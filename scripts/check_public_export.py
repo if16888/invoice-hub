@@ -158,7 +158,7 @@ def _tracked_files(root: Path) -> list[Path]:
 
 
 def _looks_like_private_source_tree(root: Path) -> bool:
-    return (root / ".git").exists() and ((root / "AGENTS.md").exists() or (root / "private").exists())
+    return (root / ".git").exists() and bool(_tracked_files(root))
 
 
 def find_source_tree_issues(root: Path) -> list[str]:

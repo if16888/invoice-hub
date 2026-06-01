@@ -7,7 +7,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from scripts.check_public_export import find_public_export_issues, find_source_tree_issues
+from scripts.check_public_export import find_public_export_issues, find_source_tree_issues, main
 
 
 REQUIRED_PUBLIC_FILES = (
@@ -160,6 +160,27 @@ class TestPublicExportCheck(unittest.TestCase):
             self.assertIn("forbidden tracked release-risk file type: reimbursement.xlsx", issues)
             self.assertIn("forbidden tracked private/public-excluded file: config.json", issues)
             self.assertNotIn("tests/fixtures/synthetic/sample.pdf", issues)
+
+    def test_public_checkout_ignores_untracked_runtime_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            (root / ".gitignore").write_text("runtime/\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", ".gitignore", *REQUIRED_PUBLIC_FILES],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+
+            runtime = root / "runtime"
+            upload_dir = runtime / "inbox" / "mobile_upload" / "2026-06-01" / "mobile_20260601_153048_e2mY_b"
+            upload_dir.mkdir(parents=True)
+            (upload_dir / "manifest.json").write_text("{}", encoding="utf-8")
+            (runtime / "invoices.db").write_bytes(b"sqlite")
+
+            self.assertEqual(main([str(root)]), 0)
 
 
 if __name__ == "__main__":
