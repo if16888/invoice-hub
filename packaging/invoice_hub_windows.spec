@@ -123,6 +123,7 @@ exe = EXE(                      # noqa: F821  (EXE is PyInstaller built-in)
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    contents_directory=".",
 )
 
 coll = COLLECT(                 # noqa: F821  (COLLECT is PyInstaller built-in)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import sys
 import textwrap
 import unittest
@@ -386,6 +387,12 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertIn("LICENSE", src)
         self.assertIn("THIRD_PARTY_NOTICES.md", src)
         self.assertIn('"licenses"', src)
+
+    def test_spec_places_data_files_next_to_executable(self):
+        src = (PROJECT_ROOT / "packaging" / "invoice_hub_windows.spec").read_text(encoding="utf-8")
+        exe_block = re.search(r"exe = EXE\((.*?)\n\)", src, re.DOTALL)
+        self.assertIsNotNone(exe_block)
+        self.assertIn('contents_directory="."', exe_block.group(1))
 
     def test_workflow_requires_notice_files_in_release_payload(self):
         src = self._workflow_path().read_text(encoding="utf-8")
