@@ -1,0 +1,79 @@
+# Runtime and generated data
+runtime/
+scratch/
+bench-local/
+output/
+downloads/
+exports/
+attachments/
+private-data/
+real-samples/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+
+# Credentials and config with secrets
+config.json
+config.yaml
+.env
+.env.*
+!.env.example
+secrets/
+private/
+commercial_blueprint*.md
+business_blueprint*.md
+
+# Real reimbursement documents and generated exports
+# Test fixtures must use synthetic data under tests/fixtures/synthetic/.
+*.pdf
+*.ofd
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.heic
+*.zip
+*.xlsx
+*.xls
+*.csv
+!tests/fixtures/synthetic/**
+!scripts/invoice_fetch/gui/assets/**
+
+
+# Build artifacts (PyInstaller)
+build/
+dist/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# AI / local agent state
+.antigravitycli/
+.gemini/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+.worktrees/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,71 @@
+import logging
+import unittest
+
+from scripts.invoice_fetch.log_privacy import (
+    PrivacyLogFilter,
+    mask_email,
+    mask_filename,
+    mask_invoice_number,
+    mask_url_for_log,
+    sanitize_log_message,
+)
+
+
+class LogPrivacyTests(unittest.TestCase):
+    def test_masks_email_invoice_number_url_amount_and_uid(self):
+        text = sanitize_log_message(
+            "UID=4050 user alice.smith@example.com url https://example.com/path?token=secret "
+            "invoice 26322000003477340276 amount 169.08"
+        )
+
+        self.assertIn("a***h@example.com", text)
+        self.assertNotIn("alice.smith", text)
+        self.assertIn("26***76", text)
+        self.assertNotIn("26322000003477340276", text)
+        self.assertIn("https://example.com/<redacted:", text)
+        self.assertNotIn("token=secret", text)
+        self.assertNotIn("169.08", text)
+        self.assertIn("UID=uid#", text)
+
+    def test_sanitizes_windows_paths(self):
+        text = sanitize_log_message(r"failed path C:\Users\alice\runtime\attachments\invoice_26322000003477340276.pdf")
+
+        self.assertIn("file#", text)
+        self.assertNotIn(r"C:\Users\alice", text)
+        self.assertNotIn("26322000003477340276", text)
+
+    def test_masks_filename_without_preserving_business_name(self):
+        masked = mask_filename("餐饮_169.08_26322000003477340276.pdf")
+
+        self.assertTrue(masked.startswith("file#"))
+        self.assertTrue(masked.endswith(".pdf"))
+        self.assertNotIn("餐饮", masked)
+        self.assertNotIn("26322000003477340276", masked)
+
+    def test_mask_helpers_keep_only_minimal_diagnostics(self):
+        self.assertEqual(mask_email("if16888@example.com"), "i***8@example.com")
+        self.assertEqual(mask_invoice_number("26322000003477340276"), "26***76")
+        self.assertIn("https://example.com/<redacted:", mask_url_for_log("https://example.com/a?b=c"))
+
+    def test_privacy_filter_sanitizes_rendered_log_record(self):
+        record = logging.LogRecord(
+            name="invoice_fetch",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="处理 UID=%d: %s",
+            args=(4050, "餐饮管理有限公司电子发票 26322000003477340276 169.08"),
+            exc_info=None,
+        )
+
+        self.assertTrue(PrivacyLogFilter().filter(record))
+        rendered = record.getMessage()
+        self.assertIn("UID=uid#", rendered)
+        self.assertIn("<subject:redacted>", rendered)
+        self.assertNotIn("4050", rendered)
+        self.assertNotIn("餐饮管理有限公司", rendered)
+        self.assertNotIn("26322000003477340276", rendered)
+
+
+if __name__ == "__main__":
+    unittest.main()

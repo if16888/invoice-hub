@@ -1,0 +1,9 @@
+# Release, privacy, and security-sensitive paths require maintainer review.
+/.github/workflows/ @if16888
+/packaging/ @if16888
+/SECURITY.md @if16888
+/docs/privacy-data-flow.md @if16888
+/docs/privacy-and-feedback.md @if16888
+/docs/pyside6-license-compliance.md @if16888
+/scripts/check_repo_privacy.py @if16888
+/scripts/check_public_export.py @if16888

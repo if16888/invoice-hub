@@ -1,0 +1,166 @@
+"""Tests for the public export hygiene checker."""
+
+from __future__ import annotations
+
+import tempfile
+import subprocess
+import unittest
+from pathlib import Path
+
+from scripts.check_public_export import find_public_export_issues, find_source_tree_issues
+
+
+REQUIRED_PUBLIC_FILES = (
+    ".github/CODEOWNERS",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "docs/user-quickstart.md",
+    "docs/privacy-and-feedback.md",
+    "docs/privacy-data-flow.md",
+    "docs/release-checklist.md",
+)
+
+
+def _write_minimal_public_tree(root: Path) -> None:
+    for rel in REQUIRED_PUBLIC_FILES:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic public file\n", encoding="utf-8")
+
+
+class TestPublicExportCheck(unittest.TestCase):
+    def test_clean_public_tree_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+
+            self.assertEqual(find_public_export_issues(root), [])
+
+    def test_forbids_private_docs_and_runtime_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            (root / "AGENTS.md").write_text("private agent notes\n", encoding="utf-8")
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "invoices.db").write_bytes(b"sqlite")
+
+            issues = "\n".join(find_public_export_issues(root))
+
+            self.assertIn("forbidden file: AGENTS.md", issues)
+            self.assertIn("forbidden directory: runtime", issues)
+            self.assertIn("file under forbidden directory: runtime/invoices.db", issues)
+
+    def test_requires_codeowners(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            (root / ".github" / "CODEOWNERS").unlink()
+
+            issues = "\n".join(find_public_export_issues(root))
+
+            self.assertIn("missing required public file: .github/CODEOWNERS", issues)
+
+    def test_forbids_secret_file_names_and_key_suffixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            for rel in (
+                ".env",
+                ".env.local",
+                ".npmrc",
+                ".pypirc",
+                "credentials.json",
+                "secrets.json",
+                "id_rsa",
+                "id_ed25519",
+                "cert.pem",
+                "private.key",
+                "identity.p12",
+                "identity.pfx",
+            ):
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("synthetic secret\n", encoding="utf-8")
+
+            issues = "\n".join(find_public_export_issues(root))
+
+            self.assertIn("forbidden secret/config file name: .env", issues)
+            self.assertIn("forbidden secret/config file name: credentials.json", issues)
+            self.assertIn("forbidden secret/config file name: id_rsa", issues)
+            self.assertIn("forbidden generated/private file type: cert.pem", issues)
+            self.assertIn("forbidden generated/private file type: private.key", issues)
+            self.assertIn("forbidden generated/private file type: identity.p12", issues)
+            self.assertIn("forbidden generated/private file type: identity.pfx", issues)
+
+    def test_allows_synthetic_fixtures_and_gui_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            asset = root / "scripts" / "invoice_fetch" / "gui" / "assets" / "logo.png"
+            fixture = root / "tests" / "fixtures" / "synthetic" / "sample.pdf"
+            asset.parent.mkdir(parents=True, exist_ok=True)
+            fixture.parent.mkdir(parents=True, exist_ok=True)
+            asset.write_bytes(b"synthetic image")
+            fixture.write_bytes(b"synthetic pdf")
+
+            self.assertEqual(find_public_export_issues(root), [])
+
+    def test_ignores_git_and_pycache_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            git_dir = root / ".git"
+            cache_dir = root / "scripts" / "__pycache__"
+            git_dir.mkdir()
+            cache_dir.mkdir(parents=True)
+            (git_dir / "config").write_text("synthetic\n", encoding="utf-8")
+            (cache_dir / "module.pyc").write_bytes(b"compiled")
+
+            self.assertEqual(find_public_export_issues(root), [])
+
+    def test_source_tree_rejects_tracked_release_risk_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+
+            risky_files = (
+                root / "real_invoice.pdf",
+                root / "reimbursement.xlsx",
+                root / "config.json",
+            )
+            for path in risky_files:
+                path.write_bytes(b"synthetic risky file")
+
+            allowed_fixture = root / "tests" / "fixtures" / "synthetic" / "sample.pdf"
+            allowed_fixture.parent.mkdir(parents=True, exist_ok=True)
+            allowed_fixture.write_bytes(b"synthetic fixture")
+
+            subprocess.run(
+                [
+                    "git",
+                    "add",
+                    "real_invoice.pdf",
+                    "reimbursement.xlsx",
+                    "config.json",
+                    "tests/fixtures/synthetic/sample.pdf",
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+
+            issues = "\n".join(find_source_tree_issues(root))
+
+            self.assertIn("forbidden tracked release-risk file type: real_invoice.pdf", issues)
+            self.assertIn("forbidden tracked release-risk file type: reimbursement.xlsx", issues)
+            self.assertIn("forbidden tracked private/public-excluded file: config.json", issues)
+            self.assertNotIn("tests/fixtures/synthetic/sample.pdf", issues)
+
+
+if __name__ == "__main__":
+    unittest.main()

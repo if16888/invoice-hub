@@ -1,0 +1,58 @@
+{
+  "email": {
+    "provider": "qq",
+    "address": "your_email@qq.com",
+    "username": ""
+  },
+  "imap": {
+    "server": "imap.qq.com",
+    "port": 993,
+    "ssl": true
+  },
+  "search": {
+    "folder": "INBOX",
+    "months_back": 3
+  },
+  "ai": {
+    "provider": "none",
+    "model": "",
+    "batch_size": 20
+  },
+  "reimbursement": {
+    "buyer_name": "示例科技有限公司",
+    "buyer_tax_id": "911100000000000000",
+    "strict_buyer_check": true
+  },
+  "playwright": {
+    "channel": "auto"
+  },
+  "categories": {
+    "hotel": {
+      "keywords": ["住宿", "酒店", "hotel", "入住", "客房", "房费", "华住", "锦江", "如家", "汉庭", "全季", "亚朵", "希尔顿", "万豪", "洲际", "喜来登"],
+      "extra_name": "水单",
+      "extra_keywords": ["水单", "folio", "消费明细", "住宿明细"]
+    },
+    "taxi": {
+      "keywords": ["打车", "出行", "滴滴", "曹操", "T3出行", "高德打车", "美团打车", "首汽约车"],
+      "extra_name": "行程记录",
+      "extra_keywords": ["行程", "trip", "行程单", "行程记录"]
+    },
+    "meal": {
+      "keywords": [
+        "餐饮", "餐厅", "餐费", "饭店", "食品", "美食", "烤鸭", "火锅", "涮肉",
+        "咖啡", "星巴克", "瑞幸", "LuckinCoffee", "luckin", "肯德基", "麦当劳",
+        "金拱门", "烧烤", "外卖", "小吃", "面馆", "饺子", "水饺", "烤肉",
+        "自助餐", "茶餐厅"
+      ],
+      "extra_name": ""
+    },
+    "telecom": {
+      "keywords": ["电信", "移动", "联通", "话费", "通信", "宽带", "流量", "手机费", "中国电信", "中国移动", "中国联通", "中国铁塔"],
+      "extra_name": ""
+    },
+    "transport": {
+      "keywords": ["通行费", "高速", "路桥", "过路费", "火车站", "汽车站", "地铁", "公交", "市民卡"],
+      "extra_name": ""
+    }
+  }
+}

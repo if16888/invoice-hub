@@ -1,0 +1,247 @@
+name: Windows Build & Release
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      strict_startup_ms:
+        description: "Strict startup gate threshold (ms)"
+        required: false
+        default: "3000"
+
+jobs:
+  build:
+    name: Build Windows x64 Package
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Verify CLI help output
+        run: python -m scripts.invoice_fetch --help
+
+      - name: Run unit tests
+        run: python -m unittest discover -v -s tests -p "test_*.py"
+        env:
+          INVOICE_HUB_TEST_MODE: "1"
+
+      - name: Run repository privacy gate
+        run: python scripts/check_repo_privacy.py
+
+      - name: Run public export/source tree gate
+        run: python scripts/check_public_export.py .
+
+      - name: Compile-check Python sources
+        run: python -m compileall -q scripts/invoice_fetch
+
+      - name: Build with PyInstaller
+        run: pyinstaller packaging/invoice_hub_windows.spec --distpath dist --workpath build/pyinstaller --clean --noconfirm
+        env:
+          PYTHONOPTIMIZE: "1"
+
+      - name: Verify executable exists
+        run: |
+          $exe = "dist\InvoiceHub\InvoiceHub.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "Build failed: $exe not found"
+            exit 1
+          }
+          Write-Host "Build succeeded: $exe"
+          Get-Item $exe | Select-Object Name, Length, LastWriteTime
+
+      - name: Startup performance check
+        run: |
+          $thresh = "${{ github.event.inputs.strict_startup_ms }}"
+          if (-not $thresh) { $thresh = "3000" }
+          python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $thresh
+        timeout-minutes: 2
+
+      - name: Prepare release version
+        run: |
+          $version = "${{ github.ref_name }}"
+          $version = $version -replace '/', '-'
+          if (-not $version -or $version -eq "refs/heads/master" -or $version -eq "master") {
+            $version = "dev-$(git rev-parse --short HEAD)"
+          }
+          echo "VERSION=${version}" >> $env:GITHUB_ENV
+          echo "ZIP_NAME=InvoiceHub-windows-x64-${version}.zip" >> $env:GITHUB_ENV
+          echo "SETUP_NAME=InvoiceHub-Setup-${version}.exe" >> $env:GITHUB_ENV
+
+      - name: Verify bundled payload hygiene
+        run: |
+          $required = @(
+            "dist\InvoiceHub\LICENSE",
+            "dist\InvoiceHub\THIRD_PARTY_NOTICES.md",
+            "dist\InvoiceHub\licenses\LGPL-3.0.txt",
+            "dist\InvoiceHub\licenses\GPL-3.0.txt"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              Write-Error "Release payload missing required notice file: $path"
+              exit 1
+            }
+          }
+          $bad = Get-ChildItem dist\InvoiceHub -Recurse -Force | Where-Object {
+            $path = $_.FullName
+            $name = $_.Name
+            $path -match '[\\/](runtime|private-data|real-samples|ms-playwright)[\\/]' -or
+              $path -match '[\\/]chromium-[^\\/]+[\\/]' -or
+              $name -in @("config.json", "invoices.db")
+          }
+          if ($bad) {
+            $bad | Select-Object FullName
+            Write-Error "Release payload contains forbidden runtime/private/browser files."
+            exit 1
+          }
+
+      - name: Create portable zip
+        run: |
+          $version = "${env:VERSION}"
+          $zipName = "InvoiceHub-windows-x64-${version}.zip"
+          Compress-Archive -Path "dist\InvoiceHub\*" -DestinationPath "dist\${zipName}" -Force
+          Write-Host "Created: dist\${zipName}"
+
+      - name: Build Inno Setup installer
+        run: |
+          $version = "${env:VERSION}"
+          $sourceDir = (Resolve-Path "dist\InvoiceHub").Path
+          $outputDir = (Resolve-Path "dist").Path
+          iscc packaging\invoice_hub_windows.iss /DAppVersion="${version}" /DSourceDir="${sourceDir}" /DOutputDir="${outputDir}"
+
+      - name: Create checksums
+        run: |
+          $version = "${env:VERSION}"
+          $artifacts = @(
+            "dist\InvoiceHub-windows-x64-${version}.zip",
+            "dist\InvoiceHub-Setup-${version}.exe"
+          )
+          $lines = foreach ($artifact in $artifacts) {
+            if (-not (Test-Path $artifact)) {
+              Write-Error "Missing release artifact: $artifact"
+              exit 1
+            }
+            $hash = Get-FileHash $artifact -Algorithm SHA256
+            "$($hash.Hash.ToLower())  $(Split-Path $artifact -Leaf)"
+          }
+          $lines | Set-Content -Path "dist\checksums.txt" -Encoding ascii
+          Get-Content "dist\checksums.txt"
+
+      - name: Verify release artifacts
+        run: |
+          $version = "${env:VERSION}"
+          $expected = @(
+            "dist\InvoiceHub-windows-x64-${version}.zip",
+            "dist\InvoiceHub-Setup-${version}.exe",
+            "dist\checksums.txt"
+          )
+          foreach ($path in $expected) {
+            if (-not (Test-Path $path)) {
+              Write-Error "Expected artifact missing: $path"
+              exit 1
+            }
+          }
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceHub-portable
+          path: |
+            dist/InvoiceHub-windows-x64-*.zip
+            dist/checksums.txt
+          retention-days: 30
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceHub-setup
+          path: dist/InvoiceHub-Setup-*.exe
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download portable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: InvoiceHub-portable
+          path: dist
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: InvoiceHub-setup
+          path: dist
+
+      - name: Prepare release version
+        run: |
+          $version = "${{ github.ref_name }}"
+          $version = $version -replace '/', '-'
+          echo "VERSION=${version}" >> $env:GITHUB_ENV
+          $zip = Get-ChildItem dist\InvoiceHub-windows-x64-*.zip | Select-Object -First 1
+          $setup = Get-ChildItem dist\InvoiceHub-Setup-*.exe | Select-Object -First 1
+          if (-not $zip -or -not $setup -or -not (Test-Path "dist\checksums.txt")) {
+            Write-Error "Downloaded release artifacts are incomplete."
+            exit 1
+          }
+          echo "ZIP_NAME=$($zip.Name)" >> $env:GITHUB_ENV
+          echo "SETUP_NAME=$($setup.Name)" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Invoice Hub ${{ env.VERSION }}"
+          body: |
+            ## Invoice Hub ${{ env.VERSION }} - Windows x64
+
+            Release artifacts:
+            - `${{ env.SETUP_NAME }}`: per-user installer, no administrator permission required.
+            - `${{ env.ZIP_NAME }}`: portable onedir package.
+            - `checksums.txt`: SHA256 checksums for both artifacts.
+
+            User data is stored under `%APPDATA%\InvoiceHub\`, not in the install directory. The uninstaller does not remove user runtime data by default.
+
+            This release does not bundle Playwright Chromium browser binaries; it uses an installed Microsoft Edge or Google Chrome when browser download automation is needed.
+          draft: false
+          prerelease: false
+          files: |
+            dist/InvoiceHub-windows-x64-*.zip
+            dist/InvoiceHub-Setup-*.exe
+            dist/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
