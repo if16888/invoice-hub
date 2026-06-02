@@ -2,6 +2,10 @@
 
 **Local-first invoice and reimbursement evidence organizer.**
 
+| 当前版本 | 状态 | 推荐 |
+| --- | --- | --- |
+| [v0.1.0](https://github.com/if16888/invoice-hub/releases/tag/v0.1.0) | early preview / 早期可试用 | 先用少量脱敏样本试跑 |
+
 Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交报销前，把散落在邮箱、本地文件夹和手机里的发票、收据、截图、证明材料整理成可审核、可归组、可导出的资料包。
 
 它不是企业费控系统，也不替代 Concur、飞书、钉钉、合思等企业报销平台；它专注于“提交之前”的个人整理环节。
@@ -15,7 +19,9 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 ## 截图占位区
 
-当前 README 不引用尚未提交的真实截图文件。后续截图和 GIF 请放在 `docs/images/`，并按 [docs/images/README.md](docs/images/README.md) 的规则命名和脱敏。
+Screenshots are planned and will use synthetic data only.
+
+当前 README 不引用尚未提交的真实截图文件。后续截图和 GIF 请放在 `docs/images/`，并按 [docs/images/README.md](docs/images/README.md) 的规则命名、脱敏和人工检查。
 
 | 位置 | 计划内容 |
 | --- | --- |
@@ -55,10 +61,12 @@ Invoice Hub 试图把这些提交前的整理动作放在本机完成。
 
 ### 普通用户优先
 
-如果项目已经发布 Windows 包，请在 GitHub Releases 中下载：
+已发布 v0.1.0，请在 [GitHub Releases](https://github.com/if16888/invoice-hub/releases/latest) 下载最新版本。
 
-- `InvoiceHub-Setup-*.exe`：Windows 安装包。
-- `InvoiceHub-windows-x64-*.zip`：免安装 portable 包。
+- [Latest Release](https://github.com/if16888/invoice-hub/releases/latest)
+- `InvoiceHub-Setup-v0.1.0.exe`：Windows 安装包。
+- `InvoiceHub-windows-x64-v0.1.0.zip`：免安装 portable 包。
+- `checksums.txt`：发布资产 SHA256 校验值。
 
 安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑，再导入真实报销材料。
 
@@ -131,6 +139,17 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 - [隐私与反馈说明](docs/privacy-and-feedback.md)
 - [隐私数据流](docs/privacy-data-flow.md)
 - [安全策略](SECURITY.md)
+
+## 反馈问题
+
+反馈 Bug 或试用问题时，请优先上传应用生成的脱敏诊断包，或只提供脱敏后的操作步骤和错误信息。
+
+请不要在 GitHub Issue、截图或附件中上传：
+
+- 真实发票、收据、图片或 PDF/OFD 原件
+- `runtime/invoices.db`、Excel 报销包或导出附件包
+- 邮箱授权码、API Key、访问令牌或完整下载链接
+- 真实邮箱、税号、金额、发票号码、公司内部路径或其他敏感财务信息
 
 ## 项目文档
 
