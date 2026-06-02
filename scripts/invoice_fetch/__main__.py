@@ -428,6 +428,17 @@ def _refresh_invoice_from_parse(
     )
 
 
+def _restore_existing_invoice_if_deleted(db: InvoiceDB, existing: dict, context: str) -> dict:
+    """Restore a matching soft-deleted invoice before refreshing parsed metadata."""
+    if int(existing.get("is_deleted") or 0) != 1:
+        return existing
+    if db.restore_invoice(existing["id"]):
+        existing = dict(existing)
+        existing["is_deleted"] = 0
+        _log.info("  已恢复已删除的重复发票(%s): %s", context, mask_invoice_number(existing.get("invoice_number", "")))
+    return existing
+
+
 def _insert_local_exception(
     db: InvoiceDB,
     file_path: Path,
@@ -916,8 +927,11 @@ def _process_email(
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
                     continue
-                existing = db.find_invoice_by_number_and_amount(info.invoice_number, info.total_amount)
+                existing = db.find_invoice_by_number_and_amount(
+                    info.invoice_number, info.total_amount, include_deleted=True
+                )
                 if existing:
+                    existing = _restore_existing_invoice_if_deleted(db, existing, "链接下载")
                     existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
                     existing_extra_paths = _normalize_path_list(existing.get("extra_paths"))
                     repair_extra_paths = bool(extra_files) and (
@@ -985,6 +999,7 @@ def _process_email(
                 if db.is_duplicate(info.invoice_number, info.total_amount, info.seller_name):
                     _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
                     link_pdf_skipped_as_duplicate = True
+                    recorded += 1
                     # Clean up the downloaded file for the duplicate
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
@@ -1058,8 +1073,11 @@ def _process_email(
 
             _log.warning("  PDF 解析失败且不像报销凭证，跳过: %s", redact_text(info.parse_note, "parse_note"))
             continue
-        existing = db.find_invoice_by_number_and_amount(info.invoice_number, info.total_amount)
+        existing = db.find_invoice_by_number_and_amount(
+            info.invoice_number, info.total_amount, include_deleted=True
+        )
         if existing:
+            existing = _restore_existing_invoice_if_deleted(db, existing, "附件")
             cat, extra_type, extra_req = _classify(
                 msg.subject, msg.sender, info.seller_name, categories)
             existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
@@ -1120,6 +1138,7 @@ def _process_email(
             continue
         if db.is_duplicate(info.invoice_number, info.total_amount, info.seller_name):
             _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
+            recorded += 1
             continue
 
         cat, extra_type, extra_req = _classify(
@@ -1210,8 +1229,9 @@ def _process_email(
                 msg.subject, msg.sender, seller, categories)
 
             if inv_num:
-                existing = db.find_invoice_by_number_and_amount(inv_num, amount)
+                existing = db.find_invoice_by_number_and_amount(inv_num, amount, include_deleted=True)
                 if existing:
+                    existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
                     if _refresh_invoice_from_parse(
                         db,
                         existing,
@@ -1235,6 +1255,7 @@ def _process_email(
 
             if db.is_duplicate(dedup_key, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
+                recorded += 1
                 return recorded
 
             rec = {
