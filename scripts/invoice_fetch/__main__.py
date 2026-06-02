@@ -447,9 +447,15 @@ def _insert_local_exception(
     categories: dict,
 ) -> tuple[str, int | None]:
     file_hash = _sha256_file(file_path) if file_path.exists() else ""
-    if file_hash and db.find_invoice_by_file_hash(file_hash):
-        _log.info("  本地导入跳过重复文件: %s", mask_filename(original_name))
-        return "duplicate", None
+    existing_by_hash = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
+    if existing_by_hash:
+        existing_by_hash = _restore_existing_invoice_if_deleted(db, existing_by_hash, "本地导入")
+        if int(existing_by_hash.get("is_deleted") or 0) == 0 and existing_by_hash.get("attachment_path"):
+            _log.info("  本地导入跳过重复文件: %s", mask_filename(original_name))
+            return "duplicate", None
+        db.update_invoice_file_paths(existing_by_hash["id"], attachment_path=_runtime_relative(file_path))
+        _log.info("  本地导入恢复已删除待处理文件: %s", mask_filename(original_name))
+        return "failed", existing_by_hash["id"]
 
     category, extra_type, extra_required = _classify(original_name, "local import", "", categories)
     rec = {
@@ -489,7 +495,7 @@ def _import_local_pdf(
     preserve_source_path: bool = False,
 ) -> tuple[str, int | None]:
     file_hash = _sha256_file(file_path) if file_path.exists() else ""
-    existing_by_hash = db.find_invoice_by_file_hash(file_hash) if file_hash else None
+    existing_by_hash = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
 
     info = parser.parse_pdf(str(file_path))
     if not info.parse_success:
@@ -504,6 +510,7 @@ def _import_local_pdf(
 
     # If duplicate file hash, check if it's a re-import of the exact same record or a new file
     if existing_by_hash:
+        existing_by_hash = _restore_existing_invoice_if_deleted(db, existing_by_hash, "本地导入")
         # Check if we should update it
         category, extra_type, extra_required = _classify(source_name, "local import", info.seller_name or "", categories)
         refreshed = _refresh_invoice_from_parse(
@@ -534,8 +541,11 @@ def _import_local_pdf(
         return "duplicate", None
 
     # Check for duplicate by (invoice_number, total_amount, seller_name)
-    existing_by_fields = db.find_invoice_by_number_and_amount(info.invoice_number, info.total_amount)
+    existing_by_fields = db.find_invoice_by_number_and_amount(
+        info.invoice_number, info.total_amount, include_deleted=True
+    )
     if existing_by_fields:
+        existing_by_fields = _restore_existing_invoice_if_deleted(db, existing_by_fields, "本地导入")
         # If it matches number, amount, and seller_name, it's a duplicate.
         # But wait, is it the exact same record we are reimporting?
         # If the file path / hash differs, it's a duplicate transaction/file.

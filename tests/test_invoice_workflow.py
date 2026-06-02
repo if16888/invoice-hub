@@ -241,6 +241,52 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(Path(rows[0]["attachment_path"]).as_posix(), "attachments/2026-05-18/runtime_invoice.pdf")
             self.assertEqual(sum(1 for _ in attachments_root.rglob("runtime_invoice*.pdf")), 1)
 
+    def test_import_local_directory_restores_soft_deleted_duplicate_pdf(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir()
+            src = import_dir / "train_invoice.pdf"
+            src.write_bytes(b"%PDF- local")
+            info = InvoiceInfo(
+                invoice_number="12345678",
+                invoice_code="031002500111",
+                invoice_date="2026-05-18",
+                total_amount="42.00",
+                seller_name="Synthetic Seller",
+                buyer_name="Synthetic Buyer",
+                invoice_type="电子发票",
+                parse_success=True,
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                count1 = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(info),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                row_id = db.get_all_invoices()[0]["id"]
+                self.assertTrue(db.soft_delete_invoice(row_id))
+
+                count2 = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(info),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(count1.get("added"), 1)
+            self.assertEqual(count2.get("added"), 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_number"], "12345678")
+            self.assertEqual(rows[0]["is_deleted"], 0)
+            self.assertTrue(rows[0]["attachment_path"])
+
     def test_import_local_directory_skips_duplicate_file_hash_for_unparsed_files(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
