@@ -241,6 +241,99 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(Path(rows[0]["attachment_path"]).as_posix(), "attachments/2026-05-18/runtime_invoice.pdf")
             self.assertEqual(sum(1 for _ in attachments_root.rglob("runtime_invoice*.pdf")), 1)
 
+    def test_import_local_directory_restores_soft_deleted_duplicate_pdf(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir()
+            src = import_dir / "train_invoice.pdf"
+            src.write_bytes(b"%PDF- local")
+            info = InvoiceInfo(
+                invoice_number="12345678",
+                invoice_code="031002500111",
+                invoice_date="2026-05-18",
+                total_amount="42.00",
+                seller_name="Synthetic Seller",
+                buyer_name="Synthetic Buyer",
+                invoice_type="电子发票",
+                parse_success=True,
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                count1 = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(info),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                row_id = db.get_all_invoices()[0]["id"]
+                self.assertTrue(db.soft_delete_invoice(row_id))
+
+                count2 = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(info),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(count1.get("added"), 1)
+            self.assertEqual(count2.get("added"), 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_number"], "12345678")
+            self.assertEqual(rows[0]["is_deleted"], 0)
+            self.assertTrue(rows[0]["attachment_path"])
+
+    def test_import_local_directory_does_not_restore_soft_deleted_different_seller_conflict(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir()
+            src = import_dir / "train_invoice.pdf"
+            src.write_bytes(b"%PDF- local different seller")
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                row_id = db.insert_invoice({
+                    "invoice_number": "12345678",
+                    "invoice_code": "031002500111",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "42.00",
+                    "seller_name": "Old Synthetic Seller",
+                    "buyer_name": "Synthetic Buyer",
+                    "invoice_type": "电子发票",
+                    "attachment_path": "",
+                })
+                self.assertTrue(db.soft_delete_invoice(row_id))
+
+                count = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(InvoiceInfo(
+                        invoice_number="12345678",
+                        invoice_code="031002500111",
+                        invoice_date="2026-05-18",
+                        total_amount="42.00",
+                        seller_name="New Synthetic Seller",
+                        buyer_name="Synthetic Buyer",
+                        invoice_type="电子发票",
+                        parse_success=True,
+                    )),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                visible_rows = db.get_all_invoices()
+                all_rows = db.get_all_invoices(include_deleted=True)
+
+            self.assertEqual(count.get("added"), 1)
+            self.assertEqual(len(visible_rows), 1)
+            self.assertEqual(visible_rows[0]["seller_name"], "New Synthetic Seller")
+            deleted_rows = [row for row in all_rows if row["seller_name"] == "Old Synthetic Seller"]
+            self.assertEqual(len(deleted_rows), 1)
+            self.assertEqual(deleted_rows[0]["is_deleted"], 1)
+
     def test_import_local_directory_skips_duplicate_file_hash_for_unparsed_files(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -806,6 +899,177 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
         self.assertFalse(marked)
         self.assertEqual(db.marked, [])
+
+    def test_duplicate_subject_fallback_marks_email_downloaded(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.bulk_upsert_emails([{
+                    "uid": 457,
+                    "subject": "synthetic invoice subject",
+                    "sender": "billing@example.com",
+                    "date": "2026-05-18",
+                }])
+                db.bulk_classify([{
+                    "uid": 457,
+                    "is_invoice": True,
+                    "by": "test",
+                    "reason": "synthetic",
+                }])
+                db.insert_invoice({
+                    "invoice_number": "1234567890",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "12.30",
+                    "seller_name": "Synthetic Seller",
+                })
+
+                with (
+                    patch.object(cli, "parse_subject", return_value={
+                        "invoice_number": "1234567890",
+                        "total_amount": "12.30",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-05-18",
+                        "invoice_type": "synthetic invoice",
+                    }),
+                    patch.object(cli, "extract_html_from_message", return_value=""),
+                    patch.object(cli, "parse_html_body", return_value={}),
+                ):
+                    marked = cli._handle_pending_email(
+                        row={"uid": 457, "mail_date": "2026-05-18"},
+                        fetcher=FakeFetcher(),
+                        folder="INBOX",
+                        att_handler=StaticAttachmentHandler(runtime / "attachments", []),
+                        parser=StaticParser(InvoiceInfo(parse_success=False)),
+                        link_dl=NoopLinkDownloader(),
+                        db=db,
+                        categories={},
+                    )
+
+                pending = db.get_invoice_emails_to_download()
+
+            self.assertTrue(marked)
+            self.assertEqual(pending, [])
+
+    def test_duplicate_subject_fallback_without_number_marks_email_downloaded(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic receipt subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.bulk_upsert_emails([{
+                    "uid": 459,
+                    "subject": "synthetic receipt subject",
+                    "sender": "billing@example.com",
+                    "date": "2026-05-18",
+                }])
+                db.bulk_classify([{
+                    "uid": 459,
+                    "is_invoice": True,
+                    "by": "test",
+                    "reason": "synthetic",
+                }])
+                db.insert_invoice({
+                    "invoice_number": "",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "12.30",
+                    "seller_name": "Synthetic Seller",
+                })
+
+                with (
+                    patch.object(cli, "parse_subject", return_value={
+                        "total_amount": "12.30",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-05-18",
+                        "invoice_type": "synthetic receipt",
+                    }),
+                    patch.object(cli, "extract_html_from_message", return_value=""),
+                    patch.object(cli, "parse_html_body", return_value={}),
+                ):
+                    marked = cli._handle_pending_email(
+                        row={"uid": 459, "mail_date": "2026-05-18"},
+                        fetcher=FakeFetcher(),
+                        folder="INBOX",
+                        att_handler=StaticAttachmentHandler(runtime / "attachments", []),
+                        parser=StaticParser(InvoiceInfo(parse_success=False)),
+                        link_dl=NoopLinkDownloader(),
+                        db=db,
+                        categories={},
+                    )
+
+                pending = db.get_invoice_emails_to_download()
+
+            self.assertTrue(marked)
+            self.assertEqual(pending, [])
+
+    def test_rescanning_soft_deleted_attachment_restores_invoice(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            att_dir = runtime / "attachments"
+            att_dir.mkdir(parents=True)
+            src = att_dir / "invoice.pdf"
+            src.write_bytes(b"%PDF- synthetic invoice")
+            attachment = Attachment(
+                file_path=str(src),
+                original_name="invoice.pdf",
+                content_type="application/pdf",
+                size=src.stat().st_size,
+                is_invoice=True,
+                is_extra=False,
+            )
+            info = InvoiceInfo(
+                invoice_number="SOFT-DEL-001",
+                invoice_code="CODE001",
+                invoice_date="2026-05-18",
+                amount="11.00",
+                total_amount="12.30",
+                seller_name="Synthetic Seller",
+                buyer_name="Synthetic Buyer",
+                invoice_type="synthetic invoice",
+                parse_success=True,
+            )
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                row_id = db.insert_invoice({
+                    "invoice_number": "SOFT-DEL-001",
+                    "invoice_code": "CODE001",
+                    "invoice_date": "2026-05-18",
+                    "amount": "11.00",
+                    "total_amount": "12.30",
+                    "seller_name": "Synthetic Seller",
+                    "buyer_name": "Synthetic Buyer",
+                    "invoice_type": "synthetic invoice",
+                    "attachment_path": "",
+                })
+                self.assertTrue(db.soft_delete_invoice(row_id))
+
+                recorded = cli._process_email(
+                    cli.MailMessage(uid=458, raw_msg=msg),
+                    StaticAttachmentHandler(att_dir, [attachment]),
+                    StaticParser(info),
+                    NoopLinkDownloader(),
+                    db,
+                    {},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_number"], "SOFT-DEL-001")
+            self.assertEqual(rows[0]["is_deleted"], 0)
+            self.assertTrue(rows[0]["attachment_path"])
 
     def test_process_email_fallback_subject_parser_is_available(self):
         """Regression: re-read fallback must not fail with missing parser imports."""

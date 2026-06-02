@@ -105,6 +105,42 @@ class MobileUploadTests(unittest.TestCase):
             self.assertTrue(all(inv["mail_sender"] == "mobile_qr" for inv in invoices))
             self.assertTrue(all(inv["file_hash"] for inv in invoices))
 
+    def test_duplicate_upload_restores_soft_deleted_file_hash_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            first = server.save_uploads([
+                UploadedFile("receipt.pdf", b"%PDF-1.4\nsynthetic receipt", "application/pdf"),
+            ])
+            self.assertEqual(first["accepted"], 1)
+
+            with InvoiceDB(db_path) as db:
+                rows = db.get_all_invoices()
+                self.assertEqual(len(rows), 1)
+                self.assertTrue(db.soft_delete_invoice(rows[0]["id"]))
+
+            second = server.save_uploads([
+                UploadedFile("receipt-again.pdf", b"%PDF-1.4\nsynthetic receipt", "application/pdf"),
+            ])
+
+            with InvoiceDB(db_path) as db:
+                restored = db.get_all_invoices()
+
+            self.assertEqual(second["accepted"], 0)
+            self.assertEqual(second["duplicate"], 1)
+            self.assertEqual(len(restored), 1)
+            self.assertEqual(restored[0]["is_deleted"], 0)
+
     def test_http_upload_page_upload_endpoint_and_invalid_token(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_dir = Path(td) / "runtime"

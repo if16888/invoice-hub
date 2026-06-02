@@ -222,6 +222,10 @@ class MobileUploadServer:
                     record["status"] = "duplicate"
                     record["reason"] = "sha256_already_uploaded"
                     duplicate_now += 1
+                    if self.import_on_upload and self.db_path:
+                        restored = self._restore_deleted_invoice_by_hash(digest)
+                        if restored:
+                            record["reason"] = "sha256_already_uploaded_restored_deleted_record"
                     self._files.append(record)
                     continue
 
@@ -259,6 +263,17 @@ class MobileUploadServer:
             "imported": imported,
             "batch_id": self.session.batch_id,
         }
+
+    def _restore_deleted_invoice_by_hash(self, file_hash: str) -> bool:
+        if not self.db_path or not file_hash:
+            return False
+        from .db import InvoiceDB
+
+        with InvoiceDB(self.db_path) as db:
+            existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+            if not existing or int(existing.get("is_deleted") or 0) != 1:
+                return False
+            return db.restore_invoice(existing["id"])
 
     def _import_accepted_files(self) -> int:
         if not self.session or not self.db_path:
