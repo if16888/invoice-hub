@@ -17,6 +17,7 @@ on:
 jobs:
   build:
     name: Build Windows x64 Package
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
