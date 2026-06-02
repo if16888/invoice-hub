@@ -581,6 +581,9 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_seller = QLineEdit()
         tab_details_layout.addRow("销售方名称:", self.txt_seller)
 
+        self.txt_buyer = QLineEdit()
+        tab_details_layout.addRow("购买方名称:", self.txt_buyer)
+
         self.txt_amount = QLineEdit()
         tab_details_layout.addRow("发票金额 (元):", self.txt_amount)
 
@@ -952,6 +955,7 @@ class InvoiceReviewApp(QMainWindow):
             "invoice_number": str(inv.get("invoice_number") or "").strip(),
             "invoice_date": str(inv.get("invoice_date") or "").strip(),
             "seller_name": str(inv.get("seller_name") or "").strip(),
+            "buyer_name": str(inv.get("buyer_name") or "").strip(),
             "total_amount": str(inv.get("total_amount") or "").strip(),
             "category": str(inv.get("category") or "").strip(),
             "confirmed_note": str(inv.get("confirmed_note") or "").strip(),
@@ -962,6 +966,7 @@ class InvoiceReviewApp(QMainWindow):
             "invoice_number": self.txt_number.text().strip(),
             "invoice_date": self.txt_date.text().strip(),
             "seller_name": self.txt_seller.text().strip(),
+            "buyer_name": self.txt_buyer.text().strip(),
             "total_amount": self.txt_amount.text().strip(),
             "category": self.combo_category.currentText().strip(),
             "confirmed_note": self.txt_note.toPlainText().strip(),
@@ -1040,7 +1045,7 @@ class InvoiceReviewApp(QMainWindow):
         self._update_save_button_state()
 
     def _connect_invoice_dirty_tracking(self):
-        for widget in (self.txt_number, self.txt_date, self.txt_seller, self.txt_amount):
+        for widget in (self.txt_number, self.txt_date, self.txt_seller, self.txt_buyer, self.txt_amount):
             widget.textEdited.connect(self._mark_invoice_form_dirty)
         self.combo_category.currentTextChanged.connect(self._mark_invoice_form_dirty)
         self.txt_note.textChanged.connect(self._mark_invoice_form_dirty)
@@ -1350,6 +1355,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_number.clear()
         self.txt_date.clear()
         self.txt_seller.clear()
+        self.txt_buyer.clear()
         self.txt_amount.clear()
         self.combo_category.setCurrentText("")
         self.txt_subject.clear()
@@ -1377,6 +1383,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_number.setEnabled(False)
         self.txt_date.setEnabled(False)
         self.txt_seller.setEnabled(False)
+        self.txt_buyer.setEnabled(False)
         self.txt_amount.setEnabled(False)
         self.combo_category.setEnabled(False)
         self.txt_note.setEnabled(False)
@@ -1483,6 +1490,7 @@ class InvoiceReviewApp(QMainWindow):
             inv_num = str(inv.get("invoice_number") or "")
             inv_date = str(inv.get("invoice_date") or "")
             seller = str(inv.get("seller_name") or "")
+            buyer = str(inv.get("buyer_name") or "")
             total_amt = str(inv.get("total_amount") or "")
             category = str(inv.get("category") or "未分类")
             status = inv.get("review_status") or "to_review"
@@ -1493,6 +1501,7 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_number.setText(inv_num)
             self.txt_date.setText(inv_date)
             self.txt_seller.setText(seller)
+            self.txt_buyer.setText(buyer)
             self.txt_amount.setText(total_amt)
             self.combo_category.setCurrentText(category)
             self.txt_subject.setText(str(inv.get("mail_subject") or ""))
@@ -1535,6 +1544,7 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_number.setEnabled(True)
             self.txt_date.setEnabled(True)
             self.txt_seller.setEnabled(True)
+            self.txt_buyer.setEnabled(True)
             self.txt_amount.setEnabled(True)
             self.combo_category.setEnabled(True)
             self.txt_note.setEnabled(True)
@@ -2127,6 +2137,7 @@ class InvoiceReviewApp(QMainWindow):
         number = self.txt_number.text().strip()
         date = self.txt_date.text().strip()
         seller = self.txt_seller.text().strip()
+        buyer = self.txt_buyer.text().strip()
         amount = self.txt_amount.text().strip()
         category = self.combo_category.currentText().strip()
         note = self.txt_note.toPlainText().strip()
@@ -2144,6 +2155,7 @@ class InvoiceReviewApp(QMainWindow):
                 invoice_number=number,
                 invoice_date=date,
                 seller_name=seller,
+                buyer_name=buyer,
                 total_amount=amount,
                 category=category,
                 note=note

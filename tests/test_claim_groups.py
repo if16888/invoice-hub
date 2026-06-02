@@ -1591,6 +1591,73 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_can_edit_buyer_name_and_refresh_warning(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            expected_buyer = "\u793a\u4f8b\u79d1\u6280\u6709\u9650\u516c\u53f8"
+            original_buyer = "\u5176\u4ed6\u516c\u53f8"
+            warning = "\u8d2d\u65b9\u62ac\u5934\u4e0d\u5339\u914d\uff0c\u53ef\u80fd\u5bfc\u81f4\u9000\u5355"
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_buyer_name_edit.db"
+                with InvoiceDB(db_path) as db:
+                    invoice_id = db.insert_invoice({
+                        "invoice_number": "BUYEREDIT001",
+                        "total_amount": "88.00",
+                        "seller_name": "Seller",
+                        "buyer_name": original_buyer,
+                        "invoice_date": "2026-05-24",
+                        "category": "\u9910\u996e",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                cfg = {
+                    "reimbursement": {
+                        "buyer_name": expected_buyer,
+                        "strict_buyer_check": True,
+                    }
+                }
+                with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg):
+                    window = InvoiceReviewApp(db_path, splash=None)
+                    try:
+                        window._deferred_init()
+                        app.processEvents()
+
+                        window.table.selectRow(0)
+                        app.processEvents()
+                        self.assertEqual(window.txt_buyer.text(), original_buyer)
+                        self.assertIn(warning, window.table.item(0, 0).toolTip())
+                        self.assertEqual(window.lbl_buyer_warning.text(), warning)
+
+                        window.txt_buyer.setText(expected_buyer)
+                        window._mark_invoice_form_dirty()
+                        self.assertTrue(window.btn_save_draft.isEnabled())
+                        self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+
+                        window._save_invoice_fields()
+                        app.processEvents()
+
+                        refreshed = window.db.get_invoice(invoice_id)
+                        self.assertEqual(refreshed["buyer_name"], expected_buyer)
+                        self.assertFalse(window.btn_save_draft.isEnabled())
+                        self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                        self.assertTrue(window.lbl_buyer_warning.isHidden())
+                        self.assertNotIn(warning, window.table.item(0, 0).toolTip())
+                    finally:
+                        if hasattr(window, "db") and window.db is not None:
+                            window.db.close()
+                        window.close()
+                        window.deleteLater()
+                        app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_selection_and_claim_amount_totals(self):
         try:
             from PySide6.QtCore import QItemSelectionModel
