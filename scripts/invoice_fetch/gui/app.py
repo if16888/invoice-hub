@@ -57,6 +57,12 @@ from .helpers import _mask_url, _read_manifest_summary
 _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
 
+GITHUB_ISSUES_URL = "https://github.com/if16888/invoice-hub/issues/new/choose"
+FEEDBACK_PRIVACY_NOTICE = (
+    "请不要上传真实发票、receipt、水单、行程单、邮箱授权码、API Key、SQLite 数据库、"
+    "Excel 报销包或完整下载链接。建议只上传应用生成的脱敏诊断包。"
+)
+
 DEFAULT_CATEGORY_OPTIONS = ["餐饮", "交通", "住宿", "办公", "通讯", "其他"]
 CONFIG_CATEGORY_LABELS = {
     "hotel": "住宿",
@@ -2419,6 +2425,7 @@ class InvoiceReviewApp(QMainWindow):
             self,
             "导出脱敏诊断包",
             (
+                f"{FEEDBACK_PRIVACY_NOTICE}\n\n"
                 "诊断包只包含 app_info.json、latest.log.redacted、config.redacted.json、"
                 "environment.txt 和 privacy_scan_result.txt。\n\n"
                 "不会打包 invoices.db、attachments/、exports/、PDF/OFD/图片、Excel、"
@@ -2451,7 +2458,23 @@ class InvoiceReviewApp(QMainWindow):
 
     def _open_github_issues(self):
         """Open the GitHub issue chooser."""
-        QDesktopServices.openUrl(QUrl("https://github.com/if16888/invoice-hub-private/issues/new/choose"))
+        QMessageBox.information(
+            self,
+            "反馈前隐私提示",
+            FEEDBACK_PRIVACY_NOTICE,
+        )
+        if not QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL)):
+            QApplication.clipboard().setText(GITHUB_ISSUES_URL)
+            QMessageBox.warning(
+                self,
+                "无法打开浏览器",
+                f"无法自动打开 GitHub Issues 页面，链接已复制到剪贴板:\n{GITHUB_ISSUES_URL}",
+            )
+            self.write_log("无法自动打开 GitHub Issues 页面，已复制链接到剪贴板。")
+            self.statusBar().showMessage("GitHub Issues 链接已复制", 5000)
+            return
+        self.write_log("已打开 GitHub Issues 页面。")
+        self.statusBar().showMessage("已打开 GitHub Issues", 3000)
 
     def _import_local_clicked(self):
         """Trigger QFileDialog to choose a directory for invoice importing."""

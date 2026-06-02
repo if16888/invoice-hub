@@ -110,6 +110,74 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(redacted["email"]["address"], "t***r@example.com")
         self.assertEqual(redacted["download_url"], "https://example.com/a?***")
 
+    def test_issue_templates_have_privacy_first_feedback_flow(self):
+        template = Path(".github/ISSUE_TEMPLATE/bug_report.yml")
+        self.assertTrue(template.exists())
+        content = template.read_text(encoding="utf-8")
+        lower_content = content.lower()
+
+        for field_id in (
+            "id: version",
+            "id: os",
+            "id: run_mode",
+            "id: summary",
+            "id: steps",
+            "id: actual",
+            "id: expected",
+            "id: diagnostics",
+            "id: additional",
+            "id: privacy",
+        ):
+            self.assertIn(field_id, content)
+
+        for required_text in (
+            "Invoice Hub 版本",
+            "操作系统",
+            "启动方式",
+            "问题描述",
+            "复现步骤",
+            "实际结果",
+            "期望结果",
+            "是否已导出脱敏诊断包",
+            "补充信息",
+            "不要上传真实发票",
+            "邮箱授权码",
+            "API Key",
+            "Cookie",
+            "完整下载链接",
+        ):
+            self.assertIn(required_text, content)
+
+        self.assertIn("checkboxes", content)
+        self.assertIn("privacy", lower_content)
+        self.assertIn("diagnostic", lower_content)
+        self.assertIn("installer", lower_content)
+        self.assertIn("portable", lower_content)
+        self.assertIn("source", lower_content)
+
+        feature_template = Path(".github/ISSUE_TEMPLATE/feature_request.yml")
+        config_template = Path(".github/ISSUE_TEMPLATE/config.yml")
+        self.assertTrue(feature_template.exists())
+        self.assertTrue(config_template.exists())
+
+        feature_content = feature_template.read_text(encoding="utf-8")
+        self.assertIn("Feature request", feature_content)
+        self.assertIn("不要上传真实发票", feature_content)
+        self.assertIn("不上传任何真实发票", feature_content)
+
+        config_content = config_template.read_text(encoding="utf-8")
+        self.assertIn("blank_issues_enabled: false", config_content)
+        self.assertIn("security/policy", config_content)
+
+    def test_desktop_feedback_entry_uses_public_issues_with_fallback(self):
+        source = Path("scripts/invoice_fetch/gui/app.py").read_text(encoding="utf-8")
+
+        self.assertIn("https://github.com/if16888/invoice-hub/issues/new/choose", source)
+        self.assertNotIn("invoice-hub-private/issues", source)
+        self.assertIn("FEEDBACK_PRIVACY_NOTICE", source)
+        self.assertIn("QDesktopServices.openUrl", source)
+        self.assertIn("QApplication.clipboard().setText(GITHUB_ISSUES_URL)", source)
+
     def test_bug_report_template_has_privacy_checkbox(self):
         template = Path(".github/ISSUE_TEMPLATE/bug_report.yml")
         self.assertTrue(template.exists())
@@ -117,13 +185,14 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn("checkboxes", content)
         self.assertIn("privacy", content.lower())
         self.assertIn("diagnostic", content.lower())
-        self.assertIn("environment", content.lower())
+        self.assertIn("Invoice Hub 版本", content)
+        self.assertIn("操作系统", content)
         self.assertIn("installer", content.lower())
+        self.assertIn("portable", content.lower())
         self.assertIn("source", content.lower())
-        self.assertIn("Problem description / 问题描述", content)
-        self.assertIn("Steps to reproduce / 复现步骤", content)
-        self.assertIn("Environment / 环境信息", content)
-        self.assertIn("Redacted diagnostics package / 脱敏诊断包", content)
+        self.assertIn("问题描述", content)
+        self.assertIn("复现步骤", content)
+        self.assertIn("是否已导出脱敏诊断包", content)
         self.assertIn("Privacy confirmation / 隐私确认", content)
 
 

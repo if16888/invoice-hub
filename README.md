@@ -142,7 +142,11 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 
 ## 反馈问题
 
-反馈 Bug 或试用问题时，请优先上传应用生成的脱敏诊断包，或只提供脱敏后的操作步骤和错误信息。
+普通问题、体验反馈和功能建议请使用 [GitHub Issues](https://github.com/if16888/invoice-hub/issues/new/choose)。
+
+安全或隐私漏洞不要提交公开 Issue，请按 [SECURITY.md](SECURITY.md) 中的安全反馈方式处理。
+
+反馈 Bug 时，请优先上传应用生成的脱敏诊断包，或只提供脱敏后的操作步骤和错误信息。
 
 请不要在 GitHub Issue、截图或附件中上传：
 
