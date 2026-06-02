@@ -481,8 +481,17 @@ class InvoiceDB:
         self._conn.commit()
         return True
 
-    def update_invoice_fields(self, invoice_id: int, invoice_number: str, invoice_date: str,
-                              seller_name: str, total_amount: str, category: str, note: str = "") -> bool:
+    def update_invoice_fields(
+        self,
+        invoice_id: int,
+        invoice_number: str,
+        invoice_date: str,
+        seller_name: str,
+        total_amount: str,
+        category: str,
+        note: str = "",
+        buyer_name: str | None = None,
+    ) -> bool:
         """Update metadata fields of an invoice.
 
         Returns False if the invoice_id does not exist.
@@ -491,11 +500,13 @@ class InvoiceDB:
         inv = self.get_invoice(invoice_id)
         if not inv:
             return False
+        if buyer_name is None:
+            buyer_name = str(inv.get("buyer_name") or "")
 
         self._conn.execute(
-            "UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?, "
+            "UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?, buyer_name=?, "
             "total_amount=?, category=?, confirmed_note=? WHERE id=?",
-            (invoice_number, invoice_date, seller_name, total_amount, category, note, invoice_id)
+            (invoice_number, invoice_date, seller_name, buyer_name, total_amount, category, note, invoice_id)
         )
         self._conn.commit()
         return True
