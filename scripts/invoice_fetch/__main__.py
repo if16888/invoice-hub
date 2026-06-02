@@ -540,9 +540,9 @@ def _import_local_pdf(
         _log.info("  本地导入跳过重复文件: %s", mask_filename(source_name))
         return "duplicate", None
 
-    # Check for duplicate by (invoice_number, total_amount, seller_name)
-    existing_by_fields = db.find_invoice_by_number_and_amount(
-        info.invoice_number, info.total_amount, include_deleted=True
+    # Check for duplicate by the full invoice uniqueness key.
+    existing_by_fields = db.find_invoice_by_unique_fields(
+        info.invoice_number, info.total_amount, info.seller_name, include_deleted=True
     )
     if existing_by_fields:
         existing_by_fields = _restore_existing_invoice_if_deleted(db, existing_by_fields, "本地导入")

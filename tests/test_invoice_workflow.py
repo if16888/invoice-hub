@@ -287,6 +287,53 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(rows[0]["is_deleted"], 0)
             self.assertTrue(rows[0]["attachment_path"])
 
+    def test_import_local_directory_does_not_restore_soft_deleted_different_seller_conflict(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir()
+            src = import_dir / "train_invoice.pdf"
+            src.write_bytes(b"%PDF- local different seller")
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                row_id = db.insert_invoice({
+                    "invoice_number": "12345678",
+                    "invoice_code": "031002500111",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "42.00",
+                    "seller_name": "Old Synthetic Seller",
+                    "buyer_name": "Synthetic Buyer",
+                    "invoice_type": "电子发票",
+                    "attachment_path": "",
+                })
+                self.assertTrue(db.soft_delete_invoice(row_id))
+
+                count = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(InvoiceInfo(
+                        invoice_number="12345678",
+                        invoice_code="031002500111",
+                        invoice_date="2026-05-18",
+                        total_amount="42.00",
+                        seller_name="New Synthetic Seller",
+                        buyer_name="Synthetic Buyer",
+                        invoice_type="电子发票",
+                        parse_success=True,
+                    )),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                visible_rows = db.get_all_invoices()
+                all_rows = db.get_all_invoices(include_deleted=True)
+
+            self.assertEqual(count.get("added"), 1)
+            self.assertEqual(len(visible_rows), 1)
+            self.assertEqual(visible_rows[0]["seller_name"], "New Synthetic Seller")
+            deleted_rows = [row for row in all_rows if row["seller_name"] == "Old Synthetic Seller"]
+            self.assertEqual(len(deleted_rows), 1)
+            self.assertEqual(deleted_rows[0]["is_deleted"], 1)
+
     def test_import_local_directory_skips_duplicate_file_hash_for_unparsed_files(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
