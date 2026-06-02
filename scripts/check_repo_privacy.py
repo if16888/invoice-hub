@@ -44,6 +44,12 @@ FORBIDDEN_DIR_PREFIXES = [
     "attachments/",
 ]
 
+ALLOWED_BINARY_PREFIXES = [
+    "docs/images/",
+    "scripts/invoice_fetch/gui/assets/",
+    "tests/fixtures/synthetic/",
+]
+
 def run_cmd(args, cwd=None):
     """Run a shell command and return its output lines."""
     try:
@@ -96,8 +102,8 @@ def check_file_leak(file_path):
 
     # 2. Check forbidden extensions
     if path.suffix.lower() in FORBIDDEN_EXTENSIONS:
-        # Whitelist synthetic test fixtures and standard GUI assets
-        if "tests/fixtures/synthetic" not in posix_path and "scripts/invoice_fetch/gui/assets" not in posix_path:
+        # Whitelist synthetic documentation images, synthetic fixtures, and standard GUI assets.
+        if not any(posix_path.startswith(prefix) for prefix in ALLOWED_BINARY_PREFIXES):
             print(f"[错误] 禁用的文件格式已被跟踪/暂存: '{file_path}'")
             return False
 

@@ -43,6 +43,7 @@ business_blueprint*.md
 *.xls
 *.csv
 !tests/fixtures/synthetic/**
+!docs/images/**
 !scripts/invoice_fetch/gui/assets/**
 
 

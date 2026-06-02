@@ -96,15 +96,18 @@ class TestPublicExportCheck(unittest.TestCase):
             self.assertIn("forbidden generated/private file type: identity.p12", issues)
             self.assertIn("forbidden generated/private file type: identity.pfx", issues)
 
-    def test_allows_synthetic_fixtures_and_gui_assets(self):
+    def test_allows_synthetic_fixtures_gui_assets_and_docs_images(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_minimal_public_tree(root)
             asset = root / "scripts" / "invoice_fetch" / "gui" / "assets" / "logo.png"
+            docs_image = root / "docs" / "images" / "invoice-hub-overview.png"
             fixture = root / "tests" / "fixtures" / "synthetic" / "sample.pdf"
             asset.parent.mkdir(parents=True, exist_ok=True)
+            docs_image.parent.mkdir(parents=True, exist_ok=True)
             fixture.parent.mkdir(parents=True, exist_ok=True)
             asset.write_bytes(b"synthetic image")
+            docs_image.write_bytes(b"synthetic overview image")
             fixture.write_bytes(b"synthetic pdf")
 
             self.assertEqual(find_public_export_issues(root), [])
