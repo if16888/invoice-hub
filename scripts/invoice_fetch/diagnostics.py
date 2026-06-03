@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import subprocess
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from . import APP_VERSION
 from . import config as config_mod
 
 _SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|password|auth[_-]?code|authorization|secret|credential)")
@@ -133,15 +135,31 @@ def _latest_log_path() -> Path | None:
 def collect_app_info() -> dict[str, Any]:
     """Collect non-sensitive app diagnostics metadata."""
     latest_log = _latest_log_path()
+    config = _read_redacted_config()
+    email_cfg = config.get("email", {}) if isinstance(config, dict) else {}
+    ai_cfg = config.get("ai", {}) if isinstance(config, dict) else {}
     return {
         "app": "Invoice Hub",
-        "version": "MVP",
+        "version": APP_VERSION,
         "mode": "frozen" if getattr(sys, "frozen", False) else "source",
+        "build_mode": "release" if getattr(sys, "frozen", False) else "local/dev",
+        "build_commit": (
+            os.environ.get("GITHUB_SHA")
+            or os.environ.get("INVOICE_HUB_BUILD_COMMIT")
+            or "unavailable"
+        ),
         "python": platform.python_version(),
         "platform": platform.platform(),
         "is_frozen": bool(getattr(sys, "frozen", False)),
+        "data_dir": "<runtime_dir:redacted>",
+        "log_dir": "<log_dir:redacted>",
         "runtime_dir": "<runtime_dir:redacted>",
         "latest_log": f"<log:redacted:{latest_log.name}>" if latest_log else "no log found",
+        "config_summary": {
+            "email_provider": email_cfg.get("provider", "unknown") if isinstance(email_cfg, dict) else "unknown",
+            "email_configured": bool(email_cfg.get("address")) if isinstance(email_cfg, dict) else False,
+            "ai_provider": ai_cfg.get("provider", "none") if isinstance(ai_cfg, dict) else "none",
+        },
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
 

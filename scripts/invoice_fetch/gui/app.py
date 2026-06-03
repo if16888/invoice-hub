@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QComboBox, QLabel, QMessageBox, QGroupBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog, QDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
-    QButtonGroup, QGridLayout
+    QButtonGroup, QGridLayout, QStyle
 )
 from PySide6.QtCore import Qt, QUrl, QThread, Signal, QTimer, QEvent
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPixmap
@@ -46,6 +46,7 @@ def get_qt_pdf_classes():
     return _QPDF_CLASSES
 
 from ..db import InvoiceDB
+from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total
@@ -98,7 +99,7 @@ class InvoiceReviewApp(QMainWindow):
         self._deferred_init_done = False
         self._first_load_notice = None
 
-        self.setWindowTitle("Invoice Hub - 发票审核与报销整理")
+        self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
         if self.startup_probe:
             self._init_ui_probe()
@@ -178,6 +179,13 @@ class InvoiceReviewApp(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
+    def _make_menu_action(self, text: str, icon_id, handler, tooltip: str = "") -> QAction:
+        action = QAction(self.style().standardIcon(icon_id), text, self)
+        action.setObjectName("action_" + text.lower().replace(" ", "_"))
+        action.setToolTip(tooltip or text)
+        action.triggered.connect(handler)
+        return action
+
     def _init_ui(self):
         # Main Layout
         central_widget = QWidget()
@@ -220,44 +228,50 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_more.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_more.setProperty("class", "SecondaryBtn")
 
-        more_menu = QMenu(self)
+        self.more_menu = QMenu(self)
+        self.more_menu.setToolTipsVisible(True)
 
-        action_refresh = QAction("🔄 刷新数据", self)
-        action_refresh.triggered.connect(self._manual_refresh)
+        self.action_refresh = self._make_menu_action(
+            "刷新数据", QStyle.SP_BrowserReload, self._manual_refresh, "刷新当前发票列表"
+        )
+        self.action_runtime = self._make_menu_action(
+            "打开数据目录", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "打开本地运行数据目录"
+        )
+        self.action_exports = self._make_menu_action(
+            "打开导出目录", QStyle.SP_DriveHDIcon, self._open_exports_directory, "打开本地导出目录"
+        )
+        self.action_logs = self._make_menu_action(
+            "打开日志目录", QStyle.SP_FileDialogDetailedView, self._open_logs_directory, "打开本地日志目录"
+        )
+        self.action_copy_diag = self._make_menu_action(
+            "复制诊断信息", QStyle.SP_FileDialogInfoView, self._copy_diagnostic_info, "复制脱敏诊断信息"
+        )
+        self.action_export_diag = self._make_menu_action(
+            "导出脱敏诊断包", QStyle.SP_DialogSaveButton, self._export_diagnostics_package, "导出可用于反馈的脱敏诊断包"
+        )
+        self.action_github_issues = self._make_menu_action(
+            "打开 GitHub Issues", QStyle.SP_MessageBoxQuestion, self._open_github_issues, "打开公开 Issue 反馈入口"
+        )
+        self.action_settings = self._make_menu_action(
+            "系统设置", QStyle.SP_ComputerIcon, self._open_settings_dialog, "打开系统设置"
+        )
+        self.action_about = self._make_menu_action(
+            "关于 Invoice Hub", QStyle.SP_MessageBoxInformation, self._show_about_dialog, "查看版本、数据目录和日志目录"
+        )
 
-        action_runtime = QAction("📂 打开数据目录", self)
-        action_runtime.triggered.connect(self._open_runtime_dir)
+        self.more_menu.addAction(self.action_refresh)
+        self.more_menu.addAction(self.action_runtime)
+        self.more_menu.addAction(self.action_exports)
+        self.more_menu.addAction(self.action_logs)
+        self.more_menu.addSeparator()
+        self.more_menu.addAction(self.action_copy_diag)
+        self.more_menu.addAction(self.action_export_diag)
+        self.more_menu.addAction(self.action_github_issues)
+        self.more_menu.addSeparator()
+        self.more_menu.addAction(self.action_settings)
+        self.more_menu.addAction(self.action_about)
 
-        action_exports = QAction("📦 打开导出目录", self)
-        action_exports.triggered.connect(self._open_exports_directory)
-
-        action_logs = QAction("打开日志目录", self)
-        action_logs.triggered.connect(self._open_logs_directory)
-
-        action_copy_diag = QAction("复制诊断信息", self)
-        action_copy_diag.triggered.connect(self._copy_diagnostic_info)
-
-        action_export_diag = QAction("导出脱敏诊断包", self)
-        action_export_diag.triggered.connect(self._export_diagnostics_package)
-
-        action_github_issues = QAction("打开 GitHub Issues", self)
-        action_github_issues.triggered.connect(self._open_github_issues)
-
-        action_settings = QAction("⚙️ 系统设置", self)
-        action_settings.triggered.connect(self._open_settings_dialog)
-
-        more_menu.addAction(action_refresh)
-        more_menu.addAction(action_runtime)
-        more_menu.addAction(action_exports)
-        more_menu.addAction(action_logs)
-        more_menu.addSeparator()
-        more_menu.addAction(action_copy_diag)
-        more_menu.addAction(action_export_diag)
-        more_menu.addAction(action_github_issues)
-        more_menu.addSeparator()
-        more_menu.addAction(action_settings)
-
-        self.btn_more.setMenu(more_menu)
+        self.btn_more.setMenu(self.more_menu)
         action_layout.addWidget(self.btn_more)
 
         action_layout.addStretch()
@@ -325,6 +339,7 @@ class InvoiceReviewApp(QMainWindow):
 
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter = splitter
         main_layout.addWidget(splitter, 1)
 
         # Left Column - Invoice Table Panel
@@ -450,7 +465,7 @@ class InvoiceReviewApp(QMainWindow):
         self.left_splitter.addWidget(self.left_upper_widget)
         self.left_splitter.addWidget(self.preview_panel)
         self.left_splitter.setSizes([380, 620])
-        self.preview_panel.setMinimumHeight(360)
+        self.preview_panel.setMinimumHeight(260)
 
 
 
@@ -801,6 +816,12 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_status_left.setStyleSheet("color: #4B5563;")
         status_layout.addWidget(self.lbl_status_left, 1)
 
+        self.lbl_version = QLabel(APP_VERSION)
+        self.lbl_version.setFont(QFont("Segoe UI", 8))
+        self.lbl_version.setStyleSheet("color: #6B7280;")
+        self.lbl_version.setToolTip("当前 Invoice Hub 版本")
+        status_layout.addWidget(self.lbl_version)
+
         self.btn_toggle_log = QPushButton("展开日志")
         self.btn_toggle_log.setProperty("class", "SecondaryBtn")
         self.btn_toggle_log.setMinimumWidth(100)
@@ -1070,6 +1091,21 @@ class InvoiceReviewApp(QMainWindow):
             self.log_container.setFixedHeight(0)
             self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             self.bottom_panel.setFixedHeight(32)
+        self._apply_log_layout_state(visible)
+
+    def _apply_log_layout_state(self, log_visible: bool):
+        if hasattr(self, "preview_panel"):
+            self.preview_panel.setMinimumHeight(280 if log_visible else 180)
+            self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if hasattr(self, "left_upper_widget"):
+            self.left_upper_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if hasattr(self, "left_splitter"):
+            self.left_splitter.setStretchFactor(0, 3)
+            self.left_splitter.setStretchFactor(1, 2 if log_visible else 1)
+            self.left_splitter.setSizes([420, 280] if log_visible else [560, 220])
+        if hasattr(self, "main_splitter"):
+            self.main_splitter.setStretchFactor(0, 3)
+            self.main_splitter.setStretchFactor(1, 2)
 
         self.log_container.updateGeometry()
         if hasattr(self, "bottom_panel"):
@@ -2431,6 +2467,21 @@ class InvoiceReviewApp(QMainWindow):
         self.write_log("已复制脱敏诊断信息到剪贴板。")
         self.statusBar().showMessage("已复制诊断信息", 3000)
 
+    def _about_text(self) -> str:
+        info = collect_app_info()
+        return "\n".join([
+            "Invoice Hub",
+            f"Version: {APP_VERSION}",
+            f"Build: {info.get('build_commit') or 'unavailable'}",
+            f"Mode: {info.get('build_mode') or info.get('mode') or 'unknown'}",
+            f"Data directory: {RUNTIME_DIR}",
+            f"Log directory: {RUNTIME_DIR / 'logs'}",
+        ])
+
+    def _show_about_dialog(self):
+        """Show app version and local support paths."""
+        QMessageBox.information(self, "关于 Invoice Hub", self._about_text())
+
     def _export_diagnostics_package(self):
         """Export a redacted diagnostics package for support and GitHub issues."""
         confirm = QMessageBox.question(
@@ -2865,6 +2916,8 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_zoom_out.setEnabled(enabled)
 
     def _show_preview_status(self, text):
+        if text == "当前发票没有可预览的原件":
+            text = "当前发票没有可预览的原件\n可点击“查看文件”或“定位文件”确认原件位置"
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
         self.overlay_toolbar.setVisible(False)

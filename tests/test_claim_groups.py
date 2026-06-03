@@ -2026,6 +2026,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
+                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
 
                     # Toggle log to expanded
                     window._toggle_log()
@@ -2038,6 +2039,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32 + 4 + 180)
                     self.assertGreater(window.bottom_panel.height(), 32)
                     self.assertGreaterEqual(window.txt_log.height(), 100)
+                    self.assertGreaterEqual(window.preview_panel.minimumHeight(), 260)
 
                     # Toggle log back to collapsed
                     window._toggle_log()
@@ -2047,6 +2049,56 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
+                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
+                    self.assertTrue(all(size >= 0 for size in window.left_splitter.sizes()))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_shell_version_about_and_more_menu_actions(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_shell.db"
+                from scripts.invoice_fetch import APP_VERSION
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    app.processEvents()
+                    self.assertIn(APP_VERSION, window.windowTitle())
+                    self.assertEqual(window.lbl_version.text(), APP_VERSION)
+
+                    expected = [
+                        "刷新数据",
+                        "打开数据目录",
+                        "打开导出目录",
+                        "打开日志目录",
+                        "复制诊断信息",
+                        "导出脱敏诊断包",
+                        "打开 GitHub Issues",
+                        "系统设置",
+                        "关于 Invoice Hub",
+                    ]
+                    actions = [a for a in window.more_menu.actions() if not a.isSeparator()]
+                    self.assertEqual([a.text() for a in actions], expected)
+                    for action in actions:
+                        self.assertFalse(action.icon().isNull(), action.text())
+
+                    about_text = window._about_text()
+                    self.assertIn("Invoice Hub", about_text)
+                    self.assertIn(f"Version: {APP_VERSION}", about_text)
+                    self.assertIn("Data directory:", about_text)
+                    self.assertIn("Log directory:", about_text)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
