@@ -226,6 +226,54 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_empty_preview_state_mentions_file_actions(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                db.insert_invoice({
+                    "mail_subject": "Invoice without attachment",
+                    "mail_date": "2026-05-30",
+                    "invoice_type": "PDF",
+                    "invoice_number": "33333",
+                    "invoice_date": "2026-06-02",
+                    "total_amount": "100.00",
+                    "buyer_name": "Company",
+                    "seller_name": "Seller C",
+                    "attachment_path": "",
+                    "extra_paths": [],
+                    "category": "Office",
+                    "confirmed_note": "",
+                    "review_status": "to_review"
+                })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window._deferred_init()
+                window.table.selectRow(0)
+                window._on_table_selection_changed()
+                app.processEvents()
+
+                self.assertIn("当前发票没有可预览的原件", window.lbl_preview_status.text())
+                self.assertIn("查看文件", window.lbl_preview_status.text())
+                self.assertIn("定位文件", window.lbl_preview_status.text())
+                self.assertFalse(window.btn_prev.isEnabled())
+                self.assertFalse(window.btn_next.isEnabled())
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_preview_zoom_methods(self):
         try:
             from PySide6.QtWidgets import QApplication

@@ -2026,6 +2026,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
+                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
 
                     # Toggle log to expanded
                     window._toggle_log()
@@ -2038,6 +2039,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32 + 4 + 180)
                     self.assertGreater(window.bottom_panel.height(), 32)
                     self.assertGreaterEqual(window.txt_log.height(), 100)
+                    self.assertGreaterEqual(window.preview_panel.minimumHeight(), 260)
 
                     # Toggle log back to collapsed
                     window._toggle_log()
@@ -2047,6 +2049,170 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
+                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
+                    self.assertTrue(all(size >= 0 for size in window.left_splitter.sizes()))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_shell_version_about_and_more_menu_actions(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_shell.db"
+                from scripts.invoice_fetch import APP_VERSION
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    app.processEvents()
+                    self.assertIn(APP_VERSION, window.windowTitle())
+                    self.assertEqual(window.lbl_version.text(), APP_VERSION)
+
+                    expected = [
+                        "刷新数据",
+                        "打开数据目录",
+                        "打开导出目录",
+                        "打开日志目录",
+                        "复制诊断信息",
+                        "导出脱敏诊断包",
+                        "打开 GitHub Issues",
+                        "系统设置",
+                        "关于 Invoice Hub",
+                    ]
+                    actions = [a for a in window.more_menu.actions() if not a.isSeparator()]
+                    self.assertEqual([a.text() for a in actions], expected)
+                    for action in actions:
+                        self.assertFalse(action.icon().isNull(), action.text())
+
+                    about_text = window._about_text()
+                    self.assertIn("Invoice Hub", about_text)
+                    self.assertIn(f"Version: {APP_VERSION}", about_text)
+                    self.assertIn("Data directory:", about_text)
+                    self.assertIn("Log directory:", about_text)
+                    self.assertEqual(window.btn_import_local.property("class"), "PrimaryBtn")
+                    self.assertEqual(window.btn_scan_email.property("class"), "PrimaryBtn")
+                    self.assertEqual(window.btn_mobile_upload.property("class"), "SecondaryBtn")
+                    self.assertEqual(window.btn_toolbar_export.property("class"), "SecondaryBtn")
+                    self.assertIn("购买方", window.txt_search.placeholderText())
+                    self.assertIn("金额", window.txt_search.placeholderText())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_filter_counts_and_diagnostic_payload_context(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_diag_context.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "CTX001",
+                        "total_amount": "50.00",
+                        "invoice_date": "2026-05-25",
+                        "review_status": "to_review",
+                        "seller_name": "Seller",
+                        "buyer_name": "Buyer",
+                    })
+                    db.insert_invoice({
+                        "invoice_number": "CTX002",
+                        "total_amount": "75.00",
+                        "invoice_date": "2026-05-26",
+                        "review_status": "approved",
+                        "seller_name": "Seller",
+                        "buyer_name": "Buyer",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                from scripts.invoice_fetch import APP_VERSION
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    self.assertIn("全部 2", window.filter_buttons["all"].text())
+                    self.assertIn("待审核 1", window.filter_buttons["to_review"].text())
+                    self.assertIn("已通过 1", window.filter_buttons["approved"].text())
+
+                    window.txt_search.setText("50.00")
+                    window.current_filter_status = "to_review"
+                    window._last_scan_summary = {
+                        "scanned": 3,
+                        "new": 1,
+                        "restored": 1,
+                        "duplicates": 1,
+                        "link_failed": 0,
+                        "pending_retry": 0,
+                    }
+                    payload = window._collect_diagnostic_payload()
+                    self.assertEqual(payload["version"], APP_VERSION)
+                    self.assertIn("database_user_version", payload)
+                    self.assertEqual(payload["current_filter_state"]["status"], "to_review")
+                    self.assertEqual(payload["current_filter_state"]["search"], "50.00")
+                    self.assertEqual(payload["last_scan_summary"]["restored"], 1)
+                    combined = json.dumps(payload, ensure_ascii=False)
+                    self.assertNotIn("auth_code", combined)
+                    self.assertNotIn("api_key", combined)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_scan_finished_builds_actionable_summary(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_scan_summary.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window.scan_worker = type("Worker", (), {
+                        "summary_logs": [
+                            "已恢复已删除的重复发票",
+                            "跳过重复发票: existing_id=1 review_status=approved is_deleted=0 duplicate_reason=attachment_duplicate",
+                            "链接下载未获得官方 PDF/OFD，保留为待下载重试",
+                        ]
+                    })()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as mock_info:
+                        window._scan_email_finished({"scanned": 5, "downloaded": 2})
+                    summary = window._last_scan_summary
+                    self.assertEqual(summary["new"], 2)
+                    self.assertEqual(summary["restored"], 1)
+                    self.assertEqual(summary["duplicates"], 1)
+                    self.assertEqual(summary["link_failed"], 1)
+                    self.assertEqual(summary["pending_retry"], 1)
+                    message = mock_info.call_args.args[2]
+                    self.assertIn("恢复软删除", message)
+                    self.assertIn("重复已存在", message)
+                    self.assertIn("链接下载失败", message)
+                    self.assertIn("待重试", message)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()

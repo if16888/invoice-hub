@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QComboBox, QLabel, QMessageBox, QGroupBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog, QDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
-    QButtonGroup, QGridLayout
+    QButtonGroup, QGridLayout, QStyle
 )
 from PySide6.QtCore import Qt, QUrl, QThread, Signal, QTimer, QEvent
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPixmap
@@ -46,6 +46,7 @@ def get_qt_pdf_classes():
     return _QPDF_CLASSES
 
 from ..db import InvoiceDB
+from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total
@@ -97,8 +98,9 @@ class InvoiceReviewApp(QMainWindow):
         self._is_first_load = True
         self._deferred_init_done = False
         self._first_load_notice = None
+        self._last_scan_summary = {}
 
-        self.setWindowTitle("Invoice Hub - 发票审核与报销整理")
+        self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
         if self.startup_probe:
             self._init_ui_probe()
@@ -178,6 +180,13 @@ class InvoiceReviewApp(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
+    def _make_menu_action(self, text: str, icon_id, handler, tooltip: str = "") -> QAction:
+        action = QAction(self.style().standardIcon(icon_id), text, self)
+        action.setObjectName("action_" + text.lower().replace(" ", "_"))
+        action.setToolTip(tooltip or text)
+        action.triggered.connect(handler)
+        return action
+
     def _init_ui(self):
         # Main Layout
         central_widget = QWidget()
@@ -200,19 +209,19 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_mobile_upload = QPushButton("📱 扫码上传")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         self.btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_mobile_upload.setProperty("class", "OutlineBtn")
+        self.btn_mobile_upload.setProperty("class", "SecondaryBtn")
         action_layout.addWidget(self.btn_mobile_upload)
 
         self.btn_scan_email = QPushButton("📧 扫描邮箱")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
         self.btn_scan_email.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_scan_email.setProperty("class", "OutlineBtn")
+        self.btn_scan_email.setProperty("class", "PrimaryBtn")
         action_layout.addWidget(self.btn_scan_email)
 
         self.btn_toolbar_export = QPushButton("🚀 一键导出")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
         self.btn_toolbar_export.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_toolbar_export.setProperty("class", "PrimaryBtn")
+        self.btn_toolbar_export.setProperty("class", "SecondaryBtn")
         action_layout.addWidget(self.btn_toolbar_export)
 
         # "更多  ▼" consolidated drop-down menu
@@ -220,44 +229,50 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_more.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_more.setProperty("class", "SecondaryBtn")
 
-        more_menu = QMenu(self)
+        self.more_menu = QMenu(self)
+        self.more_menu.setToolTipsVisible(True)
 
-        action_refresh = QAction("🔄 刷新数据", self)
-        action_refresh.triggered.connect(self._manual_refresh)
+        self.action_refresh = self._make_menu_action(
+            "刷新数据", QStyle.SP_BrowserReload, self._manual_refresh, "刷新当前发票列表"
+        )
+        self.action_runtime = self._make_menu_action(
+            "打开数据目录", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "打开本地运行数据目录"
+        )
+        self.action_exports = self._make_menu_action(
+            "打开导出目录", QStyle.SP_DriveHDIcon, self._open_exports_directory, "打开本地导出目录"
+        )
+        self.action_logs = self._make_menu_action(
+            "打开日志目录", QStyle.SP_FileDialogDetailedView, self._open_logs_directory, "打开本地日志目录"
+        )
+        self.action_copy_diag = self._make_menu_action(
+            "复制诊断信息", QStyle.SP_FileDialogInfoView, self._copy_diagnostic_info, "复制脱敏诊断信息"
+        )
+        self.action_export_diag = self._make_menu_action(
+            "导出脱敏诊断包", QStyle.SP_DialogSaveButton, self._export_diagnostics_package, "导出可用于反馈的脱敏诊断包"
+        )
+        self.action_github_issues = self._make_menu_action(
+            "打开 GitHub Issues", QStyle.SP_MessageBoxQuestion, self._open_github_issues, "打开公开 Issue 反馈入口"
+        )
+        self.action_settings = self._make_menu_action(
+            "系统设置", QStyle.SP_ComputerIcon, self._open_settings_dialog, "打开系统设置"
+        )
+        self.action_about = self._make_menu_action(
+            "关于 Invoice Hub", QStyle.SP_MessageBoxInformation, self._show_about_dialog, "查看版本、数据目录和日志目录"
+        )
 
-        action_runtime = QAction("📂 打开数据目录", self)
-        action_runtime.triggered.connect(self._open_runtime_dir)
+        self.more_menu.addAction(self.action_refresh)
+        self.more_menu.addAction(self.action_runtime)
+        self.more_menu.addAction(self.action_exports)
+        self.more_menu.addAction(self.action_logs)
+        self.more_menu.addSeparator()
+        self.more_menu.addAction(self.action_copy_diag)
+        self.more_menu.addAction(self.action_export_diag)
+        self.more_menu.addAction(self.action_github_issues)
+        self.more_menu.addSeparator()
+        self.more_menu.addAction(self.action_settings)
+        self.more_menu.addAction(self.action_about)
 
-        action_exports = QAction("📦 打开导出目录", self)
-        action_exports.triggered.connect(self._open_exports_directory)
-
-        action_logs = QAction("打开日志目录", self)
-        action_logs.triggered.connect(self._open_logs_directory)
-
-        action_copy_diag = QAction("复制诊断信息", self)
-        action_copy_diag.triggered.connect(self._copy_diagnostic_info)
-
-        action_export_diag = QAction("导出脱敏诊断包", self)
-        action_export_diag.triggered.connect(self._export_diagnostics_package)
-
-        action_github_issues = QAction("打开 GitHub Issues", self)
-        action_github_issues.triggered.connect(self._open_github_issues)
-
-        action_settings = QAction("⚙️ 系统设置", self)
-        action_settings.triggered.connect(self._open_settings_dialog)
-
-        more_menu.addAction(action_refresh)
-        more_menu.addAction(action_runtime)
-        more_menu.addAction(action_exports)
-        more_menu.addAction(action_logs)
-        more_menu.addSeparator()
-        more_menu.addAction(action_copy_diag)
-        more_menu.addAction(action_export_diag)
-        more_menu.addAction(action_github_issues)
-        more_menu.addSeparator()
-        more_menu.addAction(action_settings)
-
-        self.btn_more.setMenu(more_menu)
+        self.btn_more.setMenu(self.more_menu)
         action_layout.addWidget(self.btn_more)
 
         action_layout.addStretch()
@@ -298,7 +313,7 @@ class InvoiceReviewApp(QMainWindow):
         search_layout.setSpacing(8)
 
         self.txt_search = QLineEdit()
-        self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 邮件主题")
+        self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题")
         self.txt_search.textChanged.connect(self._schedule_invoice_reload)
         search_layout.addWidget(self.txt_search, 2)
 
@@ -325,6 +340,7 @@ class InvoiceReviewApp(QMainWindow):
 
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter = splitter
         main_layout.addWidget(splitter, 1)
 
         # Left Column - Invoice Table Panel
@@ -450,7 +466,7 @@ class InvoiceReviewApp(QMainWindow):
         self.left_splitter.addWidget(self.left_upper_widget)
         self.left_splitter.addWidget(self.preview_panel)
         self.left_splitter.setSizes([380, 620])
-        self.preview_panel.setMinimumHeight(360)
+        self.preview_panel.setMinimumHeight(260)
 
 
 
@@ -551,6 +567,10 @@ class InvoiceReviewApp(QMainWindow):
         )
         self.lbl_buyer_warning.setVisible(False)
         summary_layout.addWidget(self.lbl_buyer_warning)
+        self.lbl_buyer_warning_hint = QLabel("可在下方“购买方名称”字段修正后保存。")
+        self.lbl_buyer_warning_hint.setStyleSheet("color: #6B7280; font-size: 12px;")
+        self.lbl_buyer_warning_hint.setVisible(False)
+        summary_layout.addWidget(self.lbl_buyer_warning_hint)
         summary_layout.addLayout(quick_layout)
 
         right_layout.addWidget(self.summary_card)
@@ -801,6 +821,12 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_status_left.setStyleSheet("color: #4B5563;")
         status_layout.addWidget(self.lbl_status_left, 1)
 
+        self.lbl_version = QLabel(APP_VERSION)
+        self.lbl_version.setFont(QFont("Segoe UI", 8))
+        self.lbl_version.setStyleSheet("color: #6B7280;")
+        self.lbl_version.setToolTip("当前 Invoice Hub 版本")
+        status_layout.addWidget(self.lbl_version)
+
         self.btn_toggle_log = QPushButton("展开日志")
         self.btn_toggle_log.setProperty("class", "SecondaryBtn")
         self.btn_toggle_log.setMinimumWidth(100)
@@ -903,6 +929,35 @@ class InvoiceReviewApp(QMainWindow):
         for s, btn in self.filter_buttons.items():
             btn.setChecked(s == "all")
         self._load_invoices()
+
+    def _base_filter_label(self, status) -> str:
+        labels = {
+            "all": "全部",
+            TO_REVIEW: "待审核",
+            APPROVED: "已通过",
+            IGNORED: "已忽略",
+            ERROR: "异常",
+        }
+        return labels.get(status, str(status))
+
+    def _update_filter_counts(self, invoices: list[dict]):
+        if not hasattr(self, "filter_buttons"):
+            return
+        counts = {
+            "all": len([inv for inv in invoices if inv.get("is_deleted") != 1]),
+            TO_REVIEW: 0,
+            APPROVED: 0,
+            IGNORED: 0,
+            ERROR: 0,
+        }
+        for inv in invoices:
+            if inv.get("is_deleted") == 1:
+                continue
+            status = inv.get("review_status") or TO_REVIEW
+            if status in counts:
+                counts[status] += 1
+        for status, btn in self.filter_buttons.items():
+            btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
 
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
@@ -1070,6 +1125,21 @@ class InvoiceReviewApp(QMainWindow):
             self.log_container.setFixedHeight(0)
             self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             self.bottom_panel.setFixedHeight(32)
+        self._apply_log_layout_state(visible)
+
+    def _apply_log_layout_state(self, log_visible: bool):
+        if hasattr(self, "preview_panel"):
+            self.preview_panel.setMinimumHeight(280 if log_visible else 180)
+            self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if hasattr(self, "left_upper_widget"):
+            self.left_upper_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if hasattr(self, "left_splitter"):
+            self.left_splitter.setStretchFactor(0, 3)
+            self.left_splitter.setStretchFactor(1, 2 if log_visible else 1)
+            self.left_splitter.setSizes([420, 280] if log_visible else [560, 220])
+        if hasattr(self, "main_splitter"):
+            self.main_splitter.setStretchFactor(0, 3)
+            self.main_splitter.setStretchFactor(1, 2)
 
         self.log_container.updateGeometry()
         if hasattr(self, "bottom_panel"):
@@ -1172,6 +1242,8 @@ class InvoiceReviewApp(QMainWindow):
                 haystack = " ".join([
                     str(inv.get("invoice_number") or ""),
                     str(inv.get("seller_name") or ""),
+                    str(inv.get("buyer_name") or ""),
+                    str(inv.get("total_amount") or ""),
                     str(inv.get("mail_subject") or ""),
                     str(inv.get("category") or ""),
                     str(inv.get("attachment_path") or ""),
@@ -1183,6 +1255,7 @@ class InvoiceReviewApp(QMainWindow):
             displayed_invoices.append(inv)
 
         self.invoices_list = displayed_invoices
+        self._update_filter_counts(all_invoices)
 
         self.table.blockSignals(True)
         self.table.setRowCount(0)
@@ -1374,6 +1447,7 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_sum_category.setText("消费类型: —")
         self.lbl_buyer_warning.clear()
         self.lbl_buyer_warning.setVisible(False)
+        self.lbl_buyer_warning_hint.setVisible(False)
         self._set_summary_placeholder()
         self.btn_sum_open_file.setEnabled(False)
         self.btn_sum_copy_number.setEnabled(False)
@@ -1535,6 +1609,7 @@ class InvoiceReviewApp(QMainWindow):
             warning = self._buyer_warning(inv)
             self.lbl_buyer_warning.setText(warning)
             self.lbl_buyer_warning.setVisible(bool(warning))
+            self.lbl_buyer_warning_hint.setVisible(bool(warning))
             self._update_status_badge(status)
 
             self.btn_sum_open_file.setEnabled(bool(att_path))
@@ -2426,10 +2501,48 @@ class InvoiceReviewApp(QMainWindow):
 
     def _copy_diagnostic_info(self):
         """Copy redacted app diagnostics metadata to the clipboard."""
-        payload = json.dumps(collect_app_info(), ensure_ascii=False, indent=2)
+        payload = json.dumps(self._collect_diagnostic_payload(), ensure_ascii=False, indent=2)
         QApplication.clipboard().setText(payload)
         self.write_log("已复制脱敏诊断信息到剪贴板。")
         self.statusBar().showMessage("已复制诊断信息", 3000)
+
+    def _database_user_version(self) -> int | None:
+        try:
+            row = self.db._conn.execute("PRAGMA user_version").fetchone()
+            return int(row[0]) if row else None
+        except Exception:
+            return None
+
+    def _current_filter_state(self) -> dict:
+        return {
+            "status": self.current_filter_status or "all",
+            "search": self.txt_search.text().strip() if hasattr(self, "txt_search") else "",
+            "unlinked_only": bool(self.chk_unlinked.isChecked()) if hasattr(self, "chk_unlinked") else False,
+            "needs_fix_only": bool(self.chk_needs_fix.isChecked()) if hasattr(self, "chk_needs_fix") else False,
+            "show_deleted": bool(self.chk_show_deleted.isChecked()) if hasattr(self, "chk_show_deleted") else False,
+        }
+
+    def _collect_diagnostic_payload(self) -> dict:
+        payload = collect_app_info()
+        payload["database_user_version"] = self._database_user_version()
+        payload["current_filter_state"] = self._current_filter_state()
+        payload["last_scan_summary"] = dict(getattr(self, "_last_scan_summary", {}) or {})
+        return payload
+
+    def _about_text(self) -> str:
+        info = collect_app_info()
+        return "\n".join([
+            "Invoice Hub",
+            f"Version: {APP_VERSION}",
+            f"Build: {info.get('build_commit') or 'unavailable'}",
+            f"Mode: {info.get('build_mode') or info.get('mode') or 'unknown'}",
+            f"Data directory: {RUNTIME_DIR}",
+            f"Log directory: {RUNTIME_DIR / 'logs'}",
+        ])
+
+    def _show_about_dialog(self):
+        """Show app version and local support paths."""
+        QMessageBox.information(self, "关于 Invoice Hub", self._about_text())
 
     def _export_diagnostics_package(self):
         """Export a redacted diagnostics package for support and GitHub issues."""
@@ -2581,18 +2694,59 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_scan_email.setEnabled(True)
         scanned = res.get("scanned", 0)
         downloaded = res.get("downloaded", 0)
+        summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
+        self._last_scan_summary = summary
 
-        self.write_log(f"✅ [邮箱扫描] 成功！增量扫描邮件 {scanned} 封，新下载并解析发票 {downloaded} 张。")
-        self.statusBar().showMessage(f"邮箱扫描完成: 扫描{scanned}封，下载{downloaded}张", 4000)
+        self.write_log(
+            "✅ [邮箱扫描] 完成！"
+            f"新增 {summary['new']}，恢复 {summary['restored']}，重复 {summary['duplicates']}，"
+            f"链接失败 {summary['link_failed']}，待重试 {summary['pending_retry']}。"
+        )
+        self.statusBar().showMessage(self._format_scan_summary_status(summary), 6000)
 
         QMessageBox.information(
             self, "扫描完成",
-            f"邮箱增量扫描成功完成！\n\n"
-            f"• 扫描入库新邮件: {scanned} 封\n"
-            f"• 成功下载发票数: {downloaded} 张"
+            self._format_scan_summary_message(summary)
         )
         self._load_invoices()
         self._load_claims()
+
+    def _build_scan_summary(self, res: dict, logs: list[str] | None = None) -> dict:
+        logs = [str(line or "") for line in (logs or [])]
+        restored = sum(1 for line in logs if "已恢复已删除的重复发票" in line)
+        duplicates = sum(
+            1 for line in logs
+            if ("跳过重复" in line or "重复发票" in line) and "已恢复已删除" not in line
+        )
+        link_failed = sum(1 for line in logs if "未获得官方 PDF/OFD" in line or "链接下载失败" in line)
+        pending_retry = sum(1 for line in logs if "保留为待下载" in line or "待下载以便重试" in line or "待重试" in line)
+        downloaded = int(res.get("downloaded", 0) or 0)
+        return {
+            "scanned": int(res.get("scanned", 0) or 0),
+            "new": max(0, downloaded),
+            "restored": restored,
+            "duplicates": duplicates,
+            "link_failed": link_failed,
+            "pending_retry": pending_retry,
+        }
+
+    def _format_scan_summary_status(self, summary: dict) -> str:
+        return (
+            f"邮箱扫描完成: 新增 {summary.get('new', 0)}，恢复 {summary.get('restored', 0)}，"
+            f"重复 {summary.get('duplicates', 0)}，待重试 {summary.get('pending_retry', 0)}"
+        )
+
+    def _format_scan_summary_message(self, summary: dict) -> str:
+        return (
+            "邮箱增量扫描完成。\n\n"
+            f"• 扫描入库新邮件: {summary.get('scanned', 0)} 封\n"
+            f"• 新增发票: {summary.get('new', 0)} 张\n"
+            f"• 恢复软删除: {summary.get('restored', 0)} 张\n"
+            f"• 重复已存在: {summary.get('duplicates', 0)} 张\n"
+            f"• 链接下载失败: {summary.get('link_failed', 0)} 封\n"
+            f"• 待重试: {summary.get('pending_retry', 0)} 封\n\n"
+            "如果没有看到预期发票，请清空筛选或用发票号、购买方、金额搜索。"
+        )
 
     def _scan_email_error(self, err_msg: str):
         self.btn_import_local.setEnabled(True)
@@ -2865,6 +3019,14 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_zoom_out.setEnabled(enabled)
 
     def _show_preview_status(self, text):
+        if text == "当前发票没有可预览的原件":
+            text = "当前发票没有可预览的原件\n可点击“查看文件”或“定位文件”确认原件位置"
+        elif text == "文件不存在":
+            text = "原件文件不存在\n可点击“定位文件”确认路径，或重新导入/重新下载"
+        elif text == "暂不支持内嵌预览，请点击打开外部文件":
+            text = "当前格式暂不支持内嵌预览\n请点击外部打开查看原件"
+        elif text == "图片加载失败，暂不支持预览":
+            text = "图片加载失败\n请点击外部打开，或重新导入该材料"
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
         self.overlay_toolbar.setVisible(False)
@@ -3269,12 +3431,14 @@ class EmailScanWorker(QThread):
     def __init__(self, db_path: Path):
         super().__init__()
         self.db_path = db_path
+        self.summary_logs = []
 
     def run(self):
         try:
             from ..services import scan_email_and_download
 
             def gui_log(msg: str):
+                self.summary_logs.append(str(msg or ""))
                 self.log.emit(msg)
 
             res = scan_email_and_download(

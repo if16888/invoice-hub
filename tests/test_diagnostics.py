@@ -7,6 +7,39 @@ from unittest.mock import patch
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_collect_app_info_includes_version_metadata_without_secrets(self):
+        from scripts.invoice_fetch import diagnostics
+        from scripts.invoice_fetch import APP_VERSION
+
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            (runtime / "config.json").write_text(
+                json.dumps({
+                    "email": {"provider": "qq", "address": "tester@example.com", "auth_code": "mail-secret"},
+                    "ai": {"provider": "none", "api_key": "sk-test-placeholder"},
+                }),
+                encoding="utf-8",
+            )
+
+            with patch.object(diagnostics.config_mod, "RUNTIME_DIR", runtime), \
+                    patch.object(diagnostics.config_mod, "PROJECT_ROOT", base):
+                info = diagnostics.collect_app_info()
+
+        combined = json.dumps(info, ensure_ascii=False)
+        self.assertEqual(info["app"], "Invoice Hub")
+        self.assertEqual(info["version"], APP_VERSION)
+        self.assertIn(info["build_mode"], {"release", "local/dev"})
+        self.assertEqual(info["data_dir"], "<runtime_dir:redacted>")
+        self.assertEqual(info["log_dir"], "<log_dir:redacted>")
+        self.assertEqual(info["config_summary"]["email_provider"], "qq")
+        self.assertTrue(info["config_summary"]["email_configured"])
+        self.assertNotIn(str(runtime), combined)
+        self.assertNotIn("tester@example.com", combined)
+        self.assertNotIn("mail-secret", combined)
+        self.assertNotIn("sk-test-placeholder", combined)
+
     def test_export_diagnostics_zip_excludes_private_runtime_data(self):
         from scripts.invoice_fetch import diagnostics
 

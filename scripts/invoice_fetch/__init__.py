@@ -1,1 +1,3 @@
-"""QQ Mail invoice fetcher — scripts.invoice_fetch package."""
+"""Invoice Hub package metadata."""
+
+APP_VERSION = "v0.1.2"
