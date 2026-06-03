@@ -4,7 +4,7 @@
 
 | 当前版本 | 状态 | 推荐 |
 | --- | --- | --- |
-| [v0.1.1](https://github.com/if16888/invoice-hub/releases/tag/v0.1.1) | early preview / 早期可试用 | 先用少量脱敏样本试跑 |
+| [Invoice Hub v0.1.1](https://github.com/if16888/invoice-hub/releases/tag/v0.1.1) | early preview / 早期可试用 | 先用少量脱敏样本试跑 |
 
 Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交报销前，把散落在邮箱、本地文件夹和手机里的发票、收据、截图、证明材料整理成可审核、可归组、可导出的资料包。
 
@@ -18,11 +18,11 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 ### 普通用户优先
 
-已发布 v0.1.1，请在 [GitHub Releases](https://github.com/if16888/invoice-hub/releases/latest) 下载最新版本。
+已发布 Invoice Hub v0.1.1，请在 [GitHub Releases](https://github.com/if16888/invoice-hub/releases/latest) 下载最新版本。
 
 - [Latest Release](https://github.com/if16888/invoice-hub/releases/latest)
-- `InvoiceHub-Setup-v0.1.1.exe`：Windows 安装包。
-- `InvoiceHub-windows-x64-v0.1.1.zip`：免安装 portable 包。
+- `InvoiceHub-Setup-*.exe`：Windows 安装包。
+- `InvoiceHub-windows-x64-*.zip`：免安装 portable 包。
 - `checksums.txt`：发布资产 SHA256 校验值。
 
 安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑，再导入真实报销材料。

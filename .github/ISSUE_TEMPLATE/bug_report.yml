@@ -15,8 +15,8 @@ body:
     id: version
     attributes:
       label: Invoice Hub 版本
-      description: 例如 v0.1.0、安装包文件名或源码 commit。
-      placeholder: v0.1.0
+      description: 例如 Invoice Hub v0.1.1、安装包/portable 包文件名或源码 commit。
+      placeholder: Windows 11, Invoice Hub v0.1.1, Installer / Portable zip / Source run
     validations:
       required: true
   - type: input
