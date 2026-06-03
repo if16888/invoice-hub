@@ -101,6 +101,15 @@ Windows 发布包必须包含：
 - 卸载默认不删除用户 runtime 数据。
 - 安装包和 portable zip 不包含 `runtime/invoices.db`、`config.json`、真实附件、导出包、`ms-playwright/` 或 `chromium-*`。
 
+## Windows package / winget readiness
+
+- Confirm installer and portable zip asset names.
+- Confirm `checksums.txt` includes all release assets.
+- Confirm README and release notes reference the same asset names.
+- Confirm Inno Setup silent install switches before winget submission.
+- Do not submit winget manifest until v0.1.2 or later release is validated.
+- Do not use GitHub Packages for Windows desktop app distribution unless a future package ecosystem requires it.
+
 ## GitHub 设置
 
 这些是仓库设置项，需要在 GitHub UI 中手动确认：
