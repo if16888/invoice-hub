@@ -35,6 +35,12 @@ python scripts/check_public_export.py <public-export-dir>
 
 公开仓库应从私有开发仓库导出干净工作树，不直接公开当前私有仓库历史。
 
+发布前版本文案检查：
+
+- 检查 README、Issue templates、user quickstart 中的当前版本号是否已更新。
+- 历史 release notes 不回改。
+- 安装包示例优先使用 wildcard，例如 `InvoiceHub-Setup-*.exe` 和 `InvoiceHub-windows-x64-*.zip`，避免文档与实际 asset 名称不一致。
+
 公开仓库必须包含：
 
 - `LICENSE`
