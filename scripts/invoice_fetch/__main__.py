@@ -439,6 +439,50 @@ def _restore_existing_invoice_if_deleted(db: InvoiceDB, existing: dict, context:
     return existing
 
 
+def _find_existing_invoice_for_parse(
+    db: InvoiceDB,
+    invoice_number: str,
+    total_amount: str,
+    seller_name: str,
+    include_deleted: bool = True,
+) -> dict | None:
+    """Find an existing invoice using the strongest parsed identity available."""
+    invoice_number = (invoice_number or "").strip()
+    total_amount = (total_amount or "").strip()
+    seller_name = (seller_name or "").strip()
+    if invoice_number and seller_name:
+        exact = db.find_invoice_by_unique_fields(
+            invoice_number, total_amount, seller_name, include_deleted=include_deleted
+        )
+        if exact:
+            return exact
+        existing = db.find_invoice_by_number_and_amount(
+            invoice_number, total_amount, include_deleted=include_deleted
+        )
+        if existing and int(existing.get("is_deleted") or 0) == 0:
+            return existing
+        return None
+    if invoice_number:
+        return db.find_invoice_by_number_and_amount(
+            invoice_number, total_amount, include_deleted=include_deleted
+        )
+    if seller_name and total_amount:
+        return db.find_invoice_by_seller_and_amount(
+            seller_name, total_amount, include_deleted=include_deleted
+        )
+    return None
+
+
+def _log_existing_invoice_duplicate(existing: dict, reason: str) -> None:
+    _log.info(
+        "  跳过重复发票: existing_id=%s review_status=%s is_deleted=%s duplicate_reason=%s",
+        existing.get("id"),
+        existing.get("review_status", ""),
+        existing.get("is_deleted", 0),
+        reason,
+    )
+
+
 def _insert_local_exception(
     db: InvoiceDB,
     file_path: Path,
@@ -901,6 +945,7 @@ def _process_email(
     extra_files = [a for a in attachments if a.is_extra]
     kept_paths = set()
     link_pdf_skipped_as_duplicate = False
+    link_download_failed = False
     recorded = 0
 
     # 2. Try downloading links via browser in addition to attachments
@@ -909,6 +954,8 @@ def _process_email(
                            for kw in ["发票", "invoice", "fapiao", "电子发票", "行程单"])
     if has_invoice_hint:
         downloaded = link_dl.download_from_email(msg.raw_msg, msg.uid, msg.date)
+        if not downloaded and not invoice_pdfs:
+            link_download_failed = True
         if downloaded:
             for dl in downloaded:
                 if not dl.is_invoice:
@@ -937,10 +984,11 @@ def _process_email(
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
                     continue
-                existing = db.find_invoice_by_number_and_amount(
-                    info.invoice_number, info.total_amount, include_deleted=True
+                existing = _find_existing_invoice_for_parse(
+                    db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=True
                 )
                 if existing:
+                    was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "链接下载")
                     existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
                     existing_extra_paths = _normalize_path_list(existing.get("extra_paths"))
@@ -1001,13 +1049,19 @@ def _process_email(
                             )
                         else:
                             _log.info("  已刷新重复发票元数据(链接下载): %s", mask_invoice_number(info.invoice_number))
+                        if not was_deleted:
+                            _log_existing_invoice_duplicate(existing, "link_download_parsed_pdf")
                         recorded += 1
                     link_pdf_skipped_as_duplicate = True
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
                     continue
-                if db.is_duplicate(info.invoice_number, info.total_amount, info.seller_name):
+                duplicate = _find_existing_invoice_for_parse(
+                    db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=False
+                )
+                if duplicate:
                     _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
+                    _log_existing_invoice_duplicate(duplicate, "link_download_duplicate")
                     link_pdf_skipped_as_duplicate = True
                     recorded += 1
                     # Clean up the downloaded file for the duplicate
@@ -1083,10 +1137,11 @@ def _process_email(
 
             _log.warning("  PDF 解析失败且不像报销凭证，跳过: %s", redact_text(info.parse_note, "parse_note"))
             continue
-        existing = db.find_invoice_by_number_and_amount(
-            info.invoice_number, info.total_amount, include_deleted=True
+        existing = _find_existing_invoice_for_parse(
+            db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=True
         )
         if existing:
+            was_deleted = int(existing.get("is_deleted") or 0) == 1
             existing = _restore_existing_invoice_if_deleted(db, existing, "附件")
             cat, extra_type, extra_req = _classify(
                 msg.subject, msg.sender, info.seller_name, categories)
@@ -1144,10 +1199,16 @@ def _process_email(
                     _log.info("  已刷新重复发票元数据并修复附件路径: %s", mask_invoice_number(info.invoice_number))
                 else:
                     _log.info("  已刷新重复发票元数据: %s", mask_invoice_number(info.invoice_number))
+                if not was_deleted:
+                    _log_existing_invoice_duplicate(existing, "attachment_parsed_pdf")
                 recorded += 1
             continue
-        if db.is_duplicate(info.invoice_number, info.total_amount, info.seller_name):
+        duplicate = _find_existing_invoice_for_parse(
+            db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=False
+        )
+        if duplicate:
             _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
+            _log_existing_invoice_duplicate(duplicate, "attachment_duplicate")
             recorded += 1
             continue
 
@@ -1239,8 +1300,9 @@ def _process_email(
                 msg.subject, msg.sender, seller, categories)
 
             if inv_num:
-                existing = db.find_invoice_by_number_and_amount(inv_num, amount, include_deleted=True)
+                existing = _find_existing_invoice_for_parse(db, inv_num, amount, seller, include_deleted=True)
                 if existing:
+                    was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
                     if _refresh_invoice_from_parse(
                         db,
@@ -1261,7 +1323,19 @@ def _process_email(
                     ):
                         recorded += 1
                         _log.info("  已刷新重复发票元数据(主题/正文): %s", redact_text(dedup_key, "dedup_key"))
+                        if not was_deleted:
+                            _log_existing_invoice_duplicate(existing, "subject_body_invoice_number")
                     return recorded
+
+            existing = _find_existing_invoice_for_parse(db, "", amount, seller, include_deleted=True)
+            if existing:
+                was_deleted = int(existing.get("is_deleted") or 0) == 1
+                existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
+                if not was_deleted:
+                    _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
+                    _log_existing_invoice_duplicate(existing, "subject_body_seller_amount")
+                recorded += 1
+                return recorded
 
             if db.is_duplicate(dedup_key, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
@@ -1312,6 +1386,8 @@ def _process_email(
             # Had attachment PDFs but all were duplicates
             _log.info("  ℹ️ 附件发票已存在于数据库，跳过（重复）")
         else:
+            if link_download_failed:
+                _log.warning("  链接下载未获得官方 PDF/OFD，保留为待下载重试")
             _log.warning("  ⚠️ 未发现可用的发票附件或下载链接，且无法从主题提取有效信息")
 
     return recorded

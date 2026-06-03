@@ -378,6 +378,19 @@ class InvoiceDB:
         row = self._conn.execute(sql, (invoice_number,)).fetchone()
         return dict(row) if row else None
 
+    def find_invoice_by_seller_and_amount(self, seller_name: str, total_amount: str = "", include_deleted: bool = False) -> dict | None:
+        """Find the most recent invoice with the same seller and amount."""
+        seller_name = (seller_name or "").strip()
+        total_amount = (total_amount or "").strip()
+        if not seller_name or not total_amount:
+            return None
+        sql = "SELECT * FROM invoices WHERE seller_name = ? AND total_amount = ?"
+        if not include_deleted:
+            sql += " AND is_deleted = 0"
+        sql += " ORDER BY id DESC LIMIT 1"
+        row = self._conn.execute(sql, (seller_name, total_amount)).fetchone()
+        return dict(row) if row else None
+
     def find_invoice_by_file_hash(self, file_hash: str, include_deleted: bool = False) -> dict | None:
         """Find the most recent invoice imported from the same file content."""
         file_hash = (file_hash or "").strip()
