@@ -13,6 +13,7 @@ Invoice Hub is currently distributed as a Windows desktop app through GitHub Rel
 - The release workflow exists at `.github/workflows/windows-release.yml`.
 - The workflow builds release assets on version tags and publishes them only from tag refs.
 - Current v0.1.1 release assets used `v` in the filename version because the workflow passes the tag name as `AppVersion`.
+- Manual package validation for v0.1.1 is recorded in `docs/package-validation-v0.1.1.md`.
 
 ## Installer script status
 
@@ -116,4 +117,3 @@ wingetcreate submit <manifest-path>
 ```
 
 Before a real submission, confirm the installer SHA256, silent install and uninstall behavior, public asset URL, and version naming.
-

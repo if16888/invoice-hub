@@ -100,6 +100,7 @@ Windows 发布包必须包含：
 - 用户数据写入 AppData，不写入安装目录。
 - 卸载默认不删除用户 runtime 数据。
 - 安装包和 portable zip 不包含 `runtime/invoices.db`、`config.json`、真实附件、导出包、`ms-playwright/` 或 `chromium-*`。
+- 发布后记录 package validation result，覆盖 checksum、普通安装、普通用户权限安装、静默安装、启动、静默卸载、portable 解压和 portable 启动。
 
 ## Windows package / winget readiness
 
