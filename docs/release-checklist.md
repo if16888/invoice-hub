@@ -108,7 +108,7 @@ Windows 发布包必须包含：
 - Confirm `checksums.txt` includes all release assets.
 - Confirm README and release notes reference the same asset names.
 - Confirm Inno Setup silent install switches before winget submission.
-- Do not submit winget manifest until v0.1.2 or later release is validated.
+- Do not submit winget manifest until a later release is validated specifically for winget.
 - Do not use GitHub Packages for Windows desktop app distribution unless a future package ecosystem requires it.
 
 ## GitHub 设置

@@ -4,15 +4,15 @@ Invoice Hub is currently distributed as a Windows desktop app through GitHub Rel
 
 ## Current distribution status
 
-- Current public version context: Invoice Hub v0.1.1.
+- Current public version context: Invoice Hub v0.1.2.
 - Primary download entry: GitHub Releases.
-- README and `docs/release-notes/v0.1.1.md` both reference:
+- README and `docs/release-notes/v0.1.2.md` both reference:
   - `InvoiceHub-Setup-*.exe`
   - `InvoiceHub-windows-x64-*.zip`
   - `checksums.txt`
 - The release workflow exists at `.github/workflows/windows-release.yml`.
 - The workflow builds release assets on version tags and publishes them only from tag refs.
-- Current v0.1.1 release assets used `v` in the filename version because the workflow passes the tag name as `AppVersion`.
+- Current v0.1.2 release assets keep `v` in the filename version to match the existing release workflow.
 - Manual package validation for v0.1.1 is recorded in `docs/package-validation-v0.1.1.md`.
 
 ## Installer script status
@@ -25,25 +25,25 @@ Installer script: `packaging/invoice_hub_windows.iss`
 - `PrivilegesRequired=lowest`.
 - Default install directory: `{localappdata}\Programs\InvoiceHub`.
 - Output filename rule: `InvoiceHub-Setup-{#AppVersion}`.
-- If `AppVersion` is passed as `v0.1.1`, the installer name includes `v`.
-- If `AppVersion` is passed as `0.1.1`, the installer name does not include `v`.
+- If `AppVersion` is passed as `v0.1.2`, the installer name includes `v`.
+- If `AppVersion` is passed as `0.1.2`, the installer name does not include `v`.
 
 ## Naming consistency recommendation
 
-Current v0.1.1 assets already used:
+Current v0.1.2 assets use the existing `v` filename style:
 
-- `InvoiceHub-Setup-v0.1.1.exe`
-- `InvoiceHub-windows-x64-v0.1.1.zip`
+- `InvoiceHub-Setup-v0.1.2.exe`
+- `InvoiceHub-windows-x64-v0.1.2.zip`
 
-Do not rename the existing v0.1.1 release assets and do not rewrite historical release notes.
+Do not rename existing release assets and do not rewrite historical release notes.
 
-For v0.1.2 or later, consider standardizing on:
+For a future winget-focused release, consider standardizing on:
 
-- Git tag: `v0.1.2`
-- PackageVersion / winget version: `0.1.2`
+- Git tag: `v0.1.3`
+- PackageVersion / winget version: `0.1.3`
 - Release assets:
-  - `InvoiceHub-Setup-0.1.2.exe`
-  - `InvoiceHub-windows-x64-0.1.2.zip`
+  - `InvoiceHub-Setup-0.1.3.exe`
+  - `InvoiceHub-windows-x64-0.1.3.zip`
   - `checksums.txt`
 
 This would require passing a pure semver value to the installer and artifact naming steps while keeping the Git tag with the `v` prefix.
@@ -99,8 +99,8 @@ These silent switches must be manually verified against the real Windows install
 - [ ] Normal user permission install works.
 - [ ] Windows Defender / SmartScreen prompts are recorded.
 - [ ] README and release note download descriptions match.
-- [ ] `PackageVersion` uses pure semver, for example `0.1.2`.
-- [ ] Git tag uses a `v` prefix, for example `v0.1.2`.
+- [ ] `PackageVersion` uses pure semver, for example `0.1.3`.
+- [ ] Git tag uses a `v` prefix, for example `v0.1.3`.
 - [ ] No real invoices, databases, Excel exports, secrets, full download links, or local paths are submitted.
 
 ## Future wingetcreate draft
@@ -111,7 +111,7 @@ Do not run these commands for the current early preview. They are only a future 
 winget install wingetcreate
 
 wingetcreate new `
-  --urls "https://github.com/if16888/invoice-hub/releases/download/v0.1.2/InvoiceHub-Setup-0.1.2.exe"
+  --urls "https://github.com/if16888/invoice-hub/releases/download/v0.1.3/InvoiceHub-Setup-0.1.3.exe"
 
 wingetcreate submit <manifest-path>
 ```
