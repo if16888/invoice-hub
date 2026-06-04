@@ -59,6 +59,7 @@ _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
 
 GITHUB_ISSUES_URL = "https://github.com/if16888/invoice-hub/issues/new/choose"
+LOG_DRAWER_EXPANDED_HEIGHT = 120
 FEEDBACK_PRIVACY_NOTICE = (
     "请不要上传真实发票、receipt、水单、行程单、邮箱授权码、API Key、SQLite 数据库、"
     "Excel 报销包或完整下载链接。建议只上传应用生成的脱敏诊断包。"
@@ -1167,7 +1168,7 @@ class InvoiceReviewApp(QMainWindow):
             return
 
         if getattr(self, "_log_panel_visible", None) == visible:
-            if visible and self.log_container.isVisible() and self.log_container.maximumHeight() == 180:
+            if visible and self.log_container.isVisible() and self.log_container.maximumHeight() == LOG_DRAWER_EXPANDED_HEIGHT:
                 self.btn_toggle_log.setText("收起日志")
                 return
             if (
@@ -1185,13 +1186,13 @@ class InvoiceReviewApp(QMainWindow):
 
         if visible:
             self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            self.log_container.setMinimumHeight(180)
-            self.log_container.setMaximumHeight(180)
+            self.log_container.setMinimumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
+            self.log_container.setMaximumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
             self.log_container.setVisible(True)
             if hasattr(self, "log_drawer"):
                 self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                self.log_drawer.setMinimumHeight(180)
-                self.log_drawer.setMaximumHeight(180)
+                self.log_drawer.setMinimumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
+                self.log_drawer.setMaximumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
                 self.log_drawer.setVisible(True)
         else:
             self.log_container.setVisible(False)
