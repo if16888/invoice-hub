@@ -5,6 +5,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.mobile_upload import (
@@ -145,6 +146,67 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual(second["duplicate"], 1)
             self.assertEqual(len(restored), 1)
             self.assertEqual(restored[0]["is_deleted"], 0)
+
+    def test_pending_manual_imports_count_as_mobile_imported(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            imported = {
+                "added": 0,
+                "conflicts": 0,
+                "pending_manual": 2,
+                "duplicates": 0,
+                "failed": 0,
+            }
+            with patch.object(server, "_import_accepted_files", return_value=imported):
+                result = server.save_uploads([
+                    UploadedFile("receipt-image.jpg", b"image bytes 1", "image/jpeg"),
+                    UploadedFile("receipt.ofd", b"ofd bytes 2", "application/octet-stream"),
+                ])
+
+            self.assertEqual(result["accepted"], 2)
+            self.assertEqual(result["imported"], imported)
+            self.assertEqual(server.status()["imported"], 2)
+
+    def test_mobile_imported_count_excludes_true_failed_imports(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            imported = {
+                "added": 1,
+                "conflicts": 1,
+                "pending_manual": 2,
+                "duplicates": 1,
+                "failed": 3,
+            }
+            with patch.object(server, "_import_accepted_files", return_value=imported):
+                result = server.save_uploads([
+                    UploadedFile("invoice.pdf", b"pdf bytes", "application/pdf"),
+                    UploadedFile("receipt.jpg", b"image bytes", "image/jpeg"),
+                ])
+
+            self.assertEqual(result["imported"], imported)
+            self.assertEqual(server.status()["imported"], 5)
 
     def test_http_upload_page_upload_endpoint_and_invalid_token(self):
         with tempfile.TemporaryDirectory() as td:
