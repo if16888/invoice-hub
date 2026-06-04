@@ -812,13 +812,20 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(claims[1]["id"], id1)
                 self.assertEqual(claims[1]["name"], "Claim A")
 
+    @patch("scripts.invoice_fetch.__main__.InvoiceDB")
     @patch("scripts.invoice_fetch.gui.start_gui")
-    def test_desktop_subcommand_dispatch(self, mock_start_gui):
+    def test_desktop_subcommand_dispatch(self, mock_start_gui, mock_db):
         from scripts.invoice_fetch.__main__ import _dispatch_claim_command
+        from scripts.invoice_fetch.__main__ import RUNTIME_DIR
         import argparse
-        args = argparse.Namespace(command="desktop")
+        args = argparse.Namespace(command="desktop", startup_probe=False)
         _dispatch_claim_command(args)
-        mock_start_gui.assert_called_once()
+        mock_db.assert_not_called()
+        mock_start_gui.assert_called_once_with(
+            RUNTIME_DIR / "invoices.db",
+            startup_probe=False,
+            app_init_ms=mock_start_gui.call_args.kwargs["app_init_ms"],
+        )
 
     def test_update_invoice_fields(self):
         with tempfile.TemporaryDirectory() as td:
@@ -918,6 +925,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 window = InvoiceReviewApp(db_path)
                 try:
+                    window._deferred_init()
+                    app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
                     self.assertEqual(window.summary_card.layout().spacing(), 4)
                     self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
@@ -925,9 +934,15 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.status_bar.minimumHeight(), 32)
                     self.assertTrue(hasattr(window, "bottom_panel"))
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                    self.assertTrue(hasattr(window, "log_drawer"))
+                    self.assertEqual(window.log_drawer.maximumHeight(), 0)
+                    self.assertFalse(window.log_drawer.isVisible())
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertFalse(window.log_container.isVisible())
-                    self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
+                    self.assertEqual(window.bottom_panel.layout().count(), 1)
+                    self.assertTrue(hasattr(window, "right_stack"))
+                    self.assertEqual(window.right_stack.currentWidget(), window.right_empty_widget)
+                    self.assertEqual(window.lbl_right_empty_title.text(), "当前没有发票记录")
                     self.assertFalse(hasattr(window, "lbl_stats"))
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -2008,7 +2023,7 @@ class ClaimGroupsTests(unittest.TestCase):
     def test_gui_log_panel_collapsible_behavior(self):
         # Verify default collapsed state of log panel and the toggle visibility behavior
         try:
-            from PySide6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QApplication, QSizePolicy
             import sys
             app = QApplication.instance() or QApplication(sys.argv)
 
@@ -2024,39 +2039,161 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertFalse(window.log_container.isVisible())
                     self.assertEqual(window.btn_toggle_log.text(), "展开日志")
                     self.assertEqual(window.log_container.maximumHeight(), 0)
+                    self.assertFalse(window.log_drawer.isVisible())
+                    self.assertEqual(window.log_drawer.maximumHeight(), 0)
+                    self.assertLess(window.minimumSizeHint().height(), 1160)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
-                    self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
-                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
+                    self.assertEqual(window.bottom_panel.layout().count(), 1)
+                    self.assertEqual(window.main_splitter.sizePolicy().verticalPolicy(), QSizePolicy.Ignored)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    initial_left_sizes = window.left_splitter.sizes()
+                    initial_main_sizes = window.main_splitter.sizes()
+                    self.assertTrue(all(size > 0 for size in initial_left_sizes))
+                    self.assertTrue(all(size > 0 for size in initial_main_sizes))
 
                     # Toggle log to expanded
                     window._toggle_log()
                     app.processEvents()
                     self.assertTrue(window.log_container.isVisible())
                     self.assertEqual(window.btn_toggle_log.text(), "收起日志")
-                    self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
-                    self.assertGreaterEqual(window.log_container.minimumHeight(), 120)
-                    self.assertEqual(window.log_container.maximumHeight(), 180)
-                    self.assertEqual(window.bottom_panel.maximumHeight(), 32 + 4 + 180)
-                    self.assertGreater(window.bottom_panel.height(), 32)
-                    self.assertGreaterEqual(window.txt_log.height(), 100)
-                    self.assertGreaterEqual(window.preview_panel.minimumHeight(), 260)
+                    self.assertEqual(window.log_container.minimumHeight(), 120)
+                    self.assertEqual(window.log_container.maximumHeight(), 120)
+                    self.assertTrue(window.log_drawer.isVisible())
+                    self.assertEqual(window.log_drawer.minimumHeight(), 120)
+                    self.assertEqual(window.log_drawer.maximumHeight(), 120)
+                    self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                    self.assertGreater(window.log_drawer.height(), 0)
+                    self.assertGreaterEqual(window.txt_log.height(), 60)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    self.assertLess(window.minimumSizeHint().height(), 1160)
+                    expanded_left_sizes = window.left_splitter.sizes()
+                    expanded_main_sizes = window.main_splitter.sizes()
+                    self.assertTrue(all(size > 0 for size in expanded_left_sizes))
+                    self.assertTrue(all(size > 0 for size in expanded_main_sizes))
+
+                    # Reapply the same state to ensure idempotence.
+                    window._set_log_panel_visible(True)
+                    app.processEvents()
+                    self.assertTrue(window.log_container.isVisible())
+                    self.assertTrue(window.log_drawer.isVisible())
+                    self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    self.assertTrue(all(size > 0 for size in window.left_splitter.sizes()))
+                    self.assertTrue(all(size > 0 for size in window.main_splitter.sizes()))
 
                     # Toggle log back to collapsed
                     window._toggle_log()
                     app.processEvents()
                     self.assertFalse(window.log_container.isVisible())
+                    self.assertFalse(window.log_drawer.isVisible())
                     self.assertEqual(window.btn_toggle_log.text(), "展开日志")
                     self.assertEqual(window.log_container.maximumHeight(), 0)
+                    self.assertEqual(window.log_drawer.maximumHeight(), 0)
+                    self.assertLess(window.minimumSizeHint().height(), 1160)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
-                    self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
-                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
-                    self.assertTrue(all(size >= 0 for size in window.left_splitter.sizes()))
+                    self.assertEqual(window.bottom_panel.layout().count(), 1)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    collapsed_left_sizes = window.left_splitter.sizes()
+                    collapsed_main_sizes = window.main_splitter.sizes()
+                    self.assertTrue(all(size > 0 for size in collapsed_left_sizes))
+                    self.assertTrue(all(size > 0 for size in collapsed_main_sizes))
+
+                    # Repeat the collapse path to verify state does not drift.
+                    window._set_log_panel_visible(False)
+                    app.processEvents()
+                    self.assertFalse(window.log_container.isVisible())
+                    self.assertFalse(window.log_drawer.isVisible())
+                    self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    self.assertLess(window.minimumSizeHint().height(), 1160)
+                    self.assertTrue(all(size > 0 for size in window.left_splitter.sizes()))
+                    self.assertTrue(all(size > 0 for size in window.main_splitter.sizes()))
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
                     window.close()
                     window.deleteLater()
                     app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_log_collapse_normalizes_oversized_maximized_window(self):
+        try:
+            from PySide6.QtCore import QPoint, QRect
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            class FakeScreen:
+                def availableGeometry(self):
+                    return QRect(0, 0, 1920, 1032)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_log_maximized.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                calls = []
+                try:
+                    window.isMaximized = lambda: True
+                    window.screen = lambda: FakeScreen()
+                    window.frameGeometry = lambda: QRect(0, -8, 1920, 1154)
+                    window.btn_toggle_log.mapToGlobal = lambda _point: QPoint(
+                        1802,
+                        1085,
+                    )
+                    window.setGeometry = lambda rect: calls.append(("setGeometry", rect))
+                    window.showMaximized = lambda: calls.append(("showMaximized", None))
+
+                    window._normalize_maximized_geometry()
+                    app.processEvents()
+
+                    self.assertEqual(calls[0][0], "setGeometry")
+                    self.assertEqual(calls[0][1], QRect(0, 0, 1920, 1032))
+                    self.assertEqual(calls[1], ("showMaximized", None))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_show_does_not_emit_invalid_qfont_point_size_warning(self):
+        try:
+            from PySide6.QtCore import qInstallMessageHandler
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            warnings = []
+
+            def qt_message_handler(_mode, _context, message):
+                if "QFont::setPointSize" in message:
+                    warnings.append(message)
+
+            previous_handler = qInstallMessageHandler(qt_message_handler)
+            try:
+                with tempfile.TemporaryDirectory() as td:
+                    db_path = Path(td) / "test_gui_font_warning.db"
+                    from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                    window = InvoiceReviewApp(db_path, splash=None)
+                    try:
+                        window.show()
+                        app.processEvents()
+                        self.assertEqual(warnings, [])
+                    finally:
+                        if hasattr(window, "db") and window.db is not None:
+                            window.db.close()
+                        window.close()
+                        window.deleteLater()
+                        app.processEvents()
+            finally:
+                qInstallMessageHandler(previous_handler)
         except Exception as e:
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")

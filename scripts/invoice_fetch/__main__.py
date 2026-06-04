@@ -1595,6 +1595,16 @@ def _cmd_invoice_restore(args: argparse.Namespace, db: InvoiceDB):
 def _dispatch_claim_command(args: argparse.Namespace):
     """Execute the matching claim subcommand and exit, bypassing config loading."""
     db_path = RUNTIME_DIR / "invoices.db"
+    if args.command == "desktop":
+        import time as _time
+        _t0 = _time.monotonic()
+        from .gui import start_gui
+        _t1 = _time.monotonic()
+        app_init_ms = int((_t1 - _t0) * 1000)
+        startup_probe = getattr(args, "startup_probe", False)
+        start_gui(db_path, startup_probe=startup_probe, app_init_ms=app_init_ms)
+        return
+
     with InvoiceDB(db_path) as db:
         if args.command == "claim-create":
             _cmd_claim_create(args, db)
@@ -1614,14 +1624,6 @@ def _dispatch_claim_command(args: argparse.Namespace):
             _cmd_invoice_delete(args, db)
         elif args.command == "invoice-restore":
             _cmd_invoice_restore(args, db)
-        elif args.command == "desktop":
-            import time as _time
-            _t0 = _time.monotonic()
-            from .gui import start_gui
-            _t1 = _time.monotonic()
-            app_init_ms = int((_t1 - _t0) * 1000)
-            startup_probe = getattr(args, "startup_probe", False)
-            start_gui(db_path, startup_probe=startup_probe, app_init_ms=app_init_ms)
 
 
 # ── Main ─────────────────────────────────────────────────────────────

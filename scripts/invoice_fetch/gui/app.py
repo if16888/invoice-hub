@@ -59,6 +59,7 @@ _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
 
 GITHUB_ISSUES_URL = "https://github.com/if16888/invoice-hub/issues/new/choose"
+LOG_DRAWER_EXPANDED_HEIGHT = 120
 FEEDBACK_PRIVACY_NOTICE = (
     "请不要上传真实发票、receipt、水单、行程单、邮箱授权码、API Key、SQLite 数据库、"
     "Excel 报销包或完整下载链接。建议只上传应用生成的脱敏诊断包。"
@@ -340,6 +341,7 @@ class InvoiceReviewApp(QMainWindow):
 
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.main_splitter = splitter
         main_layout.addWidget(splitter, 1)
 
@@ -466,7 +468,7 @@ class InvoiceReviewApp(QMainWindow):
         self.left_splitter.addWidget(self.left_upper_widget)
         self.left_splitter.addWidget(self.preview_panel)
         self.left_splitter.setSizes([380, 620])
-        self.preview_panel.setMinimumHeight(260)
+        self.preview_panel.setMinimumHeight(180)
 
 
 
@@ -479,7 +481,45 @@ class InvoiceReviewApp(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(10, 0, 0, 0)
         right_layout.setSpacing(6)
-        self.right_layout = right_layout
+        self.right_stack = QStackedWidget()
+        right_layout.addWidget(self.right_stack, 1)
+
+        self.right_content_widget = QWidget()
+        right_content_layout = QVBoxLayout(self.right_content_widget)
+        right_content_layout.setContentsMargins(0, 0, 0, 0)
+        right_content_layout.setSpacing(6)
+        self.right_layout = right_content_layout
+
+        self.right_empty_widget = QWidget()
+        right_empty_layout = QVBoxLayout(self.right_empty_widget)
+        right_empty_layout.setContentsMargins(16, 16, 16, 16)
+        right_empty_layout.setSpacing(10)
+        right_empty_layout.addStretch(1)
+
+        right_empty_card = QWidget()
+        right_empty_card.setProperty("class", "SummaryCard")
+        right_empty_card_layout = QVBoxLayout(right_empty_card)
+        right_empty_card_layout.setContentsMargins(20, 18, 20, 18)
+        right_empty_card_layout.setSpacing(8)
+
+        self.lbl_right_empty_title = QLabel("当前没有发票记录")
+        self.lbl_right_empty_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.lbl_right_empty_title.setStyleSheet("color: #111827;")
+        self.lbl_right_empty_title.setAlignment(Qt.AlignCenter)
+        right_empty_card_layout.addWidget(self.lbl_right_empty_title)
+
+        self.lbl_right_empty_desc = QLabel(
+            "导入本地发票或扫描邮箱后，这里会显示发票摘要、详情和原件预览。"
+        )
+        self.lbl_right_empty_desc.setWordWrap(True)
+        self.lbl_right_empty_desc.setAlignment(Qt.AlignCenter)
+        self.lbl_right_empty_desc.setStyleSheet("color: #6B7280; line-height: 1.5;")
+        right_empty_card_layout.addWidget(self.lbl_right_empty_desc)
+
+        right_empty_layout.addWidget(right_empty_card)
+        right_empty_layout.addStretch(2)
+        self.right_stack.addWidget(self.right_content_widget)
+        self.right_stack.addWidget(self.right_empty_widget)
 
         # 1. Selected Invoice Summary Card
         self.summary_card = QGroupBox("发票摘要")
@@ -573,7 +613,7 @@ class InvoiceReviewApp(QMainWindow):
         summary_layout.addWidget(self.lbl_buyer_warning_hint)
         summary_layout.addLayout(quick_layout)
 
-        right_layout.addWidget(self.summary_card)
+        right_content_layout.addWidget(self.summary_card)
 
         # 2. Right-Side QTabWidget
         self.detail_tabs = QTabWidget()
@@ -801,7 +841,8 @@ class InvoiceReviewApp(QMainWindow):
         self._connect_invoice_dirty_tracking()
         self.btn_save_draft.setEnabled(False)
 
-        right_layout.addWidget(self.detail_tabs, 1)
+        right_content_layout.addWidget(self.detail_tabs, 1)
+        self.right_stack.setCurrentWidget(self.right_content_widget)
 
         splitter.addWidget(right_panel)
 
@@ -835,9 +876,9 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_toggle_log.clicked.connect(self._toggle_log)
         status_layout.addWidget(self.btn_toggle_log)
 
-        # Collapsible log container (hidden by default)
+        # Collapsible log drawer (hidden by default)
         self.log_container = QWidget()
-        self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.log_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         log_container_layout = QVBoxLayout(self.log_container)
         log_container_layout.setContentsMargins(0, 0, 0, 0)
         log_container_layout.setSpacing(4)
@@ -876,7 +917,7 @@ class InvoiceReviewApp(QMainWindow):
         log_container_layout.addWidget(log_header)
         log_container_layout.addWidget(self.txt_log)
 
-        # Bottom dock area keeps the status bar pinned and the log drawer collapsed
+        # Bottom dock area keeps the status bar pinned while the log drawer expands separately.
         self.bottom_panel = QWidget()
         self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.bottom_panel.setMinimumHeight(32)
@@ -885,9 +926,16 @@ class InvoiceReviewApp(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(4)
         bottom_layout.addWidget(status_bar)
-        bottom_layout.addWidget(self.log_container)
 
         main_layout.addWidget(self.bottom_panel)
+        self.log_drawer = QWidget()
+        self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        log_drawer_layout = QVBoxLayout(self.log_drawer)
+        log_drawer_layout.setContentsMargins(0, 0, 0, 0)
+        log_drawer_layout.setSpacing(0)
+        log_drawer_layout.addWidget(self.log_container)
+        main_layout.addWidget(self.log_drawer)
+        self._log_panel_visible = False
         self._set_log_panel_visible(False)
 
     def _update_status_badge(self, status):
@@ -912,6 +960,13 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_sum_status.setText("未选择发票")
         self.lbl_sum_status.setProperty("variant", "placeholder")
         self._refresh_widget_style(self.lbl_sum_status)
+
+    def _set_right_panel_state(self, has_records: bool):
+        if not hasattr(self, "right_stack"):
+            return
+        target = self.right_content_widget if has_records else self.right_empty_widget
+        if self.right_stack.currentWidget() != target:
+            self.right_stack.setCurrentWidget(target)
 
     def _schedule_invoice_reload(self, *_args):
         # Debounce invoice reloads when search/filter controls change.
@@ -1106,46 +1161,77 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_note.textChanged.connect(self._mark_invoice_form_dirty)
 
     def _toggle_log(self):
-        is_visible = self.log_container.isVisible()
-        self._set_log_panel_visible(not is_visible)
-        self.btn_toggle_log.setText("收起日志" if not is_visible else "展开日志")
+        current = getattr(self, "_log_panel_visible", self.log_container.isVisible())
+        self._set_log_panel_visible(not current)
 
     def _set_log_panel_visible(self, visible: bool):
         if not hasattr(self, "log_container"):
             return
 
+        if getattr(self, "_log_panel_visible", None) == visible:
+            if visible and self.log_container.isVisible() and self.log_container.maximumHeight() == LOG_DRAWER_EXPANDED_HEIGHT:
+                self.btn_toggle_log.setText("收起日志")
+                return
+            if (
+                not visible
+                and not self.log_container.isVisible()
+                and self.log_container.maximumHeight() == 0
+                and hasattr(self, "log_drawer")
+                and self.log_drawer.maximumHeight() == 0
+            ):
+                self.btn_toggle_log.setText("展开日志")
+                return
+
+        self._log_panel_visible = visible
+        self.btn_toggle_log.setText("收起日志" if visible else "展开日志")
+
         if visible:
             self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            self.log_container.setFixedHeight(180)
+            self.log_container.setMinimumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
+            self.log_container.setMaximumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
             self.log_container.setVisible(True)
-            self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self.bottom_panel.setFixedHeight(32 + 4 + 180)
+            if hasattr(self, "log_drawer"):
+                self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.log_drawer.setMinimumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
+                self.log_drawer.setMaximumHeight(LOG_DRAWER_EXPANDED_HEIGHT)
+                self.log_drawer.setVisible(True)
         else:
             self.log_container.setVisible(False)
-            self.log_container.setFixedHeight(0)
+            self.log_container.setMinimumHeight(0)
+            self.log_container.setMaximumHeight(0)
             self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            self.bottom_panel.setFixedHeight(32)
+            if hasattr(self, "log_drawer"):
+                self.log_drawer.setVisible(False)
+                self.log_drawer.setMinimumHeight(0)
+                self.log_drawer.setMaximumHeight(0)
         self._apply_log_layout_state(visible)
+        if not visible and self.isMaximized():
+            QTimer.singleShot(0, self._normalize_maximized_geometry)
 
     def _apply_log_layout_state(self, log_visible: bool):
         if hasattr(self, "preview_panel"):
-            self.preview_panel.setMinimumHeight(280 if log_visible else 180)
+            self.preview_panel.setMinimumHeight(180)
             self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         if hasattr(self, "left_upper_widget"):
             self.left_upper_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        if hasattr(self, "left_splitter"):
-            self.left_splitter.setStretchFactor(0, 3)
-            self.left_splitter.setStretchFactor(1, 2 if log_visible else 1)
-            self.left_splitter.setSizes([420, 280] if log_visible else [560, 220])
-        if hasattr(self, "main_splitter"):
-            self.main_splitter.setStretchFactor(0, 3)
-            self.main_splitter.setStretchFactor(1, 2)
 
         self.log_container.updateGeometry()
+        if hasattr(self, "log_drawer"):
+            self.log_drawer.updateGeometry()
+            if self.log_drawer.layout() is not None:
+                self.log_drawer.layout().invalidate()
         if hasattr(self, "bottom_panel"):
             self.bottom_panel.updateGeometry()
             if self.bottom_panel.layout() is not None:
                 self.bottom_panel.layout().invalidate()
+        if hasattr(self, "main_splitter"):
+            self.main_splitter.updateGeometry()
+            if self.main_splitter.layout() is not None:
+                self.main_splitter.layout().invalidate()
+        if hasattr(self, "left_splitter"):
+            self.left_splitter.updateGeometry()
+            if self.left_splitter.layout() is not None:
+                self.left_splitter.layout().invalidate()
         if hasattr(self, "main_layout"):
             self.main_layout.invalidate()
         central = self.centralWidget()
@@ -1154,6 +1240,20 @@ class InvoiceReviewApp(QMainWindow):
             central.updateGeometry()
             central.update()
         self.updateGeometry()
+
+    def _normalize_maximized_geometry(self):
+        if not self.isMaximized():
+            return
+        screen = self.screen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        if available.isEmpty():
+            return
+        toggle_bottom_right = self.btn_toggle_log.mapToGlobal(self.btn_toggle_log.rect().bottomRight())
+        if not available.contains(toggle_bottom_right):
+            self.setGeometry(available)
+            self.showMaximized()
 
     def _copy_log_to_clipboard(self):
         log_text = self.txt_log.toPlainText()
@@ -1369,6 +1469,7 @@ class InvoiceReviewApp(QMainWindow):
             self._update_document_preview()
             self._clear_detail_form()
             self._set_selection_total_status([])
+            self._set_right_panel_state(total_in_db > 0)
         else:
             self.left_stack.setCurrentWidget(self.table)
             target_row = -1
@@ -1381,6 +1482,7 @@ class InvoiceReviewApp(QMainWindow):
                 target_row = 0
             if target_row != -1:
                 self.table.selectRow(target_row)
+            self._set_right_panel_state(True)
 
     def _load_claims(self):
         """Populate the claim groups dropdown from DB."""
