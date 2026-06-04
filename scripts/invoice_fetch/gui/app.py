@@ -216,7 +216,7 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_scan_email = QPushButton("📧 扫描邮箱")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
         self.btn_scan_email.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_scan_email.setProperty("class", "PrimaryBtn")
+        self.btn_scan_email.setProperty("class", "SecondaryBtn")
         action_layout.addWidget(self.btn_scan_email)
 
         self.btn_toolbar_export = QPushButton("🚀 一键导出")
@@ -414,7 +414,7 @@ class InvoiceReviewApp(QMainWindow):
         self.empty_btn_import = QPushButton("📁 导入发票")
         self.empty_btn_import.clicked.connect(self._import_local_clicked)
         self.empty_btn_import.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_import.setProperty("class", "PrimaryBtn")
+        self.empty_btn_import.setProperty("class", "SecondaryBtn")
 
         self.empty_btn_settings = QPushButton("⚙️ 配置邮箱")
         self.empty_btn_settings.clicked.connect(self._open_settings_dialog)
@@ -424,12 +424,12 @@ class InvoiceReviewApp(QMainWindow):
         self.empty_btn_scan = QPushButton("📧 扫描邮箱")
         self.empty_btn_scan.clicked.connect(self._scan_email_clicked)
         self.empty_btn_scan.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_scan.setProperty("class", "OutlineBtn")
+        self.empty_btn_scan.setProperty("class", "SecondaryBtn")
 
         self.empty_btn_mobile_upload = QPushButton("📱 扫码上传")
         self.empty_btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         self.empty_btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_mobile_upload.setProperty("class", "OutlineBtn")
+        self.empty_btn_mobile_upload.setProperty("class", "SecondaryBtn")
 
         # Search / filter fail actions
         self.empty_btn_clear_search = QPushButton("🧹 清空搜索")

@@ -3,6 +3,40 @@
 Invoice Hub PySide6 QSS StyleSheet
 """
 
+PRIMARY_BUTTON_STYLE = "QPushButton.PrimaryBtn"
+SECONDARY_BUTTON_STYLE = "QPushButton.SecondaryBtn"
+FILTER_BUTTON_STYLE = "QPushButton.FilterBtn"
+ACTIVE_FILTER_STYLE = "QPushButton.FilterBtn:checked"
+DISABLED_BUTTON_STYLE = "QPushButton:disabled"
+MENU_STYLE = """
+/* QMenu dropdown styling */
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 8px;
+    padding: 6px;
+}
+QMenu::item {
+    min-height: 28px;
+    padding: 6px 24px 6px 16px;
+    color: #374151;
+    background: transparent;
+    border-radius: 6px;
+}
+QMenu::icon {
+    padding-left: 8px;
+}
+QMenu::item:selected {
+    background-color: #F3F4F6;
+    color: #111827;
+}
+QMenu::separator {
+    height: 1px;
+    background: #E5E7EB;
+    margin: 6px 8px;
+}
+"""
+
 APP_STYLESHEET = """
 QMainWindow {
     background-color: #F8FAFC;
@@ -267,7 +301,7 @@ QPushButton.FilterBtn:hover {
 QPushButton.FilterBtn:checked {
     background-color: #EFF6FF;
     color: #2563EB;
-    border: 1.5px solid #2563EB;
+    border: 1px solid #93C5FD;
     font-weight: bold;
 }
 
@@ -307,25 +341,5 @@ QTabBar::tab:hover {
     background-color: #F9FAFB;
     color: #111827;
 }
-
-/* QMenu dropdown styling */
-QMenu {
-    background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
-    padding: 4px 0px;
-}
-QMenu::item {
-    padding: 6px 20px;
-    color: #374151;
-}
-QMenu::item:selected {
-    background-color: #EFF6FF;
-    color: #2563EB;
-}
-QMenu::separator {
-    height: 1px;
-    background-color: #E5E7EB;
-    margin: 4px 0px;
-}
+""" + MENU_STYLE + """
 """
