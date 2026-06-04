@@ -2016,7 +2016,7 @@ class ClaimGroupsTests(unittest.TestCase):
     def test_gui_log_panel_collapsible_behavior(self):
         # Verify default collapsed state of log panel and the toggle visibility behavior
         try:
-            from PySide6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QApplication, QSizePolicy
             import sys
             app = QApplication.instance() or QApplication(sys.argv)
 
@@ -2037,6 +2037,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertLess(window.minimumSizeHint().height(), 1160)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().count(), 1)
+                    self.assertEqual(window.main_splitter.sizePolicy().verticalPolicy(), QSizePolicy.Ignored)
                     self.assertEqual(window.preview_panel.minimumHeight(), 180)
                     initial_left_sizes = window.left_splitter.sizes()
                     initial_main_sizes = window.main_splitter.sizes()
@@ -2100,6 +2101,50 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertLess(window.minimumSizeHint().height(), 1160)
                     self.assertEqual(window.left_splitter.sizes(), collapsed_left_sizes)
                     self.assertEqual(window.main_splitter.sizes(), collapsed_main_sizes)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_log_collapse_normalizes_oversized_maximized_window(self):
+        try:
+            from PySide6.QtCore import QPoint, QRect
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            class FakeScreen:
+                def availableGeometry(self):
+                    return QRect(0, 0, 1920, 1032)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_log_maximized.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                calls = []
+                try:
+                    window.isMaximized = lambda: True
+                    window.screen = lambda: FakeScreen()
+                    window.frameGeometry = lambda: QRect(0, -8, 1920, 1154)
+                    window.btn_toggle_log.mapToGlobal = lambda _point: QPoint(
+                        1802,
+                        1085,
+                    )
+                    window.setGeometry = lambda rect: calls.append(("setGeometry", rect))
+                    window.showMaximized = lambda: calls.append(("showMaximized", None))
+
+                    window._normalize_maximized_geometry()
+                    app.processEvents()
+
+                    self.assertEqual(calls[0][0], "setGeometry")
+                    self.assertEqual(calls[0][1], QRect(0, 0, 1920, 1032))
+                    self.assertEqual(calls[1], ("showMaximized", None))
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()

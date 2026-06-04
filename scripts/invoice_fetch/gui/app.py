@@ -341,6 +341,7 @@ class InvoiceReviewApp(QMainWindow):
 
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.main_splitter = splitter
         main_layout.addWidget(splitter, 1)
 
@@ -1204,6 +1205,8 @@ class InvoiceReviewApp(QMainWindow):
                 self.log_drawer.setMinimumHeight(0)
                 self.log_drawer.setMaximumHeight(0)
         self._apply_log_layout_state(visible)
+        if not visible and self.isMaximized():
+            QTimer.singleShot(0, self._normalize_maximized_geometry)
 
     def _apply_log_layout_state(self, log_visible: bool):
         if hasattr(self, "preview_panel"):
@@ -1237,6 +1240,20 @@ class InvoiceReviewApp(QMainWindow):
             central.updateGeometry()
             central.update()
         self.updateGeometry()
+
+    def _normalize_maximized_geometry(self):
+        if not self.isMaximized():
+            return
+        screen = self.screen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        if available.isEmpty():
+            return
+        toggle_bottom_right = self.btn_toggle_log.mapToGlobal(self.btn_toggle_log.rect().bottomRight())
+        if not available.contains(toggle_bottom_right):
+            self.setGeometry(available)
+            self.showMaximized()
 
     def _copy_log_to_clipboard(self):
         log_text = self.txt_log.toPlainText()
