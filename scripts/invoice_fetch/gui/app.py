@@ -874,9 +874,9 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_toggle_log.clicked.connect(self._toggle_log)
         status_layout.addWidget(self.btn_toggle_log)
 
-        # Collapsible log container (hidden by default)
+        # Collapsible log drawer (hidden by default)
         self.log_container = QWidget()
-        self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.log_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         log_container_layout = QVBoxLayout(self.log_container)
         log_container_layout.setContentsMargins(0, 0, 0, 0)
         log_container_layout.setSpacing(4)
@@ -915,7 +915,7 @@ class InvoiceReviewApp(QMainWindow):
         log_container_layout.addWidget(log_header)
         log_container_layout.addWidget(self.txt_log)
 
-        # Bottom dock area keeps the status bar pinned and the log drawer collapsed
+        # Bottom dock area keeps the status bar pinned while the log drawer expands separately.
         self.bottom_panel = QWidget()
         self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.bottom_panel.setMinimumHeight(32)
@@ -924,9 +924,15 @@ class InvoiceReviewApp(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(4)
         bottom_layout.addWidget(status_bar)
-        bottom_layout.addWidget(self.log_container)
 
         main_layout.addWidget(self.bottom_panel)
+        self.log_drawer = QWidget()
+        self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        log_drawer_layout = QVBoxLayout(self.log_drawer)
+        log_drawer_layout.setContentsMargins(0, 0, 0, 0)
+        log_drawer_layout.setSpacing(0)
+        log_drawer_layout.addWidget(self.log_container)
+        main_layout.addWidget(self.log_drawer)
         self._log_panel_visible = False
         self._set_log_panel_visible(False)
 
@@ -1168,7 +1174,8 @@ class InvoiceReviewApp(QMainWindow):
                 not visible
                 and not self.log_container.isVisible()
                 and self.log_container.maximumHeight() == 0
-                and self.bottom_panel.maximumHeight() == 32
+                and hasattr(self, "log_drawer")
+                and self.log_drawer.maximumHeight() == 0
             ):
                 self.btn_toggle_log.setText("展开日志")
                 return
@@ -1181,14 +1188,20 @@ class InvoiceReviewApp(QMainWindow):
             self.log_container.setMinimumHeight(180)
             self.log_container.setMaximumHeight(180)
             self.log_container.setVisible(True)
-            self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self.bottom_panel.setFixedHeight(32 + 4 + 180)
+            if hasattr(self, "log_drawer"):
+                self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.log_drawer.setMinimumHeight(180)
+                self.log_drawer.setMaximumHeight(180)
+                self.log_drawer.setVisible(True)
         else:
             self.log_container.setVisible(False)
             self.log_container.setMinimumHeight(0)
             self.log_container.setMaximumHeight(0)
             self.log_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            self.bottom_panel.setFixedHeight(32)
+            if hasattr(self, "log_drawer"):
+                self.log_drawer.setVisible(False)
+                self.log_drawer.setMinimumHeight(0)
+                self.log_drawer.setMaximumHeight(0)
         self._apply_log_layout_state(visible)
 
     def _apply_log_layout_state(self, log_visible: bool):
@@ -1199,6 +1212,10 @@ class InvoiceReviewApp(QMainWindow):
             self.left_upper_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.log_container.updateGeometry()
+        if hasattr(self, "log_drawer"):
+            self.log_drawer.updateGeometry()
+            if self.log_drawer.layout() is not None:
+                self.log_drawer.layout().invalidate()
         if hasattr(self, "bottom_panel"):
             self.bottom_panel.updateGeometry()
             if self.bottom_panel.layout() is not None:
