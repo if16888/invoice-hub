@@ -1,3 +1,5 @@
 """Invoice Hub package metadata."""
 
-APP_VERSION = "v0.1.2"
+from .version import APP_VERSION, VERSION
+
+__all__ = ["APP_VERSION", "VERSION"]

@@ -88,7 +88,12 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual(result["accepted"], 2)
             self.assertEqual(result["duplicate"], 1)
             self.assertEqual(result["failed"], 0)
-            self.assertGreaterEqual(result["imported"].get("added", 0) + result["imported"].get("failed", 0), 2)
+            self.assertGreaterEqual(
+                result["imported"].get("added", 0)
+                + result["imported"].get("pending_manual", 0)
+                + result["imported"].get("failed", 0),
+                2,
+            )
 
             manifest = json.loads(session.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["source"], "mobile_qr")
