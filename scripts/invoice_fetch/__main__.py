@@ -499,7 +499,7 @@ def _insert_local_exception(
             return "duplicate", None
         db.update_invoice_file_paths(existing_by_hash["id"], attachment_path=_runtime_relative(file_path))
         _log.info("  本地导入恢复已删除待处理文件: %s", mask_filename(original_name))
-        return "failed", existing_by_hash["id"]
+        return "pending_manual", existing_by_hash["id"]
 
     category, extra_type, extra_required = _classify(original_name, "local import", "", categories)
     rec = {
@@ -526,7 +526,7 @@ def _insert_local_exception(
         "file_hash": file_hash,
     }
     row_id = db.insert_invoice(rec)
-    return "failed", row_id
+    return "pending_manual", row_id
 
 
 def _import_local_pdf(
@@ -550,7 +550,7 @@ def _import_local_pdf(
             note=info.parse_note or "本地导入PDF解析失败",
             categories=categories,
         )
-        return "failed", row_id
+        return status, row_id
 
     # If duplicate file hash, check if it's a re-import of the exact same record or a new file
     if existing_by_hash:
@@ -753,7 +753,7 @@ def _import_local_directory(
     supported_exts = {".pdf", ".ofd", ".zip", ".png", ".jpg", ".jpeg", ".heic"}
     files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in supported_exts)
 
-    stats = {"added": 0, "duplicates": 0, "conflicts": 0, "failed": 0}
+    stats = {"added": 0, "duplicates": 0, "conflicts": 0, "pending_manual": 0, "failed": 0}
     if not files:
         _log.warning("本地导入目录没有发现 PDF/OFD/ZIP: %s", mask_path(root))
         return stats
@@ -821,7 +821,7 @@ def _import_local_directory(
             _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
             stats["failed"] += 1
 
-    total_recorded = stats["added"] + stats["conflicts"] + stats["failed"]
+    total_recorded = stats["added"] + stats["conflicts"] + stats["pending_manual"]
     _log.info("本地导入完成: 入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d)",
               total_recorded, stats["added"], stats["duplicates"], stats["conflicts"], stats["failed"])
     return stats
@@ -1677,7 +1677,7 @@ def main():
 
         if args.import_dir:
             parser = InvoiceParser()
-            total_stats = {"added": 0, "duplicates": 0, "conflicts": 0, "failed": 0}
+            total_stats = {"added": 0, "duplicates": 0, "conflicts": 0, "pending_manual": 0, "failed": 0}
             for import_dir in args.import_dir:
                 stats = _import_local_directory(
                     import_dir=import_dir,
@@ -1689,7 +1689,7 @@ def main():
                 for k in total_stats:
                     total_stats[k] += stats.get(k, 0)
             export_excel(db.get_all_invoices(), excel_path)
-            total_recorded = total_stats["added"] + total_stats["conflicts"] + total_stats["failed"]
+            total_recorded = total_stats["added"] + total_stats["conflicts"] + total_stats["pending_manual"]
             _log.info(
                 "本地导入完成: 成功入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d)",
                 total_recorded,

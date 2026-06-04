@@ -174,6 +174,16 @@ class TestDesktopLauncherScript(unittest.TestCase):
         self.assertIn("sys.argv.append", src)
 
 
+class TestVersionSource(unittest.TestCase):
+    """Release metadata should read from the same app version source."""
+
+    def test_release_workflow_reads_python_version_source(self):
+        workflow = PROJECT_ROOT / ".github" / "workflows" / "windows-release.yml"
+        src = workflow.read_text(encoding="utf-8")
+        self.assertIn("scripts.invoice_fetch.version", src)
+        self.assertIn("APP_VERSION", src)
+
+
 class TestPyInstallerSpecIntegrity(unittest.TestCase):
     """packaging/invoice_hub_windows.spec must exist and match expectations."""
 

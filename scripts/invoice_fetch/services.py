@@ -94,6 +94,12 @@ def scan_email_and_download(
 
         scanned_count = 0
         downloaded_count = 0
+        classified_invoice_count = 0
+        pending_manual_count = 0
+        failed_count = 0
+        failed_summaries: list[str] = []
+        duplicate_count = 0
+        new_count = 0
 
         with InvoiceDB(db_path) as db:
             with MailFetcher(
@@ -130,9 +136,20 @@ def scan_email_and_download(
 
                     if scan_only:
                         export_excel(db.get_all_invoices(), excel_path)
-                        return {"scanned": scanned_count, "downloaded": 0}
+                        return {
+                            "scanned": scanned_count,
+                            "new": 0,
+                            "classified_invoice": 0,
+                            "downloaded": 0,
+                            "duplicates": 0,
+                            "pending_manual": 0,
+                            "failed": 0,
+                            "failed_count": 0,
+                            "failed_summaries": [],
+                        }
 
                 pending = db.get_invoice_emails_to_download()
+                classified_invoice_count = len(pending)
                 if not pending:
                     log("No invoice emails pending download")
                 else:
@@ -145,6 +162,7 @@ def scan_email_and_download(
                         for i, row in enumerate(pending, 1):
                             log(f"[{i}/{len(pending)}] Processing {mask_uid(row['uid'])}")
                             try:
+                                before_count = len(db.get_all_invoices())
                                 success = _handle_pending_email(
                                     row=row,
                                     fetcher=fetcher,
@@ -157,14 +175,34 @@ def scan_email_and_download(
                                 )
                                 if success:
                                     downloaded_count += 1
+                                    after_count = len(db.get_all_invoices())
+                                    added_rows = max(0, after_count - before_count)
+                                    new_count += added_rows
+                                    if added_rows == 0:
+                                        duplicate_count += 1
+                                else:
+                                    pending_manual_count += 1
                             except Exception as exc:
-                                log(f"Failed to process {mask_uid(row['uid'])}: {exc}")
+                                failed_count += 1
+                                summary = sanitize_log_message(f"Failed to process {mask_uid(row['uid'])}: {exc}")
+                                failed_summaries.append(summary)
+                                log(summary)
                     finally:
                         link_dl.close()
 
             export_excel(db.get_all_invoices(), excel_path)
             log("Mailbox scan and invoice package generation completed")
-            return {"scanned": scanned_count, "downloaded": downloaded_count}
+            return {
+                "scanned": scanned_count,
+                "new": new_count,
+                "classified_invoice": classified_invoice_count,
+                "downloaded": downloaded_count,
+                "duplicates": duplicate_count,
+                "pending_manual": pending_manual_count,
+                "failed": failed_count,
+                "failed_count": failed_count,
+                "failed_summaries": failed_summaries[:10],
+            }
 
     except SystemExit as sys_err:
         raise ValueError(f"Unexpected SystemExit: {sys_err}") from None

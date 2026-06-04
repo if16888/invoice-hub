@@ -7,6 +7,15 @@ from unittest.mock import patch
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_app_version_comes_from_single_version_module(self):
+        from scripts.invoice_fetch import APP_VERSION
+        from scripts.invoice_fetch.version import APP_VERSION as VERSION_APP_VERSION
+        from scripts.invoice_fetch.version import VERSION
+
+        self.assertEqual(VERSION, "0.1.3-rc1")
+        self.assertEqual(VERSION_APP_VERSION, "v0.1.3-rc1")
+        self.assertEqual(APP_VERSION, VERSION_APP_VERSION)
+
     def test_collect_app_info_includes_version_metadata_without_secrets(self):
         from scripts.invoice_fetch import diagnostics
         from scripts.invoice_fetch import APP_VERSION
@@ -30,6 +39,7 @@ class DiagnosticsTests(unittest.TestCase):
         combined = json.dumps(info, ensure_ascii=False)
         self.assertEqual(info["app"], "Invoice Hub")
         self.assertEqual(info["version"], APP_VERSION)
+        self.assertNotIn("MVP", info["version"])
         self.assertIn(info["build_mode"], {"release", "local/dev"})
         self.assertEqual(info["data_dir"], "<runtime_dir:redacted>")
         self.assertEqual(info["log_dir"], "<log_dir:redacted>")

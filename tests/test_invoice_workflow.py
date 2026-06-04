@@ -354,7 +354,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
 
             self.assertEqual(count.get("added"), 0)
-            self.assertEqual(count.get("failed"), 1)
+            self.assertEqual(count.get("pending_manual"), 1)
+            self.assertEqual(count.get("failed"), 0)
             self.assertEqual(count.get("duplicates"), 1)
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["file_hash"])
@@ -377,7 +378,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 )
                 rows = db.get_all_invoices()
 
-            self.assertEqual(count.get("failed"), 1)
+            self.assertEqual(count.get("pending_manual"), 1)
+            self.assertEqual(count.get("failed"), 0)
             self.assertEqual(rows[0]["parse_success"], 0)
             self.assertIn("OFD", rows[0]["parse_note"])
             self.assertTrue(src.exists())

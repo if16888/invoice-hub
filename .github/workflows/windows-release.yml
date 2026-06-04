@@ -89,10 +89,11 @@ jobs:
 
       - name: Prepare release version
         run: |
-          $version = "${{ github.ref_name }}"
-          $version = $version -replace '/', '-'
-          if (-not $version -or $version -eq "refs/heads/master" -or $version -eq "master") {
-            $version = "dev-$(git rev-parse --short HEAD)"
+          $version = (python -c "from scripts.invoice_fetch.version import APP_VERSION; print(APP_VERSION)").Trim()
+          $tagVersion = "${{ github.ref_name }}" -replace '/', '-'
+          if ($tagVersion -and $tagVersion -ne $version) {
+            Write-Error "Tag version $tagVersion does not match app version $version from scripts.invoice_fetch.version.APP_VERSION"
+            exit 1
           }
           echo "VERSION=${version}" >> $env:GITHUB_ENV
           echo "ZIP_NAME=InvoiceHub-windows-x64-${version}.zip" >> $env:GITHUB_ENV

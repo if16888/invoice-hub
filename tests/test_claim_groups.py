@@ -1034,6 +1034,86 @@ class ClaimGroupsTests(unittest.TestCase):
                     mock_export_claim_package.assert_called_once()
                     app.db.close()
 
+    def test_gui_export_dialog_copy_and_preflight_stats(self):
+        from scripts.invoice_fetch.gui import PYSIDE6_AVAILABLE
+        if not PYSIDE6_AVAILABLE:
+            self.skipTest("PySide6 is not available in this environment. Skipping GUI test.")
+
+        from PySide6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_gui_export_copy.db"
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Export Copy")
+                rows = [
+                    {"invoice_number": "APP", "total_amount": "10.00", "attachment_path": "a.pdf", "review_status": "approved"},
+                    {"invoice_number": "REV", "total_amount": "", "attachment_path": "", "review_status": "to_review"},
+                    {"invoice_number": "IGN", "total_amount": "12.00", "attachment_path": "i.pdf", "review_status": "ignored"},
+                    {"invoice_number": "ERR", "total_amount": "13.00", "attachment_path": "e.pdf", "review_status": "error"},
+                ]
+                for row in rows:
+                    invoice_id = db.insert_invoice({
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-06-04",
+                        "category": "synthetic",
+                        **row,
+                    })
+                    db.add_invoice_to_claim(claim_id, invoice_id)
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(db_path, splash=None)
+            try:
+                stats = window._claim_export_preflight_stats(claim_id)
+                self.assertEqual(stats["approved"], 1)
+                self.assertEqual(stats["to_review"], 1)
+                self.assertEqual(stats["ignored"], 1)
+                self.assertEqual(stats["error"], 1)
+                self.assertEqual(stats["missing_attachment"], 1)
+                self.assertEqual(stats["missing_amount"], 1)
+                text = window._format_claim_export_preflight_text(stats)
+                self.assertIn("导出已通过 + 待审核发票", text)
+                self.assertIn("ignored/error 永远跳过", text)
+                self.assertNotIn("所有已关联文件", text)
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+    def test_gui_local_import_summary_labels_pending_manual_not_parse_failure(self):
+        from scripts.invoice_fetch.gui import PYSIDE6_AVAILABLE
+        if not PYSIDE6_AVAILABLE:
+            self.skipTest("PySide6 is not available in this environment. Skipping GUI test.")
+
+        from PySide6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_gui_local_import_summary.db"
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(db_path, splash=None)
+            try:
+                text = window._format_local_import_summary({
+                    "added": 1,
+                    "duplicates": 2,
+                    "conflicts": 1,
+                    "pending_manual": 3,
+                    "failed": 0,
+                })
+                self.assertIn("已入库待补全", text)
+                self.assertIn("真正失败: 0", text)
+                self.assertNotIn("解析失败", text)
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
     def test_gui_read_manifest_item_count(self):
         from scripts.invoice_fetch.gui.helpers import _read_manifest_item_count, _read_manifest_summary
         with tempfile.TemporaryDirectory() as td:
@@ -1278,6 +1358,62 @@ class ClaimGroupsTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as ctx:
                     scan_email_and_download(db_path, config_path=config_file)
                 self.assertIn("未配置邮箱授权码", str(ctx.exception))
+
+    def test_scan_email_counts_single_message_failure_without_crashing(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_email_failure_stats.db"
+            config_file = Path(td) / "config.json"
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "email": {"address": "synthetic_user@qq.com"},
+                    "imap": {"server": "imap.qq.com", "port": 993},
+                    "search": {"folder": "INBOX", "months_back": 1},
+                    "ai": {"provider": "none"},
+                    "categories": {},
+                }, f)
+
+            with InvoiceDB(db_path) as db:
+                db.bulk_upsert_emails([{
+                    "uid": 1001,
+                    "subject": "Synthetic invoice mail",
+                    "sender": "billing@example.com",
+                    "date": "2026-06-04",
+                }])
+                db.classify_email(1001, True, by="test", reason="synthetic")
+
+            logs = []
+            with patch("scripts.invoice_fetch.services.has_auth_code", return_value=True), \
+                 patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services.export_excel"), \
+                 patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=RuntimeError("synthetic parser failure")):
+                res = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                    log_callback=logs.append,
+                )
+
+            self.assertEqual(res["classified_invoice"], 1)
+            self.assertEqual(res["downloaded"], 0)
+            self.assertEqual(res["failed"], 1)
+            self.assertEqual(res["failed_count"], 1)
+            self.assertEqual(res["pending_manual"], 0)
+            self.assertEqual(len(res["failed_summaries"]), 1)
+            self.assertIn("synthetic parser failure", res["failed_summaries"][0])
+            self.assertTrue(any("Failed to process" in line for line in logs))
 
     def test_services_import_local_invalid_folder_is_gui_safe(self):
         from scripts.invoice_fetch.services import import_local_directory
@@ -1668,6 +1804,112 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_can_save_manual_fields_for_receipt_without_invoice_number(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_manual_receipt_save.db"
+                with InvoiceDB(db_path) as db:
+                    invoice_id = db.insert_invoice({
+                        "invoice_number": "",
+                        "total_amount": "",
+                        "seller_name": "",
+                        "invoice_date": "",
+                        "category": "",
+                        "confirmed_note": "",
+                        "attachment_path": "runtime/attachments/local_import/synthetic_receipt.jpg",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+
+                    window.table.selectRow(0)
+                    app.processEvents()
+                    self.assertEqual(window.txt_number.text(), "")
+
+                    window.txt_date.setText("2026-06-04")
+                    window.txt_seller.setText("Synthetic Receipt Seller")
+                    window.txt_amount.setText("88.50")
+                    window.combo_category.setCurrentText("receipt")
+                    window.txt_note.setPlainText("synthetic manual completion note")
+                    window._mark_invoice_form_dirty()
+
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox.warning") as mock_warning:
+                        window._save_invoice_fields()
+                        app.processEvents()
+
+                    mock_warning.assert_not_called()
+                    refreshed = window.db.get_invoice(invoice_id)
+                    self.assertEqual(refreshed["invoice_number"], "")
+                    self.assertEqual(refreshed["invoice_date"], "2026-06-04")
+                    self.assertEqual(refreshed["seller_name"], "Synthetic Receipt Seller")
+                    self.assertEqual(refreshed["total_amount"], "88.50")
+                    self.assertEqual(refreshed["category"], "receipt")
+                    self.assertEqual(refreshed["confirmed_note"], "synthetic manual completion note")
+                    self.assertFalse(window.btn_save_draft.isEnabled())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_confirms_before_approving_incomplete_invoice(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_approve_incomplete_confirm.db"
+                with InvoiceDB(db_path) as db:
+                    invoice_id = db.insert_invoice({
+                        "invoice_number": "",
+                        "total_amount": "",
+                        "seller_name": "Synthetic Receipt Seller",
+                        "invoice_date": "",
+                        "category": "receipt",
+                        "attachment_path": "",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    window.table.selectRow(0)
+                    app.processEvents()
+
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox.question", return_value=QMessageBox.No) as mock_question:
+                        window._set_selected_status(review_status.APPROVED)
+                        app.processEvents()
+
+                    mock_question.assert_called_once()
+                    refreshed = window.db.get_invoice(invoice_id)
+                    self.assertEqual(refreshed["review_status"], review_status.TO_REVIEW)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
         except Exception as e:
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")
@@ -2163,6 +2405,65 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_log_drawer_repeated_toggle_after_maximize_keeps_layout_valid(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_log_repeated_toggle.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp, LOG_DRAWER_EXPANDED_HEIGHT
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window.showMaximized()
+                    app.processEvents()
+
+                    for _ in range(5):
+                        window._set_log_panel_visible(True)
+                        app.processEvents()
+                        self.assertTrue(window.log_container.isVisible())
+                        self.assertTrue(window.log_drawer.isVisible())
+                        self.assertEqual(window.log_container.maximumHeight(), LOG_DRAWER_EXPANDED_HEIGHT)
+                        self.assertTrue(all(size > 0 for size in window.main_splitter.sizes()))
+
+                        window._set_log_panel_visible(False)
+                        app.processEvents()
+                        self.assertFalse(window.log_container.isVisible())
+                        self.assertFalse(window.log_drawer.isVisible())
+                        self.assertEqual(window.log_container.maximumHeight(), 0)
+                        self.assertEqual(window.log_drawer.maximumHeight(), 0)
+                        self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                        self.assertLessEqual(window.bottom_panel.height(), 40)
+                        self.assertTrue(all(size > 0 for size in window.main_splitter.sizes()))
+
+                    window.resize(1280, 760)
+                    app.processEvents()
+                    window._set_log_panel_visible(True)
+                    app.processEvents()
+                    self.assertTrue(window.log_container.isVisible())
+                    self.assertEqual(window.log_container.maximumHeight(), LOG_DRAWER_EXPANDED_HEIGHT)
+                    self.assertTrue(all(size > 0 for size in window.main_splitter.sizes()))
+
+                    window._set_log_panel_visible(False)
+                    app.processEvents()
+                    self.assertFalse(window.log_container.isVisible())
+                    self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                    self.assertLessEqual(window.bottom_panel.height(), 40)
+                    self.assertEqual(window.bottom_panel.layout().count(), 1)
+                    self.assertTrue(all(size > 0 for size in window.left_splitter.sizes()))
+                    self.assertTrue(all(size > 0 for size in window.main_splitter.sizes()))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_show_does_not_emit_invalid_qfont_point_size_warning(self):
         try:
             from PySide6.QtCore import qInstallMessageHandler
@@ -2338,14 +2639,24 @@ class ClaimGroupsTests(unittest.TestCase):
                         ]
                     })()
                     with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as mock_info:
-                        window._scan_email_finished({"scanned": 5, "downloaded": 2})
+                        window._scan_email_finished({
+                            "scanned": 5,
+                            "new": 1,
+                            "downloaded": 3,
+                            "duplicates": 1,
+                            "pending_manual": 2,
+                            "failed": 1,
+                            "failed_summaries": ["Failed to process UID ***: synthetic parser failure"],
+                        })
                     summary = window._last_scan_summary
-                    self.assertEqual(summary["new"], 2)
+                    self.assertEqual(summary["new"], 1)
                     self.assertEqual(summary["restored"], 1)
                     self.assertEqual(summary["duplicates"], 1)
                     self.assertEqual(summary["link_failed"], 1)
-                    self.assertEqual(summary["pending_retry"], 1)
+                    self.assertEqual(summary["pending_retry"], 2)
+                    self.assertEqual(summary["failed"], 1)
                     message = mock_info.call_args.args[2]
+                    self.assertIn("synthetic parser failure", message)
                     self.assertIn("恢复软删除", message)
                     self.assertIn("重复已存在", message)
                     self.assertIn("链接下载失败", message)
@@ -2435,6 +2746,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         "seller_name": "滴滴出行",
                         "invoice_date": "2026-05-19",
                         "category": "交通",
+                        "attachment_path": "attachments/synthetic-next-001.pdf",
                         "review_status": "to_review"
                     })
 
@@ -2541,6 +2853,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         "seller_name": "星巴克",
                         "invoice_date": "2026-05-20",
                         "category": "餐饮",
+                        "attachment_path": "attachments/synthetic-next-002.pdf",
                         "review_status": "to_review"
                     })
 
