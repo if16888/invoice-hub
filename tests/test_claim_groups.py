@@ -918,6 +918,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 window = InvoiceReviewApp(db_path)
                 try:
+                    window._deferred_init()
+                    app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
                     self.assertEqual(window.summary_card.layout().spacing(), 4)
                     self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
@@ -928,6 +930,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertFalse(window.log_container.isVisible())
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
+                    self.assertTrue(hasattr(window, "right_stack"))
+                    self.assertEqual(window.right_stack.currentWidget(), window.right_empty_widget)
+                    self.assertEqual(window.lbl_right_empty_title.text(), "当前没有发票记录")
                     self.assertFalse(hasattr(window, "lbl_stats"))
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -2026,7 +2031,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
-                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    initial_left_sizes = window.left_splitter.sizes()
+                    initial_main_sizes = window.main_splitter.sizes()
+                    self.assertTrue(all(size > 0 for size in initial_left_sizes))
+                    self.assertTrue(all(size > 0 for size in initial_main_sizes))
 
                     # Toggle log to expanded
                     window._toggle_log()
@@ -2034,12 +2043,25 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertTrue(window.log_container.isVisible())
                     self.assertEqual(window.btn_toggle_log.text(), "收起日志")
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
-                    self.assertGreaterEqual(window.log_container.minimumHeight(), 120)
+                    self.assertEqual(window.log_container.minimumHeight(), 180)
                     self.assertEqual(window.log_container.maximumHeight(), 180)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32 + 4 + 180)
                     self.assertGreater(window.bottom_panel.height(), 32)
                     self.assertGreaterEqual(window.txt_log.height(), 100)
-                    self.assertGreaterEqual(window.preview_panel.minimumHeight(), 260)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    expanded_left_sizes = window.left_splitter.sizes()
+                    expanded_main_sizes = window.main_splitter.sizes()
+                    self.assertTrue(all(size > 0 for size in expanded_left_sizes))
+                    self.assertTrue(all(size > 0 for size in expanded_main_sizes))
+
+                    # Reapply the same state to ensure idempotence.
+                    window._set_log_panel_visible(True)
+                    app.processEvents()
+                    self.assertTrue(window.log_container.isVisible())
+                    self.assertEqual(window.bottom_panel.maximumHeight(), 32 + 4 + 180)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    self.assertEqual(window.left_splitter.sizes(), expanded_left_sizes)
+                    self.assertEqual(window.main_splitter.sizes(), expanded_main_sizes)
 
                     # Toggle log back to collapsed
                     window._toggle_log()
@@ -2049,8 +2071,20 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.log_container.maximumHeight(), 0)
                     self.assertEqual(window.bottom_panel.maximumHeight(), 32)
                     self.assertEqual(window.bottom_panel.layout().indexOf(window.log_container), 1)
-                    self.assertLessEqual(window.preview_panel.minimumHeight(), 220)
-                    self.assertTrue(all(size >= 0 for size in window.left_splitter.sizes()))
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    collapsed_left_sizes = window.left_splitter.sizes()
+                    collapsed_main_sizes = window.main_splitter.sizes()
+                    self.assertTrue(all(size > 0 for size in collapsed_left_sizes))
+                    self.assertTrue(all(size > 0 for size in collapsed_main_sizes))
+
+                    # Repeat the collapse path to verify state does not drift.
+                    window._set_log_panel_visible(False)
+                    app.processEvents()
+                    self.assertFalse(window.log_container.isVisible())
+                    self.assertEqual(window.bottom_panel.maximumHeight(), 32)
+                    self.assertEqual(window.preview_panel.minimumHeight(), 180)
+                    self.assertEqual(window.left_splitter.sizes(), collapsed_left_sizes)
+                    self.assertEqual(window.main_splitter.sizes(), collapsed_main_sizes)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
