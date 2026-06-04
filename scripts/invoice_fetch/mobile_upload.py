@@ -250,7 +250,7 @@ class MobileUploadServer:
                 imported_count = (
                     imported.get("added", 0) +
                     imported.get("conflicts", 0) +
-                    imported.get("failed", 0) +
+                    imported.get("pending_manual", 0) +
                     imported.get("duplicates", 0)
                 ) if isinstance(imported, dict) else imported
                 self._stats["imported"] += imported_count
