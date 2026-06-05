@@ -882,6 +882,8 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertIn("QLabel.SummaryAmount {", APP_STYLESHEET)
         self.assertIn("QLabel.SummaryMeta {", APP_STYLESHEET)
         self.assertIn("QLabel.SummarySeller {", APP_STYLESHEET)
+        self.assertIn("font-size: 10px;", APP_STYLESHEET)
+        self.assertNotIn("font-size: 9px;", APP_STYLESHEET)
 
     def test_public_candidate_docs_do_not_keep_internal_planning_docs(self):
         # 1. Verify that the internal planning files do not exist in the public candidate paths

@@ -87,7 +87,7 @@ QLabel.SummaryAmount {
 }
 QLabel.SummaryMeta {
     color: #4B5563;
-    font-size: 9px;
+    font-size: 10px;
 }
 QLabel.SummarySeller {
     color: #111827;
