@@ -1285,6 +1285,9 @@ class InvoiceReviewApp(QMainWindow):
 
     def _load_invoices(self):
         # Fetch invoices from DB with filter, then apply search/quality filters.
+        db_elapsed_ms = 0
+        filter_elapsed_ms = 0
+        render_elapsed_ms = 0
         if not getattr(self, "db", None) or not self.db.is_open:
             _log.warning("Skipping invoice load because database is closed or unavailable.")
             self.invoices_list = []
@@ -1307,11 +1310,13 @@ class InvoiceReviewApp(QMainWindow):
 
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
+            db_start = time.perf_counter()
             all_invoices = self.db.list_invoices(
                 status=self.current_filter_status,
                 limit=limit_val,
                 include_deleted=include_deleted
             )
+            db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
             if self._is_first_load:
                 self._is_first_load = False
             if first_load_notice and limit_val == 100:
@@ -1328,6 +1333,7 @@ class InvoiceReviewApp(QMainWindow):
         unlinked_only = self.chk_unlinked.isChecked() if hasattr(self, "chk_unlinked") else False
         needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
 
+        filter_start = time.perf_counter()
         displayed_invoices = []
         for inv in all_invoices:
             claim_name = str(inv.get("claim_name") or "").strip()
@@ -1353,10 +1359,12 @@ class InvoiceReviewApp(QMainWindow):
                     continue
 
             displayed_invoices.append(inv)
+        filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
 
         self.invoices_list = displayed_invoices
         self._update_filter_counts(all_invoices)
 
+        render_start = time.perf_counter()
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for idx, inv in enumerate(self.invoices_list):
@@ -1422,6 +1430,7 @@ class InvoiceReviewApp(QMainWindow):
                 self.table.setItem(idx, col, item)
 
         self.table.blockSignals(False)
+        render_elapsed_ms = int((time.perf_counter() - render_start) * 1000)
 
         if len(self.invoices_list) == 0:
             # Check if total records in DB is 0
@@ -1483,6 +1492,12 @@ class InvoiceReviewApp(QMainWindow):
             if target_row != -1:
                 self.table.selectRow(target_row)
             self._set_right_panel_state(True)
+
+        self.write_log(
+            f"[性能] 发票列表刷新: db={db_elapsed_ms}ms "
+            f"filter={filter_elapsed_ms}ms render={render_elapsed_ms}ms "
+            f"rows={len(self.invoices_list)}"
+        )
 
     def _load_claims(self):
         """Populate the claim groups dropdown from DB."""
@@ -2965,6 +2980,10 @@ class InvoiceReviewApp(QMainWindow):
         self.image_zoom_mode = "fit_width"
         self.image_zoom_factor = 1.0
         self.current_image_pixmap = None
+        self.image_resize_timer = QTimer(self)
+        self.image_resize_timer.setSingleShot(True)
+        self.image_resize_timer.setInterval(80)
+        self.image_resize_timer.timeout.connect(self._update_image_display)
 
         # Setup Hover Hide Timer
         self.overlay_hide_timer = QTimer(self)
@@ -3007,7 +3026,7 @@ class InvoiceReviewApp(QMainWindow):
         # Dynamic Resizing scaling for image in FitToWidth / FitInView modes
         self.image_scroll_area.resizeEvent = lambda event: (
             QScrollArea.resizeEvent(self.image_scroll_area, event),
-            self._update_image_display()
+            self._schedule_image_display_update()
         )
 
         self.lbl_image_preview = QLabel()
@@ -3276,6 +3295,12 @@ class InvoiceReviewApp(QMainWindow):
             self.image_zoom_factor *= 0.8
             self._update_image_display()
 
+    def _schedule_image_display_update(self):
+        if hasattr(self, "image_resize_timer"):
+            self.image_resize_timer.start()
+        else:
+            self._update_image_display()
+
     def _update_image_display(self):
         if self.current_image_pixmap is None or self.current_image_pixmap.isNull():
             return
@@ -3341,6 +3366,17 @@ class InvoiceReviewApp(QMainWindow):
         self._set_zoom_buttons_enabled(True)
 
         suffix = file_path.suffix.lower()
+        file_size_mb = 0.0
+        preview_start = time.perf_counter()
+        used_fallback = False
+        try:
+            file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        except OSError:
+            file_size_mb = 0.0
+
+        if suffix in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic") and file_size_mb > 8:
+            self.write_log(f"[性能] 大图预览可能较慢: {file_size_mb:.1f}MB")
+
         if suffix == ".pdf":
             QPdfDocument, QPdfView = get_qt_pdf_classes()
             if QPdfDocument is not None and QPdfView is not None:
@@ -3356,6 +3392,7 @@ class InvoiceReviewApp(QMainWindow):
                 self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
                 self.preview_stack.setCurrentWidget(self.pdf_view)
             else:
+                used_fallback = True
                 if self.lbl_pdf_fallback is None:
                     self.lbl_pdf_fallback = QLabel("暂不支持内嵌 PDF 预览，请点击【外部打开】")
                     self.lbl_pdf_fallback.setAlignment(Qt.AlignCenter)
@@ -3367,6 +3404,7 @@ class InvoiceReviewApp(QMainWindow):
         elif suffix in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic"):
             pixmap = QPixmap(str(file_path))
             if pixmap.isNull():
+                used_fallback = True
                 if suffix == ".heic":
                     self._show_preview_status("该图片格式暂不支持内嵌预览，请点击外部打开")
                 else:
@@ -3380,9 +3418,17 @@ class InvoiceReviewApp(QMainWindow):
                 self._update_image_display()
                 self.preview_stack.setCurrentWidget(self.image_scroll_area)
         else:
+            used_fallback = True
             self._show_preview_status("暂不支持内嵌预览，请点击打开外部文件")
             self.overlay_toolbar.setVisible(False)
             self._set_zoom_buttons_enabled(False)
+
+        load_elapsed_ms = int((time.perf_counter() - preview_start) * 1000)
+        fallback_text = " fallback=1" if used_fallback else ""
+        self.write_log(
+            f"[性能] 原件预览: type={suffix or '<none>'} "
+            f"size={file_size_mb:.1f}MB load={load_elapsed_ms}ms{fallback_text}"
+        )
 
     def _prev_preview_doc(self):
         if hasattr(self, "current_preview_docs") and self.current_preview_docs:

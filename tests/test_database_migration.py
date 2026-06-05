@@ -141,6 +141,33 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             db.close()
 
+    def test_count_invoices_respects_soft_deleted_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_count.db"
+            db = InvoiceDB(db_path)
+
+            first_id = db.insert_invoice({
+                "invoice_number": "COUNT001",
+                "total_amount": "10.00",
+                "seller_name": "Seller A",
+                "invoice_date": "2026-06-01",
+            })
+            db.insert_invoice({
+                "invoice_number": "COUNT002",
+                "total_amount": "20.00",
+                "seller_name": "Seller B",
+                "invoice_date": "2026-06-02",
+            })
+
+            self.assertEqual(db.count_invoices(), 2)
+            self.assertEqual(db.count_invoices(include_deleted=True), 2)
+
+            self.assertTrue(db.soft_delete_invoice(first_id))
+            self.assertEqual(db.count_invoices(), 1)
+            self.assertEqual(db.count_invoices(include_deleted=True), 2)
+
+            db.close()
+
     def test_excel_export_includes_review_status_if_present(self):
         from scripts.invoice_fetch.excel_export import export_excel
         import openpyxl

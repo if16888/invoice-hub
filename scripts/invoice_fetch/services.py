@@ -162,7 +162,7 @@ def scan_email_and_download(
                         for i, row in enumerate(pending, 1):
                             log(f"[{i}/{len(pending)}] Processing {mask_uid(row['uid'])}")
                             try:
-                                before_count = len(db.get_all_invoices())
+                                before_count = db.count_invoices()
                                 success = _handle_pending_email(
                                     row=row,
                                     fetcher=fetcher,
@@ -175,7 +175,7 @@ def scan_email_and_download(
                                 )
                                 if success:
                                     downloaded_count += 1
-                                    after_count = len(db.get_all_invoices())
+                                    after_count = db.count_invoices()
                                     added_rows = max(0, after_count - before_count)
                                     new_count += added_rows
                                     if added_rows == 0:
