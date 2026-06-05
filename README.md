@@ -2,9 +2,9 @@
 
 **本地优先的发票审核与报销整理工具。**
 
-| 当前版本 | 状态 | 推荐 |
+| 当前公开下载版本 | 当前开发版本 | 状态 | 推荐 |
 | --- | --- | --- |
-| [Invoice Hub v0.1.2](https://github.com/if16888/invoice-hub/releases/tag/v0.1.2) | early preview / 早期可试用 | 先用少量脱敏样本试跑 |
+| [Invoice Hub v0.1.2](https://github.com/if16888/invoice-hub/releases/tag/v0.1.2) | Invoice Hub v0.1.3-rc1 | early preview / 早期可试用 | 先用少量脱敏样本试跑 |
 
 Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交报销前，把散落在邮箱、本地文件夹和手机里的发票、收据、截图、证明材料整理成可审核、可归组、可导出的资料包。
 
@@ -18,14 +18,14 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 ### 普通用户优先
 
-已发布 Invoice Hub v0.1.2，请在 [GitHub Releases](https://github.com/if16888/invoice-hub/releases/latest) 下载最新版本。
+请在 [GitHub Releases](https://github.com/if16888/invoice-hub/releases/latest) 下载最新版本。当前公开下载版本请以 Releases 页面为准。
 
 - [Latest Release](https://github.com/if16888/invoice-hub/releases/latest)
 - `InvoiceHub-Setup-*.exe`：Windows 安装包。
 - `InvoiceHub-windows-x64-*.zip`：免安装 portable 包。
 - `checksums.txt`：发布资产 SHA256 校验值。
 
-安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑，再导入真实报销材料。
+安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑；确认流程符合预期后，再在本机导入自己的报销材料，并避免把运行数据上传到公开 Issue。
 
 ### 开发者本地启动
 
@@ -65,7 +65,7 @@ Invoice Hub 试图把这些提交前的整理动作放在本机完成。
 **收集 -> 去重 -> 审核 -> 归组 -> 导出**
 
 1. 收集：从 IMAP 邮箱、本地目录、手机扫码上传入口收集候选发票和证明材料。
-2. 去重：根据发票号、金额、文件哈希和已有记录减少重复材料。
+2. 去重：根据文件哈希、发票号/金额/销售方等信息和已有记录减少重复材料。
 3. 审核：在桌面工作台中查看原件、补全字段、调整分类、确认状态和备注。
 4. 归组：把已确认的记录加入一个报销组，保留人工确认后的分类和说明。
 5. 导出：生成 Excel 台账、manifest 和附件包，供后续提交或留档。
