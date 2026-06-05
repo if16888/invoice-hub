@@ -197,6 +197,11 @@ class InvoiceReviewApp(QMainWindow):
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(8)
 
+        self.search_reload_timer = QTimer(self)
+        self.search_reload_timer.setSingleShot(True)
+        self.search_reload_timer.setInterval(250)
+        self.search_reload_timer.timeout.connect(self._load_invoices)
+
         # 0. Top Action Bar
         action_layout = QHBoxLayout()
         action_layout.setSpacing(8)
@@ -980,6 +985,8 @@ class InvoiceReviewApp(QMainWindow):
         self.chk_needs_fix.setChecked(False)
         if hasattr(self, "chk_show_deleted"):
             self.chk_show_deleted.setChecked(False)
+        if hasattr(self, "search_reload_timer"):
+            self.search_reload_timer.stop()
         self.current_filter_status = None
         for s, btn in self.filter_buttons.items():
             btn.setChecked(s == "all")
@@ -1017,6 +1024,8 @@ class InvoiceReviewApp(QMainWindow):
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
             self.txt_search.setText("")
+            if hasattr(self, "search_reload_timer"):
+                self.search_reload_timer.stop()
             self._load_invoices()
 
     def _get_invoice_source(self, inv: dict) -> str:
@@ -1365,78 +1374,79 @@ class InvoiceReviewApp(QMainWindow):
         self._update_filter_counts(all_invoices)
 
         render_start = time.perf_counter()
+        self.table.setUpdatesEnabled(False)
         self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        for idx, inv in enumerate(self.invoices_list):
-            self.table.insertRow(idx)
+        try:
+            self.table.setRowCount(len(self.invoices_list))
+            for idx, inv in enumerate(self.invoices_list):
+                inv_num = str(inv.get("invoice_number") or "")
+                inv_date = str(inv.get("invoice_date") or "")
+                total_amt = str(inv.get("total_amount") or "")
+                category = str(inv.get("category") or "未分类")
+                seller = str(inv.get("seller_name") or "")
+                claim_name = str(inv.get("claim_name") or "")
+                attachment_path = str(inv.get("attachment_path") or "")
+                display_status = self._get_invoice_display_status(inv)
+                source_text = self._get_invoice_source(inv)
+                review_status = inv.get("review_status") or TO_REVIEW
+                quality = self._get_invoice_quality(inv)
+                buyer_check_warning = self._buyer_warning(inv)
 
-            inv_num = str(inv.get("invoice_number") or "")
-            inv_date = str(inv.get("invoice_date") or "")
-            total_amt = str(inv.get("total_amount") or "")
-            category = str(inv.get("category") or "未分类")
-            seller = str(inv.get("seller_name") or "")
-            claim_name = str(inv.get("claim_name") or "")
-            attachment_path = str(inv.get("attachment_path") or "")
-            display_status = self._get_invoice_display_status(inv)
-            source_text = self._get_invoice_source(inv)
-            review_status = inv.get("review_status") or TO_REVIEW
-            quality = self._get_invoice_quality(inv)
-            buyer_check_warning = self._buyer_warning(inv)
+                row_items = [
+                    display_status,
+                    inv_date or "—",
+                    total_amt or "—",
+                    inv_num or "—",
+                    seller or "—",
+                    category or "未分类",
+                    source_text,
+                    claim_name or "—",
+                ]
 
-            row_items = [
-                display_status,
-                inv_date or "—",
-                total_amt or "—",
-                inv_num or "—",
-                seller or "—",
-                category or "未分类",
-                source_text,
-                claim_name or "—",
-            ]
+                for col, text in enumerate(row_items):
+                    item = QTableWidgetItem(text)
 
-            for col, text in enumerate(row_items):
-                item = QTableWidgetItem(text)
+                    if col == 2:
+                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    elif col == 0:
+                        if display_status == "已通过":
+                            item.setForeground(QColor("#059669"))
+                        elif display_status == "已忽略":
+                            item.setForeground(QColor("#6B7280"))
+                        elif display_status == "异常":
+                            item.setForeground(QColor("#DC2626"))
+                        elif display_status == "待补全":
+                            item.setForeground(QColor("#D97706"))
+                        elif display_status == "未识别":
+                            item.setForeground(QColor("#D97706"))
+                        else:
+                            item.setForeground(QColor("#D97706"))
+                        item.setToolTip(f"审核状态: {review_status}\\n数据质量: {quality or '正常'}")
+                    elif col == 3 and inv_num:
+                        item.setToolTip(inv_num)
+                    elif col == 4 and seller:
+                        item.setToolTip(seller)
+                    elif col == 6 and attachment_path:
+                        item.setToolTip(attachment_path)
+                    elif col == 7 and claim_name:
+                        item.setToolTip(claim_name)
 
-                if col == 2:
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                elif col == 0:
-                    if display_status == "已通过":
-                        item.setForeground(QColor("#059669"))
-                    elif display_status == "已忽略":
-                        item.setForeground(QColor("#6B7280"))
-                    elif display_status == "异常":
-                        item.setForeground(QColor("#DC2626"))
-                    elif display_status == "待补全":
-                        item.setForeground(QColor("#D97706"))
-                    elif display_status == "未识别":
-                        item.setForeground(QColor("#D97706"))
-                    else:
-                        item.setForeground(QColor("#D97706"))
-                    item.setToolTip(f"审核状态: {review_status}\\n数据质量: {quality or '正常'}")
-                elif col == 3 and inv_num:
-                    item.setToolTip(inv_num)
-                elif col == 4 and seller:
-                    item.setToolTip(seller)
-                elif col == 6 and attachment_path:
-                    item.setToolTip(attachment_path)
-                elif col == 7 and claim_name:
-                    item.setToolTip(claim_name)
+                    if buyer_check_warning:
+                        item.setBackground(QColor("#FEF3C7"))
+                        existing_tip = item.toolTip()
+                        item.setToolTip(f"{existing_tip}\n{buyer_check_warning}" if existing_tip else buyer_check_warning)
 
-                if buyer_check_warning:
-                    item.setBackground(QColor("#FEF3C7"))
-                    existing_tip = item.toolTip()
-                    item.setToolTip(f"{existing_tip}\n{buyer_check_warning}" if existing_tip else buyer_check_warning)
-
-                self.table.setItem(idx, col, item)
-
-        self.table.blockSignals(False)
-        render_elapsed_ms = int((time.perf_counter() - render_start) * 1000)
+                    self.table.setItem(idx, col, item)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+            render_elapsed_ms = int((time.perf_counter() - render_start) * 1000)
 
         if len(self.invoices_list) == 0:
             # Check if total records in DB is 0
             total_in_db = 0
             try:
-                total_in_db = len(self.db.list_invoices(status=None, include_deleted=True))
+                total_in_db = self.db.count_invoices(include_deleted=True)
             except Exception:
                 pass
 
