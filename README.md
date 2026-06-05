@@ -41,11 +41,7 @@ python -m scripts.invoice_fetch --help
 python -m scripts.invoice_fetch --import-dir .\your_invoices_path
 ```
 
-邮箱凭据建议存入 Windows Credential Manager：
-
-```powershell
-cmdkey /generic:invoice_mail_auth_code /user:your_email@example.com /pass:<IMAP授权码或应用专用密码>
-```
+邮箱授权码不应写入 `config.json`。桌面应用会优先从 Windows Credential Manager 读取本机凭据；如需手工配置，请参考项目文档中的凭据设置说明。
 
 ## 解决什么问题
 
