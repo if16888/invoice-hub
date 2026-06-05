@@ -2772,6 +2772,61 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_search_uses_debounce_timer(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_search_debounce.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "DEBOUNCE001",
+                        "total_amount": "10.00",
+                        "seller_name": "Debounce Seller",
+                        "invoice_date": "2026-06-01",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    self.assertTrue(hasattr(window, "search_reload_timer"))
+                    self.assertTrue(window.search_reload_timer.isSingleShot())
+                    self.assertGreaterEqual(window.search_reload_timer.interval(), 250)
+                    self.assertLessEqual(window.search_reload_timer.interval(), 300)
+
+                    load_count = 0
+                    original_load = window._load_invoices
+
+                    def spy_load():
+                        nonlocal load_count
+                        load_count += 1
+                        original_load()
+
+                    window._load_invoices = spy_load
+                    window.txt_search.setText("missing")
+                    app.processEvents()
+                    self.assertEqual(load_count, 0)
+
+                    window.search_reload_timer.stop()
+                    window._load_invoices()
+                    self.assertEqual(window.table.rowCount(), 0)
+                    self.assertEqual(window.lbl_empty_title.text(), "当前筛选没有匹配记录")
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_scan_finished_builds_actionable_summary(self):
         try:
             from PySide6.QtWidgets import QApplication
@@ -2871,6 +2926,64 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 1)
                     self.assertEqual(window.table.item(0, 3).text(), "SEARCH002")
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_empty_search_result_uses_count_for_nonempty_database(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_empty_search_count.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "COUNTEMPTY001",
+                        "total_amount": "30.90",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-06-01",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+
+                    count_calls = []
+                    original_count = window.db.count_invoices
+                    original_list = window.db.list_invoices
+
+                    def spy_count(*args, **kwargs):
+                        count_calls.append(kwargs.get("include_deleted", False))
+                        return original_count(*args, **kwargs)
+
+                    def guarded_list(*args, **kwargs):
+                        if kwargs.get("status") is None and kwargs.get("include_deleted") is True:
+                            raise AssertionError("empty-state count must not fetch all invoices")
+                        return original_list(*args, **kwargs)
+
+                    window.db.count_invoices = spy_count
+                    window.db.list_invoices = guarded_list
+                    window.txt_search.setText("no-match")
+                    window.search_reload_timer.stop()
+                    window._load_invoices()
+
+                    self.assertEqual(window.table.rowCount(), 0)
+                    self.assertEqual(window.lbl_empty_title.text(), "当前筛选没有匹配记录")
+                    self.assertIn(True, count_calls)
+                    self.assertFalse(window.table.signalsBlocked())
+                    self.assertTrue(window.table.updatesEnabled())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
