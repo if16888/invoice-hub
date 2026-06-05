@@ -327,6 +327,52 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_preview_logs_large_image_and_uses_resize_debounce(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            large_img = self.temp_dir / "large-preview.png"
+            with open(large_img, "wb") as f:
+                f.seek((9 * 1024 * 1024) - 1)
+                f.write(b"\0")
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            logs = []
+            window.write_log = logs.append
+            try:
+                self.assertTrue(window.image_resize_timer.isSingleShot())
+                self.assertEqual(window.image_resize_timer.interval(), 80)
+
+                window.current_preview_docs = [{
+                    "path": large_img,
+                    "title": "测试图片",
+                    "basename": large_img.name,
+                }]
+                window.current_preview_index = 0
+                window._update_document_preview()
+                app.processEvents()
+
+                self.assertTrue(any("[性能] 大图预览可能较慢" in line for line in logs))
+                self.assertTrue(any("[性能] 原件预览: type=.png" in line for line in logs))
+                self.assertTrue(any("fallback=1" in line for line in logs))
+
+                window._schedule_image_display_update()
+                self.assertTrue(window.image_resize_timer.isActive())
+                window.image_resize_timer.stop()
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_preview_zoom_methods(self):
         try:
             from PySide6.QtWidgets import QApplication

@@ -652,9 +652,10 @@ class InvoiceDB:
 
     def count_invoices(self, include_deleted: bool = False) -> int:
         if include_deleted:
-            return self._conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices").fetchone()
         else:
-            return self._conn.execute("SELECT COUNT(*) FROM invoices WHERE is_deleted = 0").fetchone()[0]
+            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices WHERE is_deleted = 0").fetchone()
+        return int(row["cnt"] if row else 0)
 
     def count_processed(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM processed_emails").fetchone()[0]

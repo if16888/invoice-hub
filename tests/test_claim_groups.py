@@ -1415,6 +1415,77 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertIn("synthetic parser failure", res["failed_summaries"][0])
             self.assertTrue(any("Failed to process" in line for line in logs))
 
+    def test_scan_email_uses_count_invoices_for_new_duplicate_stats(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_email_count_stats.db"
+            config_file = Path(td) / "config.json"
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "email": {"address": "synthetic_user@qq.com"},
+                    "imap": {"server": "imap.qq.com", "port": 993},
+                    "search": {"folder": "INBOX", "months_back": 1},
+                    "ai": {"provider": "none"},
+                    "categories": {},
+                }, f)
+
+            with InvoiceDB(db_path) as db:
+                db.bulk_upsert_emails([{
+                    "uid": 2001,
+                    "subject": "Synthetic invoice mail",
+                    "sender": "billing@example.com",
+                    "date": "2026-06-04",
+                }])
+                db.classify_email(2001, True, by="test", reason="synthetic")
+
+            def fake_handle_pending_email(**kwargs):
+                db = kwargs["db"]
+                db.insert_invoice({
+                    "invoice_number": "COUNTSTAT001",
+                    "total_amount": "88.00",
+                    "seller_name": "Synthetic Seller",
+                    "invoice_date": "2026-06-04",
+                })
+                return True
+
+            count_calls = []
+            original_count_invoices = InvoiceDB.count_invoices
+
+            def spy_count_invoices(self, *args, **kwargs):
+                count_calls.append(True)
+                return original_count_invoices(self, *args, **kwargs)
+
+            with patch("scripts.invoice_fetch.services.has_auth_code", return_value=True), \
+                 patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services.export_excel"), \
+                 patch("scripts.invoice_fetch.db.InvoiceDB.count_invoices", spy_count_invoices), \
+                 patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email):
+                res = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                )
+
+            self.assertEqual(res["classified_invoice"], 1)
+            self.assertEqual(res["downloaded"], 1)
+            self.assertEqual(res["new"], 1)
+            self.assertEqual(res["duplicates"], 0)
+            self.assertEqual(res["pending_manual"], 0)
+            self.assertEqual(res["failed"], 0)
+            self.assertGreaterEqual(len(count_calls), 2)
+
     def test_services_import_local_invalid_folder_is_gui_safe(self):
         from scripts.invoice_fetch.services import import_local_directory
         with tempfile.TemporaryDirectory() as td:
