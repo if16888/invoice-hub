@@ -2529,7 +2529,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     ]
                     actions = [a for a in window.more_menu.actions() if not a.isSeparator()]
                     self.assertEqual([a.text() for a in actions], expected)
+                    forbidden_menu_prefixes = ("🔄", "📁", "🧾", "ℹ️", "💾", "❔", "⚙️")
                     for action in actions:
+                        for prefix in forbidden_menu_prefixes:
+                            self.assertNotIn(prefix, action.text())
                         self.assertFalse(action.icon().isNull(), action.text())
 
                     about_text = window._about_text()
@@ -2538,11 +2541,89 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("Data directory:", about_text)
                     self.assertIn("Log directory:", about_text)
                     self.assertEqual(window.btn_import_local.property("class"), "PrimaryBtn")
-                    self.assertEqual(window.btn_scan_email.property("class"), "PrimaryBtn")
+                    self.assertEqual(window.btn_scan_email.property("class"), "SecondaryBtn")
                     self.assertEqual(window.btn_mobile_upload.property("class"), "SecondaryBtn")
                     self.assertEqual(window.btn_toolbar_export.property("class"), "SecondaryBtn")
                     self.assertIn("购买方", window.txt_search.placeholderText())
                     self.assertIn("金额", window.txt_search.placeholderText())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_button_color_hierarchy_uses_single_toolbar_primary(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_button_hierarchy.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                from scripts.invoice_fetch.gui.styles import (
+                    ACTIVE_FILTER_STYLE,
+                    APP_STYLESHEET,
+                    DISABLED_BUTTON_STYLE,
+                    FILTER_BUTTON_STYLE,
+                    MENU_STYLE,
+                    PRIMARY_BUTTON_STYLE,
+                    SECONDARY_BUTTON_STYLE,
+                )
+
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    app.processEvents()
+                    toolbar_buttons = [
+                        window.btn_import_local,
+                        window.btn_mobile_upload,
+                        window.btn_scan_email,
+                        window.btn_toolbar_export,
+                        window.btn_more,
+                    ]
+                    self.assertEqual(
+                        [btn.property("class") for btn in toolbar_buttons].count("PrimaryBtn"),
+                        1,
+                    )
+                    self.assertEqual(window.btn_import_local.property("class"), "PrimaryBtn")
+                    self.assertEqual(window.btn_mobile_upload.property("class"), "SecondaryBtn")
+                    self.assertEqual(window.btn_scan_email.property("class"), "SecondaryBtn")
+                    self.assertEqual(window.btn_toolbar_export.property("class"), "SecondaryBtn")
+                    self.assertEqual(window.btn_more.property("class"), "SecondaryBtn")
+
+                    empty_buttons = [
+                        window.empty_btn_import,
+                        window.empty_btn_mobile_upload,
+                        window.empty_btn_settings,
+                        window.empty_btn_scan,
+                    ]
+                    self.assertNotIn("PrimaryBtn", [btn.property("class") for btn in empty_buttons])
+                    for btn in empty_buttons:
+                        self.assertEqual(btn.property("class"), "SecondaryBtn")
+
+                    self.assertEqual(window.filter_buttons["all"].property("class"), "FilterBtn")
+                    self.assertTrue(window.filter_buttons["all"].isChecked())
+                    self.assertIn(PRIMARY_BUTTON_STYLE, APP_STYLESHEET)
+                    self.assertIn(SECONDARY_BUTTON_STYLE, APP_STYLESHEET)
+                    self.assertIn(FILTER_BUTTON_STYLE, APP_STYLESHEET)
+                    self.assertIn(ACTIVE_FILTER_STYLE, APP_STYLESHEET)
+                    self.assertIn(DISABLED_BUTTON_STYLE, APP_STYLESHEET)
+                    self.assertIn("QPushButton.FilterBtn:checked", APP_STYLESHEET)
+                    self.assertIn("background-color: #EFF6FF;", APP_STYLESHEET)
+                    self.assertIn("color: #2563EB;", APP_STYLESHEET)
+                    self.assertIn("border: 1px solid #93C5FD;", APP_STYLESHEET)
+                    self.assertIn(MENU_STYLE, APP_STYLESHEET)
+                    self.assertIn("QMenu::item", MENU_STYLE)
+                    self.assertIn("min-height: 28px;", MENU_STYLE)
+                    self.assertIn("padding: 6px 24px 6px 16px;", MENU_STYLE)
+                    self.assertIn("QMenu::icon", MENU_STYLE)
+                    self.assertIn("padding-left: 8px;", MENU_STYLE)
+                    self.assertIn("background-color: #F3F4F6;", MENU_STYLE)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
