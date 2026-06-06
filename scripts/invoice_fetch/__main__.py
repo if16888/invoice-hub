@@ -669,6 +669,13 @@ def _attach_email_extras_to_invoice(
         db.update_invoice_file_paths(invoice_id, extra_paths=current_extras)
         _log.info("  已为发票 %s 关联/追加额外的证明材料: %s", invoice_id, current_extras)
 
+    if current_extras:
+        db.update_invoice_extra_flags(
+            invoice_id,
+            has_extra=True,
+            missing_extra=False,
+        )
+
     return current_extras
 
 
@@ -1428,7 +1435,7 @@ def _process_email(
                             recorded += 1
                             _log.info("  已入库海外凭证/收据: %s", mask_filename(dl.filename))
                         continue
-                    _log.warning("  下载的 PDF 解析失败 (不是有效的发票 file): %s", redact_text(info.parse_note, "parse_note"))
+                    _log.warning("  下载的 PDF 解析失败 (不是有效的发票文件): %s", redact_text(info.parse_note, "parse_note"))
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
                     continue
@@ -1452,7 +1459,7 @@ def _process_email(
                         if repaired_attachment_path:
                             kept_paths.add(str((att_handler._base.parent / repaired_attachment_path).resolve()))
 
-                    repaired_extra_paths = []
+                    repaired_extra_paths = _normalize_path_list(existing.get("extra_paths"))
                     if extra_files:
                         code = info.invoice_code or info.invoice_number
                         repaired_extra_paths = _attach_email_extras_to_invoice(
@@ -1480,9 +1487,9 @@ def _process_email(
                         buyer_name=info.buyer_name,
                         invoice_type=info.invoice_type,
                         category=category,
-                        has_extra=bool(extra_files) if extra_req else False,
+                        has_extra=bool(repaired_extra_paths),
                         extra_type=extra_type,
-                        missing_extra=extra_req and not bool(extra_files or repaired_extra_paths),
+                        missing_extra=extra_req and not bool(repaired_extra_paths),
                         parse_note=info.parse_note or "链接下载",
                     ):
                         if repaired_attachment_path:
@@ -1650,7 +1657,7 @@ def _process_email(
                 if repaired_attachment_path:
                     kept_paths.add(str((att_handler._base.parent / repaired_attachment_path).resolve()))
 
-            repaired_extra_paths = []
+            repaired_extra_paths = _normalize_path_list(existing.get("extra_paths"))
             if extra_files:
                 code = info.invoice_code or info.invoice_number
                 repaired_extra_paths = _attach_email_extras_to_invoice(
@@ -1678,9 +1685,9 @@ def _process_email(
                 buyer_name=info.buyer_name,
                 invoice_type=info.invoice_type,
                 category=cat,
-                has_extra=bool(extra_files) if extra_req else False,
+                has_extra=bool(repaired_extra_paths),
                 extra_type=extra_type,
-                missing_extra=extra_req and not bool(extra_files or repaired_extra_paths),
+                missing_extra=extra_req and not bool(repaired_extra_paths),
                 parse_note=info.parse_note,
             ):
                 if repaired_attachment_path:

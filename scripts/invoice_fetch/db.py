@@ -421,8 +421,15 @@ class InvoiceDB:
 
         invoice_ids = [int(row["id"]) for row in rows]
         id_placeholders = ", ".join("?" for _ in invoice_ids)
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(invoices)").fetchall()
+        }
+        assignments = "is_deleted = 0"
+        if "updated_at" in columns:
+            assignments += ", updated_at = CURRENT_TIMESTAMP"
         self._conn.execute(
-            f"UPDATE invoices SET is_deleted = 0 WHERE id IN ({id_placeholders})",
+            f"UPDATE invoices SET {assignments} WHERE id IN ({id_placeholders})",
             tuple(invoice_ids),
         )
         self._conn.commit()
@@ -621,6 +628,23 @@ class InvoiceDB:
         self._conn.execute(
             f"UPDATE invoices SET {', '.join(fields)} WHERE id = ?",
             values,
+        )
+        self._conn.commit()
+        return True
+
+    def update_invoice_extra_flags(
+        self,
+        invoice_id: int,
+        *,
+        has_extra: bool,
+        missing_extra: bool,
+    ) -> bool:
+        """Synchronize evidence flags without changing parsed invoice metadata."""
+        if not self.get_invoice(invoice_id):
+            return False
+        self._conn.execute(
+            "UPDATE invoices SET has_extra = ?, missing_extra = ? WHERE id = ?",
+            (int(bool(has_extra)), int(bool(missing_extra)), invoice_id),
         )
         self._conn.commit()
         return True

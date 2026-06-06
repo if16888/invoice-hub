@@ -33,6 +33,34 @@ def _multipart_body(files: list[tuple[str, bytes, str]]) -> tuple[bytes, str]:
 
 
 class MobileUploadTests(unittest.TestCase):
+    def test_batch_restore_updates_updated_at_when_column_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "invoices.db"
+            with InvoiceDB(db_path) as db:
+                db._conn.execute("ALTER TABLE invoices ADD COLUMN updated_at TEXT")
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "RESTORE-TIME-001",
+                    "total_amount": "10.00",
+                    "seller_name": "Synthetic Seller",
+                    "file_hash": "synthetic-restore-hash",
+                })
+                self.assertTrue(db.soft_delete_invoice(invoice_id))
+                db._conn.execute(
+                    "UPDATE invoices SET updated_at = ? WHERE id = ?",
+                    ("2000-01-01 00:00:00", invoice_id),
+                )
+                db._conn.commit()
+
+                restored = db.restore_deleted_invoices_by_file_hashes(
+                    {"synthetic-restore-hash"}
+                )
+                row = db.get_invoice(invoice_id)
+
+            self.assertEqual(restored, {"synthetic-restore-hash"})
+            self.assertEqual(row["is_deleted"], 0)
+            self.assertTrue(row["updated_at"])
+            self.assertNotEqual(row["updated_at"], "2000-01-01 00:00:00")
+
     def test_duplicate_hash_restore_uses_one_database_connection_per_batch(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_dir = Path(td) / "runtime"

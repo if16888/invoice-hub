@@ -1743,6 +1743,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     "seller_name": "科技有限公司",
                     "invoice_type": "电子发票",
                     "category": "过路费",
+                    "has_extra": False,
+                    "missing_extra": True,
                     "attachment_path": "",
                     "extra_paths": [],
                     "mail_uid": 4050,
@@ -1771,6 +1773,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(row["extra_paths"]) if isinstance(row["extra_paths"], str) else row["extra_paths"]
             self.assertEqual(len(extra_paths), 1)
             self.assertTrue((runtime / extra_paths[0]).exists())
+            self.assertTrue(row["has_extra"])
+            self.assertFalse(row["missing_extra"])
 
     def test_process_email_updates_existing_invoice_by_number_and_amount(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2251,6 +2255,71 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(rows[0]["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
             self.assertIn("DIDI999888_ex.pdf", extra_paths[0].replace("\\", "/"))
+            self.assertTrue(rows[0]["has_extra"])
+            self.assertFalse(rows[0]["missing_extra"])
+
+    def test_link_downloaded_invoice_with_email_extra_updates_extra_flags(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir(parents=True)
+
+            downloaded_file = base / "downloaded-invoice.pdf"
+            downloaded_file.write_bytes(b"%PDF-downloaded-invoice")
+            extra_file = base / "用车明细.pdf"
+            extra_file.write_bytes(b"%PDF-trip-detail")
+
+            class StaticLinkDownloader:
+                def download_from_email(self, *args, **kwargs):
+                    return [
+                        DownloadedFile(
+                            url="https://example.invalid/synthetic-invoice",
+                            file_path=str(downloaded_file),
+                            filename=downloaded_file.name,
+                            size=downloaded_file.stat().st_size,
+                            is_invoice=True,
+                        )
+                    ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "电子发票及用车明细"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            attachment = Attachment(
+                file_path=str(extra_file),
+                original_name="用车明细.pdf",
+                content_type="application/pdf",
+                size=extra_file.stat().st_size,
+                is_invoice=False,
+                is_extra=True,
+            )
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="LINK-EXTRA-001",
+                invoice_code="LINKCODE001",
+                invoice_date="2026-05-18",
+                total_amount="88.00",
+                seller_name="Synthetic Mobility Seller",
+                invoice_type="电子发票",
+                parse_success=True,
+            ))
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=cli.MailMessage(uid=102, raw_msg=msg),
+                    att_handler=StaticAttachmentHandler(attachments_dir, [attachment]),
+                    parser=parser,
+                    link_dl=StaticLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(json.loads(rows[0]["extra_paths"])), 1)
+            self.assertTrue(rows[0]["has_extra"])
+            self.assertFalse(rows[0]["missing_extra"])
 
     def test_duplicate_email_scanning_does_not_duplicate_extra_paths(self):
         """测试 3：重复扫描同一封邮件不重复 extra_paths"""
