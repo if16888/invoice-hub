@@ -1762,6 +1762,88 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(rows[0]["invoice_type"], "海外凭证/收据")
             self.assertFalse(rows[0]["missing_extra"])
 
+    def test_unbalanced_parentheses_repair_seller(self):
+        """测试 1：缺中文右括号时自动补全"""
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "销售方名称：南京市钾程水饺店（有限合伙",
+            "统一社会信用代码：91320000123456789A",
+            "购买方名称：远景智能零碳（江苏）科技有限公司",
+            "发票号码：2632200002260046326",
+            "开票日期：2026年03月24日",
+            "价税合计（小写）¥30.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+        self.assertTrue(info.parse_success)
+        self.assertEqual(info.seller_name, "南京市钾程水饺店（有限合伙）")
+        self.assertEqual(info.buyer_name, "远景智能零碳（江苏）科技有限公司")
+
+    def test_balanced_parentheses_no_double_repair(self):
+        """测试 2：完整括号不重复补"""
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "销售方名称：南京市钾程水饺店（有限合伙）",
+            "统一社会信用代码：91320000123456789A",
+            "购买方名称：远景智能零碳（江苏）科技有限公司",
+            "发票号码：2632200002260046326",
+            "开票日期：2026年03月24日",
+            "价税合计（小写）¥30.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+        self.assertTrue(info.parse_success)
+        self.assertEqual(info.seller_name, "南京市钾程水饺店（有限合伙）")
+
+    def test_unbalanced_english_parentheses_repair(self):
+        """测试 3：英文括号缺失时也能补"""
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "销售方名称：南京市钾程水饺店(有限合伙",
+            "统一社会信用代码：91320000123456789A",
+            "购买方名称：远景智能零碳（江苏）科技有限公司",
+            "发票号码：2632200002260046326",
+            "开票日期：2026年03月24日",
+            "价税合计（小写）¥30.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+        self.assertTrue(info.parse_success)
+        self.assertEqual(info.seller_name, "南京市钾程水饺店(有限合伙)")
+
+    def test_unbalanced_parentheses_no_repair_for_general_remarks(self):
+        """测试 4：不应乱补普通文本"""
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "销售方名称：南京市钾程水饺店（测试数据",
+            "统一社会信用代码：91320000123456789A",
+            "购买方名称：远景智能零碳（江苏）科技有限公司",
+            "发票号码：2632200002260046326",
+            "开票日期：2026年03月24日",
+            "价税合计（小写）¥30.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+        self.assertTrue(info.parse_success)
+        # 括号内不是组织后缀，不应补右括号
+        self.assertEqual(info.seller_name, "南京市钾程水饺店（测试数据")
+
 
 if __name__ == "__main__":
     unittest.main()

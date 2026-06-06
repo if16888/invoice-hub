@@ -267,8 +267,11 @@ class InvoiceParser:
                 info.seller_name = "中国国家铁路集团有限公司"
                 info.invoice_type = "铁路电子客票"
 
-            # Cross validation: buyer and seller should not be identical or contain each other
+            # Repair unbalanced parentheses
+            info.seller_name = InvoiceParser._repair_company_name(info.seller_name)
+            info.buyer_name = InvoiceParser._repair_company_name(info.buyer_name)
 
+            # Cross validation: buyer and seller should not be identical or contain each other
             if info.buyer_name and info.seller_name:
                 if info.buyer_name == info.seller_name or info.buyer_name in info.seller_name or info.seller_name in info.buyer_name:
                     # Resolve identity: Usually buyer is correct (first matched/payer)
@@ -284,6 +287,10 @@ class InvoiceParser:
                         info.seller_name = filtered[-1]
                     else:
                         info.seller_name = ""
+
+            # Repair again after possible cross-validation update
+            info.seller_name = InvoiceParser._repair_company_name(info.seller_name)
+            info.buyer_name = InvoiceParser._repair_company_name(info.buyer_name)
 
             info.invoice_type = self._invoice_type(text)
 
@@ -302,6 +309,25 @@ class InvoiceParser:
             _log.error("PDF 解析出错 %s: %s", mask_path(path), exc)
 
         return info
+
+    @staticmethod
+    def _repair_company_name(name: str) -> str:
+        name = re.sub(r"\s+", "", str(name or "").strip())
+        name = name.strip(",:：，,。；; ")
+
+        # 中文括号：有“（”但没有“）”，且括号内内容像合法组织后缀时，补“）”
+        if name.count("（") > name.count("）"):
+            tail = name.rsplit("（", 1)[-1]
+            if tail and re.search(r"(有限合伙|合伙企业|有限公司|有限责任公司|股份有限公司|分公司|门店|店|公司|工作室|商行|馆|部|厂)$", tail):
+                name += "）"
+
+        # 英文括号：有“(”但没有“)”，且括号内内容像合法组织后缀时，补“)”
+        if name.count("(") > name.count(")"):
+            tail = name.rsplit("(", 1)[-1]
+            if tail and re.search(r"(有限合伙|合伙企业|有限公司|有限责任公司|股份有限公司|分公司|门店|店|公司|工作室|商行|馆|部|厂)$", tail):
+                name += ")"
+
+        return name
 
     # ── Internal ─────────────────────────────────────────────────────
 
@@ -362,6 +388,7 @@ class InvoiceParser:
                 n = re.sub(r"^(?:方名称|方信息|名\s*称|信息|名称|方)?[:：]?", "", m[1].strip())
                 n = re.sub(r"\s+", "", n)
                 n = n.strip(",:：，,。；; ")
+                n = InvoiceParser._repair_company_name(n)
                 if len(n) <= 80 and InvoiceParser._is_company_like(n):
                     return n
         return ""
