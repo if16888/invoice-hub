@@ -439,11 +439,16 @@ class MobileUploadTests(unittest.TestCase):
             dialog = None
             try:
                 self.assertTrue(hasattr(window, "btn_mobile_upload"))
-                self.assertEqual(window.btn_mobile_upload.text(), "📱 扫码上传")
+                self.assertEqual(window.btn_mobile_upload.text(), "扫码上传")
 
                 dialog = MobileUploadDialog(window, db_path)
                 self.assertIn("/u/", dialog.txt_url.text())
                 self.assertTrue(dialog.btn_stop.isEnabled())
+                self.assertEqual(dialog.property("class"), "WorkflowDialog")
+                self.assertEqual(dialog.lbl_status.property("class"), "DialogInfo")
+                self.assertEqual(dialog.lbl_qr.property("class"), "QrPanel")
+                self.assertEqual(dialog.btn_copy_url.property("class"), "SecondaryBtn")
+                self.assertEqual(dialog.btn_stop.property("class"), "DangerOutlineBtn")
                 # Verify WeChat tip is included in the dialog status text
                 self.assertIn("微信扫码", dialog.lbl_status.text())
                 self.assertIn("在浏览器打开", dialog.lbl_status.text())

@@ -206,34 +206,34 @@ class InvoiceReviewApp(QMainWindow):
         action_layout = QHBoxLayout()
         action_layout.setSpacing(8)
 
-        self.btn_import_local = QPushButton("📁 导入发票")
+        self.btn_import_local = QPushButton("导入发票")
         self.btn_import_local.clicked.connect(self._import_local_clicked)
         self.btn_import_local.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_import_local.setProperty("class", "PrimaryBtn")
+        self.btn_import_local.setProperty("class", "ToolbarActionBtn")
         action_layout.addWidget(self.btn_import_local)
 
-        self.btn_mobile_upload = QPushButton("📱 扫码上传")
+        self.btn_mobile_upload = QPushButton("扫码上传")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         self.btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_mobile_upload.setProperty("class", "SecondaryBtn")
+        self.btn_mobile_upload.setProperty("class", "ToolbarActionBtn")
         action_layout.addWidget(self.btn_mobile_upload)
 
-        self.btn_scan_email = QPushButton("📧 扫描邮箱")
+        self.btn_scan_email = QPushButton("扫描邮箱")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
         self.btn_scan_email.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_scan_email.setProperty("class", "SecondaryBtn")
+        self.btn_scan_email.setProperty("class", "ToolbarActionBtn")
         action_layout.addWidget(self.btn_scan_email)
 
-        self.btn_toolbar_export = QPushButton("🚀 一键导出")
+        self.btn_toolbar_export = QPushButton("一键导出")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
         self.btn_toolbar_export.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_toolbar_export.setProperty("class", "SecondaryBtn")
+        self.btn_toolbar_export.setProperty("class", "ToolbarActionBtn")
         action_layout.addWidget(self.btn_toolbar_export)
 
         # "更多  ▼" consolidated drop-down menu
         self.btn_more = QPushButton("更多  ▼")
         self.btn_more.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_more.setProperty("class", "SecondaryBtn")
+        self.btn_more.setProperty("class", "ToolbarActionBtn")
 
         self.more_menu = QMenu(self)
         self.more_menu.setToolTipsVisible(True)
@@ -418,22 +418,22 @@ class InvoiceReviewApp(QMainWindow):
         btn_layout.setSpacing(10)
         btn_layout.setAlignment(Qt.AlignCenter)
 
-        self.empty_btn_import = QPushButton("📁 导入发票")
+        self.empty_btn_import = QPushButton("导入发票")
         self.empty_btn_import.clicked.connect(self._import_local_clicked)
         self.empty_btn_import.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.empty_btn_import.setProperty("class", "SecondaryBtn")
 
-        self.empty_btn_settings = QPushButton("⚙️ 配置邮箱")
+        self.empty_btn_settings = QPushButton("配置邮箱")
         self.empty_btn_settings.clicked.connect(self._open_settings_dialog)
         self.empty_btn_settings.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.empty_btn_settings.setProperty("class", "SecondaryBtn")
 
-        self.empty_btn_scan = QPushButton("📧 扫描邮箱")
+        self.empty_btn_scan = QPushButton("扫描邮箱")
         self.empty_btn_scan.clicked.connect(self._scan_email_clicked)
         self.empty_btn_scan.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.empty_btn_scan.setProperty("class", "SecondaryBtn")
 
-        self.empty_btn_mobile_upload = QPushButton("📱 扫码上传")
+        self.empty_btn_mobile_upload = QPushButton("扫码上传")
         self.empty_btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         self.empty_btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.empty_btn_mobile_upload.setProperty("class", "SecondaryBtn")
@@ -542,9 +542,11 @@ class InvoiceReviewApp(QMainWindow):
         self.summary_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         summary_layout = QVBoxLayout(self.summary_card)
         summary_layout.setContentsMargins(12, 12, 12, 12)
-        summary_layout.setSpacing(4)
+        summary_layout.setSpacing(6)
 
-        # Status badge (using soft colored label system)
+        summary_header = QHBoxLayout()
+        summary_header.setContentsMargins(0, 0, 0, 0)
+        summary_header.setSpacing(8)
         self.lbl_sum_status = QLabel("未选中发票")
         self.lbl_sum_status.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self.lbl_sum_status.setAlignment(Qt.AlignCenter)
@@ -555,71 +557,65 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_sum_amount = QLabel("¥—")
         self.lbl_sum_amount.setFont(QFont("Segoe UI", 18, QFont.Bold))
         self.lbl_sum_amount.setProperty("class", "SummaryAmount")
+        summary_header.addWidget(self.lbl_sum_amount)
+        summary_header.addStretch(1)
+        summary_header.addWidget(self.lbl_sum_status)
 
-        # Grid of core metadata for rapid scanning (using nested QHBoxLayouts)
-        metadata_row1 = QWidget()
-        row1_layout = QHBoxLayout(metadata_row1)
-        row1_layout.setContentsMargins(0, 0, 0, 0)
-        row1_layout.setSpacing(10)
+        summary_metadata = QWidget()
+        summary_metadata_layout = QGridLayout(summary_metadata)
+        summary_metadata_layout.setContentsMargins(0, 0, 0, 0)
+        summary_metadata_layout.setHorizontalSpacing(12)
+        summary_metadata_layout.setVerticalSpacing(3)
+        summary_metadata_layout.setColumnStretch(0, 1)
+        summary_metadata_layout.setColumnStretch(1, 1)
         self.lbl_sum_date = QLabel("开票日期: —")
         self.lbl_sum_date.setFont(QFont("Segoe UI", 9))
         self.lbl_sum_date.setProperty("class", "SummaryMeta")
         self.lbl_sum_category = QLabel("消费类型: —")
         self.lbl_sum_category.setFont(QFont("Segoe UI", 9))
         self.lbl_sum_category.setProperty("class", "SummaryMeta")
-        row1_layout.addWidget(self.lbl_sum_date, 1)
-        row1_layout.addWidget(self.lbl_sum_category, 1)
-
-        metadata_row2 = QWidget()
-        row2_layout = QHBoxLayout(metadata_row2)
-        row2_layout.setContentsMargins(0, 0, 0, 0)
-        row2_layout.setSpacing(10)
         self.lbl_sum_number = QLabel("发票号码: —")
         self.lbl_sum_number.setFont(QFont("Segoe UI", 9))
         self.lbl_sum_number.setProperty("class", "SummaryMeta")
         self.lbl_sum_seller = QLabel("销售方: —")
         self.lbl_sum_seller.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.lbl_sum_seller.setProperty("class", "SummarySeller")
-        row2_layout.addWidget(self.lbl_sum_number, 1)
-        row2_layout.addWidget(self.lbl_sum_seller, 1)
+        summary_metadata_layout.addWidget(self.lbl_sum_date, 0, 0)
+        summary_metadata_layout.addWidget(self.lbl_sum_category, 0, 1)
+        summary_metadata_layout.addWidget(self.lbl_sum_number, 1, 0)
+        summary_metadata_layout.addWidget(self.lbl_sum_seller, 1, 1)
 
-        # Quick Actions Row
         quick_layout = QHBoxLayout()
         quick_layout.setSpacing(6)
 
-        self.btn_sum_open_file = QPushButton("📁 查看文件")
+        self.btn_sum_open_file = QPushButton("查看文件")
         self.btn_sum_open_file.setProperty("class", "SecondaryBtn")
-        self.btn_sum_open_file.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_sum_open_file.clicked.connect(self._open_attachment)
         self.btn_sum_open_file.setEnabled(False)
+        self.btn_sum_open_file.setMaximumWidth(96)
 
-        self.btn_sum_copy_number = QPushButton("📋 复制号码")
+        self.btn_sum_copy_number = QPushButton("复制号码")
         self.btn_sum_copy_number.setProperty("class", "SecondaryBtn")
-        self.btn_sum_copy_number.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_sum_copy_number.clicked.connect(self._copy_invoice_number)
         self.btn_sum_copy_number.setEnabled(False)
+        self.btn_sum_copy_number.setMaximumWidth(96)
 
-        self.btn_sum_locate_file = QPushButton("📍 定位文件")
+        self.btn_sum_locate_file = QPushButton("定位文件")
         self.btn_sum_locate_file.setProperty("class", "SecondaryBtn")
-        self.btn_sum_locate_file.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_sum_locate_file.clicked.connect(self._locate_attachment)
         self.btn_sum_locate_file.setEnabled(False)
+        self.btn_sum_locate_file.setMaximumWidth(96)
 
         quick_layout.addWidget(self.btn_sum_open_file)
         quick_layout.addWidget(self.btn_sum_copy_number)
         quick_layout.addWidget(self.btn_sum_locate_file)
         quick_layout.addStretch()
 
-        summary_layout.addWidget(self.lbl_sum_status)
-        summary_layout.addWidget(self.lbl_sum_amount)
-        summary_layout.addWidget(metadata_row1)
-        summary_layout.addWidget(metadata_row2)
+        summary_layout.addLayout(summary_header)
+        summary_layout.addWidget(summary_metadata)
         self.lbl_buyer_warning = QLabel("")
         self.lbl_buyer_warning.setWordWrap(True)
-        self.lbl_buyer_warning.setStyleSheet(
-            "color: #92400E; background-color: #FEF3C7; border: 1px solid #FDE68A; "
-            "border-radius: 6px; padding: 4px;"
-        )
+        self.lbl_buyer_warning.setProperty("class", "InlineWarning")
         self.lbl_buyer_warning.setVisible(False)
         summary_layout.addWidget(self.lbl_buyer_warning)
         self.lbl_buyer_warning_hint = QLabel("可在下方“购买方名称”字段修正后保存。")
@@ -639,6 +635,15 @@ class InvoiceReviewApp(QMainWindow):
         tab_details_layout = QVBoxLayout(tab_details)
         tab_details_layout.setContentsMargins(10, 10, 10, 10)
         tab_details_layout.setSpacing(6)
+
+        self.detail_core_section = QFrame()
+        self.detail_core_section.setProperty("class", "DetailSection")
+        detail_core_layout = QVBoxLayout(self.detail_core_section)
+        detail_core_layout.setContentsMargins(10, 8, 10, 10)
+        detail_core_layout.setSpacing(6)
+        core_title = QLabel("核心信息")
+        core_title.setProperty("class", "SectionTitle")
+        detail_core_layout.addWidget(core_title)
 
         core_fields = QWidget()
         self.invoice_core_grid = QGridLayout(core_fields)
@@ -673,7 +678,8 @@ class InvoiceReviewApp(QMainWindow):
         add_core_field(1, 1, "消费类型:", self.combo_category)
         add_core_field(2, 0, "销售方名称:", self.txt_seller)
         add_core_field(2, 1, "购买方名称:", self.txt_buyer)
-        tab_details_layout.addWidget(core_fields)
+        detail_core_layout.addWidget(core_fields)
+        tab_details_layout.addWidget(self.detail_core_section)
 
         path_widget = QWidget()
         path_layout = QHBoxLayout(path_widget)
@@ -694,6 +700,15 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_supporting_docs.setMaximumHeight(54)
         self.txt_supporting_docs.setPlaceholderText("酒店水单、行程记录、支付截图等证明材料会显示在这里")
 
+        self.detail_files_section = QFrame()
+        self.detail_files_section.setProperty("class", "DetailSection")
+        detail_files_layout = QVBoxLayout(self.detail_files_section)
+        detail_files_layout.setContentsMargins(10, 8, 10, 10)
+        detail_files_layout.setSpacing(6)
+        files_title = QLabel("原件与证明材料")
+        files_title.setProperty("class", "SectionTitle")
+        detail_files_layout.addWidget(files_title)
+
         file_fields = QWidget()
         file_fields_layout = QFormLayout(file_fields)
         file_fields_layout.setContentsMargins(0, 0, 0, 0)
@@ -701,7 +716,8 @@ class InvoiceReviewApp(QMainWindow):
         file_fields_layout.setSpacing(4)
         file_fields_layout.addRow("原件文件:", path_widget)
         file_fields_layout.addRow("证明材料:", self.txt_supporting_docs)
-        tab_details_layout.addWidget(file_fields)
+        detail_files_layout.addWidget(file_fields)
+        tab_details_layout.addWidget(self.detail_files_section)
 
         self.btn_more_source = QToolButton()
         self.btn_more_source.setText("更多来源信息")
@@ -709,6 +725,7 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_more_source.setChecked(False)
         self.btn_more_source.setArrowType(Qt.RightArrow)
         self.btn_more_source.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.btn_more_source.setProperty("class", "Disclosure")
         self.btn_more_source.toggled.connect(self._toggle_more_source_info)
         tab_details_layout.addWidget(self.btn_more_source, 0, Qt.AlignLeft)
 
@@ -789,46 +806,72 @@ class InvoiceReviewApp(QMainWindow):
         tab_review_layout.setSpacing(8)
 
         self.lbl_batch_hint = QLabel("当前选中 1 张发票")
-        self.lbl_batch_hint.setStyleSheet("color: #2563EB; font-weight: bold;")
+        self.lbl_batch_hint.setProperty("class", "SectionHint")
         tab_review_layout.addWidget(self.lbl_batch_hint)
 
-        lbl_note_title = QLabel("审核备注:")
-        tab_review_layout.addWidget(lbl_note_title)
+        self.review_note_section = QFrame()
+        self.review_note_section.setProperty("class", "DetailSection")
+        review_note_layout = QVBoxLayout(self.review_note_section)
+        review_note_layout.setContentsMargins(10, 8, 10, 10)
+        review_note_layout.setSpacing(6)
+        lbl_note_title = QLabel("审核备注")
+        lbl_note_title.setProperty("class", "SectionTitle")
+        review_note_layout.addWidget(lbl_note_title)
 
         self.txt_note = QTextEdit()
-        self.txt_note.setMaximumHeight(80)
-        tab_review_layout.addWidget(self.txt_note)
+        self.txt_note.setMaximumHeight(72)
+        self.txt_note.setPlaceholderText("补充审核说明，可选")
+        review_note_layout.addWidget(self.txt_note)
+        tab_review_layout.addWidget(self.review_note_section)
 
+        self.review_actions_section = QFrame()
+        self.review_actions_section.setProperty("class", "DetailSection")
+        review_actions_layout = QVBoxLayout(self.review_actions_section)
+        review_actions_layout.setContentsMargins(10, 8, 10, 10)
+        review_actions_layout.setSpacing(8)
+        review_actions_title = QLabel("审核结果")
+        review_actions_title.setProperty("class", "SectionTitle")
+        review_actions_layout.addWidget(review_actions_title)
         btn_box = QHBoxLayout()
         btn_box.setSpacing(6)
 
         self.btn_app = QPushButton("通过并下一张")
-        self.btn_app.setProperty("class", "SuccessBtn")
+        self.btn_app.setProperty("class", "PrimaryBtn")
+        self.btn_app.setMaximumWidth(140)
         self.btn_app.clicked.connect(lambda: self._set_selected_status(APPROVED))
         btn_box.addWidget(self.btn_app)
 
         self.btn_ign = QPushButton("忽略")
-        self.btn_ign.setProperty("class", "IgnoredBtn")
+        self.btn_ign.setProperty("class", "SecondaryBtn")
+        self.btn_ign.setMaximumWidth(96)
         self.btn_ign.clicked.connect(lambda: self._set_selected_status(IGNORED))
         btn_box.addWidget(self.btn_ign)
 
         self.btn_err = QPushButton("异常")
-        self.btn_err.setProperty("class", "DangerBtn")
+        self.btn_err.setProperty("class", "DangerOutlineBtn")
+        self.btn_err.setMaximumWidth(96)
         self.btn_err.clicked.connect(lambda: self._set_selected_status(ERROR))
         btn_box.addWidget(self.btn_err)
 
         self.btn_rev = QPushButton("重置为待审核")
-        self.btn_rev.setProperty("class", "WarningOutlineBtn")
+        self.btn_rev.setProperty("class", "SecondaryBtn")
+        self.btn_rev.setMaximumWidth(132)
         self.btn_rev.clicked.connect(lambda: self._set_selected_status(TO_REVIEW))
         btn_box.addWidget(self.btn_rev)
+        btn_box.addStretch(1)
 
-        tab_review_layout.addLayout(btn_box)
+        review_actions_layout.addLayout(btn_box)
 
-        self.btn_delete_invoice = QPushButton("🗑️ 删除发票")
-        self.btn_delete_invoice.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FCA5A5; padding: 6px; font-weight: bold; border-radius: 4px;")
+        delete_row = QHBoxLayout()
+        delete_row.addStretch(1)
+        self.btn_delete_invoice = QPushButton("删除发票")
+        self.btn_delete_invoice.setProperty("class", "TextDangerBtn")
+        self.btn_delete_invoice.setMaximumWidth(96)
         self.btn_delete_invoice.clicked.connect(self._handle_detail_delete_clicked)
-        tab_review_layout.addWidget(self.btn_delete_invoice)
+        delete_row.addWidget(self.btn_delete_invoice)
+        review_actions_layout.addLayout(delete_row)
 
+        tab_review_layout.addWidget(self.review_actions_section)
         tab_review_layout.addStretch()
 
         self.detail_tabs.addTab(tab_review, "审核")
@@ -839,22 +882,34 @@ class InvoiceReviewApp(QMainWindow):
         tab_claim_layout.setContentsMargins(10, 10, 10, 10)
         tab_claim_layout.setSpacing(8)
 
+        self.claim_setup_section = QFrame()
+        self.claim_setup_section.setProperty("class", "DetailSection")
+        claim_setup_layout = QVBoxLayout(self.claim_setup_section)
+        claim_setup_layout.setContentsMargins(10, 8, 10, 10)
+        claim_setup_layout.setSpacing(6)
+        claim_setup_title = QLabel("报销组")
+        claim_setup_title.setProperty("class", "SectionTitle")
+        claim_setup_layout.addWidget(claim_setup_title)
+
         lbl_new_claim = QLabel("新建报销组:")
-        tab_claim_layout.addWidget(lbl_new_claim)
+        lbl_new_claim.setProperty("class", "SectionHint")
+        claim_setup_layout.addWidget(lbl_new_claim)
 
         claim_create_box = QHBoxLayout()
         claim_create_box.setSpacing(6)
         self.txt_new_claim = QLineEdit()
         self.txt_new_claim.setPlaceholderText("输入新报销组名称...")
         claim_create_box.addWidget(self.txt_new_claim, 1)
-        btn_create_claim = QPushButton("新建")
-        btn_create_claim.setProperty("class", "SecondaryBtn")
-        btn_create_claim.clicked.connect(self._create_claim)
-        claim_create_box.addWidget(btn_create_claim)
-        tab_claim_layout.addLayout(claim_create_box)
+        self.btn_create_claim = QPushButton("新建")
+        self.btn_create_claim.setProperty("class", "SecondaryBtn")
+        self.btn_create_claim.setMaximumWidth(80)
+        self.btn_create_claim.clicked.connect(self._create_claim)
+        claim_create_box.addWidget(self.btn_create_claim)
+        claim_setup_layout.addLayout(claim_create_box)
 
         lbl_link_claim = QLabel("关联已有报销组:")
-        tab_claim_layout.addWidget(lbl_link_claim)
+        lbl_link_claim.setProperty("class", "SectionHint")
+        claim_setup_layout.addWidget(lbl_link_claim)
 
         link_box = QHBoxLayout()
         link_box.setSpacing(6)
@@ -862,41 +917,51 @@ class InvoiceReviewApp(QMainWindow):
         self.combo_claims.currentIndexChanged.connect(self._update_claim_total)
         link_box.addWidget(self.combo_claims, 1)
 
-        btn_refresh_claims = QPushButton("🔄")
-        btn_refresh_claims.clicked.connect(self._load_claims)
-        btn_refresh_claims.setFont(QFont("Segoe UI", 9))
-        btn_refresh_claims.setMaximumWidth(40)
-        btn_refresh_claims.setProperty("class", "SecondaryBtn")
-        link_box.addWidget(btn_refresh_claims)
+        self.btn_refresh_claims = QPushButton("刷新")
+        self.btn_refresh_claims.clicked.connect(self._load_claims)
+        self.btn_refresh_claims.setMaximumWidth(72)
+        self.btn_refresh_claims.setProperty("class", "SecondaryBtn")
+        link_box.addWidget(self.btn_refresh_claims)
 
-        self.btn_add_to_claim = QPushButton("🔗 关联发票")
+        self.btn_add_to_claim = QPushButton("关联发票")
         self.btn_add_to_claim.clicked.connect(self._link_invoices_to_claim)
         self.btn_add_to_claim.setProperty("class", "SecondaryBtn")
+        self.btn_add_to_claim.setMaximumWidth(104)
         link_box.addWidget(self.btn_add_to_claim)
-        tab_claim_layout.addLayout(link_box)
+        claim_setup_layout.addLayout(link_box)
 
         self.lbl_claim_total = QLabel("当前报销组 0 张｜合计 ¥0.00")
-        self.lbl_claim_total.setStyleSheet("color: #4B5563; font-size: 12px;")
-        tab_claim_layout.addWidget(self.lbl_claim_total)
+        self.lbl_claim_total.setProperty("class", "SectionHint")
+        claim_setup_layout.addWidget(self.lbl_claim_total)
+        tab_claim_layout.addWidget(self.claim_setup_section)
 
-        # Export Buttons
+        self.claim_export_section = QFrame()
+        self.claim_export_section.setProperty("class", "DetailSection")
+        claim_export_layout = QVBoxLayout(self.claim_export_section)
+        claim_export_layout.setContentsMargins(10, 8, 10, 10)
+        claim_export_layout.setSpacing(8)
+        claim_export_title = QLabel("导出")
+        claim_export_title.setProperty("class", "SectionTitle")
+        claim_export_layout.addWidget(claim_export_title)
+
         export_btn_layout = QHBoxLayout()
         export_btn_layout.setSpacing(6)
+        export_btn_layout.addStretch(1)
 
-        self.btn_export = QPushButton("🚀 一键打包导出")
+        self.btn_export = QPushButton("一键打包导出")
         self.btn_export.setProperty("class", "PrimaryBtn")
+        self.btn_export.setMaximumWidth(140)
         self.btn_export.clicked.connect(self._export_claim_package)
-        export_btn_layout.addWidget(self.btn_export, 2)
+        export_btn_layout.addWidget(self.btn_export)
 
-        tab_claim_layout.addLayout(export_btn_layout)
+        claim_export_layout.addLayout(export_btn_layout)
 
         self.lbl_export_summary = QLabel()
-        self.lbl_export_summary.setStyleSheet(
-            "color: #4B5563; background-color: #F8FAFC; border: 1px solid #E5E7EB; "
-            "border-radius: 6px; padding: 8px; font-size: 12px;"
-        )
+        self.lbl_export_summary.setProperty("class", "InfoPanel")
+        self.lbl_export_summary.setWordWrap(True)
         self.lbl_export_summary.setText("<b>上一次导出结果：</b><br>暂无导出记录")
-        tab_claim_layout.addWidget(self.lbl_export_summary)
+        claim_export_layout.addWidget(self.lbl_export_summary)
+        tab_claim_layout.addWidget(self.claim_export_section)
         tab_claim_layout.addStretch()
 
         self.detail_tabs.addTab(tab_claim, "报销导出")
@@ -3578,6 +3643,7 @@ class MobileUploadDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("扫码上传")
         self.resize(420, 560)
+        self.setProperty("class", "WorkflowDialog")
         self.db_path = db_path
         self.server = None
         self.session = None
@@ -3588,10 +3654,11 @@ class MobileUploadDialog(QDialog):
         layout.setSpacing(10)
 
         title = QLabel("手机扫码上传")
-        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setProperty("class", "DialogTitle")
         layout.addWidget(title)
 
         self.lbl_status = QLabel("正在启动上传服务...")
+        self.lbl_status.setProperty("class", "DialogInfo")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
@@ -3604,9 +3671,9 @@ class MobileUploadDialog(QDialog):
         layout.addLayout(network_row)
 
         self.lbl_qr = QLabel()
+        self.lbl_qr.setProperty("class", "QrPanel")
         self.lbl_qr.setAlignment(Qt.AlignCenter)
         self.lbl_qr.setMinimumSize(240, 240)
-        self.lbl_qr.setFrameShape(QFrame.StyledPanel)
         layout.addWidget(self.lbl_qr)
 
         self.txt_url = QLineEdit()
@@ -3614,6 +3681,7 @@ class MobileUploadDialog(QDialog):
         layout.addWidget(self.txt_url)
 
         stats_box = QGroupBox("上传统计")
+        stats_box.setProperty("class", "CompactGroup")
         stats_layout = QFormLayout(stats_box)
         self.lbl_batch = QLabel("—")
         self.lbl_accepted = QLabel("0")
@@ -3634,8 +3702,9 @@ class MobileUploadDialog(QDialog):
         button_row.addWidget(self.btn_copy_url)
 
         self.btn_stop = QPushButton("停止服务")
-        self.btn_stop.setProperty("class", "WarningOutlineBtn")
+        self.btn_stop.setProperty("class", "DangerOutlineBtn")
         self.btn_stop.clicked.connect(self._stop_server)
+        button_row.addStretch()
         button_row.addWidget(self.btn_stop)
         layout.addLayout(button_row)
 
@@ -3826,17 +3895,7 @@ class SettingsDialog(QDialog):
         # Step Indicator
         self.lbl_step_indicator = QLabel()
         self.lbl_step_indicator.setAlignment(Qt.AlignCenter)
-        self.lbl_step_indicator.setStyleSheet("""
-            QLabel {
-                color: #1E3A8A;
-                font-weight: bold;
-                font-size: 13px;
-                background-color: #EFF6FF;
-                border: 1px solid #BFDBFE;
-                border-radius: 6px;
-                padding: 10px;
-            }
-        """)
+        self.lbl_step_indicator.setProperty("class", "WizardSteps")
         layout.addWidget(self.lbl_step_indicator)
 
         # Stacked Widget for Steps
@@ -3874,9 +3933,9 @@ class SettingsDialog(QDialog):
 
         footer_layout.addWidget(self.btn_prev)
         footer_layout.addStretch()
+        footer_layout.addWidget(self.btn_cancel_wizard)
         footer_layout.addWidget(self.btn_next)
         footer_layout.addWidget(self.btn_save_wizard)
-        footer_layout.addWidget(self.btn_cancel_wizard)
         layout.addLayout(footer_layout)
 
         # Refresh UI state
@@ -3884,16 +3943,18 @@ class SettingsDialog(QDialog):
 
     def _init_step1_view(self):
         step1_widget = QScrollArea()
+        step1_widget.setProperty("class", "SettingsScroll")
         step1_widget.setWidgetResizable(True)
         step1_widget.setFrameShape(QFrame.NoFrame)
 
         scroll_content = QWidget()
+        scroll_content.setProperty("class", "DialogCanvas")
         v_layout = QVBoxLayout(scroll_content)
         v_layout.setContentsMargins(0, 0, 0, 0)
         v_layout.setSpacing(12)
 
         lbl_intro = QLabel("选择您的邮箱类型：")
-        lbl_intro.setStyleSheet("font-weight: bold; color: #374151; font-size: 12px;")
+        lbl_intro.setProperty("class", "SectionTitle")
         v_layout.addWidget(lbl_intro)
 
         # Provider cards grid
@@ -3915,34 +3976,21 @@ class SettingsDialog(QDialog):
         ]
 
         self.cards = {}
+        self.card_titles = {}
         for idx, (prov_id, title, desc) in enumerate(presets):
             btn = QPushButton()
             btn.setCheckable(True)
             btn.setFixedSize(175, 75)
-            btn.setStyleSheet("""
-                QPushButton {
-                    border: 2px solid #E5E7EB;
-                    border-radius: 8px;
-                    background-color: #FFFFFF;
-                }
-                QPushButton:hover {
-                    border-color: #3B82F6;
-                    background-color: #EFF6FF;
-                }
-                QPushButton:checked {
-                    border-color: #2563EB;
-                    background-color: #DBEAFE;
-                }
-            """)
+            btn.setProperty("class", "SelectionCard")
             btn_layout = QVBoxLayout(btn)
             btn_layout.setContentsMargins(10, 8, 10, 8)
             btn_layout.setSpacing(2)
 
             t_lbl = QLabel(title)
-            t_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #1F2937; background: transparent;")
+            t_lbl.setProperty("class", "SelectionCardTitle")
             t_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
             d_lbl = QLabel(desc)
-            d_lbl.setStyleSheet("font-size: 10px; color: #6B7280; background: transparent;")
+            d_lbl.setProperty("class", "SelectionCardDescription")
             d_lbl.setWordWrap(True)
             d_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
 
@@ -3951,6 +3999,7 @@ class SettingsDialog(QDialog):
 
             self.provider_group.addButton(btn)
             self.cards[prov_id] = btn
+            self.card_titles[prov_id] = t_lbl
             grid.addWidget(btn, idx // 3, idx % 3)
 
         self.provider_group.buttonClicked.connect(self._on_provider_card_clicked)
@@ -3974,7 +4023,7 @@ class SettingsDialog(QDialog):
 
         # Collapsible Advanced Settings
         self.btn_toggle_advanced = QPushButton("显示高级 IMAP 设置 ▼")
-        self.btn_toggle_advanced.setStyleSheet("text-align: left; color: #4B5563; font-size: 11px; font-weight: bold; border: none; background: transparent; padding: 4px;")
+        self.btn_toggle_advanced.setProperty("class", "TextBtn")
         self.btn_toggle_advanced.setCursor(Qt.PointingHandCursor)
         self.btn_toggle_advanced.clicked.connect(self._toggle_advanced_settings)
         v_layout.addWidget(self.btn_toggle_advanced)
@@ -4000,20 +4049,14 @@ class SettingsDialog(QDialog):
 
         # Light Info Alert Panel
         alert_box = QFrame()
-        alert_box.setStyleSheet("""
-            QFrame {
-                background-color: #F0FDF4;
-                border: 1px solid #BBF7D0;
-                border-radius: 8px;
-            }
-        """)
+        alert_box.setProperty("class", "PrivacyPanel")
         alert_layout = QVBoxLayout(alert_box)
         alert_layout.setContentsMargins(12, 12, 12, 12)
         alert_text = QLabel(
-            "🔒 <b>安全保障说明：</b><br>"
+            "<b>凭据安全说明</b><br>"
             "您的授权码直接交由 Windows 系统级别的凭据管理器加密存储，不会以明文写入配置，更不会上传至任何第三方服务器。"
         )
-        alert_text.setStyleSheet("color: #166534; font-size: 11px; line-height: 1.4;")
+        alert_text.setProperty("class", "SectionHint")
         alert_text.setWordWrap(True)
         alert_layout.addWidget(alert_text)
         layout.addWidget(alert_box)
@@ -4028,9 +4071,9 @@ class SettingsDialog(QDialog):
         self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
         self.txt_auth_code.textChanged.connect(self._on_auth_code_changed)
 
-        btn_help = QPushButton("❓ 如何获取授权码？")
+        btn_help = QPushButton("如何获取授权码")
         btn_help.clicked.connect(self._show_auth_code_help)
-        btn_help.setStyleSheet("color: #2563EB; border: none; background: transparent; text-decoration: underline; font-size: 11px; padding: 0;")
+        btn_help.setProperty("class", "TextBtn")
         btn_help.setCursor(Qt.PointingHandCursor)
 
         auth_input_layout.addWidget(self.txt_auth_code, 1)
@@ -4079,7 +4122,7 @@ class SettingsDialog(QDialog):
         test_layout.addWidget(self.lbl_test_result)
 
         btn_test_layout = QHBoxLayout()
-        self.btn_test = QPushButton("⚡ 测试连接")
+        self.btn_test = QPushButton("测试连接")
         self.btn_test.clicked.connect(self._test_connection_clicked)
         self.btn_test.setProperty("class", "SecondaryBtn")
         self.btn_test.setFixedSize(120, 28)
@@ -4189,8 +4232,16 @@ class SettingsDialog(QDialog):
     def _select_provider_card(self, provider):
         if provider in self.cards:
             self.cards[provider].setChecked(True)
+            self._refresh_provider_card_visuals()
+
+    def _refresh_provider_card_visuals(self):
+        for provider, title_label in self.card_titles.items():
+            title_label.setProperty("selected", self.cards[provider].isChecked())
+            title_label.style().unpolish(title_label)
+            title_label.style().polish(title_label)
 
     def _on_provider_card_clicked(self, checked_btn):
+        self._refresh_provider_card_visuals()
         provider = self._get_selected_provider()
         if provider == "custom":
             self.advanced_group.setVisible(True)
@@ -4449,7 +4500,7 @@ class SettingsDialog(QDialog):
             self.lbl_test_result.setText(friendly)
         finally:
             self.btn_test.setEnabled(True)
-            self.btn_test.setText("⚡ 测试连接")
+            self.btn_test.setText("测试连接")
             QApplication.restoreOverrideCursor()
 
     def _save_mailbox_settings(self):

@@ -5,6 +5,7 @@ Invoice Hub PySide6 QSS StyleSheet
 
 PRIMARY_BUTTON_STYLE = "QPushButton.PrimaryBtn"
 SECONDARY_BUTTON_STYLE = "QPushButton.SecondaryBtn"
+TOOLBAR_ACTION_STYLE = "QPushButton.ToolbarActionBtn"
 FILTER_BUTTON_STYLE = "QPushButton.FilterBtn"
 ACTIVE_FILTER_STYLE = "QPushButton.FilterBtn:checked"
 DISABLED_BUTTON_STYLE = "QPushButton:disabled"
@@ -122,7 +123,7 @@ QHeaderView::section {
     color: #4B5563;
     font-size: 13px;
 }
-QLineEdit, QTextEdit, QComboBox {
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {
     background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
     border-radius: 6px;
@@ -130,13 +131,55 @@ QLineEdit, QTextEdit, QComboBox {
     font-size: 13px;
     color: #111827;
 }
-QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
     border: 1.5px solid #2563EB;
 }
-QLineEdit:read-only, QTextEdit:read-only {
+QLineEdit:read-only, QTextEdit:read-only, QPlainTextEdit:read-only {
     background-color: #F8FAFC;
     color: #374151;
     border: 1px solid #E5E7EB;
+}
+QFrame.DetailSection {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+}
+QLabel.SectionTitle {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel.SectionHint {
+    color: #6B7280;
+    font-size: 12px;
+    font-weight: 400;
+}
+QLabel.InlineWarning {
+    color: #92400E;
+    background-color: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-weight: 500;
+}
+QLabel.InfoPanel {
+    color: #4B5563;
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QToolButton.Disclosure {
+    color: #4B5563;
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
+    font-weight: 600;
+}
+QToolButton.Disclosure:hover {
+    color: #111827;
 }
 QGroupBox {
     font-weight: bold;
@@ -231,6 +274,118 @@ QPushButton.SecondaryBtn:pressed {
     background-color: #F3F4F6;
 }
 
+/* Work-entry buttons are peers, not competing primary actions. */
+QPushButton.ToolbarActionBtn {
+    min-height: 20px;
+    min-width: 86px;
+    background-color: #FFFFFF;
+    color: #374151;
+    border: 1px solid #D1D5DB;
+    padding: 6px 14px;
+}
+QPushButton.ToolbarActionBtn:hover {
+    background-color: #F8FAFC;
+    color: #1D4ED8;
+    border-color: #93C5FD;
+}
+QPushButton.ToolbarActionBtn:focus {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border: 2px solid #60A5FA;
+    font-weight: 700;
+}
+QPushButton.ToolbarActionBtn:pressed {
+    background-color: #DBEAFE;
+    color: #1D4ED8;
+    border: 2px solid #2563EB;
+}
+QPushButton.ToolbarActionBtn:disabled {
+    background-color: #F8FAFC;
+    color: #9CA3AF;
+    border-color: #E5E7EB;
+}
+
+QPushButton.SelectionCard {
+    background-color: #FFFFFF;
+    color: #111827;
+    border: 1px solid #D1D5DB;
+    border-radius: 8px;
+    text-align: left;
+}
+QPushButton.SelectionCard:hover {
+    background-color: #F8FAFC;
+    border-color: #93C5FD;
+}
+QPushButton.SelectionCard:checked {
+    background-color: #E8F1FF;
+    color: #1D4ED8;
+    border: 2px solid #2563EB;
+}
+QLabel.SelectionCardTitle {
+    color: #1F2937;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 700;
+}
+QLabel.SelectionCardTitle[selected="true"] {
+    color: #1D4ED8;
+}
+QLabel.SelectionCardDescription {
+    color: #6B7280;
+    background: transparent;
+    font-size: 10px;
+    font-weight: 400;
+}
+
+QPushButton.TextBtn {
+    background-color: transparent;
+    color: #2563EB;
+    border: none;
+    padding: 4px 2px;
+}
+QPushButton.TextBtn:hover {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+
+QLabel.DialogTitle {
+    color: #111827;
+    font-size: 16px;
+    font-weight: 700;
+}
+QLabel.DialogInfo {
+    color: #4B5563;
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-weight: 400;
+}
+QLabel.WizardSteps {
+    color: #6B7280;
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-weight: 500;
+}
+QLabel.QrPanel {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 8px;
+    padding: 8px;
+}
+QFrame.PrivacyPanel {
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+}
+QScrollArea.SettingsScroll,
+QScrollArea.SettingsScroll > QWidget > QWidget,
+QWidget.DialogCanvas {
+    background-color: #FFFFFF;
+}
+
 /* Success Button (solid green) */
 QPushButton.SuccessBtn {
     background-color: #059669;
@@ -283,6 +438,25 @@ QPushButton.WarningOutlineBtn:hover {
 QPushButton.WarningOutlineBtn:pressed {
     background-color: #FDE68A;
 }
+QPushButton.DangerOutlineBtn {
+    background-color: #FFFFFF;
+    color: #B91C1C;
+    border: 1px solid #FCA5A5;
+}
+QPushButton.DangerOutlineBtn:hover {
+    background-color: #FEF2F2;
+    border-color: #EF4444;
+}
+QPushButton.TextDangerBtn {
+    background-color: transparent;
+    color: #B91C1C;
+    border: none;
+    padding: 6px 8px;
+}
+QPushButton.TextDangerBtn:hover {
+    background-color: #FEF2F2;
+    color: #991B1B;
+}
 
 /* Calmer Segmented Style Filter Tab Buttons */
 QPushButton.FilterBtn {
@@ -318,24 +492,25 @@ QGroupBox.SummaryCard {
 QTabWidget::pane {
     border: 1px solid #E5E7EB;
     background-color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 0 6px 6px 6px;
     top: -1px;
 }
 QTabBar::tab {
-    background-color: #F8FAFC;
+    background-color: #F3F4F6;
     color: #6B7280;
     border: 1px solid #E5E7EB;
-    border-bottom-color: none;
+    border-bottom-color: #E5E7EB;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    padding: 6px 16px;
+    min-width: 72px;
+    padding: 7px 14px;
     font-weight: 500;
 }
 QTabBar::tab:selected {
     background-color: #FFFFFF;
-    color: #2563EB;
+    color: #111827;
     border-bottom-color: #FFFFFF;
-    font-weight: bold;
+    font-weight: 700;
 }
 QTabBar::tab:hover {
     background-color: #F9FAFB;

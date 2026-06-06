@@ -930,7 +930,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._deferred_init()
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
-                    self.assertEqual(window.summary_card.layout().spacing(), 4)
+                    self.assertEqual(window.summary_card.layout().spacing(), 6)
                     self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
                     self.assertEqual(window.status_bar.maximumHeight(), 32)
                     self.assertEqual(window.status_bar.minimumHeight(), 32)
@@ -2715,6 +2715,94 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_detail_tabs_use_consistent_action_hierarchy(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(Path(td) / "test_gui_detail_hierarchy.db", splash=None)
+                try:
+                    app.processEvents()
+                    expected_classes = {
+                        window.btn_save_draft: "PrimaryBtn",
+                        window.btn_app: "PrimaryBtn",
+                        window.btn_ign: "SecondaryBtn",
+                        window.btn_err: "DangerOutlineBtn",
+                        window.btn_rev: "SecondaryBtn",
+                        window.btn_delete_invoice: "TextDangerBtn",
+                        window.btn_export: "PrimaryBtn",
+                        window.btn_create_claim: "SecondaryBtn",
+                        window.btn_add_to_claim: "SecondaryBtn",
+                    }
+                    for button, expected_class in expected_classes.items():
+                        self.assertEqual(button.property("class"), expected_class)
+                        self.assertLessEqual(button.maximumWidth(), 180)
+
+                    action_labels = [
+                        window.btn_sum_open_file.text(),
+                        window.btn_sum_copy_number.text(),
+                        window.btn_sum_locate_file.text(),
+                        window.btn_delete_invoice.text(),
+                        window.btn_export.text(),
+                        window.btn_add_to_claim.text(),
+                    ]
+                    emoji_prefixes = ("📁", "📋", "📍", "🗑", "🚀", "🔗")
+                    self.assertFalse(any(text.startswith(emoji_prefixes) for text in action_labels))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_detail_tabs_expose_consistent_section_structure(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QFrame
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(Path(td) / "test_gui_detail_sections.db", splash=None)
+                try:
+                    app.processEvents()
+                    sections = [
+                        window.detail_core_section,
+                        window.detail_files_section,
+                        window.review_note_section,
+                        window.review_actions_section,
+                        window.claim_setup_section,
+                        window.claim_export_section,
+                    ]
+                    for section in sections:
+                        self.assertIsInstance(section, QFrame)
+                        self.assertEqual(section.property("class"), "DetailSection")
+
+                    self.assertEqual(window.detail_tabs.count(), 3)
+                    self.assertEqual(
+                        [window.detail_tabs.tabText(index) for index in range(3)],
+                        ["发票详情", "审核", "报销导出"],
+                    )
+                    self.assertEqual(window.txt_note.maximumHeight(), 72)
+                    self.assertTrue(window.lbl_export_summary.wordWrap())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_show_does_not_emit_invalid_qfont_point_size_warning(self):
         try:
             from PySide6.QtCore import qInstallMessageHandler
@@ -2791,10 +2879,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn(f"Version: {APP_VERSION}", about_text)
                     self.assertIn("Data directory:", about_text)
                     self.assertIn("Log directory:", about_text)
-                    self.assertEqual(window.btn_import_local.property("class"), "PrimaryBtn")
-                    self.assertEqual(window.btn_scan_email.property("class"), "SecondaryBtn")
-                    self.assertEqual(window.btn_mobile_upload.property("class"), "SecondaryBtn")
-                    self.assertEqual(window.btn_toolbar_export.property("class"), "SecondaryBtn")
+                    self.assertEqual(window.btn_import_local.property("class"), "ToolbarActionBtn")
+                    self.assertEqual(window.btn_scan_email.property("class"), "ToolbarActionBtn")
+                    self.assertEqual(window.btn_mobile_upload.property("class"), "ToolbarActionBtn")
+                    self.assertEqual(window.btn_toolbar_export.property("class"), "ToolbarActionBtn")
                     self.assertIn("购买方", window.txt_search.placeholderText())
                     self.assertIn("金额", window.txt_search.placeholderText())
                 finally:
@@ -2808,7 +2896,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
-    def test_gui_button_color_hierarchy_uses_single_toolbar_primary(self):
+    def test_gui_button_color_hierarchy_uses_neutral_work_entries(self):
         try:
             from PySide6.QtWidgets import QApplication
             import sys
@@ -2837,15 +2925,10 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.btn_toolbar_export,
                         window.btn_more,
                     ]
-                    self.assertEqual(
-                        [btn.property("class") for btn in toolbar_buttons].count("PrimaryBtn"),
-                        1,
-                    )
-                    self.assertEqual(window.btn_import_local.property("class"), "PrimaryBtn")
-                    self.assertEqual(window.btn_mobile_upload.property("class"), "SecondaryBtn")
-                    self.assertEqual(window.btn_scan_email.property("class"), "SecondaryBtn")
-                    self.assertEqual(window.btn_toolbar_export.property("class"), "SecondaryBtn")
-                    self.assertEqual(window.btn_more.property("class"), "SecondaryBtn")
+                    self.assertNotIn("PrimaryBtn", [btn.property("class") for btn in toolbar_buttons])
+                    for btn in toolbar_buttons:
+                        self.assertEqual(btn.property("class"), "ToolbarActionBtn")
+                        self.assertNotRegex(btn.text(), r"[📁📱📧🚀]")
 
                     empty_buttons = [
                         window.empty_btn_import,
@@ -2875,11 +2958,72 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("QMenu::icon", MENU_STYLE)
                     self.assertIn("padding-left: 8px;", MENU_STYLE)
                     self.assertIn("background-color: #F3F4F6;", MENU_STYLE)
+                    toolbar_focus_style = APP_STYLESHEET.split(
+                        "QPushButton.ToolbarActionBtn:focus {", 1
+                    )[1].split("}", 1)[0]
+                    self.assertIn("background-color: #EFF6FF;", toolbar_focus_style)
+                    self.assertIn("color: #1D4ED8;", toolbar_focus_style)
+                    self.assertIn("border: 2px solid #60A5FA;", toolbar_focus_style)
+                    self.assertIn("font-weight: 700;", toolbar_focus_style)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
                     window.close()
                     window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_settings_dialog_uses_neutral_steps_selection_cards_and_one_primary_action(self):
+        try:
+            from unittest.mock import patch
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_settings_visual_hierarchy.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp, SettingsDialog
+
+                window = InvoiceReviewApp(db_path, splash=None)
+                dialog = None
+                try:
+                    with patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=False):
+                        dialog = SettingsDialog(window)
+                    self.assertEqual(dialog.lbl_step_indicator.property("class"), "WizardSteps")
+                    self.assertNotIn("background-color", dialog.lbl_step_indicator.styleSheet())
+                    for card in dialog.cards.values():
+                        self.assertEqual(card.property("class"), "SelectionCard")
+                        self.assertEqual(card.styleSheet(), "")
+                    selected_card_style = dialog.styleSheet() or window.styleSheet()
+                    self.assertIn("QPushButton.SelectionCard:checked", selected_card_style)
+                    self.assertIn(
+                        "QLabel.SelectionCardTitle",
+                        selected_card_style,
+                    )
+                    selected_provider = dialog._get_selected_provider()
+                    self.assertEqual(
+                        [
+                            provider
+                            for provider, label in dialog.card_titles.items()
+                            if label.property("selected")
+                        ],
+                        [selected_provider],
+                    )
+                    self.assertEqual(dialog.btn_prev.property("class"), "SecondaryBtn")
+                    self.assertEqual(dialog.btn_cancel_wizard.property("class"), "SecondaryBtn")
+                    self.assertEqual(dialog.btn_next.property("class"), "PrimaryBtn")
+                    self.assertEqual(dialog.btn_save_wizard.property("class"), "PrimaryBtn")
+                    self.assertEqual(dialog.btn_test.property("class"), "SecondaryBtn")
+                    self.assertNotIn("⚡", dialog.btn_test.text())
+                finally:
+                    if dialog is not None:
+                        dialog.close()
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
                     app.processEvents()
         except Exception as e:
             if isinstance(e, (ImportError, RuntimeError)):
