@@ -16,7 +16,7 @@ def check_and_migrate(conn: sqlite3.Connection):
     cursor.execute("PRAGMA user_version")
     version = cursor.fetchone()[0]
 
-    _log.info("Current database user_version: %d", version)
+    _log.debug("Current database user_version: %d", version)
 
     # 2. Migration to V1: Add invoice review and multi-currency fields
     if version < 1:

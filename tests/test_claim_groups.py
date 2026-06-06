@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import openpyxl
 
@@ -19,6 +19,23 @@ from scripts.invoice_fetch import review_status
 
 
 class ClaimGroupsTests(unittest.TestCase):
+    def test_windows_console_output_is_configured_for_utf8(self):
+        from scripts.invoice_fetch import __main__ as cli
+
+        stdout = Mock()
+        stderr = Mock()
+        with patch.object(cli.os, "name", "nt"), patch.object(
+            cli.sys, "stdout", stdout
+        ), patch.object(cli.sys, "stderr", stderr), patch(
+            "ctypes.windll.kernel32"
+        ) as kernel32:
+            cli._configure_console_utf8()
+
+        kernel32.SetConsoleOutputCP.assert_called_once_with(65001)
+        kernel32.SetConsoleCP.assert_called_once_with(65001)
+        stdout.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+        stderr.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+
     def test_migration_upgrades_to_v2_and_creates_tables(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "test_migration.db"

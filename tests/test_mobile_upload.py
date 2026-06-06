@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -32,6 +33,57 @@ def _multipart_body(files: list[tuple[str, bytes, str]]) -> tuple[bytes, str]:
 
 
 class MobileUploadTests(unittest.TestCase):
+    def test_duplicate_hash_restore_uses_one_database_connection_per_batch(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            with InvoiceDB(db_path):
+                pass
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            duplicate_content = b"%PDF-1.4 synthetic duplicate"
+            uploads = [
+                UploadedFile(f"receipt-{index}.pdf", duplicate_content, "application/pdf")
+                for index in range(6)
+            ]
+
+            with patch.object(server, "_import_accepted_files", return_value={}), patch(
+                "scripts.invoice_fetch.db.InvoiceDB",
+                wraps=InvoiceDB,
+            ) as db_cls:
+                result = server.save_uploads(uploads)
+
+            self.assertEqual(result["accepted"], 1)
+            self.assertEqual(result["duplicate"], 5)
+            self.assertEqual(db_cls.call_count, 1)
+
+    def test_database_open_and_current_schema_logs_are_debug_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "invoices.db"
+            with InvoiceDB(db_path):
+                pass
+
+            with self.assertLogs(level=logging.DEBUG) as captured:
+                with InvoiceDB(db_path):
+                    pass
+
+            relevant = [
+                record for record in captured.records
+                if "数据库已打开" in record.getMessage()
+                or "Current database user_version" in record.getMessage()
+            ]
+            self.assertEqual(len(relevant), 2)
+            self.assertTrue(all(record.levelno == logging.DEBUG for record in relevant))
+
     def test_upload_host_options_prioritize_real_lan_and_keep_172_networks(self):
         options = build_upload_host_options([
             ("Docker vEthernet", "172.18.0.1"),

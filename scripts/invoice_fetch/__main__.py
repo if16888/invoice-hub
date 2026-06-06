@@ -81,6 +81,27 @@ DEFAULT_CATEGORY_RULES = [
 
 # ── Logging setup ────────────────────────────────────────────────────
 
+def _configure_console_utf8():
+    """Use UTF-8 consistently for Windows console logging."""
+    if os.name != "nt":
+        return
+
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except (AttributeError, OSError):
+        pass
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, OSError, ValueError):
+                pass
+
+
 def _setup_logging(verbose: bool = False):
     log_dir = RUNTIME_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -2136,6 +2157,7 @@ def _dispatch_claim_command(args: argparse.Namespace):
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
+    _configure_console_utf8()
     args = _parse_args()
     _setup_logging(args.verbose)
 

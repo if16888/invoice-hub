@@ -180,6 +180,7 @@ class MobileUploadServer:
         total_bytes = 0
         known_hashes = self._known_hashes()
         accepted_paths: list[Path] = []
+        duplicate_records_by_hash: dict[str, list[dict]] = {}
 
         with self._lock:
             for item in files:
@@ -222,10 +223,7 @@ class MobileUploadServer:
                     record["status"] = "duplicate"
                     record["reason"] = "sha256_already_uploaded"
                     duplicate_now += 1
-                    if self.import_on_upload and self.db_path:
-                        restored = self._restore_deleted_invoice_by_hash(digest)
-                        if restored:
-                            record["reason"] = "sha256_already_uploaded_restored_deleted_record"
+                    duplicate_records_by_hash.setdefault(digest, []).append(record)
                     self._files.append(record)
                     continue
 
@@ -237,6 +235,14 @@ class MobileUploadServer:
                 known_hashes.add(digest)
                 accepted_paths.append(dest)
                 self._files.append(record)
+
+            if duplicate_records_by_hash and self.import_on_upload and self.db_path:
+                restored_hashes = self._restore_deleted_invoices_by_hashes(
+                    set(duplicate_records_by_hash)
+                )
+                for digest in restored_hashes:
+                    for record in duplicate_records_by_hash.get(digest, []):
+                        record["reason"] = "sha256_already_uploaded_restored_deleted_record"
 
             self._stats["accepted"] += accepted_now
             self._stats["duplicate"] += duplicate_now
@@ -264,16 +270,13 @@ class MobileUploadServer:
             "batch_id": self.session.batch_id,
         }
 
-    def _restore_deleted_invoice_by_hash(self, file_hash: str) -> bool:
-        if not self.db_path or not file_hash:
-            return False
+    def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> set[str]:
+        if not self.db_path or not file_hashes:
+            return set()
         from .db import InvoiceDB
 
         with InvoiceDB(self.db_path) as db:
-            existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
-            if not existing or int(existing.get("is_deleted") or 0) != 1:
-                return False
-            return db.restore_invoice(existing["id"])
+            return db.restore_deleted_invoices_by_file_hashes(file_hashes)
 
     def _import_accepted_files(self, accepted_paths: Iterable[Path]) -> int:
         if not self.session or not self.db_path:

@@ -81,7 +81,7 @@ class InvoiceDB:
         self._conn = sqlite3.connect(str(self._path))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
-        _log.info("数据库已打开: %s", self._path.name)
+        _log.debug("数据库已打开: %s", self._path.name)
 
         # Run database migrations
         from .migrations import check_and_migrate
@@ -402,6 +402,31 @@ class InvoiceDB:
         sql += " ORDER BY id DESC LIMIT 1"
         row = self._conn.execute(sql, (file_hash,)).fetchone()
         return dict(row) if row else None
+
+    def restore_deleted_invoices_by_file_hashes(self, file_hashes: set[str]) -> set[str]:
+        """Restore soft-deleted invoices matching any supplied file hash."""
+        normalized = {str(value or "").strip() for value in file_hashes}
+        normalized.discard("")
+        if not normalized:
+            return set()
+
+        placeholders = ", ".join("?" for _ in normalized)
+        rows = self._conn.execute(
+            f"SELECT id, file_hash FROM invoices "
+            f"WHERE is_deleted = 1 AND file_hash IN ({placeholders})",
+            tuple(sorted(normalized)),
+        ).fetchall()
+        if not rows:
+            return set()
+
+        invoice_ids = [int(row["id"]) for row in rows]
+        id_placeholders = ", ".join("?" for _ in invoice_ids)
+        self._conn.execute(
+            f"UPDATE invoices SET is_deleted = 0 WHERE id IN ({id_placeholders})",
+            tuple(invoice_ids),
+        )
+        self._conn.commit()
+        return {str(row["file_hash"]) for row in rows}
 
     def find_invoice_by_unique_fields(
         self,
