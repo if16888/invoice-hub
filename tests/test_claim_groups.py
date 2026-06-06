@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import openpyxl
 
-from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch.db import InvoiceDB, is_pending_evidence_invoice
 from scripts.invoice_fetch.migrations import check_and_migrate
 from scripts.invoice_fetch.claim_export import _sanitize_dirname, export_claim_package
 from scripts.invoice_fetch.__main__ import _parse_args
@@ -19,6 +19,24 @@ from scripts.invoice_fetch import review_status
 
 
 class ClaimGroupsTests(unittest.TestCase):
+    def test_pending_evidence_helper_does_not_confuse_manual_review_types(self):
+        self.assertTrue(is_pending_evidence_invoice({
+            "invoice_type": "待关联证明材料",
+            "parse_note": "",
+        }))
+        self.assertTrue(is_pending_evidence_invoice({
+            "invoice_type": "其他",
+            "parse_note": "待关联证明材料: synthetic",
+        }))
+        self.assertFalse(is_pending_evidence_invoice({
+            "invoice_type": "电子发票",
+            "parse_note": "",
+        }))
+        self.assertFalse(is_pending_evidence_invoice({
+            "invoice_type": "图片待识别",
+            "parse_note": "图片待识别，请人工处理",
+        }))
+
     def test_user_visible_sources_do_not_contain_broken_question_mark_placeholders(self):
         for relative_path in (
             "scripts/invoice_fetch/__main__.py",
@@ -1195,7 +1213,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     "pending_manual": 3,
                     "failed": 0,
                 })
-                self.assertIn("已入库待补全", text)
+                self.assertIn("需人工确认材料", text)
                 self.assertIn("真正失败: 0", text)
                 self.assertNotIn("解析失败", text)
             finally:
@@ -1794,6 +1812,65 @@ class ClaimGroupsTests(unittest.TestCase):
                 )
 
             self.assertEqual(result["downloaded"], 1)
+            self.assertEqual(result["pending_manual"], 1)
+            self.assertEqual(result["manual_review_required"], 1)
+            self.assertEqual(result["failed"], 0)
+
+    def test_scan_email_counts_parsed_receipt_as_manual_review_not_failure(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_email_receipt_manual_review_stats.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email": {"address": "synthetic_user@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"folder": "INBOX", "months_back": 1},
+                "ai": {"provider": "none"},
+                "categories": {},
+            }), encoding="utf-8")
+
+            with InvoiceDB(db_path) as db:
+                db.bulk_upsert_emails([{
+                    "uid": 3002,
+                    "subject": "Synthetic overseas receipt",
+                    "sender": "billing@example.com",
+                    "date": "2026-06-06",
+                }])
+                db.classify_email(3002, True, by="test", reason="synthetic")
+
+            def fake_handle_pending_email(**kwargs):
+                kwargs["db"].insert_invoice({
+                    "invoice_number": "",
+                    "invoice_type": "海外凭证/收据",
+                    "parse_success": True,
+                    "parse_note": "synthetic receipt parsed",
+                    "mail_uid": 3002,
+                    "mailbox_key": "legacy",
+                    "attachment_path": "runtime/attachments/receipt.pdf",
+                })
+                return True
+
+            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
+                    patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
+                    patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email):
+                result = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                )
+
+            self.assertEqual(result["manual_review_required"], 1)
             self.assertEqual(result["pending_manual"], 1)
             self.assertEqual(result["failed"], 0)
 
@@ -2429,13 +2506,207 @@ class ClaimGroupsTests(unittest.TestCase):
                         result = window._link_invoices_to_claim()
                         app.processEvents()
 
+                    self.assertEqual(mock_info.call_args.args[1], "未关联")
                     message = mock_info.call_args.args[2]
                     self.assertIn("跳过待关联证明材料 1 张", message)
+                    self.assertNotIn("成功关联 0 张", message)
                     self.assertNotIn("去重 1 张", message)
                     self.assertEqual(result["linked"], 0)
                     self.assertEqual(result["evidence_only"], 1)
                     self.assertEqual(window.db.get_claim_invoices(claim_id), [])
                     self.assertIsNotNone(window.db.get_invoice(evidence_id))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_mixed_claim_link_reports_linked_duplicate_and_evidence_counts(self):
+        try:
+            from PySide6.QtCore import QItemSelectionModel
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_mixed_claim_link.db"
+                with InvoiceDB(db_path) as db:
+                    claim_id = db.create_claim_group("Synthetic mixed claim")
+                    linked_id = db.insert_invoice({
+                        "invoice_number": "CLAIM-LINK-001",
+                        "invoice_type": "电子发票",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+                    duplicate_id = db.insert_invoice({
+                        "invoice_number": "CLAIM-DUPLICATE-001",
+                        "invoice_type": "电子发票",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+                    evidence_id = db.insert_invoice({
+                        "invoice_type": "待关联证明材料",
+                        "parse_note": "待关联证明材料: synthetic",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+                    self.assertTrue(db.add_invoice_to_claim(claim_id, duplicate_id))
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    claim_idx = window.combo_claims.findData(claim_id)
+                    self.assertGreaterEqual(claim_idx, 0)
+                    window.combo_claims.setCurrentIndex(claim_idx)
+                    selection = window.table.selectionModel()
+                    for row in range(window.table.rowCount()):
+                        selection.select(
+                            window.table.model().index(row, 0),
+                            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                        )
+
+                    with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok) as mock_info:
+                        result = window._link_invoices_to_claim()
+                        app.processEvents()
+
+                    self.assertEqual(result, {
+                        "linked": 1,
+                        "duplicate": 1,
+                        "evidence_only": 1,
+                        "failed": 0,
+                    })
+                    self.assertEqual(mock_info.call_args.args[1], "关联结果")
+                    message = mock_info.call_args.args[2]
+                    self.assertIn("成功关联 1 张发票", message)
+                    self.assertIn("重复 1 张", message)
+                    self.assertIn("跳过待关联证明材料 1 张", message)
+                    claim_invoice_ids = {
+                        row["id"] for row in window.db.get_claim_invoices(claim_id)
+                    }
+                    self.assertEqual(claim_invoice_ids, {linked_id, duplicate_id})
+                    self.assertNotIn(evidence_id, claim_invoice_ids)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_mixed_approve_uses_one_summary_confirmation(self):
+        try:
+            from PySide6.QtCore import QItemSelectionModel
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_mixed_approve.db"
+                with InvoiceDB(db_path) as db:
+                    evidence_id = db.insert_invoice({
+                        "invoice_type": "待关联证明材料",
+                        "parse_note": "待关联证明材料: synthetic",
+                        "attachment_path": "runtime/attachments/evidence.pdf",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+                    invoice_id = db.insert_invoice({
+                        "invoice_number": "MIXED-APPROVE-001",
+                        "invoice_type": "电子发票",
+                        "invoice_date": "2026-06-06",
+                        "total_amount": "",
+                        "seller_name": "Synthetic Seller",
+                        "attachment_path": "runtime/attachments/invoice.pdf",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    selection = window.table.selectionModel()
+                    for row in range(window.table.rowCount()):
+                        selection.select(
+                            window.table.model().index(row, 0),
+                            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                        )
+
+                    with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes) as mock_question, \
+                            patch.object(QMessageBox, "warning") as mock_warning:
+                        result = window._set_selected_status(review_status.APPROVED)
+                        app.processEvents()
+
+                    mock_warning.assert_not_called()
+                    mock_question.assert_called_once()
+                    prompt = mock_question.call_args.args[2]
+                    self.assertIn("将跳过 1 条待关联证明材料", prompt)
+                    self.assertIn("处理 1 条正式发票", prompt)
+                    self.assertIn("缺 金额", prompt)
+                    self.assertEqual(result["success"], 1)
+                    self.assertEqual(result["evidence_only"], 1)
+                    self.assertEqual(window.db.get_invoice(evidence_id)["review_status"], review_status.TO_REVIEW)
+                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.APPROVED)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_mixed_approve_cancel_keeps_formal_invoice_pending(self):
+        try:
+            from PySide6.QtCore import QItemSelectionModel
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_mixed_approve_cancel.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_type": "待关联证明材料",
+                        "parse_note": "待关联证明材料: synthetic",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+                    invoice_id = db.insert_invoice({
+                        "invoice_number": "MIXED-CANCEL-001",
+                        "invoice_type": "电子发票",
+                        "invoice_date": "2026-06-06",
+                        "total_amount": "",
+                        "seller_name": "Synthetic Seller",
+                        "review_status": review_status.TO_REVIEW,
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    selection = window.table.selectionModel()
+                    for row in range(window.table.rowCount()):
+                        selection.select(
+                            window.table.model().index(row, 0),
+                            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                        )
+
+                    with patch.object(QMessageBox, "question", return_value=QMessageBox.No):
+                        result = window._set_selected_status(review_status.APPROVED)
+
+                    self.assertEqual(result["success"], 0)
+                    self.assertEqual(result["evidence_only"], 1)
+                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
+                    self.assertIn("跳过 1 条待关联证明材料", window.statusBar().currentMessage())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -4031,13 +4302,15 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(summary["restored"], 1)
                     self.assertEqual(summary["duplicates"], 1)
                     self.assertEqual(summary["link_failed"], 1)
-                    self.assertEqual(summary["pending_retry"], 2)
+                    self.assertEqual(summary["manual_review_required"], 2)
+                    self.assertEqual(summary["pending_retry"], 1)
                     self.assertEqual(summary["failed"], 1)
                     message = mock_info.call_args.args[2]
                     self.assertIn("synthetic parser failure", message)
                     self.assertIn("恢复软删除", message)
                     self.assertIn("重复已存在", message)
                     self.assertIn("链接下载失败", message)
+                    self.assertIn("需人工确认材料", message)
                     self.assertIn("待重试", message)
                 finally:
                     if hasattr(window, "db") and window.db is not None:

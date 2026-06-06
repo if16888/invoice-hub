@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from . import review_status
 from .config import load_config_safe
+from .db import is_pending_evidence_invoice
 from .excel_export import export_excel
 from .log_privacy import mask_path
 from .reimbursement import buyer_warning
@@ -129,10 +130,7 @@ def export_claim_package(
     }
 
     for inv in all_invoices:
-        if (
-            str(inv.get("invoice_type") or "") == "待关联证明材料"
-            or "待关联证明材料" in str(inv.get("parse_note") or "")
-        ):
+        if is_pending_evidence_invoice(inv):
             skipped_counts["pending_evidence"] += 1
             continue
         status = inv.get("review_status") or review_status.TO_REVIEW

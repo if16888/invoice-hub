@@ -45,7 +45,7 @@ def get_qt_pdf_classes():
         _QPDF_CLASSES = (None, None)
     return _QPDF_CLASSES
 
-from ..db import InvoiceDB
+from ..db import InvoiceDB, is_pending_evidence_invoice
 from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..diagnostics import collect_app_info, export_diagnostics_zip
@@ -2606,14 +2606,11 @@ class InvoiceReviewApp(QMainWindow):
             missing.append("附件")
         return missing
 
-    @staticmethod
-    def _is_pending_evidence(inv: dict) -> bool:
-        return (
-            str(inv.get("invoice_type") or "") == "待关联证明材料"
-            or "待关联证明材料" in str(inv.get("parse_note") or "")
-        )
-
-    def _confirm_approve_incomplete_invoices(self, invoices: list[dict]) -> bool:
+    def _confirm_approve_incomplete_invoices(
+        self,
+        invoices: list[dict],
+        skipped_evidence_count: int = 0,
+    ) -> bool:
         incomplete = []
         for inv in invoices:
             missing = self._approval_missing_fields(inv)
@@ -2621,19 +2618,29 @@ class InvoiceReviewApp(QMainWindow):
                 label = str(inv.get("invoice_number") or inv.get("seller_name") or f"ID {inv.get('id')}").strip()
                 incomplete.append(f"- {label}: 缺 {', '.join(missing)}")
 
-        if not incomplete:
+        if not incomplete and not skipped_evidence_count:
             return True
 
         preview = "\n".join(incomplete[:8])
         if len(incomplete) > 8:
             preview += f"\n... 另有 {len(incomplete) - 8} 条"
+        selection_summary = ""
+        if skipped_evidence_count:
+            selection_summary = (
+                f"将跳过 {skipped_evidence_count} 条待关联证明材料，"
+                f"并处理 {len(invoices)} 条正式发票。\n\n"
+            )
+        missing_summary = (
+            f"以下正式发票仍缺少关键信息：\n{preview}\n\n"
+            if incomplete else ""
+        )
         reply = QMessageBox.question(
             self,
             "确认通过待补全材料",
             (
-                "选中的记录仍缺少关键信息。\n\n"
-                f"{preview}\n\n"
-                "如果这是图片、receipt、水单或其他未识别材料，请确认原件和手工补录信息无误后再通过审核。是否继续标记为已通过？"
+                selection_summary
+                + missing_summary
+                + "如果这是图片、receipt、水单或其他未识别材料，请确认原件和手工补录信息无误后再通过审核。是否继续标记为已通过？"
             ),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
@@ -2666,13 +2673,13 @@ class InvoiceReviewApp(QMainWindow):
         actionable_invoices = selected_invoices
         if status == APPROVED:
             evidence_invoices = [
-                inv for inv in selected_invoices if self._is_pending_evidence(inv)
+                inv for inv in selected_invoices if is_pending_evidence_invoice(inv)
             ]
             result["evidence_only"] = len(evidence_invoices)
             actionable_invoices = [
-                inv for inv in selected_invoices if not self._is_pending_evidence(inv)
+                inv for inv in selected_invoices if not is_pending_evidence_invoice(inv)
             ]
-            if evidence_invoices:
+            if not actionable_invoices:
                 QMessageBox.warning(
                     self,
                     "无法标记通过",
@@ -2681,14 +2688,19 @@ class InvoiceReviewApp(QMainWindow):
                         "请先关联到主发票或补录为正式报销记录。"
                     ),
                 )
-            if not actionable_invoices:
                 self.statusBar().showMessage(
                     f"已跳过 {result['evidence_only']} 条待关联证明材料。",
                     4000,
                 )
                 return result
-            if not self._confirm_approve_incomplete_invoices(actionable_invoices):
-                self.statusBar().showMessage("已取消标记通过，记录仍保持待审核。", 3000)
+            if not self._confirm_approve_incomplete_invoices(
+                actionable_invoices,
+                skipped_evidence_count=result["evidence_only"],
+            ):
+                cancel_message = "已取消标记通过，正式发票仍保持待审核。"
+                if result["evidence_only"]:
+                    cancel_message += f" 已跳过 {result['evidence_only']} 条待关联证明材料。"
+                self.statusBar().showMessage(cancel_message, 4000)
                 return result
 
         try:
@@ -2803,19 +2815,24 @@ class InvoiceReviewApp(QMainWindow):
                 else:
                     failed_count += 1
 
-            message_parts = [f"成功关联 {linked_count} 张发票"]
+            message_parts = []
+            if linked_count:
+                message_parts.append(f"成功关联 {linked_count} 张发票")
             if duplicate_count:
                 message_parts.append(f"重复 {duplicate_count} 张")
             if evidence_only_count:
                 message_parts.append(f"跳过待关联证明材料 {evidence_only_count} 张")
             if failed_count:
                 message_parts.append(f"失败 {failed_count} 张")
+            if not linked_count:
+                message_parts.insert(0, "未关联任何发票")
             msg = "；".join(message_parts) + "。"
             self.statusBar().showMessage(
                 f"报销组【{claim_name}】: " + "；".join(message_parts),
                 4000,
             )
-            QMessageBox.information(self, "关联结果", msg)
+            dialog_title = "关联结果" if linked_count else "未关联"
+            QMessageBox.information(self, dialog_title, msg)
             self._load_claims()
             self._load_invoices()
             return {
@@ -3140,7 +3157,7 @@ class InvoiceReviewApp(QMainWindow):
             f"- 成功识别: {stats.get('added', 0)} 条\n"
             f"- 重复跳过: {stats.get('duplicates', 0)} 条\n"
             f"- 冲突待确认: {stats.get('conflicts', 0)} 条\n"
-            f"- 已入库待补全: {stats.get('pending_manual', 0)} 条\n"
+            f"- 需人工确认材料: {stats.get('pending_manual', 0)} 条\n"
             f"- 真正失败: {stats.get('failed', 0)} 条"
         )
 
@@ -3154,11 +3171,11 @@ class InvoiceReviewApp(QMainWindow):
         failed = stats.get("failed", 0)
         self.write_log(
             f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"
-            f"冲突待确认 {conflicts} 条，已入库待补全 {pending_manual} 条，真正失败 {failed} 条。"
+            f"冲突待确认 {conflicts} 条，需人工确认材料 {pending_manual} 条，真正失败 {failed} 条。"
         )
         self.statusBar().showMessage(
             f"本地导入完成: 成功识别 {added}, 重复 {duplicates}, 冲突 {conflicts}, "
-            f"待补全 {pending_manual}, 失败 {failed}",
+            f"需人工确认材料 {pending_manual}, 失败 {failed}",
             4000,
         )
 
@@ -3248,6 +3265,9 @@ class InvoiceReviewApp(QMainWindow):
         )
         link_failed = sum(1 for line in logs if "未获得官方 PDF/OFD" in line or "链接下载失败" in line)
         pending_retry = sum(1 for line in logs if "保留为待下载" in line or "待下载以便重试" in line or "待重试" in line)
+        manual_review_required = int(
+            res.get("manual_review_required", res.get("pending_manual", 0)) or 0
+        )
         downloaded = int(res.get("downloaded", 0) or 0)
         failed_summaries = [str(x or "") for x in (res.get("failed_summaries") or [])]
         return {
@@ -3256,7 +3276,8 @@ class InvoiceReviewApp(QMainWindow):
             "restored": restored,
             "duplicates": max(int(res.get("duplicates", 0) or 0), duplicates),
             "link_failed": link_failed,
-            "pending_retry": max(int(res.get("pending_manual", 0) or 0), pending_retry),
+            "manual_review_required": manual_review_required,
+            "pending_retry": max(int(res.get("pending_retry", 0) or 0), pending_retry),
             "failed": int(res.get("failed", res.get("failed_count", 0)) or 0),
             "failed_summaries": failed_summaries[:5],
         }
@@ -3264,7 +3285,8 @@ class InvoiceReviewApp(QMainWindow):
     def _format_scan_summary_status(self, summary: dict) -> str:
         return (
             f"邮箱扫描完成: 新增 {summary.get('new', 0)}，恢复 {summary.get('restored', 0)}，"
-            f"重复 {summary.get('duplicates', 0)}，待手动/重试 {summary.get('pending_retry', 0)}，"
+            f"重复 {summary.get('duplicates', 0)}，需人工确认材料 {summary.get('manual_review_required', 0)}，"
+            f"待重试 {summary.get('pending_retry', 0)}，"
             f"失败 {summary.get('failed', 0)}"
         )
 
@@ -3278,7 +3300,8 @@ class InvoiceReviewApp(QMainWindow):
             f"- 恢复软删除: {summary.get('restored', 0)} 条\n"
             f"- 重复已存在: {summary.get('duplicates', 0)} 条\n"
             f"- 链接下载失败: {summary.get('link_failed', 0)} 封\n"
-            f"- 待手动/待重试: {summary.get('pending_retry', 0)} 封\n"
+            f"- 需人工确认材料: {summary.get('manual_review_required', 0)} 条\n"
+            f"- 待重试: {summary.get('pending_retry', 0)} 封\n"
             f"- 处理失败: {summary.get('failed', 0)} 封\n"
             f"失败摘要:\n{failure_text}\n\n"
             "如果没有看到预期发票，请清空筛选，或用发票号、购买方、金额搜索。"

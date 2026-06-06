@@ -15,6 +15,15 @@ from .log_privacy import mask_invoice_number
 
 _log = logging.getLogger(__name__)
 
+
+def is_pending_evidence_invoice(invoice: dict) -> bool:
+    """Return True only for evidence that still needs a main invoice link."""
+    return (
+        str(invoice.get("invoice_type") or "") == "待关联证明材料"
+        or "待关联证明材料" in str(invoice.get("parse_note") or "")
+    )
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS invoices (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -598,10 +607,7 @@ class InvoiceDB:
         if not inv:
             self._set_last_error("not_found")
             return False
-        if status == review_status.APPROVED and (
-            str(inv.get("invoice_type") or "") == "待关联证明材料"
-            or "待关联证明材料" in str(inv.get("parse_note") or "")
-        ):
+        if status == review_status.APPROVED and is_pending_evidence_invoice(inv):
             self._set_last_error("evidence_only")
             return False
 
@@ -983,10 +989,7 @@ class InvoiceDB:
         if not invoice:
             self._set_last_error("not_found")
             return False
-        if (
-            str(invoice.get("invoice_type") or "") == "待关联证明材料"
-            or "待关联证明材料" in str(invoice.get("parse_note") or "")
-        ):
+        if is_pending_evidence_invoice(invoice):
             self._set_last_error("evidence_only")
             return False
         try:

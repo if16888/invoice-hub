@@ -414,7 +414,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             info = InvoiceInfo(
                 invoice_type="电子票据行程单",
                 parse_success=True,
-                raw_text="江苏省车辆通行费电子票据行程单",
+                raw_text="江苏省车辆通行费电子票据行程单 2026-06-01 合计 35 元",
             )
 
             with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
@@ -430,7 +430,10 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(stats["pending_manual"], 1)
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["invoice_type"], "待关联证明材料")
-            self.assertIn("待关联证明材料", rows[0]["parse_note"])
+            self.assertIn(
+                "发现疑似证明材料，但没有唯一匹配的主发票，请人工关联",
+                rows[0]["parse_note"],
+            )
             self.assertIn(rows[0]["review_status"], ("to_review", "error"))
 
     def test_reimported_evidence_does_not_duplicate_extra_paths(self):
@@ -2261,6 +2264,54 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
             self.assertIn("滴滴行程单.pdf", extra_paths[0])
+
+    def test_evidence_amount_candidates_support_integer_and_currency_forms(self):
+        samples = {
+            "滴滴行程单 2026-06-01 实付 ¥35": "35.00",
+            "高德打车 2026年6月1日 合计35元": "35.00",
+            "T3出行 金额 RMB 35.0": "35.00",
+            "出租车 总计 CNY 35": "35.00",
+        }
+        for text, expected in samples.items():
+            with self.subTest(text=text):
+                self.assertIn(
+                    expected,
+                    cli._extract_amount_candidates_for_evidence(text),
+                )
+
+    def test_evidence_amount_candidates_ignore_long_order_numbers(self):
+        self.assertEqual(
+            cli._extract_amount_candidates_for_evidence(
+                "滴滴行程单 2026-06-01 订单号 2026060112345678"
+            ),
+            [],
+        )
+
+    def test_transport_evidence_integer_amount_matches_by_date_and_context(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            evidence = base / "stored.pdf"
+            evidence.write_bytes(b"%PDF- evidence")
+            parsed = InvoiceInfo(
+                parse_success=False,
+                raw_text="滴滴行程单 2026-06-01 实付 ¥35",
+            )
+            with InvoiceDB(base / "invoices.db") as db:
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "INTEGER-AMOUNT-001",
+                    "invoice_date": "2026-06-01",
+                    "total_amount": "35.00",
+                    "seller_name": "Synthetic Taxi",
+                    "category": "出租车",
+                })
+                matched, status = cli._find_matching_invoice_for_evidence(
+                    db,
+                    parsed,
+                    evidence,
+                )
+
+            self.assertIsNone(status)
+            self.assertEqual(matched["id"], invoice_id)
 
     def test_evidence_matching_uses_original_source_name_hints(self):
         with tempfile.TemporaryDirectory() as td:

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .config import get_email_accounts, load_config, load_config_safe, RUNTIME_DIR, PROJECT_ROOT
 from .credentials import get_auth_code
-from .db import InvoiceDB
+from .db import InvoiceDB, is_pending_evidence_invoice
 from .excel_export import export_excel
 from .attachment_handler import AttachmentHandler
 from .invoice_parser import InvoiceParser, parse_html_body, parse_subject
@@ -441,6 +441,32 @@ def _looks_like_transport_evidence(text: str) -> bool:
     return any(kw.lower() in text_lower for kw in keywords)
 
 
+def _extract_amount_candidates_for_evidence(text: str) -> list[str]:
+    """Extract conservative money candidates from evidence-oriented text."""
+    text = str(text or "")
+    patterns = [
+        r"(?:实付|合计|总计|金额)\s*[:：]?\s*(?:¥|￥|CNY|RMB)?\s*(\d{1,6}(?:\.\d{1,2})?)",
+        r"(?:¥|￥|CNY|RMB)\s*(\d{1,6}(?:\.\d{1,2})?)",
+        r"(?<!\d)(\d{1,6}(?:\.\d{1,2})?)\s*元",
+        r"(?<!\d)(\d{1,6}\.\d{2})(?!\d)",
+    ]
+    candidates: list[str] = []
+    for pattern in patterns:
+        for value in re.findall(pattern, text, flags=re.IGNORECASE):
+            normalized = _normalize_amount_for_match(value)
+            if not normalized:
+                continue
+            try:
+                numeric = float(normalized)
+            except ValueError:
+                continue
+            if not 1 <= numeric <= 100000:
+                continue
+            if normalized not in candidates:
+                candidates.append(normalized)
+    return candidates
+
+
 def _extract_evidence_match_hints(parsed, file_path: Path, source_name: str = "") -> dict:
     from .invoice_parser import normalize_date
     combined_text = " ".join([
@@ -458,9 +484,7 @@ def _extract_evidence_match_hints(parsed, file_path: Path, source_name: str = ""
     for d in re.findall(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?", combined_text):
         dates.append(f"{d[0]}-{int(d[1]):02d}-{int(d[2]):02d}")
 
-    amounts = []
-    for amt in re.findall(r"(?<!\d)(\d+\.\d{2})(?!\d)", combined_text):
-        amounts.append(_normalize_amount_for_match(amt))
+    amounts = _extract_amount_candidates_for_evidence(combined_text)
 
     parsed_date = normalize_date(getattr(parsed, "invoice_date", "") or "")
     if parsed_date and parsed_date not in dates:
@@ -521,9 +545,7 @@ def _find_matching_invoice_for_evidence(
         existing = db.find_invoice_by_number(invoice_number)
         if not existing:
             continue
-        if str(existing.get("invoice_type") or "") == "待关联证明材料":
-            continue
-        if "待关联证明材料" in str(existing.get("parse_note") or ""):
+        if is_pending_evidence_invoice(existing):
             continue
         return existing, None
 
@@ -539,7 +561,7 @@ def _find_matching_invoice_for_evidence(
 
     # We must have at least one date and one amount to attempt a guess match
     if not dates or not amounts:
-        return None, None
+        return None, "unmatched" if dates or amounts else None
 
     from .invoice_parser import normalize_date
     # Retrieve all invoices and filter
@@ -548,8 +570,7 @@ def _find_matching_invoice_for_evidence(
     transport_kws = ["滴滴", "出行", "出租车", "网约车", "高德打车", "t3出行", "曹操出行"]
 
     for inv in all_invoices:
-        inv_type = str(inv.get("invoice_type") or "")
-        if inv_type == "待关联证明材料" or "待关联证明材料" in str(inv.get("parse_note") or ""):
+        if is_pending_evidence_invoice(inv):
             continue
 
         # Check date
@@ -580,7 +601,7 @@ def _find_matching_invoice_for_evidence(
     elif len(matches) > 1:
         return None, "multiple"
 
-    return None, None
+    return None, "unmatched"
 
 
 def _attach_evidence_to_invoice(
@@ -730,6 +751,10 @@ def _import_local_evidence(
     parse_note = str(getattr(parsed, "parse_note", "") or "")
     if match_status == "multiple":
         note = "疑似滴滴/出租车证明材料，但匹配到多张候选发票，请人工关联"
+        _log.info("  发现多个候选主发票，已保留为待关联证明材料")
+    elif match_status == "unmatched":
+        note = "发现疑似证明材料，但没有唯一匹配的主发票，请人工关联"
+        _log.info("  发现疑似证明材料，但没有唯一匹配的主发票，请人工关联")
     else:
         note = f"待关联证明材料: {parse_note or '未匹配到已有发票号码'}"
 
@@ -2390,7 +2415,7 @@ def main():
             )
             if scan_summary:
                 _log.info(
-                    "Mailbox scan finished: %d/%d accounts succeeded, %d failed, scanned %d, new %d, downloaded %d, duplicates %d, pending_manual %d, failed_items %d",
+                    "Mailbox scan finished: %d/%d accounts succeeded, %d failed, scanned %d, new %d, downloaded %d, duplicates %d, manual_review_required %d, failed_items %d",
                     scan_summary.get("accounts_success", 0),
                     scan_summary.get("accounts_total", 0),
                     scan_summary.get("accounts_failed", 0),
@@ -2398,7 +2423,7 @@ def main():
                     scan_summary.get("new", 0),
                     scan_summary.get("downloaded", 0),
                     scan_summary.get("duplicates", 0),
-                    scan_summary.get("pending_manual", 0),
+                    scan_summary.get("manual_review_required", scan_summary.get("pending_manual", 0)),
                     scan_summary.get("failed_count", 0),
                 )
 
@@ -2588,6 +2613,7 @@ def _scan_mailboxes_with_db(
         "downloaded": downloaded,
         "duplicates": duplicates,
         "pending_manual": pending_manual,
+        "manual_review_required": pending_manual,
         "failed": failed,
         "failed_count": failed,
         "failed_summaries": failed_summaries,
