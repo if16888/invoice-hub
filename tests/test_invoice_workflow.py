@@ -748,6 +748,101 @@ class InvoiceWorkflowTests(unittest.TestCase):
         cat, _, _ = cli._classify("本地导入: rail.pdf", "", "中国国家铁路集团有限公司", {})
         self.assertEqual(cat, "交通")
 
+    def test_transport_receipt_parser_extracts_english_and_chinese_fields(self):
+        samples = [
+            "\n".join([
+                "Electronic Receipt",
+                "Order Details",
+                "Order ID: RIDE-ORDER-20260101",
+                "Supplier Order ID: SUPPLIER-001",
+                "Ride City: Singapore",
+                "Itinerary Info",
+                "Time of Departure(Local time): [2026-01-01 09:30]",
+                "Drop-off Time(Local time): [2026-01-01 10:00]",
+                "Grand Total (Paid via Alipay): SGD 18.40",
+            ]),
+            "\n".join([
+                "电子收据",
+                "订单详情",
+                "订单号：RIDE-ORDER-20260101",
+                "供应商订单号：SUPPLIER-001",
+                "用车城市：新加坡",
+                "行程信息",
+                "用车时间（当地时间）：[2026-01-01 09:30]",
+                "下车时间（当地时间）：[2026-01-01 10:00]",
+                "总计（通过支付宝支付）：SGD 18.40",
+            ]),
+        ]
+
+        for text in samples:
+            with self.subTest(language=text.splitlines()[0]):
+                parser = InvoiceParser()
+                fake_plumber = _FakePdfPlumber(text)
+                with tempfile.TemporaryDirectory() as td, patch.object(
+                    parser, "_plumber", return_value=fake_plumber
+                ):
+                    pdf_path = Path(td) / "receipt.pdf"
+                    pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+                    info = parser.parse_pdf(str(pdf_path))
+
+                self.assertTrue(info.parse_success)
+                self.assertEqual(info.invoice_number, "RIDE-ORDER-20260101")
+                self.assertEqual(info.invoice_date, "2026-01-01")
+                self.assertEqual(info.total_amount, "18.40")
+                self.assertEqual(info.invoice_type, "网约车电子收据")
+
+    def test_transport_receipt_language_variants_share_one_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "receipts"
+            import_dir.mkdir(parents=True)
+            (import_dir / "receipt-en.pdf").write_bytes(b"%PDF English variant")
+            (import_dir / "receipt-zh.pdf").write_bytes(b"%PDF Chinese variant")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                first_stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(InvoiceInfo(
+                        invoice_number="RIDE-ORDER-20260101",
+                        invoice_date="2026-01-01",
+                        total_amount="18.40",
+                        invoice_type="网约车电子收据",
+                        parse_success=True,
+                        parse_note="synthetic English transport receipt",
+                    )),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                    file_paths=[import_dir / "receipt-en.pdf"],
+                )
+                second_stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(InvoiceInfo(
+                        invoice_number="RIDE-ORDER-20260101",
+                        invoice_date="2026-01-01",
+                        total_amount="",
+                        invoice_type="网约车电子收据",
+                        parse_success=True,
+                        parse_note="synthetic Chinese transport receipt",
+                    )),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                    file_paths=[import_dir / "receipt-zh.pdf"],
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_number"], "RIDE-ORDER-20260101")
+            self.assertEqual(rows[0]["invoice_type"], "网约车电子收据")
+            self.assertEqual(rows[0]["total_amount"], "18.40")
+            self.assertEqual(rows[0]["category"], "出租车")
+            self.assertEqual(first_stats["added"], 1)
+            self.assertEqual(second_stats["added"], 1)
+            self.assertEqual(second_stats["conflicts"], 0)
+            self.assertEqual(len(json.loads(rows[0]["extra_paths"])), 1)
+
     def test_invoice_parser_extracts_seller_from_two_column_telecom_layout(self):
         """Regression: pdfplumber merges buyer/seller columns into one line.
 

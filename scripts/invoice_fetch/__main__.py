@@ -889,7 +889,10 @@ def _import_local_pdf(
     if existing_by_hash:
         existing_by_hash = _restore_existing_invoice_if_deleted(db, existing_by_hash, "本地导入")
         # Check if we should update it
-        category, extra_type, extra_required = _classify(source_name, "local import", info.seller_name or "", categories)
+        category, extra_type, extra_required = _classify(
+            f"{source_name} {info.invoice_type or ''}", "local import",
+            info.seller_name or "", categories,
+        )
         refreshed = _refresh_invoice_from_parse(
             db=db,
             existing=existing_by_hash,
@@ -917,6 +920,45 @@ def _import_local_pdf(
         _log.info("  本地导入跳过重复文件: %s", mask_filename(source_name))
         return "duplicate", None
 
+    # A bilingual or regenerated receipt can have different bytes and omit
+    # different optional fields. Its provider order ID remains the stable key.
+    if info.invoice_type == "网约车电子收据" and info.invoice_number:
+        existing_receipt = db.find_invoice_by_number(info.invoice_number, include_deleted=True)
+        if existing_receipt and existing_receipt.get("invoice_type") == "网约车电子收据":
+            existing_receipt = _restore_existing_invoice_if_deleted(
+                db, existing_receipt, "本地导入收据"
+            )
+            category, extra_type, extra_required = _classify(
+                f"{source_name} {info.invoice_type or ''}", "local import",
+                info.seller_name or existing_receipt.get("seller_name") or "", categories,
+            )
+            _refresh_invoice_from_parse(
+                db=db,
+                existing=existing_receipt,
+                invoice_number=info.invoice_number,
+                invoice_code=info.invoice_code or existing_receipt.get("invoice_code") or "",
+                invoice_date=info.invoice_date or existing_receipt.get("invoice_date") or "",
+                amount=info.amount or existing_receipt.get("amount") or "",
+                total_amount=info.total_amount or existing_receipt.get("total_amount") or "",
+                seller_name=info.seller_name or existing_receipt.get("seller_name") or "",
+                buyer_name=info.buyer_name or existing_receipt.get("buyer_name") or "",
+                invoice_type=info.invoice_type or existing_receipt.get("invoice_type") or "",
+                category=category or existing_receipt.get("category") or "",
+                has_extra=bool(extra_type) or bool(existing_receipt.get("has_extra")),
+                extra_type=extra_type or existing_receipt.get("extra_type") or "",
+                missing_extra=extra_required,
+                parse_note=info.parse_note or existing_receipt.get("parse_note") or "",
+            )
+            attached = _attach_evidence_to_invoice(db, existing_receipt, file_path)
+            if attached:
+                _log.info(
+                    "  已合并同一订单的收据版本: invoice_id=%s file=%s",
+                    existing_receipt["id"],
+                    mask_filename(source_name),
+                )
+                return "added", existing_receipt["id"]
+            return "duplicate", None
+
     # Check for duplicate by the full invoice uniqueness key.
     existing_by_fields = db.find_invoice_by_unique_fields(
         info.invoice_number, info.total_amount, info.seller_name, include_deleted=True
@@ -933,7 +975,10 @@ def _import_local_pdf(
             if att_path:
                 full_att_path = RUNTIME_DIR / att_path
                 if full_att_path.exists() and _sha256_file(full_att_path) == file_hash:
-                    category, extra_type, extra_required = _classify(source_name, "local import", info.seller_name or "", categories)
+                    category, extra_type, extra_required = _classify(
+                        f"{source_name} {info.invoice_type or ''}", "local import",
+                        info.seller_name or "", categories,
+                    )
                     _refresh_invoice_from_parse(
                         db=db,
                         existing=existing_by_fields,
@@ -950,6 +995,16 @@ def _import_local_pdf(
                         extra_type=extra_type,
                         missing_extra=extra_required,
                         parse_note=info.parse_note or "本地导入",
+                    )
+                    return "added", existing_by_fields["id"]
+
+            if info.invoice_type == "网约车电子收据":
+                attached = _attach_evidence_to_invoice(db, existing_by_fields, file_path)
+                if attached:
+                    _log.info(
+                        "  已将同一订单的收据版本关联为证明材料: invoice_id=%s file=%s",
+                        existing_by_fields["id"],
+                        mask_filename(source_name),
                     )
                     return "added", existing_by_fields["id"]
 
@@ -977,7 +1032,10 @@ def _import_local_pdf(
                 mask_invoice_number(info.invoice_number),
                 mask_filename(source_name),
             )
-            category, extra_type, extra_required = _classify(source_name, "local import", info.seller_name, categories)
+            category, extra_type, extra_required = _classify(
+                f"{source_name} {info.invoice_type or ''}", "local import",
+                info.seller_name, categories,
+            )
             if preserve_source_path:
                 attachment_path = _runtime_relative(file_path)
             else:
@@ -1018,7 +1076,10 @@ def _import_local_pdf(
             row_id = db.insert_invoice(rec)
             return "conflict", row_id
 
-    category, extra_type, extra_required = _classify(source_name, "local import", info.seller_name, categories)
+    category, extra_type, extra_required = _classify(
+        f"{source_name} {info.invoice_type or ''}", "local import",
+        info.seller_name, categories,
+    )
     if preserve_source_path:
         attachment_path = _runtime_relative(file_path)
     else:

@@ -90,6 +90,9 @@ class InvoiceParser:
 
             info.raw_text = text[:2000]
 
+            if self._parse_transport_receipt(text, info):
+                return info
+
             if not self._looks_like_invoice(text):
                 info.parse_note = "内容不像发票"
                 return info
@@ -309,6 +312,56 @@ class InvoiceParser:
             _log.error("PDF 解析出错 %s: %s", mask_path(path), exc)
 
         return info
+
+    @staticmethod
+    def _parse_transport_receipt(text: str, info: InvoiceInfo) -> bool:
+        """Parse bilingual ride receipts without treating them as tax invoices."""
+        low = text.lower()
+        markers = (
+            "order id",
+            "ride city",
+            "itinerary info",
+            "time of departure",
+            "grand total",
+            "订单号",
+            "用车城市",
+            "行程信息",
+            "用车时间",
+            "总计",
+        )
+        if sum(1 for marker in markers if marker in low) < 3:
+            return False
+
+        order_match = re.search(
+            r"(?im)^\s*(?:order\s+id|订单号)\s*[:：]\s*([A-Za-z0-9_-]{8,64})\s*$",
+            text,
+        )
+        date_match = re.search(
+            r"(?:time\s+of\s+departure[^\n]*|用车时间[^\n]*)"
+            r"[:：]\s*\[?\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
+            text,
+            re.IGNORECASE,
+        )
+        amount_match = re.search(
+            r"(?:grand\s+total[^\n]*?|总计[^\n]*?)"
+            r"[:：]?\s*(?:CNY|RMB|USD|EUR|SGD|HKD|JPY|GBP|AUD|CAD|S\$|¥|￥|\$)?"
+            r"\s*(?<![\d.])([\d,]+\.\d{2})(?!\d)",
+            text,
+            re.IGNORECASE,
+        )
+
+        if not order_match:
+            info.parse_note = "网约车电子收据未提取到订单号"
+            return False
+
+        info.invoice_number = order_match[1].strip()
+        info.invoice_date = normalize_date(date_match[1]) if date_match else ""
+        info.total_amount = amount_match[1].replace(",", "") if amount_match else ""
+        info.amount = info.total_amount
+        info.invoice_type = "网约车电子收据"
+        info.parse_success = True
+        info.parse_note = "已识别网约车电子收据"
+        return True
 
     @staticmethod
     def _repair_company_name(name: str) -> str:
