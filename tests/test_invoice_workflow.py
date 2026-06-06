@@ -1844,6 +1844,214 @@ class InvoiceWorkflowTests(unittest.TestCase):
         # 括号内不是组织后缀，不应补右括号
         self.assertEqual(info.seller_name, "南京市钾程水饺店（测试数据")
 
+    def test_didi_evidence_matching_by_invoice_number(self):
+        """测试 1：滴滴行程单按发票号匹配仍然有效"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir(parents=True)
+            evidence = import_dir / "滴滴行程单_2532700001694376933.pdf"
+            evidence.write_bytes(b"%PDF- trip evidence")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "2532700001694376933",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+                # Mock parse_pdf returning a non-success parse (evidence typically fails standard invoice parse)
+                parser = StaticParser(InvoiceInfo(parse_success=False, parse_note="行程单无标准发票号"))
+                stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=parser,
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+                updated = db.get_invoice(invoice_id)
+
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(updated["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+            self.assertIn("滴滴行程单_2532700001694376933.pdf", extra_paths[0])
+
+    def test_didi_evidence_matching_by_date_and_amount(self):
+        """测试 2：滴滴行程单无发票号时，用日期 + 金额 + 滴滴关键词唯一匹配"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir(parents=True)
+            evidence = import_dir / "滴滴行程单.pdf"
+            # Simulate parsed raw_text containing dates and amounts
+            raw_text = "滴滴出行行程单 日期：2025-12-20 金额：1142.81"
+            evidence.write_bytes(b"%PDF- trip evidence text")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "2532700001694376933",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+                parser = StaticParser(InvoiceInfo(
+                    parse_success=False,
+                    parse_note="行程单无标准发票号",
+                    raw_text=raw_text
+                ))
+                stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=parser,
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+                updated = db.get_invoice(invoice_id)
+
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(updated["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+            self.assertIn("滴滴行程单.pdf", extra_paths[0])
+
+    def test_didi_evidence_matching_multiple_candidates_fails(self):
+        """测试 3：候选多张时不自动关联"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir(parents=True)
+            evidence = import_dir / "滴滴行程单.pdf"
+            raw_text = "滴滴出行行程单 日期：2025-12-20 金额：1142.81"
+            evidence.write_bytes(b"%PDF- trip evidence text")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.insert_invoice({
+                    "invoice_number": "11111111",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+                db.insert_invoice({
+                    "invoice_number": "22222222",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+                parser = StaticParser(InvoiceInfo(
+                    parse_success=False,
+                    parse_note="行程单无标准发票号",
+                    raw_text=raw_text
+                ))
+                stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=parser,
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(stats["pending_manual"], 1)
+            self.assertEqual(len(rows), 3)  # Two standard invoices + one pending manual evidence
+            evidence_row = [r for r in rows if r["invoice_type"] == "待关联证明材料"][0]
+            self.assertIn("疑似滴滴/出租车证明材料，但匹配到多张候选发票，请人工关联", evidence_row["parse_note"])
+
+    def test_non_evidence_failed_pdf_is_not_associated(self):
+        """测试 4：普通解析失败 PDF 不应误判为行程单"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir(parents=True)
+            unknown_pdf = import_dir / "unknown.pdf"
+            unknown_pdf.write_bytes(b"%PDF- bad file")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                # Target candidates with date and amount matching to try to trigger it
+                db.insert_invoice({
+                    "invoice_number": "2532700001694376933",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+                parser = StaticParser(InvoiceInfo(
+                    parse_success=False,
+                    parse_note="无法解析发票内容",
+                    raw_text="Random text here dated 2025-12-20 with amount 1142.81"
+                ))
+                stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=parser,
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(stats["pending_manual"], 1)
+            self.assertEqual(len(rows), 2)
+            evidence_row = [r for r in rows if r["invoice_type"] == "本地导入待处理"][0]
+            self.assertNotIn("待关联证明材料", evidence_row["invoice_type"])
+
+    def test_duplicate_evidence_import_is_idempotent(self):
+        """测试 5：重复导入同一行程单不重复写入 extra_paths"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir(parents=True)
+            evidence = import_dir / "滴滴行程单_2532700001694376933.pdf"
+            evidence.write_bytes(b"%PDF- trip evidence content")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "2532700001694376933",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+                parser = StaticParser(InvoiceInfo(parse_success=False, parse_note="行程单"))
+                # Import once
+                stats1 = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=parser,
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                # Import twice
+                stats2 = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=parser,
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                updated = db.get_invoice(invoice_id)
+
+            self.assertEqual(stats1["added"], 1)
+            self.assertEqual(stats2["duplicates"], 1)
+            extra_paths = json.loads(updated["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

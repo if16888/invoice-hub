@@ -393,6 +393,60 @@ STANDARD_INVOICE_TITLES = (
 )
 
 
+def _normalize_amount_for_match(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        from decimal import Decimal, ROUND_HALF_UP
+        val = Decimal(value.replace(",", "").strip())
+        return str(val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    except Exception:
+        return ""
+
+
+def _looks_like_transport_evidence(text: str) -> bool:
+    keywords = ["滴滴", "出行", "出租车", "网约车", "用车明细", "行程单", "行程记录", "高德打车", "T3出行", "曹操出行"]
+    text_lower = text.lower()
+    return any(kw.lower() in text_lower for kw in keywords)
+
+
+def _extract_evidence_match_hints(parsed, file_path: Path, source_name: str = "") -> dict:
+    from .invoice_parser import normalize_date
+    combined_text = " ".join([
+        file_path.name,
+        source_name,
+        getattr(parsed, "raw_text", "") or "",
+        getattr(parsed, "parse_note", "") or ""
+    ])
+
+    dates = []
+    # YYYY-MM-DD
+    for d in re.findall(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", combined_text):
+        dates.append(f"{d[0]}-{int(d[1]):02d}-{int(d[2]):02d}")
+    # YYYY年MM月DD日
+    for d in re.findall(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?", combined_text):
+        dates.append(f"{d[0]}-{int(d[1]):02d}-{int(d[2]):02d}")
+
+    amounts = []
+    for amt in re.findall(r"(?<!\d)(\d+\.\d{2})(?!\d)", combined_text):
+        amounts.append(_normalize_amount_for_match(amt))
+
+    parsed_date = normalize_date(getattr(parsed, "invoice_date", "") or "")
+    if parsed_date and parsed_date not in dates:
+        dates.append(parsed_date)
+    parsed_amount = getattr(parsed, "total_amount", "") or getattr(parsed, "amount", "") or ""
+    if parsed_amount:
+        norm_parsed = _normalize_amount_for_match(parsed_amount)
+        if norm_parsed and norm_parsed not in amounts:
+            amounts.append(norm_parsed)
+
+    return {
+        "dates": list(set(dates)),
+        "amounts": list(set(amounts)),
+        "combined_text": combined_text
+    }
+
+
 def _is_evidence_document(parsed, file_path: Path, text_hint: str = "") -> bool:
     """Identify supporting evidence without reclassifying standard invoices."""
     document_text = " ".join([
@@ -415,8 +469,8 @@ def _find_matching_invoice_for_evidence(
     db: InvoiceDB,
     parsed,
     file_path: Path,
-) -> dict | None:
-    """Find a standard invoice using only exact invoice-number matches."""
+) -> tuple[dict | None, str | None]:
+    """Find a standard invoice using exact invoice-number matches or conservative hints."""
     candidates: list[str] = []
     parsed_number = str(getattr(parsed, "invoice_number", "") or "").strip()
     if parsed_number:
@@ -427,6 +481,7 @@ def _find_matching_invoice_for_evidence(
         if number not in candidates
     )
 
+    # 1. Try exact matches first
     for invoice_number in candidates:
         existing = db.find_invoice_by_number(invoice_number)
         if not existing:
@@ -435,8 +490,62 @@ def _find_matching_invoice_for_evidence(
             continue
         if "待关联证明材料" in str(existing.get("parse_note") or ""):
             continue
-        return existing
-    return None
+        return existing, None
+
+    # 2. Try conservative transport/taxi matching rules
+    # First, gather hints
+    hints = _extract_evidence_match_hints(parsed, file_path)
+    combined_text = hints["combined_text"]
+    if not _looks_like_transport_evidence(combined_text):
+        return None, None
+
+    dates = hints["dates"]
+    amounts = hints["amounts"]
+
+    # We must have at least one date and one amount to attempt a guess match
+    if not dates or not amounts:
+        return None, None
+
+    from .invoice_parser import normalize_date
+    # Retrieve all invoices and filter
+    all_invoices = db.get_all_invoices(include_deleted=False)
+    matches = []
+    transport_kws = ["滴滴", "出行", "出租车", "网约车", "高德打车", "t3出行", "曹操出行"]
+
+    for inv in all_invoices:
+        inv_type = str(inv.get("invoice_type") or "")
+        if inv_type == "待关联证明材料" or "待关联证明材料" in str(inv.get("parse_note") or ""):
+            continue
+
+        # Check date
+        inv_date = normalize_date(str(inv.get("invoice_date") or ""))
+        if inv_date not in dates:
+            continue
+
+        # Check amount
+        inv_amount = _normalize_amount_for_match(str(inv.get("total_amount") or ""))
+        if inv_amount not in amounts:
+            continue
+
+        # Check transport category/context
+        combined_inv_fields = " ".join([
+            str(inv.get("seller_name") or ""),
+            str(inv.get("mail_subject") or ""),
+            str(inv.get("attachment_path") or "")
+        ]).lower()
+        has_transport_context = (
+            inv.get("category") in ("出租车", "交通") or
+            any(kw in combined_inv_fields for kw in transport_kws)
+        )
+        if has_transport_context:
+            matches.append(inv)
+
+    if len(matches) == 1:
+        return matches[0], None
+    elif len(matches) > 1:
+        return None, "multiple"
+
+    return None, None
 
 
 def _attach_evidence_to_invoice(
@@ -479,7 +588,7 @@ def _import_local_evidence(
     if not _is_evidence_document(parsed, file_path, source_name):
         return None
 
-    matching_invoice = _find_matching_invoice_for_evidence(db, parsed, file_path)
+    matching_invoice, match_status = _find_matching_invoice_for_evidence(db, parsed, file_path)
     if matching_invoice:
         attached = _attach_evidence_to_invoice(db, matching_invoice, file_path)
         if not attached and not preserve_source_path:
@@ -490,11 +599,16 @@ def _import_local_evidence(
         return ("added", matching_invoice["id"]) if attached else ("duplicate", None)
 
     parse_note = str(getattr(parsed, "parse_note", "") or "")
+    if match_status == "multiple":
+        note = "疑似滴滴/出租车证明材料，但匹配到多张候选发票，请人工关联"
+    else:
+        note = f"待关联证明材料: {parse_note or '未匹配到已有发票号码'}"
+
     return _insert_local_exception(
         db=db,
         file_path=file_path,
         original_name=source_name,
-        note=f"待关联证明材料: {parse_note or '未匹配到已有发票号码'}",
+        note=note,
         categories=categories,
         invoice_type="待关联证明材料",
     )
@@ -674,16 +788,6 @@ def _import_local_pdf(
     existing_by_hash = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
 
     info = parser.parse_pdf(str(file_path))
-    if not info.parse_success:
-        status, row_id = _insert_local_exception(
-            db=db,
-            file_path=file_path,
-            original_name=source_name,
-            note=info.parse_note or "本地导入PDF解析失败",
-            categories=categories,
-        )
-        return status, row_id
-
     evidence_result = _import_local_evidence(
         db=db,
         parsed=info,
@@ -694,6 +798,16 @@ def _import_local_pdf(
     )
     if evidence_result is not None:
         return evidence_result
+
+    if not info.parse_success:
+        status, row_id = _insert_local_exception(
+            db=db,
+            file_path=file_path,
+            original_name=source_name,
+            note=info.parse_note or "本地导入PDF解析失败",
+            categories=categories,
+        )
+        return status, row_id
 
     # If duplicate file hash, check if it's a re-import of the exact same record or a new file
     if existing_by_hash:
