@@ -1075,6 +1075,7 @@ def _import_local_directory(
     parser: InvoiceParser,
     categories: dict,
     att_dir: Path,
+    file_paths=None,
 ) -> dict:
     root = Path(import_dir)
     if not root.exists() or not root.is_dir():
@@ -1084,7 +1085,17 @@ def _import_local_directory(
     runtime_root = RUNTIME_DIR.resolve()
     staging_dir = att_dir / "local_import"
     supported_exts = {".pdf", ".ofd", ".zip", ".png", ".jpg", ".jpeg", ".heic"}
-    files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in supported_exts)
+    if file_paths is None:
+        files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in supported_exts)
+    else:
+        files = []
+        for item in file_paths:
+            candidate = Path(item).resolve()
+            if not candidate.is_relative_to(root):
+                raise ValueError(f"导入文件不在指定目录内: {candidate}")
+            if candidate.is_file() and candidate.suffix.lower() in supported_exts:
+                files.append(candidate)
+        files.sort()
 
     stats = {"added": 0, "duplicates": 0, "conflicts": 0, "pending_manual": 0, "failed": 0}
     if not files:

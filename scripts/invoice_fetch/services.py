@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Iterable
 
 from .config import load_config_safe
 from .credentials import get_auth_code, has_auth_code
@@ -20,6 +21,7 @@ def import_local_directory(
     import_dir: str | Path,
     db_path: Path,
     config_path: Path | None = None,
+    file_paths: Iterable[str | Path] | None = None,
 ) -> dict:
     """Public wrapper to import a local directory of invoices."""
     from .__main__ import _import_local_directory
@@ -39,6 +41,7 @@ def import_local_directory(
                 parser=parser,
                 categories=categories,
                 att_dir=att_dir,
+                file_paths=file_paths,
             )
             excel_path = db_path.parent / "发票汇总.xlsx"
             export_excel(db.get_all_invoices(), excel_path)

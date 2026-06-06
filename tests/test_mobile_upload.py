@@ -208,6 +208,47 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual(result["imported"], imported)
             self.assertEqual(server.status()["imported"], 5)
 
+    def test_sequential_uploads_import_only_newly_accepted_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            imported_file_sets = []
+
+            def fake_import_local_directory(import_dir, target_db_path, config_path=None, file_paths=None):
+                imported_file_sets.append([Path(path).name for path in file_paths or []])
+                return {
+                    "added": len(file_paths or []),
+                    "conflicts": 0,
+                    "pending_manual": 0,
+                    "duplicates": 0,
+                    "failed": 0,
+                }
+
+            with patch(
+                "scripts.invoice_fetch.services.import_local_directory",
+                side_effect=fake_import_local_directory,
+            ):
+                server.save_uploads([
+                    UploadedFile("first.pdf", b"first pdf bytes", "application/pdf"),
+                ])
+                server.save_uploads([
+                    UploadedFile("second.pdf", b"second pdf bytes", "application/pdf"),
+                ])
+
+            self.assertEqual(imported_file_sets, [["first.pdf"], ["second.pdf"]])
+            self.assertEqual(server.status()["accepted"], 2)
+            self.assertEqual(server.status()["imported"], 2)
+
     def test_http_upload_page_upload_endpoint_and_invalid_token(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_dir = Path(td) / "runtime"

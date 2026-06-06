@@ -245,7 +245,7 @@ class MobileUploadServer:
 
         imported = 0
         if accepted_paths and self.import_on_upload and self.db_path:
-            imported = self._import_accepted_files()
+            imported = self._import_accepted_files(accepted_paths)
             with self._lock:
                 imported_count = (
                     imported.get("added", 0) +
@@ -275,13 +275,17 @@ class MobileUploadServer:
                 return False
             return db.restore_invoice(existing["id"])
 
-    def _import_accepted_files(self) -> int:
+    def _import_accepted_files(self, accepted_paths: Iterable[Path]) -> int:
         if not self.session or not self.db_path:
             return 0
         from .services import import_local_directory
         from .db import InvoiceDB
 
-        imported = import_local_directory(self.session.original_dir, self.db_path)
+        imported = import_local_directory(
+            self.session.original_dir,
+            self.db_path,
+            file_paths=accepted_paths,
+        )
         hash_to_subject = {
             item["sha256"]: f"手机上传: {item['original_filename']}"
             for item in self._files
