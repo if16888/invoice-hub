@@ -2537,6 +2537,62 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_detail_pane_is_scrollable_when_log_reduces_height(self):
+        try:
+            from PySide6.QtCore import Qt
+            from PySide6.QtWidgets import QApplication, QScrollArea
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_detail_scroll.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "SYNTHETIC001",
+                        "invoice_date": "2026-06-01",
+                        "total_amount": "88.00",
+                        "seller_name": "示例科技有限公司",
+                        "buyer_name": "示例购买方",
+                        "invoice_type": "电子发票",
+                        "category": "其他",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window.resize(1100, 520)
+                    window.show()
+                    app.processEvents()
+                    window._set_log_panel_visible(True)
+                    app.processEvents()
+
+                    self.assertIsInstance(window.right_content_widget, QScrollArea)
+                    self.assertTrue(window.right_content_widget.widgetResizable())
+                    self.assertEqual(
+                        window.right_content_widget.horizontalScrollBarPolicy(),
+                        Qt.ScrollBarAlwaysOff,
+                    )
+                    detail_content = window.right_content_widget.widget()
+                    self.assertIsNotNone(detail_content)
+                    self.assertTrue(detail_content.isAncestorOf(window.detail_tabs))
+                    self.assertTrue(detail_content.isAncestorOf(window.btn_save_draft))
+                    self.assertTrue(detail_content.isAncestorOf(window.btn_app))
+                    self.assertGreater(
+                        window.right_content_widget.verticalScrollBar().maximum(),
+                        0,
+                    )
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_show_does_not_emit_invalid_qfont_point_size_warning(self):
         try:
             from PySide6.QtCore import qInstallMessageHandler

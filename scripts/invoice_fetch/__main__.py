@@ -16,6 +16,7 @@ import json
 import hashlib
 import logging
 import os
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -369,6 +370,136 @@ def _normalize_path_list(raw_value) -> list[str]:
     return [str(raw_value)]
 
 
+EVIDENCE_DOCUMENT_KEYWORDS = (
+    "电子票据行程单",
+    "通行费行程单",
+    "行程单",
+    "水单",
+    "支付截图",
+    "订单截图",
+    "交易记录",
+    "滴滴行程",
+    "高德打车",
+    "铁路电子客票",
+    "机票行程单",
+)
+
+STANDARD_INVOICE_TITLES = (
+    "增值税电子普通发票",
+    "增值税普通发票",
+    "增值税专用发票",
+    "电子发票",
+    "数电发票",
+)
+
+
+def _is_evidence_document(parsed, file_path: Path, text_hint: str = "") -> bool:
+    """Identify supporting evidence without reclassifying standard invoices."""
+    document_text = " ".join([
+        str(file_path.name if file_path else ""),
+        str(getattr(parsed, "raw_text", "") or ""),
+        str(getattr(parsed, "parse_note", "") or ""),
+        str(text_hint or ""),
+    ])
+    if any(title in document_text for title in STANDARD_INVOICE_TITLES):
+        return False
+
+    evidence_text = " ".join([
+        document_text,
+        str(getattr(parsed, "invoice_type", "") or ""),
+    ])
+    return any(keyword in evidence_text for keyword in EVIDENCE_DOCUMENT_KEYWORDS)
+
+
+def _find_matching_invoice_for_evidence(
+    db: InvoiceDB,
+    parsed,
+    file_path: Path,
+) -> dict | None:
+    """Find a standard invoice using only exact invoice-number matches."""
+    candidates: list[str] = []
+    parsed_number = str(getattr(parsed, "invoice_number", "") or "").strip()
+    if parsed_number:
+        candidates.append(parsed_number)
+    candidates.extend(
+        number
+        for number in re.findall(r"(?<!\d)(\d{8,20})(?!\d)", file_path.stem)
+        if number not in candidates
+    )
+
+    for invoice_number in candidates:
+        existing = db.find_invoice_by_number(invoice_number)
+        if not existing:
+            continue
+        if str(existing.get("invoice_type") or "") == "待关联证明材料":
+            continue
+        if "待关联证明材料" in str(existing.get("parse_note") or ""):
+            continue
+        return existing
+    return None
+
+
+def _attach_evidence_to_invoice(
+    db: InvoiceDB,
+    invoice: dict,
+    file_path: Path,
+) -> bool:
+    """Attach evidence to an invoice, deduplicating by path and file content."""
+    stored_path = _runtime_relative(file_path)
+    extra_paths = _normalize_path_list(invoice.get("extra_paths"))
+    if stored_path in extra_paths:
+        return False
+
+    file_hash = _sha256_file(file_path) if file_path.exists() else ""
+    if file_hash:
+        for existing_path in extra_paths:
+            resolved = _resolve_runtime_path(existing_path)
+            if resolved and _sha256_file(resolved) == file_hash:
+                return False
+
+    extra_paths.append(stored_path)
+    db.update_invoice_file_paths(invoice["id"], extra_paths=extra_paths)
+    _log.info(
+        "  已将证明材料关联到发票: invoice_id=%s file=%s",
+        invoice["id"],
+        mask_filename(file_path.name),
+    )
+    return True
+
+
+def _import_local_evidence(
+    db: InvoiceDB,
+    parsed,
+    file_path: Path,
+    source_name: str,
+    categories: dict,
+    preserve_source_path: bool = False,
+) -> tuple[str, int | None] | None:
+    """Attach strong-matched evidence or retain it as a pending-link record."""
+    if not _is_evidence_document(parsed, file_path, source_name):
+        return None
+
+    matching_invoice = _find_matching_invoice_for_evidence(db, parsed, file_path)
+    if matching_invoice:
+        attached = _attach_evidence_to_invoice(db, matching_invoice, file_path)
+        if not attached and not preserve_source_path:
+            try:
+                file_path.unlink()
+            except OSError:
+                pass
+        return ("added", matching_invoice["id"]) if attached else ("duplicate", None)
+
+    parse_note = str(getattr(parsed, "parse_note", "") or "")
+    return _insert_local_exception(
+        db=db,
+        file_path=file_path,
+        original_name=source_name,
+        note=f"待关联证明材料: {parse_note or '未匹配到已有发票号码'}",
+        categories=categories,
+        invoice_type="待关联证明材料",
+    )
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -489,6 +620,7 @@ def _insert_local_exception(
     original_name: str,
     note: str,
     categories: dict,
+    invoice_type: str = "本地导入待处理",
 ) -> tuple[str, int | None]:
     file_hash = _sha256_file(file_path) if file_path.exists() else ""
     existing_by_hash = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
@@ -510,7 +642,7 @@ def _insert_local_exception(
         "total_amount": "",
         "seller_name": "",
         "buyer_name": "",
-        "invoice_type": "本地导入待处理",
+        "invoice_type": invoice_type,
         "category": category,
         "has_extra": False,
         "extra_type": extra_type,
@@ -551,6 +683,17 @@ def _import_local_pdf(
             categories=categories,
         )
         return status, row_id
+
+    evidence_result = _import_local_evidence(
+        db=db,
+        parsed=info,
+        file_path=file_path,
+        source_name=source_name,
+        categories=categories,
+        preserve_source_path=preserve_source_path,
+    )
+    if evidence_result is not None:
+        return evidence_result
 
     # If duplicate file hash, check if it's a re-import of the exact same record or a new file
     if existing_by_hash:
@@ -800,21 +943,43 @@ def _import_local_directory(
                 key = status + "s" if status in ("duplicate", "conflict") else status
                 stats[key] += 1
             elif ext in {".png", ".jpg", ".jpeg", ".heic"}:
-                status, row_id = _insert_local_exception(
-                    db,
-                    working_file,
-                    src.name,
-                    "本地导入图片待识别，请人工处理",
-                    categories,
+                evidence_result = _import_local_evidence(
+                    db=db,
+                    parsed=None,
+                    file_path=working_file,
+                    source_name=src.name,
+                    categories=categories,
+                    preserve_source_path=preserve_source_path,
                 )
+                if evidence_result is None:
+                    status, row_id = _insert_local_exception(
+                        db,
+                        working_file,
+                        src.name,
+                        "本地导入图片待识别，请人工处理",
+                        categories,
+                    )
+                else:
+                    status, row_id = evidence_result
                 key = status + "s" if status in ("duplicate", "conflict") else status
                 stats[key] += 1
             else:
-                status, row_id = _insert_local_exception(
-                    db, working_file, src.name,
-                    "本地导入暂不支持OFD解析，请人工处理",
-                    categories,
+                evidence_result = _import_local_evidence(
+                    db=db,
+                    parsed=None,
+                    file_path=working_file,
+                    source_name=src.name,
+                    categories=categories,
+                    preserve_source_path=preserve_source_path,
                 )
+                if evidence_result is None:
+                    status, row_id = _insert_local_exception(
+                        db, working_file, src.name,
+                        "本地导入暂不支持OFD解析，请人工处理",
+                        categories,
+                    )
+                else:
+                    status, row_id = evidence_result
                 key = status + "s" if status in ("duplicate", "conflict") else status
                 stats[key] += 1
         except Exception as exc:

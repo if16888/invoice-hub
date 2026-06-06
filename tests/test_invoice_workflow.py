@@ -360,6 +360,168 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["file_hash"])
 
+    def test_local_evidence_matching_existing_invoice_attaches_without_new_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir()
+            evidence = import_dir / "电子票据行程单_05879011.pdf"
+            evidence.write_bytes(b"%PDF- synthetic trip evidence")
+            info = InvoiceInfo(
+                invoice_number="05879011",
+                invoice_type="电子票据行程单",
+                parse_success=True,
+                raw_text="江苏省车辆通行费电子票据行程单 发票号码 05879011",
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "05879011",
+                    "invoice_date": "2026-06-01",
+                    "total_amount": "30.00",
+                    "seller_name": "示例道路服务有限公司",
+                    "invoice_type": "电子发票",
+                    "review_status": "to_review",
+                    "extra_paths": [],
+                })
+                stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(info),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+                updated = db.get_invoice(invoice_id)
+
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(updated["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+            self.assertTrue((runtime / extra_paths[0]).exists())
+
+    def test_local_unmatched_evidence_is_kept_as_pending_link_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir()
+            evidence = import_dir / "电子票据行程单_待关联.pdf"
+            evidence.write_bytes(b"%PDF- synthetic unmatched evidence")
+            info = InvoiceInfo(
+                invoice_type="电子票据行程单",
+                parse_success=True,
+                raw_text="江苏省车辆通行费电子票据行程单",
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                stats = cli._import_local_directory(
+                    import_dir=import_dir,
+                    db=db,
+                    parser=StaticParser(info),
+                    categories={},
+                    att_dir=runtime / "attachments",
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(stats["pending_manual"], 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "待关联证明材料")
+            self.assertIn("待关联证明材料", rows[0]["parse_note"])
+            self.assertIn(rows[0]["review_status"], ("to_review", "error"))
+
+    def test_reimported_evidence_does_not_duplicate_extra_paths(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir()
+            evidence = import_dir / "通行费行程单_05879011.pdf"
+            evidence.write_bytes(b"%PDF- same synthetic evidence")
+            info = InvoiceInfo(
+                invoice_number="05879011",
+                invoice_type="通行费行程单",
+                parse_success=True,
+                raw_text="通行费行程单 05879011",
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "05879011",
+                    "total_amount": "30.00",
+                    "seller_name": "示例道路服务有限公司",
+                    "invoice_type": "电子发票",
+                    "extra_paths": [],
+                })
+                first = cli._import_local_directory(
+                    import_dir, db, StaticParser(info), {}, runtime / "attachments"
+                )
+                second = cli._import_local_directory(
+                    import_dir, db, StaticParser(info), {}, runtime / "attachments"
+                )
+                updated = db.get_invoice(invoice_id)
+
+            self.assertEqual(first["added"], 1)
+            self.assertEqual(second["duplicates"], 1)
+            self.assertEqual(len(json.loads(updated["extra_paths"])), 1)
+
+    def test_standard_electronic_invoice_is_not_treated_as_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir()
+            invoice = import_dir / "电子发票_05879012.pdf"
+            invoice.write_bytes(b"%PDF- synthetic invoice")
+            info = InvoiceInfo(
+                invoice_number="05879012",
+                invoice_date="2026-06-01",
+                total_amount="30.00",
+                seller_name="示例科技有限公司",
+                invoice_type="增值税电子普通发票",
+                parse_success=True,
+                raw_text="增值税电子普通发票 发票号码 05879012",
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                stats = cli._import_local_directory(
+                    import_dir, db, StaticParser(info), {}, runtime / "attachments"
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "增值税电子普通发票")
+            self.assertEqual(json.loads(rows[0]["extra_paths"]), [])
+
+    def test_local_payment_screenshot_filename_attaches_to_existing_invoice(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_evidence"
+            import_dir.mkdir()
+            screenshot = import_dir / "支付截图_05879013.png"
+            screenshot.write_bytes(b"synthetic image bytes")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "05879013",
+                    "total_amount": "30.00",
+                    "seller_name": "示例科技有限公司",
+                    "invoice_type": "电子发票",
+                    "extra_paths": [],
+                })
+                stats = cli._import_local_directory(
+                    import_dir, db, InvoiceParser(), {}, runtime / "attachments"
+                )
+                rows = db.get_all_invoices()
+                updated = db.get_invoice(invoice_id)
+
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(json.loads(updated["extra_paths"])), 1)
+
     def test_import_local_directory_records_unparsed_ofd_as_exception(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

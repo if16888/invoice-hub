@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QComboBox, QLabel, QMessageBox, QGroupBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog, QDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
-    QButtonGroup, QGridLayout, QStyle
+    QButtonGroup, QGridLayout, QStyle, QLayout
 )
 from PySide6.QtCore import Qt, QUrl, QThread, Signal, QTimer, QEvent
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPixmap
@@ -489,11 +489,19 @@ class InvoiceReviewApp(QMainWindow):
         self.right_stack = QStackedWidget()
         right_layout.addWidget(self.right_stack, 1)
 
-        self.right_content_widget = QWidget()
-        right_content_layout = QVBoxLayout(self.right_content_widget)
+        self.right_content_widget = QScrollArea()
+        self.right_content_widget.setWidgetResizable(True)
+        self.right_content_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_content_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.right_content_widget.setFrameShape(QFrame.NoFrame)
+
+        self.right_detail_content = QWidget()
+        right_content_layout = QVBoxLayout(self.right_detail_content)
         right_content_layout.setContentsMargins(0, 0, 0, 0)
         right_content_layout.setSpacing(6)
+        right_content_layout.setSizeConstraint(QLayout.SetMinimumSize)
         self.right_layout = right_content_layout
+        self.right_content_widget.setWidget(self.right_detail_content)
 
         self.right_empty_widget = QWidget()
         right_empty_layout = QVBoxLayout(self.right_empty_widget)
@@ -622,7 +630,7 @@ class InvoiceReviewApp(QMainWindow):
 
         # 2. Right-Side QTabWidget
         self.detail_tabs = QTabWidget()
-        self.detail_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.detail_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         # ── Tab 1: 发票详情 ───────────────────────────
         tab_details = QWidget()
