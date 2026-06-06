@@ -2129,32 +2129,32 @@ class InvoiceReviewApp(QMainWindow):
                         total_amount=info.total_amount,
                         seller_name=info.seller_name,
                         buyer_name=info.buyer_name,
-                        invoice_type=info.invoice_type or inv.get("invoice_type") or "??????",
+                        invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
                         category=category,
                         has_extra=inv.get("has_extra") or False,
                         extra_type=extra_type,
                         missing_extra=extra_required,
                         parse_success=True,
-                        parse_note=info.parse_note or "??????",
+                        parse_note=info.parse_note or "重新解析",
                     )
                     if updated:
                         if repair_target_id != inv_id:
                             self.db.soft_delete_invoice(inv_id)
                             self.write_log(
-                                f"? [????] ?? ID {inv_id} ?????? ID {repair_target_id}"
+                                f"✅ [重新解析] 发票 ID {inv_id} 已合并到主记录 ID {repair_target_id}"
                             )
                         else:
-                            self.write_log(f"? [????] ?? ID {inv_id} ?????????")
+                            self.write_log(f"✅ [重新解析] 发票 ID {inv_id} 已更新解析结果")
                         success_count += 1
                     elif getattr(self.db, "last_error", "") == "unique_conflict":
                         duplicate_conflicts.append(
-                            f"?? ID {inv_id}: ????????????????"
+                            f"发票 ID {inv_id}: 解析结果与已有发票唯一键冲突"
                         )
                         self.write_log(
-                            f"?? [????] ?? ID {inv_id} ??????????????????"
+                            f"⚠️ [重新解析] 发票 ID {inv_id} 与已有发票重复，未覆盖当前记录"
                         )
                     else:
-                        parse_failed_files.append(f"?? ID {inv_id}: ??????? ({info.parse_note})")
+                        parse_failed_files.append(f"发票 ID {inv_id}: 解析结果写入失败 ({info.parse_note})")
                 else:
                     parse_failed_files.append(f"发票 ID {inv_id}: 解析失败 ({info.parse_note})")
             except Exception as e:
@@ -2212,7 +2212,7 @@ class InvoiceReviewApp(QMainWindow):
         try:
             downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
         except Exception as e:
-            QMessageBox.critical(self, "??", f"????????: {e}")
+            QMessageBox.critical(self, "错误", f"启动下载引擎失败: {e}")
             return
 
         parser = InvoiceParser()
@@ -2239,13 +2239,13 @@ class InvoiceReviewApp(QMainWindow):
             account = account_map.get(key, default_account)
             email_addr = str(account.get("address") or "")
             if not email_addr or email_addr == "your_email@qq.com":
-                raise ValueError("???[??]???????????")
+                raise ValueError("请先在[设置]中配置邮箱账号")
             if not has_auth_code(email_addr):
-                raise ValueError(f"?????? {email_addr} ????????????[??]?????????")
+                raise ValueError(f"邮箱账号 {email_addr} 未配置授权码，请先在[设置]中配置")
 
             auth_code = get_auth_code(email_addr)
             imap_cfg = account.get("imap") or cfg.get("imap", {})
-            self.write_log(f"? [??????] ???? IMAP {email_addr} ...")
+            self.write_log(f"📥 [重新下载] 连接 IMAP {email_addr} ...")
             mail_fetcher_cm = MailFetcher(
                 address=email_addr,
                 auth_code=auth_code,
@@ -2303,31 +2303,31 @@ class InvoiceReviewApp(QMainWindow):
                                     total_amount=info.total_amount,
                                     seller_name=info.seller_name,
                                     buyer_name=info.buyer_name,
-                                    invoice_type=info.invoice_type or inv.get("invoice_type") or "??????",
+                                    invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
                                     category=cat,
                                     has_extra=inv.get("has_extra") or False,
                                     extra_type=extra_type,
                                     missing_extra=extra_req,
                                     parse_success=True,
-                                    parse_note="?????????",
+                                    parse_note="重新下载后解析",
                                 )
                                 if not updated:
                                     if getattr(self.db, "last_error", "") == "unique_conflict":
-                                        fallback_reason = "???????????????"
+                                        fallback_reason = "解析结果与已有发票唯一键冲突"
                                         self.write_log(
-                                            f"?? [????] ?? ID {inv_id} ????????????????"
+                                            f"⚠️ [重新下载] 发票 ID {inv_id} 更新元数据时发生唯一键冲突，尝试回读邮件"
                                         )
                                     else:
-                                        fallback_reason = "????????????"
-                                    continue
-                                self.db._conn.execute(
-                                    "UPDATE invoices SET attachment_path = ? WHERE id = ?",
-                                    (att_path, inv_id),
-                                )
-                                self.db._conn.commit()
-                                success_count += 1
-                                direct_download_ok = True
-                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
+                                        fallback_reason = "解析结果写入数据库失败"
+                                else:
+                                    self.db._conn.execute(
+                                        "UPDATE invoices SET attachment_path = ? WHERE id = ?",
+                                        (att_path, inv_id),
+                                    )
+                                    self.db._conn.commit()
+                                    success_count += 1
+                                    direct_download_ok = True
+                                    self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
                             else:
                                 fallback_reason = f"链接下载后解析失败: {info.parse_note}"
                                 if os.path.exists(dl.file_path):
@@ -2343,8 +2343,9 @@ class InvoiceReviewApp(QMainWindow):
                 if not mail_uid:
                     no_url_count += 1
                     failed_count += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: 无邮件 UID，无法重新读取邮件")
-                    self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 没有邮件 UID，无法回读邮件")
+                    failure_detail = fallback_reason or "无邮件 UID，无法重新读取邮件"
+                    download_failed_files.append(f"发票 ID {inv_id}: {failure_detail}")
+                    self.write_log(f"❌ [重新下载] 发票 ID {inv_id} {failure_detail}")
                     continue
 
                 reread_count += 1
@@ -2569,11 +2570,11 @@ class InvoiceReviewApp(QMainWindow):
                 if getattr(self.db, "last_error", "") == "unique_conflict":
                     QMessageBox.warning(
                         self,
-                        "????",
-                        "????????????????????????????????",
+                        "保存失败",
+                        "保存内容与已有发票重复，请检查发票号码、金额和销售方。",
                     )
                 else:
-                    QMessageBox.warning(self, "????", "????????")
+                    QMessageBox.warning(self, "保存失败", "未能保存发票修改")
                 return
 
             self.statusBar().showMessage("发票修改已保存", 3000)

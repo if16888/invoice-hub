@@ -7,6 +7,7 @@
   "email_accounts": [
     {
       "name": "Primary QQ",
+      "enabled": false,
       "provider": "qq",
       "address": "primary@qq.com",
       "username": "primary@qq.com",
@@ -17,6 +18,7 @@
     },
     {
       "name": "Rail Mail",
+      "enabled": false,
       "provider": "custom",
       "address": "rail@example.com",
       "username": "rail@example.com",

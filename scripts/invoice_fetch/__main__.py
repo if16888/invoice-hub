@@ -320,7 +320,7 @@ def _rename_by_invoice_code(
         if is_extra:
             shutil.copy2(str(src), str(dest))
             _log.info(
-                "  ?? ?????????: %s ??%s/%s",
+                "  已复制证明材料: %s -> %s/%s",
                 mask_filename(src.name),
                 redact_text(invoice_date, "date"),
                 mask_filename(new_name),
@@ -328,7 +328,7 @@ def _rename_by_invoice_code(
         else:
             shutil.move(str(src), str(dest))
             _log.info(
-                "  ?? ????? %s ??%s/%s",
+                "  已整理发票文件: %s -> %s/%s",
                 mask_filename(src.name),
                 redact_text(invoice_date, "date"),
                 mask_filename(new_name),
@@ -500,6 +500,7 @@ def _find_matching_invoice_for_evidence(
     db: InvoiceDB,
     parsed,
     file_path: Path,
+    source_name: str = "",
 ) -> tuple[dict | None, str | None]:
     """Find a standard invoice using exact invoice-number matches or conservative hints."""
     candidates: list[str] = []
@@ -508,7 +509,10 @@ def _find_matching_invoice_for_evidence(
         candidates.append(parsed_number)
     candidates.extend(
         number
-        for number in re.findall(r"(?<!\d)(\d{8,20})(?!\d)", file_path.stem)
+        for number in re.findall(
+            r"(?<!\d)(\d{8,20})(?!\d)",
+            " ".join((file_path.stem, Path(source_name).stem)),
+        )
         if number not in candidates
     )
 
@@ -525,7 +529,7 @@ def _find_matching_invoice_for_evidence(
 
     # 2. Try conservative transport/taxi matching rules
     # First, gather hints
-    hints = _extract_evidence_match_hints(parsed, file_path)
+    hints = _extract_evidence_match_hints(parsed, file_path, source_name)
     combined_text = hints["combined_text"]
     if not _looks_like_transport_evidence(combined_text):
         return None, None
@@ -708,7 +712,12 @@ def _import_local_evidence(
     if not _is_evidence_document(parsed, file_path, source_name):
         return None
 
-    matching_invoice, match_status = _find_matching_invoice_for_evidence(db, parsed, file_path)
+    matching_invoice, match_status = _find_matching_invoice_for_evidence(
+        db,
+        parsed,
+        file_path,
+        source_name=source_name,
+    )
     if matching_invoice:
         attached = _attach_evidence_to_invoice(db, matching_invoice, file_path)
         if not attached and not preserve_source_path:
@@ -1928,6 +1937,7 @@ def _process_email(
         )
         if row_id:
             recorded += 1
+            kept_paths.add(str(Path(att.file_path).resolve()))
             _log.info("  图片待识别已入库: %s", mask_filename(att.original_name))
 
     # 4. Fallback: parse subject or HTML body when no PDF available
@@ -2013,6 +2023,7 @@ def _process_email(
                 "parse_note": "⬇️待手动下载",
                 "attachment_path": "",
                 "extra_paths": [],
+                "mailbox_key": mailbox_key,
             }
             row_id = db.insert_invoice(rec)
             if row_id:
@@ -2732,7 +2743,15 @@ def _handle_pending_email(
     if not msg.date:
         msg.date = row.get("mail_date", "")
 
-    recorded = _process_email(msg, att_handler, parser, link_dl, db, categories)
+    recorded = _process_email(
+        msg,
+        att_handler,
+        parser,
+        link_dl,
+        db,
+        categories,
+        mailbox_key=row.get("mailbox_key", "legacy"),
+    )
     if recorded > 0:
         db.mark_downloaded(row["uid"], mailbox_key=row.get("mailbox_key", "legacy"))
         return True

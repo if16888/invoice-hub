@@ -750,6 +750,23 @@ class InvoiceWorkflowTests(unittest.TestCase):
         cat, _, _ = cli._classify("本地导入: rail.pdf", "", "中国国家铁路集团有限公司", {})
         self.assertEqual(cat, "交通")
 
+    def test_railway_ticket_type_is_not_overwritten_by_generic_e_invoice_type(self):
+        text = "\n".join([
+            "12306 电子发票",
+            "发票号码:26329116804004609069 开票日期:2026年04月30日",
+            "南京南 G47 杭州西",
+            "￥129.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "rail_ticket.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+
+        self.assertEqual(info.invoice_type, "铁路电子客票")
+
     def test_transport_receipt_parser_extracts_english_and_chinese_fields(self):
         samples = [
             "\n".join([
@@ -1571,6 +1588,41 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(recorded, 1)
             self.assertEqual(rows[0]["invoice_number"], "1234567890")
 
+    def test_process_email_subject_fallback_preserves_mailbox_key(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            db = InvoiceDB(base / "invoices.db")
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+
+            with (
+                patch.object(cli, "parse_subject", return_value={
+                    "invoice_number": "1234567891",
+                    "total_amount": "12.30",
+                    "seller_name": "Synthetic Seller",
+                    "invoice_date": "2026-05-18",
+                    "invoice_type": "synthetic invoice",
+                }),
+                patch.object(cli, "extract_html_from_message", return_value=""),
+                patch.object(cli, "parse_html_body", return_value={}),
+            ):
+                cli._process_email(
+                    cli.MailMessage(uid=457, raw_msg=msg),
+                    StaticAttachmentHandler(base, []),
+                    StaticParser(InvoiceInfo(parse_success=False)),
+                    NoopLinkDownloader(),
+                    db,
+                    {},
+                    mailbox_key="account_b",
+                )
+
+            rows = db.get_all_invoices()
+            db.close()
+
+            self.assertEqual(rows[0]["mailbox_key"], "account_b")
+
     def test_link_downloader_keeps_multiple_invoice_pdfs_from_one_email(self):
         msg = email.message.EmailMessage()
         msg.set_content(
@@ -2097,6 +2149,9 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(rows[0]["invoice_type"], "图片待识别")
             self.assertIn("图片待识别", rows[0]["parse_note"])
             self.assertFalse(rows[0]["parse_success"])
+            stored_path = runtime / rows[0]["attachment_path"]
+            self.assertTrue(stored_path.exists())
+            self.assertEqual(stored_path.read_bytes(), b"\xff\xd8\xff synthetic image")
 
     def test_receipt_duplicate_scan_is_deduped_by_hash_and_source(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2206,6 +2261,32 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
             self.assertIn("滴滴行程单.pdf", extra_paths[0])
+
+    def test_evidence_matching_uses_original_source_name_hints(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            stored_file = base / "stored.pdf"
+            stored_file.write_bytes(b"%PDF- evidence")
+            parsed = InvoiceInfo(parse_success=False, parse_note="", raw_text="")
+
+            with InvoiceDB(runtime / "invoices.db") as db:
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "DIDI-SOURCE-001",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                })
+                matched, status = cli._find_matching_invoice_for_evidence(
+                    db,
+                    parsed,
+                    stored_file,
+                    source_name="滴滴行程单_2025-12-20_1142.81.pdf",
+                )
+
+            self.assertIsNone(status)
+            self.assertEqual(matched["id"], invoice_id)
 
     def test_didi_evidence_matching_multiple_candidates_fails(self):
         """测试 3：候选多张时不自动关联"""

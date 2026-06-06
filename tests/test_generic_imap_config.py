@@ -202,12 +202,28 @@ class GenericImapConfigTests(unittest.TestCase):
 
     def test_config_example_loads_multi_account_samples(self):
         config_path = Path("config.example.json")
-        cfg = load_config_safe(config_path)
-        accounts = get_email_accounts(cfg)
-        self.assertGreaterEqual(len(accounts), 2)
-        self.assertEqual(accounts[0]["mailbox_key"], "primary@qq.com")
-        self.assertEqual(accounts[1]["mailbox_key"], "rail@example.com")
-        self.assertEqual(accounts[1]["imap"]["server"], "imap.example.com")
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(raw["email_accounts"]), 2)
+        self.assertTrue(all(account.get("enabled") is False for account in raw["email_accounts"]))
+        with self.assertRaises(SystemExit) as context:
+            load_config(config_path)
+        self.assertIn("至少配置一个启用的邮箱账号", str(context.exception))
+
+    def test_load_config_rejects_all_disabled_email_accounts_with_clear_message(self):
+        path = self._write_config({
+            "email_accounts": [
+                {
+                    "name": "Disabled",
+                    "provider": "qq",
+                    "address": "disabled@example.com",
+                    "enabled": False,
+                },
+            ],
+            "ai": {"provider": "none"},
+        })
+        with self.assertRaises(SystemExit) as context:
+            load_config(path)
+        self.assertIn("至少配置一个启用的邮箱账号", str(context.exception))
 
     def test_save_config_strips_auth_code(self):
         from scripts.invoice_fetch.config import save_config

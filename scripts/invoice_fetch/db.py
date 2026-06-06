@@ -596,6 +596,13 @@ class InvoiceDB:
         # Check existence
         inv = self.get_invoice(invoice_id)
         if not inv:
+            self._set_last_error("not_found")
+            return False
+        if status == review_status.APPROVED and (
+            str(inv.get("invoice_type") or "") == "待关联证明材料"
+            or "待关联证明材料" in str(inv.get("parse_note") or "")
+        ):
+            self._set_last_error("evidence_only")
             return False
 
         if status == review_status.TO_REVIEW:
@@ -608,6 +615,7 @@ class InvoiceDB:
             (status, note, confirmed_at, invoice_id)
         )
         self._conn.commit()
+        self._set_last_error("")
         return True
 
     def update_invoice_fields(
@@ -950,14 +958,26 @@ class InvoiceDB:
 
     def add_invoice_to_claim(self, claim_id: int, invoice_id: int, note: str = "") -> bool:
         """Map an invoice to a claim group. Returns False on IntegrityError (e.g. duplicate)."""
+        invoice = self.get_invoice(invoice_id)
+        if not invoice:
+            self._set_last_error("not_found")
+            return False
+        if (
+            str(invoice.get("invoice_type") or "") == "待关联证明材料"
+            or "待关联证明材料" in str(invoice.get("parse_note") or "")
+        ):
+            self._set_last_error("evidence_only")
+            return False
         try:
             self._conn.execute(
                 "INSERT INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
                 (claim_id, invoice_id, note)
             )
             self._conn.commit()
+            self._set_last_error("")
             return True
         except sqlite3.IntegrityError:
+            self._set_last_error("integrity_error")
             _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
             return False
 

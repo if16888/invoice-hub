@@ -124,10 +124,17 @@ def export_claim_package(
         review_status.APPROVED: 0,
         review_status.IGNORED: 0,
         review_status.ERROR: 0,
+        "pending_evidence": 0,
         "unknown": 0
     }
 
     for inv in all_invoices:
+        if (
+            str(inv.get("invoice_type") or "") == "待关联证明材料"
+            or "待关联证明材料" in str(inv.get("parse_note") or "")
+        ):
+            skipped_counts["pending_evidence"] += 1
+            continue
         status = inv.get("review_status") or review_status.TO_REVIEW
         if status in included_statuses:
             invoices.append(inv)

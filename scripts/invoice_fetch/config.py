@@ -308,8 +308,9 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
     if isinstance(raw_accounts, list) and raw_accounts:
         accounts = get_email_accounts(cfg)
         if not accounts:
-            _log.error("请至少配置一个启用的邮箱账号")
-            raise SystemExit(1)
+            message = "至少配置一个启用的邮箱账号后才能扫描邮件"
+            _log.error(message)
+            raise SystemExit(message)
         _apply_primary_email_account(cfg, accounts)
     else:
         # Validate legacy single-account config for backward compatibility.

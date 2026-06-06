@@ -19,6 +19,16 @@ from scripts.invoice_fetch import review_status
 
 
 class ClaimGroupsTests(unittest.TestCase):
+    def test_user_visible_sources_do_not_contain_broken_question_mark_placeholders(self):
+        for relative_path in (
+            "scripts/invoice_fetch/__main__.py",
+            "scripts/invoice_fetch/gui/app.py",
+            "scripts/invoice_fetch/invoice_parser.py",
+        ):
+            content = Path(relative_path).read_text(encoding="utf-8")
+            self.assertNotIn("??????", content, relative_path)
+            self.assertNotIn("\ufffd", content, relative_path)
+
     def test_windows_console_output_is_configured_for_utf8(self):
         from scripts.invoice_fetch import __main__ as cli
 
@@ -131,6 +141,29 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(claim_invoices[0]["claim_note"], "Lunch")
                 self.assertEqual(claim_invoices[1]["invoice_number"], "INV002")
                 self.assertEqual(claim_invoices[1]["claim_note"], "Taxi")
+
+    def test_pending_evidence_cannot_be_approved_or_added_to_claim(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_pending_evidence_guard.db"
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Trip 2026")
+                evidence_id = db.insert_invoice({
+                    "invoice_number": "",
+                    "invoice_type": "待关联证明材料",
+                    "parse_note": "待关联证明材料: synthetic",
+                    "review_status": review_status.TO_REVIEW,
+                })
+
+                self.assertFalse(
+                    db.update_invoice_review_status(
+                        evidence_id,
+                        review_status.APPROVED,
+                    )
+                )
+                self.assertEqual(db.last_error, "evidence_only")
+                self.assertFalse(db.add_invoice_to_claim(claim_id, evidence_id))
+                self.assertEqual(db.last_error, "evidence_only")
+                self.assertEqual(db.get_claim_invoices(claim_id), [])
 
     def test_duplicate_add_is_idempotent_and_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as td:
@@ -645,6 +678,39 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(manifest["items"][0]["invoice_number"], "APP001")
                 self.assertEqual(manifest["skipped_counts"]["ignored"], 1)
                 self.assertEqual(manifest["skipped_counts"]["error"], 1)
+
+    def test_claim_export_excludes_pending_evidence_even_if_legacy_link_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root = Path(td) / "project"
+            runtime_dir = project_root / "runtime"
+            db_path = runtime_dir / "invoices.db"
+
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Evidence guard")
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "APP-EVIDENCE-001",
+                    "total_amount": "100.00",
+                    "seller_name": "Synthetic Seller",
+                    "review_status": review_status.APPROVED,
+                })
+                evidence_id = db.insert_invoice({
+                    "invoice_number": "",
+                    "invoice_type": "待关联证明材料",
+                    "parse_note": "待关联证明材料: synthetic",
+                    "review_status": review_status.APPROVED,
+                })
+                db.add_invoice_to_claim(claim_id, invoice_id)
+                db._conn.execute(
+                    "INSERT INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
+                    (claim_id, evidence_id, "legacy link"),
+                )
+                db._conn.commit()
+
+                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+                manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(manifest["item_count"], 1)
+            self.assertEqual(manifest["items"][0]["invoice_number"], "APP-EVIDENCE-001")
 
     def test_claim_export_empty_after_filter_raises_value_error(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2508,6 +2574,91 @@ class ClaimGroupsTests(unittest.TestCase):
                         call_kwargs = mock_handle.call_args.kwargs
                         self.assertEqual(call_kwargs["row"]["uid"], 4050)
                         self.assertEqual(call_kwargs["folder"], "INBOX")
+                    finally:
+                        if hasattr(window, "db") and window.db is not None:
+                            window.db.close()
+                        window.close()
+                        window.deleteLater()
+                        app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_redownload_unique_conflict_is_reported_as_failure(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+            from scripts.invoice_fetch.link_downloader import DownloadedFile
+
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                base = Path(td)
+                runtime = base / "runtime"
+                (runtime / "attachments").mkdir(parents=True)
+                downloaded_file = base / "downloaded.pdf"
+                downloaded_file.write_bytes(b"%PDF- synthetic")
+                db_path = runtime / "invoices.db"
+
+                class FakeDownloader:
+                    def __init__(self, download_dir):
+                        self.download_dir = download_dir
+
+                    def _download_url(self, *args, **kwargs):
+                        return DownloadedFile(
+                            url="https://example.invalid/invoice",
+                            file_path=str(downloaded_file),
+                            filename=downloaded_file.name,
+                            size=downloaded_file.stat().st_size,
+                            is_invoice=True,
+                        )
+
+                    def close(self):
+                        pass
+
+                class FakeParser:
+                    def parse_pdf(self, _path):
+                        return InvoiceInfo(
+                            invoice_number="CONFLICT-REDOWNLOAD-002",
+                            invoice_code="CODE002",
+                            invoice_date="2026-06-06",
+                            total_amount="18.00",
+                            seller_name="Synthetic Seller",
+                            invoice_type="电子发票",
+                            parse_success=True,
+                        )
+
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "CONFLICT-REDOWNLOAD-001",
+                        "total_amount": "18.00",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-06-06",
+                        "download_url": "https://example.invalid/invoice",
+                        "mail_uid": None,
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                with patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", runtime):
+                    window = InvoiceReviewApp(db_path, splash=None)
+                    try:
+                        window._deferred_init()
+                        app.processEvents()
+                        window.table.selectRow(0)
+                        app.processEvents()
+
+                        with patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
+                                patch("scripts.invoice_fetch.invoice_parser.InvoiceParser", return_value=FakeParser()), \
+                                patch.object(window.db, "update_invoice_parsed_metadata", return_value=False), \
+                                patch.object(window.db, "last_error", "unique_conflict"), \
+                                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok) as mock_info:
+                            window._redownload_selected_invoices()
+
+                        result_text = mock_info.call_args.args[2]
+                        self.assertIn("唯一键冲突", result_text)
+                        self.assertIn("失败", result_text)
                     finally:
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
