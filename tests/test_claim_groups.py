@@ -2830,6 +2830,208 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_status_filter_does_not_zero_other_filter_counts(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_stable_filter_counts.db"
+                with InvoiceDB(db_path) as db:
+                    statuses = ["to_review", "to_review", "to_review", "approved", "ignored"]
+                    for index, status in enumerate(statuses, start=1):
+                        db.insert_invoice({
+                            "invoice_number": f"COUNT{index:03d}",
+                            "invoice_date": "2026-06-01",
+                            "total_amount": str(index),
+                            "seller_name": "示例销售方",
+                            "invoice_type": "电子发票",
+                            "review_status": status,
+                        })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    expected = {
+                        "all": "全部 5",
+                        "to_review": "待审核 3",
+                        "approved": "已通过 1",
+                        "ignored": "已忽略 1",
+                        "error": "异常 0",
+                    }
+                    self.assertEqual(
+                        {key: button.text() for key, button in window.filter_buttons.items()},
+                        expected,
+                    )
+
+                    window._change_filter("error")
+                    app.processEvents()
+
+                    self.assertEqual(window.table.rowCount(), 0)
+                    self.assertEqual(
+                        {key: button.text() for key, button in window.filter_buttons.items()},
+                        expected,
+                    )
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_search_filter_counts_span_all_statuses(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_search_filter_counts.db"
+                with InvoiceDB(db_path) as db:
+                    records = [
+                        ("SEARCH001", "Alpha 示例销售方", "to_review"),
+                        ("SEARCH002", "Alpha 示例销售方", "approved"),
+                        ("SEARCH003", "Beta 示例销售方", "ignored"),
+                        ("SEARCH004", "Beta 示例销售方", "error"),
+                    ]
+                    for invoice_number, seller_name, status in records:
+                        db.insert_invoice({
+                            "invoice_number": invoice_number,
+                            "invoice_date": "2026-06-01",
+                            "total_amount": "10.00",
+                            "seller_name": seller_name,
+                            "invoice_type": "电子发票",
+                            "review_status": status,
+                        })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    window.txt_search.setText("Alpha")
+                    window.search_reload_timer.stop()
+                    window._load_invoices()
+
+                    expected = {
+                        "all": "全部 2",
+                        "to_review": "待审核 1",
+                        "approved": "已通过 1",
+                        "ignored": "已忽略 0",
+                        "error": "异常 0",
+                    }
+                    self.assertEqual(window.table.rowCount(), 2)
+                    self.assertEqual(
+                        {key: button.text() for key, button in window.filter_buttons.items()},
+                        expected,
+                    )
+
+                    window._change_filter("error")
+                    app.processEvents()
+
+                    self.assertEqual(window.table.rowCount(), 0)
+                    self.assertEqual(
+                        {key: button.text() for key, button in window.filter_buttons.items()},
+                        expected,
+                    )
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_status_filter_buttons_have_stable_labels_and_minimum_width(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QSizePolicy
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(Path(td) / "test_gui_filter_width.db", splash=None)
+                try:
+                    app.processEvents()
+                    expected_labels = {
+                        "all": "全部",
+                        "to_review": "待审核",
+                        "approved": "已通过",
+                        "ignored": "已忽略",
+                        "error": "异常",
+                    }
+                    self.assertEqual(window.filter_base_labels, expected_labels)
+                    for status, button in window.filter_buttons.items():
+                        self.assertGreaterEqual(button.minimumWidth(), 86)
+                        self.assertEqual(
+                            button.sizePolicy().horizontalPolicy(),
+                            QSizePolicy.Minimum,
+                        )
+                        button.setText(f"{expected_labels[status]} 275")
+
+                    window._update_filter_counts([])
+                    self.assertEqual(window.filter_buttons["all"].text(), "全部 0")
+                    self.assertEqual(window.filter_buttons["to_review"].text(), "待审核 0")
+                    self.assertNotIn("275 0", window.filter_buttons["all"].text())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_first_load_limit_does_not_truncate_filter_counts(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_full_filter_counts.db"
+                with InvoiceDB(db_path) as db:
+                    for index in range(105):
+                        db.insert_invoice({
+                            "invoice_number": f"LIMIT{index:03d}",
+                            "invoice_date": "2026-06-01",
+                            "total_amount": "10.00",
+                            "seller_name": "示例销售方",
+                            "invoice_type": "电子发票",
+                            "review_status": "to_review",
+                        })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    self.assertEqual(window.table.rowCount(), 100)
+                    self.assertEqual(window.filter_buttons["all"].text(), "全部 105")
+                    self.assertEqual(window.filter_buttons["to_review"].text(), "待审核 105")
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_search_uses_debounce_timer(self):
         try:
             from PySide6.QtWidgets import QApplication

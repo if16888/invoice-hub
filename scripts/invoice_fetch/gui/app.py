@@ -293,18 +293,20 @@ class InvoiceReviewApp(QMainWindow):
         filter_layout.addWidget(lbl_filter)
 
         self.filter_buttons = {}
-        filters = [
-            ("all", "全部发票"),
-            (TO_REVIEW, "待审核"),
-            (APPROVED, "已通过"),
-            (IGNORED, "已忽略"),
-            (ERROR, "异常"),
-        ]
+        self.filter_base_labels = {
+            "all": "全部",
+            TO_REVIEW: "待审核",
+            APPROVED: "已通过",
+            IGNORED: "已忽略",
+            ERROR: "异常",
+        }
 
-        for status, text in filters:
+        for status, text in self.filter_base_labels.items():
             btn = QPushButton(text)
             btn.setProperty("class", "FilterBtn")
             btn.setCheckable(True)
+            btn.setMinimumWidth(86)
+            btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             if status == "all":
                 btn.setChecked(True)
             btn.clicked.connect(lambda checked, s=status: self._change_filter(s))
@@ -1001,33 +1003,58 @@ class InvoiceReviewApp(QMainWindow):
         self._load_invoices()
 
     def _base_filter_label(self, status) -> str:
-        labels = {
-            "all": "全部",
-            TO_REVIEW: "待审核",
-            APPROVED: "已通过",
-            IGNORED: "已忽略",
-            ERROR: "异常",
-        }
-        return labels.get(status, str(status))
+        return self.filter_base_labels.get(status, str(status))
 
     def _update_filter_counts(self, invoices: list[dict]):
         if not hasattr(self, "filter_buttons"):
             return
         counts = {
-            "all": len([inv for inv in invoices if inv.get("is_deleted") != 1]),
+            "all": len(invoices),
             TO_REVIEW: 0,
             APPROVED: 0,
             IGNORED: 0,
             ERROR: 0,
         }
         for inv in invoices:
-            if inv.get("is_deleted") == 1:
-                continue
             status = inv.get("review_status") or TO_REVIEW
             if status in counts:
                 counts[status] += 1
         for status, btn in self.filter_buttons.items():
             btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
+
+    def _apply_non_status_filters(
+        self,
+        invoices: list[dict],
+        needle: str,
+        unlinked_only: bool,
+        needs_fix_only: bool,
+    ) -> list[dict]:
+        filtered: list[dict] = []
+        for inv in invoices:
+            claim_name = str(inv.get("claim_name") or "").strip()
+            quality = self._get_invoice_quality(inv)
+
+            if unlinked_only and claim_name:
+                continue
+            if needs_fix_only and quality not in {"未识别", "待补全"}:
+                continue
+
+            if needle:
+                haystack = " ".join([
+                    str(inv.get("invoice_number") or ""),
+                    str(inv.get("seller_name") or ""),
+                    str(inv.get("buyer_name") or ""),
+                    str(inv.get("total_amount") or ""),
+                    str(inv.get("mail_subject") or ""),
+                    str(inv.get("category") or ""),
+                    str(inv.get("attachment_path") or ""),
+                    claim_name,
+                ]).lower()
+                if needle not in haystack:
+                    continue
+
+            filtered.append(inv)
+        return filtered
 
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
@@ -1328,10 +1355,15 @@ class InvoiceReviewApp(QMainWindow):
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
-            all_invoices = self.db.list_invoices(
+            display_source = self.db.list_invoices(
                 status=self.current_filter_status,
                 limit=limit_val,
                 include_deleted=include_deleted
+            )
+            count_source = self.db.list_invoices(
+                status=None,
+                limit=None,
+                include_deleted=include_deleted,
             )
             db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
             if self._is_first_load:
@@ -1344,42 +1376,26 @@ class InvoiceReviewApp(QMainWindow):
         except Exception as e:
             _log.error("Failed to load invoices from DB: %s", e)
             QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
-            all_invoices = []
-
-        needle = self.txt_search.text().strip().lower() if hasattr(self, "txt_search") else ""
-        unlinked_only = self.chk_unlinked.isChecked() if hasattr(self, "chk_unlinked") else False
-        needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
+            display_source = []
+            count_source = []
 
         filter_start = time.perf_counter()
-        displayed_invoices = []
-        for inv in all_invoices:
-            claim_name = str(inv.get("claim_name") or "").strip()
-            quality = self._get_invoice_quality(inv)
-
-            if unlinked_only and claim_name:
-                continue
-            if needs_fix_only and quality not in {"未识别", "待补全"}:
-                continue
-
-            if needle:
-                haystack = " ".join([
-                    str(inv.get("invoice_number") or ""),
-                    str(inv.get("seller_name") or ""),
-                    str(inv.get("buyer_name") or ""),
-                    str(inv.get("total_amount") or ""),
-                    str(inv.get("mail_subject") or ""),
-                    str(inv.get("category") or ""),
-                    str(inv.get("attachment_path") or ""),
-                    str(claim_name),
-                ]).lower()
-                if needle not in haystack:
-                    continue
-
-            displayed_invoices.append(inv)
+        displayed_invoices = self._apply_non_status_filters(
+            display_source,
+            needle,
+            unlinked_only,
+            needs_fix_only,
+        )
+        count_filtered_invoices = self._apply_non_status_filters(
+            count_source,
+            needle,
+            unlinked_only,
+            needs_fix_only,
+        )
         filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
 
         self.invoices_list = displayed_invoices
-        self._update_filter_counts(all_invoices)
+        self._update_filter_counts(count_filtered_invoices)
 
         render_start = time.perf_counter()
         self.table.setUpdatesEnabled(False)
