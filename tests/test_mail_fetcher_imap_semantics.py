@@ -152,7 +152,12 @@ class MailFetcherImapSemanticsTests(unittest.TestCase):
         self.assertEqual(MailFetcher._parse_internaldate(meta), datetime(2026, 5, 19))
 
     def test_railway_and_high_speed_train_subjects_are_relevant(self):
-        from scripts.invoice_fetch.mail_fetcher import MailMessage, _email_looks_relevant
+        from scripts.invoice_fetch.mail_fetcher import (
+            EXCLUDE_KEYWORDS,
+            RELEVANCE_KEYWORDS,
+            MailMessage,
+            _email_looks_relevant,
+        )
 
         msg = MailMessage(
             9,
@@ -162,6 +167,10 @@ class MailFetcherImapSemanticsTests(unittest.TestCase):
                 "Date: Tue, 19 May 2026 10:00:00 +0800\n\n"
             ),
         )
+        self.assertFalse(any("??" in keyword for keyword in RELEVANCE_KEYWORDS))
+        self.assertFalse(any("??" in keyword for keyword in EXCLUDE_KEYWORDS))
+        self.assertIn("高铁", RELEVANCE_KEYWORDS)
+        self.assertIn("电子客票", RELEVANCE_KEYWORDS)
         self.assertTrue(_email_looks_relevant(msg))
 
 

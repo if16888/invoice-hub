@@ -2543,6 +2543,7 @@ def _scan_mailboxes_with_db(
                         classified_invoice += 1
                         try:
                             before_count = db.count_invoices()
+                            before_pending_manual = db.count_pending_manual_invoices()
                             recorded = _handle_pending_email(
                                 row=row,
                                 fetcher=fetcher,
@@ -2554,8 +2555,13 @@ def _scan_mailboxes_with_db(
                                 categories=categories,
                             )
                             after_count = db.count_invoices()
+                            after_pending_manual = db.count_pending_manual_invoices()
                             if recorded:
                                 downloaded += 1
+                                pending_manual += max(
+                                    0,
+                                    after_pending_manual - before_pending_manual,
+                                )
                                 if after_count > before_count:
                                     new_count += after_count - before_count
                                 else:

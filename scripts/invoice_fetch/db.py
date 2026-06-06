@@ -809,6 +809,27 @@ class InvoiceDB:
             row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices WHERE is_deleted = 0").fetchone()
         return int(row["cnt"] if row else 0)
 
+    def count_pending_manual_invoices(self) -> int:
+        """Count active records that still require manual review or completion."""
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM invoices
+            WHERE is_deleted = 0
+              AND (
+                parse_success = 0
+                OR invoice_type IN (
+                    '图片待识别',
+                    '待关联证明材料',
+                    '海外凭证/收据',
+                    '本地导入待处理'
+                )
+                OR parse_note LIKE '%待关联证明材料%'
+              )
+            """
+        ).fetchone()
+        return int(row["cnt"] if row else 0)
+
     def count_processed(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM processed_emails").fetchone()[0]
 

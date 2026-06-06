@@ -2606,6 +2606,13 @@ class InvoiceReviewApp(QMainWindow):
             missing.append("附件")
         return missing
 
+    @staticmethod
+    def _is_pending_evidence(inv: dict) -> bool:
+        return (
+            str(inv.get("invoice_type") or "") == "待关联证明材料"
+            or "待关联证明材料" in str(inv.get("parse_note") or "")
+        )
+
     def _confirm_approve_incomplete_invoices(self, invoices: list[dict]) -> bool:
         incomplete = []
         for inv in invoices:
@@ -2635,9 +2642,15 @@ class InvoiceReviewApp(QMainWindow):
 
     def _set_selected_status(self, status):
         """Set review status of all selected invoices, handles auto-advance selection."""
+        result = {
+            "success": 0,
+            "evidence_only": 0,
+            "not_found": 0,
+            "other_failed": 0,
+        }
         selected_indexes = self.table.selectionModel().selectedRows()
         if not selected_indexes:
-            return
+            return result
 
         max_row = -1
         row_indexes = []
@@ -2650,20 +2663,63 @@ class InvoiceReviewApp(QMainWindow):
         selected_invoices = [self.invoices_list[row_idx] for row_idx in row_indexes]
         note = self.txt_note.toPlainText().strip() if len(selected_indexes) == 1 else "批量修改状态"
 
-        if status == APPROVED and not self._confirm_approve_incomplete_invoices(selected_invoices):
-            self.statusBar().showMessage("已取消标记通过，记录仍保持待审核。", 3000)
-            return
+        actionable_invoices = selected_invoices
+        if status == APPROVED:
+            evidence_invoices = [
+                inv for inv in selected_invoices if self._is_pending_evidence(inv)
+            ]
+            result["evidence_only"] = len(evidence_invoices)
+            actionable_invoices = [
+                inv for inv in selected_invoices if not self._is_pending_evidence(inv)
+            ]
+            if evidence_invoices:
+                QMessageBox.warning(
+                    self,
+                    "无法标记通过",
+                    (
+                        "待关联证明材料不能直接标记为已通过，"
+                        "请先关联到主发票或补录为正式报销记录。"
+                    ),
+                )
+            if not actionable_invoices:
+                self.statusBar().showMessage(
+                    f"已跳过 {result['evidence_only']} 条待关联证明材料。",
+                    4000,
+                )
+                return result
+            if not self._confirm_approve_incomplete_invoices(actionable_invoices):
+                self.statusBar().showMessage("已取消标记通过，记录仍保持待审核。", 3000)
+                return result
 
         try:
-            for inv in selected_invoices:
-                self.db.update_invoice_review_status(inv["id"], status, note=note)
+            for inv in actionable_invoices:
+                updated = self.db.update_invoice_review_status(inv["id"], status, note=note)
+                if updated:
+                    result["success"] += 1
+                    continue
+                error = getattr(self.db, "last_error", "")
+                if error == "evidence_only":
+                    result["evidence_only"] += 1
+                elif error == "not_found":
+                    result["not_found"] += 1
+                else:
+                    result["other_failed"] += 1
 
-            self.statusBar().showMessage(f"已更新选中发票状态: {status}", 3000)
+            summary_parts = []
+            if result["success"]:
+                summary_parts.append(f"成功 {result['success']} 条")
+            if result["evidence_only"]:
+                summary_parts.append(f"跳过待关联证明材料 {result['evidence_only']} 条")
+            if result["not_found"]:
+                summary_parts.append(f"记录不存在 {result['not_found']} 条")
+            if result["other_failed"]:
+                summary_parts.append(f"失败 {result['other_failed']} 条")
+            self.statusBar().showMessage("；".join(summary_parts), 4000)
             self._load_invoices()
 
             num_rows = self.table.rowCount()
             if num_rows > 0:
-                if status == APPROVED and len(selected_indexes) == 1:
+                if status == APPROVED and result["success"] == 1 and len(selected_indexes) == 1:
                     for candidate_row in range(max(0, next_select_row), num_rows):
                         candidate = self.invoices_list[candidate_row]
                         if (candidate.get("review_status") or TO_REVIEW) == TO_REVIEW:
@@ -2689,10 +2745,13 @@ class InvoiceReviewApp(QMainWindow):
                     self._invoice_snapshot = self._get_invoice_snapshot(self.current_invoice)
             else:
                 self._clear_detail_form()
+            return result
 
         except Exception as e:
             _log.error("Failed to update status: %s", e)
             QMessageBox.critical(self, "错误", f"更新状态失败: {e}")
+            result["other_failed"] += 1
+            return result
 
     def _create_claim(self):
         """Insert a new claim group into DB and reload dropdown."""
@@ -2726,6 +2785,8 @@ class InvoiceReviewApp(QMainWindow):
         claim_name = self.combo_claims.currentText()
         linked_count = 0
         duplicate_count = 0
+        evidence_only_count = 0
+        failed_count = 0
 
         try:
             for idx in selected_indexes:
@@ -2733,20 +2794,46 @@ class InvoiceReviewApp(QMainWindow):
                 success = self.db.add_invoice_to_claim(claim_id, inv["id"])
                 if success:
                     linked_count += 1
-                else:
+                    continue
+                error = getattr(self.db, "last_error", "")
+                if error == "integrity_error":
                     duplicate_count += 1
+                elif error == "evidence_only":
+                    evidence_only_count += 1
+                else:
+                    failed_count += 1
 
-            msg = f"成功关联 {linked_count} 张发票！"
-            if duplicate_count > 0:
-                msg += f" (去重 {duplicate_count} 张)"
-            self.statusBar().showMessage(f"已关联 {linked_count} 张发票至报销组: {claim_name}", 3000)
-            QMessageBox.information(self, "成功", msg)
+            message_parts = [f"成功关联 {linked_count} 张发票"]
+            if duplicate_count:
+                message_parts.append(f"重复 {duplicate_count} 张")
+            if evidence_only_count:
+                message_parts.append(f"跳过待关联证明材料 {evidence_only_count} 张")
+            if failed_count:
+                message_parts.append(f"失败 {failed_count} 张")
+            msg = "；".join(message_parts) + "。"
+            self.statusBar().showMessage(
+                f"报销组【{claim_name}】: " + "；".join(message_parts),
+                4000,
+            )
+            QMessageBox.information(self, "关联结果", msg)
             self._load_claims()
             self._load_invoices()
+            return {
+                "linked": linked_count,
+                "duplicate": duplicate_count,
+                "evidence_only": evidence_only_count,
+                "failed": failed_count,
+            }
 
         except Exception as e:
             _log.error("Failed to link invoices to claim: %s", e)
             QMessageBox.critical(self, "错误", f"关联发票失败: {e}")
+            return {
+                "linked": linked_count,
+                "duplicate": duplicate_count,
+                "evidence_only": evidence_only_count,
+                "failed": failed_count + 1,
+            }
 
     def _unlink_selected_invoices(self):
         """Remove selected invoices from the active claim group in the SQLite DB."""
