@@ -2034,6 +2034,54 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_save_conflict_shows_duplicate_warning(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_save_conflict.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "CONFLICT001",
+                        "total_amount": "18.00",
+                        "seller_name": "Conflict Seller",
+                        "invoice_date": "2026-06-04",
+                        "category": "餐饮",
+                        "attachment_path": "runtime/attachments/synthetic_receipt.jpg",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+
+                    window.table.selectRow(0)
+                    app.processEvents()
+                    window.txt_number.setText("CONFLICT002")
+                    window._mark_invoice_form_dirty()
+
+                    with patch.object(window.db, "update_invoice_fields", return_value=False), \
+                            patch.object(window.db, "last_error", "unique_conflict"), \
+                            patch("scripts.invoice_fetch.gui.app.QMessageBox.warning") as mock_warning:
+                        window._save_invoice_fields()
+                        app.processEvents()
+
+                    mock_warning.assert_called_once()
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_confirms_before_approving_incomplete_invoice(self):
         try:
             from PySide6.QtWidgets import QApplication, QMessageBox
@@ -2368,6 +2416,102 @@ class ClaimGroupsTests(unittest.TestCase):
                         call_kwargs = mock_handle.call_args.kwargs
                         self.assertEqual(call_kwargs["row"]["uid"], 4050)
                         self.assertEqual(call_kwargs["folder"], "INBOX")
+                    finally:
+                        if hasattr(window, "db") and window.db is not None:
+                            window.db.close()
+                        window.close()
+                        window.deleteLater()
+                        app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_redownload_routes_by_invoice_mailbox_key(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            class FakeDownloader:
+                def __init__(self, download_dir):
+                    self.download_dir = download_dir
+
+                def _download_url(self, *args, **kwargs):
+                    raise AssertionError("direct download should not be attempted")
+
+                def close(self):
+                    pass
+
+            class FakeMailFetcher:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_redownload_mailbox_key.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "MAILBOX001",
+                        "total_amount": "23.50",
+                        "seller_name": "Mailbox Seller",
+                        "invoice_date": "2025-12-26",
+                        "category": "餐饮",
+                        "mail_uid": 4051,
+                        "mailbox_key": "account_b",
+                        "download_url": "",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                cfg = {
+                    "email_accounts": [
+                        {
+                            "mailbox_key": "account_a",
+                            "address": "account_a@example.com",
+                            "auth_code": "code-a",
+                            "imap": {"server": "imap.a.example.com", "port": 993},
+                            "search": {"folder": "INBOX_A"},
+                        },
+                        {
+                            "mailbox_key": "account_b",
+                            "address": "account_b@example.com",
+                            "auth_code": "code-b",
+                            "imap": {"server": "imap.b.example.com", "port": 993},
+                            "search": {"folder": "INBOX_B"},
+                        },
+                    ],
+                }
+                log_messages = []
+
+                with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg), \
+                        patch("scripts.invoice_fetch.config.get_email_accounts", return_value=cfg["email_accounts"]), \
+                        patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=True), \
+                        patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy-auth"), \
+                        patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
+                        patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as mock_mail_fetcher, \
+                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=True) as mock_handle:
+                    mock_mail_fetcher.return_value.__enter__.return_value = FakeMailFetcher()
+                    window = InvoiceReviewApp(db_path, splash=None)
+                    try:
+                        window._deferred_init()
+                        app.processEvents()
+
+                        window.table.selectRow(0)
+                        app.processEvents()
+
+                        with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok), \
+                                patch.object(window, "write_log", side_effect=log_messages.append):
+                            window._redownload_selected_invoices()
+
+                        self.assertTrue(any("重新读取邮件" in msg for msg in log_messages))
+                        mock_handle.assert_called_once()
+                        call_kwargs = mock_handle.call_args.kwargs
+                        self.assertEqual(call_kwargs["row"]["mailbox_key"], "account_b")
+                        self.assertEqual(call_kwargs["folder"], "INBOX_B")
+                        self.assertEqual(mock_mail_fetcher.call_args.kwargs["address"], "account_b@example.com")
                     finally:
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()

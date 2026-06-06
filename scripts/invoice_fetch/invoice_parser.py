@@ -295,7 +295,10 @@ class InvoiceParser:
             info.seller_name = InvoiceParser._repair_company_name(info.seller_name)
             info.buyer_name = InvoiceParser._repair_company_name(info.buyer_name)
 
-            info.invoice_type = self._invoice_type(text)
+            detected_invoice_type = self._invoice_type(text)
+            if info.invoice_type != "??????" or detected_invoice_type == "??????":
+                if detected_invoice_type:
+                    info.invoice_type = detected_invoice_type
 
             if info.invoice_number:
                 info.parse_success = True

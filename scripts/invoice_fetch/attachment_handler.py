@@ -31,7 +31,7 @@ class Attachment:
 
 # File extensions we care about
 _INVOICE_EXTS = {".pdf", ".ofd"}
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".heic"}
 _ALL_EXTS = _INVOICE_EXTS | _IMAGE_EXTS | {".zip"}
 
 # Invoice-ish filename keywords
@@ -96,6 +96,8 @@ def _payload_matches_extension(payload: bytes, ext: str) -> bool:
         return payload.startswith(b"\xff\xd8\xff")
     if ext == ".bmp":
         return payload.startswith(b"BM")
+    if ext == ".heic":
+        return len(payload) >= 12 and payload[4:8] == b"ftyp"
     return False
 
 

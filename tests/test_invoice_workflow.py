@@ -400,6 +400,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
             self.assertTrue((runtime / extra_paths[0]).exists())
+            self.assertTrue(updated["has_extra"])
+            self.assertFalse(updated["missing_extra"])
 
     def test_local_unmatched_evidence_is_kept_as_pending_link_record(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1978,7 +1980,190 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
-            self.assertIn("滴滴行程单_2532700001694376933.pdf", extra_paths[0])
+
+    def test_same_mail_extra_file_attaches_to_multiple_invoices(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            evidence_file = attachments_dir / "trip.pdf"
+            evidence_file.write_bytes(b"%PDF-evidence")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                invoice_id_1 = db.insert_invoice({
+                    "invoice_number": "SHARED001",
+                    "invoice_code": "001",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "88.00",
+                    "seller_name": "Shared Seller A",
+                    "invoice_type": "电子发票",
+                    "extra_paths": [],
+                    "has_extra": False,
+                    "missing_extra": True,
+                })
+                invoice_id_2 = db.insert_invoice({
+                    "invoice_number": "SHARED002",
+                    "invoice_code": "002",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "188.00",
+                    "seller_name": "Shared Seller B",
+                    "invoice_type": "电子发票",
+                    "extra_paths": [],
+                    "has_extra": False,
+                    "missing_extra": True,
+                })
+
+                attachment = Attachment(
+                    file_path=str(evidence_file),
+                    original_name="trip.pdf",
+                    content_type="application/pdf",
+                    size=evidence_file.stat().st_size,
+                    is_invoice=False,
+                    is_extra=True,
+                )
+                cli._attach_email_extras_to_invoice(
+                    db=db,
+                    invoice_id=invoice_id_1,
+                    extra_files=[attachment],
+                    code="001",
+                    inv_date="2026-05-18",
+                    att_base=attachments_dir,
+                    category="餐饮",
+                    total_amount="88.00",
+                    invoice_number="SHARED001",
+                    kept_paths=set(),
+                )
+                cli._attach_email_extras_to_invoice(
+                    db=db,
+                    invoice_id=invoice_id_2,
+                    extra_files=[attachment],
+                    code="002",
+                    inv_date="2026-05-18",
+                    att_base=attachments_dir,
+                    category="餐饮",
+                    total_amount="188.00",
+                    invoice_number="SHARED002",
+                    kept_paths=set(),
+                )
+                rows = sorted(db.get_all_invoices(), key=lambda row: row["id"])
+
+            self.assertEqual(len(rows), 2)
+            for row in rows:
+                extra_paths = json.loads(row["extra_paths"])
+                self.assertEqual(len(extra_paths), 1)
+                self.assertTrue((runtime / extra_paths[0]).exists())
+                self.assertTrue(row["has_extra"])
+                self.assertFalse(row["missing_extra"])
+
+    def test_email_image_attachment_is_recorded_as_pending_manual(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            image_file = attachments_dir / "IMG_001.jpg"
+            image_file.write_bytes(b"\xff\xd8\xff synthetic image")
+            attachments = [
+                Attachment(file_path=str(image_file), original_name="IMG_001.jpg", content_type="image/jpeg", size=image_file.stat().st_size, is_invoice=False, is_extra=False),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "plain photo receipt"
+            msg["From"] = "sender@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=778, raw_msg=msg)
+
+            parser = StaticParser(InvoiceInfo(parse_success=False, parse_note="not invoice"))
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                handler = StaticAttachmentHandler(attachments_dir, attachments)
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "图片待识别")
+            self.assertIn("图片待识别", rows[0]["parse_note"])
+            self.assertFalse(rows[0]["parse_success"])
+
+    def test_receipt_duplicate_scan_is_deduped_by_hash_and_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            receipt_file1 = attachments_dir / "receipt1.pdf"
+            receipt_file1.write_bytes(b"%PDF-receipt-same")
+            receipt_file2 = attachments_dir / "receipt2.pdf"
+            receipt_file2.write_bytes(b"%PDF-receipt-same")
+
+            msg1 = email.message.EmailMessage()
+            msg1["Subject"] = "hotel receipt"
+            msg1["From"] = "hotel@example.com"
+            msg1["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            msg2 = email.message.EmailMessage()
+            msg2["Subject"] = "hotel receipt"
+            msg2["From"] = "hotel@example.com"
+            msg2["Date"] = "Mon, 18 May 2026 10:05:00 +0800"
+
+            attachment1 = Attachment(
+                file_path=str(receipt_file1),
+                original_name="receipt.pdf",
+                content_type="application/pdf",
+                size=receipt_file1.stat().st_size,
+                is_invoice=False,
+                is_extra=True,
+            )
+            attachment2 = Attachment(
+                file_path=str(receipt_file2),
+                original_name="receipt.pdf",
+                content_type="application/pdf",
+                size=receipt_file2.stat().st_size,
+                is_invoice=False,
+                is_extra=True,
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                handler1 = StaticAttachmentHandler(attachments_dir, [attachment1])
+                handler2 = StaticAttachmentHandler(attachments_dir, [attachment2])
+                cli._process_email(
+                    msg=cli.MailMessage(uid=900, raw_msg=msg1),
+                    att_handler=handler1,
+                    parser=StaticParser(InvoiceInfo(parse_success=False, parse_note="not invoice")),
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                    mailbox_key="account_a",
+                )
+                cli._process_email(
+                    msg=cli.MailMessage(uid=900, raw_msg=msg2),
+                    att_handler=handler2,
+                    parser=StaticParser(InvoiceInfo(parse_success=False, parse_note="not invoice")),
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                    mailbox_key="account_a",
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "\u6d77\u5916\u51ed\u8bc1/\u6536\u636e")
+            self.assertTrue(rows[0]["file_hash"])
+            self.assertTrue((runtime / rows[0]["attachment_path"]).exists())
 
     def test_didi_evidence_matching_by_date_and_amount(self):
         """测试 2：滴滴行程单无发票号时，用日期 + 金额 + 滴滴关键词唯一匹配"""

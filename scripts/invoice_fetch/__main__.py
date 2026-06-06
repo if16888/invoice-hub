@@ -317,13 +317,22 @@ def _rename_by_invoice_code(
             _log.warning("  文件名冲突过多，改用时间戳保存: %s", mask_filename(dest.name))
 
     if src != dest:
-        shutil.move(str(src), str(dest))
-        _log.info(
-            "  📄 重命名: %s → %s/%s",
-            mask_filename(src.name),
-            redact_text(invoice_date, "date"),
-            mask_filename(new_name),
-        )
+        if is_extra:
+            shutil.copy2(str(src), str(dest))
+            _log.info(
+                "  ?? ?????????: %s ??%s/%s",
+                mask_filename(src.name),
+                redact_text(invoice_date, "date"),
+                mask_filename(new_name),
+            )
+        else:
+            shutil.move(str(src), str(dest))
+            _log.info(
+                "  ?? ????? %s ??%s/%s",
+                mask_filename(src.name),
+                redact_text(invoice_date, "date"),
+                mask_filename(new_name),
+            )
 
     try:
         return os.path.relpath(str(dest), RUNTIME_DIR)
@@ -590,6 +599,11 @@ def _attach_evidence_to_invoice(
 
     extra_paths.append(stored_path)
     db.update_invoice_file_paths(invoice["id"], extra_paths=extra_paths)
+    db.update_invoice_extra_flags(
+        invoice["id"],
+        has_extra=True,
+        missing_extra=False,
+    )
     _log.info(
         "  已将证明材料关联到发票: invoice_id=%s file=%s",
         invoice["id"],
@@ -633,6 +647,7 @@ def _attach_email_extras_to_invoice(
     for e in extra_files:
         e_path = Path(e.file_path)
         if e_path.exists():
+            kept_paths.add(str(e_path.resolve()))
             try:
                 h = _sha256_file(e_path)
                 if h in existing_hashes:
@@ -1348,6 +1363,33 @@ def _insert_receipt_record(
     mailbox_key: str = "legacy",
 ) -> int | None:
     """Insert a non-invoice reimbursement receipt and preserve its file."""
+    src = Path(file_path)
+    file_hash = _sha256_file(src) if src.exists() else ""
+    if file_hash:
+        existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+        if existing:
+            existing = _restore_existing_invoice_if_deleted(db, existing, "海外凭证/收据")
+            if int(existing.get("is_deleted") or 0) == 0:
+                _log.info("  海外凭证/收据已存在: %s", mask_filename(filename_hint or src.name))
+                return None
+
+        existing = db.find_receipt_by_source(
+            mailbox_key=mailbox_key,
+            mail_uid=msg.uid,
+            filename_hint=filename_hint,
+            include_deleted=True,
+        )
+        if existing:
+            existing = _restore_existing_invoice_if_deleted(db, existing, "海外凭证/收据")
+            if int(existing.get("is_deleted") or 0) == 0:
+                _log.info(
+                    "  海外凭证/收据已存在: mailbox_key=%s uid=%s hint=%s",
+                    mailbox_key,
+                    mask_uid(msg.uid),
+                    mask_filename(filename_hint or src.name),
+                )
+                return None
+
     cat, extra_type, _ = _classify(msg.subject, msg.sender, msg.sender, categories)
     att_path = _rename_receipt_file(
         file_path=file_path,
@@ -1380,11 +1422,58 @@ def _insert_receipt_record(
         "extra_paths": [],
         "download_url": download_url,
         "mailbox_key": mailbox_key,
+        "file_hash": file_hash,
     }
     return db.insert_invoice(rec)
 
 
-# ── Process one email ────────────────────────────────────────────────
+def _insert_pending_image_record(
+    msg: MailMessage,
+    db: InvoiceDB,
+    file_path: str,
+    original_name: str,
+    categories: dict,
+    mailbox_key: str = "legacy",
+) -> int | None:
+    """Insert a pending-manual image attachment record without silently dropping it."""
+    src = Path(file_path)
+    file_hash = _sha256_file(src) if src.exists() else ""
+    if file_hash:
+        existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+        if existing:
+            existing = _restore_existing_invoice_if_deleted(db, existing, "图片待识别")
+            if int(existing.get("is_deleted") or 0) == 0:
+                _log.info("  图片待识别已存在: %s", mask_filename(original_name or src.name))
+                return None
+
+    cat, extra_type, extra_required = _classify(msg.subject, msg.sender, original_name, categories)
+    rec = {
+        "invoice_number": "",
+        "invoice_code": "",
+        "invoice_date": msg.date,
+        "amount": "",
+        "total_amount": "",
+        "seller_name": msg.sender,
+        "buyer_name": "",
+        "invoice_type": "图片待识别",
+        "category": cat,
+        "has_extra": bool(extra_type),
+        "extra_type": extra_type,
+        "missing_extra": extra_required,
+        "mail_uid": msg.uid,
+        "mail_subject": msg.subject,
+        "mail_date": msg.date,
+        "mail_sender": msg.sender,
+        "parse_success": False,
+        "parse_note": "图片待识别，请人工处理",
+        "attachment_path": _runtime_relative(src),
+        "extra_paths": [],
+        "download_url": "",
+        "mailbox_key": mailbox_key,
+        "file_hash": file_hash,
+    }
+    return db.insert_invoice(rec)
+
 
 def _process_email(
     msg: MailMessage,
@@ -1822,6 +1911,24 @@ def _process_email(
                 if row_id:
                     recorded += 1
                     _log.info("  已入库独立水单/收据(海外凭证): %s", mask_filename(att.original_name))
+
+    image_attachments = [
+        att for att in attachments
+        if Path(att.file_path).suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic"}
+        and not att.is_extra
+    ]
+    for att in image_attachments:
+        row_id = _insert_pending_image_record(
+            msg=msg,
+            db=db,
+            file_path=att.file_path,
+            original_name=att.original_name,
+            categories=categories,
+            mailbox_key=mailbox_key,
+        )
+        if row_id:
+            recorded += 1
+            _log.info("  图片待识别已入库: %s", mask_filename(att.original_name))
 
     # 4. Fallback: parse subject or HTML body when no PDF available
     if not invoice_pdfs and recorded == 0 and not link_pdf_skipped_as_duplicate:

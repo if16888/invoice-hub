@@ -53,7 +53,7 @@ from ..reimbursement import amount_total, buyer_warning, format_amount_total
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
-from .helpers import _mask_url, _read_manifest_summary
+from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 
 _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
@@ -2120,7 +2120,7 @@ class InvoiceReviewApp(QMainWindow):
                             )
 
                     # Update database in-place
-                    if self.db.update_invoice_parsed_metadata(
+                    updated = self.db.update_invoice_parsed_metadata(
                         invoice_id=repair_target_id,
                         invoice_number=info.invoice_number,
                         invoice_code=info.invoice_code,
@@ -2129,22 +2129,32 @@ class InvoiceReviewApp(QMainWindow):
                         total_amount=info.total_amount,
                         seller_name=info.seller_name,
                         buyer_name=info.buyer_name,
-                        invoice_type=info.invoice_type or inv.get("invoice_type") or "本地导入发票",
+                        invoice_type=info.invoice_type or inv.get("invoice_type") or "??????",
                         category=category,
                         has_extra=inv.get("has_extra") or False,
                         extra_type=extra_type,
                         missing_extra=extra_required,
                         parse_success=True,
-                        parse_note=info.parse_note or "重新解析成功",
-                    ):
+                        parse_note=info.parse_note or "??????",
+                    )
+                    if updated:
                         if repair_target_id != inv_id:
                             self.db.soft_delete_invoice(inv_id)
                             self.write_log(
-                                f"🔁 [重新解析] 发票 ID {inv_id} 已并入主记录 ID {repair_target_id}"
+                                f"? [????] ?? ID {inv_id} ?????? ID {repair_target_id}"
                             )
                         else:
-                            self.write_log(f"✅ [重新解析] 发票 ID {inv_id} 重新解析并更新成功")
-                    success_count += 1
+                            self.write_log(f"? [????] ?? ID {inv_id} ?????????")
+                        success_count += 1
+                    elif getattr(self.db, "last_error", "") == "unique_conflict":
+                        duplicate_conflicts.append(
+                            f"?? ID {inv_id}: ????????????????"
+                        )
+                        self.write_log(
+                            f"?? [????] ?? ID {inv_id} ??????????????????"
+                        )
+                    else:
+                        parse_failed_files.append(f"?? ID {inv_id}: ??????? ({info.parse_note})")
                 else:
                     parse_failed_files.append(f"发票 ID {inv_id}: 解析失败 ({info.parse_note})")
             except Exception as e:
@@ -2192,6 +2202,7 @@ class InvoiceReviewApp(QMainWindow):
         reread_failed_count = 0
 
         from ..attachment_handler import AttachmentHandler
+        from ..config import get_email_accounts
         from ..credentials import get_auth_code, has_auth_code
         from ..invoice_parser import InvoiceParser
         from ..link_downloader import LinkDownloader
@@ -2201,31 +2212,40 @@ class InvoiceReviewApp(QMainWindow):
         try:
             downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"启动下载引擎失败: {e}")
+            QMessageBox.critical(self, "??", f"????????: {e}")
             return
 
         parser = InvoiceParser()
         att_handler = AttachmentHandler(RUNTIME_DIR / "attachments")
-        categories = self.config.get("categories", {})
-        mailbox_folder = self.config.get("search", {}).get("folder", "INBOX")
-        mail_fetcher = None
-        mail_fetcher_cm = None
+        cfg = self.config or load_config_safe()
+        categories = cfg.get("categories", {})
+        accounts = get_email_accounts(cfg)
+        default_account = {
+            "mailbox_key": "legacy",
+            "address": cfg.get("email", {}).get("address", ""),
+            "auth_code": "",
+            "imap": cfg.get("imap", {}),
+            "search": cfg.get("search", {}),
+        }
+        account_map = {str(account.get("mailbox_key") or "legacy"): account for account in accounts}
+        mail_fetchers: dict[str, tuple[MailFetcher, object]] = {}
 
-        def ensure_mail_fetcher():
-            nonlocal mail_fetcher, mail_fetcher_cm
-            if mail_fetcher is not None:
-                return mail_fetcher
+        def ensure_mail_fetcher(mailbox_key: str):
+            key = str(mailbox_key or "legacy")
+            cached = mail_fetchers.get(key)
+            if cached is not None:
+                return cached[0]
 
-            cfg = self.config or load_config_safe()
-            email_addr = cfg.get("email", {}).get("address", "")
+            account = account_map.get(key, default_account)
+            email_addr = str(account.get("address") or "")
             if not email_addr or email_addr == "your_email@qq.com":
-                raise ValueError("请先在 [设置] 中配置真实的邮箱地址。")
+                raise ValueError("???[??]???????????")
             if not has_auth_code(email_addr):
-                raise ValueError(f"未检测到邮箱 {email_addr} 的授权码安全凭据。请前往 [设置] 安全凭据面板写入。")
+                raise ValueError(f"?????? {email_addr} ????????????[??]?????????")
 
             auth_code = get_auth_code(email_addr)
-            imap_cfg = cfg.get("imap", {})
-            self.write_log(f"↩️ [重新读取邮件] 正在连接 IMAP {email_addr} ...")
+            imap_cfg = account.get("imap") or cfg.get("imap", {})
+            self.write_log(f"? [??????] ???? IMAP {email_addr} ...")
             mail_fetcher_cm = MailFetcher(
                 address=email_addr,
                 auth_code=auth_code,
@@ -2233,6 +2253,7 @@ class InvoiceReviewApp(QMainWindow):
                 port=imap_cfg.get("port", 993),
             )
             mail_fetcher = mail_fetcher_cm.__enter__()
+            mail_fetchers[key] = (mail_fetcher, mail_fetcher_cm)
             return mail_fetcher
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -2273,7 +2294,7 @@ class InvoiceReviewApp(QMainWindow):
                                     total_amount=info.total_amount,
                                     invoice_number=info.invoice_number,
                                 )
-                                self.db.update_invoice_parsed_metadata(
+                                updated = self.db.update_invoice_parsed_metadata(
                                     invoice_id=inv_id,
                                     invoice_number=info.invoice_number,
                                     invoice_code=info.invoice_code,
@@ -2282,14 +2303,23 @@ class InvoiceReviewApp(QMainWindow):
                                     total_amount=info.total_amount,
                                     seller_name=info.seller_name,
                                     buyer_name=info.buyer_name,
-                                    invoice_type=info.invoice_type or inv.get("invoice_type") or "链接下载",
+                                    invoice_type=info.invoice_type or inv.get("invoice_type") or "??????",
                                     category=cat,
                                     has_extra=inv.get("has_extra") or False,
                                     extra_type=extra_type,
                                     missing_extra=extra_req,
                                     parse_success=True,
-                                    parse_note="重新下载并解析成功",
+                                    parse_note="?????????",
                                 )
+                                if not updated:
+                                    if getattr(self.db, "last_error", "") == "unique_conflict":
+                                        fallback_reason = "???????????????"
+                                        self.write_log(
+                                            f"?? [????] ?? ID {inv_id} ????????????????"
+                                        )
+                                    else:
+                                        fallback_reason = "????????????"
+                                    continue
                                 self.db._conn.execute(
                                     "UPDATE invoices SET attachment_path = ? WHERE id = ?",
                                     (att_path, inv_id),
@@ -2322,12 +2352,15 @@ class InvoiceReviewApp(QMainWindow):
                     no_url_count += 1
 
                 try:
-                    fetcher = ensure_mail_fetcher()
+                    mailbox_key = str(inv.get("mailbox_key") or "legacy")
+                    account = account_map.get(mailbox_key, default_account)
+                    mailbox_folder = account.get("search", {}).get("folder", "INBOX")
+                    fetcher = ensure_mail_fetcher(mailbox_key)
                     self.write_log(
                         f"↩️ [重新下载] 发票 ID {inv_id} {fallback_reason or '无下载链接'}，改为重新读取邮件 UID={mail_uid}"
                     )
                     reread_ok = _handle_pending_email(
-                        row={"uid": mail_uid, "mail_date": mail_date},
+                        row={"uid": mail_uid, "mail_date": mail_date, "mailbox_key": mailbox_key},
                         fetcher=fetcher,
                         folder=mailbox_folder,
                         att_handler=att_handler,
@@ -2353,7 +2386,7 @@ class InvoiceReviewApp(QMainWindow):
                     self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件失败: {e}")
         finally:
             downloader.close()
-            if mail_fetcher_cm is not None:
+            for _, mail_fetcher_cm in mail_fetchers.values():
                 mail_fetcher_cm.__exit__(None, None, None)
             QApplication.restoreOverrideCursor()
             self.statusBar().clearMessage()
@@ -2454,43 +2487,7 @@ class InvoiceReviewApp(QMainWindow):
         """Resolve a DB-stored attachment path to a real local file path."""
         if not attachment_path:
             return None
-
-        raw_path = Path(str(attachment_path))
-        if raw_path.is_absolute():
-            return raw_path
-
-        candidates = [
-            RUNTIME_DIR / raw_path,
-            RUNTIME_DIR / "attachments" / raw_path,
-            PROJECT_ROOT / raw_path,
-            PROJECT_ROOT / "runtime" / raw_path,
-        ]
-
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-
-        filename = raw_path.name
-        if filename:
-            search_roots = [
-                RUNTIME_DIR / "attachments",
-                RUNTIME_DIR,
-                PROJECT_ROOT / "runtime" / "attachments",
-            ]
-            for root in search_roots:
-                if not root.exists():
-                    continue
-                matches = [p for p in root.rglob(filename) if p.is_file()]
-                if len(matches) == 1:
-                    return matches[0]
-                if len(matches) > 1 and len(raw_path.parts) >= 2:
-                    suffix = Path(*raw_path.parts[-2:])
-                    suffix_matches = [p for p in matches if str(p).endswith(str(suffix))]
-                    if len(suffix_matches) == 1:
-                        return suffix_matches[0]
-                    return matches[0]
-
-        return candidates[0]
+        return resolve_stored_path(attachment_path, RUNTIME_DIR)
 
     def _open_attachment(self):
         """Open attachment file locally using system default viewer safely."""
@@ -2569,7 +2566,14 @@ class InvoiceReviewApp(QMainWindow):
                 note=note
             )
             if not success:
-                QMessageBox.warning(self, "失败", "发票修改未保存")
+                if getattr(self.db, "last_error", "") == "unique_conflict":
+                    QMessageBox.warning(
+                        self,
+                        "????",
+                        "????????????????????????????????",
+                    )
+                else:
+                    QMessageBox.warning(self, "????", "????????")
                 return
 
             self.statusBar().showMessage("发票修改已保存", 3000)

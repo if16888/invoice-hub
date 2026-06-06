@@ -5,7 +5,7 @@ import json
 import tempfile
 import shutil
 
-from scripts.invoice_fetch.gui.helpers import resolve_invoice_documents, _normalize_path_list
+from scripts.invoice_fetch.gui.helpers import resolve_invoice_documents, resolve_stored_path, _normalize_path_list
 
 class TestUIPreviewHelpers(unittest.TestCase):
     def setUp(self):
@@ -71,6 +71,17 @@ class TestUIPreviewHelpers(unittest.TestCase):
         docs = resolve_invoice_documents(invoice, self.runtime_dir)
         self.assertEqual(len(docs), 1)
         self.assertEqual(docs[0]["path"], abs_file)
+
+    def test_resolve_stored_path_uses_shared_candidates(self):
+        nested = self.attachments_dir / "2026-06-01" / "shared.png"
+        nested.parent.mkdir(parents=True, exist_ok=True)
+        nested.touch()
+
+        resolved = resolve_stored_path("attachments/2026-06-01/shared.png", self.runtime_dir)
+        self.assertEqual(resolved, nested)
+
+        fallback = resolve_stored_path("shared.png", self.runtime_dir)
+        self.assertEqual(fallback, nested)
 
     def test_pagination_bounds_logic(self):
         # Simulate simple pagination index adjustment bounds logic

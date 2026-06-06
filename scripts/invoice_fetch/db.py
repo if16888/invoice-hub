@@ -87,6 +87,7 @@ class InvoiceDB:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._path))
         self._conn.row_factory = sqlite3.Row
+        self.last_error = ""
         self._conn.executescript(_SCHEMA)
         _log.debug("数据库已打开: %s", self._path.name)
 
@@ -115,6 +116,9 @@ class InvoiceDB:
     def _normalize_mailbox_key(mailbox_key: str | None = None) -> str:
         value = str(mailbox_key or "legacy").strip()
         return value or "legacy"
+
+    def _set_last_error(self, code: str = "") -> None:
+        self.last_error = code or ""
 
     # ── Emails table (Phase 1: scan & classify) ──────────────────────
 
@@ -484,6 +488,37 @@ class InvoiceDB:
         self._conn.commit()
         return {str(row["file_hash"]) for row in rows}
 
+    def find_receipt_by_source(
+        self,
+        mailbox_key: str,
+        mail_uid: int,
+        filename_hint: str = "",
+        include_deleted: bool = False,
+    ) -> dict | None:
+        """Find a receipt-like invoice by mailbox source metadata."""
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
+        if not mailbox_key or mail_uid is None:
+            return None
+
+        hint = Path(filename_hint or "").stem
+        hint = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in hint).strip("_")
+        if len(hint) > 40:
+            hint = hint[:40]
+
+        sql = (
+            "SELECT * FROM invoices WHERE mailbox_key = ? AND mail_uid = ? "
+            "AND invoice_type = ?"
+        )
+        params: list[Any] = [mailbox_key, int(mail_uid), "海外凭证/收据"]
+        if hint:
+            sql += " AND attachment_path LIKE ?"
+            params.append(f"%{hint}%")
+        if not include_deleted:
+            sql += " AND is_deleted = 0"
+        sql += " ORDER BY id DESC LIMIT 1"
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
     def find_invoice_by_unique_fields(
         self,
         invoice_number: str,
@@ -590,20 +625,25 @@ class InvoiceDB:
 
         Returns False if the invoice_id does not exist.
         """
-        # Check existence
         inv = self.get_invoice(invoice_id)
         if not inv:
+            self._set_last_error("not_found")
             return False
         if buyer_name is None:
             buyer_name = str(inv.get("buyer_name") or "")
 
-        self._conn.execute(
-            "UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?, buyer_name=?, "
-            "total_amount=?, category=?, confirmed_note=? WHERE id=?",
-            (invoice_number, invoice_date, seller_name, buyer_name, total_amount, category, note, invoice_id)
-        )
-        self._conn.commit()
-        return True
+        try:
+            self._conn.execute(
+                "UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?, buyer_name=?, "
+                "total_amount=?, category=?, confirmed_note=? WHERE id=?",
+                (invoice_number, invoice_date, seller_name, buyer_name, total_amount, category, note, invoice_id),
+            )
+            self._conn.commit()
+            self._set_last_error("")
+            return True
+        except sqlite3.IntegrityError:
+            self._set_last_error("unique_conflict")
+            return False
 
     def update_invoice_parsed_metadata(
         self,
@@ -626,32 +666,38 @@ class InvoiceDB:
         """Refresh parsed metadata in-place without touching review status."""
         inv = self.get_invoice(invoice_id)
         if not inv:
+            self._set_last_error("not_found")
             return False
 
-        self._conn.execute(
-            "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, amount=?, total_amount=?, "
-            "seller_name=?, buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
-            "missing_extra=?, parse_success=?, parse_note=? WHERE id=?",
-            (
-                invoice_number,
-                invoice_code,
-                invoice_date,
-                amount,
-                total_amount,
-                seller_name,
-                buyer_name,
-                invoice_type,
-                category,
-                int(bool(has_extra)),
-                extra_type,
-                int(bool(missing_extra)),
-                int(bool(parse_success)),
-                parse_note,
-                invoice_id,
-            ),
-        )
-        self._conn.commit()
-        return True
+        try:
+            self._conn.execute(
+                "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, amount=?, total_amount=?, "
+                "seller_name=?, buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
+                "missing_extra=?, parse_success=?, parse_note=? WHERE id=?",
+                (
+                    invoice_number,
+                    invoice_code,
+                    invoice_date,
+                    amount,
+                    total_amount,
+                    seller_name,
+                    buyer_name,
+                    invoice_type,
+                    category,
+                    int(bool(has_extra)),
+                    extra_type,
+                    int(bool(missing_extra)),
+                    int(bool(parse_success)),
+                    parse_note,
+                    invoice_id,
+                ),
+            )
+            self._conn.commit()
+            self._set_last_error("")
+            return True
+        except sqlite3.IntegrityError:
+            self._set_last_error("unique_conflict")
+            return False
 
     def update_invoice_file_paths(
         self,
