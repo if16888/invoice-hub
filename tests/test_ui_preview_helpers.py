@@ -707,3 +707,60 @@ class TestUIPreviewGUI(unittest.TestCase):
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
+
+    def test_load_all_selection_reset(self):
+        """Test: Selection reset behavior for first load and load all."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                for i in range(120):
+                    db.insert_invoice({
+                        "invoice_number": f"SEL_{i:04d}",
+                        "total_amount": "10.00",
+                        "seller_name": "Selection Seller",
+                        "invoice_date": "2026-06-01",
+                        "category": "Office",
+                        "review_status": "to_review"
+                    })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window._deferred_init()
+                app.processEvents()
+
+                # 1. First load: row count is 100, selectedRows count should be 1
+                self.assertEqual(window.table.rowCount(), 100)
+                selected_rows = window.table.selectionModel().selectedRows()
+                self.assertEqual(len(selected_rows), 1)
+
+                # 2. Click load all: row count is 120, selectedRows count should remain 1
+                window._load_all_invoices_clicked()
+                app.processEvents()
+                app.processEvents()  # Ensure QTimer events are processed
+
+                self.assertEqual(window.table.rowCount(), 120)
+                selected_rows = window.table.selectionModel().selectedRows()
+                self.assertEqual(len(selected_rows), 1)
+
+                # 3. Manual selectAll: selectedRows count can be 120
+                window.table.selectAll()
+                app.processEvents()
+                selected_rows = window.table.selectionModel().selectedRows()
+                self.assertEqual(len(selected_rows), 120)
+
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise

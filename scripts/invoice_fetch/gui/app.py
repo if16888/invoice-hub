@@ -1557,6 +1557,10 @@ class InvoiceReviewApp(QMainWindow):
         self.table.setUpdatesEnabled(False)
         self.table.blockSignals(True)
         try:
+            self.table.clearSelection()
+            self.table.setCurrentItem(None)
+            if self.table.selectionModel() is not None:
+                self.table.selectionModel().clearCurrentIndex()
             self.table.setRowCount(len(self.invoices_list))
             for idx, inv in enumerate(self.invoices_list):
                 inv_num = str(inv.get("invoice_number") or "")
@@ -1677,6 +1681,13 @@ class InvoiceReviewApp(QMainWindow):
                     if inv.get("id") == prev_id:
                         target_row = idx
                         break
+
+            # Clear selection and focus to prevent carryover of multi-selection
+            self.table.clearSelection()
+            self.table.setCurrentItem(None)
+            if self.table.selectionModel() is not None:
+                self.table.selectionModel().clearCurrentIndex()
+
             if target_row == -1 and len(self.invoices_list) > 0:
                 target_row = 0
             if target_row != -1:
