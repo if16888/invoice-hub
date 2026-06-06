@@ -2593,6 +2593,128 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_compact_detail_layout_keeps_source_fields_accessible(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QGridLayout
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                attachment_path = Path(td) / "synthetic-invoice.txt"
+                attachment_path.write_text("synthetic attachment", encoding="utf-8")
+                db_path = Path(td) / "test_gui_compact_detail.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "COMPACT001",
+                        "invoice_date": "2026-06-01",
+                        "total_amount": "88.00",
+                        "seller_name": "示例销售方",
+                        "buyer_name": "示例购买方",
+                        "invoice_type": "电子发票",
+                        "category": "其他",
+                        "review_status": "to_review",
+                        "mail_subject": "Synthetic invoice subject",
+                        "attachment_path": str(attachment_path),
+                        "download_url": "https://example.invalid/invoice?id=synthetic",
+                        "extra_paths": [str(Path(td) / "synthetic-evidence.png")],
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    window.table.selectRow(0)
+                    app.processEvents()
+
+                    self.assertIsInstance(window.invoice_core_grid, QGridLayout)
+                    self.assertLessEqual(window.txt_supporting_docs.maximumHeight(), 56)
+                    self.assertGreater(window.txt_supporting_docs.maximumHeight(), 0)
+                    self.assertLessEqual(window.btn_save_draft.maximumWidth(), 140)
+                    self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 96)
+                    self.assertEqual(window.txt_path.text(), attachment_path.name)
+                    self.assertEqual(window.txt_path.toolTip(), str(attachment_path))
+
+                    self.assertTrue(window.more_source_widget.isHidden())
+                    window.btn_more_source.setChecked(True)
+                    app.processEvents()
+                    self.assertFalse(window.more_source_widget.isHidden())
+                    self.assertTrue(window.more_source_widget.isAncestorOf(window.txt_id))
+                    self.assertTrue(window.more_source_widget.isAncestorOf(window.txt_subject))
+                    self.assertTrue(window.more_source_widget.isAncestorOf(window.txt_url))
+                    self.assertEqual(window.txt_full_path.text(), str(attachment_path))
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_compact_detail_core_fields_still_save(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_compact_detail_save.db"
+                with InvoiceDB(db_path) as db:
+                    invoice_id = db.insert_invoice({
+                        "invoice_number": "BEFORE001",
+                        "invoice_date": "2026-06-01",
+                        "total_amount": "10.00",
+                        "seller_name": "原销售方",
+                        "buyer_name": "原购买方",
+                        "invoice_type": "电子发票",
+                        "category": "其他",
+                        "review_status": "to_review",
+                    })
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._deferred_init()
+                    app.processEvents()
+                    window.table.selectRow(0)
+                    app.processEvents()
+
+                    window.txt_number.setText("AFTER001")
+                    window.txt_date.setText("2026-06-02")
+                    window.txt_amount.setText("25.50")
+                    window.txt_seller.setText("新销售方")
+                    window.txt_buyer.setText("新购买方")
+                    window.combo_category.setCurrentText("餐饮")
+                    window._mark_invoice_form_dirty()
+                    self.assertTrue(window.btn_save_draft.isEnabled())
+                    self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+
+                    window._save_invoice_fields()
+                    app.processEvents()
+
+                    refreshed = window.db.get_invoice(invoice_id)
+                    self.assertEqual(refreshed["invoice_number"], "AFTER001")
+                    self.assertEqual(refreshed["invoice_date"], "2026-06-02")
+                    self.assertEqual(refreshed["total_amount"], "25.50")
+                    self.assertEqual(refreshed["seller_name"], "新销售方")
+                    self.assertEqual(refreshed["buyer_name"], "新购买方")
+                    self.assertEqual(refreshed["category"], "餐饮")
+                    self.assertFalse(window.btn_save_draft.isEnabled())
+                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_show_does_not_emit_invalid_qfont_point_size_warning(self):
         try:
             from PySide6.QtCore import qInstallMessageHandler

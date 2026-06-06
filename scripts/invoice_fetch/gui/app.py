@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QComboBox, QLabel, QMessageBox, QGroupBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog, QDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
-    QButtonGroup, QGridLayout, QStyle, QLayout
+    QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
 from PySide6.QtCore import Qt, QUrl, QThread, Signal, QTimer, QEvent
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPixmap
@@ -636,40 +636,44 @@ class InvoiceReviewApp(QMainWindow):
 
         # ── Tab 1: 发票详情 ───────────────────────────
         tab_details = QWidget()
-        tab_details_layout = QFormLayout(tab_details)
+        tab_details_layout = QVBoxLayout(tab_details)
         tab_details_layout.setContentsMargins(10, 10, 10, 10)
-        tab_details_layout.setLabelAlignment(Qt.AlignRight)
-        tab_details_layout.setFormAlignment(Qt.AlignLeft)
         tab_details_layout.setSpacing(6)
 
-        self.txt_id = QLineEdit()
-        self.txt_id.setReadOnly(True)
-        tab_details_layout.addRow("发票 ID:", self.txt_id)
+        core_fields = QWidget()
+        self.invoice_core_grid = QGridLayout(core_fields)
+        self.invoice_core_grid.setContentsMargins(0, 0, 0, 0)
+        self.invoice_core_grid.setHorizontalSpacing(8)
+        self.invoice_core_grid.setVerticalSpacing(6)
+        self.invoice_core_grid.setColumnStretch(1, 1)
+        self.invoice_core_grid.setColumnStretch(3, 1)
+
+        def add_core_field(row, field_column, label_text, widget):
+            label = QLabel(label_text)
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            column = field_column * 2
+            self.invoice_core_grid.addWidget(label, row, column)
+            self.invoice_core_grid.addWidget(widget, row, column + 1)
 
         self.txt_number = QLineEdit()
-        tab_details_layout.addRow("发票号码:", self.txt_number)
-
         self.txt_date = QLineEdit()
         self.txt_date.setPlaceholderText("YYYY-MM-DD")
-        tab_details_layout.addRow("开票日期:", self.txt_date)
-
-        self.txt_seller = QLineEdit()
-        tab_details_layout.addRow("销售方名称:", self.txt_seller)
-
-        self.txt_buyer = QLineEdit()
-        tab_details_layout.addRow("购买方名称:", self.txt_buyer)
-
         self.txt_amount = QLineEdit()
-        tab_details_layout.addRow("发票金额 (元):", self.txt_amount)
-
         self.combo_category = QComboBox()
         self.combo_category.setEditable(True)
         self._refresh_category_options()
-        tab_details_layout.addRow("消费类型:", self.combo_category)
+        self.txt_seller = QLineEdit()
+        self.txt_buyer = QLineEdit()
+        self.txt_seller.textChanged.connect(self.txt_seller.setToolTip)
+        self.txt_buyer.textChanged.connect(self.txt_buyer.setToolTip)
 
-        self.txt_subject = QLineEdit()
-        self.txt_subject.setReadOnly(True)
-        tab_details_layout.addRow("邮件主题:", self.txt_subject)
+        add_core_field(0, 0, "发票号码:", self.txt_number)
+        add_core_field(0, 1, "开票日期:", self.txt_date)
+        add_core_field(1, 0, "发票金额 (元):", self.txt_amount)
+        add_core_field(1, 1, "消费类型:", self.combo_category)
+        add_core_field(2, 0, "销售方名称:", self.txt_seller)
+        add_core_field(2, 1, "购买方名称:", self.txt_buyer)
+        tab_details_layout.addWidget(core_fields)
 
         path_widget = QWidget()
         path_layout = QHBoxLayout(path_widget)
@@ -684,26 +688,69 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_open_file.setMinimumWidth(50)
         self.btn_open_file.setProperty("class", "SecondaryBtn")
         path_layout.addWidget(self.btn_open_file)
-        tab_details_layout.addRow("文件路径:", path_widget)
-
-        self.txt_url = QLineEdit()
-        self.txt_url.setReadOnly(True)
-        tab_details_layout.addRow("下载链接:", self.txt_url)
 
         self.txt_supporting_docs = QPlainTextEdit()
         self.txt_supporting_docs.setReadOnly(True)
-        self.txt_supporting_docs.setMaximumHeight(80)
+        self.txt_supporting_docs.setMaximumHeight(54)
         self.txt_supporting_docs.setPlaceholderText("酒店水单、行程记录、支付截图等证明材料会显示在这里")
-        tab_details_layout.addRow("证明材料:", self.txt_supporting_docs)
+
+        file_fields = QWidget()
+        file_fields_layout = QFormLayout(file_fields)
+        file_fields_layout.setContentsMargins(0, 0, 0, 0)
+        file_fields_layout.setLabelAlignment(Qt.AlignRight)
+        file_fields_layout.setSpacing(4)
+        file_fields_layout.addRow("原件文件:", path_widget)
+        file_fields_layout.addRow("证明材料:", self.txt_supporting_docs)
+        tab_details_layout.addWidget(file_fields)
+
+        self.btn_more_source = QToolButton()
+        self.btn_more_source.setText("更多来源信息")
+        self.btn_more_source.setCheckable(True)
+        self.btn_more_source.setChecked(False)
+        self.btn_more_source.setArrowType(Qt.RightArrow)
+        self.btn_more_source.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.btn_more_source.toggled.connect(self._toggle_more_source_info)
+        tab_details_layout.addWidget(self.btn_more_source, 0, Qt.AlignLeft)
+
+        self.more_source_widget = QWidget()
+        more_source_layout = QFormLayout(self.more_source_widget)
+        more_source_layout.setContentsMargins(0, 0, 0, 0)
+        more_source_layout.setLabelAlignment(Qt.AlignRight)
+        more_source_layout.setSpacing(4)
+
+        self.txt_id = QLineEdit()
+        self.txt_id.setReadOnly(True)
+        more_source_layout.addRow("发票 ID:", self.txt_id)
+
+        self.txt_subject = QLineEdit()
+        self.txt_subject.setReadOnly(True)
+        more_source_layout.addRow("邮件主题:", self.txt_subject)
+
+        self.txt_url = QLineEdit()
+        self.txt_url.setReadOnly(True)
+        more_source_layout.addRow("下载链接:", self.txt_url)
+
+        self.txt_full_path = QLineEdit()
+        self.txt_full_path.setReadOnly(True)
+        more_source_layout.addRow("完整文件路径:", self.txt_full_path)
+        self.more_source_widget.setVisible(False)
+        tab_details_layout.addWidget(self.more_source_widget)
 
         self.lbl_dirty_hint = QLabel("未修改")
         self.lbl_dirty_hint.setStyleSheet("color: #6B7280; font-size: 11px;")
 
         self.btn_save_draft = QPushButton("保存修改")
         self.btn_save_draft.setProperty("class", "PrimaryBtn")
+        self.btn_save_draft.setMinimumWidth(96)
+        self.btn_save_draft.setMaximumWidth(120)
         self.btn_save_draft.clicked.connect(self._save_invoice_fields)
-        tab_details_layout.addRow("", self.lbl_dirty_hint)
-        tab_details_layout.addRow("", self.btn_save_draft)
+
+        save_row = QHBoxLayout()
+        save_row.setContentsMargins(0, 0, 0, 0)
+        save_row.addWidget(self.lbl_dirty_hint)
+        save_row.addStretch(1)
+        save_row.addWidget(self.btn_save_draft)
+        tab_details_layout.addLayout(save_row)
 
         # Reimbursement Closing Card
         self.closing_card = QFrame()
@@ -730,7 +777,8 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_closing_desc.setStyleSheet("color: #4B5563; border: none; background: transparent;")
         closing_layout.addWidget(self.lbl_closing_desc)
 
-        tab_details_layout.addRow("", self.closing_card)
+        tab_details_layout.addWidget(self.closing_card)
+        tab_details_layout.addStretch(1)
 
         self.detail_tabs.addTab(tab_details, "发票详情")
 
@@ -1204,6 +1252,10 @@ class InvoiceReviewApp(QMainWindow):
         self.combo_category.currentTextChanged.connect(self._mark_invoice_form_dirty)
         self.txt_note.textChanged.connect(self._mark_invoice_form_dirty)
 
+    def _toggle_more_source_info(self, expanded: bool):
+        self.more_source_widget.setVisible(expanded)
+        self.btn_more_source.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+
     def _toggle_log(self):
         current = getattr(self, "_log_panel_visible", self.log_container.isVisible())
         self._set_log_panel_visible(not current)
@@ -1585,6 +1637,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_subject.clear()
         self.txt_path.clear()
         self.txt_path.setToolTip("")
+        self.txt_full_path.clear()
         self.txt_url.clear()
         self.txt_supporting_docs.clear()
         self.txt_supporting_docs.setToolTip("")
@@ -1732,6 +1785,8 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_subject.setText(str(inv.get("mail_subject") or ""))
             self.txt_path.setText(Path(att_path).name if att_path else "")
             self.txt_path.setToolTip(att_path)
+            self.txt_full_path.setText(att_path)
+            self.txt_full_path.setToolTip(att_path)
             self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
             extra_paths_raw = inv.get("extra_paths") or []
             if isinstance(extra_paths_raw, str):
