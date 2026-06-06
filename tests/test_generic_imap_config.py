@@ -200,6 +200,15 @@ class GenericImapConfigTests(unittest.TestCase):
             "ai": {"provider": "none"},
         })
 
+    def test_config_example_loads_multi_account_samples(self):
+        config_path = Path("config.example.json")
+        cfg = load_config_safe(config_path)
+        accounts = get_email_accounts(cfg)
+        self.assertGreaterEqual(len(accounts), 2)
+        self.assertEqual(accounts[0]["mailbox_key"], "primary@qq.com")
+        self.assertEqual(accounts[1]["mailbox_key"], "rail@example.com")
+        self.assertEqual(accounts[1]["imap"]["server"], "imap.example.com")
+
     def test_save_config_strips_auth_code(self):
         from scripts.invoice_fetch.config import save_config
         with tempfile.TemporaryDirectory() as td:

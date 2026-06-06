@@ -882,6 +882,12 @@ class ClaimGroupsTests(unittest.TestCase):
                 )
                 self.assertFalse(res_missing)
 
+    def test_rule_classifier_recognizes_rail_and_high_speed_train_keywords(self):
+        from scripts.invoice_fetch.rule_classifier import classify
+
+        self.assertEqual(classify("高铁 12306 电子客票", "")[0], 1)
+        self.assertEqual(classify("火车票 行程信息", "")[0], 1)
+
     def test_gui_mask_url_behavior(self):
         from scripts.invoice_fetch.gui.helpers import _mask_url
         url = "https://example.com/pay?token=secret123&user=456#frag"
@@ -1508,6 +1514,92 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertEqual(res["downloaded"], 2)
             self.assertEqual(res["duplicates"], 2)
             self.assertEqual(res["failed"], 0)
+
+    def test_scan_email_classifies_each_mailbox_and_masks_account_summary(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+        from scripts.invoice_fetch.log_privacy import mask_email
+
+        class FakeMailFetcher:
+            created = []
+
+            def __init__(self, address, auth_code, server="imap.qq.com", port=993):
+                self.address = address
+                self.auth_code = auth_code
+                self.server = server
+                self.port = port
+                FakeMailFetcher.created.append(address)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def scan_headers(self, folder, months_back, since_date="", known_uids=None, limit=None):
+                if self.address == "primary@qq.com":
+                    return [{
+                        "uid": 101,
+                        "subject": "电子发票 111",
+                        "sender": "billing@primary.example.com",
+                        "date": "2026-06-04",
+                    }]
+                return [{
+                    "uid": 202,
+                    "subject": "高铁 12306 电子客票",
+                    "sender": "rail@secondary.example.com",
+                    "date": "2026-06-04",
+                }]
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_scan_classify_mailbox_key.db"
+            config_file = Path(td) / "config.json"
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "email_accounts": [
+                        {
+                            "name": "Primary QQ",
+                            "provider": "qq",
+                            "address": "primary@qq.com",
+                            "search": {"folder": "INBOX", "months_back": 1},
+                        },
+                        {
+                            "name": "Secondary",
+                            "provider": "qq",
+                            "address": "secondary@qq.com",
+                            "search": {"folder": "INBOX", "months_back": 1},
+                        },
+                    ],
+                    "imap": {"server": "imap.qq.com", "port": 993},
+                    "search": {"folder": "INBOX", "months_back": 1},
+                    "ai": {"provider": "none"},
+                    "categories": {},
+                }, f)
+
+            with patch("scripts.invoice_fetch.services.load_config_safe") as mock_load_cfg, \
+                 patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.__main__.LinkDownloader") as mock_link_downloader:
+                mock_load_cfg.return_value = json.loads(config_file.read_text(encoding="utf-8"))
+                mock_link_downloader.return_value.close.return_value = None
+                res = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    scan_only=True,
+                )
+
+            with InvoiceDB(db_path) as db:
+                primary_pending = db.get_invoice_emails_to_download("primary@qq.com")
+                secondary_pending = db.get_invoice_emails_to_download("secondary@qq.com")
+
+            self.assertEqual(FakeMailFetcher.created, ["primary@qq.com", "secondary@qq.com"])
+            self.assertEqual(len(primary_pending), 1)
+            self.assertEqual(len(secondary_pending), 1)
+            self.assertTrue(all(row["mailbox_key"] == "primary@qq.com" for row in primary_pending))
+            self.assertTrue(all(row["mailbox_key"] == "secondary@qq.com" for row in secondary_pending))
+            self.assertEqual(res["accounts"], [
+                {"name": "Primary QQ", "address": mask_email("primary@qq.com"), "mailbox_key": "primary@qq.com"},
+                {"name": "Secondary", "address": mask_email("secondary@qq.com"), "mailbox_key": "secondary@qq.com"},
+            ])
 
     def test_scan_email_uses_count_invoices_for_new_duplicate_stats(self):
         from scripts.invoice_fetch.services import scan_email_and_download

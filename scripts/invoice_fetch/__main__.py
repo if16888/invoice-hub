@@ -2505,6 +2505,7 @@ def _scan_mailboxes_with_db(
                     scanned += len(headers)
                     new_count += db.bulk_upsert_emails(headers, mailbox_key=mailbox_key)
                     emit(f"Scan complete for {mask_email(email_addr)}: {len(headers)} headers, {new_count} new rows so far")
+                    _run_classify(db, ai_cfg, no_ai, mailbox_key=mailbox_key)
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
                 failed_summaries.append(f"scan failed for {mask_email(email_addr)}: {exc}")
@@ -2576,12 +2577,31 @@ def _scan_mailboxes_with_db(
         "accounts_total": accounts_total,
         "accounts_success": accounts_success,
         "accounts_failed": accounts_failed,
-        "accounts": [a.get("address", "") for a in account_contexts],
+        "accounts": [
+            {
+                "name": a.get("name", ""),
+                "address": mask_email(a.get("address", "")),
+                "mailbox_key": a.get("mailbox_key", ""),
+            }
+            for a in account_contexts
+        ],
     }
 
-def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool):
+def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool, mailbox_key: str | None = None):
     """Run rule + AI classification on unclassified emails."""
-    unclassified = db.get_unclassified_emails()
+    if mailbox_key is None:
+        all_unclassified = db.get_unclassified_emails()
+        if not all_unclassified:
+            _log.info("没有未分类的邮件")
+            return
+        mailbox_keys = sorted({str(row.get("mailbox_key") or "legacy") for row in all_unclassified})
+        if len(mailbox_keys) > 1:
+            for key in mailbox_keys:
+                _run_classify(db, ai_cfg, no_ai, mailbox_key=key)
+            return
+        mailbox_key = mailbox_keys[0]
+
+    unclassified = db.get_unclassified_emails(mailbox_key=mailbox_key)
     if not unclassified:
         _log.info("没有未分类的邮件")
         return
@@ -2590,13 +2610,15 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool):
     rule_results = []
     rule_count = 0
     for row in unclassified:
+        row_mailbox_key = str(row.get("mailbox_key") or mailbox_key or "legacy")
         # 1. Run local keyword classifier first (exclusion rules take absolute highest priority)
         result, reason = rule_classify(row["subject"], row["sender"])
         if result == 0:
             # Blocked by local exclusion keywords (even if sender is whitelisted)
             rule_results.append({
                 "uid": row["uid"], "is_invoice": False,
-                "by": "rule", "reason": reason
+                "by": "rule", "reason": reason,
+                "mailbox_key": row_mailbox_key,
             })
             rule_count += 1
             continue
@@ -2604,7 +2626,8 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool):
             # Confirmed by local positive keywords
             rule_results.append({
                 "uid": row["uid"], "is_invoice": True,
-                "by": "rule", "reason": reason
+                "by": "rule", "reason": reason,
+                "mailbox_key": row_mailbox_key,
             })
             rule_count += 1
             continue
@@ -2613,17 +2636,18 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool):
         if db.is_trusted_sender(row["sender"]):
             rule_results.append({
                 "uid": row["uid"], "is_invoice": True,
-                "by": "whitelist", "reason": "发送者在白名单中"
+                "by": "whitelist", "reason": "发送者在白名单中",
+                "mailbox_key": row_mailbox_key,
             })
             rule_count += 1
             continue
 
     if rule_results:
-        db.bulk_classify(rule_results)
+        db.bulk_classify(rule_results, mailbox_key=mailbox_key or "legacy")
     _log.info("规则/白名单分类: %d/%d", rule_count, len(unclassified))
 
     # AI classification
-    still_unknown = db.get_unclassified_emails()
+    still_unknown = db.get_unclassified_emails(mailbox_key=mailbox_key)
     if still_unknown and not no_ai:
         try:
             provider = ai_cfg.get("provider", "deepseek")
@@ -2637,17 +2661,21 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool):
             pending_count = len(results) - len(classified_results)
             db.bulk_classify([
                 {"uid": r["uid"], "is_invoice": r["is_invoice"],
-                 "by": provider, "reason": r.get("reason", "")}
+                 "by": provider, "reason": r.get("reason", ""),
+                 "mailbox_key": mailbox_key or "legacy"}
                 for r in classified_results
             ])
             if pending_count:
                 _log.warning("⚠️ AI 分类 API 失败，%d 封邮件将在下次运行时重试", pending_count)
 
             # Save confirmed senders to whitelist
-            uid_to_sender = {r["uid"]: r["sender"] for r in still_unknown}
+            uid_to_sender = {
+                (str(r.get("mailbox_key") or mailbox_key or "legacy"), r["uid"]): r["sender"]
+                for r in still_unknown
+            }
             for r in classified_results:
                 if r["is_invoice"]:
-                    sender = uid_to_sender.get(r["uid"])
+                    sender = uid_to_sender.get((str(mailbox_key or "legacy"), r["uid"]))
                     if sender:
                         db.add_trusted_sender(sender)
 

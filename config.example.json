@@ -4,6 +4,33 @@
     "address": "your_email@qq.com",
     "username": ""
   },
+  "email_accounts": [
+    {
+      "name": "Primary QQ",
+      "provider": "qq",
+      "address": "primary@qq.com",
+      "username": "primary@qq.com",
+      "search": {
+        "folder": "INBOX",
+        "months_back": 3
+      }
+    },
+    {
+      "name": "Rail Mail",
+      "provider": "custom",
+      "address": "rail@example.com",
+      "username": "rail@example.com",
+      "imap": {
+        "server": "imap.example.com",
+        "port": 993,
+        "ssl": true
+      },
+      "search": {
+        "folder": "INBOX",
+        "months_back": 2
+      }
+    }
+  ],
   "imap": {
     "server": "imap.qq.com",
     "port": 993,
