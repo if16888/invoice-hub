@@ -36,7 +36,11 @@ _ALL_EXTS = _INVOICE_EXTS | _IMAGE_EXTS | {".zip"}
 
 # Invoice-ish filename keywords
 _INVOICE_NAME_KW = ["发票", "invoice", "fapiao", "einvoice"]
-_EXTRA_NAME_KW = ["水单", "folio", "行程", "trip", "账单", "bill"]
+_EXTRA_NAME_KW = [
+    "水单", "folio", "行程", "行程单", "行程记录", "用车明细", "费用明细",
+    "支付凭证", "支付截图", "交易记录", "订单明细", "订单截图", "明细",
+    "trip", "itinerary", "ride", "ride_detail", "detail", "statement", "bill"
+]
 
 
 def _ext_priority(ext: str) -> int:
@@ -137,8 +141,8 @@ class AttachmentHandler:
                 continue
 
             name_lower = filename.lower()
-            is_inv = ext in _INVOICE_EXTS or any(k in name_lower for k in _INVOICE_NAME_KW)
             is_ext = any(k in name_lower for k in _EXTRA_NAME_KW)
+            is_inv = (ext in _INVOICE_EXTS or any(k in name_lower for k in _INVOICE_NAME_KW)) and not is_ext
 
             candidates.append({
                 "part": part,
@@ -220,8 +224,8 @@ class AttachmentHandler:
                                         break
                             dest.write_bytes(inner_payload)
                             inner_lower = inner_name.lower()
-                            is_inv = inner_ext in _INVOICE_EXTS or any(k in inner_lower for k in _INVOICE_NAME_KW)
                             is_ext = any(k in inner_lower for k in _EXTRA_NAME_KW)
+                            is_inv = (inner_ext in _INVOICE_EXTS or any(k in inner_lower for k in _INVOICE_NAME_KW)) and not is_ext
                             results.append(Attachment(
                                 file_path=str(dest),
                                 original_name=inner_name,

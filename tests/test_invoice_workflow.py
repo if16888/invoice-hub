@@ -2052,6 +2052,284 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
 
+    def test_email_attachment_classification_for_extra_files(self):
+        """测试 1：邮箱附件分类"""
+        from scripts.invoice_fetch.attachment_handler import AttachmentHandler
+        import email.message
+        msg = email.message.EmailMessage()
+        msg["Subject"] = "发票行程单邮件"
+        msg["From"] = "user@example.com"
+        msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+
+        attachments_to_add = [
+            ("用车明细.pdf", b"%PDF-detail"),
+            ("行程记录.pdf", b"%PDF-record"),
+            ("ride_detail.pdf", b"%PDF-ride"),
+            ("invoice.pdf", b"%PDF-invoice"),
+            ("发票_行程单.pdf", b"%PDF-both"),
+        ]
+        for filename, data in attachments_to_add:
+            msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
+
+        with tempfile.TemporaryDirectory() as td:
+            handler = AttachmentHandler(td)
+            extracted = handler.extract(msg, mail_uid=123, date_str="2026-06-06")
+
+            by_name = {a.original_name: a for a in extracted}
+
+            self.assertIn("用车明细.pdf", by_name)
+            self.assertTrue(by_name["用车明细.pdf"].is_extra)
+            self.assertFalse(by_name["用车明细.pdf"].is_invoice)
+
+            self.assertIn("行程记录.pdf", by_name)
+            self.assertTrue(by_name["行程记录.pdf"].is_extra)
+            self.assertFalse(by_name["行程记录.pdf"].is_invoice)
+
+            self.assertIn("ride_detail.pdf", by_name)
+            self.assertTrue(by_name["ride_detail.pdf"].is_extra)
+            self.assertFalse(by_name["ride_detail.pdf"].is_invoice)
+
+            self.assertIn("invoice.pdf", by_name)
+            self.assertFalse(by_name["invoice.pdf"].is_extra)
+            self.assertTrue(by_name["invoice.pdf"].is_invoice)
+
+            self.assertIn("发票_行程单.pdf", by_name)
+            self.assertTrue(by_name["发票_行程单.pdf"].is_extra)
+            self.assertFalse(by_name["发票_行程单.pdf"].is_invoice)
+
+            invoice_pdfs = [a for a in extracted if a.is_invoice and a.file_path.lower().endswith(".pdf")]
+            self.assertEqual(len(invoice_pdfs), 1)
+            self.assertEqual(invoice_pdfs[0].original_name, "invoice.pdf")
+
+    def test_same_email_invoice_and_itinerary_import(self):
+        """测试 2：同一封邮件发票 + 行程单入库"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            inv_file = attachments_dir / "invoice.pdf"
+            inv_file.write_bytes(b"%PDF-invoice")
+            iti_file = attachments_dir / "用车明细.pdf"
+            iti_file.write_bytes(b"%PDF-iti")
+
+            attachments = [
+                Attachment(file_path=str(inv_file), original_name="invoice.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                Attachment(file_path=str(iti_file), original_name="用车明细.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "滴滴打车发票及明细"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=101, raw_msg=msg)
+
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="DIDI999888",
+                invoice_code="11002233",
+                invoice_date="2025-12-20",
+                total_amount="123.45",
+                seller_name="南京滴滴出行科技有限公司",
+                invoice_type="电子发票",
+                parse_success=True,
+            ))
+            handler = StaticAttachmentHandler(attachments_dir, attachments)
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_number"], "DIDI999888")
+            self.assertEqual(rows[0]["category"], "出租车")
+
+            extra_paths = json.loads(rows[0]["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+            self.assertIn("DIDI999888_ex.pdf", extra_paths[0].replace("\\", "/"))
+
+    def test_duplicate_email_scanning_does_not_duplicate_extra_paths(self):
+        """测试 3：重复扫描同一封邮件不重复 extra_paths"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            inv_file = attachments_dir / "invoice.pdf"
+            inv_file.write_bytes(b"%PDF-invoice")
+            iti_file = attachments_dir / "用车明细.pdf"
+            iti_file.write_bytes(b"%PDF-iti")
+
+            attachments = [
+                Attachment(file_path=str(inv_file), original_name="invoice.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                Attachment(file_path=str(iti_file), original_name="用车明细.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "滴滴打车发票及明细"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=101, raw_msg=msg)
+
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="DIDI999888",
+                invoice_code="11002233",
+                invoice_date="2025-12-20",
+                total_amount="123.45",
+                seller_name="南京滴滴出行科技有限公司",
+                invoice_type="电子发票",
+                parse_success=True,
+            ))
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                handler1 = StaticAttachmentHandler(attachments_dir, attachments)
+                cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler1,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+
+                inv_file2 = attachments_dir / "invoice2.pdf"
+                inv_file2.write_bytes(b"%PDF-invoice")
+                iti_file2 = attachments_dir / "用车明细2.pdf"
+                iti_file2.write_bytes(b"%PDF-iti")
+                attachments2 = [
+                    Attachment(file_path=str(inv_file2), original_name="invoice2.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                    Attachment(file_path=str(iti_file2), original_name="用车明细2.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+                ]
+                handler2 = StaticAttachmentHandler(attachments_dir, attachments2)
+                cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler2,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+
+                rows = db.get_all_invoices()
+
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(rows[0]["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+
+    def test_itinerary_only_email_matches_existing_invoice(self):
+        """测试 4：只有行程单邮件，能匹配已有发票"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            iti_file = attachments_dir / "滴滴行程单_2025-12-20_1142.81.pdf"
+            iti_file.write_bytes(b"%PDF-iti-content")
+
+            attachments = [
+                Attachment(file_path=str(iti_file), original_name="滴滴行程单_2025-12-20_1142.81.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "行程单"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=102, raw_msg=msg)
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.insert_invoice({
+                    "invoice_number": "DIDI111222",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+
+                handler = StaticAttachmentHandler(attachments_dir, attachments)
+                parser = StaticParser(InvoiceInfo(parse_success=False, parse_note="滴滴行程单"))
+
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(rows[0]["extra_paths"])
+            self.assertEqual(len(extra_paths), 1)
+            self.assertIn("滴滴行程单", extra_paths[0])
+
+    def test_unknown_failed_pdf_is_ignored(self):
+        """测试 5：只有普通未知 PDF 邮件，不误判"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            unknown_file = attachments_dir / "unknown.pdf"
+            unknown_file.write_bytes(b"%PDF-unknown")
+
+            attachments = [
+                Attachment(file_path=str(unknown_file), original_name="unknown.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "未知邮件"
+            msg["From"] = "stranger@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=103, raw_msg=msg)
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.insert_invoice({
+                    "invoice_number": "DIDI111222",
+                    "invoice_date": "2025-12-20",
+                    "total_amount": "1142.81",
+                    "seller_name": "南京滴滴出行科技有限公司",
+                    "category": "出租车",
+                    "extra_paths": [],
+                })
+
+                handler = StaticAttachmentHandler(attachments_dir, attachments)
+                parser = StaticParser(InvoiceInfo(parse_success=False, parse_note="解析失败"))
+
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 0)
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(rows[0]["extra_paths"])
+            self.assertEqual(len(extra_paths), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

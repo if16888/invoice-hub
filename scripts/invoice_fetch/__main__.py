@@ -576,6 +576,82 @@ def _attach_evidence_to_invoice(
     return True
 
 
+def _attach_email_extras_to_invoice(
+    db: InvoiceDB,
+    invoice_id: int,
+    extra_files: list,
+    code: str,
+    inv_date: str,
+    att_base: Path,
+    category: str,
+    total_amount: str,
+    invoice_number: str,
+    kept_paths: set,
+) -> list[str]:
+    """Rename and associate extra files with an invoice, avoiding duplicate paths or file hashes.
+
+    Returns the list of all associated extra paths (stored relative paths).
+    """
+    inv = db.get_invoice(invoice_id)
+    if not inv:
+        return []
+    current_extras = _normalize_path_list(inv.get("extra_paths"))
+
+    # Pre-calculate hashes of existing extras
+    existing_hashes = set()
+    for ep in current_extras:
+        res = _resolve_runtime_path(ep)
+        if res and res.exists():
+            try:
+                existing_hashes.add(_sha256_file(res))
+            except Exception:
+                pass
+
+    updated = False
+    for e in extra_files:
+        e_path = Path(e.file_path)
+        if e_path.exists():
+            try:
+                h = _sha256_file(e_path)
+                if h in existing_hashes:
+                    continue
+            except Exception:
+                pass
+
+        ep = _rename_by_invoice_code(
+            e.file_path, code, inv_date, att_base, is_extra=True,
+            category=category, total_amount=total_amount,
+            invoice_number=invoice_number
+        )
+        if ep:
+            if ep in current_extras:
+                kept_paths.add(str((att_base.parent / ep).resolve()))
+                continue
+
+            res_ep = _resolve_runtime_path(ep)
+            if res_ep and res_ep.exists():
+                try:
+                    h_new = _sha256_file(res_ep)
+                    if h_new in existing_hashes:
+                        if str(res_ep.resolve()) not in kept_paths:
+                            res_ep.unlink()
+                        continue
+                    existing_hashes.add(h_new)
+                except Exception:
+                    pass
+
+            kept_paths.add(str((att_base.parent / ep).resolve()))
+            current_extras.append(ep)
+            updated = True
+
+    if updated:
+        db.update_invoice_file_paths(invoice_id, extra_paths=current_extras)
+        _log.info("  已为发票 %s 关联/追加额外的证明材料: %s", invoice_id, current_extras)
+
+    return current_extras
+
+
+
 def _import_local_evidence(
     db: InvoiceDB,
     parsed,
@@ -1259,7 +1335,7 @@ def _process_email(
                             recorded += 1
                             _log.info("  已入库海外凭证/收据: %s", mask_filename(dl.filename))
                         continue
-                    _log.warning("  下载的 PDF 解析失败 (不是有效的发票文件): %s", redact_text(info.parse_note, "parse_note"))
+                    _log.warning("  下载的 PDF 解析失败 (不是有效的发票 file): %s", redact_text(info.parse_note, "parse_note"))
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
                     continue
@@ -1270,13 +1346,7 @@ def _process_email(
                     was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "链接下载")
                     existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
-                    existing_extra_paths = _normalize_path_list(existing.get("extra_paths"))
-                    repair_extra_paths = bool(extra_files) and (
-                        not existing_extra_paths
-                        or any(_resolve_runtime_path(p) is None for p in existing_extra_paths)
-                    )
                     repaired_attachment_path = ""
-                    repaired_extra_paths: list[str] = []
                     category, extra_type, extra_req = _classify(
                         msg.subject, msg.sender, info.seller_name, categories)
                     if existing_attachment_missing:
@@ -1288,17 +1358,23 @@ def _process_email(
                             invoice_number=info.invoice_number)
                         if repaired_attachment_path:
                             kept_paths.add(str((att_handler._base.parent / repaired_attachment_path).resolve()))
-                    if repair_extra_paths:
+
+                    repaired_extra_paths = []
+                    if extra_files:
                         code = info.invoice_code or info.invoice_number
-                        for e in extra_files:
-                            ep = _rename_by_invoice_code(
-                                e.file_path, code, info.invoice_date or msg.date,
-                                att_handler._base, is_extra=True,
-                                category=category, total_amount=info.total_amount,
-                                invoice_number=info.invoice_number)
-                            if ep:
-                                kept_paths.add(str((att_handler._base.parent / ep).resolve()))
-                                repaired_extra_paths.append(ep)
+                        repaired_extra_paths = _attach_email_extras_to_invoice(
+                            db=db,
+                            invoice_id=existing["id"],
+                            extra_files=extra_files,
+                            code=code,
+                            inv_date=info.invoice_date or msg.date,
+                            att_base=att_handler._base,
+                            category=category,
+                            total_amount=info.total_amount,
+                            invoice_number=info.invoice_number,
+                            kept_paths=kept_paths
+                        )
+
                     if _refresh_invoice_from_parse(
                         db,
                         existing,
@@ -1313,14 +1389,13 @@ def _process_email(
                         category=category,
                         has_extra=bool(extra_files) if extra_req else False,
                         extra_type=extra_type,
-                        missing_extra=extra_req and not bool(extra_files),
+                        missing_extra=extra_req and not bool(extra_files or repaired_extra_paths),
                         parse_note=info.parse_note or "链接下载",
                     ):
-                        if repaired_attachment_path or repaired_extra_paths:
+                        if repaired_attachment_path:
                             db.update_invoice_file_paths(
                                 existing["id"],
-                                attachment_path=repaired_attachment_path or None,
-                                extra_paths=repaired_extra_paths or None,
+                                attachment_path=repaired_attachment_path,
                             )
                             _log.info(
                                 "  已刷新重复发票元数据(链接下载)并修复附件路径: %s",
@@ -1341,6 +1416,22 @@ def _process_email(
                 if duplicate:
                     _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
                     _log_existing_invoice_duplicate(duplicate, "link_download_duplicate")
+                    if extra_files:
+                        code = info.invoice_code or info.invoice_number
+                        cat, extra_type, extra_req = _classify(
+                            msg.subject, msg.sender, info.seller_name, categories)
+                        _attach_email_extras_to_invoice(
+                            db=db,
+                            invoice_id=duplicate["id"],
+                            extra_files=extra_files,
+                            code=code,
+                            inv_date=info.invoice_date or msg.date,
+                            att_base=att_handler._base,
+                            category=cat,
+                            total_amount=info.total_amount,
+                            invoice_number=info.invoice_number,
+                            kept_paths=kept_paths
+                        )
                     link_pdf_skipped_as_duplicate = True
                     recorded += 1
                     # Clean up the downloaded file for the duplicate
@@ -1383,6 +1474,19 @@ def _process_email(
                 }
                 row_id = db.insert_invoice(rec)
                 if row_id:
+                    if extra_files:
+                        _attach_email_extras_to_invoice(
+                            db=db,
+                            invoice_id=row_id,
+                            extra_files=extra_files,
+                            code=code,
+                            inv_date=info.invoice_date or msg.date,
+                            att_base=att_handler._base,
+                            category=cat,
+                            total_amount=info.total_amount,
+                            invoice_number=info.invoice_number,
+                            kept_paths=kept_paths
+                        )
                     recorded += 1
                     _log.info("  ✅ 已入库(链接下载): %s (%s)", mask_invoice_number(info.invoice_number), cat)
 
@@ -1399,6 +1503,23 @@ def _process_email(
     for att in invoice_pdfs:
         info = parser.parse_pdf(att.file_path)
         if not info.parse_success:
+            evidence_res = _import_local_evidence(
+                db=db,
+                parsed=info,
+                file_path=Path(att.file_path),
+                source_name=att.original_name,
+                categories=categories,
+                preserve_source_path=True
+            )
+            if evidence_res:
+                status, row_id = evidence_res
+                recorded += 1
+                if row_id is not None:
+                    kept_paths.add(str(Path(att.file_path).resolve()))
+                _log.info("  已处理解析失败PDF作为证明材料(邮箱路径): %s, 结果=%s, ID=%s",
+                          mask_filename(att.original_name), status, row_id)
+                continue
+
             if _looks_like_receipt_evidence(msg.subject, msg.sender, att.original_name):
                 row_id = _insert_receipt_record(
                     msg=msg,
@@ -1425,13 +1546,7 @@ def _process_email(
             cat, extra_type, extra_req = _classify(
                 msg.subject, msg.sender, info.seller_name, categories)
             existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
-            existing_extra_paths = _normalize_path_list(existing.get("extra_paths"))
-            repair_extra_paths = bool(extra_files) and (
-                not existing_extra_paths
-                or any(_resolve_runtime_path(p) is None for p in existing_extra_paths)
-            )
             repaired_attachment_path = ""
-            repaired_extra_paths: list[str] = []
             if existing_attachment_missing:
                 code = info.invoice_code or info.invoice_number
                 repaired_attachment_path = _rename_by_invoice_code(
@@ -1441,17 +1556,23 @@ def _process_email(
                     invoice_number=info.invoice_number)
                 if repaired_attachment_path:
                     kept_paths.add(str((att_handler._base.parent / repaired_attachment_path).resolve()))
-            if repair_extra_paths:
+
+            repaired_extra_paths = []
+            if extra_files:
                 code = info.invoice_code or info.invoice_number
-                for e in extra_files:
-                    ep = _rename_by_invoice_code(
-                        e.file_path, code, info.invoice_date or msg.date,
-                        att_handler._base, is_extra=True,
-                        category=cat, total_amount=info.total_amount,
-                        invoice_number=info.invoice_number)
-                    if ep:
-                        kept_paths.add(str((att_handler._base.parent / ep).resolve()))
-                        repaired_extra_paths.append(ep)
+                repaired_extra_paths = _attach_email_extras_to_invoice(
+                    db=db,
+                    invoice_id=existing["id"],
+                    extra_files=extra_files,
+                    code=code,
+                    inv_date=info.invoice_date or msg.date,
+                    att_base=att_handler._base,
+                    category=cat,
+                    total_amount=info.total_amount,
+                    invoice_number=info.invoice_number,
+                    kept_paths=kept_paths
+                )
+
             if _refresh_invoice_from_parse(
                 db,
                 existing,
@@ -1466,14 +1587,13 @@ def _process_email(
                 category=cat,
                 has_extra=bool(extra_files) if extra_req else False,
                 extra_type=extra_type,
-                missing_extra=extra_req and not bool(extra_files),
+                missing_extra=extra_req and not bool(extra_files or repaired_extra_paths),
                 parse_note=info.parse_note,
             ):
-                if repaired_attachment_path or repaired_extra_paths:
+                if repaired_attachment_path:
                     db.update_invoice_file_paths(
                         existing["id"],
-                        attachment_path=repaired_attachment_path or None,
-                        extra_paths=repaired_extra_paths or None,
+                        attachment_path=repaired_attachment_path,
                     )
                     _log.info("  已刷新重复发票元数据并修复附件路径: %s", mask_invoice_number(info.invoice_number))
                 else:
@@ -1488,6 +1608,22 @@ def _process_email(
         if duplicate:
             _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
             _log_existing_invoice_duplicate(duplicate, "attachment_duplicate")
+            if extra_files:
+                code = info.invoice_code or info.invoice_number
+                cat, extra_type, extra_req = _classify(
+                    msg.subject, msg.sender, info.seller_name, categories)
+                _attach_email_extras_to_invoice(
+                    db=db,
+                    invoice_id=duplicate["id"],
+                    extra_files=extra_files,
+                    code=code,
+                    inv_date=info.invoice_date or msg.date,
+                    att_base=att_handler._base,
+                    category=cat,
+                    total_amount=info.total_amount,
+                    invoice_number=info.invoice_number,
+                    kept_paths=kept_paths
+                )
             recorded += 1
             continue
 
@@ -1505,15 +1641,6 @@ def _process_email(
             invoice_number=info.invoice_number)
         if att_path:
             kept_paths.add(str((att_handler._base.parent / att_path).resolve()))
-        renamed_extras = []
-        for e in extra_files:
-            ep = _rename_by_invoice_code(
-                e.file_path, code, inv_date, att_handler._base, is_extra=True,
-                category=cat, total_amount=info.total_amount,
-                invoice_number=info.invoice_number)
-            if ep:
-                kept_paths.add(str((att_handler._base.parent / ep).resolve()))
-                renamed_extras.append(ep)
 
         rec = {
             "invoice_number": info.invoice_number,
@@ -1535,29 +1662,58 @@ def _process_email(
             "parse_success": info.parse_success,
             "parse_note": info.parse_note,
             "attachment_path": att_path,
-            "extra_paths": renamed_extras,
+            "extra_paths": [],
         }
         row_id = db.insert_invoice(rec)
         if row_id:
+            if extra_files:
+                _attach_email_extras_to_invoice(
+                    db=db,
+                    invoice_id=row_id,
+                    extra_files=extra_files,
+                    code=code,
+                    inv_date=inv_date,
+                    att_base=att_handler._base,
+                    category=cat,
+                    total_amount=info.total_amount,
+                    invoice_number=info.invoice_number,
+                    kept_paths=kept_paths
+                )
             recorded += 1
             _log.info("  ✅ 已入库: %s (%s)", mask_invoice_number(info.invoice_number), cat)
 
     # 3b. Preserve standalone receipts/water bills/folios when no invoice PDF exists.
     if not invoice_pdfs and recorded == 0 and extra_files:
         for att in extra_files:
-            if not _looks_like_receipt_evidence(msg.subject, msg.sender, att.original_name):
-                continue
-            row_id = _insert_receipt_record(
-                msg=msg,
+            evidence_res = _import_local_evidence(
                 db=db,
-                att_handler=att_handler,
+                parsed=None,
+                file_path=Path(att.file_path),
+                source_name=att.original_name,
                 categories=categories,
-                file_path=att.file_path,
-                filename_hint=att.original_name,
+                preserve_source_path=True
             )
-            if row_id:
+            if evidence_res:
+                status, row_id = evidence_res
                 recorded += 1
-                _log.info("  已入库独立水单/收据: %s", mask_filename(att.original_name))
+                if row_id is not None:
+                    kept_paths.add(str(Path(att.file_path).resolve()))
+                _log.info("  已处理待关联证明材料(邮箱路径): %s, 结果=%s, ID=%s",
+                          mask_filename(att.original_name), status, row_id)
+                continue
+
+            if _looks_like_receipt_evidence(msg.subject, msg.sender, att.original_name):
+                row_id = _insert_receipt_record(
+                    msg=msg,
+                    db=db,
+                    att_handler=att_handler,
+                    categories=categories,
+                    file_path=att.file_path,
+                    filename_hint=att.original_name,
+                )
+                if row_id:
+                    recorded += 1
+                    _log.info("  已入库独立水单/收据(海外凭证): %s", mask_filename(att.original_name))
 
     # 4. Fallback: parse subject or HTML body when no PDF available
     if not invoice_pdfs and recorded == 0 and not link_pdf_skipped_as_duplicate:
