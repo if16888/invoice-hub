@@ -1703,6 +1703,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_path.clear()
         self.txt_path.setToolTip("")
         self.txt_full_path.clear()
+        self.txt_full_path.setToolTip("")
         self.txt_url.clear()
         self.txt_supporting_docs.clear()
         self.txt_supporting_docs.setToolTip("")

@@ -2643,6 +2643,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertTrue(window.more_source_widget.isAncestorOf(window.txt_subject))
                     self.assertTrue(window.more_source_widget.isAncestorOf(window.txt_url))
                     self.assertEqual(window.txt_full_path.text(), str(attachment_path))
+                    self.assertEqual(window.txt_full_path.toolTip(), str(attachment_path))
+
+                    window._clear_detail_form()
+                    self.assertEqual(window.txt_full_path.text(), "")
+                    self.assertEqual(window.txt_full_path.toolTip(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
