@@ -22,14 +22,15 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .config import load_config, load_config_safe, RUNTIME_DIR, PROJECT_ROOT
+from .config import get_email_accounts, load_config, load_config_safe, RUNTIME_DIR, PROJECT_ROOT
 from .credentials import get_auth_code
 from .db import InvoiceDB
+from .excel_export import export_excel
 from .attachment_handler import AttachmentHandler
 from .invoice_parser import InvoiceParser, parse_html_body, parse_subject
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .mail_fetcher import MailFetcher
-from .log_privacy import PrivacyLogFilter, mask_filename, mask_invoice_number, mask_path, mask_uid, redact_text
+from .log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message, mask_filename, mask_invoice_number, mask_path, mask_uid, redact_text
 from .url_utils import _mask_url
 from .rule_classifier import classify as rule_classify
 from . import review_status
@@ -1344,6 +1345,7 @@ def _insert_receipt_record(
     filename_hint: str = "",
     parse_note: str = "海外凭证/收据",
     download_url: str = "",
+    mailbox_key: str = "legacy",
 ) -> int | None:
     """Insert a non-invoice reimbursement receipt and preserve its file."""
     cat, extra_type, _ = _classify(msg.subject, msg.sender, msg.sender, categories)
@@ -1377,6 +1379,7 @@ def _insert_receipt_record(
         "attachment_path": att_path,
         "extra_paths": [],
         "download_url": download_url,
+        "mailbox_key": mailbox_key,
     }
     return db.insert_invoice(rec)
 
@@ -1390,6 +1393,7 @@ def _process_email(
     link_dl: LinkDownloader,
     db: InvoiceDB,
     categories: dict,
+    mailbox_key: str = "legacy",
 ) -> int:
     """Process a single email.  Return the number of invoices recorded."""
     _log.info("── 处理 %s: %s", mask_uid(msg.uid), redact_text(msg.subject[:60], "subject"))
@@ -1430,6 +1434,7 @@ def _process_email(
                             filename_hint=dl.filename,
                             parse_note=info.parse_note or "海外凭证/收据",
                             download_url=dl.url,
+                            mailbox_key=mailbox_key,
                         )
                         if row_id:
                             recorded += 1
@@ -1629,6 +1634,7 @@ def _process_email(
                     file_path=att.file_path,
                     filename_hint=att.original_name,
                     parse_note=info.parse_note or "海外凭证/收据",
+                    mailbox_key=mailbox_key,
                 )
                 if row_id:
                     recorded += 1
@@ -1763,6 +1769,7 @@ def _process_email(
             "parse_note": info.parse_note,
             "attachment_path": att_path,
             "extra_paths": [],
+            "mailbox_key": mailbox_key,
         }
         row_id = db.insert_invoice(rec)
         if row_id:
@@ -1810,6 +1817,7 @@ def _process_email(
                     categories=categories,
                     file_path=att.file_path,
                     filename_hint=att.original_name,
+                    mailbox_key=mailbox_key,
                 )
                 if row_id:
                     recorded += 1
@@ -2249,86 +2257,220 @@ def main():
             else:
                 _log.info("未发现需要重新下载的失败发票记录")
 
-        # Credential
-        auth_code = get_auth_code(email_addr)
-
         try:
-            with MailFetcher(
-                address=email_addr,
-                auth_code=auth_code,
-                server=imap_cfg.get("server", "imap.qq.com"),
-                port=imap_cfg.get("port", 993),
-            ) as fetcher:
-                auth_code = ""
+            scan_summary = _scan_mailboxes_with_db(
+                db=db,
+                db_path=db_path,
+                cfg=cfg,
+                months=months,
+                limit=args.limit,
+                scan_only=args.scan_only,
+                download_only=args.download_only,
+                headed=args.headed,
+                retry_failed=args.retry_failed,
+                no_ai=args.no_ai,
+            )
+            if scan_summary:
+                _log.info(
+                    "Mailbox scan finished: %d/%d accounts succeeded, %d failed, scanned %d, new %d, downloaded %d, duplicates %d, pending_manual %d, failed_items %d",
+                    scan_summary.get("accounts_success", 0),
+                    scan_summary.get("accounts_total", 0),
+                    scan_summary.get("accounts_failed", 0),
+                    scan_summary.get("scanned", 0),
+                    scan_summary.get("new", 0),
+                    scan_summary.get("downloaded", 0),
+                    scan_summary.get("duplicates", 0),
+                    scan_summary.get("pending_manual", 0),
+                    scan_summary.get("failed_count", 0),
+                )
 
-                # ═══════════════════════════════════
-                # 阶段 1: 扫描 & 分类
-                # ═══════════════════════════════════
-                if not args.download_only:
-                    since = ""
-                    if args.months:
-                        _log.info("指定扫描范围: 最近 %d 个月", months)
-                    elif not args.reset:
-                        since = db.get_last_scanned_date()
-                        if since:
-                            _log.info("增量扫描: 从 %s 开始", since)
-
-                    known = db.get_all_email_uids()
-                    headers = fetcher.scan_headers(
-                        folder=search_cfg.get("folder", "INBOX"),
-                        months_back=months,
-                        since_date=since,
-                        known_uids=known,
-                        limit=args.limit,
-                    )
-                    new_count = db.bulk_upsert_emails(headers)
-                    _log.info("扫描完成: %d 封新邮件入库", new_count)
-
-                    # Classify
-                    _run_classify(db, ai_cfg, args.no_ai)
-
-                    if args.scan_only:
-                        _print_stats(db, excel_path)
-                        return
-
-                # ═══════════════════════════════════
-                # 阶段 2: 下载 & 解析
-                # ═══════════════════════════════════
-                pending = db.get_invoice_emails_to_download()
-                if not pending:
-                    _log.info("没有待下载的发票邮件")
-                else:
-                    _log.info("\n开始下载 %d 封发票邮件…", len(pending))
-                    att_handler = AttachmentHandler(att_dir)
-                    parser = InvoiceParser()
-                    link_dl = LinkDownloader(att_dir, headed=args.headed)
-
-                    for i, row in enumerate(pending, 1):
-                        _log.info("\n[%d/%d] ────────────────", i, len(pending))
-                        try:
-                            _handle_pending_email(
-                                row=row,
-                                fetcher=fetcher,
-                                folder=search_cfg.get("folder", "INBOX"),
-                                att_handler=att_handler,
-                                parser=parser,
-                                link_dl=link_dl,
-                                db=db,
-                                categories=categories,
-                            )
-                        except Exception as exc:
-                            _log.error("处理 %s 出错: %s", mask_uid(row["uid"]), exc)
-
-                    link_dl.close()
-
+            if args.scan_only:
+                _print_stats(db, excel_path)
+                return
         except ConnectionError as exc:
-            _log.error("连接失败: %s", exc)
+            _log.error("Mailbox scan failed: %s", exc)
+            sys.exit(1)
+        except ValueError as exc:
+            _log.error("%s", exc)
             sys.exit(1)
 
         # Export & stats
         export_excel(db.get_all_invoices(), excel_path)
         _print_stats(db, excel_path)
 
+
+
+def _scan_mailboxes_with_db(
+    db: InvoiceDB,
+    db_path: Path,
+    cfg: dict,
+    months: int | None = None,
+    limit: int | None = None,
+    scan_only: bool = False,
+    download_only: bool = False,
+    headed: bool = False,
+    retry_failed: bool = False,
+    log_callback=None,
+    no_ai: bool = False,
+) -> dict:
+    """Sequentially scan multiple enabled mailboxes and process pending invoices."""
+
+    def emit(message: str) -> None:
+        message = sanitize_log_message(str(message or ""))
+        if log_callback:
+            log_callback(message)
+        else:
+            _log.info(message)
+
+    accounts = get_email_accounts(cfg)
+    if not accounts:
+        raise ValueError("至少需要配置一个启用的邮箱账号。")
+
+    categories = cfg.get("categories", {})
+    ai_cfg = cfg.get("ai", {})
+    att_dir = db_path.parent / "attachments"
+    att_dir.mkdir(parents=True, exist_ok=True)
+    att_handler = AttachmentHandler(att_dir)
+    parser = InvoiceParser()
+    link_dl = LinkDownloader(att_dir, headed=headed)
+
+    scanned = 0
+    new_count = 0
+    downloaded = 0
+    classified_invoice = 0
+    duplicates = 0
+    pending_manual = 0
+    failed = 0
+    failed_summaries: list[str] = []
+
+    account_contexts: list[dict] = []
+    for account in accounts:
+        address = account.get("address", "")
+        try:
+            auth_code = get_auth_code(address)
+        except SystemExit as exc:
+            raise ValueError(f"未配置邮箱授权码安全凭证: {mask_email(address)}，请前往 [设置] 页面配置。") from exc
+        account_contexts.append({**account, "auth_code": auth_code})
+
+    if retry_failed:
+        for account in account_contexts:
+            mailbox_key = account.get("mailbox_key", "legacy")
+            failed_invoices = db.get_failed_downloads(mailbox_key=mailbox_key)
+            if failed_invoices:
+                failed_uids = [inv["mail_uid"] for inv in failed_invoices if inv.get("mail_uid")]
+                if failed_uids:
+                    db.reset_emails_download_status(failed_uids, mailbox_key=mailbox_key)
+                    db.delete_invoices_by_uid(failed_uids, mailbox_key=mailbox_key)
+                    emit(f"Reset {len(failed_uids)} failed invoice emails for {mask_email(account.get('address', ''))}")
+            else:
+                emit(f"No failed invoice downloads to retry for {mask_email(account.get('address', ''))}")
+
+    accounts_total = len(account_contexts)
+    failed_account_keys: set[str] = set()
+
+    if not download_only:
+        for account in account_contexts:
+            mailbox_key = account.get("mailbox_key", "legacy")
+            email_addr = account.get("address", "")
+            folder = account.get("search", {}).get("folder", "INBOX")
+            months_back = int(account.get("search", {}).get("months_back", months or 3) or (months or 3))
+            try:
+                since = "" if folder != "INBOX" else db.get_last_scanned_date(mailbox_key=mailbox_key)
+                if since:
+                    emit(f"Incremental scan from {since} [{mask_email(email_addr)}]")
+                else:
+                    emit(f"Full scan of the most recent {months_back} months [{mask_email(email_addr)}]")
+
+                known = db.get_all_email_uids(mailbox_key=mailbox_key)
+                with MailFetcher(
+                    address=email_addr,
+                    auth_code=account["auth_code"],
+                    server=account.get("imap", {}).get("server", "imap.qq.com"),
+                    port=account.get("imap", {}).get("port", 993),
+                ) as fetcher:
+                    headers = fetcher.scan_headers(
+                        folder=folder,
+                        months_back=months_back,
+                        since_date=since,
+                        known_uids=known,
+                        limit=limit,
+                    )
+                    scanned += len(headers)
+                    new_count += db.bulk_upsert_emails(headers, mailbox_key=mailbox_key)
+                    emit(f"Scan complete for {mask_email(email_addr)}: {len(headers)} headers, {new_count} new rows so far")
+            except Exception as exc:
+                failed_account_keys.add(mailbox_key)
+                failed_summaries.append(f"scan failed for {mask_email(email_addr)}: {exc}")
+                emit(f"Scan failed for {mask_email(email_addr)}: {exc}")
+
+    if not scan_only:
+        for account in account_contexts:
+            mailbox_key = account.get("mailbox_key", "legacy")
+            email_addr = account.get("address", "")
+            folder = account.get("search", {}).get("folder", "INBOX")
+            try:
+                pending = db.get_invoice_emails_to_download(mailbox_key=mailbox_key)
+                if not pending:
+                    emit(f"No invoice emails pending download for {mask_email(email_addr)}")
+                    continue
+                emit(f"Downloading {len(pending)} invoice emails for {mask_email(email_addr)}")
+                with MailFetcher(
+                    address=email_addr,
+                    auth_code=account["auth_code"],
+                    server=account.get("imap", {}).get("server", "imap.qq.com"),
+                    port=account.get("imap", {}).get("port", 993),
+                ) as fetcher:
+                    for row in pending:
+                        classified_invoice += 1
+                        try:
+                            before_count = db.count_invoices()
+                            recorded = _handle_pending_email(
+                                row=row,
+                                fetcher=fetcher,
+                                folder=folder,
+                                att_handler=att_handler,
+                                parser=parser,
+                                link_dl=link_dl,
+                                db=db,
+                                categories=categories,
+                            )
+                            after_count = db.count_invoices()
+                            if recorded:
+                                downloaded += 1
+                                if after_count > before_count:
+                                    new_count += after_count - before_count
+                                else:
+                                    duplicates += 1
+                            else:
+                                failed += 1
+                                failed_summaries.append(f"Failed to process uid={row.get('uid')}")
+                        except Exception as exc:
+                            failed += 1
+                            failed_summaries.append(str(exc))
+                            emit(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}")
+            except Exception as exc:
+                failed_account_keys.add(mailbox_key)
+                failed_summaries.append(f"download failed for {mask_email(email_addr)}: {exc}")
+                emit(f"Download failed for {mask_email(email_addr)}: {exc}")
+
+    link_dl.close()
+    accounts_failed = len(failed_account_keys)
+    accounts_success = max(0, accounts_total - accounts_failed)
+    return {
+        "scanned": scanned,
+        "new": new_count,
+        "classified_invoice": classified_invoice,
+        "downloaded": downloaded,
+        "duplicates": duplicates,
+        "pending_manual": pending_manual,
+        "failed": failed,
+        "failed_count": failed,
+        "failed_summaries": failed_summaries,
+        "accounts_total": accounts_total,
+        "accounts_success": accounts_success,
+        "accounts_failed": accounts_failed,
+        "accounts": [a.get("address", "") for a in account_contexts],
+    }
 
 def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool):
     """Run rule + AI classification on unclassified emails."""
@@ -2457,7 +2599,7 @@ def _handle_pending_email(
 
     recorded = _process_email(msg, att_handler, parser, link_dl, db, categories)
     if recorded > 0:
-        db.mark_downloaded(row["uid"])
+        db.mark_downloaded(row["uid"], mailbox_key=row.get("mailbox_key", "legacy"))
         return True
 
     _log.warning("  %s 未成功入库，保留为待下载以便重试", mask_uid(row["uid"]))

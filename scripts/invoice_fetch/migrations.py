@@ -125,3 +125,116 @@ def check_and_migrate(conn: sqlite3.Connection):
                 pass
             _log.exception("CRITICAL: Database migration to V3 failed! Error: %s", e)
             raise e
+
+    # 5. Migration to V4: mailbox namespace support for multiple IMAP accounts
+    if version < 4:
+        _log.info("Migrating database schema: V3 -> V4")
+        try:
+            cursor.execute("PRAGMA table_info(emails)")
+            email_cols = {row[1] for row in cursor.fetchall()}
+            if "mailbox_key" not in email_cols or "id" not in email_cols:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS emails_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mailbox_key TEXT NOT NULL DEFAULT 'legacy',
+                        uid INTEGER NOT NULL,
+                        subject TEXT NOT NULL DEFAULT '',
+                        sender TEXT NOT NULL DEFAULT '',
+                        mail_date TEXT NOT NULL DEFAULT '',
+                        is_invoice INTEGER NOT NULL DEFAULT -1,
+                        classify_by TEXT NOT NULL DEFAULT '',
+                        classify_reason TEXT NOT NULL DEFAULT '',
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
+                        processed_at TEXT,
+                        UNIQUE(mailbox_key, uid)
+                    )
+                """)
+                if "mailbox_key" in email_cols:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO emails_new (
+                            mailbox_key, uid, subject, sender, mail_date,
+                            is_invoice, classify_by, classify_reason,
+                            downloaded, scanned_at, processed_at
+                        )
+                        SELECT
+                            COALESCE(mailbox_key, 'legacy'),
+                            uid, subject, sender, mail_date,
+                            is_invoice, classify_by, classify_reason,
+                            downloaded, scanned_at, processed_at
+                        FROM emails
+                    """)
+                else:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO emails_new (
+                            mailbox_key, uid, subject, sender, mail_date,
+                            is_invoice, classify_by, classify_reason,
+                            downloaded, scanned_at, processed_at
+                        )
+                        SELECT
+                            'legacy',
+                            uid, subject, sender, mail_date,
+                            is_invoice, classify_by, classify_reason,
+                            downloaded, scanned_at, processed_at
+                        FROM emails
+                    """)
+                cursor.execute("DROP TABLE emails")
+                cursor.execute("ALTER TABLE emails_new RENAME TO emails")
+                _log.info("Rebuilt emails table with mailbox_key namespace")
+
+            cursor.execute("PRAGMA table_info(processed_emails)")
+            processed_cols = {row[1] for row in cursor.fetchall()}
+            if "mailbox_key" not in processed_cols or "id" not in processed_cols:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS processed_emails_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mailbox_key TEXT NOT NULL DEFAULT 'legacy',
+                        uid INTEGER NOT NULL,
+                        subject TEXT,
+                        sender TEXT,
+                        mail_date TEXT,
+                        processed_at TEXT DEFAULT (datetime('now', 'localtime')),
+                        UNIQUE(mailbox_key, uid)
+                    )
+                """)
+                if "mailbox_key" in processed_cols:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO processed_emails_new (
+                            mailbox_key, uid, subject, sender, mail_date, processed_at
+                        )
+                        SELECT
+                            COALESCE(mailbox_key, 'legacy'),
+                            uid, subject, sender, mail_date, processed_at
+                        FROM processed_emails
+                    """)
+                else:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO processed_emails_new (
+                            mailbox_key, uid, subject, sender, mail_date, processed_at
+                        )
+                        SELECT
+                            'legacy',
+                            uid, subject, sender, mail_date, processed_at
+                        FROM processed_emails
+                    """)
+                cursor.execute("DROP TABLE processed_emails")
+                cursor.execute("ALTER TABLE processed_emails_new RENAME TO processed_emails")
+                _log.info("Rebuilt processed_emails table with mailbox_key namespace")
+
+            cursor.execute("PRAGMA table_info(invoices)")
+            invoice_cols = {row[1] for row in cursor.fetchall()}
+            if "mailbox_key" not in invoice_cols:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN mailbox_key TEXT NOT NULL DEFAULT 'legacy'")
+                cursor.execute("UPDATE invoices SET mailbox_key = 'legacy' WHERE COALESCE(mailbox_key, '') = ''")
+                _log.info("Added database column [invoices.mailbox_key]")
+
+            cursor.execute("PRAGMA user_version = 4")
+            conn.commit()
+            _log.info("Database migration to V4 completed successfully.")
+        except Exception as e:
+            try:
+                conn.rollback()
+            except sqlite3.OperationalError:
+                pass
+            _log.exception("CRITICAL: Database migration to V4 failed! Error: %s", e)
+            raise e

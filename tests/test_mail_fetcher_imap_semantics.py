@@ -151,6 +151,19 @@ class MailFetcherImapSemanticsTests(unittest.TestCase):
         self.assertEqual(MailFetcher._meta_bytes([(meta.encode("utf-8"), b"")]), meta)
         self.assertEqual(MailFetcher._parse_internaldate(meta), datetime(2026, 5, 19))
 
+    def test_railway_and_high_speed_train_subjects_are_relevant(self):
+        from scripts.invoice_fetch.mail_fetcher import MailMessage, _email_looks_relevant
+
+        msg = MailMessage(
+            9,
+            email.message_from_string(
+                "Subject: 12306 高铁电子客票\n"
+                "From: Railway Service <service@12306.cn>\n"
+                "Date: Tue, 19 May 2026 10:00:00 +0800\n\n"
+            ),
+        )
+        self.assertTrue(_email_looks_relevant(msg))
+
 
 if __name__ == "__main__":
     unittest.main()

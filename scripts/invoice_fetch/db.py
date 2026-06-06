@@ -18,6 +18,7 @@ _log = logging.getLogger(__name__)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS invoices (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    mailbox_key     TEXT NOT NULL DEFAULT 'legacy',
     invoice_number  TEXT,
     invoice_code    TEXT,
     invoice_date    TEXT,
@@ -45,7 +46,9 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 
 CREATE TABLE IF NOT EXISTS emails (
-    uid             INTEGER PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    mailbox_key     TEXT NOT NULL DEFAULT 'legacy',
+    uid             INTEGER NOT NULL,
     subject         TEXT NOT NULL DEFAULT '',
     sender          TEXT NOT NULL DEFAULT '',
     mail_date       TEXT NOT NULL DEFAULT '',
@@ -54,15 +57,19 @@ CREATE TABLE IF NOT EXISTS emails (
     classify_reason TEXT NOT NULL DEFAULT '',
     downloaded      INTEGER NOT NULL DEFAULT 0,
     scanned_at      TEXT DEFAULT (datetime('now','localtime')),
-    processed_at    TEXT
+    processed_at    TEXT,
+    UNIQUE(mailbox_key, uid)
 );
 
 CREATE TABLE IF NOT EXISTS processed_emails (
-    uid          INTEGER PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    mailbox_key  TEXT NOT NULL DEFAULT 'legacy',
+    uid          INTEGER NOT NULL,
     subject      TEXT,
     sender       TEXT,
     mail_date    TEXT,
-    processed_at TEXT DEFAULT (datetime('now','localtime'))
+    processed_at TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(mailbox_key, uid)
 );
 
 CREATE TABLE IF NOT EXISTS trusted_senders (
@@ -104,31 +111,38 @@ class InvoiceDB:
     def __exit__(self, *exc):
         self.close()
 
+    @staticmethod
+    def _normalize_mailbox_key(mailbox_key: str | None = None) -> str:
+        value = str(mailbox_key or "legacy").strip()
+        return value or "legacy"
+
     # ── Emails table (Phase 1: scan & classify) ──────────────────────
 
     def upsert_email(self, uid: int, subject: str,
-                     sender: str, mail_date: str) -> bool:
+                     sender: str, mail_date: str, mailbox_key: str = "legacy") -> bool:
         """Insert a scanned email header. Returns True if new."""
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         try:
             self._conn.execute(
-                "INSERT INTO emails (uid, subject, sender, mail_date) "
-                "VALUES (?, ?, ?, ?)",
-                (uid, subject, sender, mail_date),
+                "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (mailbox_key, uid, subject, sender, mail_date),
             )
             self._conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
 
-    def bulk_upsert_emails(self, rows: list[dict]) -> int:
+    def bulk_upsert_emails(self, rows: list[dict], mailbox_key: str = "legacy") -> int:
         """Batch insert scanned headers. Returns count of new rows."""
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         new = 0
         for r in rows:
             try:
                 self._conn.execute(
-                    "INSERT INTO emails (uid, subject, sender, mail_date) "
-                    "VALUES (?, ?, ?, ?)",
-                    (r["uid"], r["subject"], r["sender"], r["date"]),
+                    "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (mailbox_key, r["uid"], r["subject"], r["sender"], r["date"]),
                 )
                 new += 1
             except sqlite3.IntegrityError:
@@ -136,58 +150,83 @@ class InvoiceDB:
         self._conn.commit()
         return new
 
-    def get_all_email_uids(self) -> set[int]:
+    def get_all_email_uids(self, mailbox_key: str | None = None) -> set[int]:
         """Return all known UIDs in the emails table."""
-        rows = self._conn.execute("SELECT uid FROM emails").fetchall()
+        if mailbox_key is None:
+            rows = self._conn.execute("SELECT uid FROM emails").fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT uid FROM emails WHERE mailbox_key = ?",
+                (self._normalize_mailbox_key(mailbox_key),),
+            ).fetchall()
         return {r[0] for r in rows}
 
-    def get_unclassified_emails(self) -> list[dict]:
+    def get_unclassified_emails(self, mailbox_key: str | None = None) -> list[dict]:
         """Return emails where is_invoice = -1 (unknown)."""
-        rows = self._conn.execute(
-            "SELECT uid, subject, sender, mail_date "
-            "FROM emails WHERE is_invoice = -1"
-        ).fetchall()
+        if mailbox_key is None:
+            rows = self._conn.execute(
+                "SELECT mailbox_key, uid, subject, sender, mail_date "
+                "FROM emails WHERE is_invoice = -1"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT mailbox_key, uid, subject, sender, mail_date "
+                "FROM emails WHERE is_invoice = -1 AND mailbox_key = ?",
+                (self._normalize_mailbox_key(mailbox_key),),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def classify_email(self, uid: int, is_invoice: bool,
-                       by: str, reason: str = ""):
+                       by: str, reason: str = "", mailbox_key: str = "legacy"):
         """Set classification result for a single email."""
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         self._conn.execute(
             "UPDATE emails SET is_invoice = ?, classify_by = ?, "
-            "classify_reason = ? WHERE uid = ?",
-            (1 if is_invoice else 0, by, reason, uid),
+            "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
+            (1 if is_invoice else 0, by, reason, mailbox_key, uid),
         )
         self._conn.commit()
 
-    def bulk_classify(self, results: list[dict]):
+    def bulk_classify(self, results: list[dict], mailbox_key: str = "legacy"):
         """Batch update classification results.
 
         Each dict: {uid, is_invoice (bool), by (str), reason (str)}
         """
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         for r in results:
+            row_mailbox_key = self._normalize_mailbox_key(r.get("mailbox_key", mailbox_key))
             self._conn.execute(
                 "UPDATE emails SET is_invoice = ?, classify_by = ?, "
-                "classify_reason = ? WHERE uid = ?",
+                "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
                 (1 if r["is_invoice"] else 0,
-                 r.get("by", ""), r.get("reason", ""), r["uid"]),
+                 r.get("by", ""), r.get("reason", ""), row_mailbox_key, r["uid"]),
             )
         self._conn.commit()
 
-    def get_invoice_emails_to_download(self) -> list[dict]:
+    def get_invoice_emails_to_download(self, mailbox_key: str | None = None) -> list[dict]:
         """Return emails marked as invoice but not yet downloaded."""
-        rows = self._conn.execute(
-            "SELECT uid, subject, sender, mail_date "
-            "FROM emails WHERE is_invoice = 1 AND downloaded = 0 "
-            "ORDER BY mail_date DESC"
-        ).fetchall()
+        if mailbox_key is None:
+            rows = self._conn.execute(
+                "SELECT mailbox_key, uid, subject, sender, mail_date "
+                "FROM emails WHERE is_invoice = 1 AND downloaded = 0 "
+                "ORDER BY mail_date DESC"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT mailbox_key, uid, subject, sender, mail_date "
+                "FROM emails WHERE is_invoice = 1 AND downloaded = 0 AND mailbox_key = ? "
+                "ORDER BY mail_date DESC",
+                (self._normalize_mailbox_key(mailbox_key),),
+            ).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_downloaded(self, uid: int):
+    def mark_downloaded(self, uid: int, mailbox_key: str = "legacy"):
         """Mark an email as downloaded/processed."""
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         self._conn.execute(
             "UPDATE emails SET downloaded = 1, "
-            "processed_at = datetime('now','localtime') WHERE uid = ?",
-            (uid,),
+            "processed_at = datetime('now','localtime') WHERE mailbox_key = ? AND uid = ?",
+            (mailbox_key, uid),
         )
         self._conn.commit()
 
@@ -238,22 +277,31 @@ class InvoiceDB:
 
     # ── Legacy processed emails ──────────────────────────────────────
 
-    def is_email_processed(self, uid: int) -> bool:
+    def is_email_processed(self, uid: int, mailbox_key: str = "legacy") -> bool:
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         row = self._conn.execute(
-            "SELECT 1 FROM processed_emails WHERE uid = ?", (uid,)
+            "SELECT 1 FROM processed_emails WHERE mailbox_key = ? AND uid = ?",
+            (mailbox_key, uid)
         ).fetchone()
         return row is not None
 
-    def get_processed_uids(self) -> set[int]:
-        rows = self._conn.execute("SELECT uid FROM processed_emails").fetchall()
+    def get_processed_uids(self, mailbox_key: str | None = None) -> set[int]:
+        if mailbox_key is None:
+            rows = self._conn.execute("SELECT uid FROM processed_emails").fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT uid FROM processed_emails WHERE mailbox_key = ?",
+                (self._normalize_mailbox_key(mailbox_key),),
+            ).fetchall()
         return {r[0] for r in rows}
 
     def mark_email_processed(self, uid: int, subject: str = "",
-                             sender: str = "", mail_date: str = ""):
+                             sender: str = "", mail_date: str = "", mailbox_key: str = "legacy"):
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
         self._conn.execute(
-            "INSERT OR IGNORE INTO processed_emails (uid, subject, sender, mail_date) "
-            "VALUES (?, ?, ?, ?)",
-            (uid, subject, sender, mail_date),
+            "INSERT OR IGNORE INTO processed_emails (mailbox_key, uid, subject, sender, mail_date) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (mailbox_key, uid, subject, sender, mail_date),
         )
         self._conn.commit()
 
@@ -290,6 +338,7 @@ class InvoiceDB:
     def insert_invoice(self, rec: dict[str, Any]) -> int | None:
         """Insert an invoice record.  Returns the row id, or None on dup."""
         allowed_cols = {
+            "mailbox_key",
             "invoice_number", "invoice_code", "invoice_date",
             "amount", "total_amount", "seller_name", "buyer_name",
             "invoice_type", "category", "has_extra", "extra_type",
@@ -711,20 +760,34 @@ class InvoiceDB:
 
     # ── Reset & dates ────────────────────────────────────────────────
 
-    def get_last_scanned_date(self) -> str:
+    def get_last_scanned_date(self, mailbox_key: str | None = None) -> str:
         """Most recent mail_date in the emails table."""
-        row = self._conn.execute(
-            "SELECT mail_date FROM emails "
-            "WHERE mail_date != '' ORDER BY mail_date DESC LIMIT 1"
-        ).fetchone()
+        if mailbox_key is None:
+            row = self._conn.execute(
+                "SELECT mail_date FROM emails "
+                "WHERE mail_date != '' ORDER BY mail_date DESC LIMIT 1"
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT mail_date FROM emails "
+                "WHERE mailbox_key = ? AND mail_date != '' ORDER BY mail_date DESC LIMIT 1",
+                (self._normalize_mailbox_key(mailbox_key),),
+            ).fetchone()
         return row[0] if row else ""
 
-    def get_last_processed_date(self) -> str:
+    def get_last_processed_date(self, mailbox_key: str | None = None) -> str:
         """Return the most recent mail_date among processed emails (YYYY-MM-DD)."""
-        row = self._conn.execute(
-            "SELECT mail_date FROM processed_emails "
-            "WHERE mail_date != '' ORDER BY mail_date DESC LIMIT 1"
-        ).fetchone()
+        if mailbox_key is None:
+            row = self._conn.execute(
+                "SELECT mail_date FROM processed_emails "
+                "WHERE mail_date != '' ORDER BY mail_date DESC LIMIT 1"
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT mail_date FROM processed_emails "
+                "WHERE mailbox_key = ? AND mail_date != '' ORDER BY mail_date DESC LIMIT 1",
+                (self._normalize_mailbox_key(mailbox_key),),
+            ).fetchone()
         return row[0] if row else ""
 
     def reset_emails(self):
@@ -745,50 +808,87 @@ class InvoiceDB:
         self._conn.commit()
         _log.info("已清空已入库发票记录")
 
-    def get_failed_downloads(self) -> list[dict]:
+    def get_failed_downloads(self, mailbox_key: str | None = None) -> list[dict]:
         """Return invoices where attachment_path is empty or NULL,
         or emails marked as invoice but have no record in invoices table.
         """
-        # 1. From invoices table where attachment_path is empty/NULL
-        rows1 = self._conn.execute(
-            "SELECT DISTINCT mail_uid FROM invoices WHERE attachment_path = '' OR attachment_path IS NULL"
-        ).fetchall()
-        uids = {r["mail_uid"] for r in rows1 if r["mail_uid"] is not None}
+        mailbox_filter = None if mailbox_key is None else self._normalize_mailbox_key(mailbox_key)
+        results: list[dict] = []
+        seen: set[tuple[str, int]] = set()
 
-        # 2. From emails table where is_invoice = 1 AND downloaded = 1, but no invoices entry exists
-        rows2 = self._conn.execute(
-            "SELECT uid FROM emails WHERE is_invoice = 1 AND downloaded = 1"
-        ).fetchall()
-        for r in rows2:
-            uid = r["uid"]
+        if mailbox_filter is None:
+            invoice_rows = self._conn.execute(
+                "SELECT DISTINCT mailbox_key, mail_uid FROM invoices WHERE attachment_path = '' OR attachment_path IS NULL"
+            ).fetchall()
+            email_rows = self._conn.execute(
+                "SELECT mailbox_key, uid FROM emails WHERE is_invoice = 1 AND downloaded = 1"
+            ).fetchall()
+        else:
+            invoice_rows = self._conn.execute(
+                "SELECT DISTINCT mailbox_key, mail_uid FROM invoices WHERE (attachment_path = '' OR attachment_path IS NULL) AND mailbox_key = ?",
+                (mailbox_filter,),
+            ).fetchall()
+            email_rows = self._conn.execute(
+                "SELECT mailbox_key, uid FROM emails WHERE is_invoice = 1 AND downloaded = 1 AND mailbox_key = ?",
+                (mailbox_filter,),
+            ).fetchall()
+
+        for row in invoice_rows:
+            uid = row["mail_uid"]
+            if uid is None:
+                continue
+            key = (str(row["mailbox_key"] or mailbox_filter or "legacy"), int(uid))
+            if key not in seen:
+                results.append({"mailbox_key": key[0], "mail_uid": key[1]})
+                seen.add(key)
+
+        for row in email_rows:
+            uid = row["uid"]
+            mailbox = str(row["mailbox_key"] or mailbox_filter or "legacy")
             inv = self._conn.execute(
-                "SELECT 1 FROM invoices WHERE mail_uid = ?", (uid,)
+                "SELECT 1 FROM invoices WHERE mail_uid = ? AND mailbox_key = ?",
+                (uid, mailbox),
             ).fetchone()
             if not inv:
-                uids.add(uid)
+                key = (mailbox, int(uid))
+                if key not in seen:
+                    results.append({"mailbox_key": mailbox, "mail_uid": int(uid)})
+                    seen.add(key)
 
-        return [{"mail_uid": uid} for uid in sorted(uids)]
+        return results
 
-    def reset_emails_download_status(self, uids: list[int]):
+    def reset_emails_download_status(self, uids: list[int], mailbox_key: str | None = None):
         """Reset downloaded = 0 for a list of email UIDs."""
         if not uids:
             return
         placeholders = ", ".join("?" for _ in uids)
-        self._conn.execute(
-            f"UPDATE emails SET downloaded = 0 WHERE uid IN ({placeholders})",
-            uids
-        )
+        if mailbox_key is None:
+            self._conn.execute(
+                f"UPDATE emails SET downloaded = 0 WHERE uid IN ({placeholders})",
+                uids
+            )
+        else:
+            self._conn.execute(
+                f"UPDATE emails SET downloaded = 0 WHERE mailbox_key = ? AND uid IN ({placeholders})",
+                [self._normalize_mailbox_key(mailbox_key), *uids],
+            )
         self._conn.commit()
 
-    def delete_invoices_by_uid(self, uids: list[int]):
+    def delete_invoices_by_uid(self, uids: list[int], mailbox_key: str | None = None):
         """Delete invoice records for a list of email UIDs where attachment_path is empty."""
         if not uids:
             return
         placeholders = ", ".join("?" for _ in uids)
-        self._conn.execute(
-            f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) AND (attachment_path = '' OR attachment_path IS NULL)",
-            uids
-        )
+        if mailbox_key is None:
+            self._conn.execute(
+                f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) AND (attachment_path = '' OR attachment_path IS NULL)",
+                uids
+            )
+        else:
+            self._conn.execute(
+                f"DELETE FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) AND (attachment_path = '' OR attachment_path IS NULL)",
+                [self._normalize_mailbox_key(mailbox_key), *uids],
+            )
         self._conn.commit()
 
     # ── Claim Groups (CODE-004) ──────────────────────────────────────

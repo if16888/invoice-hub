@@ -51,7 +51,7 @@ from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
-from ..log_privacy import PrivacyLogFilter, sanitize_log_message
+from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
 from .helpers import _mask_url, _read_manifest_summary
 
@@ -1605,7 +1605,7 @@ class InvoiceReviewApp(QMainWindow):
                             item.setForeground(QColor("#D97706"))
                         else:
                             item.setForeground(QColor("#D97706"))
-                        item.setToolTip(f"审核状态: {review_status}\\n数据质量: {quality or '正常'}")
+                        item.setToolTip(f"审核状态: {review_status}\n数据质量: {quality or '正常'}")
                     elif col == 3 and inv_num:
                         item.setToolTip(inv_num)
                     elif col == 4 and seller:
@@ -3087,22 +3087,34 @@ class InvoiceReviewApp(QMainWindow):
 
     def _scan_email_clicked(self):
         """Trigger background email incremental scanning and download."""
-        from ..config import load_config_safe
+        from ..config import get_email_accounts, load_config_safe
         cfg = load_config_safe()
-        email = cfg.get("email", {}).get("address", "")
-        if not email or email == "your_email@qq.com":
-            QMessageBox.warning(self, "配置缺失", "请先在 [设置] 中配置您真实的邮箱地址。")
+        accounts = get_email_accounts(cfg)
+        if not accounts:
+            QMessageBox.warning(
+                self,
+                "\u914d\u7f6e\u7f3a\u5931",
+                "\u8bf7\u5148\u5728 [\u8bbe\u7f6e] \u4e2d\u914d\u7f6e\u81f3\u5c11\u4e00\u4e2a\u542f\u7528\u7684\u90ae\u7bb1\u8d26\u53f7\u3002",
+            )
             self._open_settings_dialog()
             return
 
         from ..credentials import has_auth_code
-        if not has_auth_code(email):
-            QMessageBox.warning(self, "凭据缺失", f"未检测到邮箱 {email} 的授权码安全凭证。\n请前往 [设置] 安全凭据面板写入。")
+        missing = [account for account in accounts if not has_auth_code(account.get("address", ""))]
+        if missing:
+            missing_lines = "\n".join(f"  - {mask_email(account.get('address', ''))}" for account in missing[:8])
+            if len(missing) > 8:
+                missing_lines += f"\n  ... +{len(missing) - 8}"
+            QMessageBox.warning(
+                self,
+                "\u51ed\u636e\u7f3a\u5931",
+                f"\u672a\u68c0\u6d4b\u5230\u4ee5\u4e0b\u90ae\u7bb1\u7684\u6388\u6743\u7801\u5b89\u5168\u51ed\u8bc1\uff1a\n{missing_lines}\n\u8bf7\u524d\u5f80 [\u8bbe\u7f6e] \u9875\u9762\u8865\u5145\u3002",
+            )
             self._open_settings_dialog()
             return
 
-        self.write_log("📧 [邮箱扫描] 增量拉取任务已启动...")
-        self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
+        self.write_log("\U0001f4e5 [\u90ae\u7bb1\u626b\u63cf] \u589e\u91cf\u62c9\u53d6\u4efb\u52a1\u5df2\u542f\u52a8...")
+        self.statusBar().showMessage("\u6b63\u5728\u5efa\u7acb\u90ae\u7bb1\u8fde\u63a5\u5e76\u626b\u63cf\u63a5\u6536\u90ae\u4ef6...")
         self.btn_import_local.setEnabled(False)
         self.btn_scan_email.setEnabled(False)
 

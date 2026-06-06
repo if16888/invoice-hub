@@ -168,6 +168,71 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             db.close()
 
+    def test_mailbox_key_namespaces_email_and_processed_uid_tables(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_mailbox_namespace.db"
+            db = InvoiceDB(db_path)
+
+            self.assertTrue(db.upsert_email(100, "Subject A", "sender@example.com", "2026-06-01", mailbox_key="primary@qq.com"))
+            self.assertTrue(db.upsert_email(100, "Subject B", "sender@example.com", "2026-06-01", mailbox_key="secondary@example.com"))
+            self.assertFalse(db.upsert_email(100, "Subject C", "sender@example.com", "2026-06-01", mailbox_key="primary@qq.com"))
+
+            self.assertEqual(db.get_all_email_uids("primary@qq.com"), {100})
+            self.assertEqual(db.get_all_email_uids("secondary@example.com"), {100})
+            self.assertEqual(db.get_all_email_uids("legacy"), set())
+
+            db.mark_email_processed(100, subject="Processed A", sender="sender@example.com", mail_date="2026-06-01", mailbox_key="primary@qq.com")
+            db.mark_email_processed(100, subject="Processed B", sender="sender@example.com", mail_date="2026-06-01", mailbox_key="secondary@example.com")
+
+            self.assertTrue(db.is_email_processed(100, mailbox_key="primary@qq.com"))
+            self.assertTrue(db.is_email_processed(100, mailbox_key="secondary@example.com"))
+            self.assertEqual(db.get_processed_uids("primary@qq.com"), {100})
+            self.assertEqual(db.get_processed_uids("secondary@example.com"), {100})
+
+            db.close()
+
+    def test_legacy_email_tables_are_migrated_with_legacy_mailbox_key(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_legacy_mailboxes.db"
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+            cursor.execute("""
+            CREATE TABLE emails (
+                uid INTEGER PRIMARY KEY,
+                subject TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL DEFAULT '',
+                mail_date TEXT NOT NULL DEFAULT '',
+                is_invoice INTEGER NOT NULL DEFAULT -1,
+                classify_by TEXT NOT NULL DEFAULT '',
+                classify_reason TEXT NOT NULL DEFAULT '',
+                downloaded INTEGER NOT NULL DEFAULT 0,
+                scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
+                processed_at TEXT
+            );
+            """)
+            cursor.execute("""
+            CREATE TABLE processed_emails (
+                uid INTEGER PRIMARY KEY,
+                subject TEXT,
+                sender TEXT,
+                mail_date TEXT,
+                processed_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+            """)
+            cursor.execute("INSERT INTO emails (uid, subject, sender, mail_date) VALUES (101, 'Legacy mail', 'legacy@example.com', '2026-06-01')")
+            cursor.execute("INSERT INTO processed_emails (uid, subject, sender, mail_date) VALUES (101, 'Legacy mail', 'legacy@example.com', '2026-06-01')")
+            conn.commit()
+            conn.close()
+
+            db = InvoiceDB(db_path)
+            try:
+                self.assertEqual(db.get_all_email_uids("legacy"), {101})
+                self.assertEqual(db.get_processed_uids("legacy"), {101})
+                self.assertTrue(db.is_email_processed(101, mailbox_key="legacy"))
+                self.assertEqual(db.get_all_email_uids("primary@qq.com"), set())
+            finally:
+                db.close()
+
     def test_excel_export_includes_review_status_if_present(self):
         from scripts.invoice_fetch.excel_export import export_excel
         import openpyxl

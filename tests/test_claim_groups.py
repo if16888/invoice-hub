@@ -49,7 +49,7 @@ class ClaimGroupsTests(unittest.TestCase):
             # Check user_version
             cursor.execute("PRAGMA user_version")
             version = cursor.fetchone()[0]
-            self.assertIn(version, (2, 3))
+            self.assertIn(version, (2, 3, 4))
 
             # Check claim_groups columns
             cursor.execute("PRAGMA table_info(claim_groups)")
@@ -1373,7 +1373,7 @@ class ClaimGroupsTests(unittest.TestCase):
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump({"email": {"address": "test_user@qq.com"}}, f)
 
-            with patch("scripts.invoice_fetch.services.has_auth_code", return_value=False):
+            with patch("scripts.invoice_fetch.__main__.get_auth_code", side_effect=SystemExit("missing auth")):
                 with self.assertRaises(ValueError) as ctx:
                     scan_email_and_download(db_path, config_path=config_file)
                 self.assertIn("未配置邮箱授权码", str(ctx.exception))
@@ -1413,10 +1413,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 db.classify_email(1001, True, by="test", reason="synthetic")
 
             logs = []
-            with patch("scripts.invoice_fetch.services.has_auth_code", return_value=True), \
-                 patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.services.export_excel"), \
+            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.__main__.export_excel"), \
                  patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=RuntimeError("synthetic parser failure")):
                 res = scan_email_and_download(
                     db_path,
@@ -1433,6 +1432,82 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertEqual(len(res["failed_summaries"]), 1)
             self.assertIn("synthetic parser failure", res["failed_summaries"][0])
             self.assertTrue(any("Failed to process" in line for line in logs))
+
+    def test_scan_email_processes_multiple_mailboxes_sequentially(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            created = []
+
+            def __init__(self, address, auth_code, server="imap.qq.com", port=993):
+                self.address = address
+                self.auth_code = auth_code
+                self.server = server
+                self.port = port
+                FakeMailFetcher.created.append(address)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_multi_mailbox.db"
+            config_file = Path(td) / "config.json"
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "email_accounts": [
+                        {
+                            "name": "Primary QQ",
+                            "provider": "qq",
+                            "address": "primary@qq.com",
+                            "search": {"folder": "INBOX", "months_back": 1},
+                        },
+                        {
+                            "name": "Secondary",
+                            "provider": "qq",
+                            "address": "secondary@qq.com",
+                            "search": {"folder": "INBOX", "months_back": 1},
+                        },
+                    ],
+                    "imap": {"server": "imap.qq.com", "port": 993},
+                    "search": {"folder": "INBOX", "months_back": 1},
+                    "ai": {"provider": "none"},
+                    "categories": {},
+                }, f)
+
+            with InvoiceDB(db_path) as db:
+                db.upsert_email(1001, "Primary invoice", "billing@example.com", "2026-06-04", mailbox_key="primary@qq.com")
+                db.upsert_email(2001, "Secondary invoice", "billing@example.com", "2026-06-04", mailbox_key="secondary@qq.com")
+                db.classify_email(1001, True, by="test", reason="synthetic", mailbox_key="primary@qq.com")
+                db.classify_email(2001, True, by="test", reason="synthetic", mailbox_key="secondary@qq.com")
+
+            processed = []
+
+            def fake_handle_pending_email(**kwargs):
+                row = kwargs["row"]
+                processed.append((row["mailbox_key"], row["uid"]))
+                return True
+
+            with patch("scripts.invoice_fetch.services.load_config_safe") as mock_load_cfg, \
+                 patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email), \
+                 patch("scripts.invoice_fetch.__main__.export_excel"):
+                mock_load_cfg.return_value = json.loads(config_file.read_text(encoding="utf-8"))
+                res = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                )
+
+            self.assertEqual(FakeMailFetcher.created, ["primary@qq.com", "secondary@qq.com"])
+            self.assertEqual(processed, [("primary@qq.com", 1001), ("secondary@qq.com", 2001)])
+            self.assertEqual(res["classified_invoice"], 2)
+            self.assertEqual(res["downloaded"], 2)
+            self.assertEqual(res["duplicates"], 2)
+            self.assertEqual(res["failed"], 0)
 
     def test_scan_email_uses_count_invoices_for_new_duplicate_stats(self):
         from scripts.invoice_fetch.services import scan_email_and_download
@@ -1485,10 +1560,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 count_calls.append(True)
                 return original_count_invoices(self, *args, **kwargs)
 
-            with patch("scripts.invoice_fetch.services.has_auth_code", return_value=True), \
-                 patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.services.export_excel"), \
+            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.__main__.export_excel"), \
                  patch("scripts.invoice_fetch.db.InvoiceDB.count_invoices", spy_count_invoices), \
                  patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email):
                 res = scan_email_and_download(

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.invoice_fetch.config import load_config, load_config_safe, validate_config_gui
+from scripts.invoice_fetch.config import get_email_accounts, load_config, load_config_safe, validate_config_gui
 
 
 class GenericImapConfigTests(unittest.TestCase):
@@ -116,6 +116,55 @@ class GenericImapConfigTests(unittest.TestCase):
         self.assertEqual(cfg["imap"]["server"], "imap.qq.com")
         self.assertEqual(cfg["imap"]["port"], 993)
 
+    def test_email_accounts_list_normalizes_multiple_enabled_accounts(self):
+        path = self._write_config({
+            "email_accounts": [
+                {
+                    "name": "Primary QQ",
+                    "provider": "qq",
+                    "address": "primary@qq.com",
+                    "search": {"months_back": 4},
+                },
+                {
+                    "name": "Rail Mail",
+                    "provider": "custom",
+                    "address": "rail@example.com",
+                    "imap": {"server": "imap.example.com", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 2},
+                },
+                {
+                    "name": "Disabled",
+                    "provider": "qq",
+                    "address": "disabled@qq.com",
+                    "enabled": False,
+                },
+            ],
+            "ai": {"provider": "none"},
+        })
+        cfg = load_config(path)
+        accounts = get_email_accounts(cfg)
+        self.assertEqual(len(accounts), 2)
+        self.assertEqual(cfg["email"]["address"], "primary@qq.com")
+        self.assertEqual(cfg["email"]["provider"], "qq")
+        self.assertEqual(accounts[0]["mailbox_key"], "primary@qq.com")
+        self.assertEqual(accounts[1]["mailbox_key"], "rail@example.com")
+        self.assertEqual(accounts[1]["imap"]["server"], "imap.example.com")
+        self.assertEqual(accounts[0]["search"]["months_back"], 4)
+
+    def test_legacy_single_account_is_exposed_as_email_accounts(self):
+        path = self._write_config({
+            "email": {
+                "provider": "qq",
+                "address": "legacy@qq.com"
+            },
+            "imap": {},
+        })
+        cfg = load_config(path)
+        accounts = get_email_accounts(cfg)
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0]["address"], "legacy@qq.com")
+        self.assertEqual(accounts[0]["mailbox_key"], "legacy")
+
     def test_custom_imap_missing_server_fails(self):
         with self.assertRaises(ValueError):
             validate_config_gui({
@@ -130,6 +179,26 @@ class GenericImapConfigTests(unittest.TestCase):
                 "search": {"months_back": 3},
                 "ai": {"provider": "none"}
             })
+
+    def test_validate_config_gui_accepts_multi_account_mailboxes(self):
+        validate_config_gui({
+            "email_accounts": [
+                {
+                    "name": "Primary QQ",
+                    "provider": "qq",
+                    "address": "primary@qq.com",
+                    "search": {"months_back": 3},
+                },
+                {
+                    "name": "Rail Mail",
+                    "provider": "custom",
+                    "address": "rail@example.com",
+                    "imap": {"server": "imap.example.com", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 2},
+                },
+            ],
+            "ai": {"provider": "none"},
+        })
 
     def test_save_config_strips_auth_code(self):
         from scripts.invoice_fetch.config import save_config
