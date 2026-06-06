@@ -482,13 +482,219 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.assertEqual(len(window.invoices_list), 100)
                 self.assertEqual(window.table.rowCount(), 100)
                 self.assertFalse(window._is_first_load)
-                self.assertIn("首屏已加载最近 100 张，搜索/刷新/筛选会加载完整结果", window.statusBar().currentMessage())
+                # Load-all button should be visible with total count
+                self.assertTrue(window._limited_first_load_active)
+                self.assertEqual(window._limited_first_load_total, 120)
+                self.assertFalse(window.btn_load_all.isHidden())
+                self.assertIn("120", window.btn_load_all.text())
 
                 # Reset filter should reload everything, exceeding the 100 limit since _is_first_load is now False
                 window._reset_invoice_filters()
                 app.processEvents()
                 self.assertEqual(len(window.invoices_list), 120)
                 self.assertEqual(window.table.rowCount(), 120)
+                self.assertFalse(window._limited_first_load_active)
+                self.assertTrue(window.btn_load_all.isHidden())
+
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_first_load_limit_shows_load_all_button(self):
+        """Test 1: First load with >100 invoices shows 'load all' button with correct count."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                for i in range(120):
+                    db.insert_invoice({
+                        "invoice_number": f"BTN_{i:04d}",
+                        "total_amount": "10.00",
+                        "seller_name": "Button Seller",
+                        "invoice_date": "2026-06-01",
+                        "category": "Office",
+                        "review_status": "to_review"
+                    })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window._deferred_init()
+                app.processEvents()
+
+                # Table should show only 100
+                self.assertEqual(window.table.rowCount(), 100)
+                # Filter button "all" should show total 120
+                self.assertIn("120", window.filter_buttons["all"].text())
+                # Load-all button should be visible
+                self.assertFalse(window.btn_load_all.isHidden())
+                self.assertIn("加载全部 120 张", window.btn_load_all.text())
+                # Status bar should show limited info
+                status_text = window.lbl_status_left.text()
+                self.assertIn("100 / 120", status_text)
+                self.assertIn("首屏限量加载", status_text)
+
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_load_all_click_shows_all_records(self):
+        """Test 2: Clicking 'load all' loads all records and hides the button."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                for i in range(120):
+                    db.insert_invoice({
+                        "invoice_number": f"ALL_{i:04d}",
+                        "total_amount": "10.00",
+                        "seller_name": "All Seller",
+                        "invoice_date": "2026-06-01",
+                        "category": "Office",
+                        "review_status": "to_review"
+                    })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window._deferred_init()
+                app.processEvents()
+
+                # Precondition: limited load active
+                self.assertEqual(window.table.rowCount(), 100)
+                self.assertFalse(window.btn_load_all.isHidden())
+
+                # Click load all
+                window._load_all_invoices_clicked()
+                app.processEvents()
+                app.processEvents()  # Ensure all deferred QTimer callbacks are flushed
+
+                # All records should be loaded
+                self.assertEqual(window.table.rowCount(), 120)
+                self.assertEqual(len(window.invoices_list), 120)
+                # Button should be hidden
+                self.assertTrue(window.btn_load_all.isHidden())
+                self.assertFalse(window._limited_first_load_active)
+                # Status prefix should not show limited info
+                prefix = window._format_status_count_prefix()
+                self.assertNotIn("100 / 120", prefix)
+                self.assertIn("120", prefix)
+
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_under_100_hides_load_all_button(self):
+        """Test 3: With <100 invoices, load-all button stays hidden."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                for i in range(50):
+                    db.insert_invoice({
+                        "invoice_number": f"SMALL_{i:04d}",
+                        "total_amount": "5.00",
+                        "seller_name": "Small Seller",
+                        "invoice_date": "2026-06-01",
+                        "category": "Office",
+                        "review_status": "to_review"
+                    })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window._deferred_init()
+                app.processEvents()
+
+                self.assertEqual(window.table.rowCount(), 50)
+                self.assertTrue(window.btn_load_all.isHidden())
+                self.assertFalse(window._limited_first_load_active)
+
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_search_bypasses_first_load_limit(self):
+        """Test 4: Search is not affected by first-load limit and hides load-all button."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                for i in range(120):
+                    db.insert_invoice({
+                        "invoice_number": f"SRCH_{i:04d}",
+                        "total_amount": "10.00",
+                        "seller_name": "Target Seller" if i < 5 else "Other Seller",
+                        "invoice_date": "2026-06-01",
+                        "category": "Office",
+                        "review_status": "to_review"
+                    })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window._deferred_init()
+                app.processEvents()
+
+                # Precondition: limited load is active
+                self.assertEqual(window.table.rowCount(), 100)
+                self.assertFalse(window.btn_load_all.isHidden())
+
+                # Search for "Target Seller"
+                window.txt_search.setText("Target Seller")
+                window.search_reload_timer.stop()
+                window._load_invoices()
+                app.processEvents()
+
+                # Should show only matching results (5)
+                self.assertEqual(window.table.rowCount(), 5)
+                # Load-all button should be hidden during search
+                self.assertTrue(window.btn_load_all.isHidden())
+                self.assertFalse(window._limited_first_load_active)
 
             finally:
                 if hasattr(window, "db") and window.db is not None:

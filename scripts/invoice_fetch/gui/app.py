@@ -100,6 +100,8 @@ class InvoiceReviewApp(QMainWindow):
         self._deferred_init_done = False
         self._first_load_notice = None
         self._last_scan_summary = {}
+        self._limited_first_load_active = False
+        self._limited_first_load_total = 0
 
         self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
@@ -996,6 +998,16 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_version.setToolTip("当前 Invoice Hub 版本")
         status_layout.addWidget(self.lbl_version)
 
+        self.btn_load_all = QPushButton("加载全部")
+        self.btn_load_all.setProperty("class", "OutlineBtn")
+        self.btn_load_all.setFixedHeight(24)
+        self.btn_load_all.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_load_all.setStyleSheet("padding: 2px 10px; font-size: 12px;")
+        self.btn_load_all.setToolTip("首屏仅加载了部分记录，点击加载完整列表")
+        self.btn_load_all.clicked.connect(self._load_all_invoices_clicked)
+        self.btn_load_all.setVisible(False)
+        status_layout.addWidget(self.btn_load_all)
+
         self.btn_toggle_log = QPushButton("展开日志")
         self.btn_toggle_log.setProperty("class", "SecondaryBtn")
         self.btn_toggle_log.setMinimumWidth(100)
@@ -1444,6 +1456,13 @@ class InvoiceReviewApp(QMainWindow):
         self._load_claims()
         self.statusBar().showMessage("数据已成功刷新！", 3000)
 
+    def _load_all_invoices_clicked(self):
+        """User clicked 'Load All' to bypass the first-load limit."""
+        self._is_first_load = False
+        self._limited_first_load_active = False
+        self._limited_first_load_total = 0
+        self._load_invoices()
+
     def _load_invoices(self):
         # Fetch invoices from DB with filter, then apply search/quality filters.
         db_elapsed_ms = 0
@@ -1464,10 +1483,10 @@ class InvoiceReviewApp(QMainWindow):
         needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
 
         limit_val = None
-        first_load_notice = None
+        first_load_limited = False
         if self._is_first_load and not needle and not unlinked_only and not needs_fix_only and self.current_filter_status is None:
             limit_val = 100
-            first_load_notice = "首屏已加载最近 100 张，搜索/刷新/筛选会加载完整结果"
+            first_load_limited = True
 
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
@@ -1485,11 +1504,6 @@ class InvoiceReviewApp(QMainWindow):
             db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
             if self._is_first_load:
                 self._is_first_load = False
-            if first_load_notice and limit_val == 100:
-                self._first_load_notice = first_load_notice
-                self.write_log(f"ℹ️ [首屏提示] {first_load_notice}")
-            else:
-                self._first_load_notice = None
         except Exception as e:
             _log.error("Failed to load invoices from DB: %s", e)
             QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
@@ -1513,6 +1527,31 @@ class InvoiceReviewApp(QMainWindow):
 
         self.invoices_list = displayed_invoices
         self._update_filter_counts(count_filtered_invoices)
+
+        # Track limited first-load state for UI hints
+        total_matching = len(count_filtered_invoices)
+        if first_load_limited and total_matching > len(displayed_invoices):
+            self._limited_first_load_active = True
+            self._limited_first_load_total = total_matching
+            shown = len(displayed_invoices)
+            notice = (
+                f"首屏已加载最近 {shown} / {total_matching} 张。"
+                f"点击\"加载全部\"查看完整列表，或使用搜索/筛选缩小范围。"
+            )
+            self._first_load_notice = notice
+            self.write_log(f"ℹ️ [首屏提示] {notice}")
+        else:
+            self._limited_first_load_active = False
+            self._limited_first_load_total = 0
+            self._first_load_notice = None
+
+        # Show/hide the load-all button
+        if hasattr(self, "btn_load_all"):
+            if self._limited_first_load_active:
+                self.btn_load_all.setText(f"加载全部 {self._limited_first_load_total} 张")
+                self.btn_load_all.setVisible(True)
+            else:
+                self.btn_load_all.setVisible(False)
 
         render_start = time.perf_counter()
         self.table.setUpdatesEnabled(False)
@@ -1644,6 +1683,12 @@ class InvoiceReviewApp(QMainWindow):
                 self.table.selectRow(target_row)
             self._set_right_panel_state(True)
 
+        # Synchronously refresh the status bar to reflect the current limited-load state,
+        # because _on_table_selection_changed uses QTimer.singleShot(0) which may not
+        # fire until the next event loop iteration.
+        selected = self.table.selectionModel().selectedRows() if hasattr(self, "table") else []
+        self._set_selection_total_status(selected)
+
         self.write_log(
             f"[性能] 发票列表刷新: db={db_elapsed_ms}ms "
             f"filter={filter_elapsed_ms}ms render={render_elapsed_ms}ms "
@@ -1745,10 +1790,17 @@ class InvoiceReviewApp(QMainWindow):
         if hasattr(self, "lbl_closing_desc"):
             self.lbl_closing_desc.setText("请选择发票以查看建议")
 
+    def _format_status_count_prefix(self) -> str:
+        """Return the leading count segment for the status bar, reflecting limited-load state."""
+        shown = len(self.invoices_list)
+        if self._limited_first_load_active and self._limited_first_load_total > shown:
+            return f"当前显示 {shown} / {self._limited_first_load_total} 张｜首屏限量加载"
+        return f"当前筛选 {shown} 张"
+
     def _set_selection_total_status(self, selected_indexes):
-        total_filtered = len(self.invoices_list)
         if not selected_indexes:
-            self.lbl_status_left.setText(f"当前筛选 {total_filtered} 张｜未选择发票｜最近操作：系统就绪")
+            prefix = self._format_status_count_prefix()
+            self.lbl_status_left.setText(f"{prefix}｜未选择发票｜最近操作：系统就绪")
             return
 
         def calculate_async():
@@ -1764,9 +1816,10 @@ class InvoiceReviewApp(QMainWindow):
                     pass
             if not rows:
                 return
+            prefix = self._format_status_count_prefix()
             count, total, has_missing = amount_total(rows)
             suffix = "｜部分金额缺失" if has_missing else ""
-            self.lbl_status_left.setText(f"当前筛选 {total_filtered} 张｜已选中 {count} 张｜合计 ¥{total:.2f}{suffix}")
+            self.lbl_status_left.setText(f"{prefix}｜已选中 {count} 张｜合计 ¥{total:.2f}{suffix}")
 
         QTimer.singleShot(0, calculate_async)
 
