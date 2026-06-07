@@ -5,6 +5,7 @@ import unittest
 import tempfile
 import shutil
 import hashlib
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -1467,6 +1468,212 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             window.table.selectAll()
             self.app.processEvents()
             self.assertFalse(window.txt_note.isEnabled())
+        finally:
+            window.close()
+
+
+class TestDetailPanelCompact001(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            cls.app = QApplication.instance() or QApplication(sys.argv)
+        except (ImportError, RuntimeError):
+            cls.app = None
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app = None
+
+    def setUp(self):
+        import tempfile
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.db_path = self.temp_dir / "test_compact.db"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_supporting_docs_selector_loading_single(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        # Create 1 linked supporting doc
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+                "extra_paths": json.dumps(["attachments/doc1.pdf"]),
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            # Select the invoice
+            window.table.selectRow(0)
+            self.app.processEvents()
+
+            # Verify combo items and button state
+            self.assertEqual(window.combo_supporting_docs.count(), 1)
+            self.assertIn("[已关联]", window.combo_supporting_docs.itemText(0))
+            self.assertTrue(window.btn_open_extra_files.isEnabled())
+        finally:
+            window.close()
+
+    def test_supporting_docs_selector_multi(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        # Create invoice with 2 linked docs + 1 pending evidence in the same mail
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "id": 1,
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+                "mailbox_key": "mail_test",
+                "mail_uid": 12345,
+                "extra_paths": json.dumps(["attachments/doc1.pdf", "attachments/doc2.pdf"]),
+            })
+            # Pending evidence doc in same mail
+            db.insert_invoice({
+                "id": 2,
+                "invoice_number": "",
+                "invoice_date": "2026-06-01",
+                "seller_name": "",
+                "total_amount": "0.00",
+                "review_status": "to_review",
+                "invoice_type": "待关联证明材料",
+                "mailbox_key": "mail_test",
+                "mail_uid": 12345,
+                "attachment_path": "attachments/doc3.pdf",
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            # Find row index of invoice ID 1
+            row_idx = 0
+            for idx, inv in enumerate(window.invoices_list):
+                if inv["id"] == 1:
+                    row_idx = idx
+                    break
+
+            window.table.selectRow(row_idx)
+            self.app.processEvents()
+
+            # Expect 3 items (2 linked, 1 pending)
+            self.assertEqual(window.combo_supporting_docs.count(), 3)
+            texts = [window.combo_supporting_docs.itemText(i) for i in range(3)]
+            linked_count = sum(1 for t in texts if "[已关联]" in t)
+            pending_count = sum(1 for t in texts if "[待关联]" in t)
+            self.assertEqual(linked_count, 2)
+            self.assertEqual(pending_count, 1)
+        finally:
+            window.close()
+
+    def test_supporting_docs_empty(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+                "extra_paths": "",
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            window.table.selectRow(0)
+            self.app.processEvents()
+
+            self.assertEqual(window.combo_supporting_docs.count(), 1)
+            self.assertEqual(window.combo_supporting_docs.itemText(0), "暂无证明材料")
+            self.assertFalse(window.combo_supporting_docs.isEnabled())
+            self.assertFalse(window.btn_open_extra_files.isEnabled())
+        finally:
+            window.close()
+
+    def test_open_selected_supporting_doc(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        doc1 = self.temp_dir / "doc1.pdf"
+        doc2 = self.temp_dir / "doc2.pdf"
+        doc1.write_bytes(b"pdf1")
+        doc2.write_bytes(b"pdf2")
+
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+                "extra_paths": json.dumps([str(doc1), str(doc2)]),
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            window.table.selectRow(0)
+            self.app.processEvents()
+
+            # Mock _open_local_path
+            window._open_local_path = MagicMock()
+
+            # Select second item (index 1)
+            window.combo_supporting_docs.setCurrentIndex(1)
+            self.app.processEvents()
+
+            # Trigger opening
+            window._open_extra_docs()
+            self.app.processEvents()
+
+            # Verify only doc2 was opened
+            window._open_local_path.assert_called_once_with(doc2)
+        finally:
+            window.close()
+
+    def test_notes_compact_ui_height(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            self.assertLessEqual(window.txt_note.maximumHeight(), 64)
         finally:
             window.close()
 

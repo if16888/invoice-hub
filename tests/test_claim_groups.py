@@ -3762,7 +3762,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
     def test_gui_compact_detail_layout_keeps_source_fields_accessible(self):
         try:
-            from PySide6.QtWidgets import QApplication, QGridLayout
+            from PySide6.QtWidgets import QApplication, QGridLayout, QComboBox
             import sys
             app = QApplication.instance() or QApplication(sys.argv)
 
@@ -3795,8 +3795,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
 
                     self.assertIsInstance(window.invoice_core_grid, QGridLayout)
-                    self.assertLessEqual(window.txt_supporting_docs.maximumHeight(), 56)
-                    self.assertGreater(window.txt_supporting_docs.maximumHeight(), 0)
+                    self.assertIsInstance(window.combo_supporting_docs, QComboBox)
+                    self.assertEqual(window.combo_supporting_docs.count(), 1)
                     self.assertLessEqual(window.btn_save_draft.maximumWidth(), 140)
                     self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 96)
                     self.assertEqual(window.txt_path.text(), attachment_path.name)
@@ -3962,7 +3962,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         [window.detail_tabs.tabText(index) for index in range(3)],
                         ["发票详情", "审核", "报销导出"],
                     )
-                    self.assertEqual(window.txt_note.maximumHeight(), 72)
+                    self.assertEqual(window.txt_note.maximumHeight(), 60)
                     self.assertTrue(window.lbl_export_summary.wordWrap())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -4928,7 +4928,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
                     window.table.selectRow(0)
                     app.processEvents()
-                    docs_text = window.txt_supporting_docs.toPlainText()
+                    combo = window.combo_supporting_docs
+                    docs_text = "\n".join([combo.itemText(i) for i in range(combo.count())])
                     self.assertIn("hotel_folio.pdf", docs_text)
                     self.assertIn("trip_record.pdf", docs_text)
                 finally:

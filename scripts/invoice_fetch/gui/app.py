@@ -95,6 +95,7 @@ class InvoiceReviewApp(QMainWindow):
         self.current_filter_status = None  # None means "All"
         self.invoices_list = []
         self.current_invoice = None
+        self.supporting_doc_items = []
         self._invoice_snapshot = None
         self._suspend_dirty_tracking = False
         self._is_first_load = True
@@ -704,18 +705,16 @@ class InvoiceReviewApp(QMainWindow):
         docs_layout.setContentsMargins(0, 0, 0, 0)
         docs_layout.setSpacing(4)
 
-        self.txt_supporting_docs = QPlainTextEdit()
-        self.txt_supporting_docs.setReadOnly(True)
-        self.txt_supporting_docs.setMaximumHeight(54)
-        self.txt_supporting_docs.setPlaceholderText("酒店水单、行程记录、支付截图等证明材料会显示在这里")
-        docs_layout.addWidget(self.txt_supporting_docs, 1)
+        self.combo_supporting_docs = QComboBox()
+        self.combo_supporting_docs.setMinimumWidth(120)
+        self.combo_supporting_docs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_supporting_docs.currentIndexChanged.connect(self._on_supporting_docs_combo_changed)
+        docs_layout.addWidget(self.combo_supporting_docs, 1)
 
         self.btn_open_extra_files = QPushButton("查看")
         self.btn_open_extra_files.clicked.connect(self._open_extra_docs)
         self.btn_open_extra_files.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_open_extra_files.setMinimumWidth(50)
-        self.btn_open_extra_files.setMaximumHeight(54)
-        self.btn_open_extra_files.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.btn_open_extra_files.setProperty("class", "SecondaryBtn")
         self.btn_open_extra_files.setEnabled(False)
         docs_layout.addWidget(self.btn_open_extra_files)
@@ -723,7 +722,7 @@ class InvoiceReviewApp(QMainWindow):
         self.detail_files_section = QFrame()
         self.detail_files_section.setProperty("class", "DetailSection")
         detail_files_layout = QVBoxLayout(self.detail_files_section)
-        detail_files_layout.setContentsMargins(10, 8, 10, 10)
+        detail_files_layout.setContentsMargins(10, 6, 10, 8)
         detail_files_layout.setSpacing(6)
         files_title = QLabel("原件与证明材料")
         files_title.setProperty("class", "SectionTitle")
@@ -733,7 +732,7 @@ class InvoiceReviewApp(QMainWindow):
         file_fields_layout = QFormLayout(file_fields)
         file_fields_layout.setContentsMargins(0, 0, 0, 0)
         file_fields_layout.setLabelAlignment(Qt.AlignRight)
-        file_fields_layout.setSpacing(4)
+        file_fields_layout.setSpacing(3)
         file_fields_layout.addRow("原件文件:", path_widget)
         file_fields_layout.addRow("证明材料:", docs_widget)
         detail_files_layout.addWidget(file_fields)
@@ -742,14 +741,14 @@ class InvoiceReviewApp(QMainWindow):
         self.review_note_section = QFrame()
         self.review_note_section.setProperty("class", "DetailSection")
         review_note_layout = QVBoxLayout(self.review_note_section)
-        review_note_layout.setContentsMargins(10, 8, 10, 10)
-        review_note_layout.setSpacing(6)
+        review_note_layout.setContentsMargins(10, 6, 10, 8)
+        review_note_layout.setSpacing(4)
         lbl_note_title = QLabel("个人备注")
         lbl_note_title.setProperty("class", "SectionTitle")
         review_note_layout.addWidget(lbl_note_title)
 
         self.txt_note = QTextEdit()
-        self.txt_note.setMaximumHeight(72)
+        self.txt_note.setMaximumHeight(60)
         self.txt_note.setPlaceholderText("可填写报销说明、事项背景、客户/项目、异常原因等，仅保存在本地。")
         review_note_layout.addWidget(self.txt_note)
         tab_details_layout.addWidget(self.review_note_section)
@@ -815,8 +814,8 @@ class InvoiceReviewApp(QMainWindow):
             }
         """)
         closing_layout = QVBoxLayout(self.closing_card)
-        closing_layout.setContentsMargins(10, 10, 10, 10)
-        closing_layout.setSpacing(4)
+        closing_layout.setContentsMargins(10, 8, 10, 8)
+        closing_layout.setSpacing(3)
 
         lbl_closing_title = QLabel("报销闭环")
         lbl_closing_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -1779,8 +1778,11 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_full_path.clear()
         self.txt_full_path.setToolTip("")
         self.txt_url.clear()
-        self.txt_supporting_docs.clear()
-        self.txt_supporting_docs.setToolTip("")
+        self.combo_supporting_docs.blockSignals(True)
+        self.combo_supporting_docs.clear()
+        self.combo_supporting_docs.setToolTip("")
+        self.supporting_doc_items = []
+        self.combo_supporting_docs.blockSignals(False)
         self.btn_open_extra_files.setEnabled(False)
         self.txt_note.clear()
 
@@ -1805,6 +1807,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_buyer.setEnabled(False)
         self.txt_amount.setEnabled(False)
         self.combo_category.setEnabled(False)
+        self.combo_supporting_docs.setEnabled(False)
         self.txt_note.setEnabled(False)
         self.btn_save_draft.setEnabled(False)
         self.lbl_dirty_hint.setText("未修改")
@@ -1941,7 +1944,7 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_full_path.setText(att_path)
             self.txt_full_path.setToolTip(att_path)
             self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
-            self._update_supporting_docs_text(inv)
+            self._update_supporting_docs_selector(inv)
 
             self.txt_note.setPlainText(str(inv.get("confirmed_note") or ""))
 
@@ -2521,55 +2524,31 @@ class InvoiceReviewApp(QMainWindow):
         self.statusBar().showMessage(f"已成功加载本地附件: {file_path.name}", 2000)
 
     def _open_extra_docs(self):
-        """Open all matching extra/unassociated supporting docs."""
+        """Open the currently selected extra/unassociated supporting doc."""
         if not self.current_invoice:
             return
 
-        files_to_open = []
-
-        # 1. 收集自身发票的 extra_paths
-        extra_paths_raw = self.current_invoice.get("extra_paths") or []
-        if isinstance(extra_paths_raw, str):
-            try:
-                extra_paths_raw = json.loads(extra_paths_raw)
-            except json.JSONDecodeError:
-                extra_paths_raw = [extra_paths_raw]
-
-        if isinstance(extra_paths_raw, list):
-            for p in extra_paths_raw:
-                resolved = self._resolve_attachment_path(str(p))
-                if resolved and resolved.exists():
-                    files_to_open.append(resolved)
-
-        # 2. 收集同邮件下的待关联证明材料文件
-        if not files_to_open:
-            mailbox_key = self.current_invoice.get("mailbox_key")
-            mail_uid = self.current_invoice.get("mail_uid")
-            if mailbox_key and mail_uid is not None:
-                try:
-                    sql = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = ? AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
-                    rows = self.db._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
-                    if not rows and mailbox_key != "legacy":
-                        sql_fallback = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = 'legacy' AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
-                        rows = self.db._conn.execute(sql_fallback, (mail_uid,)).fetchall()
-
-                    for row in rows:
-                        att_p = row["attachment_path"]
-                        if att_p:
-                            resolved = self._resolve_attachment_path(str(att_p))
-                            if resolved and resolved.exists():
-                                files_to_open.append(resolved)
-                except Exception as e:
-                    print(f"Error querying unassociated evidence path: {e}")
-
-        if not files_to_open:
+        if not hasattr(self, "supporting_doc_items") or not self.supporting_doc_items:
             QMessageBox.information(self, "提示", "未找到可供查看的证明材料文件。")
             return
 
-        for f in files_to_open:
-            self._open_local_path(f)
+        idx = self.combo_supporting_docs.currentIndex()
+        if idx < 0 or idx >= len(self.supporting_doc_items):
+            QMessageBox.information(self, "提示", "未找到可供查看的证明材料文件。")
+            return
 
-        self.statusBar().showMessage(f"已成功加载 {len(files_to_open)} 个证明材料文件", 2000)
+        item = self.supporting_doc_items[idx]
+        file_path = item["path"]
+
+        if file_path and file_path.exists():
+            self._open_local_path(file_path)
+            self.statusBar().showMessage(f"已打开证明材料: {file_path.name}", 2000)
+        else:
+            QMessageBox.warning(
+                self,
+                "警告",
+                f"文件不存在于路径:\n{file_path}",
+            )
 
     def _locate_attachment(self):
         """Open the folder containing the current attachment."""
@@ -3892,6 +3871,21 @@ class InvoiceReviewApp(QMainWindow):
         if idx < 0 or idx >= len(self.current_preview_docs):
             return
 
+        # Synchronize combo box selection
+        if hasattr(self, "combo_supporting_docs") and getattr(self, "supporting_doc_items", None):
+            current_doc = self.current_preview_docs[idx]
+            doc_path = current_doc.get("path")
+            if doc_path:
+                doc_path_abs = str(doc_path.resolve()).lower()
+                for i, item in enumerate(self.supporting_doc_items):
+                    if item.get("path") and str(item["path"].resolve()).lower() == doc_path_abs:
+                        self.combo_supporting_docs.blockSignals(True)
+                        self.combo_supporting_docs.setCurrentIndex(i)
+                        status_text = "已关联" if item["status"] == "linked" else "待关联"
+                        self.combo_supporting_docs.setToolTip(f"[{status_text}] {item['path']}")
+                        self.combo_supporting_docs.blockSignals(False)
+                        break
+
         doc = self.current_preview_docs[idx]
         file_path = doc["path"]
         title = doc["title"]
@@ -4205,24 +4199,72 @@ class InvoiceReviewApp(QMainWindow):
         if file_path and file_path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path.resolve())))
 
-    def _update_supporting_docs_text(self, inv):
-        """Update the supporting documents plain text display area."""
+    def _on_supporting_docs_combo_changed(self, index):
+        """Called when combo box item is selected. Updates tooltip and synchronizes preview window."""
+        if index < 0 or not getattr(self, "supporting_doc_items", None):
+            self.combo_supporting_docs.setToolTip("")
+            return
+
+        if index < len(self.supporting_doc_items):
+            item = self.supporting_doc_items[index]
+            status_text = "已关联" if item["status"] == "linked" else "待关联"
+            path_str = str(item["path"]) if item["path"] else "未知路径"
+            self.combo_supporting_docs.setToolTip(f"[{status_text}] {path_str}")
+
+            # Sync preview index if the file path is present in current_preview_docs
+            if hasattr(self, "current_preview_docs") and self.current_preview_docs:
+                resolved_path = item["path"]
+                if resolved_path:
+                    resolved_abs = str(resolved_path.resolve()).lower()
+                    for i, doc in enumerate(self.current_preview_docs):
+                        if doc.get("path") and str(doc["path"].resolve()).lower() == resolved_abs:
+                            if self.current_preview_index != i:
+                                self.current_preview_index = i
+                                self._update_document_preview()
+                            break
+
+    def _update_supporting_docs_selector(self, inv):
+        """Update the supporting documents combo box selector."""
+        self.combo_supporting_docs.blockSignals(True)
+        self.combo_supporting_docs.clear()
+        self.supporting_doc_items = []
+
+        if not inv:
+            self.combo_supporting_docs.addItem("暂无证明材料")
+            self.combo_supporting_docs.setEnabled(False)
+            self.btn_open_extra_files.setEnabled(False)
+            self.combo_supporting_docs.setToolTip("")
+            self.combo_supporting_docs.blockSignals(False)
+            return
+
+        # 1. Gather linked extra docs
         extra_paths_raw = inv.get("extra_paths") or []
         if isinstance(extra_paths_raw, str):
             try:
                 extra_paths_raw = json.loads(extra_paths_raw)
             except json.JSONDecodeError:
                 extra_paths_raw = [extra_paths_raw]
-        extra_docs = []
-        if isinstance(extra_paths_raw, list):
-            for item in extra_paths_raw:
-                text = str(item).strip()
-                if text:
-                    extra_docs.append(Path(text).name)
 
-        unassociated_count = 0
-        unassociated_docs = []
-        unassociated_paths = []
+        seen_paths = set()
+
+        if isinstance(extra_paths_raw, list):
+            for p in extra_paths_raw:
+                p_str = str(p).strip()
+                if not p_str:
+                    continue
+                resolved = self._resolve_attachment_path(p_str)
+                if resolved:
+                    abs_path_lower = str(resolved.resolve()).lower()
+                    if abs_path_lower not in seen_paths:
+                        seen_paths.add(abs_path_lower)
+                        self.supporting_doc_items.append({
+                            "label": f"[已关联] {resolved.name}",
+                            "path": resolved,
+                            "status": "linked",
+                            "type": "supporting"
+                        })
+
+        # 2. Gather pending evidence docs
         mailbox_key = inv.get("mailbox_key")
         mail_uid = inv.get("mail_uid")
         if mailbox_key and mail_uid is not None:
@@ -4231,35 +4273,39 @@ class InvoiceReviewApp(QMainWindow):
                 for row in rows:
                     att_p = row.get("attachment_path")
                     if att_p:
-                        unassociated_count += 1
-                        unassociated_docs.append(f"[待关联] {Path(att_p).name}")
-                        unassociated_paths.append(att_p)
+                        resolved = self._resolve_attachment_path(str(att_p))
+                        if resolved:
+                            abs_path_lower = str(resolved.resolve()).lower()
+                            if abs_path_lower not in seen_paths:
+                                seen_paths.add(abs_path_lower)
+                                self.supporting_doc_items.append({
+                                    "label": f"[待关联] {resolved.name}",
+                                    "path": resolved,
+                                    "status": "pending",
+                                    "type": "pending_evidence"
+                                })
             except Exception as e:
                 print(f"Error querying unassociated evidence: {e}")
 
-        display_lines = []
-        tooltip_lines = []
-
-        if extra_docs:
-            for doc_name, raw_p in zip(extra_docs, extra_paths_raw):
-                display_lines.append(f"[已关联] {doc_name}")
-                tooltip_lines.append(f"[已关联] {raw_p}")
-
-        if unassociated_docs:
-            display_lines.append(f"同一邮件下有 {unassociated_count} 个待关联证明材料：")
-            tooltip_lines.append("待关联证明材料：")
-            for doc_name, raw_p in zip(unassociated_docs, unassociated_paths):
-                display_lines.append(doc_name)
-                tooltip_lines.append(f"[待关联] {raw_p}")
-
-        if display_lines:
-            self.txt_supporting_docs.setPlainText("\n".join(display_lines))
-            self.txt_supporting_docs.setToolTip("\n".join(tooltip_lines))
+        # 3. Populate QComboBox
+        if self.supporting_doc_items:
+            for item in self.supporting_doc_items:
+                self.combo_supporting_docs.addItem(item["label"])
+            self.combo_supporting_docs.setEnabled(True)
             self.btn_open_extra_files.setEnabled(True)
+            self.combo_supporting_docs.setCurrentIndex(0)
+
+            # Set tooltip for first item
+            first_item = self.supporting_doc_items[0]
+            status_text = "已关联" if first_item["status"] == "linked" else "待关联"
+            self.combo_supporting_docs.setToolTip(f"[{status_text}] {first_item['path']}")
         else:
-            self.txt_supporting_docs.setPlainText("")
-            self.txt_supporting_docs.setToolTip("")
+            self.combo_supporting_docs.addItem("暂无证明材料")
+            self.combo_supporting_docs.setEnabled(False)
             self.btn_open_extra_files.setEnabled(False)
+            self.combo_supporting_docs.setToolTip("")
+
+        self.combo_supporting_docs.blockSignals(False)
 
     def _link_current_evidence_to_invoice(self):
         """Link the currently previewed evidence document to the current invoice."""
@@ -4321,7 +4367,7 @@ class InvoiceReviewApp(QMainWindow):
 
                 # Update preview and right supporting docs text
                 self._update_document_preview()
-                self._update_supporting_docs_text(self.current_invoice)
+                self._update_supporting_docs_selector(self.current_invoice)
                 self.statusBar().showMessage("已成功将证明材料关联到当前发票", 3000)
             else:
                 QMessageBox.warning(self, "关联失败", "无法将证明材料关联到当前发票，请重试。")
