@@ -126,3 +126,64 @@ def resolve_invoice_documents(invoice: dict, runtime_dir: Path = None) -> list[d
         })
 
     return docs
+
+
+def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path = None) -> list[dict]:
+    """Extract all document paths from an invoice, including pending evidence records from the same mail."""
+    if runtime_dir is None:
+        from ..config import RUNTIME_DIR as runtime_dir
+
+    # 1 & 2. Get primary and supporting docs from this invoice
+    primary_and_supporting = resolve_invoice_documents(invoice, runtime_dir)
+
+    docs = []
+    seen_paths = set()
+
+    for doc in primary_and_supporting:
+        p = doc.get("path")
+        if p:
+            try:
+                resolved_abs_lower = str(p.resolve()).lower()
+                seen_paths.add(resolved_abs_lower)
+            except Exception:
+                pass
+        docs.append({
+            "type": doc["type"],
+            "title": doc["title"],
+            "path": p,
+            "basename": doc["basename"],
+            "invoice_id": invoice.get("id"),
+            "evidence_id": None,
+        })
+
+    # 3. Fetch pending evidence records for this mailbox_key + mail_uid
+    mailbox_key = invoice.get("mailbox_key")
+    mail_uid = invoice.get("mail_uid")
+    if mailbox_key is not None and mail_uid is not None:
+        try:
+            pending_records = db.list_pending_evidence_for_mail(mailbox_key, mail_uid)
+            for rec in pending_records:
+                att_path = rec.get("attachment_path")
+                if not att_path:
+                    continue
+                resolved_path = resolve_stored_path(att_path, runtime_dir)
+                if not resolved_path or not resolved_path.exists():
+                    continue
+
+                resolved_abs_lower = str(resolved_path.resolve()).lower()
+                if resolved_abs_lower in seen_paths:
+                    continue
+                seen_paths.add(resolved_abs_lower)
+
+                docs.append({
+                    "type": "pending_evidence",
+                    "title": "待关联证明材料",
+                    "path": resolved_path,
+                    "basename": resolved_path.name,
+                    "invoice_id": invoice.get("id"),
+                    "evidence_id": rec.get("id"),
+                })
+        except Exception:
+            pass
+
+    return docs

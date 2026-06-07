@@ -1255,3 +1255,116 @@ class InvoiceDB:
             (mailbox_key, uid)
         )
         self._conn.commit()
+
+    def list_pending_evidence_for_mail(self, mailbox_key: str, mail_uid: int) -> list[dict]:
+        """Query all active (undeleted) pending evidence records for a specific email."""
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
+        sql = """
+            SELECT * FROM invoices
+            WHERE mailbox_key = ?
+              AND mail_uid = ?
+              AND invoice_type = '待关联证明材料'
+              AND is_deleted = 0
+              AND attachment_path IS NOT NULL
+              AND attachment_path != ''
+            ORDER BY id ASC
+        """
+        rows = self._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
+        if not rows and mailbox_key not in ("legacy", ""):
+            # Fallback to legacy or empty key
+            sql_fallback = """
+                SELECT * FROM invoices
+                WHERE mailbox_key IN ('legacy', '')
+                  AND mail_uid = ?
+                  AND invoice_type = '待关联证明材料'
+                  AND is_deleted = 0
+                  AND attachment_path IS NOT NULL
+                  AND attachment_path != ''
+                ORDER BY id ASC
+            """
+            rows = self._conn.execute(sql_fallback, (mail_uid,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def link_evidence_to_invoice(self, invoice_id: int, evidence_id: int) -> bool:
+        """Link a pending evidence record to an invoice in a transaction."""
+        # 1. Fetch invoice & evidence
+        invoice = self.get_invoice(invoice_id, include_deleted=False)
+        if not invoice:
+            _log.error("link_evidence_to_invoice: target invoice ID %s not found or deleted", invoice_id)
+            return False
+
+        evidence = self.get_invoice(evidence_id, include_deleted=False)
+        if not evidence:
+            _log.error("link_evidence_to_invoice: evidence record ID %s not found or deleted", evidence_id)
+            return False
+
+        if evidence.get("invoice_type") != "待关联证明材料":
+            _log.error("link_evidence_to_invoice: record ID %s is not '待关联证明材料'", evidence_id)
+            return False
+
+        evidence_path = evidence.get("attachment_path")
+        if not evidence_path:
+            _log.error("link_evidence_to_invoice: evidence record ID %s has no attachment_path", evidence_id)
+            return False
+
+        # 2. Extract and append evidence_path to invoice's extra_paths
+        raw_extra = invoice.get("extra_paths")
+        extra_paths = []
+        if raw_extra:
+            if isinstance(raw_extra, list):
+                extra_paths = [str(p) for p in raw_extra if p]
+            elif isinstance(raw_extra, str):
+                try:
+                    parsed = json.loads(raw_extra)
+                    if isinstance(parsed, list):
+                        extra_paths = [str(p) for p in parsed if p]
+                    else:
+                        extra_paths = [str(raw_extra)]
+                except Exception:
+                    extra_paths = [str(raw_extra)]
+            else:
+                extra_paths = [str(raw_extra)]
+
+        # Deduplicate paths (ignoring case and path separators)
+        seen_normalized = {str(p).lower().replace("\\", "/") for p in extra_paths}
+        norm_ev_path = str(evidence_path).lower().replace("\\", "/")
+        if norm_ev_path not in seen_normalized:
+            extra_paths.append(str(evidence_path))
+
+        # 3. Detect updated_at column availability
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(invoices)").fetchall()
+        }
+
+        # 4. Perform atomic updates in a transaction
+        extra_paths_str = json.dumps(extra_paths, ensure_ascii=False)
+        evidence_note = evidence.get("parse_note") or ""
+        append_note = f"已关联到发票 ID {invoice_id}"
+        new_evidence_note = f"{evidence_note}; {append_note}" if evidence_note else append_note
+
+        try:
+            # Update main invoice
+            inv_sql = "UPDATE invoices SET extra_paths = ?, has_extra = 1, missing_extra = 0"
+            inv_params = [extra_paths_str]
+            if "updated_at" in columns:
+                inv_sql += ", updated_at = CURRENT_TIMESTAMP"
+            inv_sql += " WHERE id = ?"
+            inv_params.append(invoice_id)
+            self._conn.execute(inv_sql, tuple(inv_params))
+
+            # Update evidence (soft delete)
+            ev_sql = "UPDATE invoices SET is_deleted = 1, parse_note = ?"
+            ev_params = [new_evidence_note]
+            if "updated_at" in columns:
+                ev_sql += ", updated_at = CURRENT_TIMESTAMP"
+            ev_sql += " WHERE id = ?"
+            ev_params.append(evidence_id)
+            self._conn.execute(ev_sql, tuple(ev_params))
+
+            self._conn.commit()
+            return True
+        except Exception as e:
+            self._conn.rollback()
+            _log.error("Failed to link evidence to invoice (transaction rolled back): %s", e)
+            return False

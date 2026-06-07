@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch, MagicMock
 import shutil
 import tempfile
@@ -843,6 +844,280 @@ class TestEmailReprocess(unittest.TestCase):
         paths = [r["attachment_path"] for r in rows]
         self.assertIn("attachments/extra_1.pdf", paths)
         self.assertIn("attachments/extra_2.pdf", paths)
+
+    def test_23_resolve_invoice_documents_with_evidence(self):
+        # 1. Setup mock paths and DB records
+        inv = {
+            "id": 8000,
+            "attachment_path": "attachments/main.pdf",
+            "extra_paths": json.dumps(["attachments/extra_1.pdf"]),
+            "mailbox_key": "mail_test",
+            "mail_uid": 123
+        }
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_type, is_deleted, attachment_path) "
+            "VALUES (8001, 'mail_test', 123, '待关联证明材料', 0, 'attachments/extra_2.pdf')"
+        )
+        self.db._conn.commit()
+
+        # Create dummy file objects using temp directory context
+        runtime_dir = Path(self.temp_dir)
+        attachments_dir = runtime_dir / "attachments"
+        attachments_dir.mkdir(parents=True, exist_ok=True)
+        (attachments_dir / "main.pdf").touch()
+        (attachments_dir / "extra_1.pdf").touch()
+        (attachments_dir / "extra_2.pdf").touch()
+
+        from scripts.invoice_fetch.gui.helpers import resolve_invoice_documents_with_evidence
+        docs = resolve_invoice_documents_with_evidence(inv, self.db, runtime_dir)
+
+        # 3 docs: main.pdf (primary), extra_1.pdf (supporting), extra_2.pdf (pending_evidence)
+        self.assertEqual(len(docs), 3)
+        self.assertEqual(docs[0]["type"], "primary")
+        self.assertEqual(docs[0]["title"], "主发票")
+        self.assertEqual(docs[0]["evidence_id"], None)
+
+        self.assertEqual(docs[1]["type"], "supporting")
+        self.assertEqual(docs[1]["title"], "证明材料")
+        self.assertEqual(docs[1]["evidence_id"], None)
+
+        self.assertEqual(docs[2]["type"], "pending_evidence")
+        self.assertEqual(docs[2]["title"], "待关联证明材料")
+        self.assertEqual(docs[2]["evidence_id"], 8001)
+
+    def test_24_resolve_invoice_documents_deduplication(self):
+        inv = {
+            "id": 8100,
+            "attachment_path": "attachments/main.pdf",
+            "extra_paths": json.dumps(["attachments/extra_1.pdf"]),
+            "mailbox_key": "mail_test",
+            "mail_uid": 124
+        }
+        #待关联也包含 extra_1.pdf
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_type, is_deleted, attachment_path) "
+            "VALUES (8101, 'mail_test', 124, '待关联证明材料', 0, 'attachments/extra_1.pdf')"
+        )
+        self.db._conn.commit()
+
+        runtime_dir = Path(self.temp_dir)
+        attachments_dir = runtime_dir / "attachments"
+        attachments_dir.mkdir(parents=True, exist_ok=True)
+        (attachments_dir / "main.pdf").touch()
+        (attachments_dir / "extra_1.pdf").touch()
+
+        from scripts.invoice_fetch.gui.helpers import resolve_invoice_documents_with_evidence
+        docs = resolve_invoice_documents_with_evidence(inv, self.db, runtime_dir)
+
+        # 应该去重：只能有 main.pdf (primary) 和 extra_1.pdf (supporting)
+        self.assertEqual(len(docs), 2)
+        types = [d["type"] for d in docs]
+        self.assertIn("primary", types)
+        self.assertIn("supporting", types)
+        self.assertNotIn("pending_evidence", types)
+
+    def test_25_link_evidence_to_invoice(self):
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted, extra_paths) "
+            "VALUES (9000, 'test_link', 10, 'INV-9000', '100.00', 'to_review', 0, '[]')"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_type, is_deleted, attachment_path, parse_note) "
+            "VALUES (9001, 'test_link', 10, '待关联证明材料', 0, 'attachments/extra_9001.pdf', '水单文本')"
+        )
+        self.db._conn.commit()
+
+        success = self.db.link_evidence_to_invoice(9000, 9001)
+        self.assertTrue(success)
+
+        # Check main invoice is updated
+        inv = self.db.get_invoice(9000)
+        self.assertEqual(inv["has_extra"], 1)
+        self.assertEqual(inv["missing_extra"], 0)
+        extra_paths = json.loads(inv["extra_paths"])
+        self.assertEqual(extra_paths, ["attachments/extra_9001.pdf"])
+
+        # Check evidence is soft-deleted
+        ev = self.db.get_invoice(9001, include_deleted=True)
+        self.assertEqual(ev["is_deleted"], 1)
+        self.assertIn("已关联到发票 ID 9000", ev["parse_note"])
+
+    def test_26_link_evidence_to_invoice_prevent_duplicates(self):
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted, extra_paths) "
+            "VALUES (9100, 'test_dup', 11, 'INV-9100', '100.00', 'to_review', 0, '[\"attachments/extra_9001.pdf\"]')"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_type, is_deleted, attachment_path, parse_note) "
+            "VALUES (9101, 'test_dup', 11, '待关联证明材料', 0, 'attachments/extra_9001.pdf', '重复水单')"
+        )
+        self.db._conn.commit()
+
+        success = self.db.link_evidence_to_invoice(9100, 9101)
+        self.assertTrue(success)
+
+        inv = self.db.get_invoice(9100)
+        extra_paths = json.loads(inv["extra_paths"])
+        # 去重后依然是 1 个，不会有 2 个
+        self.assertEqual(len(extra_paths), 1)
+        self.assertEqual(extra_paths, ["attachments/extra_9001.pdf"])
+
+    def test_27_single_invoice_email_coarse_match(self):
+        # 模拟单发票邮件：1 个 invoice，3 个 extra
+        class MockFile:
+            def __init__(self, name, index):
+                self.original_name = name
+                self.file_path = f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv_info = MockInvoice("INV-S1", "200.00", "2026-06-01")
+        extra1 = MockFile("extra1.pdf", 1)
+        extra2 = MockFile("extra2.pdf", 2)
+        extra_files = [extra1, extra2]
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info])
+
+        # 单发票直接全挂
+        self.assertEqual(len(unmatched), 0)
+        self.assertEqual(len(matched[id(inv_info)]), 2)
+
+    def test_28_multi_invoice_email_strict_match(self):
+        # 模拟多发票邮件：2 个 invoice，2 个 extra（金额、日期一一对应）
+        class MockFile:
+            def __init__(self, name, index):
+                self.original_name = name
+                self.file_path = f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv1 = MockInvoice("INV-M1", "100.00", "2026-06-01")
+        inv2 = MockInvoice("INV-M2", "150.00", "2026-06-02")
+
+        # extra1 文件名里有金额 100.00 元且有日期 2026-06-01
+        extra1 = MockFile("行程单-2026-06-01-100.00元.pdf", 1)
+        extra2 = MockFile("行程单-2026-06-02-150.00元.pdf", 2)
+        extra_files = [extra1, extra2]
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        import scripts.invoice_fetch.__main__ as main_mod
+        orig_extract = main_mod._extract_pdf_text_simple
+        main_mod._extract_pdf_text_simple = lambda x: "" # 返回空文本即可
+        try:
+            matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv1, inv2])
+            self.assertEqual(len(unmatched), 0)
+            self.assertEqual(matched[id(inv1)], [extra1])
+            self.assertEqual(matched[id(inv2)], [extra2])
+        finally:
+            main_mod._extract_pdf_text_simple = orig_extract
+
+    def test_29_multi_invoice_email_ambiguity(self):
+        # 模拟歧义场景：2 张发票金额和日期都相同，1 张行程单无法区分
+        class MockFile:
+            def __init__(self, name, index):
+                self.original_name = name
+                self.file_path = f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv1 = MockInvoice("INV-A1", "100.00", "2026-06-01")
+        inv2 = MockInvoice("INV-A2", "100.00", "2026-06-01")
+        extra1 = MockFile("行程单-100.00.pdf", 1)
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        import scripts.invoice_fetch.__main__ as main_mod
+        orig_extract = main_mod._extract_pdf_text_simple
+        main_mod._extract_pdf_text_simple = lambda x: ""
+        try:
+            matched, unmatched = _match_email_extras_to_invoices([extra1], [inv1, inv2])
+            # 因为得分相同，无分差（0 < 20），所以退回到待关联
+            self.assertEqual(len(unmatched), 1)
+            self.assertEqual(unmatched[0], extra1)
+        finally:
+            main_mod._extract_pdf_text_simple = orig_extract
+
+    def test_30_multi_invoice_email_amount_conflict(self):
+        # 模拟金额冲突：行程单有 150，但发票是 100，不应该强挂
+        class MockFile:
+            def __init__(self, name, index):
+                self.original_name = name
+                self.file_path = f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv1 = MockInvoice("INV-C1", "100.00", "2026-06-01")
+        inv2 = MockInvoice("INV-C2", "200.00", "2026-06-02")
+        extra1 = MockFile("行程单-150.00.pdf", 1)
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        import scripts.invoice_fetch.__main__ as main_mod
+        orig_extract = main_mod._extract_pdf_text_simple
+        main_mod._extract_pdf_text_simple = lambda x: ""
+        try:
+            matched, unmatched = _match_email_extras_to_invoices([extra1], [inv1, inv2])
+            self.assertEqual(len(unmatched), 1)
+        finally:
+            main_mod._extract_pdf_text_simple = orig_extract
+
+    def test_31_gui_link_evidence_button_state(self):
+        class MockGUI:
+            def __init__(self):
+                self.btn_link_evidence = self
+                self._visible = False
+                self._enabled = False
+            def setVisible(self, v):
+                self._visible = v
+            def setEnabled(self, e):
+                self._enabled = e
+
+        gui = MockGUI()
+
+        doc_pending = {"type": "pending_evidence", "evidence_id": 999}
+        doc_primary = {"type": "primary", "evidence_id": None}
+
+        # 待关联时应显示且启用
+        is_pending = (doc_pending.get("type") == "pending_evidence" and doc_pending.get("evidence_id") is not None)
+        gui.btn_link_evidence.setVisible(is_pending)
+        gui.btn_link_evidence.setEnabled(is_pending)
+        self.assertTrue(gui._visible)
+        self.assertTrue(gui._enabled)
+
+        # 主发票时应隐藏且禁用
+        is_pending = (doc_primary.get("type") == "pending_evidence" and doc_primary.get("evidence_id") is not None)
+        gui.btn_link_evidence.setVisible(is_pending)
+        gui.btn_link_evidence.setEnabled(is_pending)
+        self.assertFalse(gui._visible)
+        self.assertFalse(gui._enabled)
+
 
 if __name__ == '__main__':
     unittest.main()

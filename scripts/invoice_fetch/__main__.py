@@ -762,86 +762,271 @@ def _attach_email_extras_to_invoice(
     return current_extras
 
 
+def _extract_pdf_text_simple(path: Path) -> str:
+    """Extract first 2 pages text from a PDF file simply without creating InvoiceParser."""
+    if not path or not path.exists() or path.suffix.lower() != ".pdf":
+        return ""
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(path)) as pdf:
+            text = ""
+            for p in pdf.pages[:2]:
+                t = p.extract_text()
+                if t:
+                    text += t + "\n"
+            # Normalize radical variants
+            text = text.replace("\u2f26", "月").replace("\u2f49", "月")
+            text = text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
+            return text
+    except Exception:
+        return ""
+
+
+def _extract_possible_order_index(filename: str) -> int | None:
+    """Extract a 1-2 digit sequence number from a filename stem."""
+    if not filename:
+        return None
+    name_without_ext = Path(filename).stem
+    # Match standalone 1-2 digits
+    matches = re.findall(r"(?:^|[^0-9])([0-9]{1,2})(?:$|[^0-9])", name_without_ext)
+    if matches:
+        try:
+            return int(matches[-1]) # Use the last sequence number candidate
+        except ValueError:
+            pass
+    return None
+
+
+def score_evidence_invoice_match(
+    evidence_hint: dict,
+    invoice_hint: dict,
+    invoice_count: int,
+    evidence_count: int,
+) -> tuple[int, list[str]]:
+    """Calculate match score and return reasons for a pair of evidence and invoice."""
+    score = 0
+    reasons = []
+
+    # 0. Invoice number or code directly present in filename stem (Strong matching signal)
+    inv_num = invoice_hint.get("invoice_number")
+    inv_code = invoice_hint.get("invoice_code")
+    ev_orig = (evidence_hint.get("original_name") or "").lower()
+
+    if inv_num and len(inv_num) >= 6 and inv_num.lower() in ev_orig:
+        score += 100
+        reasons.append(f"发票号存在于文件名中(+100): {inv_num}")
+    if inv_code and len(inv_code) >= 6 and inv_code.lower() in ev_orig:
+        score += 100
+        reasons.append(f"发票代码存在于文件名中(+100): {inv_code}")
+
+    # 1. Amount matching (Total amount or Pre-tax amount)
+    inv_amt = invoice_hint.get("total_amount") or invoice_hint.get("amount") or ""
+    if inv_amt and inv_amt in evidence_hint["amounts"]:
+        score += 50
+        reasons.append(f"金额一致(+50): {inv_amt}")
+    elif inv_amt and evidence_hint["amounts"]:
+        score -= 60
+        reasons.append("金额冲突(-60)")
+
+    # 2. Date matching
+    inv_date = invoice_hint.get("invoice_date") or ""
+    if inv_date and inv_date in evidence_hint["dates"]:
+        score += 30
+        reasons.append(f"日期一致(+30): {inv_date}")
+    elif inv_date and evidence_hint["dates"]:
+        score -= 30
+        reasons.append("日期冲突(-30)")
+
+    # 3. Sequence number matching (like -01, _02, (3))
+    inv_seq = invoice_hint.get("possible_order_index")
+    ev_seq = evidence_hint.get("possible_order_index")
+    if inv_seq is not None and ev_seq is not None and inv_seq == ev_seq:
+        score += 20
+        reasons.append(f"文件名序号一致(+20): {inv_seq}")
+
+    # 4. Attachment order matching (when counts match)
+    if invoice_count == evidence_count and invoice_count > 0:
+        inv_rank = invoice_hint.get("attachment_rank")
+        ev_rank = evidence_hint.get("attachment_rank")
+        if inv_rank is not None and ev_rank is not None and inv_rank == ev_rank:
+            score += 15
+            reasons.append(f"附件顺序一致(+15): rank {inv_rank}")
+
+    # 5. Shared token in filenames (such as order number or serials >= 4 chars)
+    inv_orig = invoice_hint.get("original_name") or ""
+    ev_orig = evidence_hint.get("original_name") or ""
+
+    def get_meaningful_tokens(name: str) -> set[str]:
+        name_lower = name.lower()
+        stem = Path(name_lower).stem
+        tokens = set(re.findall(r"[a-z0-9]{4,}", stem))
+        noise = {"fapiao", "invoice", "pdf", "ofd", "xingcheng", "xingchengdan", "evidence", "extra"}
+        return tokens - noise
+
+    inv_tokens = get_meaningful_tokens(inv_orig)
+    ev_tokens = get_meaningful_tokens(ev_orig)
+    shared = inv_tokens & ev_tokens
+    if shared:
+        score += 10
+        reasons.append(f"文件名共享标识符(+10): {list(shared)}")
+
+    return score, reasons
+
+
 def _match_email_extras_to_invoices(
     extra_files: list,
     invoice_infos: list,
 ) -> tuple[dict[int, list], list]:
-    """Map each extra to one parsed invoice, retaining ambiguous extras separately."""
-    if len(invoice_infos) <= 1:
-        if not invoice_infos:
-            return {}, list(extra_files)
-        return {id(invoice_infos[0]): list(extra_files)}, []
+    """Map each extra to one parsed invoice using scoring or single-invoice routing."""
+    if not invoice_infos:
+        return {}, list(extra_files)
 
-    def identifiers(info) -> list[str]:
-        return [
-            str(value or "").strip().lower()
-            for value in (
-                getattr(info, "invoice_number", ""),
-                getattr(info, "invoice_code", ""),
+    invoice_count = len(invoice_infos)
+    evidence_count = len(extra_files)
+
+    # Case 1: Single Invoice in Email -> Link all extras directly (Coarse matching)
+    if invoice_count == 1:
+        matched = invoice_infos[0]
+        for extra in extra_files:
+            orig_name = getattr(extra, "original_name", "") or (Path(extra.file_path).name if getattr(extra, "file_path", None) else "")
+            _log.info(
+                "  单发票邮件：证明材料 %s 直接自动关联到唯一的发票 %s",
+                mask_filename(orig_name),
+                mask_invoice_number(str(getattr(matched, "invoice_number", "") or "")),
             )
-            if str(value or "").strip()
-        ]
+        return {id(matched): list(extra_files)}, []
 
+    # Case 2: Multiple Invoices in Email -> strict matching
+    # 2.1 Calculate attachment rank for sorting consistency
+    def get_info_idx(info):
+        orig = getattr(info, "original_file", None)
+        return getattr(orig, "attachment_index", 999)
+    sorted_infos = sorted(invoice_infos, key=get_info_idx)
+    for r, info in enumerate(sorted_infos):
+        info.attachment_rank = r
+
+    def get_extra_idx(extra):
+        return getattr(extra, "attachment_index", 999)
+    sorted_extras = sorted(extra_files, key=get_extra_idx)
+    for r, extra in enumerate(sorted_extras):
+        extra.attachment_rank = r
+
+    # 2.2 Construct invoice hints
+    invoice_hints = {}
+    for info in invoice_infos:
+        orig_file = getattr(info, "original_file", None)
+        orig_name = ""
+        if orig_file:
+            orig_name = getattr(orig_file, "original_name", "") or (Path(orig_file.file_path).name if getattr(orig_file, "file_path", None) else "")
+        invoice_hints[id(info)] = {
+            "invoice_number": getattr(info, "invoice_number", ""),
+            "invoice_code": getattr(info, "invoice_code", ""),
+            "invoice_date": getattr(info, "invoice_date", ""),
+            "total_amount": _normalize_amount_for_match(getattr(info, "total_amount", "")),
+            "amount": _normalize_amount_for_match(getattr(info, "amount", "")),
+            "seller_name": getattr(info, "seller_name", ""),
+            "original_name": orig_name,
+            "attachment_index": getattr(orig_file, "attachment_index", 999),
+            "attachment_rank": getattr(info, "attachment_rank", 999),
+            "possible_order_index": _extract_possible_order_index(orig_name),
+        }
+
+    # 2.3 Construct evidence hints
+    evidence_hints = {}
+    for extra in extra_files:
+        orig_name = getattr(extra, "original_name", "") or (Path(extra.file_path).name if getattr(extra, "file_path", None) else "")
+        file_path_str = getattr(extra, "file_path", "")
+        file_path = Path(file_path_str) if file_path_str else None
+
+        # Simple text extraction for scoring dates and amounts
+        pdf_text = ""
+        if file_path:
+            pdf_text = _extract_pdf_text_simple(file_path)
+
+        hints = _extract_evidence_match_hints(None, file_path, orig_name)
+        if pdf_text:
+            # Extract date (YYYY-MM-DD)
+            for d in re.findall(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", pdf_text):
+                hints["dates"].append(f"{d[0]}-{int(d[1]):02d}-{int(d[2]):02d}")
+            # YYYY年MM月DD日
+            for d in re.findall(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?", pdf_text):
+                hints["dates"].append(f"{d[0]}-{int(d[1]):02d}-{int(d[2]):02d}")
+            # Extract money candidates
+            for amt in _extract_amount_candidates_for_evidence(pdf_text):
+                hints["amounts"].append(amt)
+
+            hints["dates"] = list(set(hints["dates"]))
+            hints["amounts"] = list(set(hints["amounts"]))
+
+        evidence_hints[id(extra)] = {
+            "original_name": orig_name,
+            "text": pdf_text,
+            "dates": hints["dates"],
+            "amounts": hints["amounts"],
+            "attachment_index": getattr(extra, "attachment_index", 999),
+            "attachment_rank": getattr(extra, "attachment_rank", 999),
+            "possible_order_index": _extract_possible_order_index(orig_name),
+        }
+
+    # 2.4 Perform strict score calculation
     matches_by_invoice: dict[int, list] = {}
     unmatched = []
-    for extra in extra_files:
-        source_text = " ".join(
-            (
-                str(getattr(extra, "original_name", "") or ""),
-                Path(str(getattr(extra, "file_path", "") or "")).name,
-            )
-        ).lower()
-        exact_matches = [
-            candidate
-            for candidate in invoice_infos
-            if any(identifier in source_text for identifier in identifiers(candidate))
-        ]
-        matches = exact_matches
-        match_reason = "发票号"
-        if not matches:
-            hints = _extract_evidence_match_hints(
-                None,
-                Path(str(getattr(extra, "file_path", "") or "")),
-                str(getattr(extra, "original_name", "") or ""),
-            )
-            hint_dates = set(hints["dates"])
-            hint_amounts = set(hints["amounts"])
-            if hint_dates and hint_amounts:
-                from .invoice_parser import normalize_date
-                matches = [
-                    candidate
-                    for candidate in invoice_infos
-                    if (
-                        normalize_date(
-                            str(getattr(candidate, "invoice_date", "") or "")
-                        ) in hint_dates
-                        and _normalize_amount_for_match(
-                            str(
-                                getattr(candidate, "total_amount", "")
-                                or getattr(candidate, "amount", "")
-                                or ""
-                            )
-                        ) in hint_amounts
-                    )
-                ]
-                match_reason = "日期和金额"
+    extra_matches = []
 
-        if len(matches) == 1:
-            matched = matches[0]
-            matches_by_invoice.setdefault(id(matched), []).append(extra)
+    for extra in extra_files:
+        ev_hint = evidence_hints[id(extra)]
+        scores = []
+        for info in invoice_infos:
+            inv_hint = invoice_hints[id(info)]
+            score, reasons = score_evidence_invoice_match(ev_hint, inv_hint, invoice_count, evidence_count)
+            scores.append((info, score, reasons))
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+        if not scores:
+            unmatched.append(extra)
+            continue
+
+        best_info, best_score, best_reasons = scores[0]
+
+        is_valid_match = False
+        if best_score >= 70:
+            if len(scores) > 1:
+                second_score = scores[1][1]
+                if best_score - second_score >= 20:
+                    is_valid_match = True
+                else:
+                    _log.info(
+                        "  多发票邮件：证明材料 %s 与两张发票匹配分数太接近(最高分=%d, 次高分=%d)，置信度不足，准备保留为待关联",
+                        mask_filename(ev_hint["original_name"]), best_score, second_score
+                    )
+            else:
+                is_valid_match = True
+        else:
             _log.info(
-                "  多发票邮件：证明材料按%s唯一匹配到发票 %s",
-                match_reason,
-                mask_invoice_number(
-                    str(getattr(matched, "invoice_number", "") or "")
-                ),
+                "  多发票邮件：证明材料未达到自动关联阈值，准备保留为待关联: %s (最高分=%d)",
+                mask_filename(ev_hint["original_name"]), best_score
             )
+
+        if is_valid_match:
+            extra_matches.append((extra, best_info, best_score, best_reasons))
         else:
             unmatched.append(extra)
-            _log.info(
-                "  多发票邮件：证明材料未唯一匹配，准备保留为待关联: %s",
-                mask_filename(str(getattr(extra, "original_name", "") or "")),
-            )
+
+    # 2.5 Assign matches greedily by score
+    extra_matches.sort(key=lambda x: x[2], reverse=True)
+    assigned_extras = set()
+    for extra, info, score, reasons in extra_matches:
+        if id(extra) in assigned_extras:
+            continue
+        assigned_extras.add(id(extra))
+        matches_by_invoice.setdefault(id(info), []).append(extra)
+        _log.info(
+            "  多发票邮件：证明材料按 %s 自动匹配到发票 %s，score=%d reason=%s",
+            "日期+金额/文件名/顺序",
+            mask_invoice_number(str(getattr(info, "invoice_number", "") or "")),
+            score,
+            ", ".join(reasons)
+        )
 
     return matches_by_invoice, unmatched
 
@@ -1678,6 +1863,16 @@ def _process_email(
         info for _, info in (downloaded_invoice_items + parsed_invoice_pdfs)
         if info.parse_success
     ]
+
+    # 动态注入附件 index 以及绑定 info 的 original_file，用于多发票/单发票评分关联算法
+    for idx, att in enumerate(attachments):
+        att.attachment_index = idx
+    for idx, dl in enumerate(downloaded):
+        dl.attachment_index = len(attachments) + idx
+
+    for f, info in (downloaded_invoice_items + parsed_invoice_pdfs):
+        if info.parse_success:
+            info.original_file = f
     matched_extra_files, unmatched_extra_files = _match_email_extras_to_invoices(
         extra_files,
         parsed_invoice_infos,

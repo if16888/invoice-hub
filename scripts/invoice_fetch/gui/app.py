@@ -1936,60 +1936,7 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_full_path.setText(att_path)
             self.txt_full_path.setToolTip(att_path)
             self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
-            extra_paths_raw = inv.get("extra_paths") or []
-            if isinstance(extra_paths_raw, str):
-                try:
-                    extra_paths_raw = json.loads(extra_paths_raw)
-                except json.JSONDecodeError:
-                    extra_paths_raw = [extra_paths_raw]
-            extra_docs = []
-            if isinstance(extra_paths_raw, list):
-                for item in extra_paths_raw:
-                    text = str(item).strip()
-                    if text:
-                        extra_docs.append(Path(text).name)
-
-            unassociated_count = 0
-            unassociated_docs = []
-            unassociated_paths = []
-            if not extra_docs:
-                mailbox_key = inv.get("mailbox_key")
-                mail_uid = inv.get("mail_uid")
-                if mailbox_key and mail_uid is not None:
-                    try:
-                        sql = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = ? AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
-                        rows = self.db._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
-                        if not rows and mailbox_key != "legacy":
-                            sql_fallback = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = 'legacy' AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
-                            rows = self.db._conn.execute(sql_fallback, (mail_uid,)).fetchall()
-
-                        for row in rows:
-                            att_p = row["attachment_path"]
-                            if att_p:
-                                unassociated_count += 1
-                                unassociated_docs.append(f"[待关联] {Path(att_p).name}")
-                                unassociated_paths.append(att_p)
-                    except Exception as e:
-                        print(f"Error querying unassociated evidence: {e}")
-
-            if extra_docs:
-                self.txt_supporting_docs.setPlainText("\n".join(extra_docs))
-                self.txt_supporting_docs.setToolTip(
-                    "\n".join(str(item) for item in extra_paths_raw) if extra_paths_raw else ""
-                )
-                self.btn_open_extra_files.setEnabled(True)
-            elif unassociated_docs:
-                self.txt_supporting_docs.setPlainText(
-                    f"同一邮件下有 {unassociated_count} 个待关联证明材料：\n" + "\n".join(unassociated_docs)
-                )
-                self.txt_supporting_docs.setToolTip(
-                    "\n".join(str(item) for item in unassociated_paths)
-                )
-                self.btn_open_extra_files.setEnabled(True)
-            else:
-                self.txt_supporting_docs.setPlainText("")
-                self.txt_supporting_docs.setToolTip("")
-                self.btn_open_extra_files.setEnabled(False)
+            self._update_supporting_docs_text(inv)
 
             self.txt_note.setPlainText(str(inv.get("confirmed_note") or ""))
 
@@ -2028,8 +1975,8 @@ class InvoiceReviewApp(QMainWindow):
                 self._update_closing_card(inv)
 
             # Update preview documents
-            from .helpers import resolve_invoice_documents
-            self.current_preview_docs = resolve_invoice_documents(inv, RUNTIME_DIR)
+            from .helpers import resolve_invoice_documents_with_evidence
+            self.current_preview_docs = resolve_invoice_documents_with_evidence(inv, self.db, RUNTIME_DIR)
             self.current_preview_index = 0
             self._preview_empty_message = "当前发票没有可预览的原件"
             if self.current_preview_docs:
@@ -3634,6 +3581,15 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_open_ext.clicked.connect(self._open_current_preview_ext)
         tb_layout.addWidget(self.btn_open_ext)
 
+        # Divider and Link Evidence Button
+        add_divider()
+        self.btn_link_evidence = QPushButton("关联到当前发票")
+        self.btn_link_evidence.clicked.connect(self._link_current_evidence_to_invoice)
+        self.btn_link_evidence.setStyleSheet("font-weight: bold; color: #059669; padding: 0 4px;")
+        self.btn_link_evidence.setVisible(False)
+        self.btn_link_evidence.setEnabled(False)
+        tb_layout.addWidget(self.btn_link_evidence)
+
         # Bind container resizing to overlay position alignment (Y-offset smaller = 4px)
         def resize_container(event):
             QWidget.resizeEvent(self.preview_container, event)
@@ -3829,6 +3785,9 @@ class InvoiceReviewApp(QMainWindow):
             self.btn_prev.setEnabled(False)
             self.btn_next.setEnabled(False)
             self.btn_open_ext.setEnabled(False)
+            if hasattr(self, "btn_link_evidence"):
+                self.btn_link_evidence.setVisible(False)
+                self.btn_link_evidence.setEnabled(False)
             self.overlay_toolbar.setVisible(False)
             self._set_zoom_buttons_enabled(False)
             return
@@ -3849,6 +3808,11 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_prev.setEnabled(len(self.current_preview_docs) > 1)
         self.btn_next.setEnabled(len(self.current_preview_docs) > 1)
         self.btn_open_ext.setEnabled(True)
+
+        is_pending = (doc.get("type") == "pending_evidence" and doc.get("evidence_id") is not None)
+        if hasattr(self, "btn_link_evidence"):
+            self.btn_link_evidence.setVisible(is_pending)
+            self.btn_link_evidence.setEnabled(is_pending)
 
         if not file_path.exists():
             self._show_preview_status("文件不存在")
@@ -3946,6 +3910,127 @@ class InvoiceReviewApp(QMainWindow):
         if file_path and file_path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path.resolve())))
 
+    def _update_supporting_docs_text(self, inv):
+        """Update the supporting documents plain text display area."""
+        extra_paths_raw = inv.get("extra_paths") or []
+        if isinstance(extra_paths_raw, str):
+            try:
+                extra_paths_raw = json.loads(extra_paths_raw)
+            except json.JSONDecodeError:
+                extra_paths_raw = [extra_paths_raw]
+        extra_docs = []
+        if isinstance(extra_paths_raw, list):
+            for item in extra_paths_raw:
+                text = str(item).strip()
+                if text:
+                    extra_docs.append(Path(text).name)
+
+        unassociated_count = 0
+        unassociated_docs = []
+        unassociated_paths = []
+        mailbox_key = inv.get("mailbox_key")
+        mail_uid = inv.get("mail_uid")
+        if mailbox_key and mail_uid is not None:
+            try:
+                rows = self.db.list_pending_evidence_for_mail(mailbox_key, mail_uid)
+                for row in rows:
+                    att_p = row.get("attachment_path")
+                    if att_p:
+                        unassociated_count += 1
+                        unassociated_docs.append(f"[待关联] {Path(att_p).name}")
+                        unassociated_paths.append(att_p)
+            except Exception as e:
+                print(f"Error querying unassociated evidence: {e}")
+
+        display_lines = []
+        tooltip_lines = []
+
+        if extra_docs:
+            for doc_name, raw_p in zip(extra_docs, extra_paths_raw):
+                display_lines.append(f"[已关联] {doc_name}")
+                tooltip_lines.append(f"[已关联] {raw_p}")
+
+        if unassociated_docs:
+            display_lines.append(f"同一邮件下有 {unassociated_count} 个待关联证明材料：")
+            tooltip_lines.append("待关联证明材料：")
+            for doc_name, raw_p in zip(unassociated_docs, unassociated_paths):
+                display_lines.append(doc_name)
+                tooltip_lines.append(f"[待关联] {raw_p}")
+
+        if display_lines:
+            self.txt_supporting_docs.setPlainText("\n".join(display_lines))
+            self.txt_supporting_docs.setToolTip("\n".join(tooltip_lines))
+            self.btn_open_extra_files.setEnabled(True)
+        else:
+            self.txt_supporting_docs.setPlainText("")
+            self.txt_supporting_docs.setToolTip("")
+            self.btn_open_extra_files.setEnabled(False)
+
+    def _link_current_evidence_to_invoice(self):
+        """Link the currently previewed evidence document to the current invoice."""
+        if not self.current_invoice:
+            return
+
+        invoice_id = self.current_invoice.get("id")
+        if not invoice_id:
+            return
+
+        if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
+            return
+
+        idx = self.current_preview_index
+        if idx < 0 or idx >= len(self.current_preview_docs):
+            return
+
+        doc = self.current_preview_docs[idx]
+        if doc.get("type") != "pending_evidence" or doc.get("evidence_id") is None:
+            return
+
+        evidence_id = doc["evidence_id"]
+        evidence_name = doc["basename"]
+        invoice_num = self.current_invoice.get("invoice_number") or "（无发票号）"
+        current_file_path = doc["path"]
+
+        # Prompt confirmation
+        reply = QMessageBox.question(
+            self,
+            "确认关联",
+            f"确认将该证明材料关联到当前发票吗？\n\n发票号码: {invoice_num}\n证明材料文件名: {evidence_name}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            success = self.db.link_evidence_to_invoice(invoice_id, evidence_id)
+            if success:
+                # Refresh invoice data
+                updated_inv = self.db.get_invoice(invoice_id)
+                if updated_inv:
+                    self.current_invoice = updated_inv
+                    for i, item in enumerate(self.invoices_list):
+                        if item.get("id") == invoice_id:
+                            self.invoices_list[i] = updated_inv
+                            break
+
+                # Re-resolve preview docs
+                from .helpers import resolve_invoice_documents_with_evidence
+                self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
+
+                # Locate the newly linked document in its new position (type=supporting)
+                new_idx = 0
+                for i, doc_item in enumerate(self.current_preview_docs):
+                    if doc_item.get("path") and current_file_path and str(doc_item["path"].resolve()).lower() == str(current_file_path.resolve()).lower():
+                        new_idx = i
+                        break
+                self.current_preview_index = new_idx
+
+                # Update preview and right supporting docs text
+                self._update_document_preview()
+                self._update_supporting_docs_text(self.current_invoice)
+                self.statusBar().showMessage("已成功将证明材料关联到当前发票", 3000)
+            else:
+                QMessageBox.warning(self, "关联失败", "无法将证明材料关联到当前发票，请重试。")
+
     def keyPressEvent(self, event):
         focused = QApplication.focusWidget()
         # Toggle overlay toolbar visible state temporarily on Alt or Ctrl keypress
@@ -3954,7 +4039,13 @@ class InvoiceReviewApp(QMainWindow):
             event.accept()
             return
 
-        if focused in (self.btn_prev, self.btn_next, self.btn_open_ext, self.preview_panel, self.preview_stack):
+        is_editing = False
+        if focused:
+            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QComboBox
+            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox)):
+                is_editing = True
+
+        if not is_editing:
             if event.key() == Qt.Key_Left:
                 self._prev_preview_doc()
                 event.accept()
