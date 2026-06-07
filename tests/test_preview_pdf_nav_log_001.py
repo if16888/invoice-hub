@@ -1617,6 +1617,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             self.assertEqual(window.combo_supporting_docs.itemText(0), "暂无证明材料")
             self.assertFalse(window.combo_supporting_docs.isEnabled())
             self.assertFalse(window.btn_open_extra_files.isEnabled())
+            self.assertIn("酒店水单、行程记录、支付截图", window.combo_supporting_docs.toolTip())
         finally:
             window.close()
 
@@ -1676,6 +1677,104 @@ class TestDetailPanelCompact001(unittest.TestCase):
             self.assertLessEqual(window.txt_note.maximumHeight(), 64)
         finally:
             window.close()
+
+    def test_supporting_doc_label_formatting(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            path_normal = Path("short_name.pdf")
+            label_normal = window._format_supporting_doc_label("已关联", path_normal)
+            self.assertEqual(label_normal, "[已关联] short_name.pdf")
+
+            path_long = Path("出租_87.90_2653700000000009000697_ex_6.pdf")
+            label_long = window._format_supporting_doc_label("已关联", path_long, max_len=42)
+            self.assertTrue(label_long.startswith("[已关联]"))
+            self.assertIn("...", label_long)
+            self.assertLessEqual(len(label_long), 42)
+        finally:
+            window.close()
+
+    def test_post_link_combo_reposition(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        doc1 = self.temp_dir / "doc1.pdf"
+        doc2 = self.temp_dir / "doc2.pdf"
+        doc1.write_bytes(b"pdf1")
+        doc2.write_bytes(b"pdf2")
+
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+                "extra_paths": json.dumps([str(doc1), str(doc2)]),
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            window.table.selectRow(0)
+            self.app.processEvents()
+
+            window._update_supporting_docs_selector(window.current_invoice, selected_path=doc2)
+            self.app.processEvents()
+
+            self.assertEqual(window.combo_supporting_docs.currentIndex(), 1)
+            self.assertIn("doc2.pdf", window.combo_supporting_docs.itemText(1))
+        finally:
+            window.close()
+
+    def test_excel_export_notes_and_evidence(self):
+        from scripts.invoice_fetch.excel_export import export_excel
+        import openpyxl
+
+        doc1 = self.temp_dir / "doc1.pdf"
+        doc2 = self.temp_dir / "doc2.pdf"
+
+        rows = [
+            {
+                "invoice_number": "EXCEL001",
+                "invoice_code": "CODE001",
+                "invoice_date": "2026-06-01",
+                "amount": "100.00",
+                "total_amount": "100.00",
+                "seller_name": "销售方A",
+                "buyer_name": "购买方B",
+                "confirmed_note": "团建说明",
+                "extra_paths": [str(doc1), str(doc2)],
+            }
+        ]
+
+        excel_file = self.temp_dir / "test_export.xlsx"
+        export_excel(rows, excel_file)
+
+        wb = openpyxl.load_workbook(excel_file)
+        ws = wb["发票汇总"]
+
+        headers = [ws.cell(row=1, column=col_idx).value for col_idx in range(1, ws.max_column + 1)]
+        self.assertIn("个人备注", headers)
+        self.assertIn("证明材料", headers)
+
+        note_col_idx = headers.index("个人备注") + 1
+        evidence_col_idx = headers.index("证明材料") + 1
+
+        note_val = ws.cell(row=2, column=note_col_idx).value
+        evidence_val = ws.cell(row=2, column=evidence_col_idx).value
+
+        self.assertEqual(note_val, "团建说明")
+        self.assertEqual(evidence_val, "doc1.pdf；doc2.pdf")
+        self.assertNotIn(str(self.temp_dir), evidence_val)
 
 
 if __name__ == "__main__":

@@ -708,6 +708,7 @@ class InvoiceReviewApp(QMainWindow):
         self.combo_supporting_docs = QComboBox()
         self.combo_supporting_docs.setMinimumWidth(120)
         self.combo_supporting_docs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_supporting_docs.view().setTextElideMode(Qt.ElideMiddle)
         self.combo_supporting_docs.currentIndexChanged.connect(self._on_supporting_docs_combo_changed)
         docs_layout.addWidget(self.combo_supporting_docs, 1)
 
@@ -1780,7 +1781,8 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_url.clear()
         self.combo_supporting_docs.blockSignals(True)
         self.combo_supporting_docs.clear()
-        self.combo_supporting_docs.setToolTip("")
+        self.combo_supporting_docs.addItem("暂无证明材料")
+        self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
         self.supporting_doc_items = []
         self.combo_supporting_docs.blockSignals(False)
         self.btn_open_extra_files.setEnabled(False)
@@ -4223,7 +4225,24 @@ class InvoiceReviewApp(QMainWindow):
                                 self._update_document_preview()
                             break
 
-    def _update_supporting_docs_selector(self, inv):
+    def _format_supporting_doc_label(self, status_text: str, path: Path, max_len: int = 42) -> str:
+        """Format supporting document label with middle elision if file name is too long."""
+        prefix = f"[{status_text}] "
+        filename = path.name if hasattr(path, "name") else Path(str(path)).name
+
+        max_filename_len = max_len - len(prefix)
+        if max_filename_len < 10:
+            max_filename_len = 10
+
+        if len(filename) > max_filename_len:
+            half = max_filename_len // 2 - 2
+            if half < 3:
+                half = 3
+            filename = filename[:half] + "..." + filename[-half:]
+
+        return f"{prefix}{filename}"
+
+    def _update_supporting_docs_selector(self, inv, selected_path=None):
         """Update the supporting documents combo box selector."""
         self.combo_supporting_docs.blockSignals(True)
         self.combo_supporting_docs.clear()
@@ -4233,7 +4252,7 @@ class InvoiceReviewApp(QMainWindow):
             self.combo_supporting_docs.addItem("暂无证明材料")
             self.combo_supporting_docs.setEnabled(False)
             self.btn_open_extra_files.setEnabled(False)
-            self.combo_supporting_docs.setToolTip("")
+            self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
             self.combo_supporting_docs.blockSignals(False)
             return
 
@@ -4258,7 +4277,7 @@ class InvoiceReviewApp(QMainWindow):
                     if abs_path_lower not in seen_paths:
                         seen_paths.add(abs_path_lower)
                         self.supporting_doc_items.append({
-                            "label": f"[已关联] {resolved.name}",
+                            "label": self._format_supporting_doc_label("已关联", resolved),
                             "path": resolved,
                             "status": "linked",
                             "type": "supporting"
@@ -4279,7 +4298,7 @@ class InvoiceReviewApp(QMainWindow):
                             if abs_path_lower not in seen_paths:
                                 seen_paths.add(abs_path_lower)
                                 self.supporting_doc_items.append({
-                                    "label": f"[待关联] {resolved.name}",
+                                    "label": self._format_supporting_doc_label("待关联", resolved),
                                     "path": resolved,
                                     "status": "pending",
                                     "type": "pending_evidence"
@@ -4293,17 +4312,27 @@ class InvoiceReviewApp(QMainWindow):
                 self.combo_supporting_docs.addItem(item["label"])
             self.combo_supporting_docs.setEnabled(True)
             self.btn_open_extra_files.setEnabled(True)
-            self.combo_supporting_docs.setCurrentIndex(0)
 
-            # Set tooltip for first item
-            first_item = self.supporting_doc_items[0]
-            status_text = "已关联" if first_item["status"] == "linked" else "待关联"
-            self.combo_supporting_docs.setToolTip(f"[{status_text}] {first_item['path']}")
+            # Determine selected index
+            matched_index = 0
+            if selected_path is not None:
+                selected_path_str = str(Path(selected_path).resolve()).lower()
+                for i, item in enumerate(self.supporting_doc_items):
+                    if item.get("path") and str(item["path"].resolve()).lower() == selected_path_str:
+                        matched_index = i
+                        break
+
+            self.combo_supporting_docs.setCurrentIndex(matched_index)
+
+            # Set tooltip for selected item
+            sel_item = self.supporting_doc_items[matched_index]
+            status_text = "已关联" if sel_item["status"] == "linked" else "待关联"
+            self.combo_supporting_docs.setToolTip(f"[{status_text}] {sel_item['path']}")
         else:
             self.combo_supporting_docs.addItem("暂无证明材料")
             self.combo_supporting_docs.setEnabled(False)
             self.btn_open_extra_files.setEnabled(False)
-            self.combo_supporting_docs.setToolTip("")
+            self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
 
         self.combo_supporting_docs.blockSignals(False)
 
@@ -4357,17 +4386,21 @@ class InvoiceReviewApp(QMainWindow):
                 from .helpers import resolve_invoice_documents_with_evidence
                 self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
 
+                # Update selector first with the path to keep it selected
+                self._update_supporting_docs_selector(self.current_invoice, selected_path=current_file_path)
+
                 # Locate the newly linked document in its new position (type=supporting)
                 new_idx = 0
-                for i, doc_item in enumerate(self.current_preview_docs):
-                    if doc_item.get("path") and current_file_path and str(doc_item["path"].resolve()).lower() == str(current_file_path.resolve()).lower():
-                        new_idx = i
-                        break
+                if current_file_path:
+                    current_file_path_abs = str(current_file_path.resolve()).lower()
+                    for i, doc_item in enumerate(self.current_preview_docs):
+                        if doc_item.get("path") and str(doc_item["path"].resolve()).lower() == current_file_path_abs:
+                            new_idx = i
+                            break
                 self.current_preview_index = new_idx
 
-                # Update preview and right supporting docs text
+                # Update preview last which handles synchronization
                 self._update_document_preview()
-                self._update_supporting_docs_selector(self.current_invoice)
                 self.statusBar().showMessage("已成功将证明材料关联到当前发票", 3000)
             else:
                 QMessageBox.warning(self, "关联失败", "无法将证明材料关联到当前发票，请重试。")

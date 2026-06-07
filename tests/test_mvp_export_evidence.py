@@ -32,10 +32,10 @@ class MvpExportEvidenceTests(unittest.TestCase):
             ws = wb["发票汇总"]
             headers = [cell.value for cell in ws[1]]
 
-            self.assertIn("用户备注", headers)
+            self.assertIn("个人备注", headers)
             self.assertIn("解析备注", headers)
 
-            user_note_col = headers.index("用户备注") + 1
+            user_note_col = headers.index("个人备注") + 1
             parse_note_col = headers.index("解析备注") + 1
             self.assertEqual(ws.cell(row=2, column=user_note_col).value, "项目A现场调试，和张三、李四午餐")
             self.assertEqual(ws.cell(row=2, column=parse_note_col).value, "PDF解析成功")
@@ -62,12 +62,12 @@ class MvpExportEvidenceTests(unittest.TestCase):
 
             self.assertIn("附加材料", headers)
             self.assertIn("缺少附件", headers)
-            self.assertIn("用户备注", headers)
+            self.assertIn("个人备注", headers)
             self.assertIn("校验提示", headers)
 
             has_extra_col = headers.index("附加材料") + 1
             missing_extra_col = headers.index("缺少附件") + 1
-            note_col = headers.index("用户备注") + 1
+            note_col = headers.index("个人备注") + 1
             warn_col = headers.index("校验提示") + 1
 
             self.assertEqual(ws.cell(row=2, column=has_extra_col).value, "有")
@@ -128,8 +128,8 @@ class MvpExportEvidenceTests(unittest.TestCase):
             wb = openpyxl.load_workbook(export_dir / "reimbursement.xlsx")
             ws = wb["发票汇总"]
             headers = [cell.value for cell in ws[1]]
-            self.assertIn("用户备注", headers)
-            note_col = headers.index("用户备注") + 1
+            self.assertIn("个人备注", headers)
+            note_col = headers.index("个人备注") + 1
             self.assertEqual(ws.cell(row=2, column=note_col).value, "项目A现场支持住宿")
 
 

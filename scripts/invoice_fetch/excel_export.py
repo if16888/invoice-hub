@@ -33,7 +33,7 @@ _COLUMNS = [
     ("attachment_path", "文件路径",   35),
     ("extra_paths",     "证明材料",   30),
     ("download_url",    "下载链接",   30),
-    ("confirmed_note",  "用户备注",    24),
+    ("confirmed_note",  "个人备注",    24),
     ("warning",         "校验提示",    24),
 ]
 
@@ -58,6 +58,28 @@ def _safe_excel_value(value):
     if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
         return "'" + value
     return value
+
+
+def _parse_paths(val) -> list[str]:
+    """Safely parse extra_paths (JSON list or single path string) into a list of strings."""
+    if not val:
+        return []
+    if isinstance(val, list):
+        return [str(p) for p in val if str(p).strip()]
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return []
+        if val.startswith("[") and val.endswith("]"):
+            try:
+                import json
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return [str(p) for p in parsed if str(p).strip()]
+            except Exception:
+                pass
+        return [val]
+    return [str(val)]
 
 
 def export_excel(rows: list[dict], dest: str | Path) -> Path:
@@ -96,9 +118,10 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
             elif key == "missing_extra":
                 val = "缺少" if val else ""
             elif key == "extra_paths":
-                if isinstance(val, list):
-                    val = "\n".join(str(p) for p in val if str(p).strip())
-                elif not val:
+                paths = _parse_paths(val)
+                if paths:
+                    val = "；".join(Path(p).name for p in paths)
+                else:
                     val = ""
             elif key == "download_url":
                 val = _mask_url(str(val or ""))
@@ -182,7 +205,7 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
         ("total_amount", "价税合计", 12),
         ("category", "分类", 12),
         ("parse_note", "解析备注", 24),
-        ("confirmed_note", "用户备注", 24),
+        ("confirmed_note", "个人备注", 24),
         ("extra_paths", "证明材料", 30),
         ("mail_subject", "邮件主题", 42),
         ("attachment_path", "文件路径", 35),
@@ -196,9 +219,10 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
         for col_idx, (key, _, _) in enumerate(exc_columns, 1):
             val = row.get(key, "")
             if key == "extra_paths":
-                if isinstance(val, list):
-                    val = "\n".join(str(p) for p in val if str(p).strip())
-                elif not val:
+                paths = _parse_paths(val)
+                if paths:
+                    val = "；".join(Path(p).name for p in paths)
+                else:
                     val = ""
             cell = ws.cell(row=row_idx, column=col_idx, value=val)
             _style_cell(cell)

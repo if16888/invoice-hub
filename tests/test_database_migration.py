@@ -286,9 +286,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             ws = wb["发票汇总"]
             headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
             self.assertIn("解析备注", headers)
-            self.assertIn("用户备注", headers)
+            self.assertIn("个人备注", headers)
             self.assertEqual(ws.cell(row=2, column=headers.index("解析备注") + 1).value, "Parsed from PDF")
-            self.assertEqual(ws.cell(row=2, column=headers.index("用户备注") + 1).value, "Lunch with client")
+            self.assertEqual(ws.cell(row=2, column=headers.index("个人备注") + 1).value, "Lunch with client")
 
     def test_old_database_migration_preserves_data_and_insert_works(self):
         with tempfile.TemporaryDirectory() as td:
