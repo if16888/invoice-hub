@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import requests
 from openpyxl import load_workbook
@@ -1180,6 +1180,29 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
         self.assertFalse(marked)
         self.assertEqual(db.marked, [])
+
+    def test_handle_pending_email_passes_row_mailbox_key_to_process_email(self):
+        row = {
+            "uid": 123,
+            "mail_date": "2026-06-07",
+            "mailbox_key": "train@example.com",
+        }
+        db = Mock()
+
+        with patch.object(cli, "_process_email", return_value=1) as mock_process:
+            marked = cli._handle_pending_email(
+                row=row,
+                fetcher=FakeFetcher(),
+                folder="INBOX",
+                att_handler=object(),
+                parser=object(),
+                link_dl=object(),
+                db=db,
+                categories={},
+            )
+
+        self.assertTrue(marked)
+        self.assertEqual(mock_process.call_args.kwargs["mailbox_key"], "train@example.com")
 
     def test_duplicate_subject_fallback_marks_email_downloaded(self):
         with tempfile.TemporaryDirectory() as td:

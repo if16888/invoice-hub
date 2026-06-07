@@ -9,6 +9,7 @@ INVOICE_KEYWORDS = [
     "开票", "票据", "发票下载", "发票查看",
     "高铁", "火车票", "铁路", "12306", "电子客票",
     "乘车", "车票", "train", "rail", "railway",
+    "报销凭证",
 ]
 
 # Strong negative signals: definitely NOT invoice-related

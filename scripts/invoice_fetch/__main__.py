@@ -2707,7 +2707,7 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool, mailbox_key: str | N
                  "by": provider, "reason": r.get("reason", ""),
                  "mailbox_key": mailbox_key or "legacy"}
                 for r in classified_results
-            ])
+            ], mailbox_key=mailbox_key or "legacy")
             if pending_count:
                 _log.warning("⚠️ AI 分类 API 失败，%d 封邮件将在下次运行时重试", pending_count)
 

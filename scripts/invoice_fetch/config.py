@@ -21,6 +21,10 @@ _EMAIL_PROVIDER_PRESETS = {
     "custom": {"server": "", "port": 993, "ssl": True},
 }
 _VALID_EMAIL_PROVIDERS = set(_EMAIL_PROVIDER_PRESETS)
+_PLACEHOLDER_EMAIL_ADDRESSES = {
+    "your_email@qq.com",
+    "your_email@example.com",
+}
 
 _DEFAULTS = {
     "email": {"provider": "qq", "address": "", "username": ""},
@@ -184,17 +188,23 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
                 raise SystemExit("email_accounts 中的每个账号都必须是对象")
             if raw.get("enabled", True) is False:
                 continue
+            if str(raw.get("address") or "").strip().lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
+                continue
             accounts.append(_normalize_email_account(raw, source_cfg=cfg))
-        return accounts
+        if accounts:
+            return accounts
 
     email_cfg = cfg.get("email", {}) if isinstance(cfg.get("email", {}), dict) else {}
+    legacy_email = str(email_cfg.get("address") or "").strip()
+    if not legacy_email or legacy_email.lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
+        return []
     imap_cfg = cfg.get("imap", {}) if isinstance(cfg.get("imap", {}), dict) else {}
     search_cfg = cfg.get("search", {}) if isinstance(cfg.get("search", {}), dict) else {}
     legacy_account = {
-        "name": str(email_cfg.get("name") or "").strip() or str(email_cfg.get("address") or "").strip() or str(email_cfg.get("provider") or "legacy"),
+        "name": str(email_cfg.get("name") or "").strip() or legacy_email or str(email_cfg.get("provider") or "legacy"),
         "enabled": True,
         "provider": email_cfg.get("provider") or "qq",
-        "address": email_cfg.get("address") or "",
+        "address": legacy_email,
         "username": email_cfg.get("username") or "",
         "imap": imap_cfg,
         "search": search_cfg,
@@ -315,7 +325,7 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
     else:
         # Validate legacy single-account config for backward compatibility.
         email_addr = cfg.get("email", {}).get("address", "")
-        if not email_addr or email_addr in {"your_email@qq.com", "your_email@example.com"}:
+        if not email_addr or email_addr.lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
             _log.error("请在 config.json 中设置真实的 email.address")
             raise SystemExit(1)
 
@@ -379,7 +389,7 @@ def validate_config_gui(cfg: dict) -> None:
         email_addr = email_cfg.get("address", "")
         if not email_addr:
             raise ValueError("邮箱地址不能为空。")
-        if email_addr in {"your_email@qq.com", "your_email@example.com"}:
+        if email_addr.lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
             raise ValueError("邮箱地址不能使用默认示例值（如 your_email@qq.com / your_email@example.com），请输入真实的邮箱地址。")
 
     try:

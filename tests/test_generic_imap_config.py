@@ -165,6 +165,46 @@ class GenericImapConfigTests(unittest.TestCase):
         self.assertEqual(accounts[0]["address"], "legacy@qq.com")
         self.assertEqual(accounts[0]["mailbox_key"], "legacy")
 
+    def test_disabled_account_list_falls_back_to_valid_legacy_account(self):
+        cfg = {
+            "email": {
+                "provider": "qq",
+                "address": "synthetic_user@qq.com",
+            },
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+            "email_accounts": [
+                {
+                    "name": "Disabled sample",
+                    "enabled": False,
+                    "provider": "qq",
+                    "address": "disabled@qq.com",
+                },
+            ],
+        }
+
+        accounts = get_email_accounts(cfg)
+
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0]["address"], "synthetic_user@qq.com")
+        self.assertEqual(accounts[0]["mailbox_key"], "legacy")
+
+    def test_placeholder_accounts_are_not_returned_as_enabled_mailboxes(self):
+        cfg = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "email_accounts": [
+                {
+                    "name": "Placeholder",
+                    "enabled": True,
+                    "provider": "qq",
+                    "address": "your_email@qq.com",
+                },
+            ],
+        }
+
+        self.assertEqual(get_email_accounts(cfg), [])
+
     def test_custom_imap_missing_server_fails(self):
         with self.assertRaises(ValueError):
             validate_config_gui({
@@ -204,7 +244,9 @@ class GenericImapConfigTests(unittest.TestCase):
         config_path = Path("config.example.json")
         raw = json.loads(config_path.read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(raw["email_accounts"]), 2)
-        self.assertTrue(all(account.get("enabled") is False for account in raw["email_accounts"]))
+        self.assertTrue(raw["email_accounts"][0].get("enabled"))
+        self.assertEqual(raw["email_accounts"][0]["address"], "your_email@qq.com")
+        self.assertFalse(raw["email_accounts"][1].get("enabled"))
         with self.assertRaises(SystemExit) as context:
             load_config(config_path)
         self.assertIn("至少配置一个启用的邮箱账号", str(context.exception))
@@ -323,6 +365,80 @@ class GenericImapConfigTests(unittest.TestCase):
                 self.assertIn("imap", dialog.cfg)
                 self.assertIn("search", dialog.cfg)
                 self.assertIn("ai", dialog.cfg)
+                self.assertEqual(len(dialog.cfg["email_accounts"]), 1)
+                self.assertEqual(dialog.cfg["email_accounts"][0]["address"], "test@qq.com")
+                self.assertTrue(dialog.cfg["email_accounts"][0]["enabled"])
+
+            dialog.close()
+            dialog.deleteLater()
+            app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping SettingsDialog GUI test: {e}")
+            raise
+
+    def test_settings_dialog_updates_matching_disabled_account_without_removing_others(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QWidget
+            import sys
+            from unittest.mock import MagicMock, patch
+
+            app = QApplication.instance() or QApplication(sys.argv)
+            from scripts.invoice_fetch.gui.app import SettingsDialog
+
+            parent = QWidget()
+            parent.write_log = MagicMock()
+            parent.config = {}
+            dialog = SettingsDialog(parent)
+            dialog.cfg = {
+                "email": {"provider": "qq", "address": "old@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+                "email_accounts": [
+                    {
+                        "name": "Old disabled",
+                        "enabled": False,
+                        "provider": "qq",
+                        "address": "test@qq.com",
+                        "mailbox_key": "test@qq.com",
+                    },
+                    {
+                        "name": "Other account",
+                        "enabled": True,
+                        "provider": "qq",
+                        "address": "other@qq.com",
+                        "mailbox_key": "other@qq.com",
+                    },
+                ],
+            }
+            dialog.txt_email.setText("test@qq.com")
+            dialog.txt_auth_code.setText("")
+            dialog.txt_months.setText("6")
+            dialog._select_provider_card("qq")
+            dialog.combo_ai_provider.setCurrentText("none")
+            dialog.test_success = True
+
+            with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
+                    patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value={"loaded": True}), \
+                    patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
+                    patch("scripts.invoice_fetch.gui.app.QMessageBox.warning"), \
+                    patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
+                dialog._save_mailbox_settings()
+
+            mock_save.assert_called_once()
+            self.assertEqual(len(dialog.cfg["email_accounts"]), 2)
+            updated = next(
+                account for account in dialog.cfg["email_accounts"]
+                if account["address"] == "test@qq.com"
+            )
+            self.assertTrue(updated["enabled"])
+            self.assertEqual(updated["mailbox_key"], "test@qq.com")
+            self.assertEqual(updated["search"]["months_back"], 6)
+            self.assertTrue(any(
+                account["address"] == "other@qq.com"
+                for account in dialog.cfg["email_accounts"]
+            ))
+            self.assertEqual(parent.config, {"loaded": True})
 
             dialog.close()
             dialog.deleteLater()

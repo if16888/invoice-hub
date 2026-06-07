@@ -971,6 +971,101 @@ class ClaimGroupsTests(unittest.TestCase):
 
         self.assertEqual(classify("高铁 12306 电子客票", "")[0], 1)
         self.assertEqual(classify("火车票 行程信息", "")[0], 1)
+        self.assertEqual(classify("铁路12306 电子客票退票费报销凭证", "")[0], 1)
+        self.assertEqual(classify("高铁票 行程信息提示", "")[0], 1)
+
+    def test_run_classify_isolates_same_uid_across_mailboxes(self):
+        from scripts.invoice_fetch import __main__ as cli
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_classify_mailbox_isolation.db"
+            with InvoiceDB(db_path) as db:
+                db.upsert_email(
+                    1,
+                    "电子发票",
+                    "billing@example.com",
+                    "2026-06-07",
+                    mailbox_key="account_a",
+                )
+                db.upsert_email(
+                    1,
+                    "铁路12306 电子客票退票费报销凭证",
+                    "rail@example.com",
+                    "2026-06-07",
+                    mailbox_key="account_b",
+                )
+
+                cli._run_classify(db, {"provider": "none"}, no_ai=True, mailbox_key="account_a")
+                account_a = db._conn.execute(
+                    "SELECT is_invoice FROM emails WHERE mailbox_key = ? AND uid = ?",
+                    ("account_a", 1),
+                ).fetchone()
+                account_b_before = db._conn.execute(
+                    "SELECT is_invoice FROM emails WHERE mailbox_key = ? AND uid = ?",
+                    ("account_b", 1),
+                ).fetchone()
+
+                cli._run_classify(db, {"provider": "none"}, no_ai=True, mailbox_key="account_b")
+                account_b_after = db._conn.execute(
+                    "SELECT is_invoice FROM emails WHERE mailbox_key = ? AND uid = ?",
+                    ("account_b", 1),
+                ).fetchone()
+
+            self.assertEqual(account_a["is_invoice"], 1)
+            self.assertEqual(account_b_before["is_invoice"], -1)
+            self.assertEqual(account_b_after["is_invoice"], 1)
+
+    def test_gui_scan_email_missing_accounts_shows_actionable_summary(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            import sys
+
+            app = QApplication.instance() or QApplication(sys.argv)
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_scan_missing_accounts.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    cfg = {
+                        "email": {"provider": "qq", "address": "your_email@qq.com"},
+                        "email_accounts": [
+                            {
+                                "enabled": False,
+                                "provider": "qq",
+                                "address": "disabled@qq.com",
+                            },
+                        ],
+                    }
+                    with patch(
+                        "scripts.invoice_fetch.config.load_config_safe",
+                        return_value=cfg,
+                    ), patch.object(
+                        window,
+                        "_open_settings_dialog",
+                    ) as mock_open_settings, patch.object(
+                        QMessageBox,
+                        "warning",
+                        return_value=QMessageBox.Ok,
+                    ) as mock_warning:
+                        window._scan_email_clicked()
+
+                    message = mock_warning.call_args.args[2]
+                    self.assertIn("当前没有启用的邮箱账号", message)
+                    self.assertIn("enabled=false", message)
+                    self.assertIn("email_accounts=1", window.txt_log.toPlainText())
+                    self.assertIn("enabled_accounts=0", window.txt_log.toPlainText())
+                    self.assertNotIn("disabled@qq.com", window.txt_log.toPlainText())
+                    mock_open_settings.assert_called_once()
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
 
     def test_gui_mask_url_behavior(self):
         from scripts.invoice_fetch.gui.helpers import _mask_url

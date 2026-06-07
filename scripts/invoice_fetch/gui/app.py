@@ -3200,10 +3200,29 @@ class InvoiceReviewApp(QMainWindow):
         cfg = load_config_safe()
         accounts = get_email_accounts(cfg)
         if not accounts:
+            raw_accounts = cfg.get("email_accounts")
+            raw_accounts = raw_accounts if isinstance(raw_accounts, list) else []
+            legacy_email = str(cfg.get("email", {}).get("address") or "").strip()
+            legacy_configured = bool(
+                legacy_email
+                and legacy_email.lower() not in {
+                    "your_email@qq.com",
+                    "your_email@example.com",
+                }
+            )
+            self.write_log(
+                "⚠️ [邮箱扫描] 未找到启用账号："
+                f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
+                f"email_accounts={len(raw_accounts)}，enabled_accounts=0。"
+            )
             QMessageBox.warning(
                 self,
-                "\u914d\u7f6e\u7f3a\u5931",
-                "\u8bf7\u5148\u5728 [\u8bbe\u7f6e] \u4e2d\u914d\u7f6e\u81f3\u5c11\u4e00\u4e2a\u542f\u7528\u7684\u90ae\u7bb1\u8d26\u53f7\u3002",
+                "配置缺失",
+                (
+                    "当前没有启用的邮箱账号。\n"
+                    "如果刚刚在设置页保存过邮箱，请重新保存一次；"
+                    "或检查 config.json 中 email_accounts 是否全部 enabled=false。"
+                ),
             )
             self._open_settings_dialog()
             return
@@ -4767,7 +4786,55 @@ class SettingsDialog(QDialog):
         self.cfg["email"]["username"] = email
         self.cfg["imap"]["server"] = imap_server
         self.cfg["imap"]["port"] = int(imap_port_str)
+        self.cfg["imap"]["ssl"] = True
+        self.cfg["search"]["folder"] = "INBOX"
         self.cfg["search"]["months_back"] = int(months_str)
+
+        provider_names = {
+            "qq": "QQ 邮箱",
+            "netease_163": "163 网易邮箱",
+            "netease_126": "126 网易邮箱",
+            "gmail": "Gmail",
+            "outlook": "Outlook",
+            "custom": "自定义 IMAP",
+        }
+        account = {
+            "name": provider_names.get(provider, provider),
+            "enabled": True,
+            "provider": provider,
+            "address": email,
+            "username": email,
+            "imap": {
+                "server": imap_server,
+                "port": int(imap_port_str),
+                "ssl": True,
+            },
+            "search": {
+                "folder": "INBOX",
+                "months_back": int(months_str),
+            },
+            "mailbox_key": email.lower(),
+        }
+        raw_accounts = self.cfg.get("email_accounts")
+        email_accounts = [
+            dict(existing)
+            for existing in raw_accounts
+            if isinstance(existing, dict)
+        ] if isinstance(raw_accounts, list) else []
+        match_index = next(
+            (
+                index
+                for index, existing in enumerate(email_accounts)
+                if str(existing.get("address") or "").strip().lower() == email.lower()
+                or str(existing.get("mailbox_key") or "").strip().lower() == email.lower()
+            ),
+            None,
+        )
+        if match_index is None:
+            email_accounts.append(account)
+        else:
+            email_accounts[match_index] = account
+        self.cfg["email_accounts"] = email_accounts
 
         try:
             save_config(self.cfg)
