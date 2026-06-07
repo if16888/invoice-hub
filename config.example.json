@@ -60,6 +60,11 @@
   "playwright": {
     "channel": "auto"
   },
+  "link_download": {
+    "timeout_ms": 10000,
+    "max_links_per_email": 5,
+    "skip_when_attachment_invoice_present": true
+  },
   "categories": {
     "hotel": {
       "keywords": ["住宿", "酒店", "hotel", "入住", "客房", "房费", "华住", "锦江", "如家", "汉庭", "全季", "亚朵", "希尔顿", "万豪", "洲际", "喜来登"],

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import ipaddress
 import logging
@@ -245,10 +246,28 @@ class LinkDownloader:
     def __init__(self, download_dir: str | Path, timeout_ms: int = 30_000, headed: bool = False):
         self._dir = Path(download_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
+        # Per-config capacity limits (can be overridden via config)
+        from .config import load_config_safe
+        cfg = load_config_safe()
+        link_cfg = cfg.get("link_download", {}) if isinstance(cfg, dict) else {}
         self._timeout = timeout_ms
+        cfg_timeout = link_cfg.get("timeout_ms")
+        if cfg_timeout is not None:
+            self._timeout = int(cfg_timeout)
+        self._max_links_per_email = int(link_cfg.get("max_links_per_email", 5))
+        self._skip_when_attachment_invoice_present = bool(
+            link_cfg.get("skip_when_attachment_invoice_present", True)
+        )
         self._pw = None
         self._browser = None
         self._headed = headed
+        # Per-process failed URL fingerprint cache — avoid retrying known failures
+        self.failed_url_fingerprints: set[str] = set()
+
+    @staticmethod
+    def _url_fingerprint(url: str) -> str:
+        """Return a hashed fingerprint for a URL — deterministic, not reversible."""
+        return hashlib.sha256(url.encode()).hexdigest()[:16]
 
     def _ensure_browser(self):
         if self._browser:
@@ -347,15 +366,32 @@ class LinkDownloader:
         if not links:
             return []
 
-        _log.info("Found %d invoice links (deduped to %d)", len(raw_links), len(links))
+        found = len(raw_links)
+        deduped = len(links)
 
         results: list[DownloadedFile] = []
+        skipped_cached = 0
+        start_time = time.perf_counter()
         for i, url in enumerate(links):
-            if len(results) >= 3:
+            if len(results) >= self._max_links_per_email:
                 break
+            # Skip URLs that already failed this session
+            fp = self._url_fingerprint(url)
+            if fp in self.failed_url_fingerprints:
+                skipped_cached += 1
+                _log.info("跳过本轮已失败链接: <%s>", fp)
+                continue
             r = self._download_url(url, mail_uid, i, date_str)
             if r:
                 results.append(r)
+
+        elapsed = time.perf_counter() - start_time
+        success = len(results)
+        failed = len(links) - success - skipped_cached
+        _log.info(
+            "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d elapsed=%.1fs",
+            found, deduped, success, failed, skipped_cached, elapsed,
+        )
         return results
 
     def _download_url(self, url: str, mail_uid: int, idx: int, date_str: str) -> DownloadedFile | None:
@@ -423,6 +459,7 @@ class LinkDownloader:
                 size = os.path.getsize(downloaded_path)
                 if size < 500:
                     os.remove(downloaded_path)
+                    self.failed_url_fingerprints.add(self._url_fingerprint(url))
                     return None
                 with open(downloaded_path, "rb") as f:
                     header = f.read(5)
@@ -435,9 +472,12 @@ class LinkDownloader:
                         is_invoice=True,
                     )
                 os.remove(downloaded_path)
+            # Cache the failure fingerprint to avoid re-attempting in this session
+            self.failed_url_fingerprints.add(self._url_fingerprint(url))
             return None
         except Exception as exc:
-            _log.warning("Browser download failed: %s", exc)
+            _log.debug("Browser download failed for <%s>: %s", self._url_fingerprint(url), exc)
+            self.failed_url_fingerprints.add(self._url_fingerprint(url))
             return None
         finally:
             if ctx:
@@ -478,5 +518,5 @@ class LinkDownloader:
             return None
 
     def _try_page_print_pdf(self, page, save_dir: Path, mail_uid: int, idx: int) -> str | None:
-        _log.info("Skipping webpage print-to-PDF fallback; official PDF/OFD download was not obtained.")
+        _log.debug("Skipping webpage print-to-PDF fallback; official PDF/OFD download was not obtained.")
         return None

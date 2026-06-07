@@ -298,14 +298,24 @@ def _safe_date_dirname(invoice_date: str) -> str:
         return "unknown_date"
 
 
+# Module-level context for filename conflict log severity
+_rename_source_mode: str = "normal"
+
+
 def _rename_by_invoice_code(
     file_path: str, invoice_code: str, invoice_date: str,
     att_dir: Path, is_extra: bool = False,
     category: str = "", total_amount: str = "", invoice_number: str = "",
+    source_mode: str | None = None,
 ) -> str:
     """Rename a file to ``{date}/{category}_{amount}_{invoice_number}.pdf``.
 
     Returns the new relative path under RUNTIME_DIR.
+
+    ``source_mode`` controls log severity for name conflicts:
+    - ``"normal"`` – WARNING (first scan)
+    - ``"reprocess"`` / ``"repair"`` – INFO (safe re-download / reprocess)
+    If ``None`` (default), defers to the module-level ``_rename_source_mode``.
     """
     if not file_path or not invoice_code:
         return file_path  # can't rename without a code
@@ -330,18 +340,27 @@ def _rename_by_invoice_code(
 
     dest = date_dir / new_name
     # Avoid overwriting a different file; keep both invoices visible.
+    effective_mode = source_mode if source_mode is not None else _rename_source_mode
     if dest.exists() and dest != src:
         stem = dest.stem
         for n in range(1, 100):
             candidate = date_dir / f"{stem}_{n}{ext}"
             if not candidate.exists():
                 dest = candidate
-                _log.warning("  文件名冲突，改用序号保存: %s", mask_filename(dest.name))
+                conflict_msg = f"  检测到同名文件，已安全改名保存: {mask_filename(dest.name)}"
+                if effective_mode in ("reprocess", "repair"):
+                    _log.info(conflict_msg)
+                else:
+                    _log.warning(conflict_msg)
                 break
         else:
             timestamp = datetime.now().strftime("%H%M%S")
             dest = date_dir / f"{stem}_{timestamp}{ext}"
-            _log.warning("  文件名冲突过多，改用时间戳保存: %s", mask_filename(dest.name))
+            conflict_msg = f"  文件名冲突过多，改用时间戳保存: {mask_filename(dest.name)}"
+            if effective_mode in ("reprocess", "repair"):
+                _log.warning(conflict_msg)
+            else:
+                _log.warning(conflict_msg)
 
     if src != dest:
         if is_extra:
@@ -1183,7 +1202,41 @@ def _refresh_invoice_from_parse(
     missing_extra: bool,
     parse_note: str,
 ) -> bool:
-    """Refresh parsed invoice metadata in place."""
+    """Refresh parsed invoice metadata in place, with safe backfill.
+
+    - approved/claimed invoices: skip business-field refresh (only backfill attachment_path)
+    - to_review/error invoices: refresh all fields + safe backfill missing fields
+    """
+    existing_status = str(existing.get("review_status") or "to_review")
+    is_approved = existing_status in ("approved",)
+
+    if is_approved:
+        # Approved: skip business-field metadata overwrite, but signal
+        # success so callers can still backfill attachment_path.
+        _log.info("  重复发票已审核，跳过元数据刷新但允许附件回填: existing_id=%d", existing["id"])
+        return True
+
+    # For to_review / error / ignored: refresh + safe backfill missing fields
+    backfill_fields = {}
+    for field_key, new_val in [
+        ("seller_name", seller_name),
+        ("buyer_name", buyer_name),
+        ("invoice_date", invoice_date),
+        ("total_amount", total_amount),
+        ("amount", amount),
+        ("category", category),
+        ("invoice_type", invoice_type),
+    ]:
+        existing_val = str(existing.get(field_key) or "").strip()
+        new_val_str = str(new_val or "").strip()
+        if new_val_str and not existing_val:
+            backfill_fields[field_key] = new_val_str
+
+    if backfill_fields:
+        db.update_invoice_missing_fields(
+            existing["id"], backfill_fields, only_if_empty=True,
+        )
+
     return db.update_invoice_parsed_metadata(
         existing["id"],
         invoice_number=invoice_number,
@@ -1894,6 +1947,7 @@ def _process_email(
     categories: dict,
     mailbox_key: str = "legacy",
     config: dict | None = None,
+    source_mode: str = "normal",
 ) -> int:
     """Process a single email.  Return the number of invoices recorded."""
     _log.info("── 处理 %s: %s", mask_uid(msg.uid), redact_text(msg.subject[:60], "subject"))
@@ -1918,7 +1972,19 @@ def _process_email(
                            for kw in ["发票", "invoice", "fapiao", "电子发票", "行程单"])
     downloaded = []
     if has_invoice_hint:
-        downloaded = link_dl.download_from_email(msg.raw_msg, msg.uid, msg.date)
+        # ── Skip browser link download when attachment invoices already parse successfully ──
+        skip_for_attachment = False
+        if getattr(link_dl, "_skip_when_attachment_invoice_present", True):
+            success_attachment_pdfs = [
+                att for att, info in parsed_invoice_pdfs
+                if info.parse_success
+            ]
+            if success_attachment_pdfs:
+                skip_for_attachment = True
+                _log.info("附件中已存在可解析发票，跳过浏览器链接下载")
+
+        if not skip_for_attachment:
+            downloaded = link_dl.download_from_email(msg.raw_msg, msg.uid, msg.date)
 
     downloaded_invoice_items = [
         (dl, parser.parse_pdf(dl.file_path))
@@ -2056,11 +2122,29 @@ def _process_email(
                 if duplicate:
                     _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
                     _log_existing_invoice_duplicate(duplicate, "link_download_duplicate")
+                    code = info.invoice_code or info.invoice_number
+                    cat_ld, extra_type_ld, extra_req_ld = _classify(
+                        msg.subject, msg.sender, info.seller_name, categories)
+                    # ── Backfill attachment_path before removing the download ──
+                    if os.path.exists(dl.file_path):
+                        backfill_path = _rename_by_invoice_code(
+                            dl.file_path, code, info.invoice_date or msg.date,
+                            att_handler._base,
+                            category=cat_ld, total_amount=info.total_amount,
+                            invoice_number=info.invoice_number)
+                        if backfill_path:
+                            backfill_abs = str((att_handler._base.parent / backfill_path).resolve())
+                            if backfill_abs not in kept_paths:
+                                kept_paths.add(backfill_abs)
+                            file_hash_val = _sha256_file(Path(backfill_abs)) if os.path.exists(backfill_abs) else ""
+                            db.update_invoice_attachment_path_if_missing(
+                                duplicate["id"], backfill_path, file_hash=file_hash_val or None,
+                            )
+                        # Clean up the downloaded file for the duplicate
+                        if os.path.exists(dl.file_path):
+                            os.remove(dl.file_path)
                     invoice_extras = extras_for_invoice(info)
                     if invoice_extras:
-                        code = info.invoice_code or info.invoice_number
-                        cat, extra_type, extra_req = _classify(
-                            msg.subject, msg.sender, info.seller_name, categories)
                         _attach_email_extras_to_invoice(
                             db=db,
                             invoice_id=duplicate["id"],
@@ -2068,7 +2152,7 @@ def _process_email(
                             code=code,
                             inv_date=info.invoice_date or msg.date,
                             att_base=att_handler._base,
-                            category=cat,
+                            category=cat_ld,
                             total_amount=info.total_amount,
                             invoice_number=info.invoice_number,
                             kept_paths=kept_paths,
@@ -2076,9 +2160,6 @@ def _process_email(
                         )
                     link_pdf_skipped_as_duplicate = True
                     recorded += 1
-                    # Clean up the downloaded file for the duplicate
-                    if os.path.exists(dl.file_path):
-                        os.remove(dl.file_path)
                     continue
                 cat, extra_type, extra_req = _classify(
                     msg.subject, msg.sender, info.seller_name, categories)
@@ -2254,11 +2335,27 @@ def _process_email(
         if duplicate:
             _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
             _log_existing_invoice_duplicate(duplicate, "attachment_duplicate")
+            # Define category for both backfill and extras
+            cat_dup, extra_type_dup, extra_req_dup = _classify(
+                msg.subject, msg.sender, info.seller_name, categories)
+            code = info.invoice_code or info.invoice_number
+            # ── Backfill attachment_path for duplicate with missing original ──
+            if att.file_path and os.path.exists(att.file_path):
+                dup_att_path = _rename_by_invoice_code(
+                    att.file_path, code, info.invoice_date or msg.date,
+                    att_handler._base,
+                    category=cat_dup, total_amount=info.total_amount,
+                    invoice_number=info.invoice_number)
+                if dup_att_path:
+                    dup_abs = str((att_handler._base.parent / dup_att_path).resolve())
+                    if dup_abs not in kept_paths:
+                        kept_paths.add(dup_abs)
+                    file_hash_val = _sha256_file(Path(dup_abs)) if os.path.exists(dup_abs) else ""
+                    db.update_invoice_attachment_path_if_missing(
+                        duplicate["id"], dup_att_path, file_hash=file_hash_val or None,
+                    )
             invoice_extras = extras_for_invoice(info)
             if invoice_extras:
-                code = info.invoice_code or info.invoice_number
-                cat, extra_type, extra_req = _classify(
-                    msg.subject, msg.sender, info.seller_name, categories)
                 _attach_email_extras_to_invoice(
                     db=db,
                     invoice_id=duplicate["id"],
@@ -2266,7 +2363,7 @@ def _process_email(
                     code=code,
                     inv_date=info.invoice_date or msg.date,
                     att_base=att_handler._base,
-                    category=cat,
+                    category=cat_dup,
                     total_amount=info.total_amount,
                     invoice_number=info.invoice_number,
                     kept_paths=kept_paths,
@@ -3758,6 +3855,11 @@ def _reprocess_email_records(
     parser = InvoiceParser()
     link_dl = LinkDownloader(att_dir, headed=headed)
 
+    # ── Downgrade filename conflict logs during reprocess ──
+    global _rename_source_mode
+    prev_rename_mode = _rename_source_mode
+    _rename_source_mode = "reprocess"
+
     reprocessed_count = 0
     failed_count = 0
     new_records_count = 0
@@ -3834,6 +3936,9 @@ def _reprocess_email_records(
             failed_count += len(pending)
 
     link_dl.close()
+
+    # ── Restore filename conflict log severity ──
+    _rename_source_mode = prev_rename_mode
 
     print("\n邮箱重处理完成：")
     print(f"- 选中邮件：{len(records)} 封")

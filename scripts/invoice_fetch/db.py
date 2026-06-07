@@ -758,6 +758,89 @@ class InvoiceDB:
         self._conn.commit()
         return True
 
+    def update_invoice_attachment_path_if_missing(
+        self, invoice_id: int, attachment_path: str, file_hash: str | None = None
+    ) -> bool:
+        """Backfill attachment_path only when the existing record lacks a valid local file.
+
+        Returns True if a backfill was performed.
+        """
+        inv = self.get_invoice(invoice_id)
+        if not inv:
+            return False
+
+        existing_path = str(inv.get("attachment_path") or "").strip()
+        if existing_path:
+            from pathlib import Path as _Path
+            from .gui.helpers import resolve_stored_path
+            from .config import RUNTIME_DIR
+            resolved = resolve_stored_path(existing_path, RUNTIME_DIR)
+            if resolved and resolved.exists():
+                return False  # already has a valid file
+
+        values = [attachment_path]
+        extra_sql = ""
+        if file_hash:
+            extra_sql = ", file_hash = ?"
+            values.append(file_hash)
+        values.append(invoice_id)
+
+        self._conn.execute(
+            f"UPDATE invoices SET attachment_path = ?{extra_sql} WHERE id = ?",
+            values,
+        )
+        self._conn.commit()
+        _log.info("重复发票已有记录缺少原件，已回填附件路径: existing_id=%d", invoice_id)
+        return True
+
+    def update_invoice_missing_fields(
+        self,
+        invoice_id: int,
+        fields: dict,
+        *,
+        only_if_empty: bool = True,
+        allow_review_statuses: tuple = ("to_review", "error"),
+    ) -> dict:
+        """Safely backfill missing fields on an existing invoice.
+
+        Returns ``{"updated_fields": [...], "skipped_fields": [...]}``.
+        """
+        inv = self.get_invoice(invoice_id)
+        if not inv:
+            return {"updated_fields": [], "skipped_fields": []}
+
+        review_status = str(inv.get("review_status") or "to_review")
+        updated: list[str] = []
+        skipped: list[str] = []
+
+        for key, new_val in fields.items():
+            if new_val is None or str(new_val).strip() == "":
+                skipped.append(key)
+                continue
+
+            existing_val = str(inv.get(key) or "").strip()
+            if only_if_empty and existing_val:
+                skipped.append(key)
+                continue
+
+            # Never backfill business fields on approved/claimed invoices
+            if key != "attachment_path" and review_status not in allow_review_statuses:
+                skipped.append(key)
+                continue
+
+            try:
+                self._conn.execute(
+                    f"UPDATE invoices SET {key} = ? WHERE id = ?",
+                    (str(new_val).strip(), invoice_id),
+                )
+                self._conn.commit()
+                updated.append(key)
+                _log.info("重复发票缺少%s，已从本次解析结果回填: existing_id=%d", key, invoice_id)
+            except Exception:
+                skipped.append(key)
+
+        return {"updated_fields": updated, "skipped_fields": skipped}
+
     def update_invoice_source_by_hashes(self, hash_to_subject: dict[str, str], sender: str) -> int:
         """Update source metadata for imported files matched by SHA256."""
         updated = 0

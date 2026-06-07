@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
 from PySide6.QtCore import Qt, QUrl, QThread, Signal, QTimer, QEvent
+from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPixmap
 
 HAS_QT_PDF = None
@@ -2297,6 +2298,7 @@ class InvoiceReviewApp(QMainWindow):
                                     category=cat,
                                     total_amount=info.total_amount,
                                     invoice_number=info.invoice_number,
+                                    source_mode="reprocess",
                                 )
                                 updated = self.db.update_invoice_parsed_metadata(
                                     invoice_id=inv_id,
@@ -3465,6 +3467,7 @@ class InvoiceReviewApp(QMainWindow):
         self.image_scroll_area = QScrollArea()
         self.image_scroll_area.setWidgetResizable(True)
         self.image_scroll_area.setAlignment(Qt.AlignCenter)
+        self.image_scroll_area.installEventFilter(self)
         # Dynamic Resizing scaling for image in FitToWidth / FitInView modes
         self.image_scroll_area.resizeEvent = lambda event: (
             QScrollArea.resizeEvent(self.image_scroll_area, event),
@@ -3515,24 +3518,26 @@ class InvoiceReviewApp(QMainWindow):
         tb_layout.setContentsMargins(4, 0, 4, 0)
         tb_layout.setSpacing(3)
 
-        # Left / Prev Doc button
+        # Left / Prev Doc button (file-level)
         self.btn_prev = QPushButton("←")
         self.btn_prev.clicked.connect(self._prev_preview_doc)
         self.btn_prev.setFixedWidth(18)
         self.btn_prev.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.btn_prev.setToolTip("上一文件")
         tb_layout.addWidget(self.btn_prev)
 
-        # File index/name display (minimal format e.g. 1/1 主发票)
+        # File index/name display (minimal format e.g. 文件 1/2｜主发票｜PDF 1/7)
         self.lbl_file_info = QLabel("0 / 0 无文件")
         self.lbl_file_info.setAlignment(Qt.AlignCenter)
         self.lbl_file_info.setStyleSheet("font-weight: bold; color: #374151; font-size: 11px; padding: 0 2px; background: transparent; border: none;")
         tb_layout.addWidget(self.lbl_file_info)
 
-        # Right / Next Doc button
+        # Right / Next Doc button (file-level)
         self.btn_next = QPushButton("→")
         self.btn_next.clicked.connect(self._next_preview_doc)
         self.btn_next.setFixedWidth(18)
         self.btn_next.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.btn_next.setToolTip("下一文件")
         tb_layout.addWidget(self.btn_next)
 
         # Divider Frame helper
@@ -3542,6 +3547,23 @@ class InvoiceReviewApp(QMainWindow):
             sep.setFrameShadow(QFrame.Plain)
             sep.setStyleSheet("color: #E5E7EB; max-height: 14px; background: transparent; border: none; border-left: 1px solid #E5E7EB;")
             tb_layout.addWidget(sep)
+
+        add_divider()
+
+        # ── PDF page-level navigation ──
+        self.btn_prev_page = QPushButton("◀ 上一页")
+        self.btn_prev_page.clicked.connect(self._prev_pdf_page)
+        self.btn_prev_page.setToolTip("PDF 上一页")
+        self.btn_prev_page.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.btn_prev_page.setEnabled(False)
+        tb_layout.addWidget(self.btn_prev_page)
+
+        self.btn_next_page = QPushButton("下一页 ▶")
+        self.btn_next_page.clicked.connect(self._next_pdf_page)
+        self.btn_next_page.setToolTip("PDF 下一页")
+        self.btn_next_page.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.btn_next_page.setEnabled(False)
+        tb_layout.addWidget(self.btn_next_page)
 
         add_divider()
 
@@ -3601,6 +3623,9 @@ class InvoiceReviewApp(QMainWindow):
         self.overlay_toolbar.setVisible(False)
         self._set_zoom_buttons_enabled(False)
 
+        # Register Ctrl+Left/Ctrl+Right shortcuts for file-level navigation
+        self._register_navigation_shortcuts()
+
     def _reposition_overlay_toolbar(self):
         if self.overlay_toolbar.isVisible() and hasattr(self, "preview_container") and self.preview_container.width() > 0:
             tb_size = self.overlay_toolbar.sizeHint()
@@ -3645,6 +3670,15 @@ class InvoiceReviewApp(QMainWindow):
             action_next.triggered.connect(self._next_preview_doc)
             menu.addSeparator()
 
+        # PDF page navigation
+        _, page_count = self._get_pdf_page_info()
+        if page_count is not None and page_count > 1:
+            action_prev_page = menu.addAction("◀ 上一页")
+            action_prev_page.triggered.connect(self._prev_pdf_page)
+            action_next_page = menu.addAction("下一页 ▶")
+            action_next_page.triggered.connect(self._next_pdf_page)
+            menu.addSeparator()
+
         action_fit_width = menu.addAction("适宽")
         action_fit_width.triggered.connect(self._zoom_fit_width)
 
@@ -3666,17 +3700,48 @@ class InvoiceReviewApp(QMainWindow):
 
         menu.exec(self.preview_container.mapToGlobal(pos))
 
+    def _focus_is_editing_widget(self) -> bool:
+        """Return True if the currently focused widget should receive raw keyboard input."""
+        focused = QApplication.focusWidget()
+        if focused is None:
+            return False
+        from PySide6.QtWidgets import (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox,
+                                        QAbstractSpinBox, QSpinBox, QDoubleSpinBox)
+        if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox,
+                                QAbstractSpinBox, QSpinBox, QDoubleSpinBox)):
+            return True
+        return False
+
     def eventFilter(self, watched, event) -> bool:
-        if watched == self.preview_container:
+        if watched is getattr(self, "preview_container", None):
             if event.type() == QEvent.Type.Enter:
                 self._show_overlay_toolbar()
             elif event.type() == QEvent.Type.Leave:
                 self._start_hide_overlay_timer()
-        elif watched == self.overlay_toolbar:
+        elif watched is getattr(self, "overlay_toolbar", None):
             if event.type() == QEvent.Type.Enter:
                 self.overlay_hide_timer.stop()
             elif event.type() == QEvent.Type.Leave:
                 self._start_hide_overlay_timer()
+        # ── Capture Left/Right keys in the PDF view for page-level navigation ──
+        elif watched is getattr(self, "pdf_view", None):
+            if event.type() == QEvent.Type.KeyPress:
+                if event.key() == Qt.Key_Left:
+                    if not self._navigate_pdf_page(-1):
+                        self._prev_preview_doc()  # fallback to file-level
+                    return True
+                elif event.key() == Qt.Key_Right:
+                    if not self._navigate_pdf_page(1):
+                        self._next_preview_doc()  # fallback to file-level
+                    return True
+        elif watched is getattr(self, "image_scroll_area", None):
+            if event.type() == QEvent.Type.KeyPress:
+                if event.key() == Qt.Key_Left:
+                    self._prev_preview_doc()
+                    return True
+                elif event.key() == Qt.Key_Right:
+                    self._next_preview_doc()
+                    return True
         return super().eventFilter(watched, event)
 
     def _set_zoom_buttons_enabled(self, enabled: bool):
@@ -3801,13 +3866,20 @@ class InvoiceReviewApp(QMainWindow):
         title = doc["title"]
         basename = doc["basename"]
 
-        # Truncate filename if it is too long to keep overlay compact, format 1/1 主发票
-        self.lbl_file_info.setText(f"{idx + 1}/{len(self.current_preview_docs)} {title}")
+        # ── Format file info with PDF page distinction ──
+        pdf_page, pdf_page_count = self._get_pdf_page_info()
+        file_info_text = self._format_preview_file_info(doc, idx, len(self.current_preview_docs), pdf_page, pdf_page_count)
+        self.lbl_file_info.setText(file_info_text)
         self.lbl_file_info.setToolTip(f"{title}: {basename}\n路径: {file_path.resolve()}")
 
         self.btn_prev.setEnabled(len(self.current_preview_docs) > 1)
         self.btn_next.setEnabled(len(self.current_preview_docs) > 1)
         self.btn_open_ext.setEnabled(True)
+        # Disable PDF page buttons initially (will be refreshed after PDF load)
+        if hasattr(self, "btn_prev_page"):
+            self.btn_prev_page.setEnabled(False)
+        if hasattr(self, "btn_next_page"):
+            self.btn_next_page.setEnabled(False)
 
         is_pending = (doc.get("type") == "pending_evidence" and doc.get("evidence_id") is not None)
         if hasattr(self, "btn_link_evidence"):
@@ -3843,13 +3915,30 @@ class InvoiceReviewApp(QMainWindow):
                     self.pdf_document = QPdfDocument(self)
                     self.pdf_view = QPdfView(self)
                     self.pdf_view.setDocument(self.pdf_document)
-                    self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
+                    # ── PDF MultiPage: prefer MultiPage, fallback to SinglePage ──
+                    if hasattr(QPdfView.PageMode, "MultiPage"):
+                        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+                    else:
+                        self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
+                        _log.info("当前 Qt PDF 组件不支持 MultiPage，已降级为单页预览")
                     self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
                     self.preview_stack.addWidget(self.pdf_view)
+                    # Install event filter to capture key events that QPdfView may consume
+                    self.pdf_view.installEventFilter(self)
 
                 self.pdf_document.load(str(file_path))
+                # Re-apply MultiPage preference on every load
+                if hasattr(QPdfView.PageMode, "MultiPage"):
+                    self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+                else:
+                    self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
                 self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
                 self.preview_stack.setCurrentWidget(self.pdf_view)
+                # ── Refresh PDF-page-aware file info after loading ──
+                self._refresh_preview_file_info()
+                self._update_pdf_page_buttons()
+                # ── Connect pageNavigator signal if available ──
+                self._connect_pdf_page_navigator()
             else:
                 used_fallback = True
                 if self.lbl_pdf_fallback is None:
@@ -3893,11 +3982,186 @@ class InvoiceReviewApp(QMainWindow):
         if hasattr(self, "current_preview_docs") and self.current_preview_docs:
             self.current_preview_index = (self.current_preview_index - 1) % len(self.current_preview_docs)
             self._update_document_preview()
+            self._refresh_preview_file_info()
+            self._update_pdf_page_buttons()
 
     def _next_preview_doc(self):
         if hasattr(self, "current_preview_docs") and self.current_preview_docs:
             self.current_preview_index = (self.current_preview_index + 1) % len(self.current_preview_docs)
             self._update_document_preview()
+            self._refresh_preview_file_info()
+            self._update_pdf_page_buttons()
+
+    # ── PDF multi-page helpers ────────────────────────────────────────
+
+    def _format_preview_file_info(self, doc: dict, file_index: int, file_count: int,
+                                   pdf_page: int | None = None, pdf_page_count: int | None = None) -> str:
+        """Build display string distinguishing file-level from PDF page-level navigation.
+
+        Non-PDF:  "文件 1/2｜主发票"
+        PDF:      "文件 1/2｜主发票｜PDF 1/7"  or  "文件 1/2｜主发票｜PDF 共 7 页"
+        """
+        title = doc.get("title", "文件")
+        base = f"文件 {file_index + 1}/{file_count}｜{title}"
+
+        suffix = file_path = doc.get("path")
+        if suffix is not None and hasattr(suffix, "suffix"):
+            suffix = suffix.suffix.lower()
+        elif suffix is not None and hasattr(suffix, "lower"):
+            suffix = suffix.lower()
+        else:
+            suffix = ""
+
+        if suffix != ".pdf" or pdf_page_count is None:
+            return base
+
+        if pdf_page is not None:
+            return f"{base}｜PDF {pdf_page}/{pdf_page_count}"
+        return f"{base}｜PDF 共 {pdf_page_count} 页"
+
+    def _get_pdf_page_info(self) -> tuple[int | None, int | None]:
+        """Return (current_page 1-based, total_pages) or (None, None) if not a PDF."""
+        QPdfDocument, QPdfView = get_qt_pdf_classes()
+        if QPdfDocument is None:
+            return None, None
+        pdf_view = getattr(self, "pdf_view", None)
+        pdf_doc = getattr(self, "pdf_document", None)
+        if pdf_view is None or pdf_doc is None:
+            return None, None
+        if self.preview_stack.currentWidget() != pdf_view:
+            return None, None
+        try:
+            page_count = pdf_doc.pageCount()
+        except Exception:
+            return None, None
+        if page_count <= 0:
+            return None, None
+
+        current_page = None
+        # Try to read current page from pageNavigator (PySide6 >= 6.5)
+        try:
+            nav = pdf_doc.pageNavigator()
+            if nav is not None:
+                cp = nav.currentPage()
+                if cp is not None and isinstance(cp, int):
+                    current_page = cp + 1  # 0-based → 1-based
+        except Exception:
+            pass
+        return current_page, page_count
+
+    def _refresh_preview_file_info(self):
+        """Recompute overlay toolbar file-info label in-place without reloading the preview."""
+        if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
+            return
+        idx = self.current_preview_index
+        if idx < 0 or idx >= len(self.current_preview_docs):
+            return
+        doc = self.current_preview_docs[idx]
+        pdf_page, pdf_page_count = self._get_pdf_page_info()
+        text = self._format_preview_file_info(doc, idx, len(self.current_preview_docs), pdf_page, pdf_page_count)
+        if hasattr(self, "lbl_file_info"):
+            self.lbl_file_info.setText(text)
+
+    def _connect_pdf_page_navigator(self):
+        """Try to connect to QPdfDocument's pageNavigator currentPageChanged signal."""
+        pdf_doc = getattr(self, "pdf_document", None)
+        if pdf_doc is None:
+            return
+        try:
+            nav = pdf_doc.pageNavigator()
+            if nav is not None and hasattr(nav, "currentPageChanged"):
+                try:
+                    nav.currentPageChanged.disconnect(self._on_pdf_page_changed)
+                except Exception:
+                    pass
+                nav.currentPageChanged.connect(self._on_pdf_page_changed)
+        except Exception:
+            pass
+
+    def _on_pdf_page_changed(self, _page: int):
+        """Slot for pageNavigator.currentPageChanged – keep toolbar in sync."""
+        self._refresh_preview_file_info()
+        self._update_pdf_page_buttons()
+
+    # ── PDF page navigation buttons ──────────────────────────────────
+
+    def _prev_pdf_page(self):
+        self._navigate_pdf_page(-1)
+
+    def _next_pdf_page(self):
+        self._navigate_pdf_page(1)
+
+    def _navigate_pdf_page(self, delta: int) -> bool:
+        """Navigate within PDF pages. Returns True if navigation succeeded."""
+        QPdfDocument, QPdfView = get_qt_pdf_classes()
+        if QPdfDocument is None:
+            return False
+        pdf_view = getattr(self, "pdf_view", None)
+        pdf_doc = getattr(self, "pdf_document", None)
+        if pdf_view is None or pdf_doc is None:
+            return False
+        if self.preview_stack.currentWidget() != pdf_view:
+            return False
+        try:
+            page_count = pdf_doc.pageCount()
+            nav = pdf_doc.pageNavigator()
+            if nav is None:
+                return False
+            current = nav.currentPage()  # 0-based
+            new_page = current + delta
+            if new_page < 0 or new_page >= page_count:
+                return False
+            nav.jump(new_page, 0.0, 0.0)
+            self._refresh_preview_file_info()
+            self._update_pdf_page_buttons()
+            return True
+        except Exception:
+            return False
+
+    def _update_pdf_page_buttons(self):
+        """Enable/disable PDF page-nav buttons based on current state."""
+        btn_prev_page = getattr(self, "btn_prev_page", None)
+        btn_next_page = getattr(self, "btn_next_page", None)
+        if btn_prev_page is None or btn_next_page is None:
+            return
+
+        _, page_count = self._get_pdf_page_info()
+        if page_count is None or page_count <= 1:
+            btn_prev_page.setEnabled(False)
+            btn_next_page.setEnabled(False)
+            return
+
+        nav = None
+        pdf_doc = getattr(self, "pdf_document", None)
+        if pdf_doc is not None:
+            try:
+                nav = pdf_doc.pageNavigator()
+            except Exception:
+                pass
+        if nav is None:
+            btn_prev_page.setEnabled(False)
+            btn_next_page.setEnabled(False)
+            return
+
+        try:
+            current = nav.currentPage()  # 0-based
+        except Exception:
+            btn_prev_page.setEnabled(False)
+            btn_next_page.setEnabled(False)
+            return
+
+        btn_prev_page.setEnabled(current > 0)
+        btn_next_page.setEnabled(current < page_count - 1)
+
+    # ── File-level navigation aliases ────────────────────────────────
+
+    def _prev_preview_file(self):
+        """Alias for _prev_preview_doc – file-level navigation."""
+        self._prev_preview_doc()
+
+    def _next_preview_file(self):
+        """Alias for _next_preview_doc – file-level navigation."""
+        self._next_preview_doc()
 
     def _open_current_preview_ext(self):
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
@@ -4032,28 +4296,11 @@ class InvoiceReviewApp(QMainWindow):
                 QMessageBox.warning(self, "关联失败", "无法将证明材料关联到当前发票，请重试。")
 
     def keyPressEvent(self, event):
-        focused = QApplication.focusWidget()
         # Toggle overlay toolbar visible state temporarily on Alt or Ctrl keypress
         if event.key() in (Qt.Key_Alt, Qt.Key_Control):
             self._show_overlay_toolbar()
             event.accept()
             return
-
-        is_editing = False
-        if focused:
-            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QComboBox
-            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox)):
-                is_editing = True
-
-        if not is_editing:
-            if event.key() == Qt.Key_Left:
-                self._prev_preview_doc()
-                event.accept()
-                return
-            elif event.key() == Qt.Key_Right:
-                self._next_preview_doc()
-                event.accept()
-                return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
@@ -4062,6 +4309,26 @@ class InvoiceReviewApp(QMainWindow):
             event.accept()
             return
         super().keyReleaseEvent(event)
+
+    def _register_navigation_shortcuts(self):
+        """Register Ctrl+Left / Ctrl+Right for file-level navigation via QShortcut."""
+        # ── Ctrl+Left: previous file ──
+        sc_prev = QShortcut(Qt.CTRL | Qt.Key_Left, self)
+        sc_prev.setContext(Qt.WindowShortcut)
+        sc_prev.activated.connect(self._on_ctrl_left)
+
+        # ── Ctrl+Right: next file ──
+        sc_next = QShortcut(Qt.CTRL | Qt.Key_Right, self)
+        sc_next.setContext(Qt.WindowShortcut)
+        sc_next.activated.connect(self._on_ctrl_right)
+
+    def _on_ctrl_left(self):
+        if not self._focus_is_editing_widget():
+            self._prev_preview_doc()
+
+    def _on_ctrl_right(self):
+        if not self._focus_is_editing_widget():
+            self._next_preview_doc()
 
 
 

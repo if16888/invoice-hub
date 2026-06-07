@@ -179,7 +179,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 app.processEvents()
                 self.assertEqual(window.current_preview_index, 0)
                 self.assertEqual(len(window.current_preview_docs), 2) # a.pdf + extra1.png
-                self.assertTrue(window.lbl_file_info.text().startswith("1/2"))
+                self.assertIn("文件 1/2", window.lbl_file_info.text())
                 self.assertTrue(window.btn_prev.isEnabled())
                 self.assertTrue(window.btn_next.isEnabled())
                 from scripts.invoice_fetch.gui.app import check_has_qt_pdf

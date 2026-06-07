@@ -212,6 +212,11 @@ class InvoiceParser:
                     ]
                     if filtered:
                         info.seller_name = filtered[-1]
+            # ── Seller-block fallback: extract from "销售方信息" region ──
+            if not info.seller_name or len(info.seller_name) <= 1:
+                fallback = InvoiceParser._extract_seller_name_fallback(text)
+                if fallback:
+                    info.seller_name = fallback
             if not info.seller_name or len(info.seller_name) <= 1:
                 if "非税收入" in text:
                     m = re.search(r"([^\n]{2,10}财政[厅局]|[^\n]{2,10}税务[局厅])", text)
@@ -492,6 +497,88 @@ class InvoiceParser:
                     return next_line
 
         return ""
+
+    @staticmethod
+    def _extract_seller_name_fallback(raw_text: str) -> str:
+        """Extract seller name from a seller-info block, avoiding buyer confusion.
+
+        Handles OCR artifacts like "销 售 方 信 息  名称：xxx".
+        Returns "" if no seller name could be reliably extracted.
+        """
+        if not raw_text:
+            return ""
+
+        text = raw_text
+        # Normalize common OCR spacing for CJK characters around seller keywords
+        for pat, repl in [
+            (r"销\s*售\s*方\s*信\s*息", "销售方信息"),
+            (r"销\s*售\s*方", "销售方"),
+            (r"购\s*买\s*方\s*信\s*息", "购买方信息"),
+            (r"购\s*买\s*方", "购买方"),
+            (r"纳\s*税\s*人\s*识\s*别\s*号", "纳税人识别号"),
+            (r"统\s*一\s*社\s*会\s*信\s*用\s*代\s*码", "统一社会信用代码"),
+        ]:
+            text = re.sub(pat, repl, text)
+
+        # ── 1.  Locate seller-info region ──
+        # Try to find "销售方信息" anchor; if missing, use "销售方"
+        region_start = -1
+        for anchor in ("销售方信息", "销售方"):
+            idx = text.find(anchor)
+            if idx != -1:
+                region_start = idx
+                break
+
+        if region_start == -1:
+            return ""
+
+        # Cut from region_start until a stop marker (备注, 合计, 价税合计, etc.)
+        stop_markers = ["备注", "合计", "价税合计", "项目名称", "规格型号", "开票人", "收款人"]
+        region_end = len(text)
+        for mk in stop_markers:
+            si = text.find(mk, region_start + 1)
+            if si != -1 and si < region_end:
+                region_end = si
+
+        # Also stop at the buyer-info region if it appears after seller
+        buyer_idx = text.find("购买方", region_start + 1)
+        if buyer_idx != -1 and buyer_idx < region_end:
+            region_end = buyer_idx
+
+        region = text[region_start:region_end]
+
+        # ── 2. Extract "名称:" value within the seller region ──
+        # Pattern: 名称: xxx   or  名称： xxx
+        name_match = re.search(r"名称\s*[:：]\s*(.+?)(?=\s*(?:纳税人识别号|统一社会信用代码|地址|电话|开户行|账号|$))", region)
+        if not name_match:
+            name_match = re.search(r"名称\s*[:：]\s*(.+?)$", region)
+
+        if not name_match:
+            return ""
+
+        candidate = name_match[1].strip()
+        candidate = re.sub(r"\s+", "", candidate)
+        candidate = candidate.strip(",:：，,。；; ()（）")
+
+        # ── 3. Clean and validate ──
+        # Reject noise tokens
+        noise_tokens = {
+            "章", "公章", "财务章", "发票章", "签章", "印", "合同章",
+            "纳税人识别号", "统一社会信用代码", "名称", "信息",
+            "发票代码", "发票号码", "购买方", "销售方",
+        }
+        for tok in noise_tokens:
+            if tok in candidate:
+                return ""
+
+        if len(candidate) < 2 or len(candidate) > 80:
+            return ""
+
+        if not InvoiceParser._is_company_like(candidate):
+            return ""
+
+        _log.debug("seller_name fallback matched by seller block")
+        return candidate
 
     @staticmethod
     def _invoice_type(text: str) -> str:
