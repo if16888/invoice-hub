@@ -211,6 +211,17 @@ def export_claim_package(
     xlsx_dest = export_dir / "reimbursement.xlsx"
     export_excel(export_invoices, xlsx_dest)
 
+    # 3.5 Generate claim_quality_report.md
+    qa_warnings_count = _generate_quality_report(
+        export_dir=export_dir,
+        claim_name=claim["name"],
+        export_invoices=export_invoices,
+        original_invoices=invoices,
+        all_invoices=all_invoices,
+        db=db,
+        runtime_dir=runtime_dir,
+    )
+
     # 4. Generate manifest.json
     manifest_data = {
         "claim_id": claim_id,
@@ -224,6 +235,7 @@ def export_claim_package(
         },
         "skipped_counts": skipped_counts,
         "item_count": len(manifest_items),
+        "qa_warnings_count": qa_warnings_count,
         "items": manifest_items
     }
     manifest_dest = export_dir / "manifest.json"
@@ -235,3 +247,131 @@ def export_claim_package(
 
     _log.info("Claim export package completed successfully under: %s", mask_path(export_dir))
     return export_dir
+
+
+def _generate_quality_report(
+    export_dir: Path,
+    claim_name: str,
+    export_invoices: list[dict],
+    original_invoices: list[dict],
+    all_invoices: list[dict],
+    db: InvoiceDB,
+    runtime_dir: Path,
+) -> int:
+    """Generate claim_quality_report.md inside export_dir and return qa_warnings_count."""
+    # 1. Missing originals (using export_invoices rewritten attachment_path)
+    missing_originals = sum(1 for inv in export_invoices if not inv.get("attachment_path"))
+
+    # 2. Empty seller names
+    empty_sellers = sum(1 for inv in export_invoices if not (inv.get("seller_name") or "").strip())
+
+    # 3. Empty amounts
+    empty_amounts = sum(1 for inv in export_invoices if not (inv.get("total_amount") or "").strip())
+
+    # 4. Empty dates
+    empty_dates = sum(1 for inv in export_invoices if not (inv.get("invoice_date") or "").strip())
+
+    # 5. Category is "其他"
+    category_others = sum(1 for inv in export_invoices if (inv.get("category") or "").strip() == "其他")
+
+    # 6. Evidence required but missing
+    missing_extras = sum(1 for inv in export_invoices if bool(inv.get("missing_extra")))
+
+    # 7. Personal notes
+    filled_confirmed_notes = sum(1 for inv in export_invoices if (inv.get("confirmed_note") or "").strip())
+
+    # 8. Evidence files missing in source (using original_invoices)
+    missing_evidence_files = 0
+    for inv in original_invoices:
+        raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
+        for extra_path in raw_extra_paths:
+            src_path = Path(extra_path)
+            if not src_path.is_absolute():
+                src_path = runtime_dir / extra_path
+            if not src_path.exists() or not src_path.is_file():
+                missing_evidence_files += 1
+
+    # 9. Suspected duplicate items
+    suspected_duplicates = 0
+    for inv in original_invoices:
+        num = inv.get("invoice_number")
+        if num and num.strip():
+            row = db._conn.execute(
+                "SELECT COUNT(*) FROM invoices WHERE invoice_number = ? AND is_deleted = 0 AND id != ?",
+                (num.strip(), inv["id"])
+            ).fetchone()
+            if row and row[0] > 0:
+                suspected_duplicates += 1
+
+    # 10. Status statistics (from all_invoices in the claim group)
+    status_counts = {
+        "approved": 0,
+        "to_review": 0,
+        "ignored": 0,
+        "error": 0
+    }
+    for inv in all_invoices:
+        status = inv.get("review_status") or "to_review"
+        if status in status_counts:
+            status_counts[status] += 1
+
+    qa_warnings_count = (
+        missing_originals
+        + empty_sellers
+        + empty_amounts
+        + empty_dates
+        + category_others
+        + missing_extras
+        + missing_evidence_files
+        + suspected_duplicates
+    )
+
+    # status indicators
+    status_missing_originals = f"⚠️ 发现 {missing_originals} 张缺失原件" if missing_originals > 0 else "✅ 合格"
+    status_empty_sellers = f"⚠️ 发现 {empty_sellers} 张销售方为空" if empty_sellers > 0 else "✅ 合格"
+    status_empty_amounts = f"⚠️ 发现 {empty_amounts} 张金额为空" if empty_amounts > 0 else "✅ 合格"
+    status_empty_dates = f"⚠️ 发现 {empty_dates} 张日期为空" if empty_dates > 0 else "✅ 合格"
+    status_category_others = f"⚠️ 发现 {category_others} 张消费类型为“其他”" if category_others > 0 else "✅ 合格"
+    status_missing_extras = f"⚠️ 发现 {missing_extras} 张缺少证明材料" if missing_extras > 0 else "✅ 合格"
+    status_filled_confirmed_notes = f"已填写 {filled_confirmed_notes} 项" if filled_confirmed_notes > 0 else "未填写"
+    status_missing_evidence_files = f"⚠️ 发现 {missing_evidence_files} 个证明材料文件不存在" if missing_evidence_files > 0 else "✅ 合格"
+    status_suspected_duplicates = f"⚠️ 发现 {suspected_duplicates} 张疑似重复发票" if suspected_duplicates > 0 else "✅ 合格"
+
+    export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Generate report
+    report_content = f"""# 报销包质量检查报告
+
+- **导出的报销组**: {claim_name}
+- **导出时间**: {export_time}
+
+## 质量检查摘要
+
+| 检查项目 | 数量 | 状态/说明 |
+| --- | --- | --- |
+| 1. 原件文件缺失 | {missing_originals} | {status_missing_originals} |
+| 2. 销售方为空 | {empty_sellers} | {status_empty_sellers} |
+| 3. 金额为空 | {empty_amounts} | {status_empty_amounts} |
+| 4. 日期为空 | {empty_dates} | {status_empty_dates} |
+| 5. 消费类型为“其他” | {category_others} | {status_category_others} |
+| 6. 有证明材料要求但未关联 | {missing_extras} | {status_missing_extras} |
+| 7. 已填写个人备注 | {filled_confirmed_notes} | {status_filled_confirmed_notes} |
+| 8. 证明材料文件不存在 | {missing_evidence_files} | {status_missing_evidence_files} |
+| 9. 重复发票疑似项 | {suspected_duplicates} | {status_suspected_duplicates} |
+
+## 报销组发票状态统计
+
+- **已审核 (approved)**: {status_counts["approved"]} 张
+- **待审核 (to_review)**: {status_counts["to_review"]} 张
+- **已忽略 (ignored)**: {status_counts["ignored"]} 张
+- **异常 (error)**: {status_counts["error"]} 张
+
+---
+*注：此报告由系统自动生成，旨在帮助您在提交报销前进行最后核对。*
+"""
+
+    report_path = export_dir / "claim_quality_report.md"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report_content)
+
+    return qa_warnings_count

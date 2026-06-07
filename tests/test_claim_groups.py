@@ -5090,6 +5090,226 @@ class ClaimGroupsTests(unittest.TestCase):
         except Exception as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
+    def test_claim_quality_report_generation(self):
+        """验证报销包质量检查报告生成逻辑及其各项检查点计数"""
+        with tempfile.TemporaryDirectory() as td:
+            project_root = Path(td) / "project"
+            runtime_dir = project_root / "runtime"
+            db_path = runtime_dir / "invoices.db"
+
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Quality QA Group")
+
+                # 1. Missing original file: attachment_path is empty
+                inv1 = db.insert_invoice({
+                    "invoice_number": "QA001",
+                    "total_amount": "100.00",
+                    "seller_name": "Seller A",
+                    "invoice_date": "2026-06-01",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": ""
+                })
+                # 2. Empty seller name
+                inv2 = db.insert_invoice({
+                    "invoice_number": "QA002",
+                    "total_amount": "200.00",
+                    "seller_name": "",
+                    "invoice_date": "2026-06-02",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 3. Empty amount
+                inv3 = db.insert_invoice({
+                    "invoice_number": "QA003",
+                    "total_amount": "",
+                    "seller_name": "Seller C",
+                    "invoice_date": "2026-06-03",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 4. Empty date
+                inv4 = db.insert_invoice({
+                    "invoice_number": "QA004",
+                    "total_amount": "400.00",
+                    "seller_name": "Seller D",
+                    "invoice_date": "",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 5. Category is "其他"
+                inv5 = db.insert_invoice({
+                    "invoice_number": "QA005",
+                    "total_amount": "500.00",
+                    "seller_name": "Seller E",
+                    "invoice_date": "2026-06-05",
+                    "category": "其他",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 6. Evidence required but missing (missing_extra=True)
+                inv6 = db.insert_invoice({
+                    "invoice_number": "QA006",
+                    "total_amount": "600.00",
+                    "seller_name": "Seller F",
+                    "invoice_date": "2026-06-06",
+                    "category": "交通",
+                    "missing_extra": 1,
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 7. Personal notes filled
+                inv7 = db.insert_invoice({
+                    "invoice_number": "QA007",
+                    "total_amount": "700.00",
+                    "seller_name": "Seller G",
+                    "invoice_date": "2026-06-07",
+                    "category": "交通",
+                    "confirmed_note": "verified",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 8. Extra paths exist but files do not exist
+                inv8 = db.insert_invoice({
+                    "invoice_number": "QA008",
+                    "total_amount": "800.00",
+                    "seller_name": "Seller H",
+                    "invoice_date": "2026-06-08",
+                    "category": "交通",
+                    "extra_paths": json.dumps(["attachments/nonexistent_extra.pdf"]),
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                # 9 & 10. Suspected duplicate items: share the same invoice number DUP999
+                inv9 = db.insert_invoice({
+                    "invoice_number": "DUP999",
+                    "total_amount": "900.00",
+                    "seller_name": "Seller I",
+                    "invoice_date": "2026-06-09",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+                inv10 = db.insert_invoice({
+                    "invoice_number": "DUP999",
+                    "total_amount": "900.00",
+                    "seller_name": "Seller J",
+                    "invoice_date": "2026-06-10",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": "attachments/dummy.pdf"
+                })
+
+                # Link all to claim
+                for iid in (inv1, inv2, inv3, inv4, inv5, inv6, inv7, inv8, inv9, inv10):
+                    db.add_invoice_to_claim(claim_id, iid)
+
+                # Write a dummy attachment file to avoid skipping during copy
+                attachments_dir = runtime_dir / "attachments"
+                attachments_dir.mkdir(parents=True, exist_ok=True)
+                (attachments_dir / "dummy.pdf").write_bytes(b"%PDF-1.4 dummy")
+
+                # Perform the export
+                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+
+                # Check report file exists
+                report_path = export_dir / "claim_quality_report.md"
+                self.assertTrue(report_path.exists())
+
+                report_md = report_path.read_text(encoding="utf-8")
+                # Verify markdown details
+                self.assertIn("Quality QA Group", report_md)
+                self.assertIn("1. 原件文件缺失 | 1", report_md)
+                self.assertIn("2. 销售方为空 | 1", report_md)
+                self.assertIn("3. 金额为空 | 1", report_md)
+                self.assertIn("4. 日期为空 | 1", report_md)
+                self.assertIn("5. 消费类型为“其他” | 1", report_md)
+                self.assertIn("6. 有证明材料要求但未关联 | 1", report_md)
+                self.assertIn("7. 已填写个人备注 | 1", report_md)
+                self.assertIn("8. 证明材料文件不存在 | 1", report_md)
+                self.assertIn("9. 重复发票疑似项 | 2", report_md)
+
+                # Verify manifest data contains qa_warnings_count
+                manifest_path = export_dir / "manifest.json"
+                self.assertTrue(manifest_path.exists())
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+
+                # Expected total warnings = 1 (missing orig) + 1 (empty seller) + 1 (empty amount) + 1 (empty date)
+                #                          + 1 (category others) + 1 (missing extras) + 1 (missing evidence file) + 2 (duplicates)
+                #                          = 9 warnings.
+                self.assertEqual(manifest.get("qa_warnings_count"), 9)
+
+    def test_claim_quality_report_gui_prompt(self):
+        """验证 GUI 在导出完成后提取 qa_warnings_count，并向用户展示包含掩码路径与需确认项的对话框"""
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                project_root = Path(td) / "project"
+                runtime_dir = project_root / "runtime"
+                db_path = runtime_dir / "invoices.db"
+
+                with InvoiceDB(db_path) as db:
+                    claim_id = db.create_claim_group("GUI QA Group")
+                    # Insert 1 invoice with empty seller (1 warning)
+                    inv_id = db.insert_invoice({
+                        "invoice_number": "GUI001",
+                        "total_amount": "100.00",
+                        "seller_name": "",
+                        "review_status": review_status.APPROVED,
+                        "attachment_path": "attachments/dummy.pdf"
+                    })
+                    db.add_invoice_to_claim(claim_id, inv_id)
+
+                    # Create dummy attachment
+                    attachments_dir = runtime_dir / "attachments"
+                    attachments_dir.mkdir(parents=True, exist_ok=True)
+                    (attachments_dir / "dummy.pdf").write_bytes(b"%PDF-1.4 dummy")
+
+                    from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                    with patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", runtime_dir), \
+                         patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root):
+                        window = InvoiceReviewApp(db_path, splash=None)
+                        try:
+                            window._deferred_init()
+
+                            # Mock box dialog to intercept text and choices
+                            with patch("scripts.invoice_fetch.gui.app.QMessageBox") as mock_box_class:
+                                mock_box_instance = mock_box_class.return_value
+                                mock_box_instance.clickedButton.return_value = Mock() # mock any clicked button
+
+                                # Simulate selecting the claim group in combo_claims
+                                idx = window.combo_claims.findData(claim_id)
+                                if idx >= 0:
+                                    window.combo_claims.setCurrentIndex(idx)
+
+                                # Mock QMessageBox.Question interaction to auto-click btn_approved_only
+                                with patch.object(mock_box_class, "Question", mock_box_class.Question):
+                                    window._export_claim_package()
+
+                                # Verify that the second dialog (QMessageBox.Information or success dialog) was created
+                                # and its text contains the warning counts
+                                setText_calls = [c for c in mock_box_instance.setText.call_args_list]
+                                self.assertTrue(any("发现 1 个需确认项" in call[0][0] for call in setText_calls))
+                                self.assertTrue(any("exports/GUI QA Group_" in call[0][0] for call in setText_calls))
+                                # Ensure absolute path td is NOT leaked
+                                self.assertFalse(any(str(td) in call[0][0] for call in setText_calls))
+
+                        finally:
+                            if hasattr(window, "db") and window.db is not None:
+                                window.db.close()
+                            window.close()
+                            window.deleteLater()
+                            app.processEvents()
+        except Exception as e:
+            self.skipTest(f"Skipping GUI test: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ def _read_manifest_summary(export_dir) -> dict:
         "item_count": 0,
         "skipped_counts": {},
         "export_filter": {},
+        "qa_warnings_count": 0,
     }
     if not export_dir:
         return summary
@@ -33,6 +34,7 @@ def _read_manifest_summary(export_dir) -> dict:
             summary["item_count"] = data.get("item_count", 0)
             summary["skipped_counts"] = data.get("skipped_counts", {})
             summary["export_filter"] = data.get("export_filter", {})
+            summary["qa_warnings_count"] = data.get("qa_warnings_count", 0)
     except Exception:
         pass
     return summary

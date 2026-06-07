@@ -3229,6 +3229,7 @@ class InvoiceReviewApp(QMainWindow):
             summary = _read_manifest_summary(export_dir)
             item_count = summary.get("item_count", 0)
             skipped = summary.get("skipped_counts", {})
+            qa_warnings_count = summary.get("qa_warnings_count", 0)
 
             # Format skipped stats neatly
             skip_items = [f"{k}: {v}张" for k, v in skipped.items() if v > 0]
@@ -3246,7 +3247,24 @@ class InvoiceReviewApp(QMainWindow):
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
             box.setWindowTitle("导出成功")
-            box.setText(f"报销包打包成功！\n\n共计打包发票: {item_count} 张\n过滤跳过记录: {skip_text}\n\n输出路径: {export_dir}")
+
+            # 不要泄露完整本机路径: show path relative to project root
+            relative_export_dir = ""
+            try:
+                relative_export_dir = "exports/" + Path(export_dir).relative_to(PROJECT_ROOT / "exports").as_posix()
+            except Exception:
+                try:
+                    relative_export_dir = Path(export_dir).relative_to(PROJECT_ROOT).as_posix()
+                except Exception:
+                    from ..log_privacy import mask_path
+                    relative_export_dir = mask_path(export_dir)
+
+            box.setText(
+                f"导出完成，发现 {qa_warnings_count} 个需确认项，请查看质量报告。\n\n"
+                f"共计打包发票: {item_count} 张\n"
+                f"过滤跳过记录: {skip_text}\n\n"
+                f"输出路径: {relative_export_dir}"
+            )
             btn_open = box.addButton("📁 打开导出目录", QMessageBox.AcceptRole)
             btn_close = box.addButton("关闭", QMessageBox.RejectRole)
             box.exec()

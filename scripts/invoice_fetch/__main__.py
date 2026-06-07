@@ -2960,7 +2960,8 @@ def _cmd_claim_export(args: argparse.Namespace, db: InvoiceDB, project_root: Pat
         from .claim_export import export_claim_package
         include_to_review = getattr(args, "include_to_review", False)
         export_dir = export_claim_package(db, args.claim_id, project_root, runtime_dir, include_to_review=include_to_review)
-        print(f"已导出报销组 ID {args.claim_id} 的报销包: {export_dir}")
+        from .log_privacy import mask_path
+        print(f"已导出报销组 ID {args.claim_id} 的报销包: {mask_path(export_dir)}")
         sys.exit(0)
     except ValueError as ve:
         print(f"错误: {ve}")
