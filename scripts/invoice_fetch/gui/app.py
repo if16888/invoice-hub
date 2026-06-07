@@ -739,6 +739,21 @@ class InvoiceReviewApp(QMainWindow):
         detail_files_layout.addWidget(file_fields)
         tab_details_layout.addWidget(self.detail_files_section)
 
+        self.review_note_section = QFrame()
+        self.review_note_section.setProperty("class", "DetailSection")
+        review_note_layout = QVBoxLayout(self.review_note_section)
+        review_note_layout.setContentsMargins(10, 8, 10, 10)
+        review_note_layout.setSpacing(6)
+        lbl_note_title = QLabel("个人备注")
+        lbl_note_title.setProperty("class", "SectionTitle")
+        review_note_layout.addWidget(lbl_note_title)
+
+        self.txt_note = QTextEdit()
+        self.txt_note.setMaximumHeight(72)
+        self.txt_note.setPlaceholderText("可填写报销说明、事项背景、客户/项目、异常原因等，仅保存在本地。")
+        review_note_layout.addWidget(self.txt_note)
+        tab_details_layout.addWidget(self.review_note_section)
+
         self.btn_more_source = QToolButton()
         self.btn_more_source.setText("更多来源信息")
         self.btn_more_source.setCheckable(True)
@@ -828,21 +843,6 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_batch_hint = QLabel("当前选中 1 张发票")
         self.lbl_batch_hint.setProperty("class", "SectionHint")
         tab_review_layout.addWidget(self.lbl_batch_hint)
-
-        self.review_note_section = QFrame()
-        self.review_note_section.setProperty("class", "DetailSection")
-        review_note_layout = QVBoxLayout(self.review_note_section)
-        review_note_layout.setContentsMargins(10, 8, 10, 10)
-        review_note_layout.setSpacing(6)
-        lbl_note_title = QLabel("审核备注")
-        lbl_note_title.setProperty("class", "SectionTitle")
-        review_note_layout.addWidget(lbl_note_title)
-
-        self.txt_note = QTextEdit()
-        self.txt_note.setMaximumHeight(72)
-        self.txt_note.setPlaceholderText("补充审核说明，可选")
-        review_note_layout.addWidget(self.txt_note)
-        tab_review_layout.addWidget(self.review_note_section)
 
         self.review_actions_section = QFrame()
         self.review_actions_section.setProperty("class", "DetailSection")
@@ -1866,15 +1866,19 @@ class InvoiceReviewApp(QMainWindow):
 
         if hasattr(self, "lbl_closing_desc"):
             if not inv_num or not inv_date or not seller or not total_amt:
-                self.lbl_closing_desc.setText("⚠️ 金额、销售方或开票日期缺失，请双击或在上方表单中补全字段。")
+                desc = "⚠️ 金额、销售方或开票日期缺失，请双击或在上方表单中补全字段。"
             elif status == "to_review":
-                self.lbl_closing_desc.setText("💡 字段已完整，确认原件无误后即可通过审核。")
+                desc = "💡 字段已完整，确认原件无误后即可通过审核。"
             elif status == "approved":
-                self.lbl_closing_desc.setText("✅ 该发票已审核通过，可导出或关联至报销组。")
+                desc = "✅ 该发票已审核通过，可导出或关联至报销组。"
             elif status in ["ignored", "error"]:
-                self.lbl_closing_desc.setText(f"ℹ️ 当前发票已标记为 [已忽略] 或 [异常] 状态。")
+                desc = f"ℹ️ 当前发票已标记为 [已忽略] 或 [异常] 状态。"
             else:
-                self.lbl_closing_desc.setText("💡 字段已完整，确认原件无误后即可通过审核。")
+                desc = "💡 字段已完整，确认原件无误后即可通过审核。"
+
+            if str(inv.get("confirmed_note") or "").strip():
+                desc += "\n已填写个人备注"
+            self.lbl_closing_desc.setText(desc)
 
     def _on_table_selection_changed(self):
         # Triggered when users select table rows. Handles single and multi-selection modes.

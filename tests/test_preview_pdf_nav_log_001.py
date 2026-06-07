@@ -1301,5 +1301,175 @@ class TestNavigationFocusStability(unittest.TestCase):
         window.hide()
 
 
+class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            cls.app = QApplication.instance() or QApplication(sys.argv)
+        except (ImportError, RuntimeError):
+            cls.app = None
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app = None
+
+    def setUp(self):
+        import tempfile
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.db_path = self.temp_dir / "test_notes.db"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_backfill_logs_redaction(self):
+        from scripts.invoice_fetch.db import InvoiceDB
+        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+
+        with InvoiceDB(self.db_path) as db:
+            inv_id = db.insert_invoice({
+                "invoice_number": "999999",
+                "invoice_code": "",
+                "invoice_date": "2026-06-01",
+                "amount": "100.00",
+                "total_amount": "100.00",
+                "seller_name": "",
+                "buyer_name": "",
+                "invoice_type": "电子发票",
+                "category": "其他",
+                "review_status": "to_review",
+            })
+            existing = db.get_invoice(inv_id)
+
+            with self.assertLogs("invoice_fetch", level="INFO") as log_ctx:
+                res = _refresh_invoice_from_parse(
+                    db, existing,
+                    invoice_number="999999",
+                    invoice_code="code_new_999",
+                    invoice_date="2026-06-01",
+                    amount="100.00",
+                    total_amount="100.00",
+                    seller_name="真实销售方公司",
+                    buyer_name="真实购买方公司",
+                    invoice_type="电子发票",
+                    category="其他",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="",
+                    force_refresh_metadata=False
+                )
+                self.assertTrue(res)
+
+            # Verify the log outputs
+            log_messages = "".join(log_ctx.output)
+            # Should contain "fields=" and the fields
+            self.assertIn("fields=", log_messages)
+            self.assertIn("seller_name", log_messages)
+            self.assertIn("buyer_name", log_messages)
+            self.assertIn("invoice_code", log_messages)
+
+            # MUST NOT contain the actual values
+            self.assertNotIn("真实销售方公司", log_messages)
+            self.assertNotIn("真实购买方公司", log_messages)
+            self.assertNotIn("code_new_999", log_messages)
+
+    def test_confirmed_note_gui_interaction(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        # Pre-populate invoice with note
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+                "confirmed_note": "这是一条测试个人备注",
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            # Select row
+            window.table.selectRow(0)
+            self.app.processEvents()
+
+            # 1. Test confirmed_note loaded to txt_note
+            self.assertEqual(window.txt_note.toPlainText(), "这是一条测试个人备注")
+
+            # 2. Test closing card text has "已填写个人备注"
+            self.assertIn("已填写个人备注", window.lbl_closing_desc.text())
+
+            # 3. Modify note and save
+            window.txt_note.setPlainText("这是修改后的个人备注")
+            self.app.processEvents()
+
+            # Trigger save
+            window._save_invoice_fields()
+            self.app.processEvents()
+
+            # Fetch from DB and verify
+            with InvoiceDB(self.db_path) as db:
+                rows = db.get_all_invoices()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["confirmed_note"], "这是修改后的个人备注")
+        finally:
+            window.close()
+
+    def test_note_disabled_when_multi_or_no_selection(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "111",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方A",
+                "total_amount": "100.00",
+                "review_status": "to_review",
+            })
+            db.insert_invoice({
+                "invoice_number": "222",
+                "invoice_date": "2026-06-02",
+                "seller_name": "销售方B",
+                "total_amount": "200.00",
+                "review_status": "to_review",
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            # 1. No selection: txt_note is disabled
+            window.table.clearSelection()
+            self.app.processEvents()
+            self.assertFalse(window.txt_note.isEnabled())
+
+            # 2. Single selection: txt_note is enabled
+            window.table.selectRow(0)
+            self.app.processEvents()
+            self.assertTrue(window.txt_note.isEnabled())
+
+            # 3. Multi-selection: txt_note is disabled
+            window.table.selectAll()
+            self.app.processEvents()
+            self.assertFalse(window.txt_note.isEnabled())
+        finally:
+            window.close()
+
+
 if __name__ == "__main__":
     unittest.main()

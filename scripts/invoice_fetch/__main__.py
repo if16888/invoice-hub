@@ -1284,9 +1284,9 @@ def _refresh_invoice_from_parse(
             ("invoice_code", existing.get("invoice_code"), invoice_code),
         ]:
             if not str(old or "").strip() and str(new or "").strip():
-                backfilled_logs.append(f"{k}='{new}'")
+                backfilled_logs.append(k)
         if backfilled_logs:
-            _log.info("  重复发票回填空字段: existing_id=%d, %s", existing["id"], ", ".join(backfilled_logs))
+            _log.info("  重复发票回填空字段: existing_id=%d, fields=%s", existing["id"], ",".join(backfilled_logs))
 
         return db.update_invoice_parsed_metadata(
             existing["id"],
