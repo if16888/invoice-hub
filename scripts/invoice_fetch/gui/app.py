@@ -3336,7 +3336,7 @@ class InvoiceReviewApp(QMainWindow):
             f"- 新入库邮件头: {summary.get('new_email_headers', 0)} 封\n"
             f"- 判定为发票候选: {summary.get('classified_invoice', 0)} 封\n"
             f"- 成功处理邮件: {summary.get('downloaded_emails', 0)} 封\n"
-            f"- 新增发票/材料记录: {summary.get('new', 0)} 条\n"
+            f"- 新增记录（发票或待补全材料）: {summary.get('new', 0)} 条\n"
             f"- 恢复软删除: {summary.get('restored', 0)} 条\n"
             f"- 重复已存在: {summary.get('duplicates', 0)} 条\n"
             f"- 链接下载失败: {summary.get('link_failed', 0)} 封\n"

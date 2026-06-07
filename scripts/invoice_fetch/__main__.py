@@ -1649,6 +1649,7 @@ def _process_email(
     ]
     parsed_invoice_infos = [
         info for _, info in (downloaded_invoice_items + parsed_invoice_pdfs)
+        if info.parse_success
     ]
     matched_extra_files, unmatched_extra_files = _match_email_extras_to_invoices(
         extra_files,

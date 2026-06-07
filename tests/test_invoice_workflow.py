@@ -3116,6 +3116,195 @@ class InvoiceWorkflowTests(unittest.TestCase):
             extra_paths = json.loads(rows[0]["extra_paths"])
             self.assertEqual(len(extra_paths), 0)
 
+    def test_failed_invoice_pdf_and_itinerary_extra(self):
+        """单个解析失败 invoice_pdf + 一个行程单 extra"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            inv_file = attachments_dir / "failed_invoice.pdf"
+            inv_file.write_bytes(b"%PDF-failed")
+            iti_file = attachments_dir / "滴滴行程单.pdf"
+            iti_file.write_bytes(b"%PDF-iti")
+
+            attachments = [
+                Attachment(file_path=str(inv_file), original_name="failed_invoice.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                Attachment(file_path=str(iti_file), original_name="滴滴行程单.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "滴滴打车发票"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=201, raw_msg=msg)
+
+            parser = StaticParser(InvoiceInfo(
+                parse_success=False,
+                parse_note="无法解析发票内容",
+            ))
+            handler = StaticAttachmentHandler(attachments_dir, attachments)
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "待关联证明材料")
+            self.assertTrue((runtime / rows[0]["attachment_path"]).exists())
+
+    def test_single_success_invoice_pdf_and_multiple_extras(self):
+        """单个解析成功 invoice_pdf + 多个 extra，全部挂到该发票"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            inv_file = attachments_dir / "invoice.pdf"
+            inv_file.write_bytes(b"%PDF-invoice")
+            iti_file1 = attachments_dir / "行程单1.pdf"
+            iti_file1.write_bytes(b"%PDF-iti1")
+            iti_file2 = attachments_dir / "用车明细2.pdf"
+            iti_file2.write_bytes(b"%PDF-iti2")
+
+            attachments = [
+                Attachment(file_path=str(inv_file), original_name="invoice.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                Attachment(file_path=str(iti_file1), original_name="行程单1.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+                Attachment(file_path=str(iti_file2), original_name="用车明细2.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "发票行程单"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=202, raw_msg=msg)
+
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="DIDI777",
+                invoice_code="220033",
+                invoice_date="2025-12-20",
+                total_amount="100.00",
+                seller_name="滴滴出行",
+                invoice_type="电子发票",
+                parse_success=True,
+            ))
+            handler = StaticAttachmentHandler(attachments_dir, attachments)
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            extra_paths = json.loads(rows[0]["extra_paths"])
+            self.assertEqual(len(extra_paths), 2)
+            self.assertIn("DIDI777_ex.pdf", extra_paths[0].replace("\\", "/"))
+            self.assertIn("DIDI777_ex_1.pdf", extra_paths[1].replace("\\", "/"))
+
+    def test_multiple_success_invoice_pdfs_and_multiple_extras(self):
+        """多个解析成功 invoice_pdf + 多个 extra，按发票号/日期金额唯一匹配，不能全量互挂"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir()
+
+            inv_file1 = attachments_dir / "invoice1.pdf"
+            inv_file1.write_bytes(b"%PDF-invoice1")
+            inv_file2 = attachments_dir / "invoice2.pdf"
+            inv_file2.write_bytes(b"%PDF-invoice2")
+
+            iti_file1 = attachments_dir / "行程单_DIDI001.pdf"
+            iti_file1.write_bytes(b"%PDF-iti1")
+
+            iti_file2 = attachments_dir / "行程单_DIDI002.pdf"
+            iti_file2.write_bytes(b"%PDF-iti2")
+
+            attachments = [
+                Attachment(file_path=str(inv_file1), original_name="invoice1.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                Attachment(file_path=str(inv_file2), original_name="invoice2.pdf", content_type="application/pdf", size=1024, is_invoice=True, is_extra=False),
+                Attachment(file_path=str(iti_file1), original_name="行程单_DIDI001.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+                Attachment(file_path=str(iti_file2), original_name="行程单_DIDI002.pdf", content_type="application/pdf", size=1024, is_invoice=False, is_extra=True),
+            ]
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "发票行程单"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            mail_msg = cli.MailMessage(uid=203, raw_msg=msg)
+
+            class MultiStaticParser:
+                def parse_pdf(self, path):
+                    if "invoice1.pdf" in path:
+                        return InvoiceInfo(
+                            invoice_number="DIDI001",
+                            invoice_code="111",
+                            invoice_date="2025-12-20",
+                            total_amount="100.00",
+                            seller_name="滴滴出行",
+                            invoice_type="电子发票",
+                            parse_success=True,
+                        )
+                    else:
+                        return InvoiceInfo(
+                            invoice_number="DIDI002",
+                            invoice_code="222",
+                            invoice_date="2025-12-20",
+                            total_amount="200.00",
+                            seller_name="滴滴出行",
+                            invoice_type="电子发票",
+                            parse_success=True,
+                        )
+
+            handler = StaticAttachmentHandler(attachments_dir, attachments)
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=handler,
+                    parser=MultiStaticParser(),
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 2)
+            self.assertEqual(len(rows), 2)
+
+            rows = sorted(rows, key=lambda r: r["invoice_number"])
+            self.assertEqual(rows[0]["invoice_number"], "DIDI001")
+            self.assertEqual(rows[1]["invoice_number"], "DIDI002")
+
+            extra_paths1 = json.loads(rows[0]["extra_paths"])
+            extra_paths2 = json.loads(rows[1]["extra_paths"])
+
+            self.assertEqual(len(extra_paths1), 1)
+            self.assertEqual(len(extra_paths2), 1)
+
+            self.assertIn("DIDI001_ex.pdf", extra_paths1[0].replace("\\", "/"))
+            self.assertIn("DIDI002_ex.pdf", extra_paths2[0].replace("\\", "/"))
+
 
 if __name__ == "__main__":
     unittest.main()
