@@ -106,5 +106,194 @@ class TestLinkDownloader(unittest.TestCase):
     def assertNilOrEmpty(self, value):
         self.assertTrue(value is None or value == "")
 
+    def test_no_pyqt5_in_gui_app(self):
+        app_path = Path("scripts/invoice_fetch/gui/app.py")
+        self.assertTrue(app_path.exists())
+        content = app_path.read_text(encoding="utf-8")
+        self.assertNotIn("PyQt5", content)
+
+    @patch("scripts.invoice_fetch.link_downloader.extract_html_from_message")
+    @patch("scripts.invoice_fetch.link_downloader._is_safe_download_url")
+    def test_download_from_email_suppresses_fallback_after_official_success(self, mock_safe, mock_extract_html):
+        mock_safe.return_value = True
+        mock_extract_html.return_value = """
+        <html>
+            <body>
+                <a href="http://nnfp.jss.com.cn/scan-invoice/invoiceShow?id=1">Link 1</a>
+                <a href="http://nnfp.jss.com.cn/scan-invoice/invoiceShow?id=2">Link 2</a>
+            </body>
+        </html>
+        """
+
+        dl = LinkDownloader(download_dir=self.tmp_dir)
+
+        fallback_file = Path(self.tmp_dir) / "fallback.pdf"
+        fallback_file.write_bytes(b"%PDF-fallback")
+
+        official_file = Path(self.tmp_dir) / "official.pdf"
+        official_file.write_bytes(b"%PDF-official")
+
+        r1 = DownloadedFile(
+            url="http://dummy1",
+            file_path=str(fallback_file),
+            filename="fallback.pdf",
+            size=1000,
+            is_invoice=True,
+            source_type="invoice_page_pdf_fallback",
+            parse_note=""
+        )
+        r2 = DownloadedFile(
+            url="http://dummy2",
+            file_path=str(official_file),
+            filename="official.pdf",
+            size=1000,
+            is_invoice=True,
+            source_type="official_download",
+            parse_note=""
+        )
+
+        call_args = []
+        def side_effect(url, mail_uid, idx, date_str, disable_fallback=False):
+            call_args.append((url, disable_fallback))
+            if "id=1" in url:
+                return r1
+            else:
+                return r2
+
+        with patch.object(dl, "_download_url", side_effect=side_effect):
+            res = dl.download_from_email(MagicMock(), 123, "2026-06-07")
+
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0].source_type, "official_download")
+            self.assertFalse(fallback_file.exists()) # Fallback should be unlinked!
+            self.assertTrue(official_file.exists())
+
+    @patch("scripts.invoice_fetch.link_downloader.extract_html_from_message")
+    @patch("scripts.invoice_fetch.link_downloader._is_safe_download_url")
+    def test_download_from_email_disables_fallback_for_subsequent_links_after_official_success(self, mock_safe, mock_extract_html):
+        mock_safe.return_value = True
+        mock_extract_html.return_value = """
+        <html>
+            <body>
+                <a href="http://nnfp.jss.com.cn/scan-invoice/invoiceShow?id=1">Link 1</a>
+                <a href="http://nnfp.jss.com.cn/scan-invoice/invoiceShow?id=2">Link 2</a>
+            </body>
+        </html>
+        """
+
+        dl = LinkDownloader(download_dir=self.tmp_dir)
+
+        official_file = Path(self.tmp_dir) / "official.pdf"
+        official_file.write_bytes(b"%PDF-official")
+
+        r1 = DownloadedFile(
+            url="http://dummy1",
+            file_path=str(official_file),
+            filename="official.pdf",
+            size=1000,
+            is_invoice=True,
+            source_type="official_download",
+            parse_note=""
+        )
+
+        call_args = []
+        def side_effect(url, mail_uid, idx, date_str, disable_fallback=False):
+            call_args.append((url, disable_fallback))
+            if "id=1" in url:
+                return r1
+            else:
+                return None
+
+        with patch.object(dl, "_download_url", side_effect=side_effect):
+            res = dl.download_from_email(MagicMock(), 123, "2026-06-07")
+
+            self.assertEqual(len(call_args), 2)
+            self.assertEqual(call_args[0], ("http://nnfp.jss.com.cn/scan-invoice/invoiceShow?id=1", False))
+            self.assertEqual(call_args[1], ("http://nnfp.jss.com.cn/scan-invoice/invoiceShow?id=2", True))
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0].source_type, "official_download")
+
+    def test_db_backfill_log_level(self):
+        import logging
+        from scripts.invoice_fetch.db import InvoiceDB
+        db_path = Path(self.tmp_dir) / "test_log.db"
+        with InvoiceDB(db_path) as db:
+            inv_id = db.insert_invoice({
+                "invoice_number": "12345678",
+                "total_amount": "100.00",
+                "seller_name": "测试公司",
+                "invoice_date": "2026-06-01",
+                "attachment_path": "",
+                "review_status": "to_review",
+            })
+            with self.assertLogs("scripts.invoice_fetch.db", level=logging.DEBUG) as log_capture:
+                db.update_invoice_attachment_path_if_missing(inv_id, "dummy.pdf")
+
+            self.assertTrue(any(record.levelname == "DEBUG" and "已回填附件路径" in record.getMessage() for record in log_capture.records))
+
+    def test_fallback_parse_warning_downgraded_in_main(self):
+        import logging
+        from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+        from scripts.invoice_fetch.__main__ import _process_email
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        from scripts.invoice_fetch.mail_fetcher import MailMessage
+        from email.message import Message
+
+        # Mock dependencies to run _process_email and trigger parse fail for a fallback file
+        att_dir = Path(self.tmp_dir) / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+
+        att_file = att_dir / "fallback.pdf"
+        att_file.write_bytes(b"%PDF-fallback")
+
+        mock_att_handler = MagicMock()
+        mock_att_handler._base = att_dir
+        mock_att_handler.extract.return_value = [] # no attachments, only links
+
+        mock_parser = MagicMock()
+        # Parse fails for any file, returns invalid PDF
+        mock_parser.parse_pdf.return_value = InvoiceInfo(parse_success=False, parse_note="invalid pdf")
+
+        mock_link_dl = MagicMock()
+        mock_link_dl.download_from_email.return_value = [
+            DownloadedFile(
+                url="http://dummy1",
+                file_path=str(att_file),
+                filename="fallback.pdf",
+                size=1000,
+                is_invoice=True,
+                source_type="invoice_page_pdf_fallback",
+                parse_note=""
+            )
+        ]
+
+        raw_msg = Message()
+        raw_msg["Subject"] = "Test Fallback Invoice"
+        raw_msg["From"] = "sender@example.com"
+        raw_msg["Date"] = "Mon, 01 Jun 2026 12:00:00 +0800"
+        msg = MailMessage(uid=1002, raw_msg=raw_msg)
+
+        from scripts.invoice_fetch.db import InvoiceDB
+        db_path = Path(self.tmp_dir) / "test_main_log.db"
+        with InvoiceDB(db_path) as db:
+            with self.assertLogs("invoice_fetch", level=logging.INFO) as log_capture:
+                with patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', Path(self.tmp_dir)):
+                    _process_email(
+                        msg=msg,
+                        att_handler=mock_att_handler,
+                        parser=mock_parser,
+                        link_dl=mock_link_dl,
+                        db=db,
+                        categories={},
+                        mailbox_key="test_mailbox"
+                    )
+
+            # Assert that there is an INFO log about fallback PDF not parsed, and NO WARNING log about invalid PDF
+            info_msgs = [record.getMessage() for record in log_capture.records if record.levelname == "INFO"]
+            warning_msgs = [record.getMessage() for record in log_capture.records if record.levelname == "WARNING"]
+
+            self.assertTrue(any("发票展示页面 PDF 副本未参与结构化解析" in m for m in info_msgs))
+            self.assertFalse(any("下载的 PDF 解析失败" in m for m in warning_msgs))
+
 if __name__ == "__main__":
     unittest.main()

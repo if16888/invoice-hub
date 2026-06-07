@@ -592,6 +592,7 @@ class LinkDownloader:
         skipped_cached = 0
         attempted_count = 0
         low_priority_skipped = 0
+        has_official_success = False
 
         start_time = time.perf_counter()
 
@@ -607,10 +608,12 @@ class LinkDownloader:
                 _log.info("跳过本轮已失败链接: <%s>", fp)
                 continue
             attempted_count += 1
-            r = self._download_url(url, mail_uid, len(results), date_str)
+            r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)
             if r:
                 results.append(r)
                 high_success = True
+                if r.source_type != "invoice_page_pdf_fallback":
+                    has_official_success = True
 
         # 2. Try low priority links if no high priority links succeeded and limit not reached
         if high_success:
@@ -627,20 +630,38 @@ class LinkDownloader:
                     _log.info("跳过本轮已失败链接: <%s>", fp)
                     continue
                 attempted_count += 1
-                r = self._download_url(url, mail_uid, len(results), date_str)
+                r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)
                 if r:
                     results.append(r)
+                    if r.source_type != "invoice_page_pdf_fallback":
+                        has_official_success = True
+
+        # Post-process: if has_official_success is True, filter out and clean up any fallback results
+        if has_official_success:
+            filtered_results = []
+            for r in results:
+                if r.source_type == "invoice_page_pdf_fallback":
+                    try:
+                        if os.path.exists(r.file_path):
+                            os.unlink(r.file_path)
+                    except Exception:
+                        pass
+                else:
+                    filtered_results.append(r)
+            results = filtered_results
 
         elapsed = time.perf_counter() - start_time
         success = len(results)
         failed = attempted_count - success
+        official_success = sum(1 for r in results if r.source_type != "invoice_page_pdf_fallback")
+        fallback_success = sum(1 for r in results if r.source_type == "invoice_page_pdf_fallback")
         _log.info(
-            "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d attempted=%d prioritized=%d low_priority_skipped=%d elapsed=%.1fs",
-            found, deduped, success, failed, skipped_cached, attempted_count, prioritized, low_priority_skipped, elapsed,
+            "链接下载摘要: found=%d deduped=%d success=%d official_success=%d fallback_success=%d failed=%d skipped_cached=%d attempted=%d prioritized=%d low_priority_skipped=%d elapsed=%.1fs",
+            found, deduped, success, official_success, fallback_success, failed, skipped_cached, attempted_count, prioritized, low_priority_skipped, elapsed,
         )
         return results
 
-    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int) -> tuple[str | None, str | None, str | None] | None:
+    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False) -> tuple[str | None, str | None, str | None] | None:
         """ Nuonuo/JSS site specific downloader handler """
         try:
             page.wait_for_load_state("domcontentloaded", timeout=5000)
@@ -773,7 +794,7 @@ class LinkDownloader:
                             if _save_download_to_path(download, dest):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
-                                    return str(dest), None, None
+                                    return str(dest), "official_download", None
                     except Exception:
                         pass
                     break
@@ -787,7 +808,7 @@ class LinkDownloader:
         for f in captured_files:
             if _verify_and_clean_file(f):
                 _log.info("已从网络响应捕获官方 PDF/OFD")
-                return f, None, None
+                return f, "official_response", None
 
         # 2. Try iframe blob fetching inside its own frame context
         for frame in page.frames:
@@ -828,19 +849,22 @@ class LinkDownloader:
                                 dest = save_dir / f"invoice_{mail_uid}_{idx}_blob{ext}"
                                 dest.write_bytes(body)
                                 _log.info("已从嵌入 PDF/OFD 资源保存文件")
-                                return str(dest), None, None
+                                return str(dest), "embedded_pdf", None
                     except Exception as e:
                         _log.debug("Fetch blob from frame context failed: %s", e)
 
         # 3. Controlled PDF Print Fallback
-        from .config import load_config_safe
-        cfg = load_config_safe()
-        allow_fallback = True
-        if isinstance(cfg, dict):
-            if "link_download_allow_invoice_page_pdf_fallback" in cfg:
-                allow_fallback = bool(cfg["link_download_allow_invoice_page_pdf_fallback"])
-            elif "link_download" in cfg and isinstance(cfg["link_download"], dict):
-                allow_fallback = bool(cfg["link_download"].get("allow_invoice_page_pdf_fallback", True))
+        if disable_fallback:
+            allow_fallback = False
+        else:
+            from .config import load_config_safe
+            cfg = load_config_safe()
+            allow_fallback = True
+            if isinstance(cfg, dict):
+                if "link_download_allow_invoice_page_pdf_fallback" in cfg:
+                    allow_fallback = bool(cfg["link_download_allow_invoice_page_pdf_fallback"])
+                elif "link_download" in cfg and isinstance(cfg["link_download"], dict):
+                    allow_fallback = bool(cfg["link_download"].get("allow_invoice_page_pdf_fallback", True))
 
         if allow_fallback:
             try:
@@ -854,7 +878,7 @@ class LinkDownloader:
 
         return None
 
-    def _download_url(self, url: str, mail_uid: int, idx: int, date_str: str) -> DownloadedFile | None:
+    def _download_url(self, url: str, mail_uid: int, idx: int, date_str: str, disable_fallback: bool = False) -> DownloadedFile | None:
         if not _is_safe_download_url(url):
             _log.warning("Skipping unsafe link: %s", mask_url_for_log(url))
             return None
@@ -943,7 +967,7 @@ class LinkDownloader:
                 pass
 
             # 1. Try JSS/Nuonuo site specific download logic first
-            res_handle = self._handle_nuonuo_invoice_page(page, url, save_dir, mail_uid, idx)
+            res_handle = self._handle_nuonuo_invoice_page(page, url, save_dir, mail_uid, idx, disable_fallback=disable_fallback)
             if res_handle:
                 downloaded_path, source_type, parse_note = res_handle
 
@@ -954,13 +978,18 @@ class LinkDownloader:
                     self._try_click_download(page)
                 if download_started and not downloaded_path:
                     download_done.wait(timeout=5)
+                    if downloaded_path:
+                        source_type = "official_download"
                 if not downloaded_path:
                     for f in captured_files:
                         if _verify_and_clean_file(f):
                             downloaded_path = f
+                            source_type = "official_response"
                             break
                 if not downloaded_path:
                     downloaded_path = self._try_extract_embedded_pdf(page, save_dir, mail_uid, idx)
+                    if downloaded_path:
+                        source_type = "embedded_pdf"
 
             if downloaded_path and os.path.exists(downloaded_path):
                 if _verify_and_clean_file(downloaded_path):

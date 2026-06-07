@@ -2563,7 +2563,7 @@ class InvoiceReviewApp(QMainWindow):
             return
 
         inv_id = self.current_invoice["id"]
-        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "选择发票原件",
@@ -2644,7 +2644,7 @@ class InvoiceReviewApp(QMainWindow):
         if not url.strip():
             return
 
-        from PyQt5.QtWidgets import QProgressDialog, QMessageBox
+        from PySide6.QtWidgets import QProgressDialog, QMessageBox
         progress = QProgressDialog("正在从链接尝试下载发票文件...", "取消", 0, 0, self)
         progress.setWindowTitle("下载引擎")
         progress.setWindowModality(Qt.WindowModal)

@@ -2090,7 +2090,10 @@ def _process_email(
                             recorded += 1
                             _log.info("  已入库海外凭证/收据: %s", mask_filename(dl.filename))
                         continue
-                    _log.warning("  下载的 PDF 解析失败 (不是有效的发票文件): %s", redact_text(info.parse_note, "parse_note"))
+                    if dl.source_type == "invoice_page_pdf_fallback":
+                        _log.info("  发票展示页面 PDF 副本未参与结构化解析，仅作为原件候选保留/或已跳过重复结构化入库")
+                    else:
+                        _log.warning("  下载的 PDF 解析失败 (不是有效的发票文件): %s", redact_text(info.parse_note, "parse_note"))
                     if os.path.exists(dl.file_path):
                         os.remove(dl.file_path)
                     continue
@@ -2191,7 +2194,9 @@ def _process_email(
                             if db.update_invoice_attachment_path_if_missing(
                                 duplicate["id"], backfill_path, file_hash=file_hash_val or None,
                             ):
-                                _log.info("重复发票已有记录缺少原件，已回填链接下载文件: existing_id=%s", duplicate["id"])
+                                _log.info("重复发票已有记录缺少原件，已回填链接下载文件: existing_id=%d", duplicate["id"])
+                            else:
+                                _log.debug("重复发票已有原件，跳过链接文件回填")
                         # Clean up the downloaded file for the duplicate
                         if os.path.exists(dl.file_path):
                             os.remove(dl.file_path)
@@ -2403,9 +2408,12 @@ def _process_email(
                     if dup_abs not in kept_paths:
                         kept_paths.add(dup_abs)
                     file_hash_val = _sha256_file(Path(dup_abs)) if os.path.exists(dup_abs) else ""
-                    db.update_invoice_attachment_path_if_missing(
+                    if db.update_invoice_attachment_path_if_missing(
                         duplicate["id"], dup_att_path, file_hash=file_hash_val or None,
-                    )
+                    ):
+                        _log.info("重复发票已有记录缺少原件，已回填附件路径: existing_id=%d", duplicate["id"])
+                    else:
+                        _log.debug("重复发票已有原件，跳过附件文件回填")
             invoice_extras = extras_for_invoice(info)
             if invoice_extras:
                 _attach_email_extras_to_invoice(

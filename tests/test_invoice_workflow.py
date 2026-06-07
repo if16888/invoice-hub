@@ -65,7 +65,7 @@ class MultiLinkDownloader(LinkDownloader):
     def __init__(self):
         super().__init__(tempfile.mkdtemp())
 
-    def _download_url(self, url, mail_uid, idx, date_str):
+    def _download_url(self, url, mail_uid, idx, date_str, disable_fallback=False):
         return DownloadedFile(
             url=url,
             file_path=f"/tmp/invoice_{idx}.pdf",

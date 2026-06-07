@@ -794,7 +794,7 @@ class InvoiceDB:
             values,
         )
         self._conn.commit()
-        _log.info("重复发票已有记录缺少原件，已回填附件路径: existing_id=%d", invoice_id)
+        _log.debug("重复发票已有记录缺少原件，已回填附件路径: existing_id=%d", invoice_id)
         return True
 
     def update_invoice_missing_fields(
