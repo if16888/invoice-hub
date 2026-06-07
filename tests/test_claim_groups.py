@@ -77,7 +77,7 @@ class ClaimGroupsTests(unittest.TestCase):
             # Check user_version
             cursor.execute("PRAGMA user_version")
             version = cursor.fetchone()[0]
-            self.assertIn(version, (2, 3, 4))
+            self.assertIn(version, (2, 3, 4, 5))
 
             # Check claim_groups columns
             cursor.execute("PRAGMA table_info(claim_groups)")

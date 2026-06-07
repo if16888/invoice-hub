@@ -238,3 +238,23 @@ def check_and_migrate(conn: sqlite3.Connection):
                 pass
             _log.exception("CRITICAL: Database migration to V4 failed! Error: %s", e)
             raise e
+
+    # 6. Migration to V5: Add item_name column to invoices table
+    if version < 5:
+        _log.info("Migrating database schema: V4 -> V5")
+        try:
+            cursor.execute("PRAGMA table_info(invoices)")
+            invoice_cols = {row[1] for row in cursor.fetchall()}
+            if "item_name" not in invoice_cols:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN item_name TEXT NOT NULL DEFAULT ''")
+                _log.info("Added database column [invoices.item_name]")
+            cursor.execute("PRAGMA user_version = 5")
+            conn.commit()
+            _log.info("Database migration to V5 completed successfully.")
+        except Exception as e:
+            try:
+                conn.rollback()
+            except sqlite3.OperationalError:
+                pass
+            _log.exception("CRITICAL: Database migration to V5 failed! Error: %s", e)
+            raise e

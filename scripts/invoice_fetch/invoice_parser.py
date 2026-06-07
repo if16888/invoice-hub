@@ -27,6 +27,7 @@ class InvoiceInfo:
     parse_success: bool = False
     parse_note: str = ""
     raw_text: str = ""
+    item_name: str = ""
 
 
 # ── Shared date normalizer ──────────────────────────────────────────
@@ -89,6 +90,7 @@ class InvoiceParser:
             text = text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
 
             info.raw_text = text[:2000]
+            info.item_name = self._extract_item_names(text)
 
             if self._parse_transport_receipt(text, info):
                 return info
@@ -594,6 +596,74 @@ class InvoiceParser:
             if re.search(pat, text):
                 return label
         return ""
+
+    def _extract_item_names(self, text: str) -> str:
+        """Extract item names (at least first 3) from the PDF text."""
+        if not text:
+            return ""
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        # Find header index
+        header_idx = -1
+        for idx, line in enumerate(lines):
+            # Check for header indicators
+            if "项目名称" in line and ("规格型号" in line or "金额" in line or "税额" in line or "数量" in line or "单价" in line):
+                header_idx = idx
+                break
+
+        # Stop words that indicate the end of the item table or should be skipped
+        stop_words = ["合计", "购买方", "销售方", "备注", "注", "密码区", "收款人", "复核", "开票人", "名称"]
+
+        item_candidates = []
+
+        if header_idx != -1:
+            # Look at lines below header
+            for idx in range(header_idx + 1, len(lines)):
+                line = lines[idx]
+                if any(line.startswith(sw) or sw in line[:5] for sw in stop_words):
+                    break
+
+                parts = line.split()
+                if not parts:
+                    continue
+
+                name = parts[0]
+                # If name is a stop word or starts with a stop word, break or skip
+                if any(name.startswith(sw) for sw in stop_words) or any(sw in name for sw in ["税额", "金额", "税率"]):
+                    break
+
+                # Check if it looks like a valid item name
+                # Should contain CJK characters or starts with *
+                if re.search(r"[\u4e00-\u9fff\*]", name):
+                    if len(name) > 1:
+                        item_candidates.append(name)
+
+        # If no candidates found from header logic, scan the whole text for asterisk patterns
+        if not item_candidates:
+            for line in lines:
+                parts = line.split()
+                if not parts:
+                    continue
+                name = parts[0]
+                if any(sw in name for sw in stop_words):
+                    continue
+                m_asterisk = re.search(r"(\*[^*]+\*[^*]*?)(?:\s|$)", name)
+                if m_asterisk:
+                    item_candidates.append(m_asterisk.group(1).strip())
+
+        # Filter and clean
+        valid_items = []
+        for item in item_candidates:
+            # Clean up
+            item = re.sub(r"\s+", "", item)
+            # Remove any prefix like "名称:" if it got parsed
+            item = re.sub(r"^(?:项目名称|名称)[:：]?", "", item)
+            if item and len(item) > 1 and not any(sw in item for sw in stop_words):
+                valid_items.append(item)
+
+        # Return first 3 items joined by comma
+        return ", ".join(valid_items[:3])
 
 
 # ── Subject-line fallback ────────────────────────────────────────────

@@ -3307,6 +3307,191 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertIn("DIDI001_ex.pdf", extra_paths1[0].replace("\\", "/"))
             self.assertIn("DIDI002_ex.pdf", extra_paths2[0].replace("\\", "/"))
 
+    def test_extract_item_names_cjk_asterisk(self):
+        """测试从发票文本中提取前 3 个明细项目名称"""
+        from scripts.invoice_fetch.invoice_parser import InvoiceParser
+        parser = InvoiceParser()
+
+        # Case 1: Standard header-based item extraction
+        text1 = (
+            "货物或应税劳务、服务名称   规格型号   单位   数量   单价   金额   税率   税额\n"
+            "*餐饮服务*48元炒饭      无        份     1     48.00  48.00  6%     2.88\n"
+            "*餐饮服务*可乐         无        瓶     1     10.00  10.00  6%     0.60\n"
+            "合计                                                 58.00         3.48\n"
+        )
+        item_names1 = parser._extract_item_names(text1)
+        self.assertEqual(item_names1, "*餐饮服务*48元炒饭, *餐饮服务*可乐")
+
+        # Case 2: Max 3 items
+        text2 = (
+            "项目名称   金额\n"
+            "项目A\n"
+            "项目B\n"
+            "项目C\n"
+            "项目D\n"
+            "合计\n"
+        )
+        item_names2 = parser._extract_item_names(text2)
+        self.assertEqual(item_names2, "项目A, 项目B, 项目C")
+
+        # Case 3: Whole-text scan fallback with asterisk patterns
+        text3 = (
+            "Some unrelated headers\n"
+            "*餐饮*炒饭 其他干扰信息\n"
+            "其他文本\n"
+        )
+        item_names3 = parser._extract_item_names(text3)
+        self.assertEqual(item_names3, "*餐饮*炒饭")
+
+    def test_classify_prioritizes_item_name(self):
+        """测试消费类型分类优先级：项目名称强餐饮/交通关键词 > 销售方/主题"""
+        # Define categories dict
+        categories = {
+            "transport": {"keywords": ["客运", "铁路"], "extra_name": ""},
+            "dining": {"keywords": ["餐费", "餐饮"], "extra_name": ""},
+        }
+
+        # Case 1: Railway dining invoice (seller is railway, item is dining) -> "餐饮"
+        cat, _, _ = cli._classify(
+            subject="电子发票",
+            sender="invoice@info.nuonuo.com",
+            seller="北京京铁列车服务有限公司",
+            categories=categories,
+            item_name="*餐饮服务*炒饭",
+            invoice_type="电子发票",
+        )
+        self.assertEqual(cat, "餐饮")
+
+        # Case 2: Railway ticket invoice (seller is railway, item is transport) -> "交通"
+        cat, _, _ = cli._classify(
+            subject="电子发票",
+            sender="12306@railway.com.cn",
+            seller="中国国家铁路集团有限公司",
+            categories=categories,
+            item_name="*旅客运输服务*火车票",
+            invoice_type="铁路电子客票",
+        )
+        self.assertEqual(cat, "交通")
+
+        # Case 3: Empty item name fallback (based on seller keyword) -> "交通"
+        cat_rail, _, _ = cli._classify(
+            subject="电子发票",
+            sender="12306@railway.com.cn",
+            seller="中国国家铁路集团有限公司",
+            categories=categories,
+            item_name="",
+        )
+        self.assertEqual(cat_rail, "交通")
+
+    def test_duplicate_backfill_dining_safe(self):
+        """测试重复发票安全回填消费分类的逻辑"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+
+            with InvoiceDB(runtime / "invoices.db") as db:
+                # Insert V5 migration to ensure table is upgraded
+                from scripts.invoice_fetch.migrations import check_and_migrate
+                check_and_migrate(db._conn)
+
+                # Case 1: Existing invoice is "其他", review_status is "to_review", should backfill to "餐饮"
+                inv_id1 = db.insert_invoice({
+                    "invoice_number": "FP001",
+                    "total_amount": "100.00",
+                    "seller_name": "列车服务公司",
+                    "category": "其他",
+                    "review_status": "to_review",
+                    "item_name": "",
+                })
+                existing1 = db.get_invoice(inv_id1)
+                refreshed1 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing1,
+                    invoice_number="FP001",
+                    invoice_code="111",
+                    invoice_date="2026-05-18",
+                    amount="100.00",
+                    total_amount="100.00",
+                    seller_name="列车服务公司",
+                    buyer_name="公司",
+                    invoice_type="电子发票",
+                    category="餐饮",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="重复发票",
+                    item_name="*餐饮服务*炒饭",
+                )
+                self.assertTrue(refreshed1)
+                updated1 = db.get_invoice(inv_id1)
+                self.assertEqual(updated1["category"], "餐饮")
+                self.assertEqual(updated1["item_name"], "*餐饮服务*炒饭")
+
+                # Case 2: Existing invoice has non-empty valid category (e.g. "交通"), should NOT backfill to "餐饮"
+                inv_id2 = db.insert_invoice({
+                    "invoice_number": "FP002",
+                    "total_amount": "200.00",
+                    "seller_name": "列车服务公司",
+                    "category": "交通",
+                    "review_status": "to_review",
+                    "item_name": "",
+                })
+                existing2 = db.get_invoice(inv_id2)
+                refreshed2 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing2,
+                    invoice_number="FP002",
+                    invoice_code="222",
+                    invoice_date="2026-05-18",
+                    amount="200.00",
+                    total_amount="200.00",
+                    seller_name="列车服务公司",
+                    buyer_name="公司",
+                    invoice_type="电子发票",
+                    category="餐饮",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="重复发票",
+                    item_name="*餐饮服务*餐费",
+                )
+                self.assertTrue(refreshed2)
+                updated2 = db.get_invoice(inv_id2)
+                self.assertEqual(updated2["category"], "交通")  # Preserved
+
+                # Case 3: Existing invoice is approved/claimed, should NOT backfill to "餐饮"
+                inv_id3 = db.insert_invoice({
+                    "invoice_number": "FP003",
+                    "total_amount": "300.00",
+                    "seller_name": "列车服务公司",
+                    "category": "未分类",
+                    "review_status": "approved",
+                    "item_name": "",
+                })
+                existing3 = db.get_invoice(inv_id3)
+                refreshed3 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing3,
+                    invoice_number="FP003",
+                    invoice_code="333",
+                    invoice_date="2026-05-18",
+                    amount="300.00",
+                    total_amount="300.00",
+                    seller_name="列车服务公司",
+                    buyer_name="公司",
+                    invoice_type="电子发票",
+                    category="餐饮",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="重复发票",
+                    item_name="*餐饮服务*盒饭",
+                )
+                self.assertTrue(refreshed3)
+                updated3 = db.get_invoice(inv_id3)
+                self.assertEqual(updated3["category"], "未分类")  # Preserved due to approved review_status
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -254,8 +254,22 @@ def _parse_args() -> argparse.Namespace:
 # ── Classify ─────────────────────────────────────────────────────────
 
 def _classify(subject: str, sender: str, seller: str,
-              categories: dict) -> tuple[str, str, bool]:
+              categories: dict, item_name: str | None = None,
+              invoice_type: str | None = None) -> tuple[str, str, bool]:
     """Return (category, extra_type, extra_required)."""
+    # 1. item_name strong keywords (highest priority)
+    if item_name:
+        item_name_lower = item_name.lower()
+        dining_kws = ["餐饮服务", "餐费", "盒饭", "炒饭", "饭", "饮品", "早餐", "午餐", "晚餐", "小吃"]
+        traffic_kws = ["旅客运输服务", "客运服务", "火车票", "铁路客运", "车票"]
+
+        if any(kw in item_name_lower for kw in dining_kws):
+            return "餐饮", "", False
+
+        if any(kw in item_name_lower for kw in traffic_kws):
+            return "交通", "", False
+
+    # 2. Existing seller/subject checks
     if seller == "中国国家铁路集团有限公司":
         return "交通", "", False
     combined = (subject + " " + sender + " " + seller).lower()
@@ -1201,6 +1215,7 @@ def _refresh_invoice_from_parse(
     extra_type: str,
     missing_extra: bool,
     parse_note: str,
+    item_name: str = "",
     force_refresh_metadata: bool = False,
 ) -> bool:
     """Refresh parsed invoice metadata in place, with safe backfill.
@@ -1220,6 +1235,13 @@ def _refresh_invoice_from_parse(
         return True
 
     # For to_review / error / ignored: refresh + safe backfill missing fields
+    existing_category = str(existing.get("category") or "").strip()
+    backfill_dining = False
+    if existing_category in ("", "其他", "未分类") and category == "餐饮" and item_name:
+        dining_kws = ["餐饮服务", "餐费", "盒饭", "炒饭", "饭", "饮品", "早餐", "午餐", "晚餐", "小吃"]
+        if any(kw in item_name.lower() for kw in dining_kws):
+            backfill_dining = True
+
     if force_refresh_metadata:
         backfill_fields = {}
         for field_key, new_val in [
@@ -1236,10 +1258,17 @@ def _refresh_invoice_from_parse(
             if new_val_str and not existing_val:
                 backfill_fields[field_key] = new_val_str
 
+        # If safe backfill dining applies, ensure we backfill category as dining even if not empty (like "其他")
+        if backfill_dining and backfill_fields.get("category") != "餐饮":
+            backfill_fields["category"] = "餐饮"
+
         if backfill_fields:
             db.update_invoice_missing_fields(
                 existing["id"], backfill_fields, only_if_empty=True,
             )
+
+        if backfill_dining:
+            _log.info("重复发票根据项目名称回填消费类型: existing_id=%d, category=餐饮", existing["id"])
 
         return db.update_invoice_parsed_metadata(
             existing["id"],
@@ -1257,6 +1286,7 @@ def _refresh_invoice_from_parse(
             missing_extra=missing_extra,
             parse_success=True,
             parse_note=parse_note,
+            item_name=item_name,
         )
     else:
         # Safe backfill (default): do not overwrite non-empty fields in existing.
@@ -1265,11 +1295,17 @@ def _refresh_invoice_from_parse(
         updated_amount = existing.get("amount") if str(existing.get("amount") or "").strip() else amount
         updated_total_amount = existing.get("total_amount") if str(existing.get("total_amount") or "").strip() else total_amount
         updated_invoice_date = existing.get("invoice_date") if str(existing.get("invoice_date") or "").strip() else invoice_date
-        updated_category = existing.get("category") if str(existing.get("category") or "").strip() else category
+
+        if backfill_dining:
+            updated_category = "餐饮"
+            _log.info("重复发票根据项目名称回填消费类型: existing_id=%d, category=餐饮", existing["id"])
+        else:
+            updated_category = existing.get("category") if str(existing.get("category") or "").strip() else category
 
         updated_buyer_name = existing.get("buyer_name") if str(existing.get("buyer_name") or "").strip() else buyer_name
         updated_invoice_type = existing.get("invoice_type") if str(existing.get("invoice_type") or "").strip() else invoice_type
         updated_invoice_code = existing.get("invoice_code") if str(existing.get("invoice_code") or "").strip() else invoice_code
+        updated_item_name = existing.get("item_name") if str(existing.get("item_name") or "").strip() else item_name
 
         # Log fields being backfilled
         backfilled_logs = []
@@ -1278,7 +1314,7 @@ def _refresh_invoice_from_parse(
             ("amount", existing.get("amount"), amount),
             ("total_amount", existing.get("total_amount"), total_amount),
             ("invoice_date", existing.get("invoice_date"), invoice_date),
-            ("category", existing.get("category"), category),
+            ("category", existing.get("category"), updated_category),
             ("buyer_name", existing.get("buyer_name"), buyer_name),
             ("invoice_type", existing.get("invoice_type"), invoice_type),
             ("invoice_code", existing.get("invoice_code"), invoice_code),
@@ -1304,6 +1340,7 @@ def _refresh_invoice_from_parse(
             missing_extra=missing_extra,
             parse_success=True,
             parse_note=parse_note,
+            item_name=updated_item_name,
         )
 
 
@@ -1450,6 +1487,7 @@ def _import_local_pdf(
         category, extra_type, extra_required = _classify(
             f"{source_name} {info.invoice_type or ''}", "local import",
             info.seller_name or "", categories,
+            item_name=info.item_name, invoice_type=info.invoice_type
         )
         refreshed = _refresh_invoice_from_parse(
             db=db,
@@ -1467,6 +1505,7 @@ def _import_local_pdf(
             extra_type=extra_type,
             missing_extra=extra_required,
             parse_note=info.parse_note or "本地导入",
+            item_name=info.item_name,
         )
         if refreshed:
             _log.info(
@@ -1489,6 +1528,7 @@ def _import_local_pdf(
             category, extra_type, extra_required = _classify(
                 f"{source_name} {info.invoice_type or ''}", "local import",
                 info.seller_name or existing_receipt.get("seller_name") or "", categories,
+                item_name=info.item_name, invoice_type=info.invoice_type
             )
             _refresh_invoice_from_parse(
                 db=db,
@@ -1506,6 +1546,7 @@ def _import_local_pdf(
                 extra_type=extra_type or existing_receipt.get("extra_type") or "",
                 missing_extra=extra_required,
                 parse_note=info.parse_note or existing_receipt.get("parse_note") or "",
+                item_name=info.item_name,
             )
             attached = _attach_evidence_to_invoice(db, existing_receipt, file_path)
             if attached:
@@ -1536,6 +1577,7 @@ def _import_local_pdf(
                     category, extra_type, extra_required = _classify(
                         f"{source_name} {info.invoice_type or ''}", "local import",
                         info.seller_name or "", categories,
+                        item_name=info.item_name, invoice_type=info.invoice_type
                     )
                     _refresh_invoice_from_parse(
                         db=db,
@@ -1553,6 +1595,7 @@ def _import_local_pdf(
                         extra_type=extra_type,
                         missing_extra=extra_required,
                         parse_note=info.parse_note or "本地导入",
+                        item_name=info.item_name,
                     )
                     return "added", existing_by_fields["id"]
 
@@ -1593,6 +1636,7 @@ def _import_local_pdf(
             category, extra_type, extra_required = _classify(
                 f"{source_name} {info.invoice_type or ''}", "local import",
                 info.seller_name, categories,
+                item_name=info.item_name, invoice_type=info.invoice_type
             )
             if preserve_source_path:
                 attachment_path = _runtime_relative(file_path)
@@ -1630,6 +1674,7 @@ def _import_local_pdf(
                 "attachment_path": attachment_path,
                 "extra_paths": [],
                 "file_hash": file_hash,
+                "item_name": info.item_name,
             }
             row_id = db.insert_invoice(rec)
             return "conflict", row_id
@@ -1637,6 +1682,7 @@ def _import_local_pdf(
     category, extra_type, extra_required = _classify(
         f"{source_name} {info.invoice_type or ''}", "local import",
         info.seller_name, categories,
+        item_name=info.item_name, invoice_type=info.invoice_type
     )
     if preserve_source_path:
         attachment_path = _runtime_relative(file_path)
@@ -1673,6 +1719,7 @@ def _import_local_pdf(
         "attachment_path": attachment_path,
         "extra_paths": [],
         "file_hash": file_hash,
+        "item_name": info.item_name,
     }
     row_id = db.insert_invoice(rec)
     return "added", row_id
@@ -2106,7 +2153,9 @@ def _process_email(
                     existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
                     repaired_attachment_path = ""
                     category, extra_type, extra_req = _classify(
-                        msg.subject, msg.sender, info.seller_name, categories)
+                        msg.subject, msg.sender, info.seller_name, categories,
+                        item_name=info.item_name, invoice_type=info.invoice_type
+                    )
                     if existing_attachment_missing:
                         code = info.invoice_code or info.invoice_number
                         repaired_attachment_path = _rename_by_invoice_code(
@@ -2151,6 +2200,7 @@ def _process_email(
                         extra_type=extra_type,
                         missing_extra=extra_req and not bool(repaired_extra_paths),
                         parse_note=info.parse_note or "链接下载",
+                        item_name=info.item_name,
                     ):
                         if repaired_attachment_path:
                             db.update_invoice_file_paths(
@@ -2178,7 +2228,9 @@ def _process_email(
                     _log_existing_invoice_duplicate(duplicate, "link_download_duplicate")
                     code = info.invoice_code or info.invoice_number
                     cat_ld, extra_type_ld, extra_req_ld = _classify(
-                        msg.subject, msg.sender, info.seller_name, categories)
+                        msg.subject, msg.sender, info.seller_name, categories,
+                        item_name=info.item_name, invoice_type=info.invoice_type
+                    )
                     # ── Backfill attachment_path before removing the download ──
                     if os.path.exists(dl.file_path):
                         backfill_path = _rename_by_invoice_code(
@@ -2219,7 +2271,9 @@ def _process_email(
                     recorded += 1
                     continue
                 cat, extra_type, extra_req = _classify(
-                    msg.subject, msg.sender, info.seller_name, categories)
+                    msg.subject, msg.sender, info.seller_name, categories,
+                    item_name=info.item_name, invoice_type=info.invoice_type
+                )
                 # Rename file: {invoice_code}.pdf under {invoice_date}/
                 code = info.invoice_code or info.invoice_number
                 att_path = _rename_by_invoice_code(
@@ -2251,6 +2305,7 @@ def _process_email(
                     "attachment_path": att_path,
                     "extra_paths": [],
                     "download_url": dl.url,
+                    "item_name": info.item_name,
                 }
                 row_id = db.insert_invoice(rec)
                 if row_id:
@@ -2326,7 +2381,9 @@ def _process_email(
             was_deleted = int(existing.get("is_deleted") or 0) == 1
             existing = _restore_existing_invoice_if_deleted(db, existing, "附件")
             cat, extra_type, extra_req = _classify(
-                msg.subject, msg.sender, info.seller_name, categories)
+                msg.subject, msg.sender, info.seller_name, categories,
+                item_name=info.item_name, invoice_type=info.invoice_type
+            )
             existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
             repaired_attachment_path = ""
             if existing_attachment_missing:
@@ -2373,6 +2430,7 @@ def _process_email(
                 extra_type=extra_type,
                 missing_extra=extra_req and not bool(repaired_extra_paths),
                 parse_note=info.parse_note,
+                item_name=info.item_name,
             ):
                 if repaired_attachment_path:
                     db.update_invoice_file_paths(
@@ -2394,7 +2452,9 @@ def _process_email(
             _log_existing_invoice_duplicate(duplicate, "attachment_duplicate")
             # Define category for both backfill and extras
             cat_dup, extra_type_dup, extra_req_dup = _classify(
-                msg.subject, msg.sender, info.seller_name, categories)
+                msg.subject, msg.sender, info.seller_name, categories,
+                item_name=info.item_name, invoice_type=info.invoice_type
+            )
             code = info.invoice_code or info.invoice_number
             # ── Backfill attachment_path for duplicate with missing original ──
             if att.file_path and os.path.exists(att.file_path):
@@ -2433,7 +2493,9 @@ def _process_email(
             continue
 
         cat, extra_type, extra_req = _classify(
-            msg.subject, msg.sender, info.seller_name, categories)
+            msg.subject, msg.sender, info.seller_name, categories,
+            item_name=info.item_name, invoice_type=info.invoice_type
+        )
 
         invoice_extras = extras_for_invoice(info)
         has_extra = bool(invoice_extras) if extra_req else False
@@ -2470,6 +2532,7 @@ def _process_email(
             "attachment_path": att_path,
             "extra_paths": [],
             "mailbox_key": mailbox_key,
+            "item_name": info.item_name,
         }
         row_id = db.insert_invoice(rec)
         if row_id:

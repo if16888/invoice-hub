@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     attachment_path TEXT DEFAULT '',
     extra_paths     TEXT DEFAULT '[]',
     download_url    TEXT DEFAULT '',
+    item_name       TEXT DEFAULT '',
     is_deleted      INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now','localtime')),
     UNIQUE(invoice_number, total_amount, seller_name)
@@ -357,7 +358,7 @@ class InvoiceDB:
             "invoice_type", "category", "has_extra", "extra_type",
             "missing_extra", "mail_uid", "mail_subject", "mail_date",
             "mail_sender", "parse_success", "parse_note",
-            "attachment_path", "extra_paths", "download_url",
+            "attachment_path", "extra_paths", "download_url", "item_name",
             "review_status", "processing_status", "currency", "exchange_rate",
             "amount_home", "file_hash", "confirmed_at", "confirmed_note", "is_deleted",
         }
@@ -676,6 +677,7 @@ class InvoiceDB:
         missing_extra: bool,
         parse_success: bool,
         parse_note: str = "",
+        item_name: str = "",
     ) -> bool:
         """Refresh parsed metadata in-place without touching review status."""
         inv = self.get_invoice(invoice_id)
@@ -687,7 +689,7 @@ class InvoiceDB:
             self._conn.execute(
                 "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, amount=?, total_amount=?, "
                 "seller_name=?, buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
-                "missing_extra=?, parse_success=?, parse_note=? WHERE id=?",
+                "missing_extra=?, parse_success=?, parse_note=?, item_name=? WHERE id=?",
                 (
                     invoice_number,
                     invoice_code,
@@ -703,6 +705,7 @@ class InvoiceDB:
                     int(bool(missing_extra)),
                     int(bool(parse_success)),
                     parse_note,
+                    item_name,
                     invoice_id,
                 ),
             )
@@ -824,6 +827,8 @@ class InvoiceDB:
             "attachment_path",
             "file_hash",
             "extra_paths",
+            "item_name",
+            "parse_note",
         }
 
         review_status = str(inv.get("review_status") or "to_review")
@@ -846,8 +851,8 @@ class InvoiceDB:
                 continue
 
             # Never backfill business fields on approved/claimed invoices
-            # Only allow path/hash updates for approved or claimed invoices.
-            if key not in ("attachment_path", "file_hash"):
+            # Only allow path/hash/meta updates for approved or claimed invoices.
+            if key not in ("attachment_path", "file_hash", "parse_note", "item_name"):
                 if review_status not in allow_review_statuses or is_claimed:
                     skipped.append(key)
                     continue

@@ -796,6 +796,10 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_url.setReadOnly(True)
         more_source_layout.addRow("下载链接:", self.txt_url)
 
+        self.txt_item_name = QLineEdit()
+        self.txt_item_name.setReadOnly(True)
+        more_source_layout.addRow("项目名称:", self.txt_item_name)
+
         self.txt_full_path = QLineEdit()
         self.txt_full_path.setReadOnly(True)
         more_source_layout.addRow("完整文件路径:", self.txt_full_path)
@@ -1797,6 +1801,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_full_path.clear()
         self.txt_full_path.setToolTip("")
         self.txt_url.clear()
+        self.txt_item_name.clear()
         self.combo_supporting_docs.blockSignals(True)
         self.combo_supporting_docs.clear()
         self.combo_supporting_docs.addItem("暂无证明材料")
@@ -1959,6 +1964,7 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_amount.setText(total_amt)
             self.combo_category.setCurrentText(category)
             self.txt_subject.setText(str(inv.get("mail_subject") or ""))
+            self.txt_item_name.setText(str(inv.get("item_name") or ""))
             mail_uid = inv.get("mail_uid")
             download_url = str(inv.get("download_url") or "").strip()
             if not att_path and (mail_uid is not None or download_url):
@@ -2183,6 +2189,7 @@ class InvoiceReviewApp(QMainWindow):
                         missing_extra=extra_required,
                         parse_success=True,
                         parse_note=info.parse_note or "重新解析",
+                        item_name=getattr(info, "item_name", ""),
                     )
                     if updated:
                         if repair_target_id != inv_id:
@@ -2358,6 +2365,7 @@ class InvoiceReviewApp(QMainWindow):
                                     missing_extra=extra_req,
                                     parse_success=True,
                                     parse_note="重新下载后解析",
+                                    item_name=getattr(info, "item_name", ""),
                                 )
                                 if not updated:
                                     if getattr(self.db, "last_error", "") == "unique_conflict":
@@ -2703,7 +2711,7 @@ class InvoiceReviewApp(QMainWindow):
 
                 self.db.update_invoice_file_paths(inv_id, attachment_path=rel_path, file_hash=file_hash_val)
                 if getattr(res, "parse_note", None):
-                    self.db.update_invoice_parsed_metadata(inv_id, {"parse_note": res.parse_note})
+                    self.db.update_invoice_missing_fields(inv_id, {"parse_note": res.parse_note}, only_if_empty=False)
 
                 self.current_invoice["attachment_path"] = rel_path
                 self.current_invoice["file_hash"] = file_hash_val
