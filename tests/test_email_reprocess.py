@@ -984,7 +984,7 @@ class TestEmailReprocess(unittest.TestCase):
         extra_files = [extra1, extra2]
 
         from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
-        matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info])
+        matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": True})
 
         # 单发票直接全挂
         self.assertEqual(len(unmatched), 0)
@@ -1117,6 +1117,265 @@ class TestEmailReprocess(unittest.TestCase):
         gui.btn_link_evidence.setEnabled(is_pending)
         self.assertFalse(gui._visible)
         self.assertFalse(gui._enabled)
+
+    def test_32_single_invoice_conservative_unmatched(self):
+        # 保守模式下，单发票邮件：1 个 invoice，1 个完全无关的 extra，应该不匹配而保留为待关联
+        class MockFile:
+            def __init__(self, name, index, file_path=None):
+                self.original_name = name
+                self.file_path = file_path or f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv_info = MockInvoice("INV-S32", "200.00", "2026-06-01")
+        # 无关的 extra
+        extra = MockFile("something_random.pdf", 1)
+        extra_files = [extra]
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": False})
+
+        # 保守匹配下不应该关联，应该归为 unmatched
+        self.assertEqual(len(unmatched), 1)
+        self.assertEqual(len(matched.get(id(inv_info), [])), 0)
+
+    def test_33_single_invoice_conservative_matched(self):
+        # 保守模式下，单发票邮件：1 个 invoice，1 个具有日期或金额特征的 extra，应能自动关联
+        class MockFile:
+            def __init__(self, name, index, file_path=None):
+                self.original_name = name
+                self.file_path = file_path or f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv_info = MockInvoice("INV-S33", "200.00", "2026-06-01")
+        # 文件名包含发票号，可触发 invoice number 匹配 (+100)
+        extra = MockFile("evidence_INV-S33.pdf", 1)
+        extra_files = [extra]
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": False})
+
+        # 应自动挂接
+        self.assertEqual(len(unmatched), 0)
+        self.assertEqual(len(matched[id(inv_info)]), 1)
+
+    def test_34_link_evidence_cross_mail_rejected(self):
+        # 跨邮件人工关联防护拦截
+        from scripts.invoice_fetch.db import InvoiceDB
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        db_path = Path(temp_dir) / "invoices.db"
+        db = InvoiceDB(db_path)
+        db.__enter__()
+
+        try:
+            # 1. 插入一个 invoice，UID=100, mailbox="mail_a"
+            inv_id = db.insert_invoice({
+                "invoice_number": "11111111",
+                "invoice_code": "code111",
+                "invoice_date": "2026-06-01",
+                "amount": "100.00",
+                "total_amount": "100.00",
+                "seller_name": "Seller A",
+                "buyer_name": "Buyer A",
+                "invoice_type": "电子普通发票",
+                "category": "其他",
+                "has_extra": False,
+                "extra_type": "",
+                "missing_extra": False,
+                "mail_uid": 100,
+                "mail_subject": "subject A",
+                "mail_date": "2026-06-01",
+                "mail_sender": "sender A",
+                "parse_success": True,
+                "parse_note": "",
+                "attachment_path": "attachments/inv.pdf",
+                "extra_paths": [],
+                "download_url": "",
+                "mailbox_key": "mail_a",
+            })
+
+            # 2. 插入一个待关联证明材料，UID=200 (不一致), mailbox="mail_a"
+            ev_id = db.insert_invoice({
+                "invoice_number": "",
+                "invoice_code": "",
+                "invoice_date": "2026-06-01",
+                "amount": "",
+                "total_amount": "",
+                "seller_name": "",
+                "buyer_name": "",
+                "invoice_type": "待关联证明材料",
+                "category": "其他",
+                "has_extra": False,
+                "extra_type": "",
+                "missing_extra": False,
+                "mail_uid": 200,
+                "mail_subject": "subject B",
+                "mail_date": "2026-06-01",
+                "mail_sender": "sender B",
+                "parse_success": True,
+                "parse_note": "",
+                "attachment_path": "attachments/evidence.pdf",
+                "extra_paths": [],
+                "download_url": "",
+                "mailbox_key": "mail_a",
+            })
+
+            # 3. 关联，由于 UID 不一致，应返回 False
+            result = db.link_evidence_to_invoice(inv_id, ev_id)
+            self.assertFalse(result)
+
+            # 4. 插入一个待关联证明材料，UID=100 (一致), mailbox="mail_b" (不一致)
+            ev_id_2 = db.insert_invoice({
+                "invoice_number": "",
+                "invoice_code": "",
+                "invoice_date": "2026-06-01",
+                "amount": "",
+                "total_amount": "",
+                "seller_name": "",
+                "buyer_name": "",
+                "invoice_type": "待关联证明材料",
+                "category": "其他",
+                "has_extra": False,
+                "extra_type": "",
+                "missing_extra": False,
+                "mail_uid": 100,
+                "mail_subject": "subject C",
+                "mail_date": "2026-06-01",
+                "mail_sender": "sender C",
+                "parse_success": True,
+                "parse_note": "",
+                "attachment_path": "attachments/evidence2.pdf",
+                "extra_paths": [],
+                "download_url": "",
+                "mailbox_key": "mail_b",
+            })
+            result2 = db.link_evidence_to_invoice(inv_id, ev_id_2)
+            self.assertFalse(result2)
+
+            # 5. 插入一个待关联证明材料，UID=100 (一致), mailbox="mail_a" (一致)
+            ev_id_3 = db.insert_invoice({
+                "invoice_number": "",
+                "invoice_code": "",
+                "invoice_date": "2026-06-01",
+                "amount": "",
+                "total_amount": "",
+                "seller_name": "",
+                "buyer_name": "",
+                "invoice_type": "待关联证明材料",
+                "category": "其他",
+                "has_extra": False,
+                "extra_type": "",
+                "missing_extra": False,
+                "mail_uid": 100,
+                "mail_subject": "subject C",
+                "mail_date": "2026-06-01",
+                "mail_sender": "sender C",
+                "parse_success": True,
+                "parse_note": "",
+                "attachment_path": "attachments/evidence3.pdf",
+                "extra_paths": [],
+                "download_url": "",
+                "mailbox_key": "mail_a",
+            })
+            result3 = db.link_evidence_to_invoice(inv_id, ev_id_3)
+            self.assertTrue(result3)
+
+        finally:
+            db.__exit__(None, None, None)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_35_multi_invoice_equal_count_one_to_one(self):
+        # 5发票 + 5行程单。其中两个行程单的最佳匹配指向了同一个发票，
+        # 验证在一对一抢占下，该发票仅分配到一个，另一个退回给 unmatched。
+        class MockFile:
+            def __init__(self, name, index, file_path=None):
+                self.original_name = name
+                self.file_path = file_path or f"attachments/{name}"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date, idx):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", idx)
+
+        # 5 张发票
+        inv1 = MockInvoice("INV-M1", "100.00", "2026-06-01", 0)
+        inv2 = MockInvoice("INV-M2", "200.00", "2026-06-02", 1)
+        inv3 = MockInvoice("INV-M3", "300.00", "2026-06-03", 2)
+        inv4 = MockInvoice("INV-M4", "400.00", "2026-06-04", 3)
+        inv5 = MockInvoice("INV-M5", "500.00", "2026-06-05", 4)
+        invoice_infos = [inv1, inv2, inv3, inv4, inv5]
+
+        # 5 张行程单 / 证据
+        extra1 = MockFile("evidence_INV-M1_100.00.pdf", 5)
+        extra2 = MockFile("evidence_100.00.pdf", 6)
+        extra3 = MockFile("evidence_INV-M3_300.00.pdf", 7)
+        extra4 = MockFile("evidence_INV-M4_400.00.pdf", 8)
+        extra5 = MockFile("evidence_INV-M5_500.00.pdf", 9)
+        extra_files = [extra1, extra2, extra3, extra4, extra5]
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        matched, unmatched = _match_email_extras_to_invoices(extra_files, invoice_infos)
+
+        # 在严格一对一贪心关联下，
+        # extra1 应被关联到 inv1，而 extra2 因为它原本的最佳候选 inv1 已被抢占，且没有第二个可选候选，应被退回为 unmatched
+        # extra3, extra4, extra5 分别关联到 inv3, inv4, inv5
+        self.assertEqual(len(unmatched), 1)
+        self.assertIn(extra2, unmatched)
+        self.assertEqual(len(matched.get(id(inv1), [])), 1)
+        self.assertIn(extra1, matched[id(inv1)])
+        self.assertEqual(len(matched.get(id(inv2), [])), 0)
+        self.assertEqual(len(matched.get(id(inv3), [])), 1)
+        self.assertEqual(len(matched.get(id(inv4), [])), 1)
+        self.assertEqual(len(matched.get(id(inv5), [])), 1)
+
+    def test_36_pdf_extraction_exception_fallback(self):
+        # 即使 PDF 文本提取发生异常（触发 Debug 日志），但仍能根据文件名里的发票号、日期等高置信度属性正确关联
+        class MockFile:
+            def __init__(self, name, index, file_path=None):
+                self.original_name = name
+                self.file_path = file_path or "non_existent_file.pdf"
+                self.attachment_index = index
+
+        class MockInvoice:
+            def __init__(self, num, amt, date):
+                self.invoice_number = num
+                self.total_amount = amt
+                self.invoice_date = date
+                self.parse_success = True
+                self.original_file = MockFile(f"{num}.pdf", 0)
+
+        inv_info = MockInvoice("INV-S36", "200.00", "2026-06-01")
+        extra = MockFile("evidence_INV-S36.pdf", 1)
+        extra_files = [extra]
+
+        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": False})
+
+        # 匹配依然应成功
+        self.assertEqual(len(unmatched), 0)
+        self.assertEqual(len(matched[id(inv_info)]), 1)
 
 
 if __name__ == '__main__':

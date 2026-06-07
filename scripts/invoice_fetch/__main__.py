@@ -778,7 +778,8 @@ def _extract_pdf_text_simple(path: Path) -> str:
             text = text.replace("\u2f26", "月").replace("\u2f49", "月")
             text = text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
             return text
-    except Exception:
+    except Exception as e:
+        _log.debug("PDF 文本提取失败 %s: %s", path, e)
         return ""
 
 
@@ -876,6 +877,7 @@ def score_evidence_invoice_match(
 def _match_email_extras_to_invoices(
     extra_files: list,
     invoice_infos: list,
+    config: dict | None = None,
 ) -> tuple[dict[int, list], list]:
     """Map each extra to one parsed invoice using scoring or single-invoice routing."""
     if not invoice_infos:
@@ -884,20 +886,23 @@ def _match_email_extras_to_invoices(
     invoice_count = len(invoice_infos)
     evidence_count = len(extra_files)
 
-    # Case 1: Single Invoice in Email -> Link all extras directly (Coarse matching)
-    if invoice_count == 1:
+    allow_unconditional = False
+    if config:
+        allow_unconditional = config.get("allow_unconditional_single_invoice_extras", False)
+
+    # Case 1: Single Invoice in Email with unconditional matching enabled
+    if invoice_count == 1 and allow_unconditional:
         matched = invoice_infos[0]
         for extra in extra_files:
             orig_name = getattr(extra, "original_name", "") or (Path(extra.file_path).name if getattr(extra, "file_path", None) else "")
             _log.info(
-                "  单发票邮件：证明材料 %s 直接自动关联到唯一的发票 %s",
+                "  单发票邮件：证明材料 %s 直接自动关联到唯一的发票 %s (无条件配置生效)",
                 mask_filename(orig_name),
                 mask_invoice_number(str(getattr(matched, "invoice_number", "") or "")),
             )
         return {id(matched): list(extra_files)}, []
 
-    # Case 2: Multiple Invoices in Email -> strict matching
-    # 2.1 Calculate attachment rank for sorting consistency
+    # Calculate attachment rank for sorting consistency
     def get_info_idx(info):
         orig = getattr(info, "original_file", None)
         return getattr(orig, "attachment_index", 999)
@@ -911,7 +916,7 @@ def _match_email_extras_to_invoices(
     for r, extra in enumerate(sorted_extras):
         extra.attachment_rank = r
 
-    # 2.2 Construct invoice hints
+    # Construct invoice hints
     invoice_hints = {}
     for info in invoice_infos:
         orig_file = getattr(info, "original_file", None)
@@ -931,7 +936,7 @@ def _match_email_extras_to_invoices(
             "possible_order_index": _extract_possible_order_index(orig_name),
         }
 
-    # 2.3 Construct evidence hints
+    # Construct evidence hints
     evidence_hints = {}
     for extra in extra_files:
         orig_name = getattr(extra, "original_name", "") or (Path(extra.file_path).name if getattr(extra, "file_path", None) else "")
@@ -968,7 +973,51 @@ def _match_email_extras_to_invoices(
             "possible_order_index": _extract_possible_order_index(orig_name),
         }
 
-    # 2.4 Perform strict score calculation
+    # Case 2: Single Invoice conservative matching (allow_unconditional = False)
+    if invoice_count == 1:
+        matched_info = invoice_infos[0]
+        matched_extras = []
+        unmatched_extras = []
+        for extra in extra_files:
+            ev_hint = evidence_hints[id(extra)]
+            inv_hint = invoice_hints[id(matched_info)]
+            score, reasons = score_evidence_invoice_match(ev_hint, inv_hint, invoice_count, evidence_count)
+
+            file_path_str = getattr(extra, "file_path", "")
+            file_path = Path(file_path_str) if file_path_str else None
+
+            combined_text_for_transport = ev_hint["original_name"] + " " + ev_hint["text"]
+            is_evidence = _is_evidence_document(None, file_path, text_hint=ev_hint["original_name"]) or \
+                          _looks_like_transport_evidence(combined_text_for_transport)
+
+            # 排除附件顺序分和随机 shared token 分，必须有强证据（如日期/金额/发票号代码/文件名序号）
+            effective_score = score
+            for r_msg in reasons:
+                if "附件顺序" in r_msg:
+                    effective_score -= 15
+                elif "文件名共享标识符" in r_msg:
+                    effective_score -= 10
+
+            if effective_score > 0 or is_evidence:
+                matched_extras.append(extra)
+                _log.info(
+                    "  单发票邮件（保守模式）：证明材料 %s 匹配成功 (score=%d, reasons=%s, is_evidence=%s)，关联到唯一发票 %s",
+                    mask_filename(ev_hint["original_name"]),
+                    score,
+                    ", ".join(reasons),
+                    is_evidence,
+                    mask_invoice_number(str(getattr(matched_info, "invoice_number", "") or "")),
+                )
+            else:
+                unmatched_extras.append(extra)
+                _log.info(
+                    "  单发票邮件（保守模式）：证明材料 %s 未通过保守匹配校验，准备保留为待关联 (score=%d)",
+                    mask_filename(ev_hint["original_name"]),
+                    score,
+                )
+        return {id(matched_info): matched_extras}, unmatched_extras
+
+    # Case 3: Multiple Invoices in Email -> strict matching
     matches_by_invoice: dict[int, list] = {}
     unmatched = []
     extra_matches = []
@@ -1003,8 +1052,8 @@ def _match_email_extras_to_invoices(
                 is_valid_match = True
         else:
             _log.info(
-                "  多发票邮件：证明材料未达到自动关联阈值，准备保留为待关联: %s (最高分=%d)",
-                mask_filename(ev_hint["original_name"]), best_score
+                "  多发票邮件：证明材料未达到自动关联阈值，准备保留为待关联: %s (最高分=%d, 原因=%s)",
+                mask_filename(ev_hint["original_name"]), best_score, ", ".join(best_reasons)
             )
 
         if is_valid_match:
@@ -1012,13 +1061,29 @@ def _match_email_extras_to_invoices(
         else:
             unmatched.append(extra)
 
-    # 2.5 Assign matches greedily by score
+    # Assign matches greedily by score
     extra_matches.sort(key=lambda x: x[2], reverse=True)
     assigned_extras = set()
+    assigned_invoices = set()
+    strict_one_to_one = (invoice_count == evidence_count and invoice_count > 1)
+
     for extra, info, score, reasons in extra_matches:
         if id(extra) in assigned_extras:
             continue
+
+        if strict_one_to_one and id(info) in assigned_invoices:
+            unmatched.append(extra)
+            _log.info(
+                "  多发票同数目邮件（一对一硬化）：证明材料 %s 的最佳匹配发票 %s 已被更匹配的材料占用，退回为待关联",
+                mask_filename(getattr(extra, "original_name", "") or Path(extra.file_path).name),
+                mask_invoice_number(str(getattr(info, "invoice_number", "") or "")),
+            )
+            continue
+
         assigned_extras.add(id(extra))
+        if strict_one_to_one:
+            assigned_invoices.add(id(info))
+
         matches_by_invoice.setdefault(id(info), []).append(extra)
         _log.info(
             "  多发票邮件：证明材料按 %s 自动匹配到发票 %s，score=%d reason=%s",
@@ -1828,6 +1893,7 @@ def _process_email(
     db: InvoiceDB,
     categories: dict,
     mailbox_key: str = "legacy",
+    config: dict | None = None,
 ) -> int:
     """Process a single email.  Return the number of invoices recorded."""
     _log.info("── 处理 %s: %s", mask_uid(msg.uid), redact_text(msg.subject[:60], "subject"))
@@ -1876,6 +1942,7 @@ def _process_email(
     matched_extra_files, unmatched_extra_files = _match_email_extras_to_invoices(
         extra_files,
         parsed_invoice_infos,
+        config=config,
     )
 
     def extras_for_invoice(info) -> list:
@@ -3169,6 +3236,7 @@ def _scan_mailboxes_with_db(
                                 link_dl=link_dl,
                                 db=db,
                                 categories=categories,
+                                config=cfg,
                             )
                             after_active_count = db.count_invoices()
                             after_total_count = db.count_invoices(include_deleted=True)
@@ -3381,6 +3449,7 @@ def _handle_pending_email(
     link_dl: LinkDownloader,
     db: InvoiceDB,
     categories: dict,
+    config: dict | None = None,
 ) -> bool:
     """Fetch and process one pending invoice email.
 
@@ -3402,6 +3471,7 @@ def _handle_pending_email(
         db,
         categories,
         mailbox_key=row.get("mailbox_key", "legacy"),
+        config=config,
     )
     if recorded > 0:
         db.mark_downloaded(row["uid"], mailbox_key=row.get("mailbox_key", "legacy"))
@@ -3741,6 +3811,7 @@ def _reprocess_email_records(
                             link_dl=link_dl,
                             db=db,
                             categories=cfg.get("categories", {}),
+                            config=cfg,
                         )
 
                         after_active_count = db.count_invoices()

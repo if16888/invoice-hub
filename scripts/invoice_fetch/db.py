@@ -1307,6 +1307,28 @@ class InvoiceDB:
             _log.error("link_evidence_to_invoice: evidence record ID %s has no attachment_path", evidence_id)
             return False
 
+        # Check mail info match
+        inv_mailbox = invoice.get("mailbox_key")
+        inv_uid = invoice.get("mail_uid")
+        ev_mailbox = evidence.get("mailbox_key")
+        ev_uid = evidence.get("mail_uid")
+
+        def norm_mailbox(key) -> str:
+            if not key:
+                return "legacy"
+            k = str(key).strip().lower()
+            if k in ("", "legacy"):
+                return "legacy"
+            return k
+
+        # Check UID equivalence
+        if inv_uid is None or ev_uid is None or int(inv_uid) != int(ev_uid) or norm_mailbox(inv_mailbox) != norm_mailbox(ev_mailbox):
+            _log.warning(
+                "link_evidence_to_invoice: Mail info mismatch! Target invoice (ID %s, mailbox: %s, UID: %s), Evidence (ID %s, mailbox: %s, UID: %s)",
+                invoice_id, inv_mailbox, inv_uid, evidence_id, ev_mailbox, ev_uid
+            )
+            return False
+
         # 2. Extract and append evidence_path to invoice's extra_paths
         raw_extra = invoice.get("extra_paths")
         extra_paths = []

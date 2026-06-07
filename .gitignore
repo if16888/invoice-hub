@@ -65,6 +65,7 @@ htmlcov/
 # AI / local agent state
 .antigravitycli/
 .gemini/
+CLAUDE.md
 
 # Logs
 logs/
