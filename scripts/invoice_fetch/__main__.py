@@ -221,6 +221,25 @@ def _parse_args() -> argparse.Namespace:
     p_inv_rest = subparsers.add_parser("invoice-restore", help="恢复已软删除的发票记录")
     p_inv_rest.add_argument("--invoice-id", type=int, required=True, help="发票ID")
 
+    # email-reprocess
+    p_reprocess = subparsers.add_parser("email-reprocess", help="安全的邮箱重处理修复工具")
+    p_reprocess.add_argument("--mailbox", help="指定 mailbox_key 或邮箱地址")
+    p_reprocess.add_argument("--uid", action="append", type=int, help="要处理的邮件 UID，可重复指定")
+    p_reprocess.add_argument("--uid-range", help="要处理的邮件 UID 范围，例如 10000-10200")
+    p_reprocess.add_argument("--since", help="起始日期 (YYYY-MM-DD)")
+    p_reprocess.add_argument("--until", help="结束日期 (YYYY-MM-DD)")
+    p_reprocess.add_argument("--subject-contains", help="邮件主题包含关键词")
+    p_reprocess.add_argument("--sender-contains", help="发件人包含关键词")
+    p_reprocess.add_argument("--only-downloaded", action="store_true", default=True, help="只处理 downloaded=1 的邮件")
+    p_reprocess.add_argument("--no-only-downloaded", action="store_false", dest="only_downloaded", help="处理包含未下载 (downloaded=0) 的邮件")
+    p_reprocess.add_argument("--include-approved", action="store_true", help="允许处理已审核通过的发票记录")
+    p_reprocess.add_argument("--include-claimed", action="store_true", help="允许处理已关联报销组的发票记录")
+    p_reprocess.add_argument("--reclassify", action="store_true", help="重置 is_invoice 为 -1 并重新运行规则/AI 分类")
+    p_reprocess.add_argument("--dry-run", action="store_true", help="仅预览修改，默认开启")
+    p_reprocess.add_argument("--apply", action="store_true", help="真正执行修复")
+    p_reprocess.add_argument("--limit", type=int, default=50, help="最多处理的邮件数量，默认 50")
+    p_reprocess.add_argument("--headed", action="store_true", help="显示浏览器窗口（用于人工辅助验证或下载）")
+
     return p.parse_args()
 
 
@@ -2450,6 +2469,8 @@ def _dispatch_claim_command(args: argparse.Namespace):
             _cmd_invoice_delete(args, db)
         elif args.command == "invoice-restore":
             _cmd_invoice_restore(args, db)
+        elif args.command == "email-reprocess":
+            _cmd_email_reprocess(args, db)
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -3008,6 +3029,282 @@ def scan_email_and_download(
         download_only=download_only,
         log_callback=log_callback
     )
+
+
+def _cmd_email_reprocess(args: argparse.Namespace, db: InvoiceDB):
+    """Subcommand handler to reprocess emails."""
+    dry_run = args.dry_run or not args.apply
+
+    uid_range = None
+    if args.uid_range:
+        parts = args.uid_range.split("-")
+        if len(parts) == 2:
+            try:
+                uid_range = (int(parts[0]), int(parts[1]))
+            except ValueError:
+                pass
+        if not uid_range:
+            print("错误: --uid-range 格式必须为 START-END, 例如 10000-10200")
+            sys.exit(1)
+
+    records = db.find_emails_for_reprocess(
+        mailbox_key=args.mailbox,
+        uids=args.uid,
+        uid_range=uid_range,
+        since=args.since,
+        until=args.until,
+        subject_contains=args.subject_contains,
+        sender_contains=args.sender_contains,
+        only_downloaded=args.only_downloaded,
+        limit=args.limit,
+    )
+
+    if not records:
+        print("没有找到符合条件的候选邮件记录。")
+        sys.exit(0)
+
+    cfg = load_config(args.config)
+    _reprocess_email_records(
+        db=db,
+        cfg=cfg,
+        records=records,
+        include_approved=args.include_approved,
+        include_claimed=args.include_claimed,
+        reclassify=args.reclassify,
+        dry_run=dry_run,
+        headed=args.headed,
+    )
+
+
+def _reprocess_email_records(
+    db: InvoiceDB,
+    cfg: dict,
+    records: list[dict],
+    include_approved: bool = False,
+    include_claimed: bool = False,
+    reclassify: bool = False,
+    dry_run: bool = True,
+    headed: bool = False,
+):
+    """Reprocess the selected email records."""
+    import json as _json
+
+    # 1. 预先扫描拟删除及跳过的 invoices 详情
+    all_targets = []
+    total_to_delete = 0
+    total_skipped_approved = 0
+    total_skipped_claimed = 0
+
+    for r in records:
+        mailbox_key = r["mailbox_key"]
+        uid = r["uid"]
+        invoices = db.get_invoices_by_mail_identity(mailbox_key, uid)
+
+        record_targets = []
+        for inv in invoices:
+            is_approved = (inv.get("review_status") == "approved")
+            is_claimed = inv.get("claim_id") is not None
+
+            skip_reason = None
+            if is_approved and not include_approved:
+                total_skipped_approved += 1
+                skip_reason = "approved"
+            elif is_claimed and not include_claimed:
+                total_skipped_claimed += 1
+                skip_reason = "claimed"
+            else:
+                total_to_delete += 1
+
+            record_targets.append({
+                "inv": inv,
+                "skip_reason": skip_reason
+            })
+
+        all_targets.append({
+            "email": r,
+            "targets": record_targets
+        })
+
+    # Dry-run 模式
+    if dry_run:
+        print("邮箱重处理预览：")
+        print(f"- 候选邮件：{len(records)} 封")
+        print(f"- 将删除旧发票记录：{total_to_delete} 条")
+        print(f"- 跳过已通过：{total_skipped_approved} 条")
+        print(f"- 跳过已归组：{total_skipped_claimed} 条")
+        print("\n候选：")
+
+        for idx, item in enumerate(all_targets, start=1):
+            email = item["email"]
+            masked_mailbox = mask_email(email["mailbox_key"])
+            masked_uid = mask_uid(email["uid"])
+            redacted_subject = redact_text(email["subject"] or "", "subject")
+            print(f"[{idx}] mailbox={masked_mailbox} uid={masked_uid} date={email['mail_date']} subject={redacted_subject}")
+
+            for tgt in item["targets"]:
+                inv = tgt["inv"]
+                inv_id = inv["id"]
+                inv_num = mask_invoice_number(inv.get("invoice_number") or "")
+                amount = inv.get("total_amount") or "0.00"
+                status = inv.get("review_status") or "to_review"
+                fallback_str = " (legacy fallback)" if inv.get("is_legacy_fallback") else ""
+
+                try:
+                    extra_paths_list = _json.loads(inv.get("extra_paths") or "[]")
+                except Exception:
+                    extra_paths_list = []
+                extra_count = len(extra_paths_list)
+
+                if tgt["skip_reason"] == "approved":
+                    print(f"    [跳过] 已通过审核: invoice id={inv_id}{fallback_str} 发票号={inv_num} 金额={amount}")
+                elif tgt["skip_reason"] == "claimed":
+                    claim_id = inv.get("claim_id")
+                    print(f"    [跳过] 已关联报销组: invoice id={inv_id}{fallback_str} 发票号={inv_num} 金额={amount} 报销组ID={claim_id}")
+                else:
+                    print(f"    将删除 invoice id={inv_id}{fallback_str} 发票号={inv_num} 金额={amount} 状态={status} extra={extra_count}")
+
+        print("\n未执行修改。确认无误后加 --apply 执行。")
+        return
+
+    # Apply 真正执行模式
+    print("正在执行邮箱重处理，请稍候...")
+    deleted_invoices_total = 0
+    skipped_approved_total = 0
+    skipped_claimed_total = 0
+
+    # 1) 删除及重置
+    for r in records:
+        mailbox_key = r["mailbox_key"]
+        uid = r["uid"]
+
+        stats = db.delete_invoices_for_reprocess(
+            mailbox_key=mailbox_key,
+            uid=uid,
+            include_approved=include_approved,
+            include_claimed=include_claimed,
+        )
+        deleted_invoices_total += stats["deleted"]
+        skipped_approved_total += stats["skipped_approved"]
+        skipped_claimed_total += stats["skipped_claimed"]
+
+        db.reset_email_for_reprocess(
+            mailbox_key=mailbox_key,
+            uid=uid,
+            reclassify=reclassify,
+        )
+
+    # 2) 重新分类 (如果启用 reclassify)
+    mailbox_keys = {r["mailbox_key"] for r in records}
+    if reclassify:
+        ai_cfg = cfg.get("ai", {})
+        import sys as _sys
+        no_ai_arg = "--no-ai" in _sys.argv
+        for m_key in mailbox_keys:
+            _run_classify(db, ai_cfg, no_ai=no_ai_arg, mailbox_key=m_key)
+
+    # 3) 获取邮箱配置并进行下载
+    accounts = get_email_accounts(cfg)
+    account_contexts = []
+    for acc in accounts:
+        addr = acc.get("address", "")
+        auth_code = ""
+        # 优先使用配置里已有的 auth_code（在单元测试的 mock 里可能已经定义了）
+        if "auth_code" in acc:
+            auth_code = acc["auth_code"]
+        else:
+            try:
+                auth_code = get_auth_code(addr)
+            except (Exception, SystemExit) as e:
+                _log.warning("获取邮箱 %s 的授权码失败: %s", mask_email(addr), e)
+        account_contexts.append({**acc, "auth_code": auth_code})
+    account_by_key = {acc["mailbox_key"]: acc for acc in account_contexts}
+
+    att_dir = db._path.parent / "attachments"
+    att_dir.mkdir(parents=True, exist_ok=True)
+    att_handler = AttachmentHandler(att_dir)
+    parser = InvoiceParser()
+    link_dl = LinkDownloader(att_dir, headed=headed)
+
+    reprocessed_count = 0
+    failed_count = 0
+    new_records_count = 0
+    restored_deleted_count = 0
+    duplicates_count = 0
+
+    for m_key in mailbox_keys:
+        selected_uids = {r["uid"] for r in records if r["mailbox_key"] == m_key}
+
+        acc = account_by_key.get(m_key)
+        if not acc:
+            _log.warning("未在配置中找到 mailbox_key=%s 的邮箱配置，无法重新下载该邮箱下的邮件", m_key)
+            pending_downloads = db.get_invoice_emails_to_download(mailbox_key=m_key)
+            failed_uids = [row["uid"] for row in pending_downloads if row["uid"] in selected_uids]
+            failed_count += len(failed_uids)
+            reprocessed_count += (len(selected_uids) - len(failed_uids))
+            continue
+
+        try:
+            pending = db.get_invoice_emails_to_download(mailbox_key=m_key)
+            pending = [row for row in pending if row["uid"] in selected_uids]
+
+            not_pending_uids = selected_uids - {row["uid"] for row in pending}
+            reprocessed_count += len(not_pending_uids)
+
+            if pending:
+                _log.info("正在连接邮箱 %s...", mask_email(acc["address"]))
+                with MailFetcher(
+                    address=acc["address"],
+                    auth_code=acc["auth_code"],
+                    server=acc.get("imap", {}).get("server", "imap.qq.com"),
+                    port=acc.get("imap", {}).get("port", 993),
+                ) as fetcher:
+                    folder = acc.get("search", {}).get("folder", "INBOX")
+                    for row in pending:
+                        before_active_count = db.count_invoices()
+                        before_total_count = db.count_invoices(include_deleted=True)
+
+                        recorded = _handle_pending_email(
+                            row=row,
+                            fetcher=fetcher,
+                            folder=folder,
+                            att_handler=att_handler,
+                            parser=parser,
+                            link_dl=link_dl,
+                            db=db,
+                            categories=cfg.get("categories", {}),
+                        )
+
+                        after_active_count = db.count_invoices()
+                        after_total_count = db.count_invoices(include_deleted=True)
+
+                        if recorded:
+                            reprocessed_count += 1
+                            new_delta = max(0, after_total_count - before_total_count)
+                            restored_delta = max(0, (after_active_count - before_active_count) - new_delta)
+                            new_records_count += new_delta
+                            restored_deleted_count += restored_delta
+                            if new_delta == 0 and restored_delta == 0:
+                                duplicates_count += 1
+                        else:
+                            failed_count += 1
+            else:
+                pass
+        except Exception as exc:
+            _log.error("连接邮箱 %s 失败或下载过程中出错: %s", mask_email(acc["address"]), exc)
+            failed_count += len(pending)
+
+    link_dl.close()
+
+    print("\n邮箱重处理完成：")
+    print(f"- 选中邮件：{len(records)} 封")
+    print(f"- 删除旧记录：{deleted_invoices_total} 条")
+    print(f"- 跳过已通过：{skipped_approved_total} 条")
+    print(f"- 跳过已归组：{skipped_claimed_total} 条")
+    print(f"- 重新处理成功：{reprocessed_count} 封")
+    print(f"- 新增记录：{new_records_count} 条")
+    print(f"- 恢复已删除记录：{restored_deleted_count} 条")
+    print(f"- 重复：{duplicates_count} 条")
+    print(f"- 失败：{failed_count} 封")
 
 
 if __name__ == "__main__":

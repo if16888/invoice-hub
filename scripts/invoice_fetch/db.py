@@ -1068,3 +1068,174 @@ class InvoiceDB:
     def list_export_runs(self, claim_id: int = None) -> list:
         """Get all logged export runs (helper/alias)."""
         return self.get_export_runs(claim_id)
+
+    def find_emails_for_reprocess(
+        self,
+        mailbox_key: str | None = None,
+        uids: list[int] | None = None,
+        uid_range: tuple[int, int] | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        subject_contains: str | None = None,
+        sender_contains: str | None = None,
+        only_downloaded: bool = True,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Query emails for reprocessing with filters."""
+        query = "SELECT mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded FROM emails WHERE 1=1"
+        params = []
+
+        if mailbox_key:
+            query += " AND LOWER(mailbox_key) = ?"
+            params.append(mailbox_key.strip().lower())
+
+        if uids:
+            placeholders = ",".join("?" for _ in uids)
+            query += f" AND uid IN ({placeholders})"
+            params.extend(uids)
+
+        if uid_range:
+            query += " AND uid >= ? AND uid <= ?"
+            params.extend(uid_range)
+
+        if since:
+            query += " AND mail_date >= ?"
+            params.append(since)
+
+        if until:
+            query += " AND mail_date <= ?"
+            params.append(until)
+
+        if subject_contains:
+            query += " AND subject LIKE ?"
+            params.append(f"%{subject_contains}%")
+
+        if sender_contains:
+            query += " AND sender LIKE ?"
+            params.append(f"%{sender_contains}%")
+
+        if only_downloaded:
+            query += " AND downloaded = 1"
+
+        query += " ORDER BY mail_date DESC, uid DESC"
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_invoices_by_mail_identity(self, mailbox_key: str, uid: int) -> list[dict]:
+        """Find invoices matching mailbox_key and uid, with a fallback to legacy mailbox_key."""
+        # 1. 精确查询，使用 LEFT JOIN 获取 claim_id 字段
+        query = (
+            "SELECT i.id, i.invoice_number, i.invoice_date, i.seller_name, i.total_amount, "
+            "i.review_status, i.attachment_path, i.extra_paths, i.mailbox_key, i.mail_uid, "
+            "cgi.claim_id AS claim_id "
+            "FROM invoices i "
+            "LEFT JOIN claim_group_items cgi ON i.id = cgi.invoice_id "
+            "WHERE i.mailbox_key = ? AND i.mail_uid = ? AND i.is_deleted = 0"
+        )
+        rows = self._conn.execute(query, (mailbox_key, uid)).fetchall()
+        results = [dict(r) for r in rows]
+
+        # 2. 如果精确查询为空，且 mailbox_key 并非 'legacy'，进行 legacy fallback 匹配
+        if not results and mailbox_key != "legacy":
+            query_fallback = (
+                "SELECT i.id, i.invoice_number, i.invoice_date, i.seller_name, i.total_amount, "
+                "i.review_status, i.attachment_path, i.extra_paths, i.mailbox_key, i.mail_uid, "
+                "cgi.claim_id AS claim_id "
+                "FROM invoices i "
+                "LEFT JOIN claim_group_items cgi ON i.id = cgi.invoice_id "
+                "WHERE i.mailbox_key IN ('', 'legacy') AND i.mail_uid = ? AND i.is_deleted = 0"
+            )
+            rows_fb = self._conn.execute(query_fallback, (uid,)).fetchall()
+            for r in rows_fb:
+                d = dict(r)
+                d["is_legacy_fallback"] = True
+                results.append(d)
+
+        # 增加 claim_group_id 的 key 兼容
+        for r in results:
+            r["claim_group_id"] = r["claim_id"]
+
+        return results
+
+    def delete_invoices_for_reprocess(
+        self,
+        mailbox_key: str,
+        uid: int,
+        include_approved: bool = False,
+        include_claimed: bool = False,
+    ) -> dict:
+        """Safely delete invoices associated with a given email and return statistics."""
+        invoices = self.get_invoices_by_mail_identity(mailbox_key, uid)
+
+        deleted = 0
+        skipped_approved = 0
+        skipped_claimed = 0
+        skipped = []
+
+        for inv in invoices:
+            inv_id = inv["id"]
+            is_approved = (inv.get("review_status") == "approved")
+            is_claimed = inv.get("claim_id") is not None
+
+            skip_reason = None
+            if is_approved and not include_approved:
+                skipped_approved += 1
+                skip_reason = "approved"
+            elif is_claimed and not include_claimed:
+                skipped_claimed += 1
+                skip_reason = "claimed"
+
+            if skip_reason:
+                skipped.append({
+                    "id": inv_id,
+                    "invoice_number": inv.get("invoice_number", ""),
+                    "reason": skip_reason
+                })
+            else:
+                # 物理删除 invoices 记录
+                self.delete_invoice_permanently(inv_id)
+                # 清除 claim_group_items 关联
+                self._conn.execute("DELETE FROM claim_group_items WHERE invoice_id = ?", (inv_id,))
+                deleted += 1
+
+        if deleted > 0:
+            self._conn.commit()
+
+        return {
+            "deleted": deleted,
+            "skipped_approved": skipped_approved,
+            "skipped_claimed": skipped_claimed,
+            "skipped": skipped
+        }
+
+    def reset_email_for_reprocess(
+        self,
+        mailbox_key: str,
+        uid: int,
+        reclassify: bool = False,
+    ):
+        """Reset an email's downloaded and processing state, and optionally its classification."""
+        if reclassify:
+            self._conn.execute(
+                "UPDATE emails SET downloaded = 0, processed_at = NULL, "
+                "is_invoice = -1, classify_by = '', classify_reason = '' "
+                "WHERE mailbox_key = ? AND uid = ?",
+                (mailbox_key, uid)
+            )
+        else:
+            self._conn.execute(
+                "UPDATE emails SET downloaded = 0, processed_at = NULL "
+                "WHERE mailbox_key = ? AND uid = ?",
+                (mailbox_key, uid)
+            )
+        # 还要从 processed_emails 表里清除该邮件，防止被当作“已扫描”忽略
+        self._conn.execute(
+            "DELETE FROM processed_emails WHERE mailbox_key = ? AND uid = ?",
+            (mailbox_key, uid)
+        )
+        self._conn.commit()
