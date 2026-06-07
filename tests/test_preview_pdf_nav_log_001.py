@@ -1776,6 +1776,60 @@ class TestDetailPanelCompact001(unittest.TestCase):
         self.assertEqual(evidence_val, "doc1.pdf；doc2.pdf")
         self.assertNotIn(str(self.temp_dir), evidence_val)
 
+    def test_gui_empty_attachment_hint(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch.db import InvoiceDB
+
+        with InvoiceDB(self.db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "222",
+                "invoice_date": "2026-06-01",
+                "seller_name": "销售方B",
+                "total_amount": "200.00",
+                "review_status": "to_review",
+                "mail_uid": 123,
+                "download_url": "http://nnfp.jss.com.cn/show",
+                "attachment_path": "",
+            })
+
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            window.show()
+            self.app.processEvents()
+
+            window.table.selectRow(0)
+            self.app.processEvents()
+
+            self.assertEqual(window.txt_path.text(), "未下载原件（可重试下载或手动补原件）")
+            self.assertTrue(window.btn_add_attachment.isEnabled())
+            self.assertTrue(window.btn_retry_download.isEnabled())
+            self.assertTrue(window.btn_retry_download.isVisible())
+            self.assertFalse(window.btn_open_file.isEnabled())
+        finally:
+            window.close()
+
+    def test_approval_missing_attachment(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        window = InvoiceReviewApp(self.db_path, splash=None)
+        try:
+            inv = {
+                "invoice_number": "222",
+                "invoice_date": "2026-06-01",
+                "total_amount": "200.00",
+                "attachment_path": "",
+                "download_url": "http://nnfp.jss.com.cn/show",
+            }
+            missing = window._approval_missing_fields(inv)
+            self.assertIn("原件", missing)
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

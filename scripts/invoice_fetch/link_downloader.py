@@ -30,6 +30,8 @@ class DownloadedFile:
     filename: str
     size: int
     is_invoice: bool = False
+    source_type: str | None = None
+    parse_note: str | None = None
 
 
 _LINK_KEYWORDS = [
@@ -137,11 +139,11 @@ def _is_safe_download_url(url: str) -> bool:
     )
 
 
-def extract_links_from_html(html: str) -> list[str]:
-    """Extract invoice-related URLs from email HTML body."""
+def extract_links_with_metadata_from_html(html: str) -> list[dict]:
+    """Extract invoice-related URLs along with their anchor text from email HTML body."""
     if not html:
         return []
-    links: list[str] = []
+    results: list[dict] = []
     try:
         soup = BeautifulSoup(html, "html.parser")
         for a in soup.find_all("a", href=True):
@@ -162,10 +164,15 @@ def extract_links_from_html(html: str) -> list[str]:
             )
             if has_invoice_host or has_invoice_context:
                 if not any(ex in url.lower() for ex in _EXCLUDE_PATTERNS):
-                    links.append(url)
+                    results.append({"url": url, "text": text})
     except Exception as exc:
         _log.warning("HTML link parse failed: %s", exc)
-    return links
+    return results
+
+
+def extract_links_from_html(html: str) -> list[str]:
+    """Extract invoice-related URLs from email HTML body."""
+    return [item["url"] for item in extract_links_with_metadata_from_html(html)]
 
 
 def extract_html_from_message(msg) -> str:
@@ -207,25 +214,67 @@ def _canonical_url(url: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(filtered, doseq=True), fragment=""))
 
 
-def _dedup_and_prioritize(links: list[str]) -> list[str]:
+def _dedup_and_prioritize_with_metadata(raw_items: list[dict], is_nuonuo_sender: bool) -> tuple[list[dict], list[dict]]:
     seen = set()
-    direct: list[str] = []
-    other: list[str] = []
-    for url in links:
+    high_items: list[dict] = []
+    low_items: list[dict] = []
+
+    for item in raw_items:
+        url = item["url"]
+        text = item["text"]
         if not _is_safe_download_url(url):
             continue
         canon = _canonical_url(url).rstrip("/")
         if canon in seen:
             continue
         seen.add(canon)
-        low = url.lower()
-        if any(pat in low for pat in _SKIP_URL_PATTERNS):
+
+        url_lower = url.lower()
+        if any(pat in url_lower for pat in _SKIP_URL_PATTERNS):
             continue
-        if any(d in low for d in ["dlj.", "nnfp.", "/dlj/", "/download"]):
-            direct.append(url)
+
+        # Check low priority keywords
+        low_priority_keywords = [
+            "了解诺诺", "官网", "帮助", "广告", "营销", "用户协议", "隐私政策",
+            "baoxiao", "ntf", "bmjc"
+        ]
+        combined_text = (text + " " + url_lower).lower()
+        is_low = any(kw in combined_text for kw in low_priority_keywords)
+
+        if is_low:
+            low_items.append(item)
         else:
-            other.append(url)
-    return direct + other
+            high_items.append(item)
+
+    # Sort high_items
+    def get_sort_key(item):
+        url = item["url"]
+        text = item["text"]
+        url_lower = url.lower()
+
+        # Rule 1: Nuonuo sender prioritization
+        rule1_match = 0
+        if is_nuonuo_sender and "nnfp.jss.com.cn/scan-invoice/invoiceshow" in url_lower:
+            rule1_match = 1
+
+        # Rule 2: High priority anchor/URL keywords
+        rule2_match = 0
+        high_text_kws = ["下载发票", "查看发票", "电子发票", "发票下载", "pdf", "ofd"]
+        high_url_kws = ["invoice", "fp", "fapiao", "scan-invoice", "invoiceshow"]
+
+        if any(kw in text.lower() for kw in high_text_kws) or any(kw in url_lower for kw in high_url_kws):
+            rule2_match = 1
+
+        return (rule1_match, rule2_match)
+
+    high_items.sort(key=get_sort_key, reverse=True)
+    return high_items, low_items
+
+
+def _dedup_and_prioritize(links: list[str]) -> list[str]:
+    raw_items = [{"url": u, "text": ""} for u in links]
+    high, low = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender=False)
+    return [item["url"] for item in high] + [item["url"] for item in low]
 
 
 def _save_download_to_path(download, dest: Path) -> bool:
@@ -356,45 +405,454 @@ class LinkDownloader:
     def __exit__(self, *exc):
         self.close()
 
+def _verify_and_clean_file(path: str | Path) -> bool:
+    """Validate if file is a valid PDF or OFD. Delete if invalid."""
+    p = Path(path)
+    if not p.exists():
+        return False
+    size = p.stat().st_size
+    if size < 500:
+        try:
+            p.unlink()
+        except Exception:
+            pass
+        return False
+    try:
+        with open(p, "rb") as f:
+            header = f.read(5)
+        is_pdf = header.startswith(b"%PDF")
+        is_zip = header.startswith(b"PK\x03\x04")
+        is_ofd = False
+        if is_zip:
+            content = p.read_bytes()
+            if b"ofd.xml" in content or b"OFD.xml" in content:
+                is_ofd = True
+        if is_pdf or is_ofd:
+            return True
+        else:
+            try:
+                p.unlink()
+            except Exception:
+                pass
+            return False
+    except Exception:
+        try:
+            p.unlink()
+        except Exception:
+            pass
+        return False
+
+
+class LinkDownloader:
+    """Download invoice PDFs from URLs using a headless browser."""
+
+    def __init__(self, download_dir: str | Path, timeout_ms: int = 30_000, headed: bool = False):
+        self._dir = Path(download_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        # Per-config capacity limits (can be overridden via config)
+        from .config import load_config_safe
+        cfg = load_config_safe()
+        link_cfg = cfg.get("link_download", {}) if isinstance(cfg, dict) else {}
+        self._timeout = timeout_ms
+        cfg_timeout = link_cfg.get("timeout_ms")
+        if cfg_timeout is not None:
+            self._timeout = int(cfg_timeout)
+        self._max_links_per_email = int(link_cfg.get("max_links_per_email", 5))
+        self._skip_when_attachment_invoice_present = bool(
+            link_cfg.get("skip_when_attachment_invoice_present", True)
+        )
+        self._pw = None
+        self._browser = None
+        self._headed = headed
+        # Per-process failed URL fingerprint cache — avoid retrying known failures
+        self.failed_url_fingerprints: set[str] = set()
+
+    @staticmethod
+    def _url_fingerprint(url: str) -> str:
+        """Return a hashed fingerprint for a URL — deterministic, not reversible."""
+        return hashlib.sha256(url.encode()).hexdigest()[:16]
+
+    def _ensure_browser(self):
+        if self._browser:
+            return
+        from playwright.sync_api import sync_playwright
+        from .config import load_config_safe
+
+        cfg = load_config_safe()
+        channel = cfg.get("playwright", {}).get("channel", "auto")
+
+        self._pw = sync_playwright().start()
+
+        launch_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-infobars",
+        ]
+
+        def _launch_browser(channel_name: str | None, label: str) -> None:
+            kwargs = {
+                "headless": not self._headed,
+                "args": launch_args,
+            }
+            if channel_name:
+                kwargs["channel"] = channel_name
+            self._browser = self._pw.chromium.launch(**kwargs)
+            _log.info(
+                "Playwright browser started using %s (headless=%s)",
+                label,
+                not self._headed,
+            )
+
+        # 1. If an explicit channel is configured, honor it first.
+        if channel not in {"auto", "chromium"}:
+            try:
+                _launch_browser(channel, f"configured channel '{channel}'")
+                return
+            except Exception as exc:
+                _log.warning(
+                    "Failed to launch configured channel '%s': %s. Falling back to auto.",
+                    channel,
+                    exc,
+                )
+
+        # 2. If the user explicitly asked for Chromium, do not change that contract.
+        if channel == "chromium":
+            try:
+                _launch_browser(None, "default Chromium")
+                return
+            except Exception as exc:
+                raise RuntimeError(
+                    "未找到可用浏览器。请安装 Microsoft Edge / Google Chrome，或在设置中配置浏览器通道。"
+                    f" (错误详情: 默认 Chromium 启动失败 - {exc})"
+                ) from exc
+
+        # 3. Auto mode: prefer the browser most Windows users already have.
+        last_exc: Exception | None = None
+        for channel_name, label in (
+            ("msedge", "system Microsoft Edge"),
+            ("chrome", "system Google Chrome"),
+            (None, "default Chromium"),
+        ):
+            try:
+                _launch_browser(channel_name, label)
+                return
+            except Exception as exc:
+                last_exc = exc
+                _log.warning("%s failed: %s", label, exc)
+
+        raise RuntimeError(
+            "未找到可用浏览器。请安装 Microsoft Edge / Google Chrome，或在设置中配置浏览器通道。"
+            f" (错误详情: {last_exc})"
+        ) from last_exc
+
+    def close(self):
+        if self._browser:
+            self._browser.close()
+            self._browser = None
+        if self._pw:
+            self._pw.stop()
+            self._pw = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     def download_from_email(self, msg, mail_uid: int, date_str: str = "") -> list[DownloadedFile]:
         html = extract_html_from_message(msg)
         if not html:
             return []
 
-        raw_links = extract_links_from_html(html)
-        links = _dedup_and_prioritize(raw_links)
-        if not links:
+        raw_items = extract_links_with_metadata_from_html(html)
+        if not raw_items:
             return []
 
-        found = len(raw_links)
-        deduped = len(links)
+        sender = ""
+        if msg:
+            if hasattr(msg, "get"):
+                try:
+                    sender = msg.get("From", "") or ""
+                except Exception:
+                    pass
+            elif hasattr(msg, "__getitem__"):
+                try:
+                    sender = msg["From"] or ""
+                except Exception:
+                    pass
+        is_nuonuo_sender = "invoice@info.nuonuo.com" in str(sender)
+
+        high_items, low_items = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender)
+
+        found = len(raw_items)
+        deduped = len(high_items) + len(low_items)
+        prioritized = len(high_items)
 
         results: list[DownloadedFile] = []
         skipped_cached = 0
         attempted_count = 0
+        low_priority_skipped = 0
+
         start_time = time.perf_counter()
-        for i, url in enumerate(links):
+
+        # 1. Try high priority links first
+        high_success = False
+        for item in high_items:
             if attempted_count >= self._max_links_per_email:
                 break
-            # Skip URLs that already failed this session
+            url = item["url"]
             fp = self._url_fingerprint(url)
             if fp in self.failed_url_fingerprints:
                 skipped_cached += 1
                 _log.info("跳过本轮已失败链接: <%s>", fp)
                 continue
             attempted_count += 1
-            r = self._download_url(url, mail_uid, i, date_str)
+            r = self._download_url(url, mail_uid, len(results), date_str)
             if r:
                 results.append(r)
+                high_success = True
+
+        # 2. Try low priority links if no high priority links succeeded and limit not reached
+        if high_success:
+            low_priority_skipped = len(low_items)
+        else:
+            for item in low_items:
+                if attempted_count >= self._max_links_per_email:
+                    low_priority_skipped += 1
+                    continue
+                url = item["url"]
+                fp = self._url_fingerprint(url)
+                if fp in self.failed_url_fingerprints:
+                    skipped_cached += 1
+                    _log.info("跳过本轮已失败链接: <%s>", fp)
+                    continue
+                attempted_count += 1
+                r = self._download_url(url, mail_uid, len(results), date_str)
+                if r:
+                    results.append(r)
 
         elapsed = time.perf_counter() - start_time
         success = len(results)
         failed = attempted_count - success
         _log.info(
-            "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d attempted=%d elapsed=%.1fs",
-            found, deduped, success, failed, skipped_cached, attempted_count, elapsed,
+            "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d attempted=%d prioritized=%d low_priority_skipped=%d elapsed=%.1fs",
+            found, deduped, success, failed, skipped_cached, attempted_count, prioritized, low_priority_skipped, elapsed,
         )
         return results
+
+    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int) -> tuple[str | None, str | None, str | None] | None:
+        """ Nuonuo/JSS site specific downloader handler """
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+
+        try:
+            page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+        try:
+            texts = []
+            try:
+                t_main = page.evaluate("() => document.body.innerText") or ""
+                texts.append(t_main)
+            except Exception:
+                pass
+            for frame in page.frames:
+                try:
+                    t_frame = frame.evaluate("() => document.body.innerText") or ""
+                    texts.append(t_frame)
+                except Exception:
+                    pass
+            page_text = "\n".join(texts)
+        except Exception:
+            page_text = ""
+
+        features = [
+            "电子发票", "发票", "发票号码", "开票日期", "销售方", "价税合计",
+            "购买方", "金额", "合计金额", "销方", "购方"
+        ]
+        matched_features = [f for f in features if f in page_text]
+
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        is_candidate = (
+            any(d in host for d in ["nnfp.jss.com.cn", "jss.com.cn", "nuonuo.com"])
+            or any(p in path for p in ["scan-invoice", "invoiceshow", "invoice", "fp"])
+        )
+
+        clean_path = path.strip().rstrip("/")
+        is_explicit_invoice_url = False
+        if host == "nnfp.jss.com.cn" or host.endswith(".nnfp.jss.com.cn") or host == "fp.nuonuo.com" or host.endswith(".fp.nuonuo.com"):
+            if (clean_path and clean_path not in ("/index.html", "/index.htm", "/index")) or parsed.query:
+                is_explicit_invoice_url = True
+
+        if not is_explicit_invoice_url:
+            if any(d in host for d in ["nnfp.jss.com.cn", "jss.com.cn"]):
+                if any(p in path for p in ["scan-invoice", "invoiceshow", "invoice"]):
+                    is_explicit_invoice_url = True
+            elif "nuonuo.com" in host and "fp" in host:
+                if any(p in path for p in ["scan-invoice", "invoiceshow", "invoice"]):
+                    is_explicit_invoice_url = True
+
+        if not is_explicit_invoice_url:
+            if not (is_candidate and len(matched_features) >= 2):
+                _log.debug("页面不匹配发票页面特征，跳过站点级处理器")
+                return None
+
+        _log.info("诺诺/JSS 发票页面识别成功，尝试站点级下载")
+
+        captured_files = []
+        def on_response(response):
+            try:
+                if response.status != 200:
+                    return
+                ct = response.headers.get("content-type", "").lower()
+                url_lower = response.url.lower()
+
+                is_target = False
+                if "application/pdf" in ct or "application/ofd" in ct:
+                    is_target = True
+                elif "application/octet-stream" in ct:
+                    if any(kw in url_lower for kw in ["pdf", "ofd", "download", "invoice"]):
+                        is_target = True
+                elif any(kw in url_lower for kw in ["pdf", "ofd", "/download"]):
+                    is_target = True
+
+                if is_target:
+                    body = response.body()
+                    if len(body) > 100:
+                        is_pdf = body.startswith(b"%PDF")
+                        is_zip = body.startswith(b"PK\x03\x04")
+                        is_ofd = False
+                        if is_zip and (b"ofd.xml" in body or b"OFD.xml" in body):
+                            is_ofd = True
+                        if is_pdf or is_ofd:
+                            ext = ".pdf" if is_pdf else ".ofd"
+                            fname = f"invoice_{mail_uid}_{idx}_resp{ext}"
+                            dest = save_dir / fname
+                            dest.write_bytes(body)
+                            captured_files.append(str(dest))
+            except Exception:
+                pass
+
+        page.on("response", on_response)
+
+        # 1. Try clicking download button
+        try:
+            selectors = [
+                'text="下载发票"',
+                'text="下载PDF"',
+                'text="PDF下载"',
+                'text="OFD下载"',
+                'text="下载"',
+                'text="PDF"',
+                'text="OFD"',
+                'a:has-text("下载")',
+                'button:has-text("下载")',
+                'a:has-text("PDF")',
+                'button:has-text("PDF")',
+            ]
+            for sel in selectors:
+                locator = page.locator(sel)
+                if locator.count() > 0:
+                    try:
+                        with page.expect_download(timeout=3000) as download_info:
+                            locator.first.click()
+                        if download_info:
+                            download = download_info.value
+                            fname = download.suggested_filename or f"invoice_{mail_uid}_{idx}.pdf"
+                            dest = save_dir / fname
+                            if _save_download_to_path(download, dest):
+                                if _verify_and_clean_file(dest):
+                                    _log.info("已点击页面下载按钮并捕获文件")
+                                    return str(dest), None, None
+                    except Exception:
+                        pass
+                    break
+        except Exception as e:
+            _log.debug("点击页面下载按钮失败: %s", e)
+
+        # Short wait to collect responses
+        page.wait_for_timeout(2000)
+
+        # Check captured responses
+        for f in captured_files:
+            if _verify_and_clean_file(f):
+                _log.info("已从网络响应捕获官方 PDF/OFD")
+                return f, None, None
+
+        # 2. Try iframe blob fetching inside its own frame context
+        for frame in page.frames:
+            try:
+                embed_sources = frame.evaluate("""() => {
+                    const srcs = [];
+                    document.querySelectorAll('iframe, embed, object').forEach(el => {
+                        const src = el.src || el.data;
+                        if (src) srcs.push(src);
+                    });
+                    return srcs;
+                }""")
+            except Exception:
+                embed_sources = []
+
+            for src in embed_sources:
+                if src.startswith("blob:"):
+                    try:
+                        b64_data = frame.evaluate("""async (blobUrl) => {
+                            const resp = await fetch(blobUrl);
+                            const blob = await resp.blob();
+                            return new Promise((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+                        }""", src)
+                        if b64_data:
+                            body = base64.b64decode(b64_data)
+                            is_pdf = body.startswith(b"%PDF")
+                            is_zip = body.startswith(b"PK\x03\x04")
+                            is_ofd = False
+                            if is_zip and (b"ofd.xml" in body or b"OFD.xml" in body):
+                                is_ofd = True
+                            if is_pdf or is_ofd:
+                                ext = ".pdf" if is_pdf else ".ofd"
+                                dest = save_dir / f"invoice_{mail_uid}_{idx}_blob{ext}"
+                                dest.write_bytes(body)
+                                _log.info("已从嵌入 PDF/OFD 资源保存文件")
+                                return str(dest), None, None
+                    except Exception as e:
+                        _log.debug("Fetch blob from frame context failed: %s", e)
+
+        # 3. Controlled PDF Print Fallback
+        from .config import load_config_safe
+        cfg = load_config_safe()
+        allow_fallback = True
+        if isinstance(cfg, dict):
+            if "link_download_allow_invoice_page_pdf_fallback" in cfg:
+                allow_fallback = bool(cfg["link_download_allow_invoice_page_pdf_fallback"])
+            elif "link_download" in cfg and isinstance(cfg["link_download"], dict):
+                allow_fallback = bool(cfg["link_download"].get("allow_invoice_page_pdf_fallback", True))
+
+        if allow_fallback:
+            try:
+                dest = save_dir / f"invoice_{mail_uid}_{idx}_page_fallback.pdf"
+                page.pdf(path=str(dest))
+                if _verify_and_clean_file(dest):
+                    _log.info("发票展示页面已保存为 PDF fallback")
+                    return str(dest), "invoice_page_pdf_fallback", "由发票展示页面保存为 PDF，建议核对原件"
+            except Exception as e:
+                _log.debug("PDF print fallback failed: %s", e)
+
+        return None
 
     def _download_url(self, url: str, mail_uid: int, idx: int, date_str: str) -> DownloadedFile | None:
         if not _is_safe_download_url(url):
@@ -423,6 +881,8 @@ class LinkDownloader:
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             downloaded_path: str | None = None
+            source_type: str | None = None
+            parse_note: str | None = None
             download_started = False
             download_done = threading.Event()
 
@@ -441,39 +901,80 @@ class LinkDownloader:
 
             page.on("download", _on_download)
 
+            captured_files = []
+            def on_response(response):
+                try:
+                    if response.status != 200:
+                        return
+                    ct = response.headers.get("content-type", "").lower()
+                    url_lower = response.url.lower()
+
+                    is_target = False
+                    if "application/pdf" in ct or "application/ofd" in ct:
+                        is_target = True
+                    elif "application/octet-stream" in ct:
+                        if any(kw in url_lower for kw in ["pdf", "ofd", "download", "invoice"]):
+                            is_target = True
+                    elif any(kw in url_lower for kw in ["pdf", "ofd", "/download"]):
+                        is_target = True
+
+                    if is_target:
+                        body = response.body()
+                        if len(body) > 100:
+                            is_pdf = body.startswith(b"%PDF")
+                            is_zip = body.startswith(b"PK\x03\x04")
+                            is_ofd = False
+                            if is_zip and (b"ofd.xml" in body or b"OFD.xml" in body):
+                                is_ofd = True
+                            if is_pdf or is_ofd:
+                                ext = ".pdf" if is_pdf else ".ofd"
+                                fname = f"invoice_{mail_uid}_{idx}_resp{ext}"
+                                dest = save_dir / fname
+                                dest.write_bytes(body)
+                                captured_files.append(str(dest))
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+
             try:
-                page.goto(url, wait_until="networkidle", timeout=self._timeout)
+                page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
             except Exception:
                 pass
 
+            # 1. Try JSS/Nuonuo site specific download logic first
+            res_handle = self._handle_nuonuo_invoice_page(page, url, save_dir, mail_uid, idx)
+            if res_handle:
+                downloaded_path, source_type, parse_note = res_handle
+
+            # 2. General logic
             if not downloaded_path:
-                page.wait_for_timeout(3000)
-            if not downloaded_path:
-                self._try_click_download(page)
-            if not downloaded_path:
-                downloaded_path = self._try_extract_embedded_pdf(page, save_dir, mail_uid, idx)
-            if not downloaded_path:
-                downloaded_path = self._try_page_print_pdf(page, save_dir, mail_uid, idx)
-            if download_started and not downloaded_path:
-                download_done.wait(timeout=5)
+                page.wait_for_timeout(2000)
+                if not downloaded_path:
+                    self._try_click_download(page)
+                if download_started and not downloaded_path:
+                    download_done.wait(timeout=5)
+                if not downloaded_path:
+                    for f in captured_files:
+                        if _verify_and_clean_file(f):
+                            downloaded_path = f
+                            break
+                if not downloaded_path:
+                    downloaded_path = self._try_extract_embedded_pdf(page, save_dir, mail_uid, idx)
 
             if downloaded_path and os.path.exists(downloaded_path):
-                size = os.path.getsize(downloaded_path)
-                if size < 500:
-                    os.remove(downloaded_path)
-                    self.failed_url_fingerprints.add(self._url_fingerprint(url))
-                    return None
-                with open(downloaded_path, "rb") as f:
-                    header = f.read(5)
-                if header == b"%PDF-":
+                if _verify_and_clean_file(downloaded_path):
+                    size = os.path.getsize(downloaded_path)
                     return DownloadedFile(
                         url=url,
                         file_path=downloaded_path,
                         filename=os.path.basename(downloaded_path),
                         size=size,
                         is_invoice=True,
+                        source_type=source_type,
+                        parse_note=parse_note,
                     )
-                os.remove(downloaded_path)
+
             # Cache the failure fingerprint to avoid re-attempting in this session
             self.failed_url_fingerprints.add(self._url_fingerprint(url))
             return None
@@ -487,13 +988,13 @@ class LinkDownloader:
 
     def _try_click_download(self, page) -> None:
         selectors = [
-            'a:has-text("涓嬭浇")',
-            'button:has-text("涓嬭浇")',
-            'a:has-text("鍙戠エ")',
-            'button:has-text("鍙戠エ")',
+            'a:has-text("下载")',
+            'button:has-text("下载")',
+            'a:has-text("发票")',
+            'button:has-text("发票")',
             'a:has-text("PDF")',
             'button:has-text("PDF")',
-            'text=涓嬭浇',
+            'text=下载',
         ]
         for sel in selectors:
             try:

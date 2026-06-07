@@ -718,6 +718,7 @@ class InvoiceDB:
         invoice_id: int,
         attachment_path: str | None = None,
         extra_paths: list[str] | None = None,
+        file_hash: str | None = None,
     ) -> bool:
         """Update stored attachment paths for an invoice."""
         fields: list[str] = []
@@ -729,6 +730,9 @@ class InvoiceDB:
         if extra_paths is not None:
             fields.append("extra_paths = ?")
             values.append(json.dumps(extra_paths, ensure_ascii=False))
+        if file_hash is not None:
+            fields.append("file_hash = ?")
+            values.append(file_hash)
 
         if not fields:
             return False

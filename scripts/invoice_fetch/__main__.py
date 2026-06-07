@@ -2188,9 +2188,10 @@ def _process_email(
                             if backfill_abs not in kept_paths:
                                 kept_paths.add(backfill_abs)
                             file_hash_val = _sha256_file(Path(backfill_abs)) if os.path.exists(backfill_abs) else ""
-                            db.update_invoice_attachment_path_if_missing(
+                            if db.update_invoice_attachment_path_if_missing(
                                 duplicate["id"], backfill_path, file_hash=file_hash_val or None,
-                            )
+                            ):
+                                _log.info("重复发票已有记录缺少原件，已回填链接下载文件: existing_id=%s", duplicate["id"])
                         # Clean up the downloaded file for the duplicate
                         if os.path.exists(dl.file_path):
                             os.remove(dl.file_path)

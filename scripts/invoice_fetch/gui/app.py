@@ -699,6 +699,20 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_open_file.setProperty("class", "SecondaryBtn")
         path_layout.addWidget(self.btn_open_file)
 
+        self.btn_add_attachment = QPushButton("补原件")
+        self.btn_add_attachment.clicked.connect(self._add_attachment_manually)
+        self.btn_add_attachment.setFont(QFont("Segoe UI", 9))
+        self.btn_add_attachment.setMinimumWidth(60)
+        self.btn_add_attachment.setProperty("class", "SecondaryBtn")
+        path_layout.addWidget(self.btn_add_attachment)
+
+        self.btn_retry_download = QPushButton("重试下载")
+        self.btn_retry_download.clicked.connect(self._retry_download_link)
+        self.btn_retry_download.setFont(QFont("Segoe UI", 9))
+        self.btn_retry_download.setMinimumWidth(65)
+        self.btn_retry_download.setProperty("class", "SecondaryBtn")
+        path_layout.addWidget(self.btn_retry_download)
+
         # 证明材料布局
         docs_widget = QWidget()
         docs_layout = QHBoxLayout(docs_widget)
@@ -1776,6 +1790,10 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_subject.clear()
         self.txt_path.clear()
         self.txt_path.setToolTip("")
+        self.btn_open_file.setEnabled(False)
+        self.btn_add_attachment.setEnabled(False)
+        self.btn_retry_download.setEnabled(False)
+        self.btn_retry_download.setVisible(False)
         self.txt_full_path.clear()
         self.txt_full_path.setToolTip("")
         self.txt_url.clear()
@@ -1941,8 +1959,23 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_amount.setText(total_amt)
             self.combo_category.setCurrentText(category)
             self.txt_subject.setText(str(inv.get("mail_subject") or ""))
-            self.txt_path.setText(Path(att_path).name if att_path else "")
-            self.txt_path.setToolTip(att_path)
+            mail_uid = inv.get("mail_uid")
+            download_url = str(inv.get("download_url") or "").strip()
+            if not att_path and (mail_uid is not None or download_url):
+                self.txt_path.setText("未下载原件（可重试下载或手动补原件）")
+                self.txt_path.setToolTip("请点击右侧按钮重新尝试自动下载，或者人工补全发票原件文件。")
+            else:
+                self.txt_path.setText(Path(att_path).name if att_path else "")
+                self.txt_path.setToolTip(att_path)
+
+            has_file = bool(att_path)
+            self.btn_open_file.setEnabled(has_file)
+
+            has_url = bool(download_url)
+            self.btn_retry_download.setEnabled(not has_file and has_url)
+            self.btn_retry_download.setVisible(has_url)
+            self.btn_add_attachment.setEnabled(True)
+
             self.txt_full_path.setText(att_path)
             self.txt_full_path.setToolTip(att_path)
             self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
@@ -2525,6 +2558,176 @@ class InvoiceReviewApp(QMainWindow):
         self._open_local_path(file_path)
         self.statusBar().showMessage(f"已成功加载本地附件: {file_path.name}", 2000)
 
+    def _add_attachment_manually(self):
+        if not self.current_invoice:
+            return
+
+        inv_id = self.current_invoice["id"]
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择发票原件",
+            "",
+            "发票文件 (*.pdf *.ofd *.png *.jpg *.jpeg);;所有文件 (*.*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            src_file = Path(file_path)
+            ext = src_file.suffix.lower()
+
+            inv_num = self.current_invoice.get("invoice_number") or ""
+            inv_code = self.current_invoice.get("invoice_code") or ""
+            code = inv_code or inv_num
+            date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
+
+            if "-" in date_str:
+                date_dir_name = date_str[:10]
+            else:
+                date_dir_name = "unknown_date"
+
+            dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            if code:
+                dest_name = f"{code}{ext}"
+            else:
+                dest_name = f"manual_{inv_id}{ext}"
+
+            dest_path = dest_dir / dest_name
+            if dest_path.exists():
+                stem = dest_path.stem
+                for n in range(1, 100):
+                    cand = dest_dir / f"{stem}_{n}{ext}"
+                    if not cand.exists():
+                        dest_path = cand
+                        break
+
+            import shutil
+            shutil.copy2(src_file, dest_path)
+
+            h = hashlib.sha256()
+            with open(dest_path, "rb") as f:
+                while chunk := f.read(8192):
+                    h.update(chunk)
+            file_hash_val = h.hexdigest()
+
+            rel_path = f"attachments/{date_dir_name}/{dest_path.name}"
+
+            # Update DB
+            self.db.update_invoice_file_paths(inv_id, attachment_path=rel_path, file_hash=file_hash_val)
+
+            # Update memory state
+            self.current_invoice["attachment_path"] = rel_path
+            self.current_invoice["file_hash"] = file_hash_val
+
+            # Refresh GUI and preview
+            self._update_detail_fields(self.current_invoice)
+            self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
+            self.current_preview_index = 0
+            self._update_document_preview()
+            self._load_invoices()
+
+            _log.info("用户手动补齐发票原件: invoice_id=%s, filename=%s", inv_id, dest_path.name)
+            self.statusBar().showMessage("手动补齐原件成功", 3000)
+
+        except Exception as e:
+            _log.error("手动补齐原件失败: %s", e)
+            QMessageBox.critical(self, "错误", f"补齐原件失败: {e}")
+
+    def _retry_download_link(self):
+        if not self.current_invoice:
+            return
+
+        url = self.current_invoice.get("download_url") or ""
+        if not url.strip():
+            return
+
+        from PyQt5.QtWidgets import QProgressDialog, QMessageBox
+        progress = QProgressDialog("正在从链接尝试下载发票文件...", "取消", 0, 0, self)
+        progress.setWindowTitle("下载引擎")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        progress.setValue(0)
+        QApplication.processEvents()
+
+        from ..link_downloader import LinkDownloader
+        import shutil
+
+        inv_id = self.current_invoice["id"]
+        mail_uid = self.current_invoice.get("mail_uid") or 0
+        date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
+
+        if "-" in date_str:
+            date_dir_name = date_str[:10]
+        else:
+            date_dir_name = "unknown_date"
+
+        success = False
+        try:
+            downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
+            res = downloader._download_url(url, mail_uid, 999, date_dir_name)
+            if res and res.file_path and os.path.exists(res.file_path):
+                src_path = Path(res.file_path)
+                ext = src_path.suffix.lower()
+
+                inv_num = self.current_invoice.get("invoice_number") or ""
+                inv_code = self.current_invoice.get("invoice_code") or ""
+                code = inv_code or inv_num
+
+                dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
+                if code:
+                    dest_name = f"{code}{ext}"
+                else:
+                    dest_name = f"downloaded_{inv_id}{ext}"
+
+                dest_path = dest_dir / dest_name
+                if dest_path.resolve() != src_path.resolve():
+                    if dest_path.exists():
+                        stem = dest_path.stem
+                        for n in range(1, 100):
+                            cand = dest_dir / f"{stem}_{n}{ext}"
+                            if not cand.exists():
+                                dest_path = cand
+                                break
+                    shutil.move(src_path, dest_path)
+
+                h = hashlib.sha256()
+                with open(dest_path, "rb") as f:
+                    while chunk := f.read(8192):
+                        h.update(chunk)
+                file_hash_val = h.hexdigest()
+
+                rel_path = f"attachments/{date_dir_name}/{dest_path.name}"
+
+                self.db.update_invoice_file_paths(inv_id, attachment_path=rel_path, file_hash=file_hash_val)
+                if getattr(res, "parse_note", None):
+                    self.db.update_invoice_parsed_metadata(inv_id, {"parse_note": res.parse_note})
+
+                self.current_invoice["attachment_path"] = rel_path
+                self.current_invoice["file_hash"] = file_hash_val
+                if getattr(res, "parse_note", None):
+                    self.current_invoice["parse_note"] = res.parse_note
+
+                success = True
+
+            downloader.close()
+        except Exception as e:
+            _log.error("重试下载发生错误: %s", e)
+
+        progress.close()
+
+        if success:
+            QMessageBox.information(self, "成功", "发票原件下载并关联成功！")
+            self._update_detail_fields(self.current_invoice)
+            self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
+            self.current_preview_index = 0
+            self._update_document_preview()
+            self._load_invoices()
+        else:
+            QMessageBox.warning(self, "下载失败", "未能从链接获取官方 PDF/OFD，请尝试人工补齐原件文件。")
+
     def _open_extra_docs(self):
         """Open the currently selected extra/unassociated supporting doc."""
         if not self.current_invoice:
@@ -2644,8 +2847,8 @@ class InvoiceReviewApp(QMainWindow):
             missing.append("金额")
         if not str(inv.get("invoice_date") or "").strip():
             missing.append("日期")
-        if not str(inv.get("attachment_path") or "").strip() and not str(inv.get("download_url") or "").strip():
-            missing.append("附件")
+        if not str(inv.get("attachment_path") or "").strip():
+            missing.append("原件")
         return missing
 
     def _confirm_approve_incomplete_invoices(
@@ -2654,9 +2857,12 @@ class InvoiceReviewApp(QMainWindow):
         skipped_evidence_count: int = 0,
     ) -> bool:
         incomplete = []
+        has_missing_attachment = False
         for inv in invoices:
             missing = self._approval_missing_fields(inv)
             if missing:
+                if "原件" in missing:
+                    has_missing_attachment = True
                 label = str(inv.get("invoice_number") or inv.get("seller_name") or f"ID {inv.get('id')}").strip()
                 incomplete.append(f"- {label}: 缺 {', '.join(missing)}")
 
@@ -2676,14 +2882,20 @@ class InvoiceReviewApp(QMainWindow):
             f"以下正式发票仍缺少关键信息：\n{preview}\n\n"
             if incomplete else ""
         )
-        reply = QMessageBox.question(
-            self,
-            "确认通过待补全材料",
-            (
+
+        if len(invoices) == 1 and has_missing_attachment and len(incomplete) == 1:
+            prompt_text = "该发票缺少本地原件文件，是否仍通过？"
+        else:
+            prompt_text = (
                 selection_summary
                 + missing_summary
                 + "如果这是图片、receipt、水单或其他未识别材料，请确认原件和手工补录信息无误后再通过审核。是否继续标记为已通过？"
-            ),
+            )
+
+        reply = QMessageBox.question(
+            self,
+            "确认通过审核",
+            prompt_text,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
