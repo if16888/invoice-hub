@@ -5262,6 +5262,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         "invoice_number": "GUI001",
                         "total_amount": "100.00",
                         "seller_name": "",
+                        "category": "交通",
                         "review_status": review_status.APPROVED,
                         "attachment_path": "attachments/dummy.pdf"
                     })
@@ -5279,27 +5280,37 @@ class ClaimGroupsTests(unittest.TestCase):
                         try:
                             window._deferred_init()
 
-                            # Mock box dialog to intercept text and choices
+                            # Scenario 1: 1 warning (empty seller name)
                             with patch("scripts.invoice_fetch.gui.app.QMessageBox") as mock_box_class:
                                 mock_box_instance = mock_box_class.return_value
-                                mock_box_instance.clickedButton.return_value = Mock() # mock any clicked button
+                                mock_box_instance.clickedButton.return_value = Mock()
 
-                                # Simulate selecting the claim group in combo_claims
                                 idx = window.combo_claims.findData(claim_id)
                                 if idx >= 0:
                                     window.combo_claims.setCurrentIndex(idx)
 
-                                # Mock QMessageBox.Question interaction to auto-click btn_approved_only
                                 with patch.object(mock_box_class, "Question", mock_box_class.Question):
                                     window._export_claim_package()
 
-                                # Verify that the second dialog (QMessageBox.Information or success dialog) was created
-                                # and its text contains the warning counts
                                 setText_calls = [c for c in mock_box_instance.setText.call_args_list]
                                 self.assertTrue(any("发现 1 个需确认项" in call[0][0] for call in setText_calls))
                                 self.assertTrue(any("exports/GUI QA Group_" in call[0][0] for call in setText_calls))
-                                # Ensure absolute path td is NOT leaked
                                 self.assertFalse(any(str(td) in call[0][0] for call in setText_calls))
+
+                            # Scenario 2: 0 warnings (fix empty seller name)
+                            db.update_invoice_fields(inv_id, {
+                                "seller_name": "Valid Seller",
+                                "invoice_date": "2026-06-01",
+                            })
+                            with patch("scripts.invoice_fetch.gui.app.QMessageBox") as mock_box_class:
+                                mock_box_instance = mock_box_class.return_value
+                                mock_box_instance.clickedButton.return_value = Mock()
+
+                                with patch.object(mock_box_class, "Question", mock_box_class.Question):
+                                    window._export_claim_package()
+
+                                setText_calls = [c for c in mock_box_instance.setText.call_args_list]
+                                self.assertTrue(any("质量检查未发现需确认项" in call[0][0] for call in setText_calls))
 
                         finally:
                             if hasattr(window, "db") and window.db is not None:

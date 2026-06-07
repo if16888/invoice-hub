@@ -249,6 +249,19 @@ def export_claim_package(
     return export_dir
 
 
+def _escape_md_inline(text: str) -> str:
+    """Escape Markdown control characters for safe table/inline display."""
+    if not text:
+        return ""
+    escaped = str(text)
+    escaped = escaped.replace("\\", "\\\\")
+    escaped = escaped.replace("|", "\\|")
+    for char in ("*", "_", "`", "#", "[", "]", "(", ")"):
+        escaped = escaped.replace(char, f"\\{char}")
+    escaped = escaped.replace("\r", " ").replace("\n", " ")
+    return escaped
+
+
 def _generate_quality_report(
     export_dir: Path,
     claim_name: str,
@@ -296,11 +309,8 @@ def _generate_quality_report(
     for inv in original_invoices:
         num = inv.get("invoice_number")
         if num and num.strip():
-            row = db._conn.execute(
-                "SELECT COUNT(*) FROM invoices WHERE invoice_number = ? AND is_deleted = 0 AND id != ?",
-                (num.strip(), inv["id"])
-            ).fetchone()
-            if row and row[0] > 0:
+            count = db.count_active_duplicates_by_invoice_number(num, inv["id"])
+            if count > 0:
                 suspected_duplicates += 1
 
     # 10. Status statistics (from all_invoices in the claim group)
@@ -338,11 +348,12 @@ def _generate_quality_report(
     status_suspected_duplicates = f"⚠️ 发现 {suspected_duplicates} 张疑似重复发票" if suspected_duplicates > 0 else "✅ 合格"
 
     export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    escaped_claim_name = _escape_md_inline(claim_name)
 
     # Generate report
     report_content = f"""# 报销包质量检查报告
 
-- **导出的报销组**: {claim_name}
+- **导出的报销组**: {escaped_claim_name}
 - **导出时间**: {export_time}
 
 ## 质量检查摘要

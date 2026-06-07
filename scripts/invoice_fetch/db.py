@@ -927,6 +927,16 @@ class InvoiceDB:
             row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices WHERE is_deleted = 0").fetchone()
         return int(row["cnt"] if row else 0)
 
+    def count_active_duplicates_by_invoice_number(self, invoice_number: str, exclude_id: int) -> int:
+        """Count other active (not deleted) invoices with the same invoice_number."""
+        if not invoice_number:
+            return 0
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM invoices WHERE invoice_number = ? AND is_deleted = 0 AND id != ?",
+            (invoice_number.strip(), exclude_id)
+        ).fetchone()
+        return int(row["cnt"] if row else 0)
+
     def count_pending_manual_invoices(self) -> int:
         """Count active records that still require manual review or completion."""
         row = self._conn.execute(

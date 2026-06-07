@@ -3259,8 +3259,13 @@ class InvoiceReviewApp(QMainWindow):
                     from ..log_privacy import mask_path
                     relative_export_dir = mask_path(export_dir)
 
+            if qa_warnings_count == 0:
+                qa_text = "导出完成，质量检查未发现需确认项。"
+            else:
+                qa_text = f"导出完成，发现 {qa_warnings_count} 个需确认项，请查看质量报告。"
+
             box.setText(
-                f"导出完成，发现 {qa_warnings_count} 个需确认项，请查看质量报告。\n\n"
+                f"{qa_text}\n\n"
                 f"共计打包发票: {item_count} 张\n"
                 f"过滤跳过记录: {skip_text}\n\n"
                 f"输出路径: {relative_export_dir}"
