@@ -3492,6 +3492,184 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 updated3 = db.get_invoice(inv_id3)
                 self.assertEqual(updated3["category"], "未分类")  # Preserved due to approved review_status
 
+    def test_is_fiscal_toll_invoice_detection(self):
+        """测试财政/通行费票据的识别检测逻辑"""
+        from scripts.invoice_fetch.invoice_parser import InvoiceParser
+        parser = InvoiceParser()
+
+        self.assertTrue(parser._is_fiscal_toll_invoice("这是一张财政电子票据"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("包含财务专用章和通行费"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("车牌号：粤B12345，入站：深圳"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("江苏省财政电子票据公共服务平台"))
+
+        self.assertFalse(parser._is_fiscal_toll_invoice("这是一张普通的增值税专用发票"))
+        self.assertFalse(parser._is_fiscal_toll_invoice(""))
+
+    def test_extract_fiscal_issuer_fallback(self):
+        """测试开票单位/销售方 fallback 提取逻辑"""
+        from scripts.invoice_fetch.invoice_parser import InvoiceParser
+        parser = InvoiceParser()
+
+        # Priority 1: Explicit fields
+        text1 = "开票单位：江苏宁沪高速公路股份有限公司\n收款人：王某"
+        issuer1, reason1 = parser._extract_fiscal_issuer_fallback(text1)
+        self.assertEqual(issuer1, "江苏宁沪高速公路股份有限公司")
+        self.assertEqual(reason1, "explicit_field")
+
+        # Priority 2: Stamp proximity
+        # Org suffix matching target within 120 chars
+        text2 = "江苏宁沪高速公路股份有限公司  一些其他文字 财务专用章"
+        issuer2, reason2 = parser._extract_fiscal_issuer_fallback(text2)
+        self.assertEqual(issuer2, "江苏宁沪高速公路股份有限公司")
+        self.assertEqual(reason2, "stamp_near")
+
+        # Priority 3: Platform fallback
+        text3 = "电子票据网址：江苏省财政电子票据公共服务平台"
+        issuer3, reason3 = parser._extract_fiscal_issuer_fallback(text3)
+        self.assertEqual(issuer3, "江苏省财政电子票据")
+        self.assertEqual(reason3, "platform_fallback")
+
+        # Noise exclusion
+        text4 = "收款人：张三\n复核人：李四\n合计：100.00\n财务专用章"
+        issuer4, reason4 = parser._extract_fiscal_issuer_fallback(text4)
+        self.assertEqual(issuer4, "")
+        self.assertEqual(reason4, "")
+
+    def test_classify_fiscal_toll(self):
+        """测试过路费分类的识别逻辑（优先规避餐饮，但不被普通餐饮覆盖）"""
+        categories = {
+            "toll": {"keywords": ["通行费", "高速公路"], "extra_name": ""},
+            "dining": {"keywords": ["餐费", "餐饮"], "extra_name": ""},
+        }
+
+        # Case 1: Dining item name takes absolute priority
+        cat, _, _ = cli._classify(
+            subject="通行费电子发票",
+            sender="etc@service.com",
+            seller="高速公路ETC",
+            categories=categories,
+            item_name="*餐饮服务*炒饭",
+            raw_text="通行费 ETC 财务专用章",
+        )
+        self.assertEqual(cat, "餐饮")
+
+        # Case 2: Standard Toll classification
+        cat2, _, _ = cli._classify(
+            subject="电子票据",
+            sender="etc@service.com",
+            seller="江苏宁沪高速公路",
+            categories=categories,
+            item_name="",
+            raw_text="车牌号：苏A12345 出口站：南京 财务专用章 通行费",
+        )
+        self.assertEqual(cat2, "过路费")
+
+    def test_safe_backfill_fiscal_toll(self):
+        """测试财政票据/通行费票据的重复发票安全回填逻辑"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+
+            with InvoiceDB(runtime / "invoices.db") as db:
+                from scripts.invoice_fetch.migrations import check_and_migrate
+                check_and_migrate(db._conn)
+
+                # Case 1: Unclaimed + to_review: should backfill empty seller_name and category
+                inv_id1 = db.insert_invoice({
+                    "invoice_number": "ETC001",
+                    "total_amount": "50.00",
+                    "seller_name": "",
+                    "category": "其他",
+                    "review_status": "to_review",
+                    "item_name": "",
+                })
+                existing1 = db.get_invoice(inv_id1)
+
+                refreshed1 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing1,
+                    invoice_number="ETC001",
+                    invoice_code="222",
+                    invoice_date="2026-06-01",
+                    amount="50.00",
+                    total_amount="50.00",
+                    seller_name="江苏省财政电子票据",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="过路费",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="销售方由财政电子票据平台推断，建议人工核对",
+                    item_name="通行费",
+                )
+                self.assertTrue(refreshed1)
+                updated1 = db.get_invoice(inv_id1)
+                self.assertEqual(updated1["seller_name"], "江苏省财政电子票据")
+                self.assertEqual(updated1["category"], "过路费")
+
+                # Case 2: Claimed: should NOT backfill metadata (except attachment_path)
+                group_id = db.create_claim_group("Test Group")
+                db.add_invoice_to_claim(group_id, inv_id1)
+
+                existing1_claimed = db.get_invoice(inv_id1)
+                self.assertGreater(db.count_claim_links(inv_id1), 0)
+
+                refreshed_claimed = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing1_claimed,
+                    invoice_number="ETC001",
+                    invoice_code="222",
+                    invoice_date="2026-06-01",
+                    amount="50.00",
+                    total_amount="50.00",
+                    seller_name="新销售方",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="其他",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="销售方由财政电子票据平台推断，建议人工核对",
+                    item_name="通行费",
+                )
+                self.assertTrue(refreshed_claimed)
+                updated_claimed = db.get_invoice(inv_id1)
+                self.assertEqual(updated_claimed["seller_name"], "江苏省财政电子票据")
+
+                # Case 3: Approved: should NOT backfill metadata
+                inv_id3 = db.insert_invoice({
+                    "invoice_number": "ETC003",
+                    "total_amount": "80.00",
+                    "seller_name": "",
+                    "category": "其他",
+                    "review_status": "approved",
+                    "item_name": "",
+                })
+                existing3 = db.get_invoice(inv_id3)
+                refreshed3 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing3,
+                    invoice_number="ETC003",
+                    invoice_code="333",
+                    invoice_date="2026-06-01",
+                    amount="80.00",
+                    total_amount="80.00",
+                    seller_name="江苏省财政电子票据",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="过路费",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="销售方由财政电子票据平台推断，建议人工核对",
+                    item_name="通行费",
+                )
+                self.assertTrue(refreshed3)
+                updated3 = db.get_invoice(inv_id3)
+                self.assertEqual(updated3["seller_name"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

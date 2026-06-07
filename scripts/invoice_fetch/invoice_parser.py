@@ -95,7 +95,8 @@ class InvoiceParser:
             if self._parse_transport_receipt(text, info):
                 return info
 
-            if not self._looks_like_invoice(text):
+            is_fiscal = self._is_fiscal_toll_invoice(text)
+            if not is_fiscal and not self._looks_like_invoice(text):
                 info.parse_note = "内容不像发票"
                 return info
 
@@ -297,6 +298,24 @@ class InvoiceParser:
                         info.seller_name = filtered[-1]
                     else:
                         info.seller_name = ""
+
+            # ── seller_name回填策略 ──
+            if (not info.seller_name or len(info.seller_name) <= 1) and is_fiscal:
+                issuer, reason = self._extract_fiscal_issuer_fallback(text)
+                if reason == "platform_fallback":
+                    info.seller_name = "江苏省财政电子票据"
+                    note = "销售方由财政电子票据平台推断，建议人工核对"
+                    if info.parse_note:
+                        info.parse_note += "; " + note
+                    else:
+                        info.parse_note = note
+                elif issuer:
+                    info.seller_name = issuer
+                    note = "销售方由财政票据开票单位/票据章推断"
+                    if info.parse_note:
+                        info.parse_note += "; " + note
+                    else:
+                        info.parse_note = note
 
             # Repair again after possible cross-validation update
             info.seller_name = InvoiceParser._repair_company_name(info.seller_name)
@@ -664,6 +683,72 @@ class InvoiceParser:
 
         # Return first 3 items joined by comma
         return ", ".join(valid_items[:3])
+
+    def _is_fiscal_toll_invoice(self, raw_text: str) -> bool:
+        if not raw_text:
+            return False
+        keywords = ["财政电子票据", "财务专用章", "通行费", "车牌号", "入站", "出口站", "出口时间",
+                    "江苏省财政电子票据公共服务平台", "高速公路", "联网收费", "通行费电子票据"]
+        return any(kw in raw_text for kw in keywords)
+
+    def _is_valid_fiscal_candidate(self, name: str) -> bool:
+        if not name:
+            return False
+        name = re.sub(r"\s+", "", name)
+        if not (3 <= len(name) <= 80):
+            return False
+        noise_words = ["车牌", "入口", "出口", "复核人", "收款人", "金额", "合计", "购买方", "购方", "买方", "交款人", "入站", "出口站"]
+        if any(w in name for w in noise_words):
+            return False
+        return True
+
+    def _extract_fiscal_issuer_fallback(self, raw_text: str) -> tuple[str, str]:
+        # 1. Explicit fields
+        explicit_patterns = [
+            r"开票单位\s*[:：]\s*([^\n\s]{3,80})",
+            r"收款单位\s*[:：]\s*([^\n\s]{3,80})",
+            r"执收单位\s*[:：]\s*([^\n\s]{3,80})",
+            r"票据单位\s*[:：]\s*([^\n\s]{3,80})",
+            r"单位名称\s*[:：]\s*([^\n\s]{3,80})",
+        ]
+        for pat in explicit_patterns:
+            m = re.search(pat, raw_text)
+            if m:
+                cand = self._repair_company_name(m.group(1).strip())
+                if self._is_valid_fiscal_candidate(cand):
+                    return cand, "explicit_field"
+
+        # 2. Stamp proximity
+        stamp_kws = ["财务专用章", "财政电子票据专用章"]
+        best_candidate = None
+        min_dist = 999999
+        suffix_pat = r"(?:服务有限公司|运营管理有限公司|管理中心|有限公司|有限责任公司|股份公司|公司|中心|管理处|收费站|交通运输厅|财政厅|财政局)"
+        cand_pat = re.compile(r"([\u4e00-\u9fff（）()·\-A-Za-z0-9]{3,80}?" + suffix_pat + r")")
+
+        for stamp in stamp_kws:
+            for m_stamp in re.finditer(re.escape(stamp), raw_text):
+                idx = m_stamp.start()
+                start = max(0, idx - 120)
+                end = min(len(raw_text), idx + 120)
+                window_text = raw_text[start:end]
+
+                for m_cand in cand_pat.finditer(window_text):
+                    cand = self._repair_company_name(m_cand.group(1).strip())
+                    if self._is_valid_fiscal_candidate(cand):
+                        cand_abs_pos = start + m_cand.start()
+                        dist = abs(cand_abs_pos - idx)
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_candidate = cand
+
+        if best_candidate:
+            return best_candidate, "stamp_near"
+
+        # 3. Platform fallback
+        if "江苏省财政电子票据公共服务平台" in raw_text:
+            return "江苏省财政电子票据", "platform_fallback"
+
+        return "", ""
 
 
 # ── Subject-line fallback ────────────────────────────────────────────
