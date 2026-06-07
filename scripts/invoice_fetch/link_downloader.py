@@ -371,9 +371,10 @@ class LinkDownloader:
 
         results: list[DownloadedFile] = []
         skipped_cached = 0
+        attempted_count = 0
         start_time = time.perf_counter()
         for i, url in enumerate(links):
-            if len(results) >= self._max_links_per_email:
+            if attempted_count >= self._max_links_per_email:
                 break
             # Skip URLs that already failed this session
             fp = self._url_fingerprint(url)
@@ -381,16 +382,17 @@ class LinkDownloader:
                 skipped_cached += 1
                 _log.info("跳过本轮已失败链接: <%s>", fp)
                 continue
+            attempted_count += 1
             r = self._download_url(url, mail_uid, i, date_str)
             if r:
                 results.append(r)
 
         elapsed = time.perf_counter() - start_time
         success = len(results)
-        failed = len(links) - success - skipped_cached
+        failed = attempted_count - success
         _log.info(
-            "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d elapsed=%.1fs",
-            found, deduped, success, failed, skipped_cached, elapsed,
+            "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d attempted=%d elapsed=%.1fs",
+            found, deduped, success, failed, skipped_cached, attempted_count, elapsed,
         )
         return results
 

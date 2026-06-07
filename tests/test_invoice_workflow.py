@@ -1970,7 +1970,9 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
             self.assertEqual(recorded, 1)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["seller_name"], "新销售方")
+            self.assertEqual(rows[0]["seller_name"], "旧销售方")
+            self.assertEqual(rows[0]["buyer_name"], "购买方")
+            self.assertEqual(rows[0]["invoice_code"], "31001519300050031029")
 
     def test_standalone_hotel_folio_attachment_is_recorded_as_receipt(self):
         with tempfile.TemporaryDirectory() as td:

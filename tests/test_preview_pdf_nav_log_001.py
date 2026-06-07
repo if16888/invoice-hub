@@ -991,5 +991,315 @@ class TestAttachmentSkipLinkDownloadIntegration(unittest.TestCase):
         self.assertFalse(skip)
 
 
+# ── 13. Hardening commits tests for INVOICE-PREVIEW-DOWNLOAD-PARSER-002 ──
+
+class TestLinkDownloaderAttemptLimit(unittest.TestCase):
+    def test_attempt_limit_enforced(self):
+        from scripts.invoice_fetch.link_downloader import LinkDownloader
+        import logging
+        import io
+        import tempfile
+
+        dl = LinkDownloader(download_dir=tempfile.mkdtemp())
+        dl._max_links_per_email = 5
+
+        # Mock _download_url to always fail (return None)
+        dl._download_url = MagicMock(return_value=None)
+
+        # Set up a logger interceptor to read summary log
+        log_stream = io.StringIO()
+        handler = logging.StreamHandler(log_stream)
+        handler.setLevel(logging.INFO)
+        logger = logging.getLogger("scripts.invoice_fetch.link_downloader")
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+
+        try:
+            # Construct a dummy email with 7 links
+            class MockMessage:
+                def is_multipart(self):
+                    return False
+                def get_content_type(self):
+                    return "text/html"
+                def get_payload(self, decode=True):
+                    return (
+                        "<html><body>"
+                        '<a href="https://51fapiao.cn/1">link1</a>'
+                        '<a href="https://51fapiao.cn/2">link2</a>'
+                        '<a href="https://51fapiao.cn/3">link3</a>'
+                        '<a href="https://51fapiao.cn/4">link4</a>'
+                        '<a href="https://51fapiao.cn/5">link5</a>'
+                        '<a href="https://51fapiao.cn/6">link6</a>'
+                        '<a href="https://51fapiao.cn/7">link7</a>'
+                        "</body></html>"
+                    ).encode("utf-8")
+                def get_content_charset(self):
+                    return "utf-8"
+
+            msg = MockMessage()
+            results = dl.download_from_email(msg, mail_uid=123)
+
+            # Assertions
+            self.assertEqual(len(results), 0)
+            self.assertEqual(dl._download_url.call_count, 5)
+
+            log_output = log_stream.getvalue()
+            self.assertIn("failed=5", log_output)
+            self.assertIn("attempted=5", log_output)
+        finally:
+            logger.removeHandler(handler)
+            dl.close()
+
+
+class TestDuplicateSafeBackfill(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.db_path = self.temp_dir / "test_dup.db"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_duplicate_safe_backfill_logic(self):
+        from scripts.invoice_fetch.db import InvoiceDB
+        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+
+        with InvoiceDB(self.db_path) as db:
+            # 1. 插入一个 existing 发票，具有非空 seller_name="原有销售方"
+            inv_id_1 = db.insert_invoice({
+                "invoice_number": "111111",
+                "invoice_code": "code1",
+                "invoice_date": "2026-06-01",
+                "amount": "100.00",
+                "total_amount": "100.00",
+                "seller_name": "原有销售方",
+                "buyer_name": "",
+                "invoice_type": "电子发票",
+                "category": "其他",
+                "review_status": "to_review",
+            })
+            existing_1 = db.get_invoice(inv_id_1)
+
+            # 调用 refresh，传入不同的 seller_name="新解析的销售方"，但 force_refresh_metadata=False
+            res = _refresh_invoice_from_parse(
+                db, existing_1,
+                invoice_number="111111",
+                invoice_code="code1",
+                invoice_date="2026-06-01",
+                amount="100.00",
+                total_amount="100.00",
+                seller_name="新解析的销售方",
+                buyer_name="购买方A",
+                invoice_type="电子发票",
+                category="其他",
+                has_extra=False,
+                extra_type="",
+                missing_extra=False,
+                parse_note="",
+                force_refresh_metadata=False
+            )
+            self.assertTrue(res)
+            # 断言已有的 seller_name 依然是 "原有销售方"（不覆盖）
+            inv_after_1 = db.get_invoice(inv_id_1)
+            self.assertEqual(inv_after_1["seller_name"], "原有销售方")
+            # 断言原本为空的 buyer_name 被成功回填为 "购买方A"
+            self.assertEqual(inv_after_1["buyer_name"], "购买方A")
+
+            # 2. 插入一个 existing 发票，seller_name 为空
+            inv_id_2 = db.insert_invoice({
+                "invoice_number": "222222",
+                "invoice_code": "code2",
+                "invoice_date": "2026-06-02",
+                "amount": "200.00",
+                "total_amount": "200.00",
+                "seller_name": "",
+                "buyer_name": "",
+                "invoice_type": "电子发票",
+                "category": "其他",
+                "review_status": "to_review",
+            })
+            existing_2 = db.get_invoice(inv_id_2)
+
+            res2 = _refresh_invoice_from_parse(
+                db, existing_2,
+                invoice_number="222222",
+                invoice_code="code2",
+                invoice_date="2026-06-02",
+                amount="200.00",
+                total_amount="200.00",
+                seller_name="回填销售方",
+                buyer_name="购买方B",
+                invoice_type="电子发票",
+                category="其他",
+                has_extra=False,
+                extra_type="",
+                missing_extra=False,
+                parse_note="",
+                force_refresh_metadata=False
+            )
+            self.assertTrue(res2)
+            # 断言原本为空的 seller_name 被成功回填
+            inv_after_2 = db.get_invoice(inv_id_2)
+            self.assertEqual(inv_after_2["seller_name"], "回填销售方")
+
+
+class TestClaimedInvoiceProtection(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.db_path = self.temp_dir / "test_claimed.db"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_claimed_invoice_protection_rules(self):
+        from scripts.invoice_fetch.db import InvoiceDB
+        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+
+        with InvoiceDB(self.db_path) as db:
+            # 1. 插入一个 existing 发票，且将其关联到报销组以使其成为 claimed 发票
+            inv_id = db.insert_invoice({
+                "invoice_number": "333333",
+                "invoice_code": "code3",
+                "invoice_date": "2026-06-03",
+                "amount": "300.00",
+                "total_amount": "300.00",
+                "seller_name": "",
+                "buyer_name": "",
+                "invoice_type": "电子发票",
+                "category": "其他",
+                "attachment_path": "",
+                "review_status": "to_review",
+            })
+            # 插入 claim_group_items
+            db._conn.execute(
+                "INSERT INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
+                (1, inv_id, "test claim")
+            )
+            db._conn.commit()
+
+            existing = db.get_invoice(inv_id)
+            self.assertTrue(db.count_claim_links(inv_id) > 0)
+
+            # 调用 refresh，试图回填 seller_name
+            res = _refresh_invoice_from_parse(
+                db, existing,
+                invoice_number="333333",
+                invoice_code="code3",
+                invoice_date="2026-06-03",
+                amount="300.00",
+                total_amount="300.00",
+                seller_name="想回填的销售方",
+                buyer_name="想回填的购买方",
+                invoice_type="电子发票",
+                category="其他",
+                has_extra=False,
+                extra_type="",
+                missing_extra=False,
+                parse_note="",
+                force_refresh_metadata=False
+            )
+            self.assertTrue(res)
+
+            # 验证 seller_name 依然为空，不被更新
+            inv_after = db.get_invoice(inv_id)
+            self.assertEqual(inv_after["seller_name"], "")
+
+            # 2. 验证 update_invoice_missing_fields 对 claimed 发票只允许更新 attachment_path / file_hash
+            result = db.update_invoice_missing_fields(
+                inv_id,
+                {
+                    "seller_name": "再次尝试",
+                    "attachment_path": "/fake/path.pdf",
+                    "file_hash": "hash123",
+                    "invalid_field": "sql_inject"
+                }
+            )
+            # seller_name 和 invalid_field 被 skipped，而 attachment_path 和 file_hash 被 updated
+            self.assertIn("seller_name", result["skipped_fields"])
+            self.assertIn("invalid_field", result["skipped_fields"])
+            self.assertIn("attachment_path", result["updated_fields"])
+            self.assertIn("file_hash", result["updated_fields"])
+
+
+class TestNavigationFocusStability(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            cls.app = QApplication.instance() or QApplication(sys.argv)
+        except (ImportError, RuntimeError):
+            cls.app = None
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app = None
+
+    def setUp(self):
+        if self.app is None:
+            self.skipTest("PySide6 not available")
+
+    def test_focus_out_of_preview_does_not_intercept(self):
+        from PySide6.QtWidgets import QWidget, QLineEdit
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtCore import QEvent, Qt
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        # 1. 模拟焦点在一个独立的 QLineEdit (代表编辑框)
+        window = QWidget()
+        window.setWindowTitle("test focus")
+        edit = QLineEdit(window)
+        window.show()
+        edit.setFocus()
+        self.app.processEvents()
+
+        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
+        app_obj.preview_stack = MagicMock()
+
+        # 模拟安装 eventFilter
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key_Left, Qt.NoModifier)
+        watched = MagicMock()
+
+        app_obj._prev_preview_doc = MagicMock()
+        res = app_obj.eventFilter(watched, event)
+        self.assertFalse(res)  # 不抢占焦点
+        app_obj._prev_preview_doc.assert_not_called()
+        window.hide()
+
+    def test_focus_in_preview_intercepts(self):
+        from PySide6.QtWidgets import QWidget, QScrollArea
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtCore import QEvent, Qt
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        window = QWidget()
+        window.setWindowTitle("test focus in preview")
+        # 模拟 image_scroll_area
+        scroll_area = QScrollArea(window)
+        window.show()
+        scroll_area.setFocus()
+        self.app.processEvents()
+
+        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
+        app_obj._prev_preview_doc = MagicMock()
+
+        # watched 设为 image_scroll_area 模拟事件分发
+        app_obj.image_scroll_area = scroll_area
+        app_obj.preview_container = window
+        app_obj.preview_stack = MagicMock()
+        app_obj.preview_stack.currentWidget.return_value = None
+        app_obj.pdf_view = None
+        app_obj.overlay_toolbar = None
+
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key_Left, Qt.NoModifier)
+        res = app_obj.eventFilter(scroll_area, event)
+        self.assertTrue(res)  # 成功拦截并消耗事件
+        app_obj._prev_preview_doc.assert_called_once()
+        window.hide()
+
+
 if __name__ == "__main__":
     unittest.main()

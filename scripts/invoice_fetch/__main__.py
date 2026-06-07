@@ -1201,6 +1201,7 @@ def _refresh_invoice_from_parse(
     extra_type: str,
     missing_extra: bool,
     parse_note: str,
+    force_refresh_metadata: bool = False,
 ) -> bool:
     """Refresh parsed invoice metadata in place, with safe backfill.
 
@@ -1209,51 +1210,101 @@ def _refresh_invoice_from_parse(
     """
     existing_status = str(existing.get("review_status") or "to_review")
     is_approved = existing_status in ("approved",)
+    is_claimed = db.count_claim_links(existing["id"]) > 0
 
-    if is_approved:
-        # Approved: skip business-field metadata overwrite, but signal
+    if is_approved or is_claimed:
+        # Approved or Claimed: skip business-field metadata overwrite, but signal
         # success so callers can still backfill attachment_path.
-        _log.info("  重复发票已审核，跳过元数据刷新但允许附件回填: existing_id=%d", existing["id"])
+        reason = "已审核" if is_approved else "已报销"
+        _log.info("  重复发票%s，跳过元数据刷新但允许附件回填: existing_id=%d", reason, existing["id"])
         return True
 
     # For to_review / error / ignored: refresh + safe backfill missing fields
-    backfill_fields = {}
-    for field_key, new_val in [
-        ("seller_name", seller_name),
-        ("buyer_name", buyer_name),
-        ("invoice_date", invoice_date),
-        ("total_amount", total_amount),
-        ("amount", amount),
-        ("category", category),
-        ("invoice_type", invoice_type),
-    ]:
-        existing_val = str(existing.get(field_key) or "").strip()
-        new_val_str = str(new_val or "").strip()
-        if new_val_str and not existing_val:
-            backfill_fields[field_key] = new_val_str
+    if force_refresh_metadata:
+        backfill_fields = {}
+        for field_key, new_val in [
+            ("seller_name", seller_name),
+            ("buyer_name", buyer_name),
+            ("invoice_date", invoice_date),
+            ("total_amount", total_amount),
+            ("amount", amount),
+            ("category", category),
+            ("invoice_type", invoice_type),
+        ]:
+            existing_val = str(existing.get(field_key) or "").strip()
+            new_val_str = str(new_val or "").strip()
+            if new_val_str and not existing_val:
+                backfill_fields[field_key] = new_val_str
 
-    if backfill_fields:
-        db.update_invoice_missing_fields(
-            existing["id"], backfill_fields, only_if_empty=True,
+        if backfill_fields:
+            db.update_invoice_missing_fields(
+                existing["id"], backfill_fields, only_if_empty=True,
+            )
+
+        return db.update_invoice_parsed_metadata(
+            existing["id"],
+            invoice_number=invoice_number,
+            invoice_code=invoice_code,
+            invoice_date=invoice_date,
+            amount=amount,
+            total_amount=total_amount,
+            seller_name=seller_name,
+            buyer_name=buyer_name,
+            invoice_type=invoice_type,
+            category=category,
+            has_extra=has_extra,
+            extra_type=extra_type,
+            missing_extra=missing_extra,
+            parse_success=True,
+            parse_note=parse_note,
         )
+    else:
+        # Safe backfill (default): do not overwrite non-empty fields in existing.
+        # Ensure seller_name, amount, invoice_date (date), category, etc. are preserved if non-empty.
+        updated_seller_name = existing.get("seller_name") if str(existing.get("seller_name") or "").strip() else seller_name
+        updated_amount = existing.get("amount") if str(existing.get("amount") or "").strip() else amount
+        updated_total_amount = existing.get("total_amount") if str(existing.get("total_amount") or "").strip() else total_amount
+        updated_invoice_date = existing.get("invoice_date") if str(existing.get("invoice_date") or "").strip() else invoice_date
+        updated_category = existing.get("category") if str(existing.get("category") or "").strip() else category
 
-    return db.update_invoice_parsed_metadata(
-        existing["id"],
-        invoice_number=invoice_number,
-        invoice_code=invoice_code,
-        invoice_date=invoice_date,
-        amount=amount,
-        total_amount=total_amount,
-        seller_name=seller_name,
-        buyer_name=buyer_name,
-        invoice_type=invoice_type,
-        category=category,
-        has_extra=has_extra,
-        extra_type=extra_type,
-        missing_extra=missing_extra,
-        parse_success=True,
-        parse_note=parse_note,
-    )
+        updated_buyer_name = existing.get("buyer_name") if str(existing.get("buyer_name") or "").strip() else buyer_name
+        updated_invoice_type = existing.get("invoice_type") if str(existing.get("invoice_type") or "").strip() else invoice_type
+        updated_invoice_code = existing.get("invoice_code") if str(existing.get("invoice_code") or "").strip() else invoice_code
+
+        # Log fields being backfilled
+        backfilled_logs = []
+        for k, old, new in [
+            ("seller_name", existing.get("seller_name"), seller_name),
+            ("amount", existing.get("amount"), amount),
+            ("total_amount", existing.get("total_amount"), total_amount),
+            ("invoice_date", existing.get("invoice_date"), invoice_date),
+            ("category", existing.get("category"), category),
+            ("buyer_name", existing.get("buyer_name"), buyer_name),
+            ("invoice_type", existing.get("invoice_type"), invoice_type),
+            ("invoice_code", existing.get("invoice_code"), invoice_code),
+        ]:
+            if not str(old or "").strip() and str(new or "").strip():
+                backfilled_logs.append(f"{k}='{new}'")
+        if backfilled_logs:
+            _log.info("  重复发票回填空字段: existing_id=%d, %s", existing["id"], ", ".join(backfilled_logs))
+
+        return db.update_invoice_parsed_metadata(
+            existing["id"],
+            invoice_number=existing.get("invoice_number") or invoice_number,
+            invoice_code=updated_invoice_code,
+            invoice_date=updated_invoice_date,
+            amount=updated_amount,
+            total_amount=updated_total_amount,
+            seller_name=updated_seller_name,
+            buyer_name=updated_buyer_name,
+            invoice_type=updated_invoice_type,
+            category=updated_category,
+            has_extra=has_extra,
+            extra_type=extra_type,
+            missing_extra=missing_extra,
+            parse_success=True,
+            parse_note=parse_note,
+        )
 
 
 def _restore_existing_invoice_if_deleted(db: InvoiceDB, existing: dict, context: str) -> dict:

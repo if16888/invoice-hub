@@ -3449,9 +3449,9 @@ class InvoiceReviewApp(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        # Main Preview View Stack (full screen in container)
         self.preview_stack = QStackedWidget()
         self.preview_stack.setFrameShape(QFrame.StyledPanel)
+        self.preview_stack.installEventFilter(self)
 
         self.lbl_preview_status = QLabel("请选择一张发票查看原件")
         self.lbl_preview_status.setAlignment(Qt.AlignCenter)
@@ -3723,26 +3723,53 @@ class InvoiceReviewApp(QMainWindow):
                 self.overlay_hide_timer.stop()
             elif event.type() == QEvent.Type.Leave:
                 self._start_hide_overlay_timer()
-        # ── Capture Left/Right keys in the PDF view for page-level navigation ──
-        elif watched is getattr(self, "pdf_view", None):
+
+        # ── Capture Left/Right keys for preview navigation with focus protection ──
+        preview_widgets = {
+            getattr(self, "preview_container", None),
+            getattr(self, "preview_stack", None),
+            getattr(self, "pdf_view", None),
+            getattr(self, "image_scroll_area", None),
+            getattr(self, "overlay_toolbar", None),
+        }
+        if watched in preview_widgets and watched is not None:
             if event.type() == QEvent.Type.KeyPress:
-                if event.key() == Qt.Key_Left:
-                    if not self._navigate_pdf_page(-1):
-                        self._prev_preview_doc()  # fallback to file-level
-                    return True
-                elif event.key() == Qt.Key_Right:
-                    if not self._navigate_pdf_page(1):
-                        self._next_preview_doc()  # fallback to file-level
-                    return True
-        elif watched is getattr(self, "image_scroll_area", None):
-            if event.type() == QEvent.Type.KeyPress:
-                if event.key() == Qt.Key_Left:
-                    self._prev_preview_doc()
-                    return True
-                elif event.key() == Qt.Key_Right:
-                    self._next_preview_doc()
-                    return True
-        return super().eventFilter(watched, event)
+                if event.key() in (Qt.Key_Left, Qt.Key_Right):
+                    # Only grab focus when active focus is inside preview related area (or no focus)
+                    focused = QApplication.focusWidget()
+                    is_preview_focused = False
+                    if focused:
+                        for w in preview_widgets:
+                            if w and (focused is w or w.isAncestorOf(focused)):
+                                is_preview_focused = True
+                                break
+                    else:
+                        is_preview_focused = True
+
+                    if is_preview_focused:
+                        is_pdf_mode = (
+                            getattr(self, "pdf_view", None) is not None
+                            and self.preview_stack.currentWidget() is self.pdf_view
+                        )
+                        if event.key() == Qt.Key_Left:
+                            if is_pdf_mode:
+                                if not self._navigate_pdf_page(-1):
+                                    self._prev_preview_doc()
+                            else:
+                                self._prev_preview_doc()
+                            return True
+                        elif event.key() == Qt.Key_Right:
+                            if is_pdf_mode:
+                                if not self._navigate_pdf_page(1):
+                                    self._next_preview_doc()
+                            else:
+                                self._next_preview_doc()
+                            return True
+
+        try:
+            return super().eventFilter(watched, event)
+        except RuntimeError:
+            return False
 
     def _set_zoom_buttons_enabled(self, enabled: bool):
         self.btn_fit_width.setEnabled(enabled)
@@ -4313,14 +4340,14 @@ class InvoiceReviewApp(QMainWindow):
     def _register_navigation_shortcuts(self):
         """Register Ctrl+Left / Ctrl+Right for file-level navigation via QShortcut."""
         # ── Ctrl+Left: previous file ──
-        sc_prev = QShortcut(Qt.CTRL | Qt.Key_Left, self)
-        sc_prev.setContext(Qt.WindowShortcut)
-        sc_prev.activated.connect(self._on_ctrl_left)
+        self.shortcut_prev_file = QShortcut(Qt.CTRL | Qt.Key_Left, self)
+        self.shortcut_prev_file.setContext(Qt.WindowShortcut)
+        self.shortcut_prev_file.activated.connect(self._on_ctrl_left)
 
         # ── Ctrl+Right: next file ──
-        sc_next = QShortcut(Qt.CTRL | Qt.Key_Right, self)
-        sc_next.setContext(Qt.WindowShortcut)
-        sc_next.activated.connect(self._on_ctrl_right)
+        self.shortcut_next_file = QShortcut(Qt.CTRL | Qt.Key_Right, self)
+        self.shortcut_next_file.setContext(Qt.WindowShortcut)
+        self.shortcut_next_file.activated.connect(self._on_ctrl_right)
 
     def _on_ctrl_left(self):
         if not self._focus_is_editing_widget():

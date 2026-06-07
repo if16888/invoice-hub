@@ -809,11 +809,29 @@ class InvoiceDB:
         if not inv:
             return {"updated_fields": [], "skipped_fields": []}
 
+        ALLOWED_FIELDS = {
+            "seller_name",
+            "buyer_name",
+            "invoice_date",
+            "amount",
+            "total_amount",
+            "category",
+            "invoice_type",
+            "attachment_path",
+            "file_hash",
+            "extra_paths",
+        }
+
         review_status = str(inv.get("review_status") or "to_review")
+        is_claimed = self.count_claim_links(invoice_id) > 0
         updated: list[str] = []
         skipped: list[str] = []
 
         for key, new_val in fields.items():
+            if key not in ALLOWED_FIELDS:
+                skipped.append(key)
+                continue
+
             if new_val is None or str(new_val).strip() == "":
                 skipped.append(key)
                 continue
@@ -824,9 +842,11 @@ class InvoiceDB:
                 continue
 
             # Never backfill business fields on approved/claimed invoices
-            if key != "attachment_path" and review_status not in allow_review_statuses:
-                skipped.append(key)
-                continue
+            # Only allow path/hash updates for approved or claimed invoices.
+            if key not in ("attachment_path", "file_hash"):
+                if review_status not in allow_review_statuses or is_claimed:
+                    skipped.append(key)
+                    continue
 
             try:
                 self._conn.execute(
