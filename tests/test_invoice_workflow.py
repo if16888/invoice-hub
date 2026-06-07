@@ -3948,26 +3948,49 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
     def test_no_hardcoded_fiscal_sellers_in_production(self):
         """6. 验证生产代码中不得出现特定硬编码省份财政平台/厅写入行为"""
-        import glob
-        import os as _os
-        pattern = _os.path.join(r"d:\01_workspace\win\invoice-hub\scripts\invoice_fetch", "*.py")
-        files = glob.glob(pattern)
+        from pathlib import Path
+        import re
+
+        repo_root = Path(__file__).resolve().parents[1]
+        src_root = repo_root / "scripts" / "invoice_fetch"
+        files = list(src_root.rglob("*.py"))
         self.assertGreater(len(files), 0, "Expected to find production .py files")
 
-        forbidden_patterns = [
+        forbidden_literals = [
             'seller_name="江苏省财政电子票据"',
+            "seller_name='江苏省财政电子票据'",
             'seller_name="江苏省财政厅"',
-            'return"江苏省财政电子票据"'
+            "seller_name='江苏省财政厅'",
+            'return"江苏省财政电子票据"',
+            "return'江苏省财政电子票据'",
+        ]
+
+        forbidden_regexes = [
+            r'seller_name\s*=\s*["\'][^"\']{0,12}(?:省|市|自治区|特别行政区)?财政电子票据["\']',
+            r'return\s+["\'][^"\']{0,12}(?:省|市|自治区|特别行政区)?财政电子票据["\']',
         ]
 
         for fpath in files:
             with open(fpath, "r", encoding="utf-8") as f:
                 code = f.read()
-            # Remove all whitespace for robust matching
+
+            # 1. Check normalized space-free literals
             normalized = code.replace(" ", "").replace("\t", "")
-            for fp in forbidden_patterns:
-                self.assertNotIn(fp, normalized,
-                    f"Forbidden hardcoded fiscal seller found in {_os.path.basename(fpath)}: {fp}")
+            for lit in forbidden_literals:
+                self.assertNotIn(
+                    lit,
+                    normalized,
+                    f"Forbidden hardcoded literal found in {fpath.relative_to(repo_root)}: {lit}"
+                )
+
+            # 2. Check regex patterns
+            for pattern in forbidden_regexes:
+                match = re.search(pattern, code)
+                if match:
+                    self.fail(
+                        f"Forbidden regex match {repr(pattern)} found in "
+                        f"{fpath.relative_to(repo_root)}: {repr(match.group(0))}"
+                    )
 
 
 
