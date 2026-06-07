@@ -1851,6 +1851,167 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertEqual(res["failed"], 0)
             self.assertGreaterEqual(len(count_calls), 2)
 
+    def test_scan_email_separates_header_and_invoice_record_counts(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def scan_headers(
+                self,
+                folder,
+                months_back,
+                since_date="",
+                known_uids=None,
+                limit=None,
+            ):
+                return [
+                    {
+                        "uid": uid,
+                        "subject": f"Synthetic message {uid}",
+                        "sender": "sender@example.com",
+                        "date": "2026-06-07",
+                    }
+                    for uid in range(1, 11)
+                ]
+
+        def fake_run_classify(db, ai_cfg, no_ai, mailbox_key=None):
+            for uid in range(1, 11):
+                db.classify_email(
+                    uid,
+                    uid <= 2,
+                    by="test",
+                    reason="synthetic",
+                    mailbox_key=mailbox_key or "legacy",
+                )
+
+        def fake_handle_pending_email(**kwargs):
+            row = kwargs["row"]
+            kwargs["db"].insert_invoice({
+                "invoice_number": f"COUNT-{row['uid']}",
+                "invoice_date": "2026-06-07",
+                "total_amount": "10.00",
+                "seller_name": f"Synthetic Seller {row['uid']}",
+                "invoice_type": "电子发票",
+                "parse_success": True,
+                "mail_uid": row["uid"],
+                "mailbox_key": row["mailbox_key"],
+            })
+            return True
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_scan_count_semantics.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email": {"address": "synthetic_user@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"folder": "INBOX", "months_back": 1},
+                "ai": {"provider": "none"},
+                "categories": {},
+            }), encoding="utf-8")
+
+            with patch(
+                "scripts.invoice_fetch.__main__.get_auth_code",
+                return_value="synthetic-auth-code",
+            ), patch(
+                "scripts.invoice_fetch.__main__.MailFetcher",
+                FakeMailFetcher,
+            ), patch(
+                "scripts.invoice_fetch.__main__._run_classify",
+                side_effect=fake_run_classify,
+            ), patch(
+                "scripts.invoice_fetch.__main__._handle_pending_email",
+                side_effect=fake_handle_pending_email,
+            ):
+                result = scan_email_and_download(db_path, config_path=config_file)
+
+        self.assertEqual(result["scanned_headers"], 10)
+        self.assertEqual(result["new_email_headers"], 10)
+        self.assertEqual(result["classified_invoice"], 2)
+        self.assertEqual(result["downloaded_emails"], 2)
+        self.assertEqual(result["new_invoice_records"], 2)
+        self.assertEqual(result["new"], 2)
+        self.assertEqual(result["duplicates"], 0)
+        self.assertEqual(result["duplicate_invoices"], 0)
+
+    def test_scan_email_counts_restored_deleted_separately_from_new_records(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_scan_restore_stats.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email": {"address": "synthetic_user@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"folder": "INBOX", "months_back": 1},
+                "ai": {"provider": "none"},
+                "categories": {},
+            }), encoding="utf-8")
+
+            with InvoiceDB(db_path) as db:
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "RESTORE-COUNT-001",
+                    "invoice_date": "2026-06-07",
+                    "total_amount": "20.00",
+                    "seller_name": "Synthetic Restore Seller",
+                    "invoice_type": "电子发票",
+                    "parse_success": True,
+                })
+                db.soft_delete_invoice(invoice_id)
+                db.upsert_email(
+                    5001,
+                    "Synthetic restore invoice",
+                    "billing@example.com",
+                    "2026-06-07",
+                )
+                db.classify_email(
+                    5001,
+                    True,
+                    by="test",
+                    reason="synthetic",
+                )
+
+            def fake_handle_pending_email(**kwargs):
+                return kwargs["db"].restore_invoice(invoice_id)
+
+            with patch(
+                "scripts.invoice_fetch.__main__.get_auth_code",
+                return_value="synthetic-auth-code",
+            ), patch(
+                "scripts.invoice_fetch.__main__.MailFetcher",
+                FakeMailFetcher,
+            ), patch(
+                "scripts.invoice_fetch.__main__._handle_pending_email",
+                side_effect=fake_handle_pending_email,
+            ):
+                result = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                )
+
+        self.assertEqual(result["new_invoice_records"], 0)
+        self.assertEqual(result["new"], 0)
+        self.assertEqual(result["restored_deleted"], 1)
+        self.assertEqual(result["duplicates"], 0)
+
     def test_scan_email_counts_new_pending_manual_image_record(self):
         from scripts.invoice_fetch.services import scan_email_and_download
 
@@ -4384,15 +4545,24 @@ class ClaimGroupsTests(unittest.TestCase):
                     })()
                     with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as mock_info:
                         window._scan_email_finished({
-                            "scanned": 5,
+                            "scanned_headers": 5,
+                            "new_email_headers": 4,
+                            "classified_invoice": 3,
+                            "downloaded_emails": 3,
+                            "new_invoice_records": 1,
                             "new": 1,
                             "downloaded": 3,
+                            "restored_deleted": 1,
                             "duplicates": 1,
                             "pending_manual": 2,
                             "failed": 1,
                             "failed_summaries": ["Failed to process UID ***: synthetic parser failure"],
                         })
                     summary = window._last_scan_summary
+                    self.assertEqual(summary["scanned_headers"], 5)
+                    self.assertEqual(summary["new_email_headers"], 4)
+                    self.assertEqual(summary["classified_invoice"], 3)
+                    self.assertEqual(summary["downloaded_emails"], 3)
                     self.assertEqual(summary["new"], 1)
                     self.assertEqual(summary["restored"], 1)
                     self.assertEqual(summary["duplicates"], 1)
@@ -4402,6 +4572,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(summary["failed"], 1)
                     message = mock_info.call_args.args[2]
                     self.assertIn("synthetic parser failure", message)
+                    self.assertIn("扫描邮件头", message)
+                    self.assertIn("新入库邮件头", message)
+                    self.assertIn("判定为发票候选", message)
+                    self.assertIn("成功处理邮件", message)
                     self.assertIn("恢复软删除", message)
                     self.assertIn("重复已存在", message)
                     self.assertIn("链接下载失败", message)

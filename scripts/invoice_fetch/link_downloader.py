@@ -44,6 +44,12 @@ _LINK_KEYWORDS = [
     "\u6c34\u5355",
     "folio",
     "receipt",
+    "ofd",
+    ".pdf",
+    "\u7a0e\u52a1",
+    "nuonuo",
+    "baiwang",
+    "51fapiao",
 ]
 
 _EXCLUDE_PATTERNS = [
@@ -79,6 +85,23 @@ _EXCLUDE_PATTERNS = [
 
 _SAFE_URL_SCHEMES = {"http", "https"}
 _SKIP_URL_PATTERNS = ["tydl-login", "/login", "/register"]
+_TECHNICAL_HOST_SUFFIXES = (
+    "github.com",
+    "githubusercontent.com",
+    "gitlab.com",
+    "gitee.com",
+    "bitbucket.org",
+)
+_INVOICE_HOST_MARKERS = (
+    "51fapiao",
+    "fapiao",
+    "nuonuo",
+    "baiwang",
+    "jss.com.cn",
+    "chinatax",
+    "12306",
+    "railway",
+)
 _TRACKING_QUERY_KEYS = {
     "spm", "utm_source", "utm_medium",
     "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid",
@@ -96,6 +119,8 @@ def _is_safe_download_url(url: str) -> bool:
         return False
     host = parsed.hostname.strip().lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return False
+    if any(host == suffix or host.endswith(f".{suffix}") for suffix in _TECHNICAL_HOST_SUFFIXES):
         return False
     try:
         ip = ipaddress.ip_address(host)
@@ -125,8 +150,16 @@ def extract_links_from_html(html: str) -> list[str]:
                 continue
             if not _is_safe_download_url(url):
                 continue
-            combined = (url + " " + text).lower()
-            if any(kw.lower() in combined for kw in _LINK_KEYWORDS):
+            parsed = urlparse(url)
+            combined = " ".join(
+                (parsed.path, parsed.query, parsed.fragment, text)
+            ).lower()
+            host = (parsed.hostname or "").lower()
+            has_invoice_host = any(marker in host for marker in _INVOICE_HOST_MARKERS)
+            has_invoice_context = any(
+                kw.lower() in combined for kw in _LINK_KEYWORDS
+            )
+            if has_invoice_host or has_invoice_context:
                 if not any(ex in url.lower() for ex in _EXCLUDE_PATTERNS):
                     links.append(url)
     except Exception as exc:

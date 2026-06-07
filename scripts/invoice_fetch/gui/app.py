@@ -3256,8 +3256,6 @@ class InvoiceReviewApp(QMainWindow):
     def _scan_email_finished(self, res: dict):
         self.btn_import_local.setEnabled(True)
         self.btn_scan_email.setEnabled(True)
-        scanned = res.get("scanned", 0)
-        downloaded = res.get("downloaded", 0)
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary
 
@@ -3290,10 +3288,30 @@ class InvoiceReviewApp(QMainWindow):
         downloaded = int(res.get("downloaded", 0) or 0)
         failed_summaries = [str(x or "") for x in (res.get("failed_summaries") or [])]
         return {
-            "scanned": int(res.get("scanned", 0) or 0),
-            "new": int(res.get("new", downloaded) or 0),
-            "restored": restored,
-            "duplicates": max(int(res.get("duplicates", 0) or 0), duplicates),
+            "scanned_headers": int(
+                res.get("scanned_headers", res.get("scanned", 0)) or 0
+            ),
+            "new_email_headers": int(res.get("new_email_headers", 0) or 0),
+            "classified_invoice": int(res.get("classified_invoice", 0) or 0),
+            "downloaded_emails": int(
+                res.get("downloaded_emails", downloaded) or 0
+            ),
+            "new": int(
+                res.get("new_invoice_records", res.get("new", downloaded)) or 0
+            ),
+            "restored": max(
+                int(res.get("restored_deleted", 0) or 0),
+                restored,
+            ),
+            "duplicates": max(
+                int(
+                    res.get(
+                        "duplicate_invoices",
+                        res.get("duplicates", 0),
+                    ) or 0
+                ),
+                duplicates,
+            ),
             "link_failed": link_failed,
             "manual_review_required": manual_review_required,
             "pending_retry": max(int(res.get("pending_retry", 0) or 0), pending_retry),
@@ -3303,7 +3321,7 @@ class InvoiceReviewApp(QMainWindow):
 
     def _format_scan_summary_status(self, summary: dict) -> str:
         return (
-            f"邮箱扫描完成: 新增 {summary.get('new', 0)}，恢复 {summary.get('restored', 0)}，"
+            f"邮箱扫描完成: 新增记录 {summary.get('new', 0)}，恢复 {summary.get('restored', 0)}，"
             f"重复 {summary.get('duplicates', 0)}，需人工确认材料 {summary.get('manual_review_required', 0)}，"
             f"待重试 {summary.get('pending_retry', 0)}，"
             f"失败 {summary.get('failed', 0)}"
@@ -3314,15 +3332,19 @@ class InvoiceReviewApp(QMainWindow):
         failure_text = "\n".join(f"  - {line}" for line in failures[:5]) if failures else "无"
         return (
             "邮箱增量扫描完成。\n\n"
-            f"- 扫描入库新邮件: {summary.get('scanned', 0)} 封\n"
-            f"- 新增发票/材料: {summary.get('new', 0)} 条\n"
+            f"- 扫描邮件头: {summary.get('scanned_headers', 0)} 封\n"
+            f"- 新入库邮件头: {summary.get('new_email_headers', 0)} 封\n"
+            f"- 判定为发票候选: {summary.get('classified_invoice', 0)} 封\n"
+            f"- 成功处理邮件: {summary.get('downloaded_emails', 0)} 封\n"
+            f"- 新增发票/材料记录: {summary.get('new', 0)} 条\n"
             f"- 恢复软删除: {summary.get('restored', 0)} 条\n"
             f"- 重复已存在: {summary.get('duplicates', 0)} 条\n"
             f"- 链接下载失败: {summary.get('link_failed', 0)} 封\n"
-            f"- 需人工确认材料: {summary.get('manual_review_required', 0)} 条\n"
+            f"- 其中需人工确认材料: {summary.get('manual_review_required', 0)} 条\n"
             f"- 待重试: {summary.get('pending_retry', 0)} 封\n"
             f"- 处理失败: {summary.get('failed', 0)} 封\n"
             f"失败摘要:\n{failure_text}\n\n"
+            "说明：新入库邮件头不等于新增发票；需人工确认材料不是处理失败。\n"
             "如果没有看到预期发票，请清空筛选，或用发票号、购买方、金额搜索。"
         )
 

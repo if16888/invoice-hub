@@ -30,6 +30,23 @@ EXCLUDE_KEYWORDS = [
     "登机记录", "登机凭证", "乘机凭证", "登机",
 ]
 
+TECHNICAL_EXCLUDE_KEYWORDS = [
+    "github", "gitlab", "gitee", "bitbucket",
+    "pull request", "merge request", "workflow run", "github actions",
+    "repository", "commit", "issue", "dependabot", "security alert",
+    "continuous integration", "ci failed", "actions run",
+    "代码审查", "工作流运行", "安全警报",
+]
+
+TECHNICAL_EXCLUDE_SENDERS = [
+    "notifications@github.com",
+    "noreply@github.com",
+    "github.com",
+    "gitlab.com",
+    "gitee.com",
+    "bitbucket.org",
+]
+
 
 def classify(subject: str, sender: str) -> tuple[int, str]:
     """Classify an email by keyword rules.
@@ -41,6 +58,25 @@ def classify(subject: str, sender: str) -> tuple[int, str]:
            -1, ""               — uncertain, needs AI
     """
     text = (subject + " " + sender).lower()
+    sender_lower = (sender or "").lower()
+
+    technical_signal = next(
+        (
+            kw for kw in TECHNICAL_EXCLUDE_KEYWORDS
+            if kw.lower() in text
+        ),
+        "",
+    )
+    technical_sender = next(
+        (
+            marker for marker in TECHNICAL_EXCLUDE_SENDERS
+            if marker.lower() in sender_lower
+        ),
+        "",
+    )
+    if technical_signal or technical_sender:
+        reason = technical_signal or technical_sender
+        return 0, f"技术通知: {reason}"
 
     positive = [kw for kw in INVOICE_KEYWORDS if kw.lower() in text]
     negative = [kw for kw in EXCLUDE_KEYWORDS if kw.lower() in text]
