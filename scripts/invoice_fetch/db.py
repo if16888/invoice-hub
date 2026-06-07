@@ -1172,12 +1172,21 @@ class InvoiceDB:
         """Safely delete invoices associated with a given email and return statistics."""
         invoices = self.get_invoices_by_mail_identity(mailbox_key, uid)
 
+        # 1. 结果按发票 ID 进行去重，防止重复统计和处理
+        unique_invoices = {}
+        for inv in invoices:
+            inv_id = inv["id"]
+            if inv_id not in unique_invoices:
+                unique_invoices[inv_id] = inv
+        unique_list = list(unique_invoices.values())
+
         deleted = 0
         skipped_approved = 0
         skipped_claimed = 0
         skipped = []
+        to_delete_ids = []
 
-        for inv in invoices:
+        for inv in unique_list:
             inv_id = inv["id"]
             is_approved = (inv.get("review_status") == "approved")
             is_claimed = inv.get("claim_id") is not None
@@ -1197,14 +1206,21 @@ class InvoiceDB:
                     "reason": skip_reason
                 })
             else:
-                # 物理删除 invoices 记录
-                self.delete_invoice_permanently(inv_id)
-                # 清除 claim_group_items 关联
-                self._conn.execute("DELETE FROM claim_group_items WHERE invoice_id = ?", (inv_id,))
-                deleted += 1
+                to_delete_ids.append(inv_id)
 
-        if deleted > 0:
-            self._conn.commit()
+        # 2. 事务级原子删除：先删除 claim_group_items 关联，再物理删除 invoices
+        if to_delete_ids:
+            try:
+                for inv_id in to_delete_ids:
+                    # 先删除关联关系
+                    self._conn.execute("DELETE FROM claim_group_items WHERE invoice_id = ?", (inv_id,))
+                    # 后删除发票
+                    self._conn.execute("DELETE FROM invoices WHERE id = ?", (inv_id,))
+                self._conn.commit()
+                deleted = len(to_delete_ids)
+            except Exception as e:
+                self._conn.rollback()
+                raise e
 
         return {
             "deleted": deleted,

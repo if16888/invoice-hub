@@ -82,9 +82,11 @@ class TestEmailReprocess(unittest.TestCase):
         email = self.db._conn.execute("SELECT downloaded FROM emails WHERE mailbox_key='a' AND uid=100").fetchone()
         self.assertEqual(email["downloaded"], 1)
 
+    @patch('scripts.invoice_fetch.__main__.get_auth_code')
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
     @patch('scripts.invoice_fetch.__main__._handle_pending_email')
-    def test_2_apply_deletes_and_resets(self, mock_handle, mock_fetcher):
+    def test_2_apply_deletes_and_resets(self, mock_handle, mock_fetcher, mock_get_auth):
+        mock_get_auth.return_value = "dummycode"
         mock_handle.return_value = True
 
         # 1. 插入 email 和 invoice
@@ -240,9 +242,11 @@ class TestEmailReprocess(unittest.TestCase):
         pending = self.db.get_invoice_emails_to_download('test@example.com')
         self.assertNotIn(500, [row["uid"] for row in pending])
 
+    @patch('scripts.invoice_fetch.__main__.get_auth_code')
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
     @patch('scripts.invoice_fetch.__main__._handle_pending_email')
-    def test_8_only_process_selected_uids(self, mock_handle, mock_fetcher):
+    def test_8_only_process_selected_uids(self, mock_handle, mock_fetcher, mock_get_auth):
+        mock_get_auth.return_value = "dummycode"
         mock_handle.return_value = True
 
         # 1. 同邮箱有 uid=1、uid=2 都 pending
@@ -272,6 +276,169 @@ class TestEmailReprocess(unittest.TestCase):
         self.assertEqual(mock_handle.call_count, 1)
         args, kwargs = mock_handle.call_args
         self.assertEqual(kwargs['row']['uid'], 1)
+
+    def test_9_apply_reject_missing_mailbox(self):
+        # 1. 构造一个缺少 mailbox 的 args 命名空间，以及 mock db
+        args = MagicMock()
+        args.apply = True
+        args.mailbox = None
+        args.uid = [100]
+        args.limit = 50
+
+        # 验证会调用 sys.exit(1)
+        with self.assertRaises(SystemExit) as cm:
+            _cmd_email_reprocess(args, self.db)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_10_apply_reject_missing_filters(self):
+        # 仅有 mailbox，无 any 筛选范围
+        args = MagicMock()
+        args.apply = True
+        args.mailbox = "a"
+        args.uid = []
+        args.uid_range = None
+        args.since = None
+        args.until = None
+        args.subject_contains = None
+        args.sender_contains = None
+        args.limit = 50
+
+        with self.assertRaises(SystemExit) as cm:
+            _cmd_email_reprocess(args, self.db)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_11_limit_validation(self):
+        # limit <= 0 拒绝
+        args = MagicMock()
+        args.apply = False
+        args.limit = 0
+        args.uid_range = None
+        args.since = None
+        args.until = None
+
+        with self.assertRaises(SystemExit) as cm:
+            _cmd_email_reprocess(args, self.db)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_12_uid_range_validation_start_gt_end(self):
+        # START > END 拒绝
+        args = MagicMock()
+        args.apply = False
+        args.limit = 50
+        args.uid_range = "200-100"
+        args.since = None
+        args.until = None
+
+        with self.assertRaises(SystemExit) as cm:
+            _cmd_email_reprocess(args, self.db)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_13_date_range_validation_since_gt_until(self):
+        # since > until 拒绝，或格式错拒绝
+        args = MagicMock()
+        args.apply = False
+        args.limit = 50
+        args.uid_range = None
+        args.since = "2026-06-07"
+        args.until = "2026-05-07"
+
+        with self.assertRaises(SystemExit) as cm:
+            _cmd_email_reprocess(args, self.db)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_14_claimed_invoice_transation_delete(self):
+        # 往 claim_groups，claim_group_items，invoices 插入关联发票
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_number, total_amount, is_deleted) "
+            "VALUES (1000, 'a', 100, 'INV-1000', '100.00', 0)"
+        )
+        self.db._conn.execute(
+            "INSERT INTO claim_group_items (claim_id, invoice_id) "
+            "VALUES (5, 1000)"
+        )
+        self.db._conn.commit()
+
+        # include_claimed=True 删除它
+        stats = self.db.delete_invoices_for_reprocess('a', 100, include_claimed=True)
+        self.assertEqual(stats["deleted"], 1)
+
+        # 检查 invoices 已经物理删除
+        invs = self.db.get_invoices_by_mail_identity('a', 100)
+        self.assertEqual(len(invs), 0)
+
+        # 检查 claim_group_items 也被彻底清理
+        row = self.db._conn.execute("SELECT COUNT(*) AS cnt FROM claim_group_items WHERE invoice_id = 1000").fetchone()
+        self.assertEqual(row["cnt"], 0)
+
+    def test_15_claimed_invoice_deduplication(self):
+        # 模拟一个发票被多个报销组关联的情况（产生了多条 claim_group_items 关联）
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_number, total_amount, is_deleted) "
+            "VALUES (1001, 'a', 100, 'INV-1001', '100.00', 0)"
+        )
+        self.db._conn.execute(
+            "INSERT INTO claim_group_items (claim_id, invoice_id) "
+            "VALUES (5, 1001)"
+        )
+        self.db._conn.execute(
+            "INSERT INTO claim_group_items (claim_id, invoice_id) "
+            "VALUES (6, 1001)"
+        )
+        self.db._conn.commit()
+
+        # 验证 get_invoices_by_mail_identity 会返回多条行（因为 JOIN 了多次）
+        invs = self.db.get_invoices_by_mail_identity('a', 100)
+        self.assertTrue(len(invs) > 1)
+
+        # 验证 delete_invoices_for_reprocess 在 include_claimed=True 下只删除了 1 条（不会统计重复），并且干净清理
+        stats = self.db.delete_invoices_for_reprocess('a', 100, include_claimed=True)
+        self.assertEqual(stats["deleted"], 1)
+
+        # 检查 invoices 物理删除
+        invs_after = self.db.get_invoices_by_mail_identity('a', 100)
+        self.assertEqual(len(invs_after), 0)
+
+        # 检查 claim_group_items 中 1001 的记录为 0 条
+        row = self.db._conn.execute("SELECT COUNT(*) AS cnt FROM claim_group_items WHERE invoice_id = 1001").fetchone()
+        self.assertEqual(row["cnt"], 0)
+
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    def test_16_missing_auth_code_skips_fetcher(self, mock_fetcher):
+        # 配置中没有 auth_code 的账号，但有 pending 邮件
+        cfg_no_auth = {
+            "email": {"address": "test@example.com"},
+            "email_accounts": [
+                {
+                    "name": "No Auth Account",
+                    "enabled": True,
+                    "address": "test@example.com",
+                    "mailbox_key": "test@example.com",
+                    "auth_code": "",  # 空 auth_code
+                }
+            ]
+        }
+
+        # 插入一封 pending 邮件
+        self.db._conn.execute(
+            "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
+            "VALUES ('test@example.com', 1, 'Test Title', 'sender', '2026-06-01', 1, 0)"
+        )
+        self.db._conn.commit()
+
+        # 对其运行 reprocess (apply=True, reclassify=False, dry_run=False)
+        records = [{"mailbox_key": "test@example.com", "uid": 1}]
+
+        # 为了防备测试环境读取真实 keyring，我们 patch get_auth_code
+        with patch('scripts.invoice_fetch.__main__.get_auth_code', side_effect=SystemExit(1)):
+            _reprocess_email_records(
+                db=self.db,
+                cfg=cfg_no_auth,
+                records=records,
+                dry_run=False,
+            )
+
+        # 验证 MailFetcher 绝对没有被实例化
+        self.assertFalse(mock_fetcher.called)
 
 if __name__ == '__main__':
     unittest.main()

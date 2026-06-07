@@ -239,6 +239,7 @@ def _parse_args() -> argparse.Namespace:
     p_reprocess.add_argument("--apply", action="store_true", help="真正执行修复")
     p_reprocess.add_argument("--limit", type=int, default=50, help="最多处理的邮件数量，默认 50")
     p_reprocess.add_argument("--headed", action="store_true", help="显示浏览器窗口（用于人工辅助验证或下载）")
+    p_reprocess.add_argument("--force-large-batch", action="store_true", help="允许在 apply 模式下处理超过 200 封邮件")
 
     return p.parse_args()
 
@@ -3033,19 +3034,67 @@ def scan_email_and_download(
 
 def _cmd_email_reprocess(args: argparse.Namespace, db: InvoiceDB):
     """Subcommand handler to reprocess emails."""
-    dry_run = args.dry_run or not args.apply
+    # 1. 验证 limit 必须为正整数
+    if args.limit is not None and args.limit <= 0:
+        print("错误: --limit 必须为正整数。")
+        sys.exit(1)
 
+    # 2. apply 模式下的高强度安全保护校验
+    if args.apply:
+        # 必须提供 mailbox
+        if not args.mailbox:
+            print("错误: 在 apply 模式下，必须指定 --mailbox 邮箱账号。")
+            sys.exit(1)
+        # 必须至少提供一个筛选范围条件
+        has_filter = (
+            args.uid or
+            args.uid_range or
+            args.since or
+            args.until or
+            args.subject_contains or
+            args.sender_contains
+        )
+        if not has_filter:
+            print("错误: 在 apply 模式下，必须提供至少一个具体的筛选范围（如 --uid, --uid-range, --since, --until, --subject-contains, --sender-contains）以防误操作全局删除。")
+            sys.exit(1)
+        # 单次最大数量限制，除非显式指定 --force-large-batch
+        if args.limit is not None and args.limit > 200 and not args.force_large_batch:
+            print("错误: 单次处理数量限制为 200。如果确需处理大批量邮件，请显式提供 --force-large-batch 选项。")
+            sys.exit(1)
+
+    # 3. 验证 uid-range 并解析
     uid_range = None
     if args.uid_range:
         parts = args.uid_range.split("-")
         if len(parts) == 2:
             try:
-                uid_range = (int(parts[0]), int(parts[1]))
+                start = int(parts[0])
+                end = int(parts[1])
+                if start <= end and start >= 0:
+                    uid_range = (start, end)
             except ValueError:
                 pass
         if not uid_range:
-            print("错误: --uid-range 格式必须为 START-END, 例如 10000-10200")
+            print("错误: --uid-range 格式必须为 START-END, 且满足 START <= END (均需为非负整数)。")
             sys.exit(1)
+
+    # 4. 验证 since/until 的格式 (YYYY-MM-DD) 以及 since <= until
+    import re as _re
+    date_pat = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    if args.since:
+        if not date_pat.match(args.since):
+            print("错误: --since 日期格式必须为 YYYY-MM-DD。")
+            sys.exit(1)
+    if args.until:
+        if not date_pat.match(args.until):
+            print("错误: --until 日期格式必须为 YYYY-MM-DD。")
+            sys.exit(1)
+    if args.since and args.until:
+        if args.since > args.until:
+            print("错误: --since 起始日期不能大于 --until 结束日期。")
+            sys.exit(1)
+
+    dry_run = args.dry_run or not args.apply
 
     records = db.find_emails_for_reprocess(
         mailbox_key=args.mailbox,
@@ -3243,6 +3292,7 @@ def _reprocess_email_records(
             reprocessed_count += (len(selected_uids) - len(failed_uids))
             continue
 
+        pending = []
         try:
             pending = db.get_invoice_emails_to_download(mailbox_key=m_key)
             pending = [row for row in pending if row["uid"] in selected_uids]
@@ -3251,6 +3301,11 @@ def _reprocess_email_records(
             reprocessed_count += len(not_pending_uids)
 
             if pending:
+                if not acc.get("auth_code"):
+                    _log.warning("获取邮箱 %s 的授权码为空，无法下载该邮箱下的 %d 封邮件", mask_email(acc["address"]), len(pending))
+                    failed_count += len(pending)
+                    continue
+
                 _log.info("正在连接邮箱 %s...", mask_email(acc["address"]))
                 with MailFetcher(
                     address=acc["address"],
