@@ -1264,6 +1264,14 @@ def _refresh_invoice_from_parse(
 
     - approved/claimed invoices: skip business-field refresh (only backfill attachment_path)
     - to_review/error invoices: refresh all fields + safe backfill missing fields
+
+    Safety constraints on force_refresh_metadata:
+    - force_refresh_metadata=True is a dangerous explicit overwrite mode, which will overwrite
+      existing business metadata fields. It should only be used in scenarios where explicit user
+      intent requires metadata force-refresh.
+    - By default, force_refresh_metadata=False is used for safe backfilling, ensuring existing
+      fields (seller_name, amount, invoice_date, category) are preserved if non-empty.
+    - Both approved and claimed records are never overwritten for business fields under any circumstances.
     """
     existing_status = str(existing.get("review_status") or "to_review")
     is_approved = existing_status in ("approved",)

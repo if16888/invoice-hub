@@ -3715,6 +3715,261 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 updated4 = db.get_invoice(inv_id4)
                 self.assertEqual(updated4["seller_name"], "浙江省财政电子票据公共服务平台") # preserved
 
+    def test_platform_only_does_not_write_seller_name(self):
+        """1. 验证 platform_only 时，提取结果为空且不写入 seller_name"""
+        from scripts.invoice_fetch.invoice_parser import InvoiceParser
+        parser = InvoiceParser()
+
+        raw_text = "江苏省财政电子票据公共服务平台\n财务专用章\n车牌号：苏A11111\n入站：南京\n出口站：苏州"
+
+        # Direct fallback extraction must return platform_only
+        issuer, reason = parser._extract_fiscal_issuer_fallback(raw_text)
+        self.assertEqual(issuer, "")
+        self.assertEqual(reason, "platform_only")
+
+        # Verify that _is_fiscal_toll_invoice correctly identifies the text
+        self.assertTrue(parser._is_fiscal_toll_invoice(raw_text))
+
+        # Parse via mocked plumber - use text with invoice number so parse_note isn't overwritten
+        # Add invoice number to get past the "未提取到发票号码" early exit
+        raw_with_number = raw_text + "\n发票号码：12345678"
+        fake_plumber = _FakePdfPlumber(raw_with_number)
+        with tempfile.TemporaryDirectory() as td:
+            pdf_path = Path(td) / "dummy.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 fake")
+            with patch.object(parser, "_plumber", return_value=fake_plumber):
+                info = parser.parse_pdf(str(pdf_path))
+        # seller_name must be empty (not written from platform)
+        self.assertEqual(info.seller_name, "")
+        # parse_note must mention platform hint
+        self.assertIn("未识别到具体开票单位", info.parse_note)
+
+    def test_multi_region_platforms_all_platform_only(self):
+        """2. 验证多地区平台均不写入 seller_name，且都被归类为 platform_only"""
+        from scripts.invoice_fetch.invoice_parser import InvoiceParser
+        parser = InvoiceParser()
+
+        platforms = [
+            "浙江省财政电子票据公共服务平台",
+            "上海市财政电子票据公共服务平台",
+            "广东省财政电子票据公共服务平台",
+            "四川省财政电子票据公共服务平台",
+            "江苏省财政电子票据公共服务平台",
+        ]
+        for plat in platforms:
+            # Direct test via _extract_fiscal_issuer_fallback
+            raw_text = f"电子票据网址：{plat}"
+            issuer, reason = parser._extract_fiscal_issuer_fallback(raw_text)
+            self.assertEqual(issuer, "", f"Expected empty issuer for platform: {plat}")
+            self.assertEqual(reason, "platform_only", f"Expected platform_only for: {plat}")
+
+        # Full parse-path test: add toll clues + invoice number so we can check parse_note
+        for plat in platforms:
+            raw_text = f"电子票据：{plat}\n车牌号：粤B12345\n入站：深圳\n出口站：广州\n发票号码：88887777"
+            fake_plumber = _FakePdfPlumber(raw_text)
+            with tempfile.TemporaryDirectory() as td:
+                pdf_path = Path(td) / "dummy.pdf"
+                pdf_path.write_bytes(b"%PDF-1.4 fake")
+                with patch.object(parser, "_plumber", return_value=fake_plumber):
+                    info = parser.parse_pdf(str(pdf_path))
+            self.assertEqual(info.seller_name, "", f"seller_name must be empty for platform: {plat}")
+            self.assertIn("未识别到具体开票单位", info.parse_note, f"parse_note must mention hint for: {plat}")
+
+    def test_legacy_platform_seller_cleanup(self):
+        """3. 验证历史误写平台销售方在 platform_only 重新解析时被安全清空且保留过路费分类"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+
+            with InvoiceDB(runtime / "invoices.db") as db:
+                from scripts.invoice_fetch.migrations import check_and_migrate
+                check_and_migrate(db._conn)
+
+                inv_id = db.insert_invoice({
+                    "invoice_number": "ETC_CLEANUP",
+                    "total_amount": "99.00",
+                    "seller_name": "江苏省财政电子票据",
+                    "category": "其他",
+                    "review_status": "to_review",
+                    "item_name": "",
+                })
+                existing = db.get_invoice(inv_id)
+
+                refreshed = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing,
+                    invoice_number="ETC_CLEANUP",
+                    invoice_code="111",
+                    invoice_date="2026-06-01",
+                    amount="99.00",
+                    total_amount="99.00",
+                    seller_name="",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="过路费",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="检测到财政电子票据平台，但未识别到具体开票单位，建议人工核对红章; platform_only",
+                    item_name="通行费",
+                    force_refresh_metadata=False
+                )
+                self.assertTrue(refreshed)
+                updated = db.get_invoice(inv_id)
+                self.assertEqual(updated["seller_name"], "") # Cleared!
+                self.assertEqual(updated["category"], "过路费") # Category backfilled!
+
+    def test_approved_claimed_do_not_clear_legacy_platform_seller(self):
+        """4. 验证已审核/已报销的记录不清理历史误写平台名且不覆盖业务字段"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+
+            with InvoiceDB(runtime / "invoices.db") as db:
+                from scripts.invoice_fetch.migrations import check_and_migrate
+                check_and_migrate(db._conn)
+
+                # Approved record
+                inv_id1 = db.insert_invoice({
+                    "invoice_number": "ETC_APPROVED",
+                    "total_amount": "150.00",
+                    "seller_name": "江苏省财政电子票据",
+                    "category": "过路费",
+                    "review_status": "approved",
+                    "item_name": "",
+                })
+                existing1 = db.get_invoice(inv_id1)
+                refreshed1 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing1,
+                    invoice_number="ETC_APPROVED",
+                    invoice_code="222",
+                    invoice_date="2026-06-01",
+                    amount="150.00",
+                    total_amount="150.00",
+                    seller_name="",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="其他",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="检测到财政电子票据平台，但未识别到具体开票单位，建议人工核对红章; platform_only",
+                    item_name="通行费",
+                    force_refresh_metadata=False
+                )
+                self.assertTrue(refreshed1)
+                updated1 = db.get_invoice(inv_id1)
+                self.assertEqual(updated1["seller_name"], "江苏省财政电子票据") # Preserved
+                self.assertEqual(updated1["category"], "过路费") # Preserved
+
+                # Claimed record
+                inv_id2 = db.insert_invoice({
+                    "invoice_number": "ETC_CLAIMED",
+                    "total_amount": "200.00",
+                    "seller_name": "江苏省财政电子票据",
+                    "category": "过路费",
+                    "review_status": "to_review",
+                    "item_name": "",
+                })
+                group_id = db.create_claim_group("Group A")
+                db.add_invoice_to_claim(group_id, inv_id2)
+                existing2 = db.get_invoice(inv_id2)
+                refreshed2 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing2,
+                    invoice_number="ETC_CLAIMED",
+                    invoice_code="333",
+                    invoice_date="2026-06-01",
+                    amount="200.00",
+                    total_amount="200.00",
+                    seller_name="",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="其他",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="检测到财政电子票据平台，但未识别到具体开票单位，建议人工核对红章; platform_only",
+                    item_name="通行费",
+                    force_refresh_metadata=False
+                )
+                self.assertTrue(refreshed2)
+                updated2 = db.get_invoice(inv_id2)
+                self.assertEqual(updated2["seller_name"], "江苏省财政电子票据") # Preserved
+                self.assertEqual(updated2["category"], "过路费") # Preserved
+
+    def test_force_refresh_default_protection(self):
+        """5. 验证 force_refresh_metadata 默认为 False，且不覆盖用户填写的非空销售方"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            runtime.mkdir()
+
+            with InvoiceDB(runtime / "invoices.db") as db:
+                from scripts.invoice_fetch.migrations import check_and_migrate
+                check_and_migrate(db._conn)
+
+                inv_id = db.insert_invoice({
+                    "invoice_number": "ETC_USER_CUSTOM",
+                    "total_amount": "50.00",
+                    "seller_name": "某定制高速运营公司",
+                    "category": "过路费",
+                    "review_status": "to_review",
+                    "item_name": "",
+                })
+                existing = db.get_invoice(inv_id)
+
+                # Simulate a parse result where seller_name is empty (e.g. platform-only)
+                # under default force_refresh_metadata=False; existing non-empty seller preserved
+                refreshed = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing,
+                    invoice_number="ETC_USER_CUSTOM",
+                    invoice_code="444",
+                    invoice_date="2026-06-01",
+                    amount="50.00",
+                    total_amount="50.00",
+                    seller_name="",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="过路费",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="检测到财政电子票据平台，但未识别到具体开票单位; platform_only",
+                    item_name="通行费",
+                )
+                self.assertTrue(refreshed)
+                updated = db.get_invoice(inv_id)
+                self.assertEqual(updated["seller_name"], "某定制高速运营公司") # Not cleared!
+
+    def test_no_hardcoded_fiscal_sellers_in_production(self):
+        """6. 验证生产代码中不得出现特定硬编码省份财政平台/厅写入行为"""
+        import glob
+        import os as _os
+        pattern = _os.path.join(r"d:\01_workspace\win\invoice-hub\scripts\invoice_fetch", "*.py")
+        files = glob.glob(pattern)
+        self.assertGreater(len(files), 0, "Expected to find production .py files")
+
+        forbidden_patterns = [
+            'seller_name="江苏省财政电子票据"',
+            'seller_name="江苏省财政厅"',
+            'return"江苏省财政电子票据"'
+        ]
+
+        for fpath in files:
+            with open(fpath, "r", encoding="utf-8") as f:
+                code = f.read()
+            # Remove all whitespace for robust matching
+            normalized = code.replace(" ", "").replace("\t", "")
+            for fp in forbidden_patterns:
+                self.assertNotIn(fp, normalized,
+                    f"Forbidden hardcoded fiscal seller found in {_os.path.basename(fpath)}: {fp}")
+
+
 
 if __name__ == "__main__":
     unittest.main()
