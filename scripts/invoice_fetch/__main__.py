@@ -241,6 +241,13 @@ def _parse_args() -> argparse.Namespace:
     p_reprocess.add_argument("--headed", action="store_true", help="显示浏览器窗口（用于人工辅助验证或下载）")
     p_reprocess.add_argument("--force-large-batch", action="store_true", help="允许在 apply 模式下处理超过 200 封邮件")
 
+    # evidence-repair
+    p_ev_repair = subparsers.add_parser("evidence-repair", help="邮箱未关联证明材料修复工具")
+    p_ev_repair.add_argument("--mailbox", required=True, help="指定 mailbox_key 邮箱账号")
+    p_ev_repair.add_argument("--uid", type=int, required=True, help="指定邮件 UID")
+    p_ev_repair.add_argument("--dry-run", action="store_true", help="仅预览，不修改数据库")
+    p_ev_repair.add_argument("--apply", action="store_true", help="真实执行，修补待关联证明材料记录")
+
     return p.parse_args()
 
 
@@ -832,7 +839,7 @@ def _match_email_extras_to_invoices(
         else:
             unmatched.append(extra)
             _log.info(
-                "  多发票邮件：证明材料未唯一匹配，已保留为待关联: %s",
+                "  多发票邮件：证明材料未唯一匹配，准备保留为待关联: %s",
                 mask_filename(str(getattr(extra, "original_name", "") or "")),
             )
 
@@ -2075,21 +2082,39 @@ def _process_email(
     ]
     if remaining_extra_files:
         for att in remaining_extra_files:
+            file_path = Path(att.file_path)
+            file_hash = _sha256_file(file_path) if file_path.exists() else ""
+
             evidence_res = _import_local_evidence(
                 db=db,
                 parsed=None,
-                file_path=Path(att.file_path),
+                file_path=file_path,
                 source_name=att.original_name,
                 categories=categories,
                 preserve_source_path=True
             )
+
+            processed_id = None
             if evidence_res:
                 status, row_id = evidence_res
                 recorded += 1
                 if row_id is not None:
-                    kept_paths.add(str(Path(att.file_path).resolve()))
-                _log.info("  已处理待关联证明材料(邮箱路径): %s, 结果=%s, ID=%s",
-                          mask_filename(att.original_name), status, row_id)
+                    processed_id = row_id
+                else:
+                    if file_hash:
+                        existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+                        if existing:
+                            processed_id = existing["id"]
+
+                kept_paths.add(str(file_path.resolve()))
+
+                if status == "added":
+                    _log.info("  已处理待关联证明材料(邮箱路径): %s, 结果=%s, ID=%s",
+                              mask_filename(att.original_name), status, row_id)
+                else:
+                    if processed_id:
+                        _log.info("  已保留待关联证明材料: invoice_id=%s file=%s",
+                                  processed_id, mask_filename(att.original_name))
                 continue
 
             if _looks_like_receipt_evidence(msg.subject, msg.sender, att.original_name):
@@ -2104,7 +2129,50 @@ def _process_email(
                 )
                 if row_id:
                     recorded += 1
+                    kept_paths.add(str(file_path.resolve()))
                     _log.info("  已入库独立水单/收据(海外凭证): %s", mask_filename(att.original_name))
+                    continue
+
+            # Fallback 逻辑
+            existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
+            if existing:
+                existing = _restore_existing_invoice_if_deleted(db, existing, "证明材料")
+                if not existing.get("attachment_path"):
+                    db.update_invoice_file_paths(existing["id"], attachment_path=_runtime_relative(file_path))
+                processed_id = existing["id"]
+            else:
+                category, extra_type, extra_required = _classify(att.original_name, msg.sender or "", "", categories)
+                rec = {
+                    "invoice_number": "",
+                    "invoice_code": "",
+                    "invoice_date": "",
+                    "amount": "",
+                    "total_amount": "",
+                    "seller_name": "",
+                    "buyer_name": "",
+                    "invoice_type": "待关联证明材料",
+                    "category": category,
+                    "has_extra": False,
+                    "extra_type": extra_type,
+                    "missing_extra": False,
+                    "mail_uid": msg.uid,
+                    "mail_subject": msg.subject,
+                    "mail_date": msg.date,
+                    "mail_sender": msg.sender,
+                    "parse_success": False,
+                    "parse_note": "多发票邮件证明材料未唯一匹配，请人工关联",
+                    "attachment_path": _runtime_relative(file_path),
+                    "extra_paths": [],
+                    "file_hash": file_hash,
+                    "mailbox_key": mailbox_key,
+                }
+                processed_id = db.insert_invoice(rec)
+
+            recorded += 1
+            kept_paths.add(str(file_path.resolve()))
+            if processed_id:
+                _log.info("  已保留待关联证明材料: invoice_id=%s file=%s",
+                          processed_id, mask_filename(att.original_name))
 
     image_attachments = [
         att for att in attachments
@@ -2438,6 +2506,155 @@ def _cmd_invoice_restore(args: argparse.Namespace, db: InvoiceDB):
         sys.exit(1)
 
 
+def _cmd_evidence_repair(args: argparse.Namespace, db: InvoiceDB):
+    """Subcommand to repair unassociated evidence documents for a given email UID."""
+    mailbox_key = args.mailbox
+    uid = args.uid
+    dry_run = args.dry_run or not args.apply
+
+    # Load configuration
+    cfg = load_config(args.config)
+    accounts = get_email_accounts(cfg)
+
+    # 寻找匹配的邮箱
+    acc = None
+    for a in accounts:
+        if a.get("mailbox_key") == mailbox_key or a.get("address") == mailbox_key:
+            acc = a
+            break
+
+    if not acc:
+        print(f"错误: 未在配置中找到 mailbox_key/address 匹配 '{mailbox_key}' 的邮箱配置。")
+        sys.exit(1)
+
+    addr = acc.get("address", "")
+    auth_code = acc.get("auth_code", "")
+    if not auth_code:
+        try:
+            auth_code = get_auth_code(addr)
+        except (Exception, SystemExit) as e:
+            print(f"错误: 获取邮箱 {addr} 的授权码失败: {e}")
+            sys.exit(1)
+
+    if not auth_code:
+        print(f"错误: 邮箱 {addr} 的授权码为空。")
+        sys.exit(1)
+
+    print(f"正在连接邮箱 {addr} 并获取邮件 UID: {uid}...")
+    with MailFetcher(
+        address=addr,
+        auth_code=auth_code,
+        server=acc.get("imap", {}).get("server", "imap.qq.com"),
+        port=acc.get("imap", {}).get("port", 993),
+    ) as fetcher:
+        folder = acc.get("search", {}).get("folder", "INBOX")
+        msg = fetcher.fetch_by_uid(uid, folder=folder)
+        if not msg:
+            print(f"错误: 未在邮箱中找到 UID 为 {uid} 的邮件。")
+            sys.exit(1)
+
+        print(f"邮件获取成功。主题: {msg.subject}")
+
+        # 找出附加材料附件
+        att_dir = db._path.parent / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        att_handler = AttachmentHandler(att_dir)
+
+        # 提取附件
+        attachments = att_handler.extract(msg.raw_msg, msg.uid, date_str=msg.date)
+        extra_files = [a for a in attachments if a.is_extra]
+
+        if not extra_files:
+            print("该邮件的附件中未发现任何附加材料 [附加材料]。")
+            sys.exit(0)
+
+        # 获取该 UID 和 mailbox_key 在发票库里的所有未删除关联发票，以获得当前已经关联的 extra_paths
+        invoices = db.get_invoices_by_mail_identity(mailbox_key, uid)
+        associated_paths = set()
+        for inv in invoices:
+            paths = _normalize_path_list(inv.get("extra_paths"))
+            for p in paths:
+                resolved = _resolve_runtime_path(p)
+                if resolved:
+                    associated_paths.add(str(resolved.resolve()).lower())
+
+        # 过滤出未关联 of extra_files
+        unassociated_extras = []
+        for att in extra_files:
+            att_path = Path(att.file_path)
+            if str(att_path.resolve()).lower() not in associated_paths:
+                unassociated_extras.append(att)
+
+        if not unassociated_extras:
+            print("该邮件下的所有附加材料均已被关联，无需修复。")
+            sys.exit(0)
+
+        print(f"发现 {len(unassociated_extras)} 个未关联的证明材料：")
+        categories = cfg.get("categories", {})
+
+        for att in unassociated_extras:
+            file_path = Path(att.file_path)
+            file_hash = _sha256_file(file_path) if file_path.exists() else ""
+
+            existing = None
+            if file_hash:
+                existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+
+            if existing:
+                inv_id = existing["id"]
+                is_del = int(existing.get("is_deleted") or 0) == 1
+
+                if is_del:
+                    print(f"- [已删除记录] 文件: {att.original_name} (Hash: {file_hash[:10]}...), 准备在 apply 时恢复。")
+                    if not dry_run:
+                        _restore_existing_invoice_if_deleted(db, existing, "证明材料恢复")
+                        if not existing.get("attachment_path"):
+                            db.update_invoice_file_paths(inv_id, attachment_path=_runtime_relative(file_path))
+                        print(f"  -> 已成功恢复记录 ID: {inv_id}")
+                else:
+                    print(f"- [已存在活跃记录] 文件: {att.original_name} (ID: {inv_id}), 跳过插入，已自动复用。")
+                    if not dry_run:
+                        if not existing.get("attachment_path"):
+                            db.update_invoice_file_paths(inv_id, attachment_path=_runtime_relative(file_path))
+            else:
+                print(f"- [新证明材料] 文件: {att.original_name} (Hash: {file_hash[:10]}...), 准备在 apply 时创建待关联记录。")
+                if not dry_run:
+                    category, extra_type, extra_required = _classify(att.original_name, msg.sender or "", "", categories)
+                    rec = {
+                        "invoice_number": "",
+                        "invoice_code": "",
+                        "invoice_date": "",
+                        "amount": "",
+                        "total_amount": "",
+                        "seller_name": "",
+                        "buyer_name": "",
+                        "invoice_type": "待关联证明材料",
+                        "category": category,
+                        "has_extra": False,
+                        "extra_type": extra_type,
+                        "missing_extra": False,
+                        "mail_uid": msg.uid,
+                        "mail_subject": msg.subject,
+                        "mail_date": msg.date,
+                        "mail_sender": msg.sender,
+                        "parse_success": False,
+                        "parse_note": "多发票邮件证明材料未唯一匹配，请人工关联",
+                        "attachment_path": _runtime_relative(file_path),
+                        "extra_paths": [],
+                        "file_hash": file_hash,
+                        "mailbox_key": mailbox_key,
+                    }
+                    row_id = db.insert_invoice(rec)
+                    print(f"  -> 已成功创建待关联记录 ID: {row_id}")
+
+        if dry_run:
+            print("\n提示: 当前为 dry-run 预览模式，未对数据库做任何修改。如需真正执行修复，请添加 --apply 参数。")
+        else:
+            print("\n已成功完成修复。")
+
+        sys.exit(0)
+
+
 def _dispatch_claim_command(args: argparse.Namespace):
     """Execute the matching claim subcommand and exit, bypassing config loading."""
     db_path = RUNTIME_DIR / "invoices.db"
@@ -2472,6 +2689,8 @@ def _dispatch_claim_command(args: argparse.Namespace):
             _cmd_invoice_restore(args, db)
         elif args.command == "email-reprocess":
             _cmd_email_reprocess(args, db)
+        elif args.command == "evidence-repair":
+            _cmd_evidence_repair(args, db)
 
 
 # ── Main ─────────────────────────────────────────────────────────────

@@ -78,7 +78,7 @@ class TestEmailReprocess(unittest.TestCase):
         # 4. 断言仍存在且下载状态没变
         invoices = self.db.get_invoices_by_mail_identity('a', 100)
         self.assertEqual(len(invoices), 1)
-        
+
         email = self.db._conn.execute("SELECT downloaded FROM emails WHERE mailbox_key='a' AND uid=100").fetchone()
         self.assertEqual(email["downloaded"], 1)
 
@@ -271,7 +271,7 @@ class TestEmailReprocess(unittest.TestCase):
             dry_run=False,
         )
 
-        # 3. 验证 mock_handle (也就是 _handle_pending_email) 只被调用了一次且其 uid 确实是 1 
+        # 3. 验证 mock_handle (也就是 _handle_pending_email) 只被调用了一次且其 uid 确实是 1
         # (因为只有 uid=1 才是被选中的)
         self.assertEqual(mock_handle.call_count, 1)
         args, kwargs = mock_handle.call_args
@@ -439,6 +439,410 @@ class TestEmailReprocess(unittest.TestCase):
 
         # 验证 MailFetcher 绝对没有被实例化
         self.assertFalse(mock_fetcher.called)
+
+    def test_17_process_email_keeps_unmatched_extra_files(self):
+        from scripts.invoice_fetch.__main__ import _process_email
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+        from scripts.invoice_fetch.mail_fetcher import MailMessage
+
+        # 1. 准备文件和 mock
+        att_dir = self.temp_dir / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+
+        attachments = []
+
+        # 创建 5 个 invoice 附件
+        for i in range(1, 6):
+            f_path = att_dir / f"invoice_{i}.pdf"
+            f_path.write_bytes(f"invoice_pdf_content_{i}".encode('utf-8'))
+            attachments.append(Attachment(
+                file_path=str(f_path),
+                original_name=f"invoice_{i}.pdf",
+                content_type="application/pdf",
+                size=len(f_path.read_bytes()),
+                is_invoice=True,
+                is_extra=False
+            ))
+
+        # 创建 5 个 extra 附件
+        for i in range(1, 6):
+            f_path = att_dir / f"extra_{i}.pdf"
+            f_path.write_bytes(f"extra_pdf_content_{i}".encode('utf-8'))
+            attachments.append(Attachment(
+                file_path=str(f_path),
+                original_name=f"extra_{i}.pdf",
+                content_type="application/pdf",
+                size=len(f_path.read_bytes()),
+                is_invoice=False,
+                is_extra=True
+            ))
+
+        mock_att_handler = MagicMock()
+        mock_att_handler._base = att_dir
+        mock_att_handler.extract.return_value = attachments
+
+        mock_parser = MagicMock()
+        def mock_parse_pdf(file_path):
+            name = Path(file_path).name
+            if "invoice" in name:
+                num = name.split("_")[1].split(".")[0]
+                return InvoiceInfo(
+                    parse_success=True,
+                    invoice_number=f"INV-{num}",
+                    invoice_code=f"CODE-{num}",
+                    invoice_date="2026-06-01",
+                    amount="100.00",
+                    total_amount="100.00",
+                    seller_name=f"Seller {num}",
+                    buyer_name="Buyer",
+                    invoice_type="增值税电子普通发票",
+                    parse_note=""
+                )
+            return InvoiceInfo(parse_success=False)
+        mock_parser.parse_pdf.side_effect = mock_parse_pdf
+
+        mock_link_dl = MagicMock()
+        mock_link_dl.download_from_email.return_value = []
+
+        from email.message import Message
+        raw_msg = Message()
+        raw_msg["Subject"] = "Test Multilingual Multi-Invoices"
+        raw_msg["From"] = "sender@example.com"
+        raw_msg["Date"] = "Mon, 01 Jun 2026 12:00:00 +0800"
+
+        msg = MailMessage(uid=999, raw_msg=raw_msg)
+
+        with patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+            recorded = _process_email(
+                msg=msg,
+                att_handler=mock_att_handler,
+                parser=mock_parser,
+                link_dl=mock_link_dl,
+                db=self.db,
+                categories={},
+                mailbox_key="test_mailbox"
+            )
+
+        # 5 个 invoice + 5 个待关联证明材料 = 10
+        self.assertEqual(recorded, 10)
+
+        invoices = self.db._conn.execute(
+            "SELECT * FROM invoices WHERE invoice_type != '待关联证明材料' AND is_deleted = 0"
+        ).fetchall()
+        self.assertEqual(len(invoices), 5)
+
+        evidence = self.db._conn.execute(
+            "SELECT * FROM invoices WHERE invoice_type = '待关联证明材料' AND is_deleted = 0"
+        ).fetchall()
+        self.assertEqual(len(evidence), 5)
+
+        for i in range(1, 6):
+            f_path = att_dir / f"extra_{i}.pdf"
+            self.assertTrue(f_path.exists())
+
+    @patch('scripts.invoice_fetch.__main__._log')
+    def test_18_process_email_log_timing(self, mock_log):
+        from scripts.invoice_fetch.__main__ import _process_email
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+        from scripts.invoice_fetch.mail_fetcher import MailMessage
+
+        att_dir = self.temp_dir / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+
+        attachments = []
+
+        # 写入 2 个 invoice pdf
+        for i in range(1, 3):
+            f_path = att_dir / f"invoice_{i}.pdf"
+            f_path.write_bytes(b"invoice_content")
+            attachments.append(Attachment(
+                file_path=str(f_path),
+                original_name=f"invoice_{i}.pdf",
+                content_type="application/pdf",
+                size=len(f_path.read_bytes()),
+                is_invoice=True,
+                is_extra=False
+            ))
+
+        f_path_extra = att_dir / "extra.pdf"
+        f_path_extra.write_bytes(b"extra_content")
+
+        attachments.append(Attachment(
+            file_path=str(f_path_extra),
+            original_name="extra.pdf",
+            content_type="application/pdf",
+            size=len(f_path_extra.read_bytes()),
+            is_invoice=False,
+            is_extra=True
+        ))
+
+        mock_att_handler = MagicMock()
+        mock_att_handler._base = att_dir
+        mock_att_handler.extract.return_value = attachments
+
+        mock_parser = MagicMock()
+        def mock_parse_pdf(file_path):
+            name = Path(file_path).name
+            if "invoice" in name:
+                num = name.split("_")[1].split(".")[0]
+                return InvoiceInfo(
+                    parse_success=True,
+                    invoice_number=f"INV-{num}",
+                    invoice_code=f"CODE-{num}",
+                    invoice_date="2026-06-01",
+                    amount="100.00",
+                    total_amount="100.00",
+                    seller_name=f"Seller {num}",
+                    buyer_name="Buyer",
+                    invoice_type="增值税电子普通发票",
+                    parse_note=""
+                )
+            return InvoiceInfo(parse_success=False)
+        mock_parser.parse_pdf.side_effect = mock_parse_pdf
+
+        mock_link_dl = MagicMock()
+        mock_link_dl.download_from_email.return_value = []
+
+        from email.message import Message
+        raw_msg = Message()
+        raw_msg["Subject"] = "Test Log"
+        raw_msg["From"] = "sender@example.com"
+        raw_msg["Date"] = "Mon, 01 Jun 2026 12:00:00 +0800"
+
+        msg = MailMessage(uid=1001, raw_msg=raw_msg)
+
+        info_calls = []
+        def log_info_side_effect(msg, *args):
+            formatted = msg % args
+            info_calls.append(formatted)
+        mock_log.info.side_effect = log_info_side_effect
+
+        with patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+            _process_email(
+                msg=msg,
+                att_handler=mock_att_handler,
+                parser=mock_parser,
+                link_dl=mock_link_dl,
+                db=self.db,
+                categories={},
+                mailbox_key="test_mailbox"
+            )
+
+        prep_idx = -1
+        keep_idx = -1
+        for idx, call_str in enumerate(info_calls):
+            if "准备保留为待关联" in call_str:
+                prep_idx = idx
+            elif "已保留待关联证明材料" in call_str:
+                keep_idx = idx
+
+        self.assertNotEqual(prep_idx, -1)
+        self.assertNotEqual(keep_idx, -1)
+        self.assertTrue(prep_idx < keep_idx)
+
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    def test_19_evidence_repair_dry_run(self, mock_fetcher_cls):
+        from scripts.invoice_fetch.__main__ import _cmd_evidence_repair
+        from scripts.invoice_fetch.mail_fetcher import MailMessage
+        from email.message import Message
+
+        mock_fetcher = MagicMock()
+        mock_fetcher_cls.return_value.__enter__.return_value = mock_fetcher
+
+        raw_msg = Message()
+        raw_msg["Subject"] = "Test Repair"
+        raw_msg["From"] = "sender@example.com"
+        raw_msg["Date"] = "Mon, 01 Jun 2026 12:00:00 +0800"
+
+        att_dir = self.temp_dir / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        f_path = att_dir / "extra.pdf"
+        f_path.write_bytes(b"extra_content")
+
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        att = Attachment(
+            file_path=str(f_path),
+            original_name="extra.pdf",
+            content_type="application/pdf",
+            size=len(f_path.read_bytes()),
+            is_invoice=False,
+            is_extra=True
+        )
+
+        mock_fetcher.fetch_by_uid.return_value = MailMessage(uid=123, raw_msg=raw_msg)
+
+        with patch('scripts.invoice_fetch.__main__.AttachmentHandler') as mock_handler_cls, \
+             patch('scripts.invoice_fetch.__main__.load_config', return_value=self.cfg), \
+             patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode"):
+            mock_handler = MagicMock()
+            mock_handler_cls.return_value = mock_handler
+            mock_handler.extract.return_value = [att]
+
+            args = MagicMock()
+            args.mailbox = "a"
+            args.uid = 123
+            args.dry_run = True
+            args.apply = False
+            args.config = None
+
+            with self.assertRaises(SystemExit) as cm, \
+                 patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+                _cmd_evidence_repair(args, self.db)
+
+            self.assertEqual(cm.exception.code, 0)
+
+        evidence = self.db._conn.execute(
+            "SELECT * FROM invoices WHERE invoice_type = '待关联证明材料'"
+        ).fetchall()
+        self.assertEqual(len(evidence), 0)
+
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    def test_20_evidence_repair_apply(self, mock_fetcher_cls):
+        from scripts.invoice_fetch.__main__ import _cmd_evidence_repair
+        from scripts.invoice_fetch.mail_fetcher import MailMessage
+        from email.message import Message
+
+        mock_fetcher = MagicMock()
+        mock_fetcher_cls.return_value.__enter__.return_value = mock_fetcher
+
+        raw_msg = Message()
+        raw_msg["Subject"] = "Test Repair Apply"
+        raw_msg["From"] = "sender@example.com"
+        raw_msg["Date"] = "Mon, 01 Jun 2026 12:00:00 +0800"
+
+        att_dir = self.temp_dir / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        f_path = att_dir / "extra.pdf"
+        f_path.write_bytes(b"extra_content")
+
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        att = Attachment(
+            file_path=str(f_path),
+            original_name="extra.pdf",
+            content_type="application/pdf",
+            size=len(f_path.read_bytes()),
+            is_invoice=False,
+            is_extra=True
+        )
+
+        mock_fetcher.fetch_by_uid.return_value = MailMessage(uid=123, raw_msg=raw_msg)
+
+        with patch('scripts.invoice_fetch.__main__.AttachmentHandler') as mock_handler_cls, \
+             patch('scripts.invoice_fetch.__main__.load_config', return_value=self.cfg), \
+             patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode"):
+            mock_handler = MagicMock()
+            mock_handler_cls.return_value = mock_handler
+            mock_handler.extract.return_value = [att]
+
+            args = MagicMock()
+            args.mailbox = "a"
+            args.uid = 123
+            args.dry_run = False
+            args.apply = True
+            args.config = None
+
+            with self.assertRaises(SystemExit) as cm, \
+                 patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+                _cmd_evidence_repair(args, self.db)
+
+            self.assertEqual(cm.exception.code, 0)
+
+        evidence = self.db._conn.execute(
+            "SELECT * FROM invoices WHERE invoice_type = '待关联证明材料' AND is_deleted = 0"
+        ).fetchall()
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["mail_uid"], 123)
+        self.assertEqual(evidence[0]["mailbox_key"], "a")
+
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    def test_21_evidence_repair_deduplication(self, mock_fetcher_cls):
+        from scripts.invoice_fetch.__main__ import _cmd_evidence_repair
+        from scripts.invoice_fetch.mail_fetcher import MailMessage
+        from email.message import Message
+
+        mock_fetcher = MagicMock()
+        mock_fetcher_cls.return_value.__enter__.return_value = mock_fetcher
+
+        raw_msg = Message()
+        raw_msg["Subject"] = "Test Repair Dedup"
+        raw_msg["From"] = "sender@example.com"
+        raw_msg["Date"] = "Mon, 01 Jun 2026 12:00:00 +0800"
+
+        att_dir = self.temp_dir / "attachments"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        f_path = att_dir / "extra.pdf"
+        f_path.write_bytes(b"extra_content")
+
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        att = Attachment(
+            file_path=str(f_path),
+            original_name="extra.pdf",
+            content_type="application/pdf",
+            size=len(f_path.read_bytes()),
+            is_invoice=False,
+            is_extra=True
+        )
+
+        mock_fetcher.fetch_by_uid.return_value = MailMessage(uid=123, raw_msg=raw_msg)
+
+        with patch('scripts.invoice_fetch.__main__.AttachmentHandler') as mock_handler_cls, \
+             patch('scripts.invoice_fetch.__main__.load_config', return_value=self.cfg), \
+             patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode"):
+            mock_handler = MagicMock()
+            mock_handler_cls.return_value = mock_handler
+            mock_handler.extract.return_value = [att]
+
+            args = MagicMock()
+            args.mailbox = "a"
+            args.uid = 123
+            args.dry_run = False
+            args.apply = True
+            args.config = None
+
+            with self.assertRaises(SystemExit) as cm, \
+                 patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+                _cmd_evidence_repair(args, self.db)
+
+            self.assertEqual(cm.exception.code, 0)
+
+            with self.assertRaises(SystemExit) as cm, \
+                 patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+                _cmd_evidence_repair(args, self.db)
+
+            self.assertEqual(cm.exception.code, 0)
+
+        evidence = self.db._conn.execute(
+            "SELECT * FROM invoices WHERE invoice_type = '待关联证明材料' AND is_deleted = 0"
+        ).fetchall()
+        self.assertEqual(len(evidence), 1)
+
+    def test_22_gui_queries_correct_unassociated_count(self):
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted, extra_paths) "
+            "VALUES (5000, 'a', 100, 'INV-5000', '100.00', 'to_review', 0, '[]')"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_type, is_deleted, attachment_path) "
+            "VALUES (5001, 'a', 100, '待关联证明材料', 0, 'attachments/extra_1.pdf')"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (id, mailbox_key, mail_uid, invoice_type, is_deleted, attachment_path) "
+            "VALUES (5002, 'a', 100, '待关联证明材料', 0, 'attachments/extra_2.pdf')"
+        )
+        self.db._conn.commit()
+
+        mailbox_key = 'a'
+        mail_uid = 100
+
+        sql = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = ? AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
+        rows = self.db._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
+
+        self.assertEqual(len(rows), 2)
+        paths = [r["attachment_path"] for r in rows]
+        self.assertIn("attachments/extra_1.pdf", paths)
+        self.assertIn("attachments/extra_2.pdf", paths)
 
 if __name__ == '__main__':
     unittest.main()

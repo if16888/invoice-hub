@@ -697,10 +697,27 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_open_file.setProperty("class", "SecondaryBtn")
         path_layout.addWidget(self.btn_open_file)
 
+        # 证明材料布局
+        docs_widget = QWidget()
+        docs_layout = QHBoxLayout(docs_widget)
+        docs_layout.setContentsMargins(0, 0, 0, 0)
+        docs_layout.setSpacing(4)
+
         self.txt_supporting_docs = QPlainTextEdit()
         self.txt_supporting_docs.setReadOnly(True)
         self.txt_supporting_docs.setMaximumHeight(54)
         self.txt_supporting_docs.setPlaceholderText("酒店水单、行程记录、支付截图等证明材料会显示在这里")
+        docs_layout.addWidget(self.txt_supporting_docs, 1)
+
+        self.btn_open_extra_files = QPushButton("查看")
+        self.btn_open_extra_files.clicked.connect(self._open_extra_docs)
+        self.btn_open_extra_files.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.btn_open_extra_files.setMinimumWidth(50)
+        self.btn_open_extra_files.setMaximumHeight(54)
+        self.btn_open_extra_files.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.btn_open_extra_files.setProperty("class", "SecondaryBtn")
+        self.btn_open_extra_files.setEnabled(False)
+        docs_layout.addWidget(self.btn_open_extra_files)
 
         self.detail_files_section = QFrame()
         self.detail_files_section.setProperty("class", "DetailSection")
@@ -717,7 +734,7 @@ class InvoiceReviewApp(QMainWindow):
         file_fields_layout.setLabelAlignment(Qt.AlignRight)
         file_fields_layout.setSpacing(4)
         file_fields_layout.addRow("原件文件:", path_widget)
-        file_fields_layout.addRow("证明材料:", self.txt_supporting_docs)
+        file_fields_layout.addRow("证明材料:", docs_widget)
         detail_files_layout.addWidget(file_fields)
         tab_details_layout.addWidget(self.detail_files_section)
 
@@ -1763,6 +1780,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_url.clear()
         self.txt_supporting_docs.clear()
         self.txt_supporting_docs.setToolTip("")
+        self.btn_open_extra_files.setEnabled(False)
         self.txt_note.clear()
 
         # Clear summary card
@@ -1930,10 +1948,49 @@ class InvoiceReviewApp(QMainWindow):
                     text = str(item).strip()
                     if text:
                         extra_docs.append(Path(text).name)
-            self.txt_supporting_docs.setPlainText("\n".join(extra_docs))
-            self.txt_supporting_docs.setToolTip(
-                "\n".join(str(item) for item in extra_paths_raw) if extra_paths_raw else ""
-            )
+
+            unassociated_count = 0
+            unassociated_docs = []
+            unassociated_paths = []
+            if not extra_docs:
+                mailbox_key = inv.get("mailbox_key")
+                mail_uid = inv.get("mail_uid")
+                if mailbox_key and mail_uid is not None:
+                    try:
+                        sql = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = ? AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
+                        rows = self.db._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
+                        if not rows and mailbox_key != "legacy":
+                            sql_fallback = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = 'legacy' AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
+                            rows = self.db._conn.execute(sql_fallback, (mail_uid,)).fetchall()
+
+                        for row in rows:
+                            att_p = row["attachment_path"]
+                            if att_p:
+                                unassociated_count += 1
+                                unassociated_docs.append(f"[待关联] {Path(att_p).name}")
+                                unassociated_paths.append(att_p)
+                    except Exception as e:
+                        print(f"Error querying unassociated evidence: {e}")
+
+            if extra_docs:
+                self.txt_supporting_docs.setPlainText("\n".join(extra_docs))
+                self.txt_supporting_docs.setToolTip(
+                    "\n".join(str(item) for item in extra_paths_raw) if extra_paths_raw else ""
+                )
+                self.btn_open_extra_files.setEnabled(True)
+            elif unassociated_docs:
+                self.txt_supporting_docs.setPlainText(
+                    f"同一邮件下有 {unassociated_count} 个待关联证明材料：\n" + "\n".join(unassociated_docs)
+                )
+                self.txt_supporting_docs.setToolTip(
+                    "\n".join(str(item) for item in unassociated_paths)
+                )
+                self.btn_open_extra_files.setEnabled(True)
+            else:
+                self.txt_supporting_docs.setPlainText("")
+                self.txt_supporting_docs.setToolTip("")
+                self.btn_open_extra_files.setEnabled(False)
+
             self.txt_note.setPlainText(str(inv.get("confirmed_note") or ""))
 
             # Update summary card
@@ -2509,6 +2566,57 @@ class InvoiceReviewApp(QMainWindow):
 
         self._open_local_path(file_path)
         self.statusBar().showMessage(f"已成功加载本地附件: {file_path.name}", 2000)
+
+    def _open_extra_docs(self):
+        """Open all matching extra/unassociated supporting docs."""
+        if not self.current_invoice:
+            return
+
+        files_to_open = []
+
+        # 1. 收集自身发票的 extra_paths
+        extra_paths_raw = self.current_invoice.get("extra_paths") or []
+        if isinstance(extra_paths_raw, str):
+            try:
+                extra_paths_raw = json.loads(extra_paths_raw)
+            except json.JSONDecodeError:
+                extra_paths_raw = [extra_paths_raw]
+
+        if isinstance(extra_paths_raw, list):
+            for p in extra_paths_raw:
+                resolved = self._resolve_attachment_path(str(p))
+                if resolved and resolved.exists():
+                    files_to_open.append(resolved)
+
+        # 2. 收集同邮件下的待关联证明材料文件
+        if not files_to_open:
+            mailbox_key = self.current_invoice.get("mailbox_key")
+            mail_uid = self.current_invoice.get("mail_uid")
+            if mailbox_key and mail_uid is not None:
+                try:
+                    sql = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = ? AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
+                    rows = self.db._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
+                    if not rows and mailbox_key != "legacy":
+                        sql_fallback = "SELECT id, attachment_path FROM invoices WHERE mailbox_key = 'legacy' AND mail_uid = ? AND invoice_type = '待关联证明材料' AND is_deleted = 0"
+                        rows = self.db._conn.execute(sql_fallback, (mail_uid,)).fetchall()
+
+                    for row in rows:
+                        att_p = row["attachment_path"]
+                        if att_p:
+                            resolved = self._resolve_attachment_path(str(att_p))
+                            if resolved and resolved.exists():
+                                files_to_open.append(resolved)
+                except Exception as e:
+                    print(f"Error querying unassociated evidence path: {e}")
+
+        if not files_to_open:
+            QMessageBox.information(self, "提示", "未找到可供查看的证明材料文件。")
+            return
+
+        for f in files_to_open:
+            self._open_local_path(f)
+
+        self.statusBar().showMessage(f"已成功加载 {len(files_to_open)} 个证明材料文件", 2000)
 
     def _locate_attachment(self):
         """Open the folder containing the current attachment."""
