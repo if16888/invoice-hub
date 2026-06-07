@@ -225,8 +225,6 @@ class InvoiceParser:
                     m = re.search(r"([^\n]{2,10}财政[厅局]|[^\n]{2,10}税务[局厅])", text)
                     if m:
                         info.seller_name = m[1].strip()
-                    else:
-                        info.seller_name = "江苏省财政厅"
 
             info.buyer_name = self._name(text, [
                 r"购\s*名\s*称\s*[:：]\s*(.+?)(?=\s*(?:销|方|信|统一社会|项目名称|规格型号|备注|开票人|$))",
@@ -302,16 +300,22 @@ class InvoiceParser:
             # ── seller_name回填策略 ──
             if (not info.seller_name or len(info.seller_name) <= 1) and is_fiscal:
                 issuer, reason = self._extract_fiscal_issuer_fallback(text)
-                if reason == "platform_fallback":
-                    info.seller_name = "江苏省财政电子票据"
-                    note = "销售方由财政电子票据平台推断，建议人工核对"
+                if reason == "explicit_field" and issuer:
+                    info.seller_name = issuer
+                    note = "销售方由财政票据开票/收款/执收单位识别"
                     if info.parse_note:
                         info.parse_note += "; " + note
                     else:
                         info.parse_note = note
-                elif issuer:
+                elif reason == "stamp_text_near" and issuer:
                     info.seller_name = issuer
-                    note = "销售方由财政票据开票单位/票据章推断"
+                    note = "销售方由财政票据章附近文本推断，建议核对"
+                    if info.parse_note:
+                        info.parse_note += "; " + note
+                    else:
+                        info.parse_note = note
+                elif reason == "platform_only":
+                    note = "检测到财政电子票据平台，但未识别到具体开票单位，建议人工核对红章"
                     if info.parse_note:
                         info.parse_note += "; " + note
                     else:
@@ -684,12 +688,44 @@ class InvoiceParser:
         # Return first 3 items joined by comma
         return ", ".join(valid_items[:3])
 
+    def _detect_fiscal_platform(self, raw_text: str) -> dict:
+        if not raw_text:
+            return {"matched": False, "region": "", "platform_name": ""}
+        pat = re.compile(
+            r"(?P<region>[\u4e00-\u9fff]{2,12}?(?:省|市|自治区|特别行政区))?"
+            r"(?:财政电子票据公共服务平台|财政电子票据服务平台|财政票据公共服务平台)"
+        )
+        m = pat.search(raw_text)
+        if m:
+            region = m.group("region") or ""
+            platform_name = m.group(0)
+            return {"matched": True, "region": region, "platform_name": platform_name}
+        return {"matched": False, "region": "", "platform_name": ""}
+
     def _is_fiscal_toll_invoice(self, raw_text: str) -> bool:
         if not raw_text:
             return False
-        keywords = ["财政电子票据", "财务专用章", "通行费", "车牌号", "入站", "出口站", "出口时间",
-                    "江苏省财政电子票据公共服务平台", "高速公路", "联网收费", "通行费电子票据"]
-        return any(kw in raw_text for kw in keywords)
+        has = lambda kw: kw in raw_text
+
+        # 1. fiscal platform + toll clue
+        platform_info = self._detect_fiscal_platform(raw_text)
+        toll_clues = ["通行费", "车牌号", "入站", "出口站", "出口时间", "高速公路", "收费站"]
+        cond1 = platform_info["matched"] and any(has(clue) for clue in toll_clues)
+
+        # 2. stamp + toll clue
+        stamps = ["财务专用章", "财政电子票据专用章"]
+        has_stamp = any(has(s) for s in stamps)
+        stamp_toll_clues = ["车牌号", "入站", "出口站", "通行费"]
+        cond2 = has_stamp and any(has(clue) for clue in stamp_toll_clues)
+
+        # 3. toll structure
+        cond3 = (
+            (has("车牌号") and has("入站") and has("出口站"))
+            or (has("通行费") and has("高速公路"))
+            or (has("通行费") and has("收费站"))
+        )
+
+        return bool(cond1 or cond2 or cond3)
 
     def _is_valid_fiscal_candidate(self, name: str) -> bool:
         if not name:
@@ -697,21 +733,16 @@ class InvoiceParser:
         name = re.sub(r"\s+", "", name)
         if not (3 <= len(name) <= 80):
             return False
-        noise_words = ["车牌", "入口", "出口", "复核人", "收款人", "金额", "合计", "购买方", "购方", "买方", "交款人", "入站", "出口站"]
+        noise_words = ["车牌", "入口", "出口", "复核人", "收款人", "开票人", "收费人", "复核", "金额", "合计", "购买方", "购方", "买方", "交款人", "入站", "出口站", "站点", "单价", "数量"]
         if any(w in name for w in noise_words):
             return False
         return True
 
     def _extract_fiscal_issuer_fallback(self, raw_text: str) -> tuple[str, str]:
         # 1. Explicit fields
-        explicit_patterns = [
-            r"开票单位\s*[:：]\s*([^\n\s]{3,80})",
-            r"收款单位\s*[:：]\s*([^\n\s]{3,80})",
-            r"执收单位\s*[:：]\s*([^\n\s]{3,80})",
-            r"票据单位\s*[:：]\s*([^\n\s]{3,80})",
-            r"单位名称\s*[:：]\s*([^\n\s]{3,80})",
-        ]
-        for pat in explicit_patterns:
+        explicit_kws = ["开票单位", "收款单位", "执收单位", "票据单位", "单位名称", "收费单位", "运营单位", "管理单位"]
+        for kw in explicit_kws:
+            pat = r"" + re.escape(kw) + r"\s*[:：]\s*([^\n\s]{3,80})"
             m = re.search(pat, raw_text)
             if m:
                 cand = self._repair_company_name(m.group(1).strip())
@@ -722,7 +753,7 @@ class InvoiceParser:
         stamp_kws = ["财务专用章", "财政电子票据专用章"]
         best_candidate = None
         min_dist = 999999
-        suffix_pat = r"(?:服务有限公司|运营管理有限公司|管理中心|有限公司|有限责任公司|股份公司|公司|中心|管理处|收费站|交通运输厅|财政厅|财政局)"
+        suffix_pat = r"(?:服务有限公司|运营管理有限公司|高速公路有限公司|有限公司|有限责任公司|股份公司|公司|管理中心|中心|管理处|收费站|服务区|交通运输厅|财政厅|财政局|税务局|分局|支局|管理局|局|厅|院|所)"
         cand_pat = re.compile(r"([\u4e00-\u9fff（）()·\-A-Za-z0-9]{3,80}?" + suffix_pat + r")")
 
         for stamp in stamp_kws:
@@ -742,11 +773,12 @@ class InvoiceParser:
                             best_candidate = cand
 
         if best_candidate:
-            return best_candidate, "stamp_near"
+            return best_candidate, "stamp_text_near"
 
         # 3. Platform fallback
-        if "江苏省财政电子票据公共服务平台" in raw_text:
-            return "江苏省财政电子票据", "platform_fallback"
+        platform_info = self._detect_fiscal_platform(raw_text)
+        if platform_info["matched"]:
+            return "", "platform_only"
 
         return "", ""
 

@@ -3497,12 +3497,22 @@ class InvoiceWorkflowTests(unittest.TestCase):
         from scripts.invoice_fetch.invoice_parser import InvoiceParser
         parser = InvoiceParser()
 
-        self.assertTrue(parser._is_fiscal_toll_invoice("这是一张财政电子票据"))
-        self.assertTrue(parser._is_fiscal_toll_invoice("包含财务专用章和通行费"))
-        self.assertTrue(parser._is_fiscal_toll_invoice("车牌号：粤B12345，入站：深圳"))
-        self.assertTrue(parser._is_fiscal_toll_invoice("江苏省财政电子票据公共服务平台"))
+        # 1. platform + toll clue (multi-region platform names)
+        self.assertTrue(parser._is_fiscal_toll_invoice("四川省财政电子票据公共服务平台 包含通行费"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("浙江省财政电子票据服务平台 车牌号：粤B12345"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("江苏省财政电子票据公共服务平台，入站：苏州"))
 
+        # 2. stamp + toll clue
+        self.assertTrue(parser._is_fiscal_toll_invoice("财务专用章 入站：深圳"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("财政电子票据专用章 出口站：广州"))
+
+        # 3. toll structure
+        self.assertTrue(parser._is_fiscal_toll_invoice("车牌号：粤B12345，入站：深圳，出口站：广州"))
+        self.assertTrue(parser._is_fiscal_toll_invoice("通行费 高速公路"))
+
+        # False cases
         self.assertFalse(parser._is_fiscal_toll_invoice("这是一张普通的增值税专用发票"))
+        self.assertFalse(parser._is_fiscal_toll_invoice("这是一张财政电子票据"))  # No toll clues
         self.assertFalse(parser._is_fiscal_toll_invoice(""))
 
     def test_extract_fiscal_issuer_fallback(self):
@@ -3511,23 +3521,22 @@ class InvoiceWorkflowTests(unittest.TestCase):
         parser = InvoiceParser()
 
         # Priority 1: Explicit fields
-        text1 = "开票单位：江苏宁沪高速公路股份有限公司\n收款人：王某"
+        text1 = "收费单位：江苏宁沪高速公路股份有限公司\n收款人：王某"
         issuer1, reason1 = parser._extract_fiscal_issuer_fallback(text1)
         self.assertEqual(issuer1, "江苏宁沪高速公路股份有限公司")
         self.assertEqual(reason1, "explicit_field")
 
-        # Priority 2: Stamp proximity
-        # Org suffix matching target within 120 chars
+        # Priority 2: Stamp proximity (with updated reason stamp_text_near)
         text2 = "江苏宁沪高速公路股份有限公司  一些其他文字 财务专用章"
         issuer2, reason2 = parser._extract_fiscal_issuer_fallback(text2)
         self.assertEqual(issuer2, "江苏宁沪高速公路股份有限公司")
-        self.assertEqual(reason2, "stamp_near")
+        self.assertEqual(reason2, "stamp_text_near")
 
-        # Priority 3: Platform fallback
-        text3 = "电子票据网址：江苏省财政电子票据公共服务平台"
+        # Priority 3: Platform fallback (returns empty seller name and platform_only reason)
+        text3 = "电子票据网址：四川省财政电子票据公共服务平台"
         issuer3, reason3 = parser._extract_fiscal_issuer_fallback(text3)
-        self.assertEqual(issuer3, "江苏省财政电子票据")
-        self.assertEqual(reason3, "platform_fallback")
+        self.assertEqual(issuer3, "")
+        self.assertEqual(reason3, "platform_only")
 
         # Noise exclusion
         text4 = "收款人：张三\n复核人：李四\n合计：100.00\n财务专用章"
@@ -3565,7 +3574,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(cat2, "过路费")
 
     def test_safe_backfill_fiscal_toll(self):
-        """测试财政票据/通行费票据的重复发票安全回填逻辑"""
+        """测试财政票据/通行费票据的重复发票安全回填与旧数据清理逻辑"""
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             runtime = base / "runtime"
@@ -3575,7 +3584,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 from scripts.invoice_fetch.migrations import check_and_migrate
                 check_and_migrate(db._conn)
 
-                # Case 1: Unclaimed + to_review: should backfill empty seller_name and category
+                # Case 1: Unclaimed + to_review: should backfill valid explicit seller and category
                 inv_id1 = db.insert_invoice({
                     "invoice_number": "ETC001",
                     "total_amount": "50.00",
@@ -3594,22 +3603,22 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     invoice_date="2026-06-01",
                     amount="50.00",
                     total_amount="50.00",
-                    seller_name="江苏省财政电子票据",
+                    seller_name="江苏宁沪高速公路股份有限公司",
                     buyer_name="测试公司",
                     invoice_type="电子票据",
                     category="过路费",
                     has_extra=False,
                     extra_type="",
                     missing_extra=False,
-                    parse_note="销售方由财政电子票据平台推断，建议人工核对",
+                    parse_note="销售方由财政票据开票/收款/执收单位识别",
                     item_name="通行费",
                 )
                 self.assertTrue(refreshed1)
                 updated1 = db.get_invoice(inv_id1)
-                self.assertEqual(updated1["seller_name"], "江苏省财政电子票据")
+                self.assertEqual(updated1["seller_name"], "江苏宁沪高速公路股份有限公司")
                 self.assertEqual(updated1["category"], "过路费")
 
-                # Case 2: Claimed: should NOT backfill metadata (except attachment_path)
+                # Case 2: Claimed: should NOT backfill metadata even with valid parse
                 group_id = db.create_claim_group("Test Group")
                 db.add_invoice_to_claim(group_id, inv_id1)
 
@@ -3624,27 +3633,29 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     invoice_date="2026-06-01",
                     amount="50.00",
                     total_amount="50.00",
-                    seller_name="新销售方",
+                    seller_name="另一个新销售方",
                     buyer_name="测试公司",
                     invoice_type="电子票据",
                     category="其他",
                     has_extra=False,
                     extra_type="",
                     missing_extra=False,
-                    parse_note="销售方由财政电子票据平台推断，建议人工核对",
+                    parse_note="销售方由财政票据开票/收款/执收单位识别",
                     item_name="通行费",
                 )
                 self.assertTrue(refreshed_claimed)
                 updated_claimed = db.get_invoice(inv_id1)
-                self.assertEqual(updated_claimed["seller_name"], "江苏省财政电子票据")
+                # Should preserve the existing one, not overwrite with "另一个新销售方"
+                self.assertEqual(updated_claimed["seller_name"], "江苏宁沪高速公路股份有限公司")
 
-                # Case 3: Approved: should NOT backfill metadata
+                # Case 3: to_review + unclaimed with legacy miswritten platform name:
+                # Should clear seller_name to "" when parsed as platform-only.
                 inv_id3 = db.insert_invoice({
                     "invoice_number": "ETC003",
                     "total_amount": "80.00",
-                    "seller_name": "",
+                    "seller_name": "江苏省财政电子票据",
                     "category": "其他",
-                    "review_status": "approved",
+                    "review_status": "to_review",
                     "item_name": "",
                 })
                 existing3 = db.get_invoice(inv_id3)
@@ -3656,19 +3667,53 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     invoice_date="2026-06-01",
                     amount="80.00",
                     total_amount="80.00",
-                    seller_name="江苏省财政电子票据",
+                    seller_name="",
                     buyer_name="测试公司",
                     invoice_type="电子票据",
                     category="过路费",
                     has_extra=False,
                     extra_type="",
                     missing_extra=False,
-                    parse_note="销售方由财政电子票据平台推断，建议人工核对",
+                    parse_note="检测到财政电子票据平台，但未识别到具体开票单位，建议人工核对红章; platform_only",
                     item_name="通行费",
                 )
                 self.assertTrue(refreshed3)
                 updated3 = db.get_invoice(inv_id3)
-                self.assertEqual(updated3["seller_name"], "")
+                self.assertEqual(updated3["seller_name"], "") # cleared!
+                self.assertEqual(updated3["category"], "过路费") # category backfilled!
+
+                # Case 4: approved + unclaimed with legacy platform name:
+                # Should NOT clear seller_name.
+                inv_id4 = db.insert_invoice({
+                    "invoice_number": "ETC004",
+                    "total_amount": "120.00",
+                    "seller_name": "浙江省财政电子票据公共服务平台",
+                    "category": "过路费",
+                    "review_status": "approved",
+                    "item_name": "",
+                })
+                existing4 = db.get_invoice(inv_id4)
+                refreshed4 = cli._refresh_invoice_from_parse(
+                    db=db,
+                    existing=existing4,
+                    invoice_number="ETC004",
+                    invoice_code="444",
+                    invoice_date="2026-06-01",
+                    amount="120.00",
+                    total_amount="120.00",
+                    seller_name="",
+                    buyer_name="测试公司",
+                    invoice_type="电子票据",
+                    category="过路费",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="检测到财政电子票据平台，但未识别到具体开票单位，建议人工核对红章; platform_only",
+                    item_name="通行费",
+                )
+                self.assertTrue(refreshed4)
+                updated4 = db.get_invoice(inv_id4)
+                self.assertEqual(updated4["seller_name"], "浙江省财政电子票据公共服务平台") # preserved
 
 
 if __name__ == "__main__":

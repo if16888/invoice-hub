@@ -1217,6 +1217,29 @@ def _path_is_within(path: Path, parent: Path) -> bool:
         return False
 
 
+def _looks_like_fiscal_platform_seller_name(name: str) -> bool:
+    if not name:
+        return False
+    name = name.strip()
+    # Matches XX省/市/自治区/特别行政区财政电子票据
+    pat = re.compile(
+        r"^(?:[\u4e00-\u9fff]{2,12}?(?:省|市|自治区|特别行政区))?财政电子票据$"
+    )
+    if pat.match(name):
+        return True
+
+    # Matches various platform names
+    platforms = [
+        "财政电子票据公共服务平台",
+        "财政电子票据服务平台",
+        "财政票据公共服务平台",
+    ]
+    if any(p in name for p in platforms):
+        return True
+
+    return False
+
+
 def _refresh_invoice_from_parse(
     db: InvoiceDB,
     existing: dict,
@@ -1265,12 +1288,21 @@ def _refresh_invoice_from_parse(
 
     backfill_fiscal_seller = False
     backfill_fiscal_category = False
+    clear_miswritten_platform_seller = False
     if existing_status == "to_review" and not is_claimed:
-        new_is_fiscal_fallback = seller_name and ("推断" in parse_note)
+        new_is_fiscal_fallback = (
+            seller_name
+            and ("开票/收款/执收单位识别" in parse_note or "票据章附近文本推断" in parse_note)
+            and not any(kw in parse_note for kw in ["检测到财政电子票据平台", "未识别到具体开票单位", "platform_only"])
+        )
         if not existing_seller and new_is_fiscal_fallback:
             backfill_fiscal_seller = True
         if existing_category in ("", "其他", "未分类") and category == "过路费":
             backfill_fiscal_category = True
+
+        is_platform_only_parse = "未识别到具体开票单位" in parse_note or "platform_only" in parse_note
+        if _looks_like_fiscal_platform_seller_name(existing_seller) and is_platform_only_parse:
+            clear_miswritten_platform_seller = True
 
     if force_refresh_metadata:
         backfill_fields = {}
@@ -1314,6 +1346,9 @@ def _refresh_invoice_from_parse(
                 f_list.append("category")
             _log.info("财政票据开票单位 fallback 已回填: existing_id=%d, fields=%s", existing["id"], ",".join(f_list))
 
+        if clear_miswritten_platform_seller:
+            _log.info("财政票据平台名不是销售方，已清空旧的 seller_name: existing_id=%d", existing["id"])
+
         return db.update_invoice_parsed_metadata(
             existing["id"],
             invoice_number=invoice_number,
@@ -1335,7 +1370,9 @@ def _refresh_invoice_from_parse(
     else:
         # Safe backfill (default): do not overwrite non-empty fields in existing.
         # Ensure seller_name, amount, invoice_date (date), category, etc. are preserved if non-empty.
-        if backfill_fiscal_seller:
+        if clear_miswritten_platform_seller:
+            updated_seller_name = ""
+        elif backfill_fiscal_seller:
             updated_seller_name = seller_name
         else:
             updated_seller_name = existing.get("seller_name") if str(existing.get("seller_name") or "").strip() else seller_name
@@ -1388,6 +1425,9 @@ def _refresh_invoice_from_parse(
         if backfill_fiscal_seller or backfill_fiscal_category:
             f_list = sorted(list(fiscal_logged_fields))
             _log.info("财政票据开票单位 fallback 已回填: existing_id=%d, fields=%s", existing["id"], ",".join(f_list))
+
+        if clear_miswritten_platform_seller:
+            _log.info("财政票据平台名不是销售方，已清空旧的 seller_name: existing_id=%d", existing["id"])
 
         return db.update_invoice_parsed_metadata(
             existing["id"],
