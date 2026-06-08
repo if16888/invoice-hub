@@ -29,6 +29,13 @@ class InvoiceInfo:
     raw_text: str = ""
     item_name: str = ""
 
+    # Financial semantic date fields
+    expense_date: str = ""
+    date_source: str = ""        # e.g., "travel_date", "invoice_date", etc.
+    travel_date: str = ""
+    service_date: str = ""
+    payment_date: str = ""
+
 
 # ── Shared date normalizer ──────────────────────────────────────────
 
@@ -47,6 +54,28 @@ def normalize_date(s: str) -> str:
     if m:
         return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
     return s
+
+
+def parse_railway_travel_date(text: str) -> str | None:
+    """Extract and normalize travel date from railway ticket."""
+    if not text:
+        return None
+    pattern = r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*\d{1,2}[:：]\d{2}\s*开"
+    m = re.search(pattern, text)
+    if m:
+        return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
+    return None
+
+
+def parse_railway_invoice_date(text: str) -> str | None:
+    """Extract and normalize invoice date from railway ticket."""
+    if not text:
+        return None
+    pattern = r"开票日期[:：]?\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日"
+    m = re.search(pattern, text)
+    if m:
+        return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
+    return None
 
 
 
@@ -268,13 +297,29 @@ class InvoiceParser:
 
 
             # ── Dedicated Railway Ticket Parsing Override ──
-            if "铁路" in text or "电子客票" in text or "12306" in text or "铁一发路" in text:
+            is_railway = (
+                "电子发票（铁路电子客票）" in text
+                or "铁路电子客票" in text
+                or info.seller_name == "中国国家铁路集团有限公司"
+                or "铁路" in text or "电子客票" in text or "12306" in text or "铁一发路" in text
+            )
+            if is_railway:
                 m_amt = re.search(r"[￥¥]\s*([\d,]+\.\d{2})", text)
                 if m_amt:
                     info.total_amount = m_amt[1].replace(",", "")
                     info.amount = info.total_amount
                 info.seller_name = "中国国家铁路集团有限公司"
                 info.invoice_type = "铁路电子客票"
+
+                r_travel = parse_railway_travel_date(text)
+                if r_travel:
+                    info.travel_date = r_travel
+                    info.expense_date = r_travel
+                    info.date_source = "travel_date"
+
+                r_inv = parse_railway_invoice_date(text)
+                if r_inv:
+                    info.invoice_date = r_inv
 
             # Repair unbalanced parentheses
             info.seller_name = InvoiceParser._repair_company_name(info.seller_name)
@@ -331,6 +376,24 @@ class InvoiceParser:
                 or detected_invoice_type == "铁路电子客票"
             ):
                 info.invoice_type = detected_invoice_type
+
+            # Resolve date priorities
+            if not info.expense_date:
+                if info.travel_date:
+                    info.expense_date = info.travel_date
+                    info.date_source = "travel_date"
+                elif info.service_date:
+                    info.expense_date = info.service_date
+                    info.date_source = "service_date"
+                elif info.payment_date:
+                    info.expense_date = info.payment_date
+                    info.date_source = "payment_date"
+                elif info.invoice_date:
+                    info.expense_date = info.invoice_date
+                    info.date_source = "invoice_date"
+                else:
+                    info.expense_date = ""
+                    info.date_source = "unknown"
 
             if info.invoice_number:
                 info.parse_success = True

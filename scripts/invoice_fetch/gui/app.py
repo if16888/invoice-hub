@@ -50,7 +50,7 @@ from ..db import InvoiceDB, is_pending_evidence_invoice
 from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..diagnostics import collect_app_info, export_diagnostics_zip
-from ..reimbursement import amount_total, buyer_warning, format_amount_total
+from ..reimbursement import amount_total, buyer_warning, format_amount_total, get_date_warning
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
@@ -368,7 +368,7 @@ class InvoiceReviewApp(QMainWindow):
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
-            "状态", "日期", "金额", "发票号码", "销售方", "消费类型", "来源", "报销组"
+            "状态", "费用日期", "金额", "发票号码", "销售方", "消费类型", "来源", "报销组"
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -626,6 +626,12 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_buyer_warning_hint.setStyleSheet("color: #6B7280; font-size: 12px;")
         self.lbl_buyer_warning_hint.setVisible(False)
         summary_layout.addWidget(self.lbl_buyer_warning_hint)
+
+        self.lbl_date_warning = QLabel("")
+        self.lbl_date_warning.setWordWrap(True)
+        self.lbl_date_warning.setProperty("class", "InlineWarning")
+        self.lbl_date_warning.setVisible(False)
+        summary_layout.addWidget(self.lbl_date_warning)
         summary_layout.addLayout(quick_layout)
 
         right_content_layout.addWidget(self.summary_card)
@@ -677,7 +683,7 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_buyer.textChanged.connect(self.txt_buyer.setToolTip)
 
         add_core_field(0, 0, "发票号码:", self.txt_number)
-        add_core_field(0, 1, "开票日期:", self.txt_date)
+        add_core_field(0, 1, "费用日期:", self.txt_date)
         add_core_field(1, 0, "发票金额 (元):", self.txt_amount)
         add_core_field(1, 1, "消费类型:", self.combo_category)
         add_core_field(2, 0, "销售方名称:", self.txt_seller)
@@ -787,6 +793,14 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_id = QLineEdit()
         self.txt_id.setReadOnly(True)
         more_source_layout.addRow("发票 ID:", self.txt_id)
+
+        self.txt_invoice_date = QLineEdit()
+        self.txt_invoice_date.setReadOnly(True)
+        more_source_layout.addRow("开票日期:", self.txt_invoice_date)
+
+        self.txt_date_source = QLineEdit()
+        self.txt_date_source.setReadOnly(True)
+        more_source_layout.addRow("日期来源:", self.txt_date_source)
 
         self.txt_subject = QLineEdit()
         self.txt_subject.setReadOnly(True)
@@ -1268,7 +1282,7 @@ class InvoiceReviewApp(QMainWindow):
     def _get_invoice_snapshot(self, inv: dict) -> dict:
         return {
             "invoice_number": str(inv.get("invoice_number") or "").strip(),
-            "invoice_date": str(inv.get("invoice_date") or "").strip(),
+            "invoice_date": str(inv.get("expense_date") or inv.get("invoice_date") or "").strip(),
             "seller_name": str(inv.get("seller_name") or "").strip(),
             "buyer_name": str(inv.get("buyer_name") or "").strip(),
             "total_amount": str(inv.get("total_amount") or "").strip(),
@@ -1601,6 +1615,9 @@ class InvoiceReviewApp(QMainWindow):
             for idx, inv in enumerate(self.invoices_list):
                 inv_num = str(inv.get("invoice_number") or "")
                 inv_date = str(inv.get("invoice_date") or "")
+                expense_date = str(inv.get("expense_date") or "")
+                date_source = str(inv.get("date_source") or "")
+                display_date = expense_date or inv_date
                 total_amt = str(inv.get("total_amount") or "")
                 category = str(inv.get("category") or "未分类")
                 seller = str(inv.get("seller_name") or "")
@@ -1611,10 +1628,18 @@ class InvoiceReviewApp(QMainWindow):
                 review_status = inv.get("review_status") or TO_REVIEW
                 quality = self._get_invoice_quality(inv)
                 buyer_check_warning = self._buyer_warning(inv)
+                date_warn = get_date_warning(inv)
+                combined_warning = ""
+                if buyer_check_warning and date_warn:
+                    combined_warning = f"{buyer_check_warning}\n{date_warn}"
+                elif buyer_check_warning:
+                    combined_warning = buyer_check_warning
+                elif date_warn:
+                    combined_warning = date_warn
 
                 row_items = [
                     display_status,
-                    inv_date or "—",
+                    display_date or "—",
                     total_amt or "—",
                     inv_num or "—",
                     seller or "—",
@@ -1642,6 +1667,20 @@ class InvoiceReviewApp(QMainWindow):
                         else:
                             item.setForeground(QColor("#D97706"))
                         item.setToolTip(f"审核状态: {review_status}\n数据质量: {quality or '正常'}")
+                    elif col == 1:
+                        date_source_disp = {
+                            "travel_date": "乘车日期",
+                            "invoice_date": "开票日期",
+                            "legacy": "历史数据",
+                            "service_date": "服务日期",
+                            "payment_date": "付款日期",
+                        }.get(date_source, "未知")
+                        tooltip_lines = [
+                            f"费用日期: {display_date or '—'}",
+                            f"日期来源: {date_source_disp}",
+                            f"开票日期: {inv_date or '—'}"
+                        ]
+                        item.setToolTip("\n".join(tooltip_lines))
                     elif col == 3 and inv_num:
                         item.setToolTip(inv_num)
                     elif col == 4 and seller:
@@ -1651,10 +1690,10 @@ class InvoiceReviewApp(QMainWindow):
                     elif col == 7 and claim_name:
                         item.setToolTip(claim_name)
 
-                    if buyer_check_warning:
+                    if combined_warning:
                         item.setBackground(QColor("#FEF3C7"))
                         existing_tip = item.toolTip()
-                        item.setToolTip(f"{existing_tip}\n{buyer_check_warning}" if existing_tip else buyer_check_warning)
+                        item.setToolTip(f"{existing_tip}\n{combined_warning}" if existing_tip else combined_warning)
 
                     self.table.setItem(idx, col, item)
         finally:
@@ -1787,6 +1826,8 @@ class InvoiceReviewApp(QMainWindow):
         self.txt_id.clear()
         self.txt_number.clear()
         self.txt_date.clear()
+        self.txt_invoice_date.clear()
+        self.txt_date_source.clear()
         self.txt_seller.clear()
         self.txt_buyer.clear()
         self.txt_amount.clear()
@@ -1813,13 +1854,15 @@ class InvoiceReviewApp(QMainWindow):
 
         # Clear summary card
         self.lbl_sum_amount.setText("¥—")
-        self.lbl_sum_date.setText("开票日期: —")
+        self.lbl_sum_date.setText("费用日期: —")
         self.lbl_sum_number.setText("发票号码: —")
         self.lbl_sum_seller.setText("销售方: —")
         self.lbl_sum_category.setText("消费类型: —")
         self.lbl_buyer_warning.clear()
         self.lbl_buyer_warning.setVisible(False)
         self.lbl_buyer_warning_hint.setVisible(False)
+        self.lbl_date_warning.clear()
+        self.lbl_date_warning.setVisible(False)
         self._set_summary_placeholder()
         self.btn_sum_open_file.setEnabled(False)
         self.btn_sum_copy_number.setEnabled(False)
@@ -1887,14 +1930,14 @@ class InvoiceReviewApp(QMainWindow):
                 self.lbl_closing_desc.setText("请选择发票以查看建议")
             return
         inv_num = str(inv.get("invoice_number") or "").strip()
-        inv_date = str(inv.get("invoice_date") or "").strip()
+        inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
         seller = str(inv.get("seller_name") or "").strip()
         total_amt = str(inv.get("total_amount") or "").strip()
         status = inv.get("review_status") or "to_review"
 
         if hasattr(self, "lbl_closing_desc"):
             if not inv_num or not inv_date or not seller or not total_amt:
-                desc = "⚠️ 金额、销售方或开票日期缺失，请双击或在上方表单中补全字段。"
+                desc = "⚠️ 金额、销售方或费用日期缺失，请双击或在上方表单中补全字段。"
             elif status == "to_review":
                 desc = "💡 字段已完整，确认原件无误后即可通过审核。"
             elif status == "approved":
@@ -1948,6 +1991,9 @@ class InvoiceReviewApp(QMainWindow):
             inv_id = str(inv.get("id", ""))
             inv_num = str(inv.get("invoice_number") or "")
             inv_date = str(inv.get("invoice_date") or "")
+            expense_date = str(inv.get("expense_date") or "")
+            date_source = str(inv.get("date_source") or "")
+            display_date = expense_date or inv_date
             seller = str(inv.get("seller_name") or "")
             buyer = str(inv.get("buyer_name") or "")
             total_amt = str(inv.get("total_amount") or "")
@@ -1958,7 +2004,16 @@ class InvoiceReviewApp(QMainWindow):
             # Populate text inputs
             self.txt_id.setText(inv_id)
             self.txt_number.setText(inv_num)
-            self.txt_date.setText(inv_date)
+            self.txt_date.setText(display_date)
+            self.txt_invoice_date.setText(inv_date)
+            date_source_disp = {
+                "travel_date": "乘车日期",
+                "invoice_date": "开票日期",
+                "legacy": "历史数据",
+                "service_date": "服务日期",
+                "payment_date": "付款日期",
+            }.get(date_source, date_source)
+            self.txt_date_source.setText(date_source_disp)
             self.txt_seller.setText(seller)
             self.txt_buyer.setText(buyer)
             self.txt_amount.setText(total_amt)
@@ -1991,14 +2046,18 @@ class InvoiceReviewApp(QMainWindow):
 
             # Update summary card
             self.lbl_sum_amount.setText(self._format_amount_display(total_amt))
-            self.lbl_sum_date.setText(f"开票日期: {inv_date}" if inv_date else "开票日期: —")
+            self.lbl_sum_date.setText(f"费用日期: {display_date}" if display_date else "费用日期: —")
             self.lbl_sum_number.setText(f"发票号码: {inv_num}" if inv_num else "发票号码: —")
             self.lbl_sum_seller.setText(f"销售方: {seller}" if seller else "销售方: —")
             self.lbl_sum_category.setText(f"消费类型: {category or '未分类'}")
-            warning = self._buyer_warning(inv)
-            self.lbl_buyer_warning.setText(warning)
-            self.lbl_buyer_warning.setVisible(bool(warning))
-            self.lbl_buyer_warning_hint.setVisible(bool(warning))
+            buyer_check_warning = self._buyer_warning(inv)
+            self.lbl_buyer_warning.setText(buyer_check_warning)
+            self.lbl_buyer_warning.setVisible(bool(buyer_check_warning))
+            self.lbl_buyer_warning_hint.setVisible(bool(buyer_check_warning))
+
+            date_warn = get_date_warning(inv)
+            self.lbl_date_warning.setText(date_warn)
+            self.lbl_date_warning.setVisible(bool(date_warn))
             self._update_status_badge(status)
 
             self.btn_sum_open_file.setEnabled(bool(att_path))
@@ -2190,6 +2249,8 @@ class InvoiceReviewApp(QMainWindow):
                         parse_success=True,
                         parse_note=info.parse_note or "重新解析",
                         item_name=getattr(info, "item_name", ""),
+                        expense_date=getattr(info, "expense_date", ""),
+                        date_source=getattr(info, "date_source", ""),
                     )
                     if updated:
                         if repair_target_id != inv_id:
@@ -2366,6 +2427,8 @@ class InvoiceReviewApp(QMainWindow):
                                     parse_success=True,
                                     parse_note="重新下载后解析",
                                     item_name=getattr(info, "item_name", ""),
+                                    expense_date=getattr(info, "expense_date", ""),
+                                    date_source=getattr(info, "date_source", ""),
                                 )
                                 if not updated:
                                     if getattr(self.db, "last_error", "") == "unique_conflict":
@@ -2853,7 +2916,7 @@ class InvoiceReviewApp(QMainWindow):
             missing.append("发票号码")
         if not str(inv.get("total_amount") or "").strip():
             missing.append("金额")
-        if not str(inv.get("invoice_date") or "").strip():
+        if not str(inv.get("expense_date") or inv.get("invoice_date") or "").strip():
             missing.append("日期")
         if not str(inv.get("attachment_path") or "").strip():
             missing.append("原件")

@@ -18,7 +18,7 @@ from .config import load_config_safe
 from .db import is_pending_evidence_invoice
 from .excel_export import export_excel
 from .log_privacy import mask_path
-from .reimbursement import buyer_warning
+from .reimbursement import buyer_warning, get_date_warning
 
 _log = logging.getLogger(__name__)
 
@@ -164,7 +164,14 @@ def export_claim_package(
     # 2. Process attachments
     for inv in invoices:
         inv_copy = dict(inv)
-        warning = buyer_warning(inv, reimbursement_config)
+        b_warning = buyer_warning(inv, reimbursement_config)
+        d_warning = get_date_warning(inv)
+        if b_warning and d_warning:
+            warning = f"{b_warning}；{d_warning}"
+        elif b_warning:
+            warning = b_warning
+        else:
+            warning = d_warning
         inv_copy["warning"] = warning
         copied_relative_path = ""
         orig_attachment_path = inv.get("attachment_path", "")
@@ -191,6 +198,8 @@ def export_claim_package(
             "invoice_id": inv.get("id"),
             "invoice_number": inv.get("invoice_number"),
             "invoice_date": inv.get("invoice_date"),
+            "expense_date": inv.get("expense_date") or inv.get("invoice_date"),
+            "date_source": inv.get("date_source", ""),
             "category": inv.get("category"),
             "total_amount": inv.get("total_amount"),
             "currency": inv.get("currency", ""),
@@ -282,7 +291,7 @@ def _generate_quality_report(
     empty_amounts = sum(1 for inv in export_invoices if not (inv.get("total_amount") or "").strip())
 
     # 4. Empty dates
-    empty_dates = sum(1 for inv in export_invoices if not (inv.get("invoice_date") or "").strip())
+    empty_dates = sum(1 for inv in export_invoices if not (inv.get("expense_date") or inv.get("invoice_date") or "").strip())
 
     # 5. Category is "其他"
     category_others = sum(1 for inv in export_invoices if (inv.get("category") or "").strip() == "其他")

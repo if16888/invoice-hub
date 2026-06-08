@@ -1258,6 +1258,8 @@ def _refresh_invoice_from_parse(
     missing_extra: bool,
     parse_note: str,
     item_name: str = "",
+    expense_date: str = "",
+    date_source: str = "",
     force_refresh_metadata: bool = False,
 ) -> bool:
     """Refresh parsed invoice metadata in place, with safe backfill.
@@ -1374,6 +1376,8 @@ def _refresh_invoice_from_parse(
             parse_success=True,
             parse_note=parse_note,
             item_name=item_name,
+            expense_date=expense_date,
+            date_source=date_source,
         )
     else:
         # Safe backfill (default): do not overwrite non-empty fields in existing.
@@ -1388,6 +1392,8 @@ def _refresh_invoice_from_parse(
         updated_amount = existing.get("amount") if str(existing.get("amount") or "").strip() else amount
         updated_total_amount = existing.get("total_amount") if str(existing.get("total_amount") or "").strip() else total_amount
         updated_invoice_date = existing.get("invoice_date") if str(existing.get("invoice_date") or "").strip() else invoice_date
+        updated_expense_date = existing.get("expense_date") if str(existing.get("expense_date") or "").strip() else expense_date
+        updated_date_source = existing.get("date_source") if str(existing.get("date_source") or "").strip() else date_source
 
         if backfill_fiscal_category:
             updated_category = "过路费"
@@ -1414,6 +1420,7 @@ def _refresh_invoice_from_parse(
             ("amount", existing.get("amount"), amount),
             ("total_amount", existing.get("total_amount"), total_amount),
             ("invoice_date", existing.get("invoice_date"), invoice_date),
+            ("expense_date", existing.get("expense_date"), expense_date),
             ("category", existing.get("category"), updated_category),
             ("buyer_name", existing.get("buyer_name"), buyer_name),
             ("invoice_type", existing.get("invoice_type"), invoice_type),
@@ -1454,6 +1461,8 @@ def _refresh_invoice_from_parse(
             parse_success=True,
             parse_note=parse_note,
             item_name=updated_item_name,
+            expense_date=updated_expense_date,
+            date_source=updated_date_source,
         )
 
 
@@ -1536,6 +1545,8 @@ def _insert_local_exception(
         "invoice_number": "",
         "invoice_code": "",
         "invoice_date": "",
+        "expense_date": "",
+        "date_source": "unknown",
         "amount": "",
         "total_amount": "",
         "seller_name": "",
@@ -1609,6 +1620,8 @@ def _import_local_pdf(
             invoice_number=info.invoice_number or "",
             invoice_code=info.invoice_code or "",
             invoice_date=info.invoice_date or "",
+            expense_date=info.expense_date or "",
+            date_source=info.date_source or "",
             amount=info.amount or "",
             total_amount=info.total_amount or "",
             seller_name=info.seller_name or "",
@@ -1651,6 +1664,8 @@ def _import_local_pdf(
                 invoice_number=info.invoice_number,
                 invoice_code=info.invoice_code or existing_receipt.get("invoice_code") or "",
                 invoice_date=info.invoice_date or existing_receipt.get("invoice_date") or "",
+                expense_date=info.expense_date or existing_receipt.get("expense_date") or "",
+                date_source=info.date_source or existing_receipt.get("date_source") or "",
                 amount=info.amount or existing_receipt.get("amount") or "",
                 total_amount=info.total_amount or existing_receipt.get("total_amount") or "",
                 seller_name=info.seller_name or existing_receipt.get("seller_name") or "",
@@ -1701,6 +1716,8 @@ def _import_local_pdf(
                         invoice_number=info.invoice_number or "",
                         invoice_code=info.invoice_code or "",
                         invoice_date=info.invoice_date or "",
+                        expense_date=info.expense_date or "",
+                        date_source=info.date_source or "",
                         amount=info.amount or "",
                         total_amount=info.total_amount or "",
                         seller_name=info.seller_name or "",
@@ -1772,6 +1789,8 @@ def _import_local_pdf(
                 "invoice_number": info.invoice_number,
                 "invoice_code": info.invoice_code,
                 "invoice_date": info.invoice_date,
+                "expense_date": info.expense_date,
+                "date_source": info.date_source,
                 "amount": info.amount,
                 "total_amount": info.total_amount,
                 "seller_name": info.seller_name,
@@ -1819,6 +1838,8 @@ def _import_local_pdf(
         "invoice_number": info.invoice_number,
         "invoice_code": info.invoice_code,
         "invoice_date": info.invoice_date,
+        "expense_date": info.expense_date,
+        "date_source": info.date_source,
         "amount": info.amount,
         "total_amount": info.total_amount,
         "seller_name": info.seller_name,
@@ -2082,6 +2103,8 @@ def _insert_receipt_record(
         "invoice_number": "",
         "invoice_code": "",
         "invoice_date": msg.date,
+        "expense_date": msg.date,
+        "date_source": "invoice_date",
         "amount": "",
         "total_amount": "",
         "seller_name": msg.sender,
@@ -2127,30 +2150,32 @@ def _insert_pending_image_record(
 
     cat, extra_type, extra_required = _classify(msg.subject, msg.sender, original_name, categories)
     rec = {
-        "invoice_number": "",
-        "invoice_code": "",
-        "invoice_date": msg.date,
-        "amount": "",
-        "total_amount": "",
-        "seller_name": msg.sender,
-        "buyer_name": "",
-        "invoice_type": "图片待识别",
-        "category": cat,
-        "has_extra": bool(extra_type),
-        "extra_type": extra_type,
-        "missing_extra": extra_required,
-        "mail_uid": msg.uid,
-        "mail_subject": msg.subject,
-        "mail_date": msg.date,
-        "mail_sender": msg.sender,
-        "parse_success": False,
-        "parse_note": "图片待识别，请人工处理",
-        "attachment_path": _runtime_relative(src),
-        "extra_paths": [],
-        "download_url": "",
-        "mailbox_key": mailbox_key,
-        "file_hash": file_hash,
-    }
+         "invoice_number": "",
+         "invoice_code": "",
+         "invoice_date": msg.date,
+         "expense_date": msg.date,
+         "date_source": "invoice_date",
+         "amount": "",
+         "total_amount": "",
+         "seller_name": msg.sender,
+         "buyer_name": "",
+         "invoice_type": "图片待识别",
+         "category": cat,
+         "has_extra": bool(extra_type),
+         "extra_type": extra_type,
+         "missing_extra": extra_required,
+         "mail_uid": msg.uid,
+         "mail_subject": msg.subject,
+         "mail_date": msg.date,
+         "mail_sender": msg.sender,
+         "parse_success": False,
+         "parse_note": "图片待识别，请人工处理",
+         "attachment_path": _runtime_relative(src),
+         "extra_paths": [],
+         "download_url": "",
+         "mailbox_key": mailbox_key,
+         "file_hash": file_hash,
+     }
     return db.insert_invoice(rec)
 
 
@@ -2309,6 +2334,8 @@ def _process_email(
                         invoice_number=info.invoice_number,
                         invoice_code=info.invoice_code,
                         invoice_date=info.invoice_date,
+                        expense_date=info.expense_date or "",
+                        date_source=info.date_source or "",
                         amount=info.amount,
                         total_amount=info.total_amount,
                         seller_name=info.seller_name,
@@ -2408,6 +2435,8 @@ def _process_email(
                     "invoice_number": info.invoice_number,
                     "invoice_code": info.invoice_code,
                     "invoice_date": info.invoice_date,
+                    "expense_date": info.expense_date or "",
+                    "date_source": info.date_source or "",
                     "amount": info.amount,
                     "total_amount": info.total_amount,
                     "seller_name": info.seller_name,
@@ -2542,6 +2571,8 @@ def _process_email(
                 invoice_number=info.invoice_number,
                 invoice_code=info.invoice_code,
                 invoice_date=info.invoice_date,
+                expense_date=info.expense_date or "",
+                date_source=info.date_source or "",
                 amount=info.amount,
                 total_amount=info.total_amount,
                 seller_name=info.seller_name,
@@ -2638,6 +2669,8 @@ def _process_email(
             "invoice_number": info.invoice_number,
             "invoice_code": info.invoice_code,
             "invoice_date": info.invoice_date,
+            "expense_date": info.expense_date or "",
+            "date_source": info.date_source or "",
             "amount": info.amount,
             "total_amount": info.total_amount,
             "seller_name": info.seller_name,
@@ -2752,6 +2785,8 @@ def _process_email(
                     "invoice_number": "",
                     "invoice_code": "",
                     "invoice_date": "",
+                    "expense_date": "",
+                    "date_source": "unknown",
                     "amount": "",
                     "total_amount": "",
                     "seller_name": "",
@@ -2807,6 +2842,9 @@ def _process_email(
 
         # Merge results, prioritizing subject over body
         merged = {**body_info, **subj_info}
+        if "invoice_date" in merged:
+            merged["expense_date"] = merged.get("expense_date") or merged["invoice_date"]
+            merged["date_source"] = merged.get("date_source") or "invoice_date"
 
         has_useful = merged.get("invoice_number") or (
             merged.get("seller_name") and merged.get("total_amount"))
@@ -2829,6 +2867,8 @@ def _process_email(
                         invoice_number=inv_num,
                         invoice_code=merged.get("invoice_code", ""),
                         invoice_date=merged.get("invoice_date", "") or msg.date,
+                        expense_date=merged.get("expense_date", "") or merged.get("invoice_date", "") or msg.date,
+                        date_source=merged.get("date_source", "") or "invoice_date",
                         amount="",
                         total_amount=amount,
                         seller_name=seller,
@@ -2865,6 +2905,8 @@ def _process_email(
                 "invoice_number": inv_num,
                 "invoice_code": merged.get("invoice_code", ""),
                 "invoice_date": merged.get("invoice_date", "") or msg.date,
+                "expense_date": merged.get("expense_date", "") or merged.get("invoice_date", "") or msg.date,
+                "date_source": merged.get("date_source", "") or "invoice_date",
                 "amount": "",
                 "total_amount": amount,
                 "seller_name": seller,
@@ -3231,6 +3273,8 @@ def _cmd_evidence_repair(args: argparse.Namespace, db: InvoiceDB):
                         "invoice_number": "",
                         "invoice_code": "",
                         "invoice_date": "",
+                        "expense_date": "",
+                        "date_source": "unknown",
                         "amount": "",
                         "total_amount": "",
                         "seller_name": "",

@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     invoice_number  TEXT,
     invoice_code    TEXT,
     invoice_date    TEXT,
+    expense_date    TEXT,
+    date_source     TEXT,
     amount          TEXT,
     total_amount    TEXT,
     seller_name     TEXT,
@@ -351,6 +353,12 @@ class InvoiceDB:
 
     def insert_invoice(self, rec: dict[str, Any]) -> int | None:
         """Insert an invoice record.  Returns the row id, or None on dup."""
+        if "invoice_date" in rec and "expense_date" not in rec:
+            rec = dict(rec)
+            rec["expense_date"] = rec["invoice_date"]
+            if "date_source" not in rec:
+                rec["date_source"] = "invoice_date"
+
         allowed_cols = {
             "mailbox_key",
             "invoice_number", "invoice_code", "invoice_date",
@@ -361,6 +369,7 @@ class InvoiceDB:
             "attachment_path", "extra_paths", "download_url", "item_name",
             "review_status", "processing_status", "currency", "exchange_rate",
             "amount_home", "file_hash", "confirmed_at", "confirmed_note", "is_deleted",
+            "expense_date", "date_source",
         }
 
         # Dynamically build the SQL statement containing only keys that are explicitly provided.
@@ -403,11 +412,11 @@ class InvoiceDB:
     def get_all_invoices(self, include_deleted: bool = False) -> list[dict]:
         if include_deleted:
             rows = self._conn.execute(
-                "SELECT * FROM invoices ORDER BY invoice_date DESC, id DESC"
+                "SELECT * FROM invoices ORDER BY expense_date DESC, id DESC"
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM invoices WHERE is_deleted = 0 ORDER BY invoice_date DESC, id DESC"
+                "SELECT * FROM invoices WHERE is_deleted = 0 ORDER BY expense_date DESC, id DESC"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -647,11 +656,19 @@ class InvoiceDB:
         if buyer_name is None:
             buyer_name = str(inv.get("buyer_name") or "")
 
+        new_expense_date = invoice_date
+        old_date_source = str(inv.get("date_source") or "")
+
+        if old_date_source in ("invoice_date", "legacy", "unknown", ""):
+            new_invoice_date = new_expense_date
+        else:
+            new_invoice_date = str(inv.get("invoice_date") or "")
+
         try:
             self._conn.execute(
-                "UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?, buyer_name=?, "
+                "UPDATE invoices SET invoice_number=?, invoice_date=?, expense_date=?, seller_name=?, buyer_name=?, "
                 "total_amount=?, category=?, confirmed_note=? WHERE id=?",
-                (invoice_number, invoice_date, seller_name, buyer_name, total_amount, category, note, invoice_id),
+                (invoice_number, new_invoice_date, new_expense_date, seller_name, buyer_name, total_amount, category, note, invoice_id),
             )
             self._conn.commit()
             self._set_last_error("")
@@ -678,6 +695,8 @@ class InvoiceDB:
         parse_success: bool,
         parse_note: str = "",
         item_name: str = "",
+        expense_date: str = "",
+        date_source: str = "",
     ) -> bool:
         """Refresh parsed metadata in-place without touching review status."""
         inv = self.get_invoice(invoice_id)
@@ -685,15 +704,22 @@ class InvoiceDB:
             self._set_last_error("not_found")
             return False
 
+        if not expense_date:
+            expense_date = invoice_date
+        if not date_source:
+            date_source = "invoice_date"
+
         try:
             self._conn.execute(
-                "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, amount=?, total_amount=?, "
+                "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, expense_date=?, date_source=?, amount=?, total_amount=?, "
                 "seller_name=?, buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
                 "missing_extra=?, parse_success=?, parse_note=?, item_name=? WHERE id=?",
                 (
                     invoice_number,
                     invoice_code,
                     invoice_date,
+                    expense_date,
+                    date_source,
                     amount,
                     total_amount,
                     seller_name,
@@ -912,7 +938,7 @@ class InvoiceDB:
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
 
-        query += " ORDER BY i.invoice_date DESC, i.id DESC"
+        query += " ORDER BY i.expense_date DESC, i.id DESC"
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
@@ -1159,7 +1185,7 @@ class InvoiceDB:
         """
         if not include_deleted:
             sql += " AND i.is_deleted = 0"
-        sql += " ORDER BY cgi.sort_order ASC, i.invoice_date DESC, i.id DESC"
+        sql += " ORDER BY cgi.sort_order ASC, i.expense_date DESC, i.id DESC"
 
         rows = self._conn.execute(sql, (claim_id,)).fetchall()
         return [dict(r) for r in rows]

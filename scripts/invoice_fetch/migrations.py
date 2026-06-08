@@ -258,3 +258,31 @@ def check_and_migrate(conn: sqlite3.Connection):
                 pass
             _log.exception("CRITICAL: Database migration to V5 failed! Error: %s", e)
             raise e
+
+    # 7. Migration to V6: Add expense_date and date_source columns to invoices table
+    if version < 6:
+        _log.info("Migrating database schema: V5 -> V6")
+        try:
+            cursor.execute("PRAGMA table_info(invoices)")
+            invoice_cols = {row[1] for row in cursor.fetchall()}
+            if "expense_date" not in invoice_cols:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN expense_date TEXT")
+                _log.info("Added database column [invoices.expense_date]")
+            if "date_source" not in invoice_cols:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN date_source TEXT")
+                _log.info("Added database column [invoices.date_source]")
+
+            # Backfill legacy/existing data
+            cursor.execute("UPDATE invoices SET expense_date = invoice_date WHERE expense_date IS NULL OR expense_date = ''")
+            cursor.execute("UPDATE invoices SET date_source = 'legacy' WHERE date_source IS NULL OR date_source = ''")
+
+            cursor.execute("PRAGMA user_version = 6")
+            conn.commit()
+            _log.info("Database migration to V6 completed successfully.")
+        except Exception as e:
+            try:
+                conn.rollback()
+            except sqlite3.OperationalError:
+                pass
+            _log.exception("CRITICAL: Database migration to V6 failed! Error: %s", e)
+            raise e

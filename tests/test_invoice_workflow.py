@@ -1762,7 +1762,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertIn("异常待处理", wb.sheetnames)
         self.assertEqual(wb["分类汇总"]["A2"].value, "餐饮")
         self.assertEqual(wb["异常待处理"]["A2"].value, "1002")
-        self.assertIsNotNone(wb["发票汇总"]["O2"].hyperlink)
+        self.assertIsNotNone(wb["发票汇总"]["P2"].hyperlink)
 
     def test_overseas_receipt_pdf_is_preserved_without_invoice_number(self):
         with tempfile.TemporaryDirectory() as td:

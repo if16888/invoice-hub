@@ -36,6 +36,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             CREATE TABLE invoices (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 invoice_number  TEXT,
+                invoice_date    TEXT,
                 total_amount    TEXT,
                 seller_name     TEXT,
                 category        TEXT DEFAULT '其他',
@@ -375,7 +376,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             ws = wb.worksheets[0]
 
             self.assertEqual(
-                ws.cell(row=2, column=17).value,
+                ws.cell(row=2, column=18).value,
                 "https://example.com/pdf?token=%2A%2A%2A&invoice=%2A%2A%2A",
             )
 
@@ -397,8 +398,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             wb = openpyxl.load_workbook(dest, data_only=False)
             ws = wb.worksheets[0]
 
-            self.assertEqual(ws.cell(row=2, column=6).value, "'=HYPERLINK(\"http://evil.example\",\"click\")")
-            self.assertEqual(ws.cell(row=2, column=13).value, "'@SUM(1,1)")
+            self.assertEqual(ws.cell(row=2, column=7).value, "'=HYPERLINK(\"http://evil.example\",\"click\")")
+            self.assertEqual(ws.cell(row=2, column=14).value, "'@SUM(1,1)")
 
 
 if __name__ == "__main__":

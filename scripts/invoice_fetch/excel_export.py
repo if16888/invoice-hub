@@ -18,6 +18,7 @@ _log = logging.getLogger(__name__)
 _COLUMNS = [
     ("invoice_number",  "发票号码",   14),
     ("invoice_code",    "发票代码",   16),
+    ("expense_date",    "费用日期",   13),
     ("invoice_date",    "开票日期",   13),
     ("amount",          "金额(税前)", 12),
     ("total_amount",    "价税合计",   12),
@@ -113,7 +114,9 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
         is_alt = row_idx % 2 == 0
         for col_idx, (key, _, _) in enumerate(columns, 1):
             val = row.get(key, "")
-            if key == "has_extra":
+            if key == "expense_date":
+                val = row.get("expense_date") or row.get("invoice_date") or ""
+            elif key == "has_extra":
                 val = "有" if val else ""
             elif key == "missing_extra":
                 val = "缺少" if val else ""
@@ -201,6 +204,7 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
     ws = wb.create_sheet("异常待处理")
     exc_columns = [
         ("invoice_number", "发票号码", 16),
+        ("expense_date", "费用日期", 13),
         ("invoice_date", "开票日期", 13),
         ("total_amount", "价税合计", 12),
         ("category", "分类", 12),
@@ -218,7 +222,9 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
     for row_idx, row in enumerate([r for r in rows if _is_exception(r)], 2):
         for col_idx, (key, _, _) in enumerate(exc_columns, 1):
             val = row.get(key, "")
-            if key == "extra_paths":
+            if key == "expense_date":
+                val = row.get("expense_date") or row.get("invoice_date") or ""
+            elif key == "extra_paths":
                 paths = _parse_paths(val)
                 if paths:
                     val = "；".join(Path(p).name for p in paths)

@@ -77,7 +77,7 @@ class ClaimGroupsTests(unittest.TestCase):
             # Check user_version
             cursor.execute("PRAGMA user_version")
             version = cursor.fetchone()[0]
-            self.assertIn(version, (2, 3, 4, 5))
+            self.assertIn(version, (2, 3, 4, 5, 6))
 
             # Check claim_groups columns
             cursor.execute("PRAGMA table_info(claim_groups)")
@@ -3487,7 +3487,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Assert summary card is updated correctly
                     self.assertEqual(window.lbl_sum_status.text(), "已通过")
                     self.assertEqual(window.lbl_sum_amount.text(), "¥500.00")
-                    self.assertEqual(window.lbl_sum_date.text(), "开票日期: 2026-05-25")
+                    self.assertEqual(window.lbl_sum_date.text(), "费用日期: 2026-05-25")
                     self.assertEqual(window.lbl_sum_number.text(), "发票号码: SEL777")
                     self.assertEqual(window.lbl_sum_seller.text(), "销售方: Grid Seller")
                     self.assertEqual(window.lbl_sum_category.text(), "消费类型: 酒店住宿")

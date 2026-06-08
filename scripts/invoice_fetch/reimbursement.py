@@ -51,3 +51,12 @@ def format_amount_total(rows: list[dict]) -> str:
     count, total, has_missing = amount_total(rows)
     suffix = "｜部分金额缺失" if has_missing else ""
     return f"{count} 张｜合计 ¥{total:.2f}{suffix}"
+
+
+def get_date_warning(invoice: dict) -> str:
+    """Return a low-priority warning if expense date defaults to invoice date."""
+    expense_date = str(invoice.get("expense_date") or "").strip()
+    date_source = str(invoice.get("date_source") or "").strip()
+    if expense_date and date_source in ("invoice_date", "legacy", "unknown", ""):
+        return "未识别到费用发生日期，已使用开票日期。"
+    return ""
