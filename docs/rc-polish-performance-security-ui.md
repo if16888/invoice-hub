@@ -108,11 +108,39 @@ count_invoices_for_status(status=None, include_deleted=False) -> int
 - 1000 synthetic invoices: first-load render should stay responsive.
 - `_load_invoices()` should not hydrate every invoice just to show the first screen.
 
+## P1: Database backup and rollback safety
+
+### Already completed in branch
+
+- Added `scripts/invoice_fetch/db_backup.py` as a GUI-independent SQLite backup helper.
+- Added `tests/test_db_backup.py` to cover deterministic backup names, sanitized reason slugs, non-overwrite behavior, and missing-database errors.
+
+### Target behavior
+
+Before any high-impact data operation, create a timestamped backup under `runtime/backups/`:
+
+- database schema migration
+- repair/backfill utilities
+- batch mobile import
+- batch delete/restore
+- risky rescan or reparse workflows
+
+Suggested naming pattern:
+
+```text
+invoices-YYYYMMDD-HHMMSS-before-<reason>.db
+```
+
+### Integration notes
+
+The helper is intentionally not wired into the GUI yet, because this pass avoids editing `app.py`. Future integration should call `create_database_backup()` from CLI repair tools, migration entry points, and desktop-confirmed batch-import flows.
+
 ## P1/P2: Security polish
 
 ### Already completed in branch
 
 - AI request error logging no longer prints raw `RequestException` strings. This reduces the risk of leaking provider URLs or API keys when a provider uses query-string credentials.
+- A unit test now verifies that the safe AI request error summary does not contain provider URLs, query keys, or a fake secret token.
 
 ### Remaining security tasks
 
@@ -120,16 +148,20 @@ count_invoices_for_status(status=None, include_deleted=False) -> int
 2. Mobile upload: after receiving files from the LAN upload page, ask the desktop user to confirm import instead of silently importing into the invoice DB.
 3. Mobile upload: keep token TTL short and display clear stop-session control.
 4. Diagnostics: keep the allowlist model; never include `invoices.db`, original invoice files, export packages, or full tokenized URLs.
+5. AI payload boundary: cloud AI requests must remain limited to masked `uid`, `subject`, and `sender`; never send email body text, attachments, OCR text, PDF/OFD text, or image contents.
 
 ### Acceptance criteria
 
 - Uploading from phone requires a live token and a desktop-visible session.
 - Large ZIP members are skipped before loading their content into memory.
 - AI/API exceptions do not contain raw request URLs or credentials in logs.
+- High-impact data operations have a backup path before mutating the database.
 
 ## Suggested validation commands
 
 ```bash
+python -m unittest tests.test_db_backup -v
+python -m unittest tests.test_privacy_defaults -v
 python -m unittest tests.test_expense_date -v
 python -m unittest tests.test_claim_groups -v
 python -m unittest tests.test_diagnostics -v
@@ -147,4 +179,5 @@ The RC can be considered ready when:
 - The right-side panel no longer requires tab switching for normal review.
 - The first load avoids full-list hydration for the default path.
 - The security polish tests pass.
+- High-impact data operations create or document a database backup path.
 - A real personal reimbursement package can be exported from a mixed set of email, local, and mobile-uploaded invoices.
