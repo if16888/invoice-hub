@@ -113,7 +113,8 @@ count_invoices_for_status(status=None, include_deleted=False) -> int
 ### Already completed in branch
 
 - Added `scripts/invoice_fetch/db_backup.py` as a GUI-independent SQLite backup helper.
-- Added `tests/test_db_backup.py` to cover deterministic backup names, sanitized reason slugs, non-overwrite behavior, and missing-database errors.
+- Added `scripts/invoice_fetch/backup_cli.py` as a standalone backup command.
+- Added `tests/test_db_backup.py` and `tests/test_backup_cli.py` for backup, pruning, and CLI coverage.
 
 ### Target behavior
 
@@ -131,6 +132,18 @@ Suggested naming pattern:
 invoices-YYYYMMDD-HHMMSS-before-<reason>.db
 ```
 
+Manual backup command:
+
+```bash
+python -m scripts.invoice_fetch.backup_cli --reason before-manual-repair
+```
+
+Optional arguments:
+
+```bash
+python -m scripts.invoice_fetch.backup_cli --db runtime/invoices.db --backup-dir runtime/backups --keep-backups 20
+```
+
 ### Integration notes
 
 The helper is intentionally not wired into the GUI yet, because this pass avoids editing `app.py`. Future integration should call `create_database_backup()` from CLI repair tools, migration entry points, and desktop-confirmed batch-import flows.
@@ -141,6 +154,7 @@ The helper is intentionally not wired into the GUI yet, because this pass avoids
 
 - AI request error logging no longer prints raw `RequestException` strings. This reduces the risk of leaking provider URLs or API keys when a provider uses query-string credentials.
 - A unit test now verifies that the safe AI request error summary does not contain provider URLs, query keys, or a fake secret token.
+- A unit test verifies that AI prompts only include masked `uid`, `subject`, and `sender`, not email body, attachment text, OCR text, or local file paths.
 
 ### Remaining security tasks
 
@@ -161,6 +175,7 @@ The helper is intentionally not wired into the GUI yet, because this pass avoids
 
 ```bash
 python -m unittest tests.test_db_backup -v
+python -m unittest tests.test_backup_cli -v
 python -m unittest tests.test_privacy_defaults -v
 python -m unittest tests.test_expense_date -v
 python -m unittest tests.test_claim_groups -v
