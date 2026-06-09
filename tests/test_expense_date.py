@@ -72,7 +72,7 @@ class ExpenseDateTests(unittest.TestCase):
         import sqlite3
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "test_migration.db"
-            
+
             # 1. Manually create an old invoices table (V5 representation with all V5 columns)
             conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
@@ -114,7 +114,7 @@ class ExpenseDateTests(unittest.TestCase):
             cursor.execute("PRAGMA user_version = 5")
             conn.commit()
             conn.close()
-            
+
             # 2. Open via InvoiceDB which runs migration
             with InvoiceDB(db_path) as db:
                 # Check version is 6
@@ -157,7 +157,7 @@ class ExpenseDateTests(unittest.TestCase):
                     "attachment_path": "attachments/invoice.pdf",
                     "review_status": "approved",
                 })
-                
+
                 id_normal = db.insert_invoice({
                     "invoice_number": "NORMAL456",
                     "invoice_date": "2026-05-20",
@@ -189,11 +189,11 @@ class ExpenseDateTests(unittest.TestCase):
             # 1. Verify manifest.json
             manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
             items_by_num = {item["invoice_number"]: item for item in manifest["items"]}
-            
+
             self.assertEqual(items_by_num["TRAIN123"]["expense_date"], "2026-05-07")
             self.assertEqual(items_by_num["TRAIN123"]["date_source"], "travel_date")
             self.assertEqual(items_by_num["TRAIN123"]["warning"], "")  # No date warning
-            
+
             self.assertEqual(items_by_num["NORMAL456"]["expense_date"], "2026-05-20")
             self.assertEqual(items_by_num["NORMAL456"]["date_source"], "invoice_date")
             self.assertEqual(items_by_num["NORMAL456"]["warning"], "")
@@ -202,15 +202,15 @@ class ExpenseDateTests(unittest.TestCase):
             wb = load_workbook(export_dir / "reimbursement.xlsx")
             ws = wb.active
             headers = [cell.value for cell in ws[1]]
-            
+
             self.assertIn("费用日期", headers)
             self.assertIn("开票日期", headers)
             self.assertIn("校验提示", headers)
-            
+
             col_expense = headers.index("费用日期") + 1
             col_invoice = headers.index("开票日期") + 1
             col_warning = headers.index("校验提示") + 1
-            
+
             rows_by_num = {}
             for row in range(2, ws.max_row + 1):
                 num = ws.cell(row=row, column=headers.index("发票号码") + 1).value
@@ -298,10 +298,6 @@ class ExpenseDateTests(unittest.TestCase):
                 self.assertEqual(updated["invoice_date"], "2026-05-18")
 
     def test_gui_table_uses_expense_date(self):
-        import sys
-        from PySide6.QtWidgets import QApplication
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app = QApplication.instance() or QApplication(sys.argv)
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "test.db"
             with InvoiceDB(db_path) as db:
@@ -317,34 +313,46 @@ class ExpenseDateTests(unittest.TestCase):
                 })
 
             try:
+                import sys
+                from PySide6.QtWidgets import QApplication
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+                app = QApplication.instance() or QApplication(sys.argv)
                 window = InvoiceReviewApp(db_path, splash=None)
                 window._deferred_init()
                 app.processEvents()
+            except Exception as e:
+                self.skipTest(f"Skipping GUI setup due to UI environment issues: {e}")
 
+            try:
                 self.assertEqual(window.table.rowCount(), 1)
                 date_item = window.table.item(0, 1)
+                self.assertIsNotNone(date_item)
                 self.assertEqual(date_item.text(), "2026-05-07")
+            finally:
                 window.close()
                 window.deleteLater()
                 app.processEvents()
-            except Exception as e:
-                self.skipTest(f"Skipping GUI test due to UI environment issues: {e}")
 
     def test_quality_uses_expense_date(self):
-        import sys
-        from PySide6.QtWidgets import QApplication
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app = QApplication.instance() or QApplication(sys.argv)
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "test.db"
             with InvoiceDB(db_path) as db:
                 pass
 
             try:
+                import sys
+                from PySide6.QtWidgets import QApplication
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+                app = QApplication.instance() or QApplication(sys.argv)
                 window = InvoiceReviewApp(db_path, splash=None)
                 window._deferred_init()
                 app.processEvents()
+            except Exception as e:
+                self.skipTest(f"Skipping GUI setup due to UI environment issues: {e}")
 
+            try:
                 inv_ok = {
                     "invoice_number": "QUALITY001",
                     "invoice_date": "",
@@ -362,12 +370,10 @@ class ExpenseDateTests(unittest.TestCase):
                     "seller_name": "Test Seller",
                 }
                 self.assertEqual(window._get_invoice_quality(inv_bad), "待补全")
-
+            finally:
                 window.close()
                 window.deleteLater()
                 app.processEvents()
-            except Exception as e:
-                self.skipTest(f"Skipping GUI test due to UI environment issues: {e}")
 
 
 if __name__ == "__main__":
