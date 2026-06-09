@@ -164,6 +164,33 @@ class TestPublicExportCheck(unittest.TestCase):
             self.assertIn("forbidden tracked private/public-excluded file: config.json", issues)
             self.assertNotIn("tests/fixtures/synthetic/sample.pdf", issues)
 
+    def test_source_tree_rejects_tracked_runtime_backups_even_if_gitignored_later(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            backup = root / "runtime" / "backups" / "invoices-20260609-123456-before-test.db"
+            backup.parent.mkdir(parents=True)
+            backup.write_bytes(b"sqlite backup")
+            subprocess.run(
+                ["git", "add", *REQUIRED_PUBLIC_FILES, "runtime/backups/invoices-20260609-123456-before-test.db"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            (root / ".gitignore").write_text("runtime/\n", encoding="utf-8")
+
+            issues = "\n".join(find_source_tree_issues(root))
+
+            self.assertIn(
+                "forbidden tracked file under generated/private directory: runtime/backups/invoices-20260609-123456-before-test.db",
+                issues,
+            )
+            self.assertIn(
+                "forbidden tracked release-risk file type: runtime/backups/invoices-20260609-123456-before-test.db",
+                issues,
+            )
+
     def test_public_checkout_ignores_untracked_runtime_data(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
