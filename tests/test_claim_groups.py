@@ -2499,7 +2499,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.table.selectRow(0)
                         app.processEvents()
                         self.assertFalse(window.lbl_buyer_warning.isHidden())
-                        self.assertEqual(window.lbl_buyer_warning.text(), warning)
+                        self.assertEqual(window.lbl_buyer_warning.text(), "抬头不匹配")
                     finally:
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
@@ -2551,7 +2551,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         app.processEvents()
                         self.assertEqual(window.txt_buyer.text(), original_buyer)
                         self.assertIn(warning, window.table.item(0, 0).toolTip())
-                        self.assertEqual(window.lbl_buyer_warning.text(), warning)
+                        self.assertEqual(window.lbl_buyer_warning.text(), "抬头不匹配")
 
                         window.txt_buyer.setText(expected_buyer)
                         window._mark_invoice_form_dirty()
@@ -3962,7 +3962,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.btn_err: "DangerOutlineBtn",
                         window.btn_rev: "SecondaryBtn",
                         window.btn_delete_invoice: "TextDangerBtn",
-                        window.btn_export: "PrimaryBtn",
+                        window.btn_export: "SecondaryBtn",
                         window.btn_create_claim: "SecondaryBtn",
                         window.btn_add_to_claim: "SecondaryBtn",
                     }
@@ -4017,7 +4017,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.detail_tabs.count(), 2)
                     self.assertEqual(
                         [window.detail_tabs.tabText(index) for index in range(2)],
-                        ["发票详情", "报销导出"],
+                        ["发票详情", "报销组"],
                     )
                     self.assertEqual(window.txt_note.maximumHeight(), 45)
                     self.assertTrue(window.lbl_export_summary.wordWrap())

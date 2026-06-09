@@ -592,27 +592,27 @@ class InvoiceReviewApp(QMainWindow):
         quick_layout = QHBoxLayout()
         quick_layout.setSpacing(6)
 
-        self.btn_sum_open_file = QPushButton("查看文件")
+        self.btn_sum_open_file = QPushButton("查看原件")
         self.btn_sum_open_file.setProperty("class", "SecondaryBtn")
         self.btn_sum_open_file.clicked.connect(self._open_attachment)
         self.btn_sum_open_file.setEnabled(False)
         self.btn_sum_open_file.setMaximumWidth(96)
 
-        self.btn_sum_copy_number = QPushButton("复制号码")
+        self.btn_sum_copy_number = QPushButton("复制号码", self)
         self.btn_sum_copy_number.setProperty("class", "SecondaryBtn")
         self.btn_sum_copy_number.clicked.connect(self._copy_invoice_number)
         self.btn_sum_copy_number.setEnabled(False)
         self.btn_sum_copy_number.setMaximumWidth(96)
+        self.btn_sum_copy_number.setVisible(False)
 
-        self.btn_sum_locate_file = QPushButton("定位文件")
+        self.btn_sum_locate_file = QPushButton("定位文件", self)
         self.btn_sum_locate_file.setProperty("class", "SecondaryBtn")
         self.btn_sum_locate_file.clicked.connect(self._locate_attachment)
         self.btn_sum_locate_file.setEnabled(False)
         self.btn_sum_locate_file.setMaximumWidth(96)
+        self.btn_sum_locate_file.setVisible(False)
 
         quick_layout.addWidget(self.btn_sum_open_file)
-        quick_layout.addWidget(self.btn_sum_copy_number)
-        quick_layout.addWidget(self.btn_sum_locate_file)
         quick_layout.addStretch()
 
         summary_layout.addLayout(summary_header)
@@ -622,7 +622,7 @@ class InvoiceReviewApp(QMainWindow):
         self.lbl_buyer_warning.setProperty("class", "InlineWarning")
         self.lbl_buyer_warning.setVisible(False)
         summary_layout.addWidget(self.lbl_buyer_warning)
-        self.lbl_buyer_warning_hint = QLabel("可在下方“购买方名称”字段修正后保存。")
+        self.lbl_buyer_warning_hint = QLabel("可在下方“购买方名称”字段修正后保存。", self)
         self.lbl_buyer_warning_hint.setStyleSheet("color: #6B7280; font-size: 12px;")
         self.lbl_buyer_warning_hint.setVisible(False)
         summary_layout.addWidget(self.lbl_buyer_warning_hint)
@@ -662,8 +662,16 @@ class InvoiceReviewApp(QMainWindow):
         self.inline_more_menu = QMenu(self)
         self.action_inline_reset = self.inline_more_menu.addAction("重置为待审核")
         self.action_inline_delete = self.inline_more_menu.addAction("删除发票")
+        self.inline_more_menu.addSeparator()
+        self.action_copy_number = self.inline_more_menu.addAction("复制发票号码")
+        self.action_locate_file = self.inline_more_menu.addAction("定位原件文件")
+        self.action_open_dir = self.inline_more_menu.addAction("打开文件所在目录")
+
         self.action_inline_reset.triggered.connect(lambda: self._set_selected_status(TO_REVIEW))
         self.action_inline_delete.triggered.connect(self._handle_detail_delete_clicked)
+        self.action_copy_number.triggered.connect(self._copy_invoice_number)
+        self.action_locate_file.triggered.connect(self._locate_attachment_file)
+        self.action_open_dir.triggered.connect(self._locate_attachment)
 
         self.btn_inline_more = QPushButton("⋯")
         self.btn_inline_more.setProperty("class", "SecondaryBtn")
@@ -819,14 +827,21 @@ class InvoiceReviewApp(QMainWindow):
         self.review_note_section.setProperty("class", "DetailSection")
         review_note_layout = QVBoxLayout(self.review_note_section)
         review_note_layout.setContentsMargins(10, 4, 10, 4)
-        review_note_layout.setSpacing(2)
-        lbl_note_title = QLabel("个人备注")
-        lbl_note_title.setProperty("class", "SectionTitle")
-        review_note_layout.addWidget(lbl_note_title)
+        review_note_layout.setSpacing(4)
+
+        note_title_layout = QHBoxLayout()
+        self.btn_toggle_note = QPushButton("个人备注 +")
+        self.btn_toggle_note.setProperty("class", "TextBtn")
+        self.btn_toggle_note.setStyleSheet("text-align: left; font-weight: bold; color: #4B5563; border: none; background: transparent; padding: 0;")
+        self.btn_toggle_note.clicked.connect(self._toggle_note_visibility)
+        note_title_layout.addWidget(self.btn_toggle_note)
+        note_title_layout.addStretch(1)
+        review_note_layout.addLayout(note_title_layout)
 
         self.txt_note = QTextEdit()
         self.txt_note.setMaximumHeight(45)
         self.txt_note.setPlaceholderText("可填写报销说明、事项背景、客户/项目等本地备注。")
+        self.txt_note.setVisible(False)
         review_note_layout.addWidget(self.txt_note)
         tab_details_layout.addWidget(self.review_note_section)
 
@@ -990,7 +1005,7 @@ class InvoiceReviewApp(QMainWindow):
         export_btn_layout.addStretch(1)
 
         self.btn_export = QPushButton("一键打包导出")
-        self.btn_export.setProperty("class", "PrimaryBtn")
+        self.btn_export.setProperty("class", "SecondaryBtn")
         self.btn_export.setMaximumWidth(140)
         self.btn_export.clicked.connect(self._export_claim_package)
         export_btn_layout.addWidget(self.btn_export)
@@ -1005,7 +1020,7 @@ class InvoiceReviewApp(QMainWindow):
         tab_claim_layout.addWidget(self.claim_export_section)
         tab_claim_layout.addStretch()
 
-        self.detail_tabs.addTab(tab_claim, "报销导出")
+        self.detail_tabs.addTab(tab_claim, "报销组")
 
         self._connect_invoice_dirty_tracking()
         self.btn_save_draft.setEnabled(False)
@@ -1374,6 +1389,12 @@ class InvoiceReviewApp(QMainWindow):
     def _toggle_more_source_info(self, expanded: bool):
         self.more_source_widget.setVisible(expanded)
         self.btn_more_source.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+
+    def _toggle_note_visibility(self):
+        if hasattr(self, "txt_note") and hasattr(self, "btn_toggle_note"):
+            visible = not self.txt_note.isVisible()
+            self.txt_note.setVisible(visible)
+            self.btn_toggle_note.setText("个人备注 -" if visible else "个人备注 +")
 
     def _toggle_log(self):
         current = getattr(self, "_log_panel_visible", self.log_container.isVisible())
@@ -1875,6 +1896,12 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_sum_open_file.setEnabled(False)
         self.btn_sum_copy_number.setEnabled(False)
         self.btn_sum_locate_file.setEnabled(False)
+        self.txt_buyer.setPlaceholderText("")
+
+        if hasattr(self, "action_copy_number"):
+            self.action_copy_number.setEnabled(False)
+            self.action_locate_file.setEnabled(False)
+            self.action_open_dir.setEnabled(False)
 
         # Disable fields
         self.txt_number.setEnabled(False)
@@ -2061,7 +2088,12 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
             self._update_supporting_docs_selector(inv)
 
-            self.txt_note.setPlainText(str(inv.get("confirmed_note") or ""))
+            note_content = str(inv.get("confirmed_note") or "").strip()
+            self.txt_note.setPlainText(note_content)
+            has_note = bool(note_content)
+            self.txt_note.setVisible(has_note)
+            if hasattr(self, "btn_toggle_note"):
+                self.btn_toggle_note.setText("个人备注 -" if has_note else "个人备注 +")
 
             # Update summary card
             self.lbl_sum_amount.setText(self._format_amount_display(total_amt))
@@ -2069,10 +2101,23 @@ class InvoiceReviewApp(QMainWindow):
             self.lbl_sum_number.setText(f"发票号码: {inv_num}" if inv_num else "发票号码: —")
             self.lbl_sum_seller.setText(f"销售方: {seller}" if seller else "销售方: —")
             self.lbl_sum_category.setText(f"消费类型: {category or '未分类'}")
+
             buyer_check_warning = self._buyer_warning(inv)
-            self.lbl_buyer_warning.setText(buyer_check_warning)
-            self.lbl_buyer_warning.setVisible(bool(buyer_check_warning))
-            self.lbl_buyer_warning_hint.setVisible(bool(buyer_check_warning))
+            if buyer_check_warning == "购方抬头不匹配，可能导致退单":
+                self.lbl_buyer_warning.setText("抬头不匹配")
+                cfg = load_config_safe()
+                expected = str(cfg.get("reimbursement", {}).get("buyer_name") or "").strip()
+                self.lbl_buyer_warning.setToolTip(f"期望抬头：{expected}\n实际抬头：{buyer}")
+                self.lbl_buyer_warning.setVisible(True)
+            else:
+                self.lbl_buyer_warning.setVisible(False)
+
+            self.lbl_buyer_warning_hint.setVisible(False)
+
+            if not buyer.strip():
+                self.txt_buyer.setPlaceholderText("待补全")
+            else:
+                self.txt_buyer.setPlaceholderText("")
 
             date_warn = get_date_warning(inv)
             self.lbl_date_warning.setText(date_warn)
@@ -2082,6 +2127,13 @@ class InvoiceReviewApp(QMainWindow):
             self.btn_sum_open_file.setEnabled(bool(att_path))
             self.btn_sum_copy_number.setEnabled(bool(inv_num))
             self.btn_sum_locate_file.setEnabled(bool(att_path))
+
+            if hasattr(self, "action_copy_number"):
+                has_num = bool(inv_num)
+                has_att = bool(att_path)
+                self.action_copy_number.setEnabled(has_num)
+                self.action_locate_file.setEnabled(has_att)
+                self.action_open_dir.setEnabled(has_att)
 
             self.txt_number.setEnabled(True)
             self.txt_date.setEnabled(True)
@@ -2866,6 +2918,31 @@ class InvoiceReviewApp(QMainWindow):
 
         self._open_local_path(target_dir)
         self.statusBar().showMessage(f"已打开附件所在目录: {target_dir}", 2000)
+
+    def _locate_attachment_file(self):
+        """Open Explorer and highlight/select the current attachment file."""
+        if not self.current_invoice or not self.current_invoice.get("attachment_path"):
+            return
+        attachment_path = str(self.current_invoice.get("attachment_path") or "")
+        file_path = self._resolve_attachment_path(attachment_path)
+        if not file_path or not file_path.exists():
+            QMessageBox.warning(
+                self,
+                "警告",
+                f"文件不存在于路径:\n{file_path}",
+            )
+            return
+
+        import sys
+        if sys.platform == "win32":
+            try:
+                import subprocess
+                subprocess.run(["explorer.exe", "/select,", str(file_path.resolve())])
+                return
+            except Exception as e:
+                _log.error("Failed to run explorer /select: %s", e)
+
+        self._open_local_path(file_path.parent)
 
     def _open_exports_directory(self):
         """Open global exports folder, write to status bar."""
