@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import requests
+
 from scripts.invoice_fetch.ai_classifier import AIClassifier
 from scripts.invoice_fetch.config import load_config
 
@@ -54,6 +56,26 @@ class PrivacyDefaultTests(unittest.TestCase):
         self.assertNotIn("13812345678", masked)
         self.assertNotIn("20260520123456789", masked)
         self.assertNotIn("tester@example.com", masked)
+
+    def test_ai_request_error_summary_does_not_leak_url_or_key(self):
+        request = requests.Request(
+            "POST",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=secret-token",
+        ).prepare()
+        response = requests.Response()
+        response.status_code = 403
+        response.request = request
+        exc = requests.HTTPError(
+            "403 Client Error for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=secret-token",
+            response=response,
+        )
+
+        safe = AIClassifier._safe_request_error(exc)
+
+        self.assertEqual(safe, "HTTPError:status=403")
+        self.assertNotIn("secret-token", safe)
+        self.assertNotIn("generativelanguage", safe)
+        self.assertNotIn("key=", safe)
 
 
 if __name__ == "__main__":
