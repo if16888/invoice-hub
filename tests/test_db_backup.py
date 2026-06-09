@@ -1,9 +1,10 @@
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
 
-from scripts.invoice_fetch.db_backup import create_database_backup
+from scripts.invoice_fetch.db_backup import create_database_backup, prune_database_backups
 
 
 class DatabaseBackupTests(unittest.TestCase):
@@ -60,6 +61,34 @@ class DatabaseBackupTests(unittest.TestCase):
 
             with self.assertRaises(FileNotFoundError):
                 create_database_backup(missing, backup_dir=Path(td) / "backups")
+
+    def test_prune_database_backups_keeps_newest_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            backup_dir = Path(td) / "backups"
+            backup_dir.mkdir()
+            files = []
+            for idx in range(5):
+                path = backup_dir / f"invoices-{idx}.db"
+                path.write_text(str(idx), encoding="utf-8")
+                mtime = time.time() + idx
+                path.touch()
+                path_stat_time = mtime
+                import os
+                os.utime(path, (path_stat_time, path_stat_time))
+                files.append(path)
+            ignored = backup_dir / "notes.txt"
+            ignored.write_text("keep", encoding="utf-8")
+
+            removed = prune_database_backups(backup_dir, keep=2)
+
+            self.assertEqual({p.name for p in removed}, {"invoices-0.db", "invoices-1.db", "invoices-2.db"})
+            self.assertTrue((backup_dir / "invoices-3.db").exists())
+            self.assertTrue((backup_dir / "invoices-4.db").exists())
+            self.assertTrue(ignored.exists())
+
+    def test_prune_database_backups_rejects_negative_keep(self):
+        with self.assertRaises(ValueError):
+            prune_database_backups(keep=-1)
 
 
 if __name__ == "__main__":
