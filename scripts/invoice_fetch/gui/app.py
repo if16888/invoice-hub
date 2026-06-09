@@ -636,6 +636,39 @@ class InvoiceReviewApp(QMainWindow):
 
         right_content_layout.addWidget(self.summary_card)
 
+        # New inline review actions bar
+        self.inline_review_layout = QHBoxLayout()
+        self.inline_review_layout.setSpacing(6)
+        self.inline_review_layout.setContentsMargins(0, 4, 0, 4)
+
+        self.btn_inline_app = QPushButton("通过并下一张")
+        self.btn_inline_app.setProperty("class", "PrimaryBtn")
+        self.btn_inline_app.clicked.connect(lambda: self._set_selected_status(APPROVED))
+        self.inline_review_layout.addWidget(self.btn_inline_app)
+
+        self.btn_inline_ign = QPushButton("忽略")
+        self.btn_inline_ign.setProperty("class", "SecondaryBtn")
+        self.btn_inline_ign.clicked.connect(lambda: self._set_selected_status(IGNORED))
+        self.inline_review_layout.addWidget(self.btn_inline_ign)
+
+        self.btn_inline_err = QPushButton("异常")
+        self.btn_inline_err.setProperty("class", "DangerOutlineBtn")
+        self.btn_inline_err.clicked.connect(lambda: self._set_selected_status(ERROR))
+        self.inline_review_layout.addWidget(self.btn_inline_err)
+
+        self.inline_more_menu = QMenu(self)
+        self.action_inline_reset = self.inline_more_menu.addAction("重置为待审核")
+        self.action_inline_delete = self.inline_more_menu.addAction("删除发票")
+        self.action_inline_reset.triggered.connect(lambda: self._set_selected_status(TO_REVIEW))
+        self.action_inline_delete.triggered.connect(self._handle_detail_delete_clicked)
+
+        self.btn_inline_more = QPushButton("更多")
+        self.btn_inline_more.setProperty("class", "SecondaryBtn")
+        self.btn_inline_more.setMenu(self.inline_more_menu)
+        self.inline_review_layout.addWidget(self.btn_inline_more)
+
+        right_content_layout.addLayout(self.inline_review_layout)
+
         # 2. Right-Side QTabWidget
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -1886,6 +1919,11 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_ign.setEnabled(False)
         self.btn_err.setEnabled(False)
         self.btn_rev.setEnabled(False)
+        if hasattr(self, "btn_inline_app"):
+            self.btn_inline_app.setEnabled(False)
+            self.btn_inline_ign.setEnabled(False)
+            self.btn_inline_err.setEnabled(False)
+            self.btn_inline_more.setEnabled(False)
         self._suspend_dirty_tracking = False
 
         if hasattr(self, "lbl_closing_desc"):
@@ -1971,6 +2009,19 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_ign.setEnabled(True)
         self.btn_err.setEnabled(True)
         self.btn_rev.setEnabled(True)
+
+        if hasattr(self, "btn_inline_app"):
+            self.btn_inline_app.setEnabled(True)
+            self.btn_inline_ign.setEnabled(True)
+            self.btn_inline_err.setEnabled(True)
+            self.btn_inline_more.setEnabled(True)
+
+        if hasattr(self, "action_inline_delete") and num_selected > 0:
+            first_inv = self.invoices_list[selected_indexes[0].row()]
+            if first_inv.get("is_deleted") == 1:
+                self.action_inline_delete.setText("恢复发票")
+            else:
+                self.action_inline_delete.setText("删除发票")
 
         if hasattr(self, "btn_delete_invoice") and num_selected > 0:
             first_inv = self.invoices_list[selected_indexes[0].row()]
@@ -2097,6 +2148,11 @@ class InvoiceReviewApp(QMainWindow):
             self.btn_ign.setEnabled(True)
             self.btn_err.setEnabled(True)
             self.btn_rev.setEnabled(True)
+            if hasattr(self, "btn_inline_app"):
+                self.btn_inline_app.setEnabled(True)
+                self.btn_inline_ign.setEnabled(True)
+                self.btn_inline_err.setEnabled(True)
+                self.btn_inline_more.setEnabled(True)
             self.lbl_batch_hint.setText(f"已选择 {num_selected} 张发票，可批量处理")
             self.current_preview_docs = []
             self.current_preview_index = 0
