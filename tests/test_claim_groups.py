@@ -870,6 +870,59 @@ class ClaimGroupsTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     db.list_invoices(limit=-5)
 
+    def test_count_invoices_for_status(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_count_status.db"
+            with InvoiceDB(db_path) as db:
+                self.assertEqual(db.count_invoices_for_status(status=None), 0)
+
+                db.insert_invoice({
+                    "invoice_number": "INV001",
+                    "total_amount": "100.00",
+                    "seller_name": "Seller A",
+                    "invoice_date": "2026-06-01",
+                    "review_status": "to_review"
+                })
+                db.insert_invoice({
+                    "invoice_number": "INV002",
+                    "total_amount": "200.00",
+                    "seller_name": "Seller B",
+                    "invoice_date": "2026-06-02",
+                    "review_status": "approved"
+                })
+                db.insert_invoice({
+                    "invoice_number": "INV003",
+                    "total_amount": "300.00",
+                    "seller_name": "Seller C",
+                    "invoice_date": "2026-06-03",
+                    "review_status": "approved"
+                })
+                db.insert_invoice({
+                    "invoice_number": "INV004",
+                    "total_amount": "400.00",
+                    "seller_name": "Seller D",
+                    "invoice_date": "2026-06-04",
+                    "review_status": "ignored"
+                })
+
+                self.assertEqual(db.count_invoices_for_status(status=None), 4)
+                self.assertEqual(db.count_invoices_for_status(status="to_review"), 1)
+                self.assertEqual(db.count_invoices_for_status(status="approved"), 2)
+                self.assertEqual(db.count_invoices_for_status(status="ignored"), 1)
+                self.assertEqual(db.count_invoices_for_status(status="error"), 0)
+
+                inv_id = db.find_invoice_by_number("INV004")["id"]
+                db.soft_delete_invoice(inv_id)
+
+                self.assertEqual(db.count_invoices_for_status(status=None), 3)
+                self.assertEqual(db.count_invoices_for_status(status="ignored"), 0)
+
+                self.assertEqual(db.count_invoices_for_status(status=None, include_deleted=True), 4)
+                self.assertEqual(db.count_invoices_for_status(status="ignored", include_deleted=True), 1)
+
+                with self.assertRaises(ValueError):
+                    db.count_invoices_for_status(status="invalid_status")
+
     @patch("sys.exit")
     @patch("builtins.print")
     def test_invoice_list_status_approved_limit_20_output(self, mock_print, mock_exit):
@@ -4701,6 +4754,58 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn(True, count_calls)
                     self.assertFalse(window.table.signalsBlocked())
                     self.assertTrue(window.table.updatesEnabled())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_first_load_does_not_hydrate_entire_database_with_1000_records(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_performance_count.db"
+                with InvoiceDB(db_path) as db:
+                    db._conn.execute("BEGIN TRANSACTION")
+                    for i in range(1000):
+                        db._conn.execute(
+                            "INSERT INTO invoices (invoice_number, total_amount, seller_name, invoice_date, review_status, is_deleted) VALUES (?, ?, ?, ?, ?, ?)",
+                            (f"PERF{i:04d}", "10.00", "Synthetic Seller", "2026-06-01", "to_review", 0)
+                        )
+                    db._conn.execute("COMMIT")
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    original_list = window.db.list_invoices
+                    list_calls = []
+
+                    def spy_list(*args, **kwargs):
+                        list_calls.append((kwargs.get("status"), kwargs.get("limit")))
+                        return original_list(*args, **kwargs)
+
+                    window.db.list_invoices = spy_list
+
+                    window._deferred_init()
+                    app.processEvents()
+
+                    self.assertEqual(window.table.rowCount(), 100)
+
+                    for status, limit in list_calls:
+                        if status is None and limit is None:
+                            self.fail("list_invoices(status=None, limit=None) was called, leading to full hydration!")
+
+                    self.assertTrue(window._limited_first_load_active)
+                    self.assertEqual(window._limited_first_load_total, 1000)
+
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()

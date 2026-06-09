@@ -1213,20 +1213,23 @@ class InvoiceReviewApp(QMainWindow):
     def _base_filter_label(self, status) -> str:
         return self.filter_base_labels.get(status, str(status))
 
-    def _update_filter_counts(self, invoices: list[dict]):
+    def _update_filter_counts(self, invoices_or_counts):
         if not hasattr(self, "filter_buttons"):
             return
-        counts = {
-            "all": len(invoices),
-            TO_REVIEW: 0,
-            APPROVED: 0,
-            IGNORED: 0,
-            ERROR: 0,
-        }
-        for inv in invoices:
-            status = inv.get("review_status") or TO_REVIEW
-            if status in counts:
-                counts[status] += 1
+        if isinstance(invoices_or_counts, dict):
+            counts = invoices_or_counts
+        else:
+            counts = {
+                "all": len(invoices_or_counts),
+                TO_REVIEW: 0,
+                APPROVED: 0,
+                IGNORED: 0,
+                ERROR: 0,
+            }
+            for inv in invoices_or_counts:
+                status = inv.get("review_status") or TO_REVIEW
+                if status in counts:
+                    counts[status] += 1
         for status, btn in self.filter_buttons.items():
             btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
 
@@ -1565,12 +1568,14 @@ class InvoiceReviewApp(QMainWindow):
         unlinked_only = self.chk_unlinked.isChecked() if hasattr(self, "chk_unlinked") else False
         needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
 
+        is_default_view = not needle and not unlinked_only and not needs_fix_only
         limit_val = None
         first_load_limited = False
-        if self._is_first_load and not needle and not unlinked_only and not needs_fix_only and self.current_filter_status is None:
+        if self._is_first_load and is_default_view and self.current_filter_status is None:
             limit_val = 100
             first_load_limited = True
 
+        counts = None
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
@@ -1579,11 +1584,21 @@ class InvoiceReviewApp(QMainWindow):
                 limit=limit_val,
                 include_deleted=include_deleted
             )
-            count_source = self.db.list_invoices(
-                status=None,
-                limit=None,
-                include_deleted=include_deleted,
-            )
+            if is_default_view:
+                counts = {
+                    "all": self.db.count_invoices_for_status(status=None, include_deleted=include_deleted),
+                    TO_REVIEW: self.db.count_invoices_for_status(status=TO_REVIEW, include_deleted=include_deleted),
+                    APPROVED: self.db.count_invoices_for_status(status=APPROVED, include_deleted=include_deleted),
+                    IGNORED: self.db.count_invoices_for_status(status=IGNORED, include_deleted=include_deleted),
+                    ERROR: self.db.count_invoices_for_status(status=ERROR, include_deleted=include_deleted),
+                }
+                count_source = []
+            else:
+                count_source = self.db.list_invoices(
+                    status=None,
+                    limit=None,
+                    include_deleted=include_deleted,
+                )
             db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
             if self._is_first_load:
                 self._is_first_load = False
@@ -1592,6 +1607,7 @@ class InvoiceReviewApp(QMainWindow):
             QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
             display_source = []
             count_source = []
+            counts = None
 
         filter_start = time.perf_counter()
         displayed_invoices = self._apply_non_status_filters(
@@ -1600,19 +1616,22 @@ class InvoiceReviewApp(QMainWindow):
             unlinked_only,
             needs_fix_only,
         )
-        count_filtered_invoices = self._apply_non_status_filters(
-            count_source,
-            needle,
-            unlinked_only,
-            needs_fix_only,
-        )
+        if is_default_view and counts is not None:
+            count_filtered_invoices = counts
+        else:
+            count_filtered_invoices = self._apply_non_status_filters(
+                count_source,
+                needle,
+                unlinked_only,
+                needs_fix_only,
+            )
         filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
 
         self.invoices_list = displayed_invoices
         self._update_filter_counts(count_filtered_invoices)
 
         # Track limited first-load state for UI hints
-        total_matching = len(count_filtered_invoices)
+        total_matching = count_filtered_invoices.get("all", 0) if isinstance(count_filtered_invoices, dict) else len(count_filtered_invoices)
         if first_load_limited and total_matching > len(displayed_invoices):
             self._limited_first_load_active = True
             self._limited_first_load_total = total_matching
