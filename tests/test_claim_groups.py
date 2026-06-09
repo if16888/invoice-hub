@@ -4014,12 +4014,12 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertIsInstance(section, QFrame)
                         self.assertEqual(section.property("class"), "DetailSection")
 
-                    self.assertEqual(window.detail_tabs.count(), 3)
+                    self.assertEqual(window.detail_tabs.count(), 2)
                     self.assertEqual(
-                        [window.detail_tabs.tabText(index) for index in range(3)],
-                        ["发票详情", "审核", "报销导出"],
+                        [window.detail_tabs.tabText(index) for index in range(2)],
+                        ["发票详情", "报销导出"],
                     )
-                    self.assertEqual(window.txt_note.maximumHeight(), 60)
+                    self.assertEqual(window.txt_note.maximumHeight(), 45)
                     self.assertTrue(window.lbl_export_summary.wordWrap())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
