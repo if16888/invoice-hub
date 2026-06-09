@@ -57,6 +57,36 @@ class PrivacyDefaultTests(unittest.TestCase):
         self.assertNotIn("20260520123456789", masked)
         self.assertNotIn("tester@example.com", masked)
 
+    def test_ai_prompt_uses_only_masked_headers_not_body_or_attachments(self):
+        ai = AIClassifier(provider="none", model="", batch_size=20)
+
+        prompt = ai._build_user_message([
+            {
+                "uid": 99,
+                "subject": "发票 订单 202606091234567890",
+                "sender": "real.person@example.com",
+                "body": "正文包含身份证 110101199001011234，不应进入云 AI 请求",
+                "attachment_text": "PDF/OFD 全文、银行卡 6222020202020202020，不应进入云 AI 请求",
+                "ocr_text": "图片 OCR 全文，不应进入云 AI 请求",
+                "file_path": r"D:\\private\\invoice.pdf",
+            }
+        ])
+
+        self.assertIn("UID=99", prompt)
+        self.assertIn("主题:", prompt)
+        self.assertIn("发件人:", prompt)
+        self.assertIn("20****90", prompt)
+        self.assertIn("r***n@example.com", prompt)
+        self.assertNotIn("202606091234567890", prompt)
+        self.assertNotIn("real.person@example.com", prompt)
+        self.assertNotIn("身份证", prompt)
+        self.assertNotIn("110101199001011234", prompt)
+        self.assertNotIn("银行卡", prompt)
+        self.assertNotIn("6222020202020202020", prompt)
+        self.assertNotIn("PDF/OFD", prompt)
+        self.assertNotIn("OCR", prompt)
+        self.assertNotIn("D:\\private", prompt)
+
     def test_ai_request_error_summary_does_not_leak_url_or_key(self):
         request = requests.Request(
             "POST",
