@@ -2253,8 +2253,8 @@ class ClaimGroupsTests(unittest.TestCase):
             splash.show_message("正在进行测试...", 50)
             splash.close()
             self.assertTrue(True)
-        except Exception as e:
-            self.skipTest(f"Skipping GUI test in displayless environment: {e}")
+        except (ImportError, RuntimeError, OSError) as e:
+            self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_deferred_init_loads_invoice_list(self):
         # GUI test to verify _deferred_init loads invoices and claims successfully
@@ -4862,7 +4862,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.close()
                     window.deleteLater()
                     app.processEvents()
-        except (ImportError, RuntimeError) as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_link_invoice_refreshes_claim_column(self):
@@ -4870,7 +4870,7 @@ class ClaimGroupsTests(unittest.TestCase):
         try:
             from PySide6.QtWidgets import QApplication, QMessageBox
             app = QApplication.instance() or QApplication(sys.argv)
-        except (ImportError, RuntimeError) as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
         with tempfile.TemporaryDirectory() as td:
@@ -4961,7 +4961,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.close()
                     window.deleteLater()
                     app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_missing_amount_shows_placeholder_in_summary(self):
@@ -4997,7 +4997,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.close()
                     window.deleteLater()
                     app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_supporting_documents_list_updates_with_selected_invoice(self):
@@ -5095,7 +5095,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_open_attachment_resolves_mainrepo_nested_relative_path(self):
@@ -5144,7 +5144,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_open_attachment_recovers_from_stale_filename_only_path(self):
@@ -5193,7 +5193,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_claim_quality_report_generation(self):
@@ -5428,7 +5428,7 @@ class ClaimGroupsTests(unittest.TestCase):
                             window.close()
                             window.deleteLater()
                             app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
 

@@ -829,6 +829,7 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_export = QPushButton("导出报销包")
         self.btn_export.setProperty("class", "SecondaryBtn")
         self.btn_export.setMaximumWidth(120)
+        self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self._export_claim_package)
         claim_total_row.addWidget(self.btn_export)
         claim_setup_layout.addLayout(claim_total_row)
@@ -1765,6 +1766,8 @@ class InvoiceReviewApp(QMainWindow):
         claim_idx = self.combo_claims.currentIndex() if hasattr(self, "combo_claims") else -1
         if claim_idx < 0:
             self.lbl_claim_total.setText("当前报销组 0 张｜合计 ¥0.00")
+            if hasattr(self, "btn_export"):
+                self.btn_export.setEnabled(False)
             return
         claim_id = self.combo_claims.itemData(claim_idx)
         try:
@@ -1773,6 +1776,8 @@ class InvoiceReviewApp(QMainWindow):
             _log.debug("Failed to calculate claim total: %s", exc)
             invoices = []
         self.lbl_claim_total.setText(f"当前报销组 {format_amount_total(invoices)}")
+        if hasattr(self, "btn_export"):
+            self.btn_export.setEnabled(True)
 
     def _clear_detail_form(self):
         # Reset right hand details form to generic empty/placeholder state.
@@ -1843,6 +1848,7 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_err.setEnabled(False)
         self.btn_rev.setEnabled(False)
         self.btn_inline_more.setEnabled(False)
+        self.btn_add_to_claim.setEnabled(False)
         self._suspend_dirty_tracking = False
 
         if hasattr(self, "lbl_closing_desc"):
@@ -1931,6 +1937,7 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_err.setEnabled(True)
         self.btn_rev.setEnabled(True)
         self.btn_inline_more.setEnabled(True)
+        self.btn_add_to_claim.setEnabled(True)
 
         if hasattr(self, "action_inline_delete") and num_selected > 0:
             first_inv = self.invoices_list[selected_indexes[0].row()]
