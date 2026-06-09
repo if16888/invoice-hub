@@ -61,7 +61,7 @@ class ReimbursementValidationTests(unittest.TestCase):
                 )
 
             manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
-            warning = "购方抬头不匹配，可能导致退单；未识别到费用发生日期，已使用开票日期。"
+            warning = "购方抬头不匹配，可能导致退单"
             self.assertEqual(manifest["items"][0]["warning"], warning)
 
             wb = load_workbook(export_dir / "reimbursement.xlsx")

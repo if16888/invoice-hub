@@ -53,8 +53,39 @@ def format_amount_total(rows: list[dict]) -> str:
     return f"{count} 张｜合计 ¥{total:.2f}{suffix}"
 
 
+def _is_railway_or_travel_ticket(invoice: dict) -> bool:
+    inv_type = str(invoice.get("invoice_type") or "").strip()
+    seller_name = str(invoice.get("seller_name") or "").strip()
+    category = str(invoice.get("category") or "").strip()
+
+    # 1. 铁路电子客票
+    if inv_type == "铁路电子客票" or seller_name == "中国国家铁路集团有限公司":
+        return True
+    if "铁路" in inv_type or "铁路" in seller_name:
+        return True
+    if "12306" in inv_type or "12306" in seller_name:
+        return True
+
+    # 2. 交通类且 seller_name/票据类型明显属于行程票据
+    is_transport = category in ("交通", "过路费") or "交通" in category
+    if is_transport:
+        travel_kws = [
+            "客运", "客运站", "地铁", "公交", "出租车", "打车", "滴滴", "出行",
+            "机票", "车票", "船票", "客票", "过路", "高速", "公路", "大卡",
+            "强生", "航旅", "航空", "捷运", "轨道交通", "运输"
+        ]
+        if any(kw in seller_name for kw in travel_kws):
+            return True
+        if any(kw in inv_type for kw in travel_kws):
+            return True
+
+    return False
+
+
 def get_date_warning(invoice: dict) -> str:
     """Return a low-priority warning if expense date defaults to invoice date."""
+    if not _is_railway_or_travel_ticket(invoice):
+        return ""
     expense_date = str(invoice.get("expense_date") or "").strip()
     date_source = str(invoice.get("date_source") or "").strip()
     if expense_date and date_source in ("invoice_date", "legacy", "unknown", ""):

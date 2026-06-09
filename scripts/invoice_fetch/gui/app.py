@@ -1258,7 +1258,7 @@ class InvoiceReviewApp(QMainWindow):
     def _get_invoice_quality(self, inv: dict) -> str:
         inv_num = str(inv.get("invoice_number") or "").strip()
         total_amt = str(inv.get("total_amount") or "").strip()
-        inv_date = str(inv.get("invoice_date") or "").strip()
+        inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
         seller = str(inv.get("seller_name") or "").strip()
         if not inv_num and not total_amt and not seller:
             return "未识别"
@@ -2875,7 +2875,7 @@ class InvoiceReviewApp(QMainWindow):
             success = self.db.update_invoice_fields(
                 invoice_id=inv_id,
                 invoice_number=number,
-                invoice_date=date,
+                expense_date=date,
                 seller_name=seller,
                 buyer_name=buyer,
                 total_amount=amount,
@@ -2917,7 +2917,7 @@ class InvoiceReviewApp(QMainWindow):
         if not str(inv.get("total_amount") or "").strip():
             missing.append("金额")
         if not str(inv.get("expense_date") or inv.get("invoice_date") or "").strip():
-            missing.append("日期")
+            missing.append("费用日期")
         if not str(inv.get("attachment_path") or "").strip():
             missing.append("原件")
         return missing

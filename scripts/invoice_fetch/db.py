@@ -638,7 +638,7 @@ class InvoiceDB:
         self,
         invoice_id: int,
         invoice_number: str,
-        invoice_date: str,
+        expense_date: str,
         seller_name: str,
         total_amount: str,
         category: str,
@@ -656,19 +656,20 @@ class InvoiceDB:
         if buyer_name is None:
             buyer_name = str(inv.get("buyer_name") or "")
 
-        new_expense_date = invoice_date
-        old_date_source = str(inv.get("date_source") or "")
+        new_expense_date = str(expense_date or "").strip()
+        old_expense_date = str(inv.get("expense_date") or "").strip()
+        old_date_source = str(inv.get("date_source") or "").strip()
 
-        if old_date_source in ("invoice_date", "legacy", "unknown", ""):
-            new_invoice_date = new_expense_date
+        if new_expense_date != old_expense_date:
+            new_date_source = "manual"
         else:
-            new_invoice_date = str(inv.get("invoice_date") or "")
+            new_date_source = old_date_source
 
         try:
             self._conn.execute(
-                "UPDATE invoices SET invoice_number=?, invoice_date=?, expense_date=?, seller_name=?, buyer_name=?, "
+                "UPDATE invoices SET invoice_number=?, expense_date=?, date_source=?, seller_name=?, buyer_name=?, "
                 "total_amount=?, category=?, confirmed_note=? WHERE id=?",
-                (invoice_number, new_invoice_date, new_expense_date, seller_name, buyer_name, total_amount, category, note, invoice_id),
+                (invoice_number, new_expense_date, new_date_source, seller_name, buyer_name, total_amount, category, note, invoice_id),
             )
             self._conn.commit()
             self._set_last_error("")

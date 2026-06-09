@@ -941,7 +941,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 res = db.update_invoice_fields(
                     invoice_id=inv_id,
                     invoice_number="NEWNUM",
-                    invoice_date="2026-05-24",
+                    expense_date="2026-05-24",
                     seller_name="New Seller",
                     total_amount="120.50",
                     category="餐饮",
@@ -950,7 +950,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertTrue(res)
                 inv = db.get_invoice(inv_id)
                 self.assertEqual(inv["invoice_number"], "NEWNUM")
-                self.assertEqual(inv["invoice_date"], "2026-05-24")
+                self.assertEqual(inv["expense_date"], "2026-05-24")
+                self.assertFalse(inv.get("invoice_date"))
                 self.assertEqual(inv["seller_name"], "New Seller")
                 self.assertEqual(inv["total_amount"], "120.50")
                 self.assertEqual(inv["category"], "餐饮")
@@ -959,7 +960,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 res_missing = db.update_invoice_fields(
                     invoice_id=9999,
                     invoice_number="NUM",
-                    invoice_date="",
+                    expense_date="",
                     seller_name="Seller",
                     total_amount="10.00",
                     category="其他"
@@ -2568,7 +2569,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     mock_warning.assert_not_called()
                     refreshed = window.db.get_invoice(invoice_id)
                     self.assertEqual(refreshed["invoice_number"], "")
-                    self.assertEqual(refreshed["invoice_date"], "2026-06-04")
+                    self.assertEqual(refreshed["invoice_date"], "")
+                    self.assertEqual(refreshed["expense_date"], "2026-06-04")
                     self.assertEqual(refreshed["seller_name"], "Synthetic Receipt Seller")
                     self.assertEqual(refreshed["total_amount"], "88.50")
                     self.assertEqual(refreshed["category"], "receipt")
@@ -3869,7 +3871,9 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     refreshed = window.db.get_invoice(invoice_id)
                     self.assertEqual(refreshed["invoice_number"], "AFTER001")
-                    self.assertEqual(refreshed["invoice_date"], "2026-06-02")
+                    self.assertEqual(refreshed["invoice_date"], "2026-06-01")
+                    self.assertEqual(refreshed["expense_date"], "2026-06-02")
+                    self.assertEqual(refreshed["date_source"], "manual")
                     self.assertEqual(refreshed["total_amount"], "25.50")
                     self.assertEqual(refreshed["seller_name"], "新销售方")
                     self.assertEqual(refreshed["buyer_name"], "新购买方")
@@ -5298,10 +5302,14 @@ class ClaimGroupsTests(unittest.TestCase):
                                 self.assertFalse(any(str(td) in call[0][0] for call in setText_calls))
 
                             # Scenario 2: 0 warnings (fix empty seller name)
-                            db.update_invoice_fields(inv_id, {
-                                "seller_name": "Valid Seller",
-                                "invoice_date": "2026-06-01",
-                            })
+                            db.update_invoice_fields(
+                                invoice_id=inv_id,
+                                invoice_number="GUI001",
+                                expense_date="2026-06-01",
+                                seller_name="Valid Seller",
+                                total_amount="100.00",
+                                category="交通",
+                            )
                             with patch("scripts.invoice_fetch.gui.app.QMessageBox") as mock_box_class:
                                 mock_box_instance = mock_box_class.return_value
                                 mock_box_instance.clickedButton.return_value = Mock()

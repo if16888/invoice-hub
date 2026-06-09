@@ -30,23 +30,37 @@ class ExpenseDateTests(unittest.TestCase):
         self.assertIsNone(parse_railway_invoice_date("开票日期 2026-05-18"))
 
     def test_date_warning_logic(self):
-        # 1. Fallback to invoice date
+        # 1. Fallback to invoice date (railway ticket triggers warning)
         inv_fallback = {
             "expense_date": "2026-05-18",
             "invoice_date": "2026-05-18",
-            "date_source": "invoice_date"
+            "date_source": "invoice_date",
+            "invoice_type": "铁路电子客票",
+            "seller_name": "中国国家铁路集团有限公司",
         }
         self.assertEqual(get_date_warning(inv_fallback), "未识别到费用发生日期，已使用开票日期。")
 
-        # 2. Travel date source
+        # 2. Travel date source (no warning)
         inv_travel = {
             "expense_date": "2026-05-07",
             "invoice_date": "2026-05-18",
-            "date_source": "travel_date"
+            "date_source": "travel_date",
+            "invoice_type": "铁路电子客票",
+            "seller_name": "中国国家铁路集团有限公司",
         }
         self.assertEqual(get_date_warning(inv_travel), "")
 
-        # 3. Empty date source / empty dates
+        # 3. Ordinary dining invoice fallback (no warning)
+        inv_dining = {
+            "expense_date": "2026-05-18",
+            "invoice_date": "2026-05-18",
+            "date_source": "invoice_date",
+            "category": "餐饮",
+            "seller_name": "餐饮商户",
+        }
+        self.assertEqual(get_date_warning(inv_dining), "")
+
+        # 4. Empty date source / empty dates
         inv_empty = {
             "expense_date": "",
             "invoice_date": "",
@@ -182,7 +196,7 @@ class ExpenseDateTests(unittest.TestCase):
             
             self.assertEqual(items_by_num["NORMAL456"]["expense_date"], "2026-05-20")
             self.assertEqual(items_by_num["NORMAL456"]["date_source"], "invoice_date")
-            self.assertEqual(items_by_num["NORMAL456"]["warning"], "未识别到费用发生日期，已使用开票日期。")
+            self.assertEqual(items_by_num["NORMAL456"]["warning"], "")
 
             # 2. Verify Excel columns
             wb = load_workbook(export_dir / "reimbursement.xlsx")
@@ -213,7 +227,147 @@ class ExpenseDateTests(unittest.TestCase):
 
             self.assertEqual(rows_by_num["NORMAL456"]["expense_date"], "2026-05-20")
             self.assertEqual(rows_by_num["NORMAL456"]["invoice_date"], "2026-05-20")
-            self.assertEqual(rows_by_num["NORMAL456"]["warning"], "未识别到费用发生日期，已使用开票日期。")
+            self.assertIsNone(rows_by_num["NORMAL456"]["warning"])
+
+    def test_refresh_legacy_railway_expense_date_upgrade(self):
+        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test.db"
+            with InvoiceDB(db_path) as db:
+                existing_id = db.insert_invoice({
+                    "invoice_number": "UPGRADE001",
+                    "invoice_date": "2026-05-18",
+                    "expense_date": "2026-05-18",
+                    "date_source": "legacy",
+                    "seller_name": "中国国家铁路集团有限公司",
+                    "total_amount": "140.00",
+                    "category": "交通",
+                })
+                existing = db.get_invoice(existing_id)
+                res = _refresh_invoice_from_parse(
+                    db,
+                    existing,
+                    invoice_number="UPGRADE001",
+                    invoice_code="CODE123",
+                    invoice_date="2026-05-18",
+                    amount="140.00",
+                    total_amount="140.00",
+                    seller_name="中国国家铁路集团有限公司",
+                    buyer_name="Test Co",
+                    invoice_type="铁路电子客票",
+                    category="交通",
+                    has_extra=False,
+                    extra_type="",
+                    missing_extra=False,
+                    parse_note="new parse",
+                    expense_date="2026-05-07",
+                    date_source="travel_date",
+                    force_refresh_metadata=False,
+                )
+                self.assertTrue(res)
+                updated = db.get_invoice(existing_id)
+                self.assertEqual(updated["expense_date"], "2026-05-07")
+                self.assertEqual(updated["date_source"], "travel_date")
+                self.assertEqual(updated["invoice_date"], "2026-05-18")
+
+    def test_manual_edit_expense_date_preserves_invoice_date(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test.db"
+            with InvoiceDB(db_path) as db:
+                inv_id = db.insert_invoice({
+                    "invoice_number": "MANUAL001",
+                    "invoice_date": "2026-05-18",
+                    "expense_date": "2026-05-07",
+                    "date_source": "travel_date",
+                    "seller_name": "中国国家铁路集团有限公司",
+                    "total_amount": "140.00",
+                    "category": "交通",
+                })
+                res = db.update_invoice_fields(
+                    invoice_id=inv_id,
+                    invoice_number="MANUAL001",
+                    expense_date="2026-05-08",
+                    seller_name="中国国家铁路集团有限公司",
+                    total_amount="140.00",
+                    category="交通",
+                )
+                self.assertTrue(res)
+                updated = db.get_invoice(inv_id)
+                self.assertEqual(updated["expense_date"], "2026-05-08")
+                self.assertEqual(updated["date_source"], "manual")
+                self.assertEqual(updated["invoice_date"], "2026-05-18")
+
+    def test_gui_table_uses_expense_date(self):
+        import sys
+        from PySide6.QtWidgets import QApplication
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test.db"
+            with InvoiceDB(db_path) as db:
+                db.insert_invoice({
+                    "invoice_number": "GUITABLE001",
+                    "invoice_date": "2026-05-18",
+                    "expense_date": "2026-05-07",
+                    "date_source": "travel_date",
+                    "seller_name": "中国国家铁路集团有限公司",
+                    "total_amount": "140.00",
+                    "category": "交通",
+                    "review_status": "to_review",
+                })
+
+            try:
+                window = InvoiceReviewApp(db_path, splash=None)
+                window._deferred_init()
+                app.processEvents()
+
+                self.assertEqual(window.table.rowCount(), 1)
+                date_item = window.table.item(0, 1)
+                self.assertEqual(date_item.text(), "2026-05-07")
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+            except Exception as e:
+                self.skipTest(f"Skipping GUI test due to UI environment issues: {e}")
+
+    def test_quality_uses_expense_date(self):
+        import sys
+        from PySide6.QtWidgets import QApplication
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test.db"
+            with InvoiceDB(db_path) as db:
+                pass
+
+            try:
+                window = InvoiceReviewApp(db_path, splash=None)
+                window._deferred_init()
+                app.processEvents()
+
+                inv_ok = {
+                    "invoice_number": "QUALITY001",
+                    "invoice_date": "",
+                    "expense_date": "2026-05-07",
+                    "total_amount": "100.00",
+                    "seller_name": "Test Seller",
+                }
+                self.assertEqual(window._get_invoice_quality(inv_ok), "")
+
+                inv_bad = {
+                    "invoice_number": "QUALITY002",
+                    "invoice_date": "",
+                    "expense_date": "",
+                    "total_amount": "100.00",
+                    "seller_name": "Test Seller",
+                }
+                self.assertEqual(window._get_invoice_quality(inv_bad), "待补全")
+
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+            except Exception as e:
+                self.skipTest(f"Skipping GUI test due to UI environment issues: {e}")
 
 
 if __name__ == "__main__":

@@ -1392,8 +1392,37 @@ def _refresh_invoice_from_parse(
         updated_amount = existing.get("amount") if str(existing.get("amount") or "").strip() else amount
         updated_total_amount = existing.get("total_amount") if str(existing.get("total_amount") or "").strip() else total_amount
         updated_invoice_date = existing.get("invoice_date") if str(existing.get("invoice_date") or "").strip() else invoice_date
-        updated_expense_date = existing.get("expense_date") if str(existing.get("expense_date") or "").strip() else expense_date
-        updated_date_source = existing.get("date_source") if str(existing.get("date_source") or "").strip() else date_source
+
+        weak_sources = {"", "unknown", "legacy", "invoice_date"}
+        strong_sources = {"travel_date", "service_date", "payment_date"}
+
+        new_expense_date_clean = str(expense_date or "").strip()
+        new_date_source_clean = str(date_source or "").strip()
+        existing_expense_date_clean = str(existing.get("expense_date") or "").strip()
+        existing_date_source_clean = str(existing.get("date_source") or "").strip()
+
+        # Date source upgrade rule
+        is_upgrade = (
+            new_expense_date_clean
+            and new_date_source_clean in strong_sources
+            and existing_date_source_clean in weak_sources
+            and existing_expense_date_clean != new_expense_date_clean
+        )
+
+        if is_upgrade:
+            updated_expense_date = new_expense_date_clean
+            updated_date_source = new_date_source_clean
+            _log.info(
+                "  重复发票费用日期升级: existing_id=%d, %s(%s) -> %s(%s)",
+                existing["id"],
+                existing_expense_date_clean or "空",
+                existing_date_source_clean or "空",
+                new_expense_date_clean,
+                new_date_source_clean
+            )
+        else:
+            updated_expense_date = existing.get("expense_date") if existing_expense_date_clean else expense_date
+            updated_date_source = existing.get("date_source") if existing_date_source_clean else date_source
 
         if backfill_fiscal_category:
             updated_category = "过路费"

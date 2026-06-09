@@ -1320,10 +1320,54 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
         import tempfile
         self.temp_dir = Path(tempfile.mkdtemp())
         self.db_path = self.temp_dir / "test_notes.db"
+        if self.app is not None:
+            self.app.processEvents()
 
     def tearDown(self):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+        if self.app is not None:
+            self.app.processEvents()
+
+    def _select_row(self, window, row_idx):
+        from PySide6.QtCore import QItemSelectionModel
+        window.table.clearSelection()
+        window.table.setCurrentItem(None)
+        if window.table.selectionModel() is not None:
+            window.table.selectionModel().clearSelection()
+            window.table.selectionModel().clear()
+        self.app.processEvents()
+
+        window.table.selectRow(row_idx)
+        self.app.processEvents()
+        model = window.table.model()
+        sel_model = window.table.selectionModel()
+        idx = model.index(row_idx, 0)
+        sel_model.select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        window._on_table_selection_changed()
+        self.app.processEvents()
+
+    def _clear_selection(self, window):
+        window.table.clearSelection()
+        window.table.setCurrentItem(None)
+        if window.table.selectionModel() is not None:
+            window.table.selectionModel().clearSelection()
+            window.table.selectionModel().clear()
+        self.app.processEvents()
+        window._on_table_selection_changed()
+        self.app.processEvents()
+
+    def _select_all(self, window):
+        from PySide6.QtCore import QItemSelectionModel
+        window.table.selectAll()
+        self.app.processEvents()
+        model = window.table.model()
+        sel_model = window.table.selectionModel()
+        for r in range(window.table.rowCount()):
+            idx = model.index(r, 0)
+            sel_model.select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        window._on_table_selection_changed()
+        self.app.processEvents()
 
     def test_backfill_logs_redaction(self):
         from scripts.invoice_fetch.db import InvoiceDB
@@ -1401,8 +1445,7 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             self.app.processEvents()
 
             # Select row
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
 
             # 1. Test confirmed_note loaded to txt_note
             self.assertEqual(window.txt_note.toPlainText(), "这是一条测试个人备注")
@@ -1455,18 +1498,15 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             self.app.processEvents()
 
             # 1. No selection: txt_note is disabled
-            window.table.clearSelection()
-            self.app.processEvents()
+            self._clear_selection(window)
             self.assertFalse(window.txt_note.isEnabled())
 
             # 2. Single selection: txt_note is enabled
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
             self.assertTrue(window.txt_note.isEnabled())
 
             # 3. Multi-selection: txt_note is disabled
-            window.table.selectAll()
-            self.app.processEvents()
+            self._select_all(window)
             self.assertFalse(window.txt_note.isEnabled())
         finally:
             window.close()
@@ -1490,10 +1530,32 @@ class TestDetailPanelCompact001(unittest.TestCase):
         import tempfile
         self.temp_dir = Path(tempfile.mkdtemp())
         self.db_path = self.temp_dir / "test_compact.db"
+        if self.app is not None:
+            self.app.processEvents()
 
     def tearDown(self):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+        if self.app is not None:
+            self.app.processEvents()
+
+    def _select_row(self, window, row_idx):
+        from PySide6.QtCore import QItemSelectionModel
+        window.table.clearSelection()
+        window.table.setCurrentItem(None)
+        if window.table.selectionModel() is not None:
+            window.table.selectionModel().clearSelection()
+            window.table.selectionModel().clear()
+        self.app.processEvents()
+
+        window.table.selectRow(row_idx)
+        self.app.processEvents()
+        model = window.table.model()
+        sel_model = window.table.selectionModel()
+        idx = model.index(row_idx, 0)
+        sel_model.select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        window._on_table_selection_changed()
+        self.app.processEvents()
 
     def test_supporting_docs_selector_loading_single(self):
         if self.app is None:
@@ -1519,8 +1581,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             self.app.processEvents()
 
             # Select the invoice
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
 
             # Verify combo items and button state
             self.assertEqual(window.combo_supporting_docs.count(), 1)
@@ -1575,8 +1636,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
                     row_idx = idx
                     break
 
-            window.table.selectRow(row_idx)
-            self.app.processEvents()
+            self._select_row(window, row_idx)
 
             # Expect 3 items (2 linked, 1 pending)
             self.assertEqual(window.combo_supporting_docs.count(), 3)
@@ -1610,8 +1670,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             window.show()
             self.app.processEvents()
 
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
 
             self.assertEqual(window.combo_supporting_docs.count(), 1)
             self.assertEqual(window.combo_supporting_docs.itemText(0), "暂无证明材料")
@@ -1648,8 +1707,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             window.show()
             self.app.processEvents()
 
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
 
             # Mock _open_local_path
             window._open_local_path = MagicMock()
@@ -1724,8 +1782,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             window.show()
             self.app.processEvents()
 
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
 
             window._update_supporting_docs_selector(window.current_invoice, selected_path=doc2)
             self.app.processEvents()
@@ -1800,8 +1857,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             window.show()
             self.app.processEvents()
 
-            window.table.selectRow(0)
-            self.app.processEvents()
+            self._select_row(window, 0)
 
             self.assertEqual(window.txt_path.text(), "未下载原件（可重试下载或手动补原件）")
             self.assertTrue(window.btn_add_attachment.isEnabled())
