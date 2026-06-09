@@ -74,3 +74,37 @@ def create_database_backup(
     dest = _unique_path(dest)
     shutil.copy2(source, dest)
     return dest
+
+
+def prune_database_backups(
+    backup_dir: str | Path | None = None,
+    *,
+    keep: int = 20,
+    pattern: str = "*.db",
+) -> list[Path]:
+    """Delete older database backups and return the removed paths.
+
+    The newest files by modification time are kept. This helper is deliberately
+    conservative: ``keep`` must be non-negative and only regular files matching
+    ``pattern`` inside ``backup_dir`` are considered.
+    """
+    if keep < 0:
+        raise ValueError("keep must be non-negative")
+
+    dest_dir = Path(backup_dir) if backup_dir is not None else DEFAULT_BACKUP_DIR
+    if not dest_dir.exists():
+        return []
+    if not dest_dir.is_dir():
+        raise ValueError(f"Backup path is not a directory: {dest_dir}")
+
+    backups = sorted(
+        (p for p in dest_dir.glob(pattern) if p.is_file()),
+        key=lambda p: (p.stat().st_mtime, p.name),
+        reverse=True,
+    )
+    to_remove = backups[keep:]
+    removed: list[Path] = []
+    for path in to_remove:
+        path.unlink()
+        removed.append(path)
+    return removed
