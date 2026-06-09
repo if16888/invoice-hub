@@ -2498,8 +2498,8 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertIn(warning, window.table.item(0, 0).toolTip())
                         window.table.selectRow(0)
                         app.processEvents()
-                        self.assertFalse(window.lbl_buyer_warning.isHidden())
-                        self.assertEqual(window.lbl_buyer_warning.text(), "抬头不匹配")
+                        # Buyer warning now surfaced via txt_buyer tooltip (not summary card)
+                        self.assertIn("抬头不匹配", window.txt_buyer.toolTip())
                     finally:
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
@@ -2551,7 +2551,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         app.processEvents()
                         self.assertEqual(window.txt_buyer.text(), original_buyer)
                         self.assertIn(warning, window.table.item(0, 0).toolTip())
-                        self.assertEqual(window.lbl_buyer_warning.text(), "抬头不匹配")
+                        self.assertIn("抬头不匹配", window.txt_buyer.toolTip())
 
                         window.txt_buyer.setText(expected_buyer)
                         window._mark_invoice_form_dirty()
@@ -2565,7 +2565,8 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertEqual(refreshed["buyer_name"], expected_buyer)
                         self.assertFalse(window.btn_save_draft.isEnabled())
                         self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
-                        self.assertTrue(window.lbl_buyer_warning.isHidden())
+                        # Buyer warning cleared from tooltip after correction
+                        self.assertNotIn("抬头不匹配", window.txt_buyer.toolTip())
                         self.assertNotIn(warning, window.table.item(0, 0).toolTip())
                     finally:
                         if hasattr(window, "db") and window.db is not None:
@@ -3797,7 +3798,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     )
                     detail_content = window.right_content_widget.widget()
                     self.assertIsNotNone(detail_content)
-                    self.assertTrue(detail_content.isAncestorOf(window.detail_tabs))
+                    # detail_core_section is now directly in the scroll area (no QTabWidget wrapper)
+                    self.assertTrue(detail_content.isAncestorOf(window.detail_core_section))
                     self.assertTrue(detail_content.isAncestorOf(window.btn_save_draft))
                     self.assertTrue(detail_content.isAncestorOf(window.btn_app))
                     self.assertGreater(
@@ -3971,12 +3973,10 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertLessEqual(button.maximumWidth(), 180)
 
                     action_labels = [
-                        window.btn_sum_open_file.text(),
-                        window.btn_sum_copy_number.text(),
-                        window.btn_sum_locate_file.text(),
                         window.btn_delete_invoice.text(),
                         window.btn_export.text(),
                         window.btn_add_to_claim.text(),
+                        window.btn_create_claim.text(),
                     ]
                     emoji_prefixes = ("📁", "📋", "📍", "🗑", "🚀", "🔗")
                     self.assertFalse(any(text.startswith(emoji_prefixes) for text in action_labels))
@@ -4008,17 +4008,14 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.review_note_section,
                         window.review_actions_section,
                         window.claim_setup_section,
-                        window.claim_export_section,
                     ]
                     for section in sections:
                         self.assertIsInstance(section, QFrame)
                         self.assertEqual(section.property("class"), "DetailSection")
 
-                    self.assertEqual(window.detail_tabs.count(), 2)
-                    self.assertEqual(
-                        [window.detail_tabs.tabText(index) for index in range(2)],
-                        ["发票详情", "报销组"],
-                    )
+                    # Single-page layout — no QTabWidget; all sections in scroll area
+                    self.assertIsNotNone(window.detail_core_section)
+                    self.assertIsNotNone(window.claim_setup_section)
                     self.assertEqual(window.txt_note.maximumHeight(), 45)
                     self.assertTrue(window.lbl_export_summary.wordWrap())
                 finally:
