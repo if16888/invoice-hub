@@ -181,11 +181,14 @@ def find_source_tree_issues(root: Path) -> list[str]:
         if not path.exists() or path.is_dir():
             continue
         rel = _rel(path, root)
+        parts = set(Path(rel).parts)
         suffix = path.suffix.lower()
         if rel in FORBIDDEN_EXACT and rel not in SOURCE_TREE_ALLOWED_FORBIDDEN_EXACT:
             issues.append(f"forbidden tracked private/public-excluded file: {rel}")
         if path.name.lower() in FORBIDDEN_NAMES:
             issues.append(f"forbidden secret/config file name: {rel}")
+        if parts & FORBIDDEN_DIRS:
+            issues.append(f"forbidden tracked file under generated/private directory: {rel}")
         if suffix in FORBIDDEN_SUFFIXES and not _allowed_suffix(rel, suffix):
             issues.append(f"forbidden tracked release-risk file type: {rel}")
 

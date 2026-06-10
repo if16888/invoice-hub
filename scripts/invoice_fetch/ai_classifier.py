@@ -162,7 +162,12 @@ class AIClassifier:
                 timeout=60,
             )
         except requests.RequestException as exc:
-            _log.error("DeepSeek API 调用失败: %s", exc)
+            _log.error(
+                "DeepSeek API 调用失败: provider=%s, model=%s, error=%s",
+                self.provider,
+                self.model,
+                self._safe_request_error(exc),
+            )
             return self._mark_batch_unclassified(chunk, "AI 分类 API 失败，将在下次运行时重试")
 
         content = resp.json()["choices"][0]["message"]["content"]
@@ -184,14 +189,23 @@ class AIClassifier:
                 timeout=60,
             )
         except requests.RequestException as exc:
-            _log.error("Gemini API 调用失败: %s", exc)
+            _log.error(
+                "Gemini API 调用失败: provider=%s, model=%s, error=%s",
+                self.provider,
+                self.model,
+                self._safe_request_error(exc),
+            )
             return self._mark_batch_unclassified(chunk, "AI 分类 API 失败，将在下次运行时重试")
 
         content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         return self._parse_response(content, chunk)
 
     def _post_with_retry(self, url: str, **kwargs) -> requests.Response:
-        """POST once, then retry once with exponential backoff."""
+        """POST once, then retry once with exponential backoff.
+
+        The URL may carry provider credentials for some APIs, so never log the
+        raw URL or the raw RequestException string here.
+        """
         last_exc = None
         for attempt in range(2):
             try:
@@ -201,9 +215,23 @@ class AIClassifier:
             except requests.RequestException as exc:
                 last_exc = exc
                 if attempt == 0:
-                    _log.warning("AI 分类 API 失败，1 秒后重试: %s", exc)
+                    _log.warning(
+                        "AI 分类 API 失败，1 秒后重试: provider=%s, model=%s, error=%s",
+                        self.provider,
+                        self.model,
+                        self._safe_request_error(exc),
+                    )
                     time.sleep(1)
         raise last_exc
+
+    @staticmethod
+    def _safe_request_error(exc: requests.RequestException) -> str:
+        """Return a credential-safe request error summary for logs."""
+        status = ""
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status = f":status={getattr(response, 'status_code', 'unknown')}"
+        return f"{type(exc).__name__}{status}"
 
     @staticmethod
     def _mark_batch_unclassified(chunk: list[dict], reason: str) -> list[dict]:
@@ -240,6 +268,6 @@ class AIClassifier:
                 parsed.extend(self._mark_batch_unclassified(missing, "AI 响应缺少该邮件的分类结果"))
             return parsed
         except Exception as exc:
-            _log.warning("AI 响应解析失败: %s", exc)
+            _log.warning("AI 响应解析失败: %s", type(exc).__name__)
             _log.debug("原始响应: %s", content[:500])
             return self._mark_batch_unclassified(chunk, "AI 响应解析失败，将在下次运行时重试")

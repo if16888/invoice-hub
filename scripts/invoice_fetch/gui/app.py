@@ -55,6 +55,7 @@ from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
 from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
+from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 
 _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
@@ -487,544 +488,12 @@ class InvoiceReviewApp(QMainWindow):
 
         splitter.addWidget(left_panel)
 
-        # Right Column - Fixed Summary Card & QTabWidget Panel
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(10, 0, 0, 0)
-        right_layout.setSpacing(6)
-        self.right_stack = QStackedWidget()
-        right_layout.addWidget(self.right_stack, 1)
-
-        self.right_content_widget = QScrollArea()
-        self.right_content_widget.setWidgetResizable(True)
-        self.right_content_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.right_content_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.right_content_widget.setFrameShape(QFrame.NoFrame)
-
-        self.right_detail_content = QWidget()
-        right_content_layout = QVBoxLayout(self.right_detail_content)
-        right_content_layout.setContentsMargins(0, 0, 0, 0)
-        right_content_layout.setSpacing(6)
-        right_content_layout.setSizeConstraint(QLayout.SetMinimumSize)
-        self.right_layout = right_content_layout
-        self.right_content_widget.setWidget(self.right_detail_content)
-
-        self.right_empty_widget = QWidget()
-        right_empty_layout = QVBoxLayout(self.right_empty_widget)
-        right_empty_layout.setContentsMargins(16, 16, 16, 16)
-        right_empty_layout.setSpacing(10)
-        right_empty_layout.addStretch(1)
-
-        right_empty_card = QWidget()
-        right_empty_card.setProperty("class", "SummaryCard")
-        right_empty_card_layout = QVBoxLayout(right_empty_card)
-        right_empty_card_layout.setContentsMargins(20, 18, 20, 18)
-        right_empty_card_layout.setSpacing(8)
-
-        self.lbl_right_empty_title = QLabel("当前没有发票记录")
-        self.lbl_right_empty_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.lbl_right_empty_title.setStyleSheet("color: #111827;")
-        self.lbl_right_empty_title.setAlignment(Qt.AlignCenter)
-        right_empty_card_layout.addWidget(self.lbl_right_empty_title)
-
-        self.lbl_right_empty_desc = QLabel(
-            "导入本地发票或扫描邮箱后，这里会显示发票摘要、详情和原件预览。"
-        )
-        self.lbl_right_empty_desc.setWordWrap(True)
-        self.lbl_right_empty_desc.setAlignment(Qt.AlignCenter)
-        self.lbl_right_empty_desc.setStyleSheet("color: #6B7280; line-height: 1.5;")
-        right_empty_card_layout.addWidget(self.lbl_right_empty_desc)
-
-        right_empty_layout.addWidget(right_empty_card)
-        right_empty_layout.addStretch(2)
-        self.right_stack.addWidget(self.right_content_widget)
-        self.right_stack.addWidget(self.right_empty_widget)
-
-        # 1. Selected Invoice Summary Card
-        self.summary_card = QGroupBox("发票摘要")
-        self.summary_card.setProperty("class", "SummaryCard")
-        self.summary_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        summary_layout = QVBoxLayout(self.summary_card)
-        summary_layout.setContentsMargins(12, 12, 12, 12)
-        summary_layout.setSpacing(6)
-
-        summary_header = QHBoxLayout()
-        summary_header.setContentsMargins(0, 0, 0, 0)
-        summary_header.setSpacing(8)
-        self.lbl_sum_status = QLabel("未选中发票")
-        self.lbl_sum_status.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.lbl_sum_status.setAlignment(Qt.AlignCenter)
-        self.lbl_sum_status.setMaximumWidth(80)
-        self.lbl_sum_status.setProperty("class", "StatusBadge")
-        self._set_summary_placeholder()
-
-        self.lbl_sum_amount = QLabel("¥—")
-        self.lbl_sum_amount.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        self.lbl_sum_amount.setProperty("class", "SummaryAmount")
-        summary_header.addWidget(self.lbl_sum_amount)
-        summary_header.addStretch(1)
-        summary_header.addWidget(self.lbl_sum_status)
-
-        summary_metadata = QWidget()
-        summary_metadata_layout = QGridLayout(summary_metadata)
-        summary_metadata_layout.setContentsMargins(0, 0, 0, 0)
-        summary_metadata_layout.setHorizontalSpacing(12)
-        summary_metadata_layout.setVerticalSpacing(3)
-        summary_metadata_layout.setColumnStretch(0, 1)
-        summary_metadata_layout.setColumnStretch(1, 1)
-        self.lbl_sum_date = QLabel("开票日期: —")
-        self.lbl_sum_date.setFont(QFont("Segoe UI", 9))
-        self.lbl_sum_date.setProperty("class", "SummaryMeta")
-        self.lbl_sum_category = QLabel("消费类型: —")
-        self.lbl_sum_category.setFont(QFont("Segoe UI", 9))
-        self.lbl_sum_category.setProperty("class", "SummaryMeta")
-        self.lbl_sum_number = QLabel("发票号码: —")
-        self.lbl_sum_number.setFont(QFont("Segoe UI", 9))
-        self.lbl_sum_number.setProperty("class", "SummaryMeta")
-        self.lbl_sum_seller = QLabel("销售方: —")
-        self.lbl_sum_seller.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.lbl_sum_seller.setProperty("class", "SummarySeller")
-        summary_metadata_layout.addWidget(self.lbl_sum_date, 0, 0)
-        summary_metadata_layout.addWidget(self.lbl_sum_category, 0, 1)
-        summary_metadata_layout.addWidget(self.lbl_sum_number, 1, 0)
-        summary_metadata_layout.addWidget(self.lbl_sum_seller, 1, 1)
-
-        quick_layout = QHBoxLayout()
-        quick_layout.setSpacing(6)
-
-        self.btn_sum_open_file = QPushButton("查看文件")
-        self.btn_sum_open_file.setProperty("class", "SecondaryBtn")
-        self.btn_sum_open_file.clicked.connect(self._open_attachment)
-        self.btn_sum_open_file.setEnabled(False)
-        self.btn_sum_open_file.setMaximumWidth(96)
-
-        self.btn_sum_copy_number = QPushButton("复制号码")
-        self.btn_sum_copy_number.setProperty("class", "SecondaryBtn")
-        self.btn_sum_copy_number.clicked.connect(self._copy_invoice_number)
-        self.btn_sum_copy_number.setEnabled(False)
-        self.btn_sum_copy_number.setMaximumWidth(96)
-
-        self.btn_sum_locate_file = QPushButton("定位文件")
-        self.btn_sum_locate_file.setProperty("class", "SecondaryBtn")
-        self.btn_sum_locate_file.clicked.connect(self._locate_attachment)
-        self.btn_sum_locate_file.setEnabled(False)
-        self.btn_sum_locate_file.setMaximumWidth(96)
-
-        quick_layout.addWidget(self.btn_sum_open_file)
-        quick_layout.addWidget(self.btn_sum_copy_number)
-        quick_layout.addWidget(self.btn_sum_locate_file)
-        quick_layout.addStretch()
-
-        summary_layout.addLayout(summary_header)
-        summary_layout.addWidget(summary_metadata)
-        self.lbl_buyer_warning = QLabel("")
-        self.lbl_buyer_warning.setWordWrap(True)
-        self.lbl_buyer_warning.setProperty("class", "InlineWarning")
-        self.lbl_buyer_warning.setVisible(False)
-        summary_layout.addWidget(self.lbl_buyer_warning)
-        self.lbl_buyer_warning_hint = QLabel("可在下方“购买方名称”字段修正后保存。")
-        self.lbl_buyer_warning_hint.setStyleSheet("color: #6B7280; font-size: 12px;")
-        self.lbl_buyer_warning_hint.setVisible(False)
-        summary_layout.addWidget(self.lbl_buyer_warning_hint)
-
-        self.lbl_date_warning = QLabel("")
-        self.lbl_date_warning.setWordWrap(True)
-        self.lbl_date_warning.setProperty("class", "InlineWarning")
-        self.lbl_date_warning.setVisible(False)
-        summary_layout.addWidget(self.lbl_date_warning)
-        summary_layout.addLayout(quick_layout)
-
-        right_content_layout.addWidget(self.summary_card)
-
-        # 2. Right-Side QTabWidget
-        self.detail_tabs = QTabWidget()
-        self.detail_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-
-        # ── Tab 1: 发票详情 ───────────────────────────
-        tab_details = QWidget()
-        tab_details_layout = QVBoxLayout(tab_details)
-        tab_details_layout.setContentsMargins(10, 10, 10, 10)
-        tab_details_layout.setSpacing(6)
-
-        self.detail_core_section = QFrame()
-        self.detail_core_section.setProperty("class", "DetailSection")
-        detail_core_layout = QVBoxLayout(self.detail_core_section)
-        detail_core_layout.setContentsMargins(10, 8, 10, 10)
-        detail_core_layout.setSpacing(6)
-        core_title = QLabel("核心信息")
-        core_title.setProperty("class", "SectionTitle")
-        detail_core_layout.addWidget(core_title)
-
-        core_fields = QWidget()
-        self.invoice_core_grid = QGridLayout(core_fields)
-        self.invoice_core_grid.setContentsMargins(0, 0, 0, 0)
-        self.invoice_core_grid.setHorizontalSpacing(8)
-        self.invoice_core_grid.setVerticalSpacing(6)
-        self.invoice_core_grid.setColumnStretch(1, 1)
-        self.invoice_core_grid.setColumnStretch(3, 1)
-
-        def add_core_field(row, field_column, label_text, widget):
-            label = QLabel(label_text)
-            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            column = field_column * 2
-            self.invoice_core_grid.addWidget(label, row, column)
-            self.invoice_core_grid.addWidget(widget, row, column + 1)
-
-        self.txt_number = QLineEdit()
-        self.txt_date = QLineEdit()
-        self.txt_date.setPlaceholderText("YYYY-MM-DD")
-        self.txt_amount = QLineEdit()
-        self.combo_category = QComboBox()
-        self.combo_category.setEditable(True)
+        # Right Column - InvoiceDetailPanel
+        self._setup_detail_panel()
+        splitter.addWidget(self._detail_panel)
+        self._proxy_detail_panel_attrs()
+        # Populate category dropdown after proxies are set up
         self._refresh_category_options()
-        self.txt_seller = QLineEdit()
-        self.txt_buyer = QLineEdit()
-        self.txt_seller.textChanged.connect(self.txt_seller.setToolTip)
-        self.txt_buyer.textChanged.connect(self.txt_buyer.setToolTip)
-
-        add_core_field(0, 0, "发票号码:", self.txt_number)
-        add_core_field(0, 1, "费用日期:", self.txt_date)
-        add_core_field(1, 0, "发票金额 (元):", self.txt_amount)
-        add_core_field(1, 1, "消费类型:", self.combo_category)
-        add_core_field(2, 0, "销售方名称:", self.txt_seller)
-        add_core_field(2, 1, "购买方名称:", self.txt_buyer)
-        detail_core_layout.addWidget(core_fields)
-        tab_details_layout.addWidget(self.detail_core_section)
-
-        path_widget = QWidget()
-        path_layout = QHBoxLayout(path_widget)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(4)
-        self.txt_path = QLineEdit()
-        self.txt_path.setReadOnly(True)
-        path_layout.addWidget(self.txt_path, 1)
-        self.btn_open_file = QPushButton("查看")
-        self.btn_open_file.clicked.connect(self._open_attachment)
-        self.btn_open_file.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_open_file.setMinimumWidth(50)
-        self.btn_open_file.setProperty("class", "SecondaryBtn")
-        path_layout.addWidget(self.btn_open_file)
-
-        self.btn_add_attachment = QPushButton("补原件")
-        self.btn_add_attachment.clicked.connect(self._add_attachment_manually)
-        self.btn_add_attachment.setFont(QFont("Segoe UI", 9))
-        self.btn_add_attachment.setMinimumWidth(60)
-        self.btn_add_attachment.setProperty("class", "SecondaryBtn")
-        path_layout.addWidget(self.btn_add_attachment)
-
-        self.btn_retry_download = QPushButton("重试下载")
-        self.btn_retry_download.clicked.connect(self._retry_download_link)
-        self.btn_retry_download.setFont(QFont("Segoe UI", 9))
-        self.btn_retry_download.setMinimumWidth(65)
-        self.btn_retry_download.setProperty("class", "SecondaryBtn")
-        path_layout.addWidget(self.btn_retry_download)
-
-        # 证明材料布局
-        docs_widget = QWidget()
-        docs_layout = QHBoxLayout(docs_widget)
-        docs_layout.setContentsMargins(0, 0, 0, 0)
-        docs_layout.setSpacing(4)
-
-        self.combo_supporting_docs = QComboBox()
-        self.combo_supporting_docs.setMinimumWidth(120)
-        self.combo_supporting_docs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.combo_supporting_docs.view().setTextElideMode(Qt.ElideMiddle)
-        self.combo_supporting_docs.currentIndexChanged.connect(self._on_supporting_docs_combo_changed)
-        docs_layout.addWidget(self.combo_supporting_docs, 1)
-
-        self.btn_open_extra_files = QPushButton("查看")
-        self.btn_open_extra_files.clicked.connect(self._open_extra_docs)
-        self.btn_open_extra_files.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_open_extra_files.setMinimumWidth(50)
-        self.btn_open_extra_files.setProperty("class", "SecondaryBtn")
-        self.btn_open_extra_files.setEnabled(False)
-        docs_layout.addWidget(self.btn_open_extra_files)
-
-        self.detail_files_section = QFrame()
-        self.detail_files_section.setProperty("class", "DetailSection")
-        detail_files_layout = QVBoxLayout(self.detail_files_section)
-        detail_files_layout.setContentsMargins(10, 6, 10, 8)
-        detail_files_layout.setSpacing(6)
-        files_title = QLabel("原件与证明材料")
-        files_title.setProperty("class", "SectionTitle")
-        detail_files_layout.addWidget(files_title)
-
-        file_fields = QWidget()
-        file_fields_layout = QFormLayout(file_fields)
-        file_fields_layout.setContentsMargins(0, 0, 0, 0)
-        file_fields_layout.setLabelAlignment(Qt.AlignRight)
-        file_fields_layout.setSpacing(3)
-        file_fields_layout.addRow("原件文件:", path_widget)
-        file_fields_layout.addRow("证明材料:", docs_widget)
-        detail_files_layout.addWidget(file_fields)
-        tab_details_layout.addWidget(self.detail_files_section)
-
-        self.review_note_section = QFrame()
-        self.review_note_section.setProperty("class", "DetailSection")
-        review_note_layout = QVBoxLayout(self.review_note_section)
-        review_note_layout.setContentsMargins(10, 6, 10, 8)
-        review_note_layout.setSpacing(4)
-        lbl_note_title = QLabel("个人备注")
-        lbl_note_title.setProperty("class", "SectionTitle")
-        review_note_layout.addWidget(lbl_note_title)
-
-        self.txt_note = QTextEdit()
-        self.txt_note.setMaximumHeight(60)
-        self.txt_note.setPlaceholderText("可填写报销说明、事项背景、客户/项目、异常原因等，仅保存在本地。")
-        review_note_layout.addWidget(self.txt_note)
-        tab_details_layout.addWidget(self.review_note_section)
-
-        self.btn_more_source = QToolButton()
-        self.btn_more_source.setText("更多来源信息")
-        self.btn_more_source.setCheckable(True)
-        self.btn_more_source.setChecked(False)
-        self.btn_more_source.setArrowType(Qt.RightArrow)
-        self.btn_more_source.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.btn_more_source.setProperty("class", "Disclosure")
-        self.btn_more_source.toggled.connect(self._toggle_more_source_info)
-        tab_details_layout.addWidget(self.btn_more_source, 0, Qt.AlignLeft)
-
-        self.more_source_widget = QWidget()
-        more_source_layout = QFormLayout(self.more_source_widget)
-        more_source_layout.setContentsMargins(0, 0, 0, 0)
-        more_source_layout.setLabelAlignment(Qt.AlignRight)
-        more_source_layout.setSpacing(4)
-
-        self.txt_id = QLineEdit()
-        self.txt_id.setReadOnly(True)
-        more_source_layout.addRow("发票 ID:", self.txt_id)
-
-        self.txt_invoice_date = QLineEdit()
-        self.txt_invoice_date.setReadOnly(True)
-        more_source_layout.addRow("开票日期:", self.txt_invoice_date)
-
-        self.txt_date_source = QLineEdit()
-        self.txt_date_source.setReadOnly(True)
-        more_source_layout.addRow("日期来源:", self.txt_date_source)
-
-        self.txt_subject = QLineEdit()
-        self.txt_subject.setReadOnly(True)
-        more_source_layout.addRow("邮件主题:", self.txt_subject)
-
-        self.txt_url = QLineEdit()
-        self.txt_url.setReadOnly(True)
-        more_source_layout.addRow("下载链接:", self.txt_url)
-
-        self.txt_item_name = QLineEdit()
-        self.txt_item_name.setReadOnly(True)
-        more_source_layout.addRow("项目名称:", self.txt_item_name)
-
-        self.txt_full_path = QLineEdit()
-        self.txt_full_path.setReadOnly(True)
-        more_source_layout.addRow("完整文件路径:", self.txt_full_path)
-        self.more_source_widget.setVisible(False)
-        tab_details_layout.addWidget(self.more_source_widget)
-
-        self.lbl_dirty_hint = QLabel("未修改")
-        self.lbl_dirty_hint.setStyleSheet("color: #6B7280; font-size: 11px;")
-
-        self.btn_save_draft = QPushButton("保存修改")
-        self.btn_save_draft.setProperty("class", "PrimaryBtn")
-        self.btn_save_draft.setMinimumWidth(96)
-        self.btn_save_draft.setMaximumWidth(120)
-        self.btn_save_draft.clicked.connect(self._save_invoice_fields)
-
-        save_row = QHBoxLayout()
-        save_row.setContentsMargins(0, 0, 0, 0)
-        save_row.addWidget(self.lbl_dirty_hint)
-        save_row.addStretch(1)
-        save_row.addWidget(self.btn_save_draft)
-        tab_details_layout.addLayout(save_row)
-
-        # Reimbursement Closing Card
-        self.closing_card = QFrame()
-        self.closing_card.setFrameShape(QFrame.StyledPanel)
-        self.closing_card.setStyleSheet("""
-            QFrame {
-                background-color: #F9FAFB;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-            }
-        """)
-        closing_layout = QVBoxLayout(self.closing_card)
-        closing_layout.setContentsMargins(10, 8, 10, 8)
-        closing_layout.setSpacing(3)
-
-        lbl_closing_title = QLabel("报销闭环")
-        lbl_closing_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        lbl_closing_title.setStyleSheet("color: #1F2937; border: none; background: transparent;")
-        closing_layout.addWidget(lbl_closing_title)
-
-        self.lbl_closing_desc = QLabel("请选择发票以查看建议")
-        self.lbl_closing_desc.setWordWrap(True)
-        self.lbl_closing_desc.setFont(QFont("Segoe UI", 8))
-        self.lbl_closing_desc.setStyleSheet("color: #4B5563; border: none; background: transparent;")
-        closing_layout.addWidget(self.lbl_closing_desc)
-
-        tab_details_layout.addWidget(self.closing_card)
-        tab_details_layout.addStretch(1)
-
-        self.detail_tabs.addTab(tab_details, "发票详情")
-
-        # ── Tab 2: 审核操作 ───────────────────────────
-        tab_review = QWidget()
-        tab_review_layout = QVBoxLayout(tab_review)
-        tab_review_layout.setContentsMargins(10, 10, 10, 10)
-        tab_review_layout.setSpacing(8)
-
-        self.lbl_batch_hint = QLabel("当前选中 1 张发票")
-        self.lbl_batch_hint.setProperty("class", "SectionHint")
-        tab_review_layout.addWidget(self.lbl_batch_hint)
-
-        self.review_actions_section = QFrame()
-        self.review_actions_section.setProperty("class", "DetailSection")
-        review_actions_layout = QVBoxLayout(self.review_actions_section)
-        review_actions_layout.setContentsMargins(10, 8, 10, 10)
-        review_actions_layout.setSpacing(8)
-        review_actions_title = QLabel("审核结果")
-        review_actions_title.setProperty("class", "SectionTitle")
-        review_actions_layout.addWidget(review_actions_title)
-        btn_box = QHBoxLayout()
-        btn_box.setSpacing(6)
-
-        self.btn_app = QPushButton("通过并下一张")
-        self.btn_app.setProperty("class", "PrimaryBtn")
-        self.btn_app.setMaximumWidth(140)
-        self.btn_app.clicked.connect(lambda: self._set_selected_status(APPROVED))
-        btn_box.addWidget(self.btn_app)
-
-        self.btn_ign = QPushButton("忽略")
-        self.btn_ign.setProperty("class", "SecondaryBtn")
-        self.btn_ign.setMaximumWidth(96)
-        self.btn_ign.clicked.connect(lambda: self._set_selected_status(IGNORED))
-        btn_box.addWidget(self.btn_ign)
-
-        self.btn_err = QPushButton("异常")
-        self.btn_err.setProperty("class", "DangerOutlineBtn")
-        self.btn_err.setMaximumWidth(96)
-        self.btn_err.clicked.connect(lambda: self._set_selected_status(ERROR))
-        btn_box.addWidget(self.btn_err)
-
-        self.btn_rev = QPushButton("重置为待审核")
-        self.btn_rev.setProperty("class", "SecondaryBtn")
-        self.btn_rev.setMaximumWidth(132)
-        self.btn_rev.clicked.connect(lambda: self._set_selected_status(TO_REVIEW))
-        btn_box.addWidget(self.btn_rev)
-        btn_box.addStretch(1)
-
-        review_actions_layout.addLayout(btn_box)
-
-        delete_row = QHBoxLayout()
-        delete_row.addStretch(1)
-        self.btn_delete_invoice = QPushButton("删除发票")
-        self.btn_delete_invoice.setProperty("class", "TextDangerBtn")
-        self.btn_delete_invoice.setMaximumWidth(96)
-        self.btn_delete_invoice.clicked.connect(self._handle_detail_delete_clicked)
-        delete_row.addWidget(self.btn_delete_invoice)
-        review_actions_layout.addLayout(delete_row)
-
-        tab_review_layout.addWidget(self.review_actions_section)
-        tab_review_layout.addStretch()
-
-        self.detail_tabs.addTab(tab_review, "审核")
-
-        # ── Tab 3: 报销与导出 ─────────────────────────
-        tab_claim = QWidget()
-        tab_claim_layout = QVBoxLayout(tab_claim)
-        tab_claim_layout.setContentsMargins(10, 10, 10, 10)
-        tab_claim_layout.setSpacing(8)
-
-        self.claim_setup_section = QFrame()
-        self.claim_setup_section.setProperty("class", "DetailSection")
-        claim_setup_layout = QVBoxLayout(self.claim_setup_section)
-        claim_setup_layout.setContentsMargins(10, 8, 10, 10)
-        claim_setup_layout.setSpacing(6)
-        claim_setup_title = QLabel("报销组")
-        claim_setup_title.setProperty("class", "SectionTitle")
-        claim_setup_layout.addWidget(claim_setup_title)
-
-        lbl_new_claim = QLabel("新建报销组:")
-        lbl_new_claim.setProperty("class", "SectionHint")
-        claim_setup_layout.addWidget(lbl_new_claim)
-
-        claim_create_box = QHBoxLayout()
-        claim_create_box.setSpacing(6)
-        self.txt_new_claim = QLineEdit()
-        self.txt_new_claim.setPlaceholderText("输入新报销组名称...")
-        claim_create_box.addWidget(self.txt_new_claim, 1)
-        self.btn_create_claim = QPushButton("新建")
-        self.btn_create_claim.setProperty("class", "SecondaryBtn")
-        self.btn_create_claim.setMaximumWidth(80)
-        self.btn_create_claim.clicked.connect(self._create_claim)
-        claim_create_box.addWidget(self.btn_create_claim)
-        claim_setup_layout.addLayout(claim_create_box)
-
-        lbl_link_claim = QLabel("关联已有报销组:")
-        lbl_link_claim.setProperty("class", "SectionHint")
-        claim_setup_layout.addWidget(lbl_link_claim)
-
-        link_box = QHBoxLayout()
-        link_box.setSpacing(6)
-        self.combo_claims = QComboBox()
-        self.combo_claims.currentIndexChanged.connect(self._update_claim_total)
-        link_box.addWidget(self.combo_claims, 1)
-
-        self.btn_refresh_claims = QPushButton("刷新")
-        self.btn_refresh_claims.clicked.connect(self._load_claims)
-        self.btn_refresh_claims.setMaximumWidth(72)
-        self.btn_refresh_claims.setProperty("class", "SecondaryBtn")
-        link_box.addWidget(self.btn_refresh_claims)
-
-        self.btn_add_to_claim = QPushButton("关联发票")
-        self.btn_add_to_claim.clicked.connect(self._link_invoices_to_claim)
-        self.btn_add_to_claim.setProperty("class", "SecondaryBtn")
-        self.btn_add_to_claim.setMaximumWidth(104)
-        link_box.addWidget(self.btn_add_to_claim)
-        claim_setup_layout.addLayout(link_box)
-
-        self.lbl_claim_total = QLabel("当前报销组 0 张｜合计 ¥0.00")
-        self.lbl_claim_total.setProperty("class", "SectionHint")
-        claim_setup_layout.addWidget(self.lbl_claim_total)
-        tab_claim_layout.addWidget(self.claim_setup_section)
-
-        self.claim_export_section = QFrame()
-        self.claim_export_section.setProperty("class", "DetailSection")
-        claim_export_layout = QVBoxLayout(self.claim_export_section)
-        claim_export_layout.setContentsMargins(10, 8, 10, 10)
-        claim_export_layout.setSpacing(8)
-        claim_export_title = QLabel("导出")
-        claim_export_title.setProperty("class", "SectionTitle")
-        claim_export_layout.addWidget(claim_export_title)
-
-        export_btn_layout = QHBoxLayout()
-        export_btn_layout.setSpacing(6)
-        export_btn_layout.addStretch(1)
-
-        self.btn_export = QPushButton("一键打包导出")
-        self.btn_export.setProperty("class", "PrimaryBtn")
-        self.btn_export.setMaximumWidth(140)
-        self.btn_export.clicked.connect(self._export_claim_package)
-        export_btn_layout.addWidget(self.btn_export)
-
-        claim_export_layout.addLayout(export_btn_layout)
-
-        self.lbl_export_summary = QLabel()
-        self.lbl_export_summary.setProperty("class", "InfoPanel")
-        self.lbl_export_summary.setWordWrap(True)
-        self.lbl_export_summary.setText("<b>上一次导出结果：</b><br>暂无导出记录")
-        claim_export_layout.addWidget(self.lbl_export_summary)
-        tab_claim_layout.addWidget(self.claim_export_section)
-        tab_claim_layout.addStretch()
-
-        self.detail_tabs.addTab(tab_claim, "报销导出")
-
-        self._connect_invoice_dirty_tracking()
-        self.btn_save_draft.setEnabled(False)
-
-        right_content_layout.addWidget(self.detail_tabs, 1)
-        self.right_stack.setCurrentWidget(self.right_content_widget)
-
-        splitter.addWidget(right_panel)
 
         # Set default proportions: Table takes 60%, Form takes 40%
         splitter.setSizes([650, 450])
@@ -1128,28 +597,127 @@ class InvoiceReviewApp(QMainWindow):
         self._log_panel_visible = False
         self._set_log_panel_visible(False)
 
-    def _update_status_badge(self, status):
-        status_styles = {
-            "to_review": ("待审核", "review"),
-            "approved": ("已通过", "approved"),
-            "ignored": ("已忽略", "ignored"),
-            "error": ("异常", "error"),
-        }
-        text, variant = status_styles.get(status, ("未知", "placeholder"))
-        self.lbl_sum_status.setText(text)
-        self.lbl_sum_status.setProperty("variant", variant)
-        self._refresh_widget_style(self.lbl_sum_status)
+    # ── Detail panel wiring ────────────────────────────────────
 
-    def _refresh_widget_style(self, widget):
-        style = widget.style()
-        style.unpolish(widget)
-        style.polish(widget)
-        widget.update()
+    def _setup_detail_panel(self):
+        cbs = InvoiceDetailCallbacks(
+            on_approve_next=lambda: self._set_selected_status(APPROVED),
+            on_ignore=lambda: self._set_selected_status(IGNORED),
+            on_mark_error=lambda: self._set_selected_status(ERROR),
+            on_reset_review=lambda: self._set_selected_status(TO_REVIEW),
+            on_delete_or_restore=self._handle_detail_delete_clicked,
+            on_open_file=self._open_attachment,
+            on_add_attachment=self._add_attachment_manually,
+            on_retry_download=self._retry_download_link,
+            on_open_evidence=self._open_extra_docs,
+            on_copy_number=self._copy_invoice_number,
+            on_locate_file=self._locate_attachment_file,
+            on_open_dir=self._locate_attachment,
+            on_create_claim=self._create_claim,
+            on_link_to_claim=self._link_invoices_to_claim,
+            on_refresh_claims=self._load_claims,
+            on_export_claim=self._export_claim_package,
+            on_save_fields=self._save_invoice_fields,
+            on_form_dirty=self._mark_invoice_form_dirty,
+            on_supporting_doc_changed=self._on_supporting_docs_combo_changed,
+            on_claim_combo_changed=self._update_claim_total,
+        )
+        self._detail_panel = InvoiceDetailPanel(callbacks=cbs)
+        self._detail_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def _set_summary_placeholder(self):
-        self.lbl_sum_status.setText("未选择发票")
-        self.lbl_sum_status.setProperty("variant", "placeholder")
-        self._refresh_widget_style(self.lbl_sum_status)
+    def _proxy_detail_panel_attrs(self):
+        """Proxy commonly-accessed panel attributes for backward compatibility."""
+        dp = self._detail_panel
+        # Summary card
+        self.summary_card = dp.summary_card
+        self.lbl_sum_amount = dp.lbl_sum_amount
+        self.lbl_sum_status = dp.lbl_sum_status
+        self.lbl_sum_date = dp.lbl_sum_date
+        self.lbl_sum_number = dp.lbl_sum_number
+        self.lbl_sum_seller = dp.lbl_sum_seller
+        self.lbl_sum_category = dp.lbl_sum_category
+        self.lbl_date_warning = dp.lbl_date_warning
+        # Review actions
+        self.inline_review_layout = dp.inline_review_layout
+        self.btn_app = dp.btn_app
+        self.btn_ign = dp.btn_ign
+        self.btn_err = dp.btn_err
+        self.btn_inline_more = dp.btn_inline_more
+        self.inline_more_menu = dp.inline_more_menu
+        self.action_inline_reset = dp.action_inline_reset
+        self.action_inline_delete = dp.action_inline_delete
+        self.action_copy_number = dp.action_copy_number
+        self.action_locate_file = dp.action_locate_file
+        self.action_open_dir = dp.action_open_dir
+        # Compat deprecated
+        self.review_actions_section = dp.review_actions_section
+        self.lbl_batch_hint = dp.lbl_batch_hint
+        self.btn_rev = dp.btn_rev
+        self.btn_delete_invoice = dp.btn_delete_invoice
+        # Core info
+        self.detail_core_section = dp.detail_core_section
+        self.invoice_core_grid = dp.invoice_core_grid
+        self.txt_number = dp.txt_number
+        self.txt_date = dp.txt_date
+        self.txt_amount = dp.txt_amount
+        self.combo_category = dp.combo_category
+        self.txt_seller = dp.txt_seller
+        self.txt_buyer = dp.txt_buyer
+        # Files
+        self.detail_files_section = dp.detail_files_section
+        self.txt_path = dp.txt_path
+        self.btn_open_file = dp.btn_open_file
+        self.btn_add_attachment = dp.btn_add_attachment
+        self.btn_retry_download = dp.btn_retry_download
+        self.combo_supporting_docs = dp.combo_supporting_docs
+        self.btn_open_extra_files = dp.btn_open_extra_files
+        self.supporting_doc_items = dp.supporting_doc_items
+        # Claim group
+        self.claim_setup_section = dp.claim_setup_section
+        self.combo_claims = dp.combo_claims
+        self.btn_refresh_claims = dp.btn_refresh_claims
+        self.btn_add_to_claim = dp.btn_add_to_claim
+        self.txt_new_claim = dp.txt_new_claim
+        self.btn_create_claim = dp.btn_create_claim
+        self.lbl_claim_total = dp.lbl_claim_total
+        self.btn_export = dp.btn_export
+        self.lbl_export_summary = dp.lbl_export_summary
+        # Notes
+        self.review_note_section = dp.review_note_section
+        self.btn_toggle_note = dp.btn_toggle_note
+        self.txt_note = dp.txt_note
+        self.lbl_note_summary = dp.lbl_note_summary
+        self.btn_new_claim_toggle = dp.btn_new_claim_toggle
+        self.new_claim_widget = dp.new_claim_widget
+        # More source
+        self.btn_more_source = dp.btn_more_source
+        self.more_source_widget = dp.more_source_widget
+        self.txt_id = dp.txt_id
+        self.txt_invoice_date = dp.txt_invoice_date
+        self.txt_date_source = dp.txt_date_source
+        self.txt_subject = dp.txt_subject
+        self.txt_url = dp.txt_url
+        self.txt_item_name = dp.txt_item_name
+        self.txt_full_path = dp.txt_full_path
+        # Bottom
+        self.closing_card = dp.closing_card
+        self.lbl_closing_desc = dp.lbl_closing_desc
+        self.lbl_dirty_hint = dp.lbl_dirty_hint
+        self.btn_save_draft = dp.btn_save_draft
+        # Stack / scroll
+        self.right_stack = dp.right_stack
+        self.right_content_widget = dp.right_content_widget
+        self.right_empty_widget = dp.right_empty_widget
+        self.right_layout = dp.right_layout
+        self.right_detail_content = dp.right_detail_content
+        self.lbl_right_empty_title = dp.lbl_right_empty_title
+        self.lbl_right_empty_desc = dp.lbl_right_empty_desc
+        # Delegate methods
+        self._update_status_badge = dp._update_status_badge
+        self._set_summary_placeholder = dp._set_summary_placeholder
+        self._refresh_widget_style = dp._refresh_widget_style
+        self._toggle_note_visibility = dp._toggle_note_visibility
+        self._toggle_more_source_info = dp._toggle_more_source_info
 
     def _set_right_panel_state(self, has_records: bool):
         if not hasattr(self, "right_stack"):
@@ -1180,20 +748,23 @@ class InvoiceReviewApp(QMainWindow):
     def _base_filter_label(self, status) -> str:
         return self.filter_base_labels.get(status, str(status))
 
-    def _update_filter_counts(self, invoices: list[dict]):
+    def _update_filter_counts(self, invoices_or_counts):
         if not hasattr(self, "filter_buttons"):
             return
-        counts = {
-            "all": len(invoices),
-            TO_REVIEW: 0,
-            APPROVED: 0,
-            IGNORED: 0,
-            ERROR: 0,
-        }
-        for inv in invoices:
-            status = inv.get("review_status") or TO_REVIEW
-            if status in counts:
-                counts[status] += 1
+        if isinstance(invoices_or_counts, dict):
+            counts = invoices_or_counts
+        else:
+            counts = {
+                "all": len(invoices_or_counts),
+                TO_REVIEW: 0,
+                APPROVED: 0,
+                IGNORED: 0,
+                ERROR: 0,
+            }
+            for inv in invoices_or_counts:
+                status = inv.get("review_status") or TO_REVIEW
+                if status in counts:
+                    counts[status] += 1
         for status, btn in self.filter_buttons.items():
             btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
 
@@ -1339,49 +910,21 @@ class InvoiceReviewApp(QMainWindow):
             self.combo_category.setCurrentText(current)
         self.combo_category.blockSignals(False)
 
-    def _format_amount_display(self, amount_text: str) -> str:
-        amount_text = str(amount_text or "").strip()
-        if not amount_text:
-            return "¥—"
-
-        try:
-            from decimal import Decimal, InvalidOperation
-
-            return f"¥{Decimal(amount_text):.2f}"
-        except (InvalidOperation, ValueError, TypeError):
-            return f"¥{amount_text}"
-
     def _buyer_warning(self, inv: dict) -> str:
         cfg = load_config_safe()
         return buyer_warning(inv, cfg.get("reimbursement", {}))
 
     def _update_save_button_state(self):
-        if not hasattr(self, "btn_save_draft"):
-            return
         if not self.current_invoice or self._invoice_snapshot is None:
-            self.btn_save_draft.setEnabled(False)
-            if hasattr(self, "lbl_dirty_hint"):
-                self.lbl_dirty_hint.setText("未修改")
+            self._detail_panel.set_dirty_state(False)
             return
         changed = self._get_invoice_form_snapshot() != self._invoice_snapshot
-        self.btn_save_draft.setEnabled(changed)
-        if hasattr(self, "lbl_dirty_hint"):
-            self.lbl_dirty_hint.setText("有未保存修改" if changed else "未修改")
+        self._detail_panel.set_dirty_state(changed)
 
     def _mark_invoice_form_dirty(self):
         if self._suspend_dirty_tracking:
             return
         self._update_save_button_state()
-
-    def _connect_invoice_dirty_tracking(self):
-        for widget in (self.txt_number, self.txt_date, self.txt_seller, self.txt_buyer, self.txt_amount):
-            widget.textEdited.connect(self._mark_invoice_form_dirty)
-        self.combo_category.currentTextChanged.connect(self._mark_invoice_form_dirty)
-        self.txt_note.textChanged.connect(self._mark_invoice_form_dirty)
-
-    def _toggle_more_source_info(self, expanded: bool):
-        self.more_source_widget.setVisible(expanded)
-        self.btn_more_source.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
 
     def _toggle_log(self):
         current = getattr(self, "_log_panel_visible", self.log_container.isVisible())
@@ -1532,12 +1075,14 @@ class InvoiceReviewApp(QMainWindow):
         unlinked_only = self.chk_unlinked.isChecked() if hasattr(self, "chk_unlinked") else False
         needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
 
+        is_default_view = not needle and not unlinked_only and not needs_fix_only
         limit_val = None
         first_load_limited = False
-        if self._is_first_load and not needle and not unlinked_only and not needs_fix_only and self.current_filter_status is None:
+        if self._is_first_load and is_default_view and self.current_filter_status is None:
             limit_val = 100
             first_load_limited = True
 
+        counts = None
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
@@ -1546,11 +1091,21 @@ class InvoiceReviewApp(QMainWindow):
                 limit=limit_val,
                 include_deleted=include_deleted
             )
-            count_source = self.db.list_invoices(
-                status=None,
-                limit=None,
-                include_deleted=include_deleted,
-            )
+            if is_default_view:
+                counts = {
+                    "all": self.db.count_invoices_for_status(status=None, include_deleted=include_deleted),
+                    TO_REVIEW: self.db.count_invoices_for_status(status=TO_REVIEW, include_deleted=include_deleted),
+                    APPROVED: self.db.count_invoices_for_status(status=APPROVED, include_deleted=include_deleted),
+                    IGNORED: self.db.count_invoices_for_status(status=IGNORED, include_deleted=include_deleted),
+                    ERROR: self.db.count_invoices_for_status(status=ERROR, include_deleted=include_deleted),
+                }
+                count_source = []
+            else:
+                count_source = self.db.list_invoices(
+                    status=None,
+                    limit=None,
+                    include_deleted=include_deleted,
+                )
             db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
             if self._is_first_load:
                 self._is_first_load = False
@@ -1559,6 +1114,7 @@ class InvoiceReviewApp(QMainWindow):
             QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
             display_source = []
             count_source = []
+            counts = None
 
         filter_start = time.perf_counter()
         displayed_invoices = self._apply_non_status_filters(
@@ -1567,19 +1123,22 @@ class InvoiceReviewApp(QMainWindow):
             unlinked_only,
             needs_fix_only,
         )
-        count_filtered_invoices = self._apply_non_status_filters(
-            count_source,
-            needle,
-            unlinked_only,
-            needs_fix_only,
-        )
+        if is_default_view and counts is not None:
+            count_filtered_invoices = counts
+        else:
+            count_filtered_invoices = self._apply_non_status_filters(
+                count_source,
+                needle,
+                unlinked_only,
+                needs_fix_only,
+            )
         filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
 
         self.invoices_list = displayed_invoices
         self._update_filter_counts(count_filtered_invoices)
 
         # Track limited first-load state for UI hints
-        total_matching = len(count_filtered_invoices)
+        total_matching = count_filtered_invoices.get("all", 0) if isinstance(count_filtered_invoices, dict) else len(count_filtered_invoices)
         if first_load_limited and total_matching > len(displayed_invoices):
             self._limited_first_load_active = True
             self._limited_first_load_total = total_matching
@@ -1809,6 +1368,8 @@ class InvoiceReviewApp(QMainWindow):
         claim_idx = self.combo_claims.currentIndex() if hasattr(self, "combo_claims") else -1
         if claim_idx < 0:
             self.lbl_claim_total.setText("当前报销组 0 张｜合计 ¥0.00")
+            if hasattr(self, "btn_export"):
+                self.btn_export.setEnabled(False)
             return
         claim_id = self.combo_claims.itemData(claim_idx)
         try:
@@ -1817,79 +1378,20 @@ class InvoiceReviewApp(QMainWindow):
             _log.debug("Failed to calculate claim total: %s", exc)
             invoices = []
         self.lbl_claim_total.setText(f"当前报销组 {format_amount_total(invoices)}")
+        if hasattr(self, "btn_export"):
+            self.btn_export.setEnabled(True)
 
     def _clear_detail_form(self):
         # Reset right hand details form to generic empty/placeholder state.
         self._suspend_dirty_tracking = True
         self.current_invoice = None
         self._invoice_snapshot = None
-        self.txt_id.clear()
-        self.txt_number.clear()
-        self.txt_date.clear()
-        self.txt_invoice_date.clear()
-        self.txt_date_source.clear()
-        self.txt_seller.clear()
-        self.txt_buyer.clear()
-        self.txt_amount.clear()
-        self.combo_category.setCurrentText("")
-        self.txt_subject.clear()
-        self.txt_path.clear()
-        self.txt_path.setToolTip("")
-        self.btn_open_file.setEnabled(False)
-        self.btn_add_attachment.setEnabled(False)
-        self.btn_retry_download.setEnabled(False)
-        self.btn_retry_download.setVisible(False)
-        self.txt_full_path.clear()
-        self.txt_full_path.setToolTip("")
-        self.txt_url.clear()
-        self.txt_item_name.clear()
-        self.combo_supporting_docs.blockSignals(True)
-        self.combo_supporting_docs.clear()
-        self.combo_supporting_docs.addItem("暂无证明材料")
-        self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
-        self.supporting_doc_items = []
-        self.combo_supporting_docs.blockSignals(False)
-        self.btn_open_extra_files.setEnabled(False)
-        self.txt_note.clear()
-
-        # Clear summary card
-        self.lbl_sum_amount.setText("¥—")
-        self.lbl_sum_date.setText("费用日期: —")
-        self.lbl_sum_number.setText("发票号码: —")
-        self.lbl_sum_seller.setText("销售方: —")
-        self.lbl_sum_category.setText("消费类型: —")
-        self.lbl_buyer_warning.clear()
-        self.lbl_buyer_warning.setVisible(False)
-        self.lbl_buyer_warning_hint.setVisible(False)
-        self.lbl_date_warning.clear()
-        self.lbl_date_warning.setVisible(False)
-        self._set_summary_placeholder()
-        self.btn_sum_open_file.setEnabled(False)
-        self.btn_sum_copy_number.setEnabled(False)
-        self.btn_sum_locate_file.setEnabled(False)
-
-        # Disable fields
-        self.txt_number.setEnabled(False)
-        self.txt_date.setEnabled(False)
-        self.txt_seller.setEnabled(False)
-        self.txt_buyer.setEnabled(False)
-        self.txt_amount.setEnabled(False)
-        self.combo_category.setEnabled(False)
-        self.combo_supporting_docs.setEnabled(False)
-        self.txt_note.setEnabled(False)
-        self.btn_save_draft.setEnabled(False)
-        self.lbl_dirty_hint.setText("未修改")
-        self.btn_open_file.setEnabled(False)
-
-        self.lbl_batch_hint.setText("请选择一个发票记录")
-        self.btn_app.setEnabled(False)
-        self.btn_ign.setEnabled(False)
-        self.btn_err.setEnabled(False)
-        self.btn_rev.setEnabled(False)
+        self._detail_panel.clear_detail()
+        if hasattr(self, "action_copy_number"):
+            self.action_copy_number.setEnabled(False)
+            self.action_locate_file.setEnabled(False)
+            self.action_open_dir.setEnabled(False)
         self._suspend_dirty_tracking = False
-
-        if hasattr(self, "lbl_closing_desc"):
-            self.lbl_closing_desc.setText("请选择发票以查看建议")
 
     def _format_status_count_prefix(self) -> str:
         """Return the leading count segment for the status bar, reflecting limited-load state."""
@@ -1926,30 +1428,17 @@ class InvoiceReviewApp(QMainWindow):
 
     def _update_closing_card(self, inv):
         if not inv:
-            if hasattr(self, "lbl_closing_desc"):
-                self.lbl_closing_desc.setText("请选择发票以查看建议")
+            self._detail_panel.set_closing_status()
             return
         inv_num = str(inv.get("invoice_number") or "").strip()
         inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
         seller = str(inv.get("seller_name") or "").strip()
         total_amt = str(inv.get("total_amount") or "").strip()
         status = inv.get("review_status") or "to_review"
-
-        if hasattr(self, "lbl_closing_desc"):
-            if not inv_num or not inv_date or not seller or not total_amt:
-                desc = "⚠️ 金额、销售方或费用日期缺失，请双击或在上方表单中补全字段。"
-            elif status == "to_review":
-                desc = "💡 字段已完整，确认原件无误后即可通过审核。"
-            elif status == "approved":
-                desc = "✅ 该发票已审核通过，可导出或关联至报销组。"
-            elif status in ["ignored", "error"]:
-                desc = f"ℹ️ 当前发票已标记为 [已忽略] 或 [异常] 状态。"
-            else:
-                desc = "💡 字段已完整，确认原件无误后即可通过审核。"
-
-            if str(inv.get("confirmed_note") or "").strip():
-                desc += "\n已填写个人备注"
-            self.lbl_closing_desc.setText(desc)
+        missing = not inv_num or not inv_date or not seller or not total_amt
+        self._detail_panel.set_closing_status(
+            missing_fields=missing, is_error=(status == "error" and not missing)
+        )
 
     def _on_table_selection_changed(self):
         # Triggered when users select table rows. Handles single and multi-selection modes.
@@ -1971,6 +1460,15 @@ class InvoiceReviewApp(QMainWindow):
         self.btn_ign.setEnabled(True)
         self.btn_err.setEnabled(True)
         self.btn_rev.setEnabled(True)
+        self.btn_inline_more.setEnabled(True)
+        self.btn_add_to_claim.setEnabled(True)
+
+        if hasattr(self, "action_inline_delete") and num_selected > 0:
+            first_inv = self.invoices_list[selected_indexes[0].row()]
+            if first_inv.get("is_deleted") == 1:
+                self.action_inline_delete.setText("恢复发票")
+            else:
+                self.action_inline_delete.setText("删除发票")
 
         if hasattr(self, "btn_delete_invoice") and num_selected > 0:
             first_inv = self.invoices_list[selected_indexes[0].row()]
@@ -2001,11 +1499,7 @@ class InvoiceReviewApp(QMainWindow):
             status = inv.get("review_status") or "to_review"
             att_path = str(inv.get("attachment_path") or "")
 
-            # Populate text inputs
-            self.txt_id.setText(inv_id)
-            self.txt_number.setText(inv_num)
-            self.txt_date.setText(display_date)
-            self.txt_invoice_date.setText(inv_date)
+            # Populate form fields via panel
             date_source_disp = {
                 "travel_date": "乘车日期",
                 "invoice_date": "开票日期",
@@ -2013,71 +1507,72 @@ class InvoiceReviewApp(QMainWindow):
                 "service_date": "服务日期",
                 "payment_date": "付款日期",
             }.get(date_source, date_source)
-            self.txt_date_source.setText(date_source_disp)
-            self.txt_seller.setText(seller)
-            self.txt_buyer.setText(buyer)
-            self.txt_amount.setText(total_amt)
-            self.combo_category.setCurrentText(category)
-            self.txt_subject.setText(str(inv.get("mail_subject") or ""))
-            self.txt_item_name.setText(str(inv.get("item_name") or ""))
             mail_uid = inv.get("mail_uid")
             download_url = str(inv.get("download_url") or "").strip()
-            if not att_path and (mail_uid is not None or download_url):
-                self.txt_path.setText("未下载原件（可重试下载或手动补原件）")
-                self.txt_path.setToolTip("请点击右侧按钮重新尝试自动下载，或者人工补全发票原件文件。")
-            else:
-                self.txt_path.setText(Path(att_path).name if att_path else "")
-                self.txt_path.setToolTip(att_path)
-
             has_file = bool(att_path)
-            self.btn_open_file.setEnabled(has_file)
-
             has_url = bool(download_url)
-            self.btn_retry_download.setEnabled(not has_file and has_url)
-            self.btn_retry_download.setVisible(has_url)
-            self.btn_add_attachment.setEnabled(True)
 
-            self.txt_full_path.setText(att_path)
-            self.txt_full_path.setToolTip(att_path)
-            self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
+            self._detail_panel.set_form_fields(
+                inv_id=inv_id, number=inv_num, date=display_date,
+                invoice_date=inv_date, date_source=date_source_disp,
+                seller=seller, buyer=buyer, amount=total_amt, category=category,
+                subject=str(inv.get("mail_subject") or ""),
+                item_name=str(inv.get("item_name") or ""),
+                full_path=att_path,
+                url=_mask_url(inv.get("download_url") or ""),
+            )
+            self._detail_panel.set_attachment_state(
+                has_file=has_file, has_url=has_url,
+                file_name=Path(att_path).name if att_path else "",
+                file_path=att_path,
+                can_download=(not att_path and (mail_uid is not None or download_url)),
+            )
             self._update_supporting_docs_selector(inv)
 
-            self.txt_note.setPlainText(str(inv.get("confirmed_note") or ""))
+            # Note via panel
+            note_content = str(inv.get("confirmed_note") or "").strip()
+            self._detail_panel.set_note(note_content)
 
-            # Update summary card
-            self.lbl_sum_amount.setText(self._format_amount_display(total_amt))
-            self.lbl_sum_date.setText(f"费用日期: {display_date}" if display_date else "费用日期: —")
-            self.lbl_sum_number.setText(f"发票号码: {inv_num}" if inv_num else "发票号码: —")
-            self.lbl_sum_seller.setText(f"销售方: {seller}" if seller else "销售方: —")
-            self.lbl_sum_category.setText(f"消费类型: {category or '未分类'}")
+            # Update summary card via panel
+            self._detail_panel.set_summary(
+                amount=total_amt, status=status, date=display_date,
+                category=category, seller=seller, number=inv_num,
+                date_warning=get_date_warning(inv),
+            )
+
             buyer_check_warning = self._buyer_warning(inv)
-            self.lbl_buyer_warning.setText(buyer_check_warning)
-            self.lbl_buyer_warning.setVisible(bool(buyer_check_warning))
-            self.lbl_buyer_warning_hint.setVisible(bool(buyer_check_warning))
+            if buyer_check_warning == "购方抬头不匹配，可能导致退单":
+                # Buyer title risk surfaced near buyer field, not in summary card.
+                cfg = load_config_safe()
+                expected = str(cfg.get("reimbursement", {}).get("buyer_name") or "").strip()
+                self.txt_buyer.setToolTip(f"抬头不匹配 — 期望抬头：{expected}\n实际抬头：{buyer}")
+            else:
+                self.txt_buyer.setToolTip(buyer if buyer else "")
+
+
+            if not buyer.strip():
+                self.txt_buyer.setPlaceholderText("待补全")
+            else:
+                self.txt_buyer.setPlaceholderText("")
 
             date_warn = get_date_warning(inv)
             self.lbl_date_warning.setText(date_warn)
             self.lbl_date_warning.setVisible(bool(date_warn))
             self._update_status_badge(status)
 
-            self.btn_sum_open_file.setEnabled(bool(att_path))
-            self.btn_sum_copy_number.setEnabled(bool(inv_num))
-            self.btn_sum_locate_file.setEnabled(bool(att_path))
+            if hasattr(self, "action_copy_number"):
+                has_num = bool(inv_num)
+                has_att = bool(att_path)
+                self.action_copy_number.setEnabled(has_num)
+                self.action_locate_file.setEnabled(has_att)
+                self.action_open_dir.setEnabled(has_att)
 
-            self.txt_number.setEnabled(True)
-            self.txt_date.setEnabled(True)
-            self.txt_seller.setEnabled(True)
-            self.txt_buyer.setEnabled(True)
-            self.txt_amount.setEnabled(True)
-            self.combo_category.setEnabled(True)
-            self.txt_note.setEnabled(True)
+            self._detail_panel.set_single_selection_state()
             self.btn_open_file.setEnabled(bool(att_path))
-            self.lbl_batch_hint.setText("已选择 1 张发票")
 
             self._invoice_snapshot = self._get_invoice_snapshot(inv)
             self._suspend_dirty_tracking = False
             self._update_save_button_state()
-            self.lbl_dirty_hint.setText("未修改")
 
             if hasattr(self, "lbl_closing_desc"):
                 self._update_closing_card(inv)
@@ -2093,11 +1588,7 @@ class InvoiceReviewApp(QMainWindow):
         else:
             self._preview_empty_message = "已选择多张发票，请选择单张查看原件"
             self._clear_detail_form()
-            self.btn_app.setEnabled(True)
-            self.btn_ign.setEnabled(True)
-            self.btn_err.setEnabled(True)
-            self.btn_rev.setEnabled(True)
-            self.lbl_batch_hint.setText(f"已选择 {num_selected} 张发票，可批量处理")
+            self._detail_panel.set_multi_selection_state(num_selected)
             self.current_preview_docs = []
             self.current_preview_index = 0
             self.lbl_file_info.setText("0 / 0 无文件")
@@ -2847,6 +2338,31 @@ class InvoiceReviewApp(QMainWindow):
         self._open_local_path(target_dir)
         self.statusBar().showMessage(f"已打开附件所在目录: {target_dir}", 2000)
 
+    def _locate_attachment_file(self):
+        """Open Explorer and highlight/select the current attachment file."""
+        if not self.current_invoice or not self.current_invoice.get("attachment_path"):
+            return
+        attachment_path = str(self.current_invoice.get("attachment_path") or "")
+        file_path = self._resolve_attachment_path(attachment_path)
+        if not file_path or not file_path.exists():
+            QMessageBox.warning(
+                self,
+                "警告",
+                f"文件不存在于路径:\n{file_path}",
+            )
+            return
+
+        import sys
+        if sys.platform == "win32":
+            try:
+                import subprocess
+                subprocess.run(["explorer.exe", "/select,", str(file_path.resolve())])
+                return
+            except Exception as e:
+                _log.error("Failed to run explorer /select: %s", e)
+
+        self._open_local_path(file_path.parent)
+
     def _open_exports_directory(self):
         """Open global exports folder, write to status bar."""
         exports_dir = PROJECT_ROOT / "exports"
@@ -2904,7 +2420,7 @@ class InvoiceReviewApp(QMainWindow):
             if current_row >= 0 and current_row < self.table.rowCount():
                 self.table.selectRow(current_row)
                 self._on_table_selection_changed()
-            self.lbl_dirty_hint.setText("未修改")
+            self._detail_panel.set_dirty_state(False)
             self.btn_save_draft.setEnabled(False)
         except Exception as e:
             _log.error("Failed to save invoice edits: %s", e)

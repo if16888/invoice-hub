@@ -1450,8 +1450,8 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             # 1. Test confirmed_note loaded to txt_note
             self.assertEqual(window.txt_note.toPlainText(), "这是一条测试个人备注")
 
-            # 2. Test closing card text has "已填写个人备注"
-            self.assertIn("已填写个人备注", window.lbl_closing_desc.text())
+            # 2. Test note summary shows the note content
+            self.assertIn("这是一条测试个人备注", window.lbl_note_summary.text())
 
             # 3. Modify note and save
             window.txt_note.setPlainText("这是修改后的个人备注")
@@ -1732,7 +1732,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
         from scripts.invoice_fetch.gui.app import InvoiceReviewApp
         window = InvoiceReviewApp(self.db_path, splash=None)
         try:
-            self.assertLessEqual(window.txt_note.maximumHeight(), 64)
+            self.assertLessEqual(window.txt_note.maximumHeight(), 80)  # readable note height
         finally:
             window.close()
 

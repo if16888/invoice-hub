@@ -954,6 +954,26 @@ class InvoiceDB:
             row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices WHERE is_deleted = 0").fetchone()
         return int(row["cnt"] if row else 0)
 
+    def count_invoices_for_status(self, status: str | None = None, include_deleted: bool = False) -> int:
+        """Count invoices, optionally filtered by review status, without hydrating rows."""
+        if status is not None and status not in review_status.ALL_STATUSES:
+            raise ValueError(f"Invalid review status: '{status}'. Must be one of {review_status.ALL_STATUSES}")
+
+        query = "SELECT COUNT(*) AS cnt FROM invoices"
+        where_clauses = []
+        params = []
+        if not include_deleted:
+            where_clauses.append("is_deleted = 0")
+        if status is not None:
+            where_clauses.append("review_status = ?")
+            params.append(status)
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        row = self._conn.execute(query, params).fetchone()
+        return int(row["cnt"] if row else 0)
+
     def count_active_duplicates_by_invoice_number(self, invoice_number: str, exclude_id: int) -> int:
         """Count other active (not deleted) invoices with the same invoice_number."""
         if not invoice_number:

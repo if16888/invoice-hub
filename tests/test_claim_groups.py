@@ -870,6 +870,59 @@ class ClaimGroupsTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     db.list_invoices(limit=-5)
 
+    def test_count_invoices_for_status(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_count_status.db"
+            with InvoiceDB(db_path) as db:
+                self.assertEqual(db.count_invoices_for_status(status=None), 0)
+
+                db.insert_invoice({
+                    "invoice_number": "INV001",
+                    "total_amount": "100.00",
+                    "seller_name": "Seller A",
+                    "invoice_date": "2026-06-01",
+                    "review_status": "to_review"
+                })
+                db.insert_invoice({
+                    "invoice_number": "INV002",
+                    "total_amount": "200.00",
+                    "seller_name": "Seller B",
+                    "invoice_date": "2026-06-02",
+                    "review_status": "approved"
+                })
+                db.insert_invoice({
+                    "invoice_number": "INV003",
+                    "total_amount": "300.00",
+                    "seller_name": "Seller C",
+                    "invoice_date": "2026-06-03",
+                    "review_status": "approved"
+                })
+                db.insert_invoice({
+                    "invoice_number": "INV004",
+                    "total_amount": "400.00",
+                    "seller_name": "Seller D",
+                    "invoice_date": "2026-06-04",
+                    "review_status": "ignored"
+                })
+
+                self.assertEqual(db.count_invoices_for_status(status=None), 4)
+                self.assertEqual(db.count_invoices_for_status(status="to_review"), 1)
+                self.assertEqual(db.count_invoices_for_status(status="approved"), 2)
+                self.assertEqual(db.count_invoices_for_status(status="ignored"), 1)
+                self.assertEqual(db.count_invoices_for_status(status="error"), 0)
+
+                inv_id = db.find_invoice_by_number("INV004")["id"]
+                db.soft_delete_invoice(inv_id)
+
+                self.assertEqual(db.count_invoices_for_status(status=None), 3)
+                self.assertEqual(db.count_invoices_for_status(status="ignored"), 0)
+
+                self.assertEqual(db.count_invoices_for_status(status=None, include_deleted=True), 4)
+                self.assertEqual(db.count_invoices_for_status(status="ignored", include_deleted=True), 1)
+
+                with self.assertRaises(ValueError):
+                    db.count_invoices_for_status(status="invalid_status")
+
     @patch("sys.exit")
     @patch("builtins.print")
     def test_invoice_list_status_approved_limit_20_output(self, mock_print, mock_exit):
@@ -1133,7 +1186,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._deferred_init()
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
-                    self.assertEqual(window.summary_card.layout().spacing(), 6)
+                    self.assertEqual(window.summary_card.layout().spacing(), 6)  # readable spacing
                     self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
                     self.assertEqual(window.status_bar.maximumHeight(), 32)
                     self.assertEqual(window.status_bar.minimumHeight(), 32)
@@ -2200,8 +2253,8 @@ class ClaimGroupsTests(unittest.TestCase):
             splash.show_message("正在进行测试...", 50)
             splash.close()
             self.assertTrue(True)
-        except Exception as e:
-            self.skipTest(f"Skipping GUI test in displayless environment: {e}")
+        except (ImportError, RuntimeError, OSError) as e:
+            self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_deferred_init_loads_invoice_list(self):
         # GUI test to verify _deferred_init loads invoices and claims successfully
@@ -2445,8 +2498,8 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertIn(warning, window.table.item(0, 0).toolTip())
                         window.table.selectRow(0)
                         app.processEvents()
-                        self.assertFalse(window.lbl_buyer_warning.isHidden())
-                        self.assertEqual(window.lbl_buyer_warning.text(), warning)
+                        # Buyer warning now surfaced via txt_buyer tooltip (not summary card)
+                        self.assertIn("抬头不匹配", window.txt_buyer.toolTip())
                     finally:
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
@@ -2498,12 +2551,12 @@ class ClaimGroupsTests(unittest.TestCase):
                         app.processEvents()
                         self.assertEqual(window.txt_buyer.text(), original_buyer)
                         self.assertIn(warning, window.table.item(0, 0).toolTip())
-                        self.assertEqual(window.lbl_buyer_warning.text(), warning)
+                        self.assertIn("抬头不匹配", window.txt_buyer.toolTip())
 
                         window.txt_buyer.setText(expected_buyer)
                         window._mark_invoice_form_dirty()
                         self.assertTrue(window.btn_save_draft.isEnabled())
-                        self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+                        self.assertEqual(window.lbl_dirty_hint.text(), "已修改")
 
                         window._save_invoice_fields()
                         app.processEvents()
@@ -2511,8 +2564,9 @@ class ClaimGroupsTests(unittest.TestCase):
                         refreshed = window.db.get_invoice(invoice_id)
                         self.assertEqual(refreshed["buyer_name"], expected_buyer)
                         self.assertFalse(window.btn_save_draft.isEnabled())
-                        self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
-                        self.assertTrue(window.lbl_buyer_warning.isHidden())
+                        self.assertEqual(window.lbl_dirty_hint.text(), "")
+                        # Buyer warning cleared from tooltip after correction
+                        self.assertNotIn("抬头不匹配", window.txt_buyer.toolTip())
                         self.assertNotIn(warning, window.table.item(0, 0).toolTip())
                     finally:
                         if hasattr(window, "db") and window.db is not None:
@@ -3489,10 +3543,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Assert summary card is updated correctly
                     self.assertEqual(window.lbl_sum_status.text(), "已通过")
                     self.assertEqual(window.lbl_sum_amount.text(), "¥500.00")
-                    self.assertEqual(window.lbl_sum_date.text(), "费用日期: 2026-05-25")
+                    self.assertEqual(window.lbl_sum_date.text(), "2026-05-25")
                     self.assertEqual(window.lbl_sum_number.text(), "发票号码: SEL777")
-                    self.assertEqual(window.lbl_sum_seller.text(), "销售方: Grid Seller")
-                    self.assertEqual(window.lbl_sum_category.text(), "消费类型: 酒店住宿")
+                    self.assertEqual(window.lbl_sum_seller.text(), "Grid Seller")
+                    self.assertEqual(window.lbl_sum_category.text(), "酒店住宿")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -3744,7 +3798,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     )
                     detail_content = window.right_content_widget.widget()
                     self.assertIsNotNone(detail_content)
-                    self.assertTrue(detail_content.isAncestorOf(window.detail_tabs))
+                    # detail_core_section is now directly in the scroll area (no QTabWidget wrapper)
+                    self.assertTrue(detail_content.isAncestorOf(window.detail_core_section))
                     self.assertTrue(detail_content.isAncestorOf(window.btn_save_draft))
                     self.assertTrue(detail_content.isAncestorOf(window.btn_app))
                     self.assertGreater(
@@ -3800,7 +3855,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIsInstance(window.combo_supporting_docs, QComboBox)
                     self.assertEqual(window.combo_supporting_docs.count(), 1)
                     self.assertLessEqual(window.btn_save_draft.maximumWidth(), 140)
-                    self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 96)
+                    self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 72)  # compact layout
                     self.assertEqual(window.txt_path.text(), attachment_path.name)
                     self.assertEqual(window.txt_path.toolTip(), str(attachment_path))
 
@@ -3864,7 +3919,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.combo_category.setCurrentText("餐饮")
                     window._mark_invoice_form_dirty()
                     self.assertTrue(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "已修改")
 
                     window._save_invoice_fields()
                     app.processEvents()
@@ -3879,7 +3934,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(refreshed["buyer_name"], "新购买方")
                     self.assertEqual(refreshed["category"], "餐饮")
                     self.assertFalse(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -3909,7 +3964,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.btn_err: "DangerOutlineBtn",
                         window.btn_rev: "SecondaryBtn",
                         window.btn_delete_invoice: "TextDangerBtn",
-                        window.btn_export: "PrimaryBtn",
+                        window.btn_export: "SecondaryBtn",
                         window.btn_create_claim: "SecondaryBtn",
                         window.btn_add_to_claim: "SecondaryBtn",
                     }
@@ -3918,12 +3973,10 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertLessEqual(button.maximumWidth(), 180)
 
                     action_labels = [
-                        window.btn_sum_open_file.text(),
-                        window.btn_sum_copy_number.text(),
-                        window.btn_sum_locate_file.text(),
                         window.btn_delete_invoice.text(),
                         window.btn_export.text(),
                         window.btn_add_to_claim.text(),
+                        window.btn_create_claim.text(),
                     ]
                     emoji_prefixes = ("📁", "📋", "📍", "🗑", "🚀", "🔗")
                     self.assertFalse(any(text.startswith(emoji_prefixes) for text in action_labels))
@@ -3955,18 +4008,15 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.review_note_section,
                         window.review_actions_section,
                         window.claim_setup_section,
-                        window.claim_export_section,
                     ]
                     for section in sections:
                         self.assertIsInstance(section, QFrame)
                         self.assertEqual(section.property("class"), "DetailSection")
 
-                    self.assertEqual(window.detail_tabs.count(), 3)
-                    self.assertEqual(
-                        [window.detail_tabs.tabText(index) for index in range(3)],
-                        ["发票详情", "审核", "报销导出"],
-                    )
-                    self.assertEqual(window.txt_note.maximumHeight(), 60)
+                    # Single-page layout — no QTabWidget; all sections in scroll area
+                    self.assertIsNotNone(window.detail_core_section)
+                    self.assertIsNotNone(window.claim_setup_section)
+                    self.assertEqual(window.txt_note.maximumHeight(), 72)  # readable note
                     self.assertTrue(window.lbl_export_summary.wordWrap())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -4712,6 +4762,58 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_first_load_does_not_hydrate_entire_database_with_1000_records(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_performance_count.db"
+                with InvoiceDB(db_path) as db:
+                    db._conn.execute("BEGIN TRANSACTION")
+                    for i in range(1000):
+                        db._conn.execute(
+                            "INSERT INTO invoices (invoice_number, total_amount, seller_name, invoice_date, review_status, is_deleted) VALUES (?, ?, ?, ?, ?, ?)",
+                            (f"PERF{i:04d}", "10.00", "Synthetic Seller", "2026-06-01", "to_review", 0)
+                        )
+                    db._conn.execute("COMMIT")
+
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    original_list = window.db.list_invoices
+                    list_calls = []
+
+                    def spy_list(*args, **kwargs):
+                        list_calls.append((kwargs.get("status"), kwargs.get("limit")))
+                        return original_list(*args, **kwargs)
+
+                    window.db.list_invoices = spy_list
+
+                    window._deferred_init()
+                    app.processEvents()
+
+                    self.assertEqual(window.table.rowCount(), 100)
+
+                    for status, limit in list_calls:
+                        if status is None and limit is None:
+                            self.fail("list_invoices(status=None, limit=None) was called, leading to full hydration!")
+
+                    self.assertTrue(window._limited_first_load_active)
+                    self.assertEqual(window._limited_first_load_total, 1000)
+
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_save_button_dirty_state(self):
         # Verify the save button only enables after editing and disables again after save.
         try:
@@ -4743,24 +4845,24 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.table.selectRow(0)
                     app.processEvents()
                     self.assertFalse(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "")
 
                     window.txt_amount.setText("31.90")
                     window._mark_invoice_form_dirty()
                     self.assertTrue(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "已修改")
 
                     window._save_invoice_fields()
                     app.processEvents()
                     self.assertFalse(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
                     window.close()
                     window.deleteLater()
                     app.processEvents()
-        except (ImportError, RuntimeError) as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_link_invoice_refreshes_claim_column(self):
@@ -4768,7 +4870,7 @@ class ClaimGroupsTests(unittest.TestCase):
         try:
             from PySide6.QtWidgets import QApplication, QMessageBox
             app = QApplication.instance() or QApplication(sys.argv)
-        except (ImportError, RuntimeError) as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
         with tempfile.TemporaryDirectory() as td:
@@ -4859,7 +4961,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.close()
                     window.deleteLater()
                     app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_missing_amount_shows_placeholder_in_summary(self):
@@ -4895,7 +4997,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.close()
                     window.deleteLater()
                     app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_supporting_documents_list_updates_with_selected_invoice(self):
@@ -4993,7 +5095,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_open_attachment_resolves_mainrepo_nested_relative_path(self):
@@ -5042,7 +5144,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_gui_open_attachment_recovers_from_stale_filename_only_path(self):
@@ -5091,7 +5193,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
     def test_claim_quality_report_generation(self):
@@ -5326,7 +5428,7 @@ class ClaimGroupsTests(unittest.TestCase):
                             window.close()
                             window.deleteLater()
                             app.processEvents()
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 
 
