@@ -686,6 +686,9 @@ class InvoiceReviewApp(QMainWindow):
         self.review_note_section = dp.review_note_section
         self.btn_toggle_note = dp.btn_toggle_note
         self.txt_note = dp.txt_note
+        self.lbl_note_summary = dp.lbl_note_summary
+        self.btn_new_claim_toggle = dp.btn_new_claim_toggle
+        self.new_claim_widget = dp.new_claim_widget
         # More source
         self.btn_more_source = dp.btn_more_source
         self.more_source_widget = dp.more_source_widget
@@ -929,12 +932,12 @@ class InvoiceReviewApp(QMainWindow):
         if not self.current_invoice or self._invoice_snapshot is None:
             self.btn_save_draft.setEnabled(False)
             if hasattr(self, "lbl_dirty_hint"):
-                self.lbl_dirty_hint.setText("未修改")
+                self.lbl_dirty_hint.setText("")
             return
         changed = self._get_invoice_form_snapshot() != self._invoice_snapshot
         self.btn_save_draft.setEnabled(changed)
         if hasattr(self, "lbl_dirty_hint"):
-            self.lbl_dirty_hint.setText("有未保存修改" if changed else "未修改")
+            self.lbl_dirty_hint.setText("已修改" if changed else "")
 
     def _mark_invoice_form_dirty(self):
         if self._suspend_dirty_tracking:
@@ -1432,10 +1435,10 @@ class InvoiceReviewApp(QMainWindow):
 
         # Clear summary card
         self.lbl_sum_amount.setText("¥—")
-        self.lbl_sum_date.setText("费用日期: —")
+        self.lbl_sum_date.setText("—")
         self.lbl_sum_number.setText("发票号码: —")
-        self.lbl_sum_seller.setText("销售方: —")
-        self.lbl_sum_category.setText("消费类型: —")
+        self.lbl_sum_seller.setText("—")
+        self.lbl_sum_category.setText("—")
         self.lbl_date_warning.clear()
         self.lbl_date_warning.setVisible(False)
         self._set_summary_placeholder()
@@ -1456,7 +1459,9 @@ class InvoiceReviewApp(QMainWindow):
         self.combo_supporting_docs.setEnabled(False)
         self.txt_note.setEnabled(False)
         self.btn_save_draft.setEnabled(False)
-        self.lbl_dirty_hint.setText("未修改")
+        self.lbl_dirty_hint.setText("")
+        self.lbl_note_summary.setText("")
+        self.lbl_note_summary.setVisible(False)
         self.btn_open_file.setEnabled(False)
 
         self.lbl_batch_hint.setText("请选择一个发票记录")
@@ -1507,7 +1512,8 @@ class InvoiceReviewApp(QMainWindow):
     def _update_closing_card(self, inv):
         if not inv:
             if hasattr(self, "lbl_closing_desc"):
-                self.lbl_closing_desc.setText("请选择发票以查看建议")
+                self.lbl_closing_desc.setText("")
+                self.lbl_closing_desc.setVisible(False)
             return
         inv_num = str(inv.get("invoice_number") or "").strip()
         inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
@@ -1518,20 +1524,14 @@ class InvoiceReviewApp(QMainWindow):
         if hasattr(self, "lbl_closing_desc"):
             if not inv_num or not inv_date or not seller or not total_amt:
                 desc = "⚠️ 关键字段缺失，请在上方表单中补全。"
-            elif status == "to_review":
-                desc = "💡 字段已完整，确认无误后即可通过审核。"
-            elif status == "approved":
-                desc = "✅ 已通过 ｜ 可加入报销组"
-            elif status == "ignored":
-                desc = "ℹ️ 已忽略 ｜ 不参与报销"
+                self.lbl_closing_desc.setText(desc)
+                self.lbl_closing_desc.setVisible(True)
             elif status == "error":
-                desc = "❌ 异常发票 ｜ 需核对"
+                self.lbl_closing_desc.setText("❌ 异常发票 ｜ 需核对")
+                self.lbl_closing_desc.setVisible(True)
             else:
-                desc = "💡 字段已完整，确认无误后即可通过审核。"
-
-            if str(inv.get("confirmed_note") or "").strip():
-                desc += " ｜ 已填个人备注"
-            self.lbl_closing_desc.setText(desc)
+                self.lbl_closing_desc.setText("")
+                self.lbl_closing_desc.setVisible(False)
 
     def _on_table_selection_changed(self):
         # Triggered when users select table rows. Handles single and multi-selection modes.
@@ -1636,16 +1636,25 @@ class InvoiceReviewApp(QMainWindow):
             note_content = str(inv.get("confirmed_note") or "").strip()
             self.txt_note.setPlainText(note_content)
             has_note = bool(note_content)
-            self.txt_note.setVisible(has_note)
-            if hasattr(self, "btn_toggle_note"):
-                self.btn_toggle_note.setText("个人备注 -" if has_note else "个人备注 +")
+            self.txt_note.setVisible(False)  # start collapsed
+            if has_note:
+                summary = note_content[:60] + ("…" if len(note_content) > 60 else "")
+                self.lbl_note_summary.setText(f"备注: {summary}")
+                self.lbl_note_summary.setVisible(True)
+                if hasattr(self, "btn_toggle_note"):
+                    self.btn_toggle_note.setText("备注 + 编辑")
+            else:
+                self.lbl_note_summary.setText("")
+                self.lbl_note_summary.setVisible(False)
+                if hasattr(self, "btn_toggle_note"):
+                    self.btn_toggle_note.setText("备注 + 添加")
 
             # Update summary card
             self.lbl_sum_amount.setText(self._format_amount_display(total_amt))
-            self.lbl_sum_date.setText(f"费用日期: {display_date}" if display_date else "费用日期: —")
+            self.lbl_sum_date.setText(display_date if display_date else "—")
             self.lbl_sum_number.setText(f"发票号码: {inv_num}" if inv_num else "发票号码: —")
-            self.lbl_sum_seller.setText(f"销售方: {seller}" if seller else "销售方: —")
-            self.lbl_sum_category.setText(f"消费类型: {category or '未分类'}")
+            self.lbl_sum_seller.setText(seller if seller else "—")
+            self.lbl_sum_category.setText(category if category else "未分类")
 
             buyer_check_warning = self._buyer_warning(inv)
             if buyer_check_warning == "购方抬头不匹配，可能导致退单":
@@ -1687,7 +1696,6 @@ class InvoiceReviewApp(QMainWindow):
             self._invoice_snapshot = self._get_invoice_snapshot(inv)
             self._suspend_dirty_tracking = False
             self._update_save_button_state()
-            self.lbl_dirty_hint.setText("未修改")
 
             if hasattr(self, "lbl_closing_desc"):
                 self._update_closing_card(inv)
@@ -2540,7 +2548,7 @@ class InvoiceReviewApp(QMainWindow):
             if current_row >= 0 and current_row < self.table.rowCount():
                 self.table.selectRow(current_row)
                 self._on_table_selection_changed()
-            self.lbl_dirty_hint.setText("未修改")
+            self.lbl_dirty_hint.setText("")
             self.btn_save_draft.setEnabled(False)
         except Exception as e:
             _log.error("Failed to save invoice edits: %s", e)

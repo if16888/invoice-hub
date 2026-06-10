@@ -1186,7 +1186,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._deferred_init()
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
-                    self.assertEqual(window.summary_card.layout().spacing(), 6)
+                    self.assertEqual(window.summary_card.layout().spacing(), 3)  # compact layout
                     self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
                     self.assertEqual(window.status_bar.maximumHeight(), 32)
                     self.assertEqual(window.status_bar.minimumHeight(), 32)
@@ -2556,7 +2556,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.txt_buyer.setText(expected_buyer)
                         window._mark_invoice_form_dirty()
                         self.assertTrue(window.btn_save_draft.isEnabled())
-                        self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+                        self.assertEqual(window.lbl_dirty_hint.text(), "已修改")
 
                         window._save_invoice_fields()
                         app.processEvents()
@@ -2564,7 +2564,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         refreshed = window.db.get_invoice(invoice_id)
                         self.assertEqual(refreshed["buyer_name"], expected_buyer)
                         self.assertFalse(window.btn_save_draft.isEnabled())
-                        self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                        self.assertEqual(window.lbl_dirty_hint.text(), "")
                         # Buyer warning cleared from tooltip after correction
                         self.assertNotIn("抬头不匹配", window.txt_buyer.toolTip())
                         self.assertNotIn(warning, window.table.item(0, 0).toolTip())
@@ -3543,10 +3543,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Assert summary card is updated correctly
                     self.assertEqual(window.lbl_sum_status.text(), "已通过")
                     self.assertEqual(window.lbl_sum_amount.text(), "¥500.00")
-                    self.assertEqual(window.lbl_sum_date.text(), "费用日期: 2026-05-25")
+                    self.assertEqual(window.lbl_sum_date.text(), "2026-05-25")
                     self.assertEqual(window.lbl_sum_number.text(), "发票号码: SEL777")
-                    self.assertEqual(window.lbl_sum_seller.text(), "销售方: Grid Seller")
-                    self.assertEqual(window.lbl_sum_category.text(), "消费类型: 酒店住宿")
+                    self.assertEqual(window.lbl_sum_seller.text(), "Grid Seller")
+                    self.assertEqual(window.lbl_sum_category.text(), "酒店住宿")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -3855,7 +3855,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIsInstance(window.combo_supporting_docs, QComboBox)
                     self.assertEqual(window.combo_supporting_docs.count(), 1)
                     self.assertLessEqual(window.btn_save_draft.maximumWidth(), 140)
-                    self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 96)
+                    self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 72)  # compact layout
                     self.assertEqual(window.txt_path.text(), attachment_path.name)
                     self.assertEqual(window.txt_path.toolTip(), str(attachment_path))
 
@@ -3919,7 +3919,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.combo_category.setCurrentText("餐饮")
                     window._mark_invoice_form_dirty()
                     self.assertTrue(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "已修改")
 
                     window._save_invoice_fields()
                     app.processEvents()
@@ -3934,7 +3934,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(refreshed["buyer_name"], "新购买方")
                     self.assertEqual(refreshed["category"], "餐饮")
                     self.assertFalse(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -4016,7 +4016,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Single-page layout — no QTabWidget; all sections in scroll area
                     self.assertIsNotNone(window.detail_core_section)
                     self.assertIsNotNone(window.claim_setup_section)
-                    self.assertEqual(window.txt_note.maximumHeight(), 45)
+                    self.assertEqual(window.txt_note.maximumHeight(), 40)  # compact note
                     self.assertTrue(window.lbl_export_summary.wordWrap())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -4845,17 +4845,17 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.table.selectRow(0)
                     app.processEvents()
                     self.assertFalse(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "")
 
                     window.txt_amount.setText("31.90")
                     window._mark_invoice_form_dirty()
                     self.assertTrue(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "有未保存修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "已修改")
 
                     window._save_invoice_fields()
                     app.processEvents()
                     self.assertFalse(window.btn_save_draft.isEnabled())
-                    self.assertEqual(window.lbl_dirty_hint.text(), "未修改")
+                    self.assertEqual(window.lbl_dirty_hint.text(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
