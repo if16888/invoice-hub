@@ -88,16 +88,34 @@ def _patch_preview_select_helpers() -> None:
     except ModuleNotFoundError:
         return
 
+    def _is_pending_evidence_row(inv: dict) -> bool:
+        return str((inv or {}).get("invoice_type") or "") == "待关联证明材料"
+
     def _wrap_select_row(original):
         if getattr(original, "_invoice_hub_guard_wrapped", False):
             return original
 
         def _select_row_with_deferred_init(self, window, row_idx):
-            if hasattr(window, "_deferred_init") and not getattr(window, "_deferred_init_done", False):
+            was_unloaded = not getattr(window, "_deferred_init_done", False)
+            if hasattr(window, "_deferred_init") and was_unloaded:
                 window._deferred_init()
                 app_obj = getattr(self, "app", None)
                 if app_obj is not None:
                     app_obj.processEvents()
+
+            # Some legacy tests compute row_idx before deferred loading, when
+            # invoices_list is still empty, so their fallback remains 0. If the
+            # first loaded row is a pending-evidence helper record, choose the
+            # first regular invoice row instead; the selector tests are about
+            # documents attached to a real invoice, not selecting evidence rows.
+            if was_unloaded and row_idx == 0:
+                invoices = list(getattr(window, "invoices_list", []) or [])
+                if invoices and _is_pending_evidence_row(invoices[0]):
+                    for idx, inv in enumerate(invoices):
+                        if not _is_pending_evidence_row(inv):
+                            row_idx = idx
+                            break
+
             return original(self, window, row_idx)
 
         _select_row_with_deferred_init._invoice_hub_guard_wrapped = True
