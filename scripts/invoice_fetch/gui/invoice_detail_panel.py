@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Invoice detail panel — right-side single-invoice review panel for Invoice Hub."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -298,11 +298,13 @@ class InvoiceDetailPanel(QWidget):
         self.btn_rev.setVisible(False)
         self.btn_rev.setProperty("class", "SecondaryBtn")
         self.btn_rev.setMaximumWidth(132)
+        self.btn_rev.clicked.connect(self._cb.on_reset_review)
 
         self.btn_delete_invoice = QPushButton("删除发票", self)
         self.btn_delete_invoice.setVisible(False)
         self.btn_delete_invoice.setProperty("class", "TextDangerBtn")
         self.btn_delete_invoice.setMaximumWidth(96)
+        self.btn_delete_invoice.clicked.connect(self._cb.on_delete_or_restore)
 
         # ── 3. Core Info ──────────────────────────────────────────
         self.detail_core_section = QFrame()
