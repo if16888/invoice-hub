@@ -910,34 +910,16 @@ class InvoiceReviewApp(QMainWindow):
             self.combo_category.setCurrentText(current)
         self.combo_category.blockSignals(False)
 
-    def _format_amount_display(self, amount_text: str) -> str:
-        amount_text = str(amount_text or "").strip()
-        if not amount_text:
-            return "¥—"
-
-        try:
-            from decimal import Decimal, InvalidOperation
-
-            return f"¥{Decimal(amount_text):.2f}"
-        except (InvalidOperation, ValueError, TypeError):
-            return f"¥{amount_text}"
-
     def _buyer_warning(self, inv: dict) -> str:
         cfg = load_config_safe()
         return buyer_warning(inv, cfg.get("reimbursement", {}))
 
     def _update_save_button_state(self):
-        if not hasattr(self, "btn_save_draft"):
-            return
         if not self.current_invoice or self._invoice_snapshot is None:
-            self.btn_save_draft.setEnabled(False)
-            if hasattr(self, "lbl_dirty_hint"):
-                self.lbl_dirty_hint.setText("")
+            self._detail_panel.set_dirty_state(False)
             return
         changed = self._get_invoice_form_snapshot() != self._invoice_snapshot
-        self.btn_save_draft.setEnabled(changed)
-        if hasattr(self, "lbl_dirty_hint"):
-            self.lbl_dirty_hint.setText("已修改" if changed else "")
+        self._detail_panel.set_dirty_state(changed)
 
     def _mark_invoice_form_dirty(self):
         if self._suspend_dirty_tracking:
@@ -1404,77 +1386,12 @@ class InvoiceReviewApp(QMainWindow):
         self._suspend_dirty_tracking = True
         self.current_invoice = None
         self._invoice_snapshot = None
-        self.txt_id.clear()
-        self.txt_number.clear()
-        self.txt_date.clear()
-        self.txt_invoice_date.clear()
-        self.txt_date_source.clear()
-        self.txt_seller.clear()
-        self.txt_buyer.clear()
-        self.txt_amount.clear()
-        self.combo_category.setCurrentText("")
-        self.txt_subject.clear()
-        self.txt_path.clear()
-        self.txt_path.setToolTip("")
-        self.btn_open_file.setEnabled(False)
-        self.btn_add_attachment.setEnabled(False)
-        self.btn_retry_download.setEnabled(False)
-        self.btn_retry_download.setVisible(False)
-        self.txt_full_path.clear()
-        self.txt_full_path.setToolTip("")
-        self.txt_url.clear()
-        self.txt_item_name.clear()
-        self.combo_supporting_docs.blockSignals(True)
-        self.combo_supporting_docs.clear()
-        self.combo_supporting_docs.addItem("暂无证明材料")
-        self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
-        self.supporting_doc_items = []
-        self.combo_supporting_docs.blockSignals(False)
-        self.btn_open_extra_files.setEnabled(False)
-        self.txt_note.clear()
-
-        # Clear summary card
-        self.lbl_sum_amount.setText("¥—")
-        self.lbl_sum_date.setText("—")
-        self.lbl_sum_number.setText("发票号码: —")
-        self.lbl_sum_seller.setText("—")
-        self.lbl_sum_category.setText("—")
-        self.lbl_date_warning.clear()
-        self.lbl_date_warning.setVisible(False)
-        self._set_summary_placeholder()
-        self.txt_buyer.setPlaceholderText("")
-
+        self._detail_panel.clear_detail()
         if hasattr(self, "action_copy_number"):
             self.action_copy_number.setEnabled(False)
             self.action_locate_file.setEnabled(False)
             self.action_open_dir.setEnabled(False)
-
-        # Disable fields
-        self.txt_number.setEnabled(False)
-        self.txt_date.setEnabled(False)
-        self.txt_seller.setEnabled(False)
-        self.txt_buyer.setEnabled(False)
-        self.txt_amount.setEnabled(False)
-        self.combo_category.setEnabled(False)
-        self.combo_supporting_docs.setEnabled(False)
-        self.txt_note.setEnabled(False)
-        self.btn_save_draft.setEnabled(False)
-        self.lbl_dirty_hint.setText("")
-        self.lbl_note_summary.setText("")
-        self.lbl_note_summary.setVisible(False)
-        self.btn_open_file.setEnabled(False)
-
-        self.lbl_batch_hint.setText("请选择一个发票记录")
-        self.btn_app.setEnabled(False)
-        self.btn_ign.setEnabled(False)
-        self.btn_err.setEnabled(False)
-        self.btn_rev.setEnabled(False)
-        self.btn_inline_more.setEnabled(False)
-        self.btn_add_to_claim.setEnabled(False)
         self._suspend_dirty_tracking = False
-
-        if hasattr(self, "lbl_closing_desc"):
-            self.lbl_closing_desc.setText("请选择发票以查看建议")
 
     def _format_status_count_prefix(self) -> str:
         """Return the leading count segment for the status bar, reflecting limited-load state."""
@@ -1511,27 +1428,17 @@ class InvoiceReviewApp(QMainWindow):
 
     def _update_closing_card(self, inv):
         if not inv:
-            if hasattr(self, "lbl_closing_desc"):
-                self.lbl_closing_desc.setText("")
-                self.lbl_closing_desc.setVisible(False)
+            self._detail_panel.set_closing_status()
             return
         inv_num = str(inv.get("invoice_number") or "").strip()
         inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
         seller = str(inv.get("seller_name") or "").strip()
         total_amt = str(inv.get("total_amount") or "").strip()
         status = inv.get("review_status") or "to_review"
-
-        if hasattr(self, "lbl_closing_desc"):
-            if not inv_num or not inv_date or not seller or not total_amt:
-                desc = "⚠️ 关键字段缺失，请在上方表单中补全。"
-                self.lbl_closing_desc.setText(desc)
-                self.lbl_closing_desc.setVisible(True)
-            elif status == "error":
-                self.lbl_closing_desc.setText("❌ 异常发票 ｜ 需核对")
-                self.lbl_closing_desc.setVisible(True)
-            else:
-                self.lbl_closing_desc.setText("")
-                self.lbl_closing_desc.setVisible(False)
+        missing = not inv_num or not inv_date or not seller or not total_amt
+        self._detail_panel.set_closing_status(
+            missing_fields=missing, is_error=(status == "error" and not missing)
+        )
 
     def _on_table_selection_changed(self):
         # Triggered when users select table rows. Handles single and multi-selection modes.
@@ -1633,28 +1540,16 @@ class InvoiceReviewApp(QMainWindow):
             self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
             self._update_supporting_docs_selector(inv)
 
+            # Note via panel
             note_content = str(inv.get("confirmed_note") or "").strip()
-            self.txt_note.setPlainText(note_content)
-            has_note = bool(note_content)
-            self.txt_note.setVisible(False)  # start collapsed
-            if has_note:
-                summary = note_content[:60] + ("…" if len(note_content) > 60 else "")
-                self.lbl_note_summary.setText(f"备注: {summary}")
-                self.lbl_note_summary.setVisible(True)
-                if hasattr(self, "btn_toggle_note"):
-                    self.btn_toggle_note.setText("备注 + 编辑")
-            else:
-                self.lbl_note_summary.setText("")
-                self.lbl_note_summary.setVisible(False)
-                if hasattr(self, "btn_toggle_note"):
-                    self.btn_toggle_note.setText("备注 + 添加")
+            self._detail_panel.set_note(note_content)
 
-            # Update summary card
-            self.lbl_sum_amount.setText(self._format_amount_display(total_amt))
-            self.lbl_sum_date.setText(display_date if display_date else "—")
-            self.lbl_sum_number.setText(f"发票号码: {inv_num}" if inv_num else "发票号码: —")
-            self.lbl_sum_seller.setText(seller if seller else "—")
-            self.lbl_sum_category.setText(category if category else "未分类")
+            # Update summary card via panel
+            self._detail_panel.set_summary(
+                amount=total_amt, status=status, date=display_date,
+                category=category, seller=seller, number=inv_num,
+                date_warning=get_date_warning(inv),
+            )
 
             buyer_check_warning = self._buyer_warning(inv)
             if buyer_check_warning == "购方抬头不匹配，可能导致退单":
@@ -2548,7 +2443,7 @@ class InvoiceReviewApp(QMainWindow):
             if current_row >= 0 and current_row < self.table.rowCount():
                 self.table.selectRow(current_row)
                 self._on_table_selection_changed()
-            self.lbl_dirty_hint.setText("")
+            self._detail_panel.set_dirty_state(False)
             self.btn_save_draft.setEnabled(False)
         except Exception as e:
             _log.error("Failed to save invoice edits: %s", e)

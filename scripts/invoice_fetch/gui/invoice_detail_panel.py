@@ -2,6 +2,7 @@
 """Invoice detail panel — right-side single-invoice review panel for Invoice Hub."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -137,6 +138,245 @@ class InvoiceDetailPanel(QWidget):
         visible = not self.new_claim_widget.isVisible()
         self.new_claim_widget.setVisible(visible)
         self.btn_new_claim_toggle.setText("− 取消" if visible else "+ 新建报销组")
+
+    # ── public detail API ────────────────────────────────────────
+
+    def clear_detail(self):
+        """Reset all detail fields to empty/placeholder state."""
+        self.txt_id.clear()
+        self.txt_number.clear()
+        self.txt_date.clear()
+        self.txt_invoice_date.clear()
+        self.txt_date_source.clear()
+        self.txt_seller.clear()
+        self.txt_buyer.clear()
+        self.txt_amount.clear()
+        self.combo_category.setCurrentText("")
+        self.txt_subject.clear()
+        self.txt_path.clear()
+        self.txt_path.setToolTip("")
+        self.btn_open_file.setEnabled(False)
+        self.btn_add_attachment.setEnabled(False)
+        self.btn_retry_download.setEnabled(False)
+        self.btn_retry_download.setVisible(False)
+        self.txt_full_path.clear()
+        self.txt_full_path.setToolTip("")
+        self.txt_url.clear()
+        self.txt_item_name.clear()
+        self.combo_supporting_docs.blockSignals(True)
+        self.combo_supporting_docs.clear()
+        self.combo_supporting_docs.addItem("暂无证明材料")
+        self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
+        self.supporting_doc_items = []
+        self.combo_supporting_docs.blockSignals(False)
+        self.btn_open_extra_files.setEnabled(False)
+        self.txt_note.clear()
+        # Summary card
+        self.lbl_sum_amount.setText("¥—")
+        self.lbl_sum_date.setText("—")
+        self.lbl_sum_number.setText("发票号码: —")
+        self.lbl_sum_seller.setText("—")
+        self.lbl_sum_category.setText("—")
+        self.lbl_date_warning.clear()
+        self.lbl_date_warning.setVisible(False)
+        self._set_summary_placeholder()
+        self.txt_buyer.setPlaceholderText("")
+        # Notes
+        self.lbl_note_summary.setText("")
+        self.lbl_note_summary.setVisible(False)
+        self.btn_toggle_note.setText("备注 + 添加")
+        self.txt_note.setVisible(False)
+        # Closing card
+        self.lbl_closing_desc.setText("")
+        self.lbl_closing_desc.setVisible(False)
+        # Dirty hint
+        self.lbl_dirty_hint.setText("")
+        # Disable action buttons
+        self.btn_app.setEnabled(False)
+        self.btn_ign.setEnabled(False)
+        self.btn_err.setEnabled(False)
+        self.btn_rev.setEnabled(False)
+        self.btn_inline_more.setEnabled(False)
+        self.btn_add_to_claim.setEnabled(False)
+        self.btn_save_draft.setEnabled(False)
+        # Also disable form text fields
+        self.txt_number.setEnabled(False)
+        self.txt_date.setEnabled(False)
+        self.txt_seller.setEnabled(False)
+        self.txt_buyer.setEnabled(False)
+        self.txt_amount.setEnabled(False)
+        self.combo_category.setEnabled(False)
+        self.combo_supporting_docs.setEnabled(False)
+        self.txt_note.setEnabled(False)
+
+    def set_no_selection_state(self):
+        """Disable form fields — no invoice selected."""
+        self.txt_number.setEnabled(False)
+        self.txt_date.setEnabled(False)
+        self.txt_seller.setEnabled(False)
+        self.txt_buyer.setEnabled(False)
+        self.txt_amount.setEnabled(False)
+        self.combo_category.setEnabled(False)
+        self.combo_supporting_docs.setEnabled(False)
+        self.txt_note.setEnabled(False)
+        self.lbl_batch_hint.setText("请选择一个发票记录")
+
+    def set_single_selection_state(self):
+        """Enable form fields — single invoice selected."""
+        self.txt_number.setEnabled(True)
+        self.txt_date.setEnabled(True)
+        self.txt_seller.setEnabled(True)
+        self.txt_buyer.setEnabled(True)
+        self.txt_amount.setEnabled(True)
+        self.combo_category.setEnabled(True)
+        self.txt_note.setEnabled(True)
+        self.btn_app.setEnabled(True)
+        self.btn_ign.setEnabled(True)
+        self.btn_err.setEnabled(True)
+        self.btn_rev.setEnabled(True)
+        self.btn_inline_more.setEnabled(True)
+        self.btn_add_to_claim.setEnabled(True)
+        self.lbl_batch_hint.setText("已选择 1 张发票")
+
+    def set_multi_selection_state(self, count: int):
+        """Enable review buttons for multi-selection; disable form fields."""
+        self.btn_app.setEnabled(True)
+        self.btn_ign.setEnabled(True)
+        self.btn_err.setEnabled(True)
+        self.btn_rev.setEnabled(True)
+        self.btn_inline_more.setEnabled(True)
+        self.txt_number.setEnabled(False)
+        self.txt_date.setEnabled(False)
+        self.txt_seller.setEnabled(False)
+        self.txt_buyer.setEnabled(False)
+        self.txt_amount.setEnabled(False)
+        self.combo_category.setEnabled(False)
+        self.txt_note.setEnabled(False)
+        self.lbl_batch_hint.setText(f"已选择 {count} 张发票，可批量处理")
+
+    def set_summary(self, *, amount: str = "", status: str = "",
+                    date: str = "", category: str = "", seller: str = "",
+                    number: str = "", buyer_warning: str = "", date_warning: str = ""):
+        """Populate the summary card."""
+        self.lbl_sum_amount.setText(self._format_amount_display(amount))
+        self.lbl_sum_date.setText(date if date else "—")
+        self.lbl_sum_number.setText(f"发票号码: {number}" if number else "发票号码: —")
+        self.lbl_sum_seller.setText(seller if seller else "—")
+        self.lbl_sum_category.setText(category if category else "未分类")
+        self._update_status_badge(status)
+        if date_warning:
+            self.lbl_date_warning.setText(date_warning)
+            self.lbl_date_warning.setVisible(True)
+        else:
+            self.lbl_date_warning.setVisible(False)
+
+    def set_form_fields(self, *, inv_id: str = "", number: str = "",
+                        date: str = "", invoice_date: str = "",
+                        date_source: str = "", seller: str = "", buyer: str = "",
+                        amount: str = "", category: str = ""):
+        """Populate the basic-info form fields."""
+        self.txt_id.setText(inv_id)
+        self.txt_number.setText(number)
+        self.txt_date.setText(date)
+        self.txt_invoice_date.setText(invoice_date)
+        self.txt_date_source.setText(date_source)
+        self.txt_seller.setText(seller)
+        self.txt_buyer.setText(buyer)
+        self.txt_amount.setText(amount)
+        self.combo_category.setCurrentText(category)
+
+    def set_attachment_state(self, *, has_file: bool = False, has_url: bool = False,
+                             file_name: str = "", file_path: str = ""):
+        """Update attachment-related widgets."""
+        self.txt_path.setText(file_name if file_name else "")
+        self.txt_path.setToolTip(file_path)
+        self.btn_open_file.setEnabled(has_file)
+        self.btn_retry_download.setEnabled(not has_file and has_url)
+        self.btn_retry_download.setVisible(has_url)
+        self.btn_add_attachment.setEnabled(True)
+
+    def set_note(self, text: str):
+        """Set the personal note content."""
+        self.txt_note.setPlainText(text)
+        has_note = bool(text.strip())
+        self.txt_note.setVisible(False)  # start collapsed
+        if has_note:
+            summary = text[:60] + ("…" if len(text) > 60 else "")
+            self.lbl_note_summary.setText(f"备注: {summary}")
+            self.lbl_note_summary.setVisible(True)
+            self.btn_toggle_note.setText("备注 + 编辑")
+        else:
+            self.lbl_note_summary.setText("")
+            self.lbl_note_summary.setVisible(False)
+            self.btn_toggle_note.setText("备注 + 添加")
+
+    def set_closing_status(self, missing_fields: bool = False, is_error: bool = False):
+        """Set bottom status bar — only shown for warnings."""
+        if missing_fields:
+            self.lbl_closing_desc.setText("⚠️ 关键字段缺失，请在上方表单中补全。")
+            self.lbl_closing_desc.setVisible(True)
+        elif is_error:
+            self.lbl_closing_desc.setText("❌ 异常发票 ｜ 需核对")
+            self.lbl_closing_desc.setVisible(True)
+        else:
+            self.lbl_closing_desc.setText("")
+            self.lbl_closing_desc.setVisible(False)
+
+    def set_dirty_state(self, dirty: bool):
+        """Update save button and dirty hint."""
+        self.btn_save_draft.setEnabled(dirty)
+        self.lbl_dirty_hint.setText("已修改" if dirty else "")
+
+    def set_claim_summary(self, text: str = "", export_enabled: bool = False):
+        """Update claim group summary text and export button state."""
+        self.lbl_claim_total.setText(text)
+        self.btn_export.setEnabled(export_enabled)
+
+    def set_supporting_documents(self, items: list[dict]):
+        """Populate the supporting-documents combo from extra_paths."""
+        self.combo_supporting_docs.blockSignals(True)
+        self.combo_supporting_docs.clear()
+        self.supporting_doc_items = items
+        if not items:
+            self.combo_supporting_docs.addItem("暂无证明材料")
+            self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
+            self.btn_open_extra_files.setEnabled(False)
+        else:
+            for doc in items:
+                label = doc.get("label") or Path(doc.get("path", "")).name
+                self.combo_supporting_docs.addItem(label, doc)
+            self.combo_supporting_docs.setToolTip("")
+            self.btn_open_extra_files.setEnabled(True)
+        self.combo_supporting_docs.blockSignals(False)
+
+    def get_selected_supporting_document(self) -> dict | None:
+        """Return the currently selected supporting document, or None."""
+        idx = self.combo_supporting_docs.currentIndex()
+        if idx < 0 or idx >= len(self.supporting_doc_items):
+            return None
+        return self.supporting_doc_items[idx]
+
+    def get_form_values(self) -> dict:
+        """Return current form field values for saving."""
+        return {
+            "invoice_number": self.txt_number.text().strip(),
+            "expense_date": self.txt_date.text().strip(),
+            "total_amount": self.txt_amount.text().strip(),
+            "category": self.combo_category.currentText().strip(),
+            "seller_name": self.txt_seller.text().strip(),
+            "buyer_name": self.txt_buyer.text().strip(),
+        }
+
+    def _format_amount_display(self, amount_text: str) -> str:
+        """Format amount for display."""
+        amount_text = str(amount_text or "").strip()
+        if not amount_text:
+            return "¥—"
+        try:
+            from decimal import Decimal, InvalidOperation
+            return f"¥{Decimal(amount_text):.2f}"
+        except (InvalidOperation, ValueError, TypeError):
+            return f"¥{amount_text}"
 
     # ── UI construction ───────────────────────────────────────────
 
