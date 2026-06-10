@@ -273,7 +273,9 @@ class InvoiceDetailPanel(QWidget):
     def set_form_fields(self, *, inv_id: str = "", number: str = "",
                         date: str = "", invoice_date: str = "",
                         date_source: str = "", seller: str = "", buyer: str = "",
-                        amount: str = "", category: str = ""):
+                        amount: str = "", category: str = "",
+                        subject: str = "", item_name: str = "",
+                        full_path: str = "", url: str = ""):
         """Populate the basic-info form fields."""
         self.txt_id.setText(inv_id)
         self.txt_number.setText(number)
@@ -284,12 +286,22 @@ class InvoiceDetailPanel(QWidget):
         self.txt_buyer.setText(buyer)
         self.txt_amount.setText(amount)
         self.combo_category.setCurrentText(category)
+        self.txt_subject.setText(subject)
+        self.txt_item_name.setText(item_name)
+        self.txt_full_path.setText(full_path)
+        self.txt_full_path.setToolTip(full_path)
+        self.txt_url.setText(url)
 
     def set_attachment_state(self, *, has_file: bool = False, has_url: bool = False,
-                             file_name: str = "", file_path: str = ""):
+                             file_name: str = "", file_path: str = "",
+                             can_download: bool = False):
         """Update attachment-related widgets."""
-        self.txt_path.setText(file_name if file_name else "")
-        self.txt_path.setToolTip(file_path)
+        if not has_file and can_download:
+            self.txt_path.setText("未下载原件（可重试下载或手动补原件）")
+            self.txt_path.setToolTip("请点击右侧按钮重新尝试自动下载，或者人工补全发票原件文件。")
+        else:
+            self.txt_path.setText(file_name if file_name else "")
+            self.txt_path.setToolTip(file_path)
         self.btn_open_file.setEnabled(has_file)
         self.btn_retry_download.setEnabled(not has_file and has_url)
         self.btn_retry_download.setVisible(has_url)

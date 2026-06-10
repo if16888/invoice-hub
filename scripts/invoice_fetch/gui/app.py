@@ -1499,11 +1499,7 @@ class InvoiceReviewApp(QMainWindow):
             status = inv.get("review_status") or "to_review"
             att_path = str(inv.get("attachment_path") or "")
 
-            # Populate text inputs
-            self.txt_id.setText(inv_id)
-            self.txt_number.setText(inv_num)
-            self.txt_date.setText(display_date)
-            self.txt_invoice_date.setText(inv_date)
+            # Populate form fields via panel
             date_source_disp = {
                 "travel_date": "乘车日期",
                 "invoice_date": "开票日期",
@@ -1511,33 +1507,26 @@ class InvoiceReviewApp(QMainWindow):
                 "service_date": "服务日期",
                 "payment_date": "付款日期",
             }.get(date_source, date_source)
-            self.txt_date_source.setText(date_source_disp)
-            self.txt_seller.setText(seller)
-            self.txt_buyer.setText(buyer)
-            self.txt_amount.setText(total_amt)
-            self.combo_category.setCurrentText(category)
-            self.txt_subject.setText(str(inv.get("mail_subject") or ""))
-            self.txt_item_name.setText(str(inv.get("item_name") or ""))
             mail_uid = inv.get("mail_uid")
             download_url = str(inv.get("download_url") or "").strip()
-            if not att_path and (mail_uid is not None or download_url):
-                self.txt_path.setText("未下载原件（可重试下载或手动补原件）")
-                self.txt_path.setToolTip("请点击右侧按钮重新尝试自动下载，或者人工补全发票原件文件。")
-            else:
-                self.txt_path.setText(Path(att_path).name if att_path else "")
-                self.txt_path.setToolTip(att_path)
-
             has_file = bool(att_path)
-            self.btn_open_file.setEnabled(has_file)
-
             has_url = bool(download_url)
-            self.btn_retry_download.setEnabled(not has_file and has_url)
-            self.btn_retry_download.setVisible(has_url)
-            self.btn_add_attachment.setEnabled(True)
 
-            self.txt_full_path.setText(att_path)
-            self.txt_full_path.setToolTip(att_path)
-            self.txt_url.setText(_mask_url(inv.get("download_url") or ""))
+            self._detail_panel.set_form_fields(
+                inv_id=inv_id, number=inv_num, date=display_date,
+                invoice_date=inv_date, date_source=date_source_disp,
+                seller=seller, buyer=buyer, amount=total_amt, category=category,
+                subject=str(inv.get("mail_subject") or ""),
+                item_name=str(inv.get("item_name") or ""),
+                full_path=att_path,
+                url=_mask_url(inv.get("download_url") or ""),
+            )
+            self._detail_panel.set_attachment_state(
+                has_file=has_file, has_url=has_url,
+                file_name=Path(att_path).name if att_path else "",
+                file_path=att_path,
+                can_download=(not att_path and (mail_uid is not None or download_url)),
+            )
             self._update_supporting_docs_selector(inv)
 
             # Note via panel
@@ -1578,15 +1567,8 @@ class InvoiceReviewApp(QMainWindow):
                 self.action_locate_file.setEnabled(has_att)
                 self.action_open_dir.setEnabled(has_att)
 
-            self.txt_number.setEnabled(True)
-            self.txt_date.setEnabled(True)
-            self.txt_seller.setEnabled(True)
-            self.txt_buyer.setEnabled(True)
-            self.txt_amount.setEnabled(True)
-            self.combo_category.setEnabled(True)
-            self.txt_note.setEnabled(True)
+            self._detail_panel.set_single_selection_state()
             self.btn_open_file.setEnabled(bool(att_path))
-            self.lbl_batch_hint.setText("已选择 1 张发票")
 
             self._invoice_snapshot = self._get_invoice_snapshot(inv)
             self._suspend_dirty_tracking = False
@@ -1606,12 +1588,7 @@ class InvoiceReviewApp(QMainWindow):
         else:
             self._preview_empty_message = "已选择多张发票，请选择单张查看原件"
             self._clear_detail_form()
-            self.btn_app.setEnabled(True)
-            self.btn_ign.setEnabled(True)
-            self.btn_err.setEnabled(True)
-            self.btn_rev.setEnabled(True)
-            self.btn_inline_more.setEnabled(True)
-            self.lbl_batch_hint.setText(f"已选择 {num_selected} 张发票，可批量处理")
+            self._detail_panel.set_multi_selection_state(num_selected)
             self.current_preview_docs = []
             self.current_preview_index = 0
             self.lbl_file_info.setText("0 / 0 无文件")
