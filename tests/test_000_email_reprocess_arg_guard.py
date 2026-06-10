@@ -1,12 +1,12 @@
 """CI guards for legacy tests that depend on pre-refactor assumptions.
 
-The branch is carrying a large GUI refactor while CI is unavailable locally. This
-module keeps the full unittest suite exercising the current production code
-without weakening production behavior:
+The branch carries a large GUI refactor while CI feedback is the only available
+runtime signal. This module keeps the full unittest suite exercising current
+production code without weakening production behavior:
 
 * email-reprocess still rejects ``--apply`` without ``--mailbox``.
-* GUI tests still use the real ``InvoiceReviewApp``; they just do not depend on
-  a 50 ms Qt timer firing during a single ``processEvents()`` call.
+* selected legacy GUI tests load the invoice table before selecting rows, rather
+  than relying on a 50 ms Qt timer to have fired after one ``processEvents()``.
 """
 
 from __future__ import annotations
@@ -17,13 +17,20 @@ from argparse import Namespace
 from contextlib import redirect_stderr, redirect_stdout
 
 
-def _load_email_reprocess_tests():
-    for module_name in ("test_email_reprocess", "tests.test_email_reprocess"):
+def _load_module(*names: str):
+    last_error = None
+    for module_name in names:
         try:
             return importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            continue
-    raise ModuleNotFoundError("test_email_reprocess")
+        except ModuleNotFoundError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise ModuleNotFoundError(names[0] if names else "")
+
+
+def _load_email_reprocess_tests():
+    return _load_module("test_email_reprocess", "tests.test_email_reprocess")
 
 
 def _patched_missing_mailbox_test(self):
@@ -59,25 +66,48 @@ def _patched_missing_mailbox_test(self):
     self.assertIn("必须指定 --mailbox", combined_output)
 
 
-_target = _load_email_reprocess_tests()
-_target.TestEmailReprocess.test_9_apply_reject_missing_mailbox = _patched_missing_mailbox_test
+_email_target = _load_email_reprocess_tests()
+_email_target.TestEmailReprocess.test_9_apply_reject_missing_mailbox = _patched_missing_mailbox_test
 
 
-try:
-    from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-except (ImportError, RuntimeError, OSError):  # Qt/PySide may be unavailable locally.
-    InvoiceReviewApp = None
+def _patch_preview_select_helpers() -> None:
+    """Make row-selection helpers deterministic without changing production init.
 
-if InvoiceReviewApp is not None and not getattr(InvoiceReviewApp, "_test_sync_deferred_init", False):
-    _original_init = InvoiceReviewApp.__init__
+    Some legacy tests instantiate ``InvoiceReviewApp``, call ``show()`` and one
+    ``processEvents()``, then immediately select row 0. The application now uses
+    a delayed ``QTimer.singleShot(50, _deferred_init)`` for startup
+    responsiveness, so those tests can select against an empty table in CI.
 
-    def _init_with_synchronous_deferred_load(self, *args, **kwargs):
-        _original_init(self, *args, **kwargs)
-        if getattr(self, "startup_probe", False):
-            return
-        if getattr(self, "_deferred_init_done", False):
-            return
-        self._deferred_init()
+    Patch only the test helper methods that already mean "select row after the
+    window is ready". Do not patch ``InvoiceReviewApp.__init__`` globally, since
+    other tests assert lazy startup state before calling ``_deferred_init``.
+    """
 
-    InvoiceReviewApp.__init__ = _init_with_synchronous_deferred_load
-    InvoiceReviewApp._test_sync_deferred_init = True
+    try:
+        target = _load_module("test_preview_pdf_nav_log_001", "tests.test_preview_pdf_nav_log_001")
+    except ModuleNotFoundError:
+        return
+
+    def _wrap_select_row(original):
+        if getattr(original, "_invoice_hub_guard_wrapped", False):
+            return original
+
+        def _select_row_with_deferred_init(self, window, row_idx):
+            if hasattr(window, "_deferred_init") and not getattr(window, "_deferred_init_done", False):
+                window._deferred_init()
+                app_obj = getattr(self, "app", None)
+                if app_obj is not None:
+                    app_obj.processEvents()
+            return original(self, window, row_idx)
+
+        _select_row_with_deferred_init._invoice_hub_guard_wrapped = True
+        return _select_row_with_deferred_init
+
+    for class_name in ("TestInvoiceNoteAndPrivacy001", "TestDetailPanelCompact001"):
+        cls = getattr(target, class_name, None)
+        if cls is None or not hasattr(cls, "_select_row"):
+            continue
+        cls._select_row = _wrap_select_row(cls._select_row)
+
+
+_patch_preview_select_helpers()
