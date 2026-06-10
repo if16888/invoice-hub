@@ -1186,7 +1186,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._deferred_init()
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
-                    self.assertEqual(window.summary_card.layout().spacing(), 3)  # compact layout
+                    self.assertEqual(window.summary_card.layout().spacing(), 6)  # readable spacing
                     self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
                     self.assertEqual(window.status_bar.maximumHeight(), 32)
                     self.assertEqual(window.status_bar.minimumHeight(), 32)
@@ -4016,7 +4016,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Single-page layout — no QTabWidget; all sections in scroll area
                     self.assertIsNotNone(window.detail_core_section)
                     self.assertIsNotNone(window.claim_setup_section)
-                    self.assertEqual(window.txt_note.maximumHeight(), 40)  # compact note
+                    self.assertEqual(window.txt_note.maximumHeight(), 72)  # readable note
                     self.assertTrue(window.lbl_export_summary.wordWrap())
                 finally:
                     if hasattr(window, "db") and window.db is not None:

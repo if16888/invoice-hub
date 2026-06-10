@@ -1732,7 +1732,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
         from scripts.invoice_fetch.gui.app import InvoiceReviewApp
         window = InvoiceReviewApp(self.db_path, splash=None)
         try:
-            self.assertLessEqual(window.txt_note.maximumHeight(), 64)
+            self.assertLessEqual(window.txt_note.maximumHeight(), 80)  # readable note height
         finally:
             window.close()
 
