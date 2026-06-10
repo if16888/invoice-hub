@@ -158,7 +158,10 @@ def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path
             "evidence_id": None,
         })
 
-    # 3. Fetch pending evidence records for this mailbox_key + mail_uid
+    # 3. Fetch pending evidence records for this mailbox_key + mail_uid.
+    # Keep records even when the file is currently missing so the review UI can
+    # still show that an unassociated evidence record exists and let opening
+    # actions surface the normal missing-file warning.
     mailbox_key = invoice.get("mailbox_key")
     mail_uid = invoice.get("mail_uid")
     if mailbox_key is not None and mail_uid is not None:
@@ -169,8 +172,6 @@ def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path
                 if not att_path:
                     continue
                 resolved_path = resolve_stored_path(att_path, runtime_dir)
-                if not resolved_path or not resolved_path.exists():
-                    continue
 
                 resolved_abs_lower = str(resolved_path.resolve()).lower()
                 if resolved_abs_lower in seen_paths:
