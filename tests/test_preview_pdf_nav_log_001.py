@@ -9,6 +9,32 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
+_PENDING_EVIDENCE_TYPE = "待关联证明材料"
+
+
+def _ensure_deferred_invoice_load(window, app_obj):
+    was_unloaded = not getattr(window, "_deferred_init_done", False)
+    if hasattr(window, "_deferred_init") and was_unloaded:
+        window._deferred_init()
+        if app_obj is not None:
+            app_obj.processEvents()
+    return was_unloaded
+
+
+def _adjust_row_idx_after_deferred_load(window, row_idx, was_unloaded):
+    if not was_unloaded or row_idx != 0:
+        return row_idx
+    invoices = list(getattr(window, "invoices_list", []) or [])
+    if not invoices:
+        return row_idx
+    first_type = str((invoices[0] or {}).get("invoice_type") or "")
+    if first_type != _PENDING_EVIDENCE_TYPE:
+        return row_idx
+    for idx, inv in enumerate(invoices):
+        if str((inv or {}).get("invoice_type") or "") != _PENDING_EVIDENCE_TYPE:
+            return idx
+    return row_idx
+
 
 # ── 1. File info formatting tests ────────────────────────────────────
 
@@ -1331,6 +1357,8 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
 
     def _select_row(self, window, row_idx):
         from PySide6.QtCore import QItemSelectionModel
+        was_unloaded = _ensure_deferred_invoice_load(window, self.app)
+        row_idx = _adjust_row_idx_after_deferred_load(window, row_idx, was_unloaded)
         window.table.clearSelection()
         window.table.setCurrentItem(None)
         if window.table.selectionModel() is not None:
@@ -1541,6 +1569,8 @@ class TestDetailPanelCompact001(unittest.TestCase):
 
     def _select_row(self, window, row_idx):
         from PySide6.QtCore import QItemSelectionModel
+        was_unloaded = _ensure_deferred_invoice_load(window, self.app)
+        row_idx = _adjust_row_idx_after_deferred_load(window, row_idx, was_unloaded)
         window.table.clearSelection()
         window.table.setCurrentItem(None)
         if window.table.selectionModel() is not None:
