@@ -416,6 +416,23 @@ class InvoiceDetailPanel(QWidget):
         self.right_layout = right_content_layout
         self.right_content_widget.setWidget(self.right_detail_content)
 
+        self.detail_workbench = QFrame()
+        self.detail_workbench.setProperty("class", "DetailWorkbench")
+        self.detail_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        workbench_layout = QVBoxLayout(self.detail_workbench)
+        workbench_layout.setContentsMargins(0, 0, 0, 0)
+        workbench_layout.setSpacing(0)
+        self.detail_workbench_layout = workbench_layout
+        right_content_layout.addWidget(self.detail_workbench)
+
+        def add_workbench_divider():
+            divider = QFrame()
+            divider.setProperty("class", "DetailDivider")
+            divider.setFrameShape(QFrame.HLine)
+            divider.setFixedHeight(1)
+            workbench_layout.addWidget(divider)
+            return divider
+
         # ── empty state widget ────────────────────────────────────
         self.right_empty_widget = QWidget()
         right_empty_layout = QVBoxLayout(self.right_empty_widget)
@@ -454,16 +471,10 @@ class InvoiceDetailPanel(QWidget):
         # ═══════════════════════════════════════════════════════════
         self.summary_card = QFrame()
         self.summary_card.setProperty("class", "SummaryCard")
+        self.summary_card.setProperty("variant", "embedded")
         self.summary_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.summary_card.setStyleSheet('''
-            QFrame.SummaryCard {
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-            }
-        ''')
         summary_layout = QVBoxLayout(self.summary_card)
-        summary_layout.setContentsMargins(12, 10, 12, 10)
+        summary_layout.setContentsMargins(16, 14, 16, 12)
         summary_layout.setSpacing(6)
 
         # Row 1: amount + status badge
@@ -471,8 +482,7 @@ class InvoiceDetailPanel(QWidget):
         amount_row.setContentsMargins(0, 0, 0, 0)
         amount_row.setSpacing(10)
         self.lbl_sum_amount = QLabel("¥—")
-        self.lbl_sum_amount.setFont(QFont("Segoe UI", 20, QFont.Bold))
-        self.lbl_sum_amount.setStyleSheet("color: #111827;")
+        self.lbl_sum_amount.setProperty("class", "DetailAmount")
         amount_row.addWidget(self.lbl_sum_amount)
         amount_row.addStretch(1)
         self.lbl_sum_status = QLabel("未选择发票")
@@ -489,15 +499,13 @@ class InvoiceDetailPanel(QWidget):
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(10)
         self.lbl_sum_category = QLabel("—")
-        self.lbl_sum_category.setFont(QFont("Segoe UI", 12))
-        self.lbl_sum_category.setStyleSheet("color: #374151;")
+        self.lbl_sum_category.setProperty("class", "DetailMeta")
         meta_row.addWidget(self.lbl_sum_category)
         sep1 = QLabel("|")
         sep1.setStyleSheet("color: #D1D5DB; font-size: 13px;")
         meta_row.addWidget(sep1)
         self.lbl_sum_date = QLabel("—")
-        self.lbl_sum_date.setFont(QFont("Segoe UI", 12))
-        self.lbl_sum_date.setStyleSheet("color: #374151;")
+        self.lbl_sum_date.setProperty("class", "DetailMeta")
         meta_row.addWidget(self.lbl_sum_date)
         meta_row.addStretch(1)
         summary_layout.addLayout(meta_row)
@@ -507,8 +515,7 @@ class InvoiceDetailPanel(QWidget):
         seller_row.setContentsMargins(0, 0, 0, 0)
         seller_row.setSpacing(8)
         self.lbl_sum_seller = QLabel("—")
-        self.lbl_sum_seller.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        self.lbl_sum_seller.setStyleSheet("color: #111827;")
+        self.lbl_sum_seller.setProperty("class", "DetailSeller")
         seller_row.addWidget(self.lbl_sum_seller, 1)
         summary_layout.addLayout(seller_row)
 
@@ -517,8 +524,7 @@ class InvoiceDetailPanel(QWidget):
         num_row.setContentsMargins(0, 0, 0, 0)
         num_row.setSpacing(8)
         self.lbl_sum_number = QLabel("发票号码: —")
-        self.lbl_sum_number.setFont(QFont("Segoe UI", 11))
-        self.lbl_sum_number.setStyleSheet("color: #4B5563;")
+        self.lbl_sum_number.setProperty("class", "DetailCaption")
         num_row.addWidget(self.lbl_sum_number)
         num_row.addStretch(1)
         summary_layout.addLayout(num_row)
@@ -583,7 +589,8 @@ class InvoiceDetailPanel(QWidget):
         self.inline_review_layout.addStretch(1)
 
         summary_layout.addLayout(self.inline_review_layout)
-        right_content_layout.addWidget(self.summary_card)
+        workbench_layout.addWidget(self.summary_card)
+        add_workbench_divider()
 
         # Compat variables for hidden/deprecated review actions tab
         self.review_actions_section = QFrame(self)
@@ -609,34 +616,26 @@ class InvoiceDetailPanel(QWidget):
         # ═══════════════════════════════════════════════════════════
         self.detail_core_section = QFrame()
         self.detail_core_section.setProperty("class", "DetailSection")
-        self.detail_core_section.setStyleSheet('''
-            QFrame.DetailSection {
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-            }
-        ''')
+        self.detail_core_section.setProperty("variant", "flat")
         detail_core_layout = QVBoxLayout(self.detail_core_section)
-        detail_core_layout.setContentsMargins(12, 8, 12, 10)
-        detail_core_layout.setSpacing(8)
+        detail_core_layout.setContentsMargins(16, 12, 16, 14)
+        detail_core_layout.setSpacing(10)
 
         # Title row with save button
         core_title_row = QHBoxLayout()
         core_title_row.setContentsMargins(0, 0, 0, 0)
         core_title_row.setSpacing(8)
         core_title = QLabel("基本信息")
-        core_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        core_title.setStyleSheet("color: #111827; border: none; background: transparent;")
+        core_title.setProperty("class", "SectionTitle")
         core_title_row.addWidget(core_title)
         core_title_row.addStretch(1)
 
         self.lbl_dirty_hint = QLabel("")
-        self.lbl_dirty_hint.setFont(QFont("Segoe UI", 11))
-        self.lbl_dirty_hint.setStyleSheet("color: #6B7280; border: none; background: transparent;")
+        self.lbl_dirty_hint.setProperty("class", "SectionHint")
         core_title_row.addWidget(self.lbl_dirty_hint)
 
         self.btn_save_draft = QPushButton("保存修改")
-        self.btn_save_draft.setProperty("class", "PrimaryBtn")
+        self.btn_save_draft.setProperty("class", "OutlineBtn")
         self.btn_save_draft.setMinimumWidth(80)
         self.btn_save_draft.setMaximumWidth(100)
         self.btn_save_draft.setMinimumHeight(28)
@@ -654,9 +653,8 @@ class InvoiceDetailPanel(QWidget):
 
         def core_label(text):
             lbl = QLabel(text)
-            lbl.setFont(QFont("Segoe UI", 12))
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            lbl.setStyleSheet("color: #374151; border: none; background: transparent;")
+            lbl.setProperty("class", "FieldLabel")
             return lbl
 
         self.txt_number = QLineEdit()
@@ -705,35 +703,34 @@ class InvoiceDetailPanel(QWidget):
         self.invoice_core_grid.setColumnStretch(1, 1)
         self.invoice_core_grid.setColumnStretch(3, 1)
         detail_core_layout.addWidget(core_fields)
-        right_content_layout.addWidget(self.detail_core_section)
+        workbench_layout.addWidget(self.detail_core_section)
+        add_workbench_divider()
 
         # ═══════════════════════════════════════════════════════════
         # Zone 3 — 材料与报销 (merged files + claim group)
         # ═══════════════════════════════════════════════════════════
         self.detail_files_section = QFrame()
         self.detail_files_section.setProperty("class", "DetailSection")
-        self.detail_files_section.setStyleSheet('''
-            QFrame.DetailSection {
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-            }
-        ''')
+        self.detail_files_section.setProperty("variant", "flat")
         detail_files_layout = QVBoxLayout(self.detail_files_section)
-        detail_files_layout.setContentsMargins(12, 8, 12, 10)
+        detail_files_layout.setContentsMargins(16, 12, 16, 14)
         detail_files_layout.setSpacing(8)
         files_title = QLabel("材料与报销")
-        files_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        files_title.setStyleSheet("color: #111827; border: none; background: transparent;")
+        files_title.setProperty("class", "SectionTitle")
         detail_files_layout.addWidget(files_title)
+
+        materials_label = QLabel("原件与证明")
+        materials_label.setProperty("class", "SectionEyebrow")
+        detail_files_layout.addWidget(materials_label)
 
         # — attachment row —
         attach_row = QHBoxLayout()
         attach_row.setContentsMargins(0, 0, 0, 0)
         attach_row.setSpacing(6)
         attach_label = QLabel("原件:")
-        attach_label.setFont(QFont("Segoe UI", 12))
-        attach_label.setStyleSheet("color: #374151; border: none; background: transparent;")
+        attach_label.setProperty("class", "FieldLabel")
+        attach_label.setMinimumWidth(52)
+        attach_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         attach_row.addWidget(attach_label)
         self.txt_path = QLineEdit()
         self.txt_path.setReadOnly(True)
@@ -765,8 +762,9 @@ class InvoiceDetailPanel(QWidget):
         evidence_row.setContentsMargins(0, 0, 0, 0)
         evidence_row.setSpacing(6)
         evidence_label = QLabel("证明:")
-        evidence_label.setFont(QFont("Segoe UI", 12))
-        evidence_label.setStyleSheet("color: #374151; border: none; background: transparent;")
+        evidence_label.setProperty("class", "FieldLabel")
+        evidence_label.setMinimumWidth(52)
+        evidence_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         evidence_row.addWidget(evidence_label)
         self.combo_supporting_docs = QComboBox()
         self.combo_supporting_docs.setFont(QFont("Segoe UI", 12))
@@ -784,13 +782,33 @@ class InvoiceDetailPanel(QWidget):
         evidence_row.addWidget(self.btn_open_extra_files)
         detail_files_layout.addLayout(evidence_row)
 
+        claim_divider = QFrame()
+        claim_divider.setProperty("class", "DetailSubDivider")
+        claim_divider.setFrameShape(QFrame.HLine)
+        claim_divider.setFixedHeight(1)
+        detail_files_layout.addWidget(claim_divider)
+
+        claim_heading_row = QHBoxLayout()
+        claim_heading_row.setContentsMargins(0, 2, 0, 0)
+        claim_heading_row.setSpacing(8)
+        claim_heading = QLabel("报销归组")
+        claim_heading.setProperty("class", "SectionEyebrow")
+        claim_heading_row.addWidget(claim_heading)
+        claim_heading_row.addStretch(1)
+        self.btn_new_claim_toggle = QPushButton("+ 新建报销组")
+        self.btn_new_claim_toggle.setProperty("class", "TextBtn")
+        self.btn_new_claim_toggle.clicked.connect(self._toggle_new_claim_input)
+        claim_heading_row.addWidget(self.btn_new_claim_toggle)
+        detail_files_layout.addLayout(claim_heading_row)
+
         # — claim group row —
         claim_row = QHBoxLayout()
-        claim_row.setContentsMargins(0, 2, 0, 0)
+        claim_row.setContentsMargins(0, 0, 0, 0)
         claim_row.setSpacing(6)
         claim_label = QLabel("报销组:")
-        claim_label.setFont(QFont("Segoe UI", 12))
-        claim_label.setStyleSheet("color: #374151; border: none; background: transparent;")
+        claim_label.setProperty("class", "FieldLabel")
+        claim_label.setMinimumWidth(52)
+        claim_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         claim_row.addWidget(claim_label)
         self.combo_claims = QComboBox()
         self.combo_claims.setFont(QFont("Segoe UI", 12))
@@ -832,16 +850,6 @@ class InvoiceDetailPanel(QWidget):
         claim_total_row.addWidget(self.btn_export)
         detail_files_layout.addLayout(claim_total_row)
 
-        # — new claim group (hidden by default) —
-        self.btn_new_claim_toggle = QPushButton("+ 新建报销组")
-        self.btn_new_claim_toggle.setProperty("class", "TextBtn")
-        self.btn_new_claim_toggle.setFont(QFont("Segoe UI", 12))
-        self.btn_new_claim_toggle.setStyleSheet(
-            "text-align: left; color: #4B5563; border: none; background: transparent; padding: 0;"
-        )
-        self.btn_new_claim_toggle.clicked.connect(self._toggle_new_claim_input)
-        detail_files_layout.addWidget(self.btn_new_claim_toggle, 0, Qt.AlignLeft)
-
         self.new_claim_widget = QWidget()
         new_claim_layout = QHBoxLayout(self.new_claim_widget)
         new_claim_layout.setContentsMargins(0, 2, 0, 0)
@@ -873,22 +881,17 @@ class InvoiceDetailPanel(QWidget):
         # Also expose claim_setup_section for backward compat
         self.claim_setup_section = self.detail_files_section
 
-        right_content_layout.addWidget(self.detail_files_section)
+        workbench_layout.addWidget(self.detail_files_section)
+        add_workbench_divider()
 
         # ═══════════════════════════════════════════════════════════
         # Zone 4 — 备注 / 更多来源信息
         # ═══════════════════════════════════════════════════════════
         self.review_note_section = QFrame()
         self.review_note_section.setProperty("class", "DetailSection")
-        self.review_note_section.setStyleSheet('''
-            QFrame.DetailSection {
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-            }
-        ''')
+        self.review_note_section.setProperty("variant", "flat")
         review_note_layout = QVBoxLayout(self.review_note_section)
-        review_note_layout.setContentsMargins(12, 6, 12, 8)
+        review_note_layout.setContentsMargins(16, 10, 16, 12)
         review_note_layout.setSpacing(6)
 
         # Inline note summary row
@@ -897,10 +900,6 @@ class InvoiceDetailPanel(QWidget):
         note_row.setSpacing(6)
         self.btn_toggle_note = QPushButton("备注 + 添加")
         self.btn_toggle_note.setProperty("class", "TextBtn")
-        self.btn_toggle_note.setFont(QFont("Segoe UI", 12))
-        self.btn_toggle_note.setStyleSheet(
-            "text-align: left; color: #4B5563; border: none; background: transparent; padding: 0;"
-        )
         self.btn_toggle_note.clicked.connect(self._toggle_note_visibility)
         note_row.addWidget(self.btn_toggle_note)
         self.lbl_note_summary = QLabel("")
@@ -918,9 +917,17 @@ class InvoiceDetailPanel(QWidget):
         self.txt_note.setPlaceholderText("可填写报销说明、事项背景、客户/项目等。")
         self.txt_note.setVisible(False)
         review_note_layout.addWidget(self.txt_note)
-        right_content_layout.addWidget(self.review_note_section)
+        workbench_layout.addWidget(self.review_note_section)
+        add_workbench_divider()
 
         # — More source info (folded) —
+        self.source_info_section = QFrame()
+        self.source_info_section.setProperty("class", "DetailSection")
+        self.source_info_section.setProperty("variant", "flat")
+        source_info_layout = QVBoxLayout(self.source_info_section)
+        source_info_layout.setContentsMargins(16, 8, 16, 10)
+        source_info_layout.setSpacing(4)
+
         self.btn_more_source = QToolButton()
         self.btn_more_source.setText("更多来源信息")
         self.btn_more_source.setFont(QFont("Segoe UI", 12))
@@ -930,11 +937,11 @@ class InvoiceDetailPanel(QWidget):
         self.btn_more_source.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.btn_more_source.setProperty("class", "Disclosure")
         self.btn_more_source.toggled.connect(self._toggle_more_source_info)
-        right_content_layout.addWidget(self.btn_more_source, 0, Qt.AlignLeft)
+        source_info_layout.addWidget(self.btn_more_source, 0, Qt.AlignLeft)
 
         self.more_source_widget = QWidget()
         more_source_layout = QFormLayout(self.more_source_widget)
-        more_source_layout.setContentsMargins(4, 4, 0, 4)
+        more_source_layout.setContentsMargins(0, 6, 0, 2)
         more_source_layout.setLabelAlignment(Qt.AlignRight)
         more_source_layout.setSpacing(4)
 
@@ -973,18 +980,13 @@ class InvoiceDetailPanel(QWidget):
         self.txt_full_path.setFont(QFont("Segoe UI", 11))
         more_source_layout.addRow("完整文件路径:", self.txt_full_path)
         self.more_source_widget.setVisible(False)
-        right_content_layout.addWidget(self.more_source_widget)
+        source_info_layout.addWidget(self.more_source_widget)
+        workbench_layout.addWidget(self.source_info_section)
 
         # ── Bottom status bar (minimal, only warnings) ────────────
         self.closing_card = QFrame()
         self.closing_card.setFrameShape(QFrame.StyledPanel)
-        self.closing_card.setStyleSheet('''
-            QFrame {
-                background-color: #F9FAFB;
-                border: 1px solid #E5E7EB;
-                border-radius: 4px;
-            }
-        ''')
+        self.closing_card.setProperty("class", "DetailStatus")
         closing_layout = QHBoxLayout(self.closing_card)
         closing_layout.setContentsMargins(10, 4, 10, 4)
         closing_layout.setSpacing(4)
@@ -997,7 +999,8 @@ class InvoiceDetailPanel(QWidget):
         closing_layout.addWidget(self.lbl_closing_desc)
         closing_layout.addStretch(1)
 
-        right_content_layout.addWidget(self.closing_card)
+        workbench_layout.addWidget(self.closing_card)
+        workbench_layout.addStretch(1)
         right_content_layout.addStretch(1)
 
         # initial states

@@ -3958,7 +3958,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 try:
                     app.processEvents()
                     expected_classes = {
-                        window.btn_save_draft: "PrimaryBtn",
+                        window.btn_save_draft: "OutlineBtn",
                         window.btn_app: "PrimaryBtn",
                         window.btn_ign: "SecondaryBtn",
                         window.btn_err: "DangerOutlineBtn",
@@ -4012,6 +4012,25 @@ class ClaimGroupsTests(unittest.TestCase):
                     for section in sections:
                         self.assertIsInstance(section, QFrame)
                         self.assertEqual(section.property("class"), "DetailSection")
+
+                    panel = window._detail_panel
+                    self.assertIsInstance(panel.detail_workbench, QFrame)
+                    self.assertEqual(
+                        panel.detail_workbench.property("class"),
+                        "DetailWorkbench",
+                    )
+                    self.assertEqual(
+                        panel.summary_card.property("variant"),
+                        "embedded",
+                    )
+                    for section in (
+                        panel.detail_core_section,
+                        panel.detail_files_section,
+                        panel.review_note_section,
+                        panel.source_info_section,
+                    ):
+                        self.assertTrue(panel.detail_workbench.isAncestorOf(section))
+                        self.assertEqual(section.property("variant"), "flat")
 
                     # Single-page layout — no QTabWidget; all sections in scroll area
                     self.assertIsNotNone(window.detail_core_section)
