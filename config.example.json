@@ -1,5 +1,6 @@
 {
   "email": {
+    "_note": "Legacy single-mailbox compatibility. New users should prefer email_accounts below.",
     "provider": "qq",
     "address": "your_email@qq.com",
     "username": ""
@@ -11,6 +12,7 @@
       "provider": "qq",
       "address": "your_email@qq.com",
       "username": "",
+      "_username_note": "通常留空即可，程序会使用 address；如服务商要求单独登录名，再填写对应用户名。",
       "imap": {
         "server": "imap.qq.com",
         "port": 993,
@@ -27,6 +29,7 @@
       "provider": "netease_163",
       "address": "your_train_ticket_email@163.com",
       "username": "",
+      "_username_note": "通常留空即可，程序会使用 address；如服务商要求单独登录名，再填写对应用户名。",
       "imap": {
         "server": "imap.163.com",
         "port": 993,
@@ -39,11 +42,13 @@
     }
   ],
   "imap": {
+    "_note": "Legacy single-mailbox compatibility and default values for email_accounts.",
     "server": "imap.qq.com",
     "port": 993,
     "ssl": true
   },
   "search": {
+    "_note": "Legacy single-mailbox compatibility and default values for email_accounts.",
     "folder": "INBOX",
     "months_back": 3
   },
