@@ -144,14 +144,78 @@ QFrame.DetailSection {
     border: 1px solid #E5E7EB;
     border-radius: 6px;
 }
+QFrame.DetailWorkbench {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+}
+QFrame.SummaryCard[variant="embedded"] {
+    background-color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+}
+QFrame.DetailSection[variant="flat"] {
+    background-color: #FFFFFF;
+    border: none;
+    border-radius: 0;
+}
+QFrame.DetailDivider {
+    background-color: #E5E7EB;
+    border: none;
+    margin-left: 16px;
+    margin-right: 16px;
+}
+QFrame.DetailSubDivider {
+    background-color: #EEF2F7;
+    border: none;
+    margin-top: 4px;
+    margin-bottom: 2px;
+}
+QFrame.DetailStatus {
+    background-color: #F8FAFC;
+    border: none;
+    border-top: 1px solid #E5E7EB;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
 QLabel.SectionTitle {
     color: #111827;
     font-size: 13px;
     font-weight: 700;
 }
+QLabel.SectionEyebrow {
+    color: #64748B;
+    font-size: 11px;
+    font-weight: 700;
+}
 QLabel.SectionHint {
     color: #6B7280;
     font-size: 12px;
+    font-weight: 400;
+}
+QLabel.FieldLabel {
+    color: #475569;
+    font-size: 12px;
+    font-weight: 500;
+}
+QLabel.DetailAmount {
+    color: #0F172A;
+    font-size: 20px;
+    font-weight: 700;
+}
+QLabel.DetailMeta {
+    color: #475569;
+    font-size: 12px;
+    font-weight: 500;
+}
+QLabel.DetailSeller {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel.DetailCaption {
+    color: #64748B;
+    font-size: 11px;
     font-weight: 400;
 }
 QLabel.InlineWarning {
