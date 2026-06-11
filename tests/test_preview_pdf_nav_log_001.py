@@ -1386,16 +1386,24 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
         self.app.processEvents()
 
     def _select_all(self, window):
-        from PySide6.QtCore import QItemSelectionModel
-        window.table.selectAll()
-        self.app.processEvents()
+        from PySide6.QtCore import QItemSelection, QItemSelectionModel
+
         model = window.table.model()
         sel_model = window.table.selectionModel()
-        for r in range(window.table.rowCount()):
-            idx = model.index(r, 0)
-            sel_model.select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
-        window._on_table_selection_changed()
+        row_count = window.table.rowCount()
+        column_count = window.table.columnCount()
+        if row_count and column_count:
+            selection = QItemSelection(
+                model.index(0, 0),
+                model.index(row_count - 1, column_count - 1),
+            )
+            sel_model.select(
+                selection,
+                QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+            )
         self.app.processEvents()
+        self.assertEqual(len(sel_model.selectedRows()), row_count)
+        window._on_table_selection_changed()
 
     def test_backfill_logs_redaction(self):
         from scripts.invoice_fetch.db import InvoiceDB
