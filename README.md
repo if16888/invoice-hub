@@ -26,13 +26,27 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑；确认流程符合预期后，再在本机导入自己的报销材料，并避免把运行数据上传到公开 Issue。
 
+Windows 打包版采用 PyInstaller onedir 方式发布。当前打包策略会随程序携带 Playwright Python driver，但不打包完整浏览器二进制；也默认不使用 UPX 压缩，以减少 Qt/PySide6 兼容问题和杀软误报概率。
+
 ### 开发者本地启动
+
+普通开发安装：
 
 ```powershell
 pip install -r requirements.txt
 pip install -r requirements-desktop.txt
 python -m scripts.invoice_fetch desktop
 ```
+
+可复现排障或 release 候选验证时，可使用锁定依赖版本：
+
+```powershell
+pip install -r requirements.lock.txt
+pip install -r requirements-desktop.lock.txt
+python -m scripts.invoice_fetch desktop
+```
+
+`requirements*.txt` 保留宽松版本范围，便于普通开发环境安装；`requirements*.lock.txt` 由维护者当前 Python 3.14 环境生成，用于复现当前开发、排障和 release 候选验证环境。若贡献者使用其他 Python 版本，建议在对应环境下重新运行 `pip-compile` 生成自己的 lock 文件。发布前如升级依赖，请同步更新 lock 文件并重新跑测试。
 
 命令行入口：
 
@@ -78,10 +92,19 @@ Invoice Hub 试图把这些提交前的整理动作放在本机完成。
 
 - 桌面审核工作台：发票列表、搜索筛选、原件预览、字段编辑、审核状态和报销组操作。
 - 邮箱扫描：支持 QQ、163/126 和自定义 IMAP 配置。
+- 邮件链接下载：可尝试从邮件中的发票下载链接或网页入口下载原件，该能力依赖 Playwright driver。
 - 本地导入：导入 PDF、OFD、图片和 ZIP，复制到本机运行目录后进入同一处理流程。
 - 手机扫码上传：在局域网中从手机上传发票或证明材料。
 - 报销组导出：生成 Excel 台账、manifest 和附件包。
 - 隐私保护诊断：导出脱敏诊断包，便于反馈问题时避免泄露真实票据和密钥。
+
+## 关于 Playwright
+
+Invoice Hub 可尝试从邮件中的发票下载链接自动获取原件。该能力依赖 Playwright 浏览器自动化组件，安装体积较大。
+
+当前 Windows 打包策略只携带 Playwright Python driver，不打包完整浏览器二进制；如果没有可用浏览器或对应能力不可用，仍可通过邮箱附件、本地导入或手动补充原件完成整理流程。
+
+如果只需要本地导入、已有附件解析和手动补原件，可以先跳过浏览器下载能力。缺失原件时，应用会保留记录，用户可后续手工补充或重试下载。
 
 ## 当前状态
 
@@ -102,6 +125,16 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 
 - 解析结果需要人工复核，不应直接视为财务事实。
 - 不提供企业审批流、自动报销、云同步或第三方报销平台自动提交。
+
+## 配置说明
+
+`config.example.json` 只作为模板。新用户优先配置 `email_accounts`，这样可以同时管理多个邮箱账号。
+
+顶层 `email` / `imap` / `search` 字段仍保留为兼容旧版单邮箱配置，也会作为 `email_accounts` 的默认值来源。新配置请优先写在每个 `email_accounts[]` 项中。
+
+`username` 通常可以留空，程序会自动使用 `address` 作为登录用户名；如果邮箱服务商要求单独的登录名，再填写服务商指定的用户名。
+
+真实邮箱授权码、应用专用密码和 API Key 不应写入示例文件或提交到仓库。桌面应用优先使用操作系统凭据管理器保存邮箱凭据。
 
 ## 隐私优先提示
 

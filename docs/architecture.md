@@ -1,51 +1,74 @@
 # Invoice Hub Architecture
 
-This document describes the offline-first, privacy-respecting local architecture of **Invoice Hub**.
+Invoice Hub is an offline-first desktop tool for collecting, reviewing, grouping, and exporting personal reimbursement materials before they are submitted to a company expense system.
 
-Every design decision in Invoice Hub is guided by the principle of **Zero Cloud Upload by Default**. Optional AI classification, when explicitly enabled, may send documented redacted email metadata only. All parsing, indexing, and storage happen entirely on the user's local machine.
+The default boundary is simple: **no cloud upload by default**. Parsing, indexing, review, and export happen on the user's local machine. Optional AI classification is disabled by default and must remain limited to documented redacted metadata.
 
----
-
-## Architecture Flow Overview
-
-The diagram below illustrates the sequential data flow of personal documents through the local system components:
+## Data flow
 
 ```mermaid
 graph TD
-    A[Inputs: Directory / IMAP Mailbox / Mobile QR Upload] --> B[Local Parsing Layer: Regex & Rules]
-    B --> C[(Local SQLite Database)]
-    C --> D[PySide6 GUI Review Workbench]
-    D --> E[Reimbursement Bundler]
-    E --> F[Excel Ledger & Zip Attachment Package]
-    D --> G[Diagnostics: Allowlist Redacted Logs]
+    A[Inputs: local folder / IMAP mailbox / mobile LAN upload] --> B[Local intake and parsing]
+    B --> C[(Local SQLite database)]
+    C --> D[PySide6 review workbench]
+    D --> E[Claim group and export]
+    E --> F[Excel ledger / manifest / attachment package]
+    D --> G[Allowlist diagnostics]
 ```
 
----
+## Main modules
 
-## Component Breakdown
+| Path | Responsibility |
+| --- | --- |
+| `scripts/invoice_fetch/__main__.py` | CLI entry point and command dispatch. |
+| `scripts/invoice_fetch_desktop.py` | Thin desktop launcher used by packaging. |
+| `scripts/invoice_fetch/gui/app.py` | PySide6 main window, list/search/filter workflow, and top-level GUI actions. |
+| `scripts/invoice_fetch/gui/invoice_detail_panel.py` | Right-side invoice detail and review panel. |
+| `scripts/invoice_fetch/gui/helpers.py` | GUI helper functions for masking, manifest summaries, and stored-path resolution. |
+| `scripts/invoice_fetch/db.py` | SQLite data access, invoice records, email records, claim groups, and review state. |
+| `scripts/invoice_fetch/claim_export.py` | Claim package export, Excel ledger creation, manifest, and attachment packaging. |
+| `scripts/invoice_fetch/config.py` | Config loading, provider presets, legacy config compatibility, and mailbox normalization. |
+| `scripts/invoice_fetch/diagnostics.py` | Allowlist diagnostic package creation and redaction. |
+| `scripts/invoice_fetch/ai_classifier.py` | Optional AI classification boundary; must not receive raw invoice files or email body content. |
+| `scripts/invoice_fetch/db_backup.py` | SQLite backup helper for high-impact operations and manual recovery. |
+| `scripts/invoice_fetch/backup_cli.py` | Standalone backup command. |
+| `tests/` | Unit tests and GUI regression tests. |
 
-### 1. Data Ingestion (Inputs)
-- **Local Directories**: Scans user-specified directories for PDF, OFD, and rasterized image files.
-- **IMAP Mailbox Synchronizer**: Downloads emails matching local subject heuristics directly from secure mail servers. Mailbox passwords are never stored in plain text configuration files, relying instead on OS-level credential managers (e.g., Windows Credential Manager).
-- **Mobile QR Code Upload**: Runs a temporary, local-only HTTP server over the LAN, allowing the user's mobile device to upload documents directly via a dynamically generated QR code without involving external cloud sync.
+## Configuration model
 
-### 2. Local Parsing Layer
-- A rule-based parser that executes lightweight regex matchers and structural filters to extract critical tax metadata (Unified Social Credit Code, invoice number, date, billing names, and total amounts).
-- Performs extraction entirely offline in PySide6/Python processes, ensuring zero transmission of invoice content.
+New users should prefer `email_accounts`, which supports multiple mailbox definitions. Top-level `email`, `imap`, and `search` remain for backward compatibility with older single-mailbox configs and as default values for mailbox entries.
 
-### 3. Local Storage Layer
-- Keeps extracted records structured in a local **SQLite** database file.
-- SQLite database logs and state are stored strictly in a `.db` file within local workspace directories. No cloud DB syncing is used.
+Credentials should not be stored in `config.json`. The desktop app uses the operating system credential store where possible.
 
-### 4. Interactive GUI Workbench
-- A desktop interface built on **PySide6** designed for high productivity.
-- Allows table views of collected materials, instant searching, detail modifications, and custom categorization.
-- Integrates a lazy-loaded local PDF/Image viewer that avoids pre-rendering delays.
+## Packaging notes
 
-### 5. Reimbursement Bundler & Exporter
-- Packages reviewed items into a standard zip container.
-- Generates a cleanly structured Excel `.xlsx` ledger (台账) mapping all original files to their corresponding metadata, tags, and classification labels.
+The Windows release uses PyInstaller onedir packaging. The spec bundles application metadata, license files, GUI assets, and the Playwright Python driver, but intentionally does not bundle full Playwright browser binaries. UPX is disabled in the current spec to reduce Qt/PySide6 compatibility issues and antivirus false positives.
 
-### 6. Privacy-Redacted Diagnostics
-- An allowlist-based log sanitizer that packages system configuration, synthetic/redacted logs, and general system stats into a zip bundle.
-- The diagnostics exporter uses an allowlist and redaction rules to avoid including invoice files, databases, credentials, full URLs, and known sensitive patterns.
+## Privacy and diagnostics
+
+Diagnostics use an allowlist model. A diagnostic package should include useful environment and log context, but must not include:
+
+- `runtime/invoices.db` or other SQLite databases;
+- original invoices, receipts, screenshots, or uploaded files;
+- exported claim packages;
+- mailbox authorization codes;
+- AI API keys;
+- full tokenized download URLs.
+
+## Contributor orientation
+
+For most small changes:
+
+1. Start from the relevant module in the table above.
+2. Add or update a focused test in `tests/`.
+3. Run the targeted test, then the full unittest suite when possible.
+4. Run the public export/privacy checks before submitting a PR.
+
+Suggested checks:
+
+```bash
+python -m unittest discover -v -s tests -p "test_*.py"
+python -m compileall -q scripts tests
+python scripts/check_public_export.py .
+git diff --check
+```
