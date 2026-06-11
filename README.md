@@ -46,7 +46,7 @@ pip install -r requirements-desktop.lock.txt
 python -m scripts.invoice_fetch desktop
 ```
 
-`requirements*.txt` 保留宽松版本范围，便于开发环境安装；`requirements*.lock.txt` 使用当前项目基线依赖版本，便于复现问题。发布前如升级依赖，请同步更新 lock 文件并重新跑测试。
+`requirements*.txt` 保留宽松版本范围，便于普通开发环境安装；`requirements*.lock.txt` 由维护者当前 Python 3.14 环境生成，用于复现当前开发、排障和 release 候选验证环境。若贡献者使用其他 Python 版本，建议在对应环境下重新运行 `pip-compile` 生成自己的 lock 文件。发布前如升级依赖，请同步更新 lock 文件并重新跑测试。
 
 命令行入口：
 
