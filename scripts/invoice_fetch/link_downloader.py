@@ -10,9 +10,11 @@ import ipaddress
 import logging
 import os
 import re
+import socket
 import time
 import threading
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -129,14 +131,82 @@ def _is_safe_download_url(url: str) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return True
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    return ip.is_global
+
+
+@lru_cache(maxsize=256)
+def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
+    """Fail closed unless every resolved address is publicly routable."""
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None:
+        return literal_ip.is_global
+
+    try:
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    addresses = {record[4][0] for record in records if record[4]}
+    if not addresses:
+        return False
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        if not ip.is_global:
+            return False
+    return True
+
+
+def _is_safe_browser_request_url(url: str) -> bool:
+    """Allow browser-internal resources and public HTTP(S) destinations."""
+    parsed = urlparse(str(url or ""))
+    scheme = parsed.scheme.lower()
+    if scheme in {"about", "blob", "data"}:
+        return True
+    if not _is_safe_download_url(url):
+        return False
+    port = parsed.port or (443 if scheme == "https" else 80)
+    return _host_resolves_to_public_addresses(parsed.hostname or "", port)
+
+
+def _route_browser_request(route) -> None:
+    """Abort browser requests that target local or otherwise unsafe URLs."""
+    url = str(route.request.url or "")
+    if _is_safe_browser_request_url(url):
+        route.continue_()
+        return
+    fingerprint = hashlib.sha256(url.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    _log.warning("Blocked unsafe browser request: <%s>", fingerprint)
+    route.abort("blockedbyclient")
+
+
+def _safe_download_destination(
+    save_dir: str | Path,
+    suggested_filename: str,
+    fallback_filename: str,
+) -> Path:
+    """Return a sanitized download path contained by *save_dir*."""
+    root = Path(save_dir).resolve()
+    raw_name = str(suggested_filename or fallback_filename or "").replace("\\", "/")
+    basename = raw_name.rsplit("/", 1)[-1]
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", basename).strip(" .")
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = re.sub(
+            r'[<>:"/\\|?*\x00-\x1f]',
+            "_",
+            str(fallback_filename or "invoice_download"),
+        ).strip(" .")
+
+    candidate = (root / safe_name).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        candidate = (root / Path(fallback_filename or "invoice_download").name).resolve()
+    return candidate
 
 
 def extract_links_with_metadata_from_html(html: str) -> list[dict]:
@@ -789,8 +859,11 @@ class LinkDownloader:
                             locator.first.click()
                         if download_info:
                             download = download_info.value
-                            fname = download.suggested_filename or f"invoice_{mail_uid}_{idx}.pdf"
-                            dest = save_dir / fname
+                            dest = _safe_download_destination(
+                                save_dir,
+                                download.suggested_filename,
+                                f"invoice_{mail_uid}_{idx}.pdf",
+                            )
                             if _save_download_to_path(download, dest):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
@@ -902,6 +975,7 @@ class LinkDownloader:
             )
             ctx = self._browser.new_context(accept_downloads=True, user_agent=desktop_ua)
             page = ctx.new_page()
+            page.route("**/*", _route_browser_request)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             downloaded_path: str | None = None
@@ -913,8 +987,11 @@ class LinkDownloader:
             def _on_download(download):
                 nonlocal downloaded_path, download_started
                 download_started = True
-                fname = download.suggested_filename or f"invoice_{mail_uid}_{idx}.pdf"
-                dest = save_dir / fname
+                dest = _safe_download_destination(
+                    save_dir,
+                    download.suggested_filename,
+                    f"invoice_{mail_uid}_{idx}.pdf",
+                )
                 if dest.exists():
                     downloaded_path = str(dest)
                     download_done.set()
@@ -965,6 +1042,14 @@ class LinkDownloader:
                 page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
             except Exception:
                 pass
+            final_url = str(getattr(page, "url", "") or "")
+            if final_url and not _is_safe_browser_request_url(final_url):
+                _log.warning(
+                    "Blocked unsafe final browser destination: <%s>",
+                    self._url_fingerprint(final_url),
+                )
+                self.failed_url_fingerprints.add(self._url_fingerprint(url))
+                return None
 
             # 1. Try JSS/Nuonuo site specific download logic first
             res_handle = self._handle_nuonuo_invoice_page(page, url, save_dir, mail_uid, idx, disable_fallback=disable_fallback)

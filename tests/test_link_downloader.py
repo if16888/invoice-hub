@@ -68,6 +68,71 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertFalse(_verify_and_clean_file(bad_path))
         self.assertFalse(bad_path.exists()) # 校验是否已被删除
 
+    def test_download_destination_stays_inside_save_directory(self):
+        from scripts.invoice_fetch import link_downloader
+
+        save_dir = Path(self.tmp_dir) / "downloads"
+        save_dir.mkdir()
+
+        relative_escape = link_downloader._safe_download_destination(
+            save_dir,
+            r"..\..\config.json",
+            "invoice_1_0.pdf",
+        )
+        absolute_escape = link_downloader._safe_download_destination(
+            save_dir,
+            r"C:\Windows\Temp\invoice.pdf",
+            "invoice_1_1.pdf",
+        )
+
+        self.assertEqual(relative_escape.parent, save_dir.resolve())
+        self.assertEqual(relative_escape.name, "config.json")
+        self.assertEqual(absolute_escape.parent, save_dir.resolve())
+        self.assertEqual(absolute_escape.name, "invoice.pdf")
+
+    def test_browser_request_guard_blocks_private_redirect_target(self):
+        from scripts.invoice_fetch import link_downloader
+
+        blocked_route = MagicMock()
+        blocked_route.request.url = "http://127.0.0.1/private-invoice"
+        link_downloader._route_browser_request(blocked_route)
+        blocked_route.abort.assert_called_once_with("blockedbyclient")
+        blocked_route.continue_.assert_not_called()
+
+        shared_address_route = MagicMock()
+        shared_address_route.request.url = "http://100.64.0.1/private-invoice"
+        link_downloader._route_browser_request(shared_address_route)
+        shared_address_route.abort.assert_called_once_with("blockedbyclient")
+        shared_address_route.continue_.assert_not_called()
+
+        public_route = MagicMock()
+        public_route.request.url = "https://example.com/invoice.pdf"
+        with patch.object(
+            link_downloader,
+            "_host_resolves_to_public_addresses",
+            return_value=True,
+        ):
+            link_downloader._route_browser_request(public_route)
+        public_route.continue_.assert_called_once_with()
+        public_route.abort.assert_not_called()
+
+        private_dns_route = MagicMock()
+        private_dns_route.request.url = "https://invoice.example/private-target"
+        with patch.object(
+            link_downloader,
+            "_host_resolves_to_public_addresses",
+            return_value=False,
+        ):
+            link_downloader._route_browser_request(private_dns_route)
+        private_dns_route.abort.assert_called_once_with("blockedbyclient")
+        private_dns_route.continue_.assert_not_called()
+
+        browser_internal_route = MagicMock()
+        browser_internal_route.request.url = "about:blank"
+        link_downloader._route_browser_request(browser_internal_route)
+        browser_internal_route.continue_.assert_called_once_with()
+        browser_internal_route.abort.assert_not_called()
+
     @patch("playwright.sync_api.sync_playwright")
     def test_invoice_page_detection_and_processor(self, mock_playwright):
         # 1. 模拟 Playwright page
