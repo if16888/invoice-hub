@@ -35,6 +35,7 @@ FORBIDDEN_EXTENSIONS = [
 
 # Directory prefixes that should never contain tracked or staged files
 FORBIDDEN_DIR_PREFIXES = [
+    ".claude/",
     "scratch/",
     "runtime/",
     "exports/",
