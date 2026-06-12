@@ -1382,8 +1382,13 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             window.table.selectionModel().clearSelection()
             window.table.selectionModel().clear()
         self.app.processEvents()
+        window.table.clearSelection()
+        window.table.setCurrentItem(None)
+        if window.table.selectionModel() is not None:
+            window.table.selectionModel().clearSelection()
+            window.table.selectionModel().clear()
+            self.assertEqual(len(window.table.selectionModel().selectedRows()), 0)
         window._on_table_selection_changed()
-        self.app.processEvents()
 
     def _select_all(self, window):
         from PySide6.QtCore import QItemSelection, QItemSelectionModel
