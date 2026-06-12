@@ -47,12 +47,17 @@ class TestPublicExportCheck(unittest.TestCase):
             runtime = root / "runtime"
             runtime.mkdir()
             (runtime / "invoices.db").write_bytes(b"sqlite")
+            claude_dir = root / ".claude"
+            claude_dir.mkdir()
+            (claude_dir / "settings.local.json").write_text("{}\n", encoding="utf-8")
 
             issues = "\n".join(find_public_export_issues(root))
 
             self.assertIn("forbidden file: AGENTS.md", issues)
             self.assertIn("forbidden directory: runtime", issues)
             self.assertIn("file under forbidden directory: runtime/invoices.db", issues)
+            self.assertIn("forbidden directory: .claude", issues)
+            self.assertIn("file under forbidden directory: .claude/settings.local.json", issues)
 
     def test_requires_codeowners(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,6 +193,29 @@ class TestPublicExportCheck(unittest.TestCase):
             )
             self.assertIn(
                 "forbidden tracked release-risk file type: runtime/backups/invoices-20260609-123456-before-test.db",
+                issues,
+            )
+
+    def test_source_tree_rejects_tracked_claude_state_even_if_gitignored_later(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            claude_state = root / ".claude" / "settings.local.json"
+            claude_state.parent.mkdir(parents=True)
+            claude_state.write_text("{}\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", *REQUIRED_PUBLIC_FILES, ".claude/settings.local.json"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            (root / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+
+            issues = "\n".join(find_source_tree_issues(root))
+
+            self.assertIn(
+                "forbidden tracked file under generated/private directory: .claude/settings.local.json",
                 issues,
             )
 

@@ -51,6 +51,7 @@ FORBIDDEN_NAMES = {
 
 FORBIDDEN_DIRS = {
     ".antigravitycli",
+    ".claude",
     ".gemini",
     ".worktrees",
     "bench-local",
