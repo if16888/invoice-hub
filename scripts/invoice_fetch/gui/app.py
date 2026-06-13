@@ -698,6 +698,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_widget_style = dp._refresh_widget_style
         self._toggle_note_visibility = dp._toggle_note_visibility
         self._toggle_more_source_info = dp._toggle_more_source_info
+        # Evidence row (row-style with missing badge)
+        self.lbl_evidence_dot = dp.lbl_evidence_dot
+        self.lbl_evidence_name = dp.lbl_evidence_name
+        self.lbl_evidence_missing = dp.lbl_evidence_missing
+        self.btn_add_evidence = dp.btn_add_evidence
+        self.update_evidence_row = dp.update_evidence_row
 
     def _set_right_panel_state(self, has_records: bool):
         if not hasattr(self, "right_stack"):
