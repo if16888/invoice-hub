@@ -360,6 +360,29 @@ class InvoiceDetailPanel(QWidget):
             self.combo_supporting_docs.setToolTip("")
             self.btn_open_extra_files.setEnabled(True)
         self.combo_supporting_docs.blockSignals(False)
+        self.update_evidence_row(items)
+
+    def update_evidence_row(self, items: list[dict]):
+        """Update the row-style evidence display from a list of supporting-doc items."""
+        has_doc = bool(items)
+        if has_doc:
+            doc = items[0]
+            label = doc.get("label") or doc.get("path", "").split("/")[-1].split("\\")[-1]
+            max_chars = 40
+            display = (label[:max_chars] + "…") if len(label) > max_chars else label
+            self.lbl_evidence_name.setText(display)
+            self.lbl_evidence_name.setToolTip(doc.get("path", "") or label)
+            self.lbl_evidence_name.setVisible(True)
+            self.lbl_evidence_missing.setVisible(False)
+            self.lbl_evidence_dot.setProperty("class", "EvidenceDotPresent")
+            self._refresh_widget_style(self.lbl_evidence_dot)
+            self.btn_open_extra_files.setEnabled(True)
+        else:
+            self.lbl_evidence_name.setVisible(False)
+            self.lbl_evidence_missing.setVisible(True)
+            self.lbl_evidence_dot.setProperty("class", "EvidenceDotMissing")
+            self._refresh_widget_style(self.lbl_evidence_dot)
+            self.btn_open_extra_files.setEnabled(False)
 
     def get_selected_supporting_document(self) -> dict | None:
         """Return the currently selected supporting document, or None."""
@@ -634,7 +657,7 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_dirty_hint.setProperty("class", "SectionHint")
         core_title_row.addWidget(self.lbl_dirty_hint)
 
-        self.btn_save_draft = QPushButton("保存修改")
+        self.btn_save_draft = QPushButton("保存字段修改")
         self.btn_save_draft.setProperty("class", "OutlineBtn")
         self.btn_save_draft.setMinimumWidth(80)
         self.btn_save_draft.setMaximumWidth(100)
@@ -757,7 +780,7 @@ class InvoiceDetailPanel(QWidget):
         attach_row.addWidget(self.btn_retry_download)
         detail_files_layout.addLayout(attach_row)
 
-        # — evidence row —
+        # — evidence row (row-style: label + dot + filename/badge + actions) —
         evidence_row = QHBoxLayout()
         evidence_row.setContentsMargins(0, 0, 0, 0)
         evidence_row.setSpacing(6)
@@ -766,13 +789,29 @@ class InvoiceDetailPanel(QWidget):
         evidence_label.setMinimumWidth(52)
         evidence_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         evidence_row.addWidget(evidence_label)
-        self.combo_supporting_docs = QComboBox()
-        self.combo_supporting_docs.setFont(QFont("Segoe UI", 12))
-        self.combo_supporting_docs.setMinimumHeight(28)
-        self.combo_supporting_docs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.combo_supporting_docs.view().setTextElideMode(Qt.ElideMiddle)
-        self.combo_supporting_docs.currentIndexChanged.connect(self._cb.on_supporting_doc_changed)
-        evidence_row.addWidget(self.combo_supporting_docs, 1)
+
+        # Status dot: orange when missing, green when present
+        self.lbl_evidence_dot = QLabel("●")
+        self.lbl_evidence_dot.setFixedWidth(14)
+        self.lbl_evidence_dot.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.lbl_evidence_dot.setProperty("class", "EvidenceDotMissing")
+        evidence_row.addWidget(self.lbl_evidence_dot)
+
+        # File name label (visible when a document exists)
+        self.lbl_evidence_name = QLabel("")
+        self.lbl_evidence_name.setProperty("class", "EvidenceFileName")
+        self.lbl_evidence_name.setMinimumHeight(28)
+        self.lbl_evidence_name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.lbl_evidence_name.setVisible(False)
+        evidence_row.addWidget(self.lbl_evidence_name, 1)
+
+        # Orange "missing" badge (visible when no supporting document)
+        self.lbl_evidence_missing = QLabel("缺失")
+        self.lbl_evidence_missing.setProperty("class", "EvidenceMissing")
+        self.lbl_evidence_missing.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        evidence_row.addWidget(self.lbl_evidence_missing)
+        evidence_row.addStretch(1)
+
         self.btn_open_extra_files = QPushButton("查看")
         self.btn_open_extra_files.clicked.connect(self._cb.on_open_evidence)
         self.btn_open_extra_files.setFont(QFont("Segoe UI", 12))
@@ -780,7 +819,24 @@ class InvoiceDetailPanel(QWidget):
         self.btn_open_extra_files.setProperty("class", "SecondaryBtn")
         self.btn_open_extra_files.setEnabled(False)
         evidence_row.addWidget(self.btn_open_extra_files)
+
+        self.btn_add_evidence = QPushButton("补充")
+        self.btn_add_evidence.setFont(QFont("Segoe UI", 12))
+        self.btn_add_evidence.setMinimumHeight(28)
+        self.btn_add_evidence.setProperty("class", "SecondaryBtn")
+        self.btn_add_evidence.clicked.connect(self._cb.on_add_attachment)
+        evidence_row.addWidget(self.btn_add_evidence)
+
         detail_files_layout.addLayout(evidence_row)
+
+        # Hidden QComboBox retained for backward-compat with on_supporting_doc_changed
+        self.combo_supporting_docs = QComboBox()
+        self.combo_supporting_docs.setFont(QFont("Segoe UI", 12))
+        self.combo_supporting_docs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_supporting_docs.view().setTextElideMode(Qt.ElideMiddle)
+        self.combo_supporting_docs.currentIndexChanged.connect(self._cb.on_supporting_doc_changed)
+        self.combo_supporting_docs.setVisible(False)
+        detail_files_layout.addWidget(self.combo_supporting_docs)
 
         claim_divider = QFrame()
         claim_divider.setProperty("class", "DetailSubDivider")
@@ -985,7 +1041,6 @@ class InvoiceDetailPanel(QWidget):
 
         # ── Bottom status bar (minimal, only warnings) ────────────
         self.closing_card = QFrame()
-        self.closing_card.setFrameShape(QFrame.StyledPanel)
         self.closing_card.setProperty("class", "DetailStatus")
         closing_layout = QHBoxLayout(self.closing_card)
         closing_layout.setContentsMargins(10, 4, 10, 4)

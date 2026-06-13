@@ -141,8 +141,8 @@ QLineEdit:read-only, QTextEdit:read-only, QPlainTextEdit:read-only {
 }
 QFrame.DetailSection {
     background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
+    border: none;
+    border-radius: 0;
 }
 QFrame.DetailWorkbench {
     background-color: #FFFFFF;
@@ -225,6 +225,34 @@ QLabel.InlineWarning {
     border-radius: 6px;
     padding: 6px 8px;
     font-weight: 500;
+}
+QLabel.EvidenceMissing {
+    background-color: #FFFBEB;
+    color: #B45309;
+    border: 1px solid #FCD34D;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel.EvidenceFileName {
+    color: #374151;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+QLabel.EvidenceDotMissing {
+    color: #D97706;
+    font-size: 14px;
+    background: transparent;
+    border: none;
+}
+QLabel.EvidenceDotPresent {
+    color: #10B981;
+    font-size: 14px;
+    background: transparent;
+    border: none;
 }
 QLabel.InfoPanel {
     color: #4B5563;
