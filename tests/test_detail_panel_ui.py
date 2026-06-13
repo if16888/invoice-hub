@@ -55,16 +55,20 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
     # ── 1. Save button text ─────────────────────────────────────────────────
 
     def test_save_button_text_is_save_fields(self):
-        """btn_save_draft must read '保存字段修改', not the old '保存修改'."""
-        self.assertEqual(self.panel.btn_save_draft.text(), "保存字段修改")
+        """btn_save_draft must read '保存', with tooltip '保存字段修改', and min-width >= 72. Font size shouldn't exceed 10pt."""
+        self.assertEqual(self.panel.btn_save_draft.text(), "保存")
+        self.assertEqual(self.panel.btn_save_draft.toolTip(), "保存字段修改")
+        self.assertGreaterEqual(self.panel.btn_save_draft.minimumWidth(), 72)
+        self.assertLessEqual(self.panel.btn_save_draft.font().pointSize(), 10)
 
     # ── 2. Form fields editability ──────────────────────────────────────────
 
     def test_form_fields_are_qlineedit_or_qcombobox(self):
-        """Core form fields must be editable inputs, not plain read-only labels."""
+        """Core form fields must be editable inputs, not plain read-only labels. Font should not be 12pt."""
         from PySide6.QtWidgets import QLineEdit, QComboBox
         self.assertIsInstance(self.panel.txt_number, QLineEdit)
         self.assertFalse(self.panel.txt_number.isReadOnly(), "txt_number should not be read-only")
+        self.assertLessEqual(self.panel.txt_number.font().pointSize(), 10)
 
         self.assertIsInstance(self.panel.txt_date, QLineEdit)
         self.assertFalse(self.panel.txt_date.isReadOnly(), "txt_date should not be read-only")
@@ -77,9 +81,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
         self.assertIsInstance(self.panel.txt_amount, QLineEdit)
         self.assertFalse(self.panel.txt_amount.isReadOnly(), "txt_amount should not be read-only")
+        self.assertLessEqual(self.panel.txt_amount.font().pointSize(), 10)
 
         self.assertIsInstance(self.panel.combo_category, QComboBox)
         self.assertTrue(self.panel.combo_category.isEditable(), "combo_category should be editable")
+        self.assertLessEqual(self.panel.combo_category.font().pointSize(), 10)
 
     # ── 3. Save button disabled when clean ─────────────────────────────────
 
@@ -156,6 +162,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
             self.panel.btn_open_extra_files.isEnabled(),
             "Open button must be disabled when no supporting documents"
         )
+        self.assertTrue(
+            self.panel.btn_open_extra_files.isHidden(),
+            "Open button must be hidden when no supporting documents"
+        )
+        self.assertEqual(self.panel.btn_add_evidence.text(), "补充")
 
     def test_evidence_row_shows_filename_when_doc_present(self):
         """When a supporting document exists, filename label is visible and badge hidden."""
@@ -171,6 +182,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         )
         self.assertIn("行程单.pdf", self.panel.lbl_evidence_name.text())
         self.assertTrue(self.panel.btn_open_extra_files.isEnabled())
+        self.assertFalse(
+            self.panel.btn_open_extra_files.isHidden(),
+            "Open button must be visible when a doc is present"
+        )
+        self.assertEqual(self.panel.btn_add_evidence.text(), "替换")
 
     def test_evidence_row_filename_truncated_when_long(self):
         """Filenames longer than 40 chars are truncated with ellipsis."""
@@ -240,6 +256,20 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         # label is 'receipt.pdf', not the full path
         self.assertNotIn("C:\\", displayed)
         self.assertNotIn("secret", displayed)
+
+    # ── 11. Attachment row text & visibility ───────────────────────────────
+
+    def test_attachment_row_shows_supplement_when_no_file(self):
+        """When no attachment exists, btn_open_file is hidden, btn_add_attachment is '补充'."""
+        self.panel.set_attachment_state(has_file=False)
+        self.assertTrue(self.panel.btn_open_file.isHidden())
+        self.assertEqual(self.panel.btn_add_attachment.text(), "补充")
+
+    def test_attachment_row_shows_replace_when_file_exists(self):
+        """When attachment exists, btn_open_file is visible, btn_add_attachment is '替换'."""
+        self.panel.set_attachment_state(has_file=True, file_name="invoice.pdf", file_path="/tmp/invoice.pdf")
+        self.assertFalse(self.panel.btn_open_file.isHidden())
+        self.assertEqual(self.panel.btn_add_attachment.text(), "替换")
 
 
 if __name__ == "__main__":
