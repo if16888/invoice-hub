@@ -57,6 +57,7 @@ QLabel.StatusBadge {
     border: 1px solid #E5E7EB;
     border-radius: 4px;
     padding: 2px 6px;
+    font-size: 12px;
     font-weight: bold;
 }
 QLabel.StatusBadge[variant="review"] {
@@ -144,6 +145,11 @@ QFrame.DetailSection {
     border: none;
     border-radius: 0;
 }
+QFrame.DetailSection QLineEdit,
+QFrame.DetailSection QComboBox,
+QFrame.DetailSection QTextEdit {
+    font-size: 12px;
+}
 QFrame.DetailWorkbench {
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0;
@@ -181,12 +187,12 @@ QFrame.DetailStatus {
 QLabel.SectionTitle {
     color: #111827;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
 }
 QLabel.SectionEyebrow {
     color: #64748B;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
 }
 QLabel.SectionHint {
     color: #6B7280;
@@ -200,7 +206,7 @@ QLabel.FieldLabel {
 }
 QLabel.DetailAmount {
     color: #0F172A;
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 700;
 }
 QLabel.DetailMeta {
@@ -211,11 +217,11 @@ QLabel.DetailMeta {
 QLabel.DetailSeller {
     color: #111827;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
 }
 QLabel.DetailCaption {
     color: #64748B;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 400;
 }
 QLabel.InlineWarning {
@@ -232,7 +238,7 @@ QLabel.EvidenceMissing {
     border: 1px solid #FCD34D;
     border-radius: 4px;
     padding: 2px 8px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
 }
 QLabel.EvidenceFileName {
@@ -296,6 +302,7 @@ QPushButton {
     border: 1px solid #E5E7EB;
     border-radius: 6px;
     padding: 6px 14px;
+    font-size: 12px;
     font-weight: 600;
 }
 QPushButton:hover {
@@ -308,7 +315,7 @@ QPushButton:pressed {
 }
 QPushButton:disabled {
     background-color: #F9FAFB;
-    color: #9CA3AF;
+    color: #6B7280;
     border-color: #E5E7EB;
 }
 QPushButton::menu-indicator {
@@ -347,7 +354,7 @@ QPushButton.OutlineBtn:pressed {
 }
 QPushButton.OutlineBtn:disabled {
     background-color: #F1F5F9;
-    color: #94A3B8;
+    color: #6B7280;
     border-color: #E2E8F0;
 }
 
