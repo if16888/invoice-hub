@@ -83,10 +83,22 @@ def _parse_paths(val) -> list[str]:
     return [str(val)]
 
 
+def _effective_date(row: dict) -> str:
+    """Return the best available date string for sorting: expense_date → invoice_date → mail_date."""
+    return (
+        str(row.get("expense_date") or "")
+        or str(row.get("invoice_date") or "")
+        or str(row.get("mail_date") or "")
+    )
+
+
 def export_excel(rows: list[dict], dest: str | Path) -> Path:
     """Write *rows* (from ``InvoiceDB.get_all_invoices()``) to an Excel file."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # Stable sort by effective date ascending (expense_date → invoice_date → mail_date)
+    rows = sorted(rows, key=_effective_date)
 
     columns = list(_COLUMNS)
     if any(r.get("review_status") for r in rows):

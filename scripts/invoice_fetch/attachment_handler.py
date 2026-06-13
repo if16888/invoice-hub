@@ -109,9 +109,9 @@ def build_managed_attachment_name(
 
     YYYY-MM-DD_原文件名.ext
     """
-    # 1. Date Priority: invoice_date -> expense_date -> fallback_date -> unknown-date
+    # 1. Date Priority: expense_date -> invoice_date -> fallback_date -> unknown-date
     date_to_use = None
-    for d in [invoice_date, expense_date, fallback_date]:
+    for d in [expense_date, invoice_date, fallback_date]:
         if d:
             normalized = _normalize_export_date_prefix(d)
             if normalized and normalized != "unknown-date":
