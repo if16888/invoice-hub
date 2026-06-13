@@ -27,6 +27,7 @@ class InvoiceDetailCallbacks:
 
     on_open_file: Callable[[], None] = lambda: None
     on_add_attachment: Callable[[], None] = lambda: None
+    on_add_evidence: Callable[[], None] = lambda: None
     on_retry_download: Callable[[], None] = lambda: None
     on_open_evidence: Callable[[], None] = lambda: None
 
@@ -813,7 +814,7 @@ class InvoiceDetailPanel(QWidget):
         self.btn_add_evidence = QPushButton("补充")
         self.btn_add_evidence.setMinimumHeight(28)
         self.btn_add_evidence.setProperty("class", "SecondaryBtn")
-        self.btn_add_evidence.clicked.connect(self._cb.on_add_attachment)
+        self.btn_add_evidence.clicked.connect(self._cb.on_add_evidence)
         evidence_row.addWidget(self.btn_add_evidence)
 
         detail_files_layout.addLayout(evidence_row)

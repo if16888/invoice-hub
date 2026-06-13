@@ -371,6 +371,10 @@ def _rename_by_invoice_code(
         invoice_date=invoice_date,
         expense_date=expense_date,
         fallback_date=fallback_date,
+        category=category or None,
+        total_amount=total_amount or None,
+        invoice_number=invoice_number or None,
+        role="证明材料" if is_extra else "原件",
     )
 
     # Ensure extension matches src extension

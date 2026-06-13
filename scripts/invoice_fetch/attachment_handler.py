@@ -97,6 +97,34 @@ def _normalize_export_date_prefix(raw_value: str) -> str:
     return "unknown-date"
 
 
+_WINDOWS_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+_MAX_FILENAME_LEN = 180  # leave room for _1, _2 suffix and extension
+
+
+def _safe_field(text: str, fallback: str, max_len: int = 20) -> str:
+    """Sanitize a single field for inclusion in a filename segment."""
+    text = str(text or "").strip()
+    if not text:
+        return fallback
+    cleaned = _WINDOWS_ILLEGAL.sub("_", text)
+    cleaned = re.sub(r"[_\s]+", "_", cleaned).strip("_")
+    if not cleaned:
+        return fallback
+    return cleaned[:max_len]
+
+
+def _format_amount_field(amount) -> str:
+    """Format amount as '945.50'; return '金额待补全' if empty or invalid."""
+    text = str(amount or "").strip()
+    if not text:
+        return "金额待补全"
+    try:
+        from decimal import Decimal, InvalidOperation
+        return f"{Decimal(text):.2f}"
+    except (ImportError, Exception):
+        return text[:12] if text else "金额待补全"
+
+
 def build_managed_attachment_name(
     *,
     original_name: str,
@@ -104,42 +132,65 @@ def build_managed_attachment_name(
     expense_date: str | None = None,
     fallback_date: str | None = None,
     prefix_date: bool = True,
+    # Extended fields for full-format naming
+    category: str | None = None,
+    total_amount: str | None = None,
+    invoice_number: str | None = None,
+    role: str | None = None,   # 原件 / 证明材料 / None (falls back to stem)
 ) -> str:
     """Build a unified, Windows-safe filename for a managed attachment.
 
-    YYYY-MM-DD_原文件名.ext
+    Short format (when category/amount/number all absent):
+        YYYY-MM-DD_原文件名.ext
+
+    Full format (when at least one of category/amount/number is provided):
+        YYYY-MM-DD_消费类型_金额_发票号_原件.ext
+        YYYY-MM-DD_消费类型_金额_发票号_证明材料.ext
     """
     # 1. Date Priority: expense_date -> invoice_date -> fallback_date -> unknown-date
-    date_to_use = None
+    date_to_use = "unknown-date"
     for d in [expense_date, invoice_date, fallback_date]:
         if d:
             normalized = _normalize_export_date_prefix(d)
             if normalized and normalized != "unknown-date":
                 date_to_use = normalized
                 break
-    if not date_to_use:
-        date_to_use = "unknown-date"
 
-    # 2. Extract stem and extension
+    # 2. Extract extension
     name_path = Path(original_name)
-    stem = name_path.stem
     ext = name_path.suffix.lower()
 
-    # 3. Clean Windows illegal characters
-    clean_stem = re.sub(r'[\\/:*?"<>|]', "_", stem)
-    clean_stem = re.sub(r"[_\s]+", "_", clean_stem).strip("_")
+    # 3. Decide naming mode
+    use_full_format = any(x is not None for x in [category, total_amount, invoice_number, role])
 
-    if not clean_stem:
-        clean_stem = "file"
-
-    # 4. Check if YYYY-MM-DD_ is already present
-    if prefix_date:
-        if re.match(r"^\d{4}-\d{2}-\d{2}_", clean_stem):
-            filename = f"{clean_stem}{ext}"
-        else:
-            filename = f"{date_to_use}_{clean_stem}{ext}"
+    if use_full_format:
+        cat_part = _safe_field(category, "未分类", 16)
+        amt_part = _format_amount_field(total_amount)
+        num_part = _safe_field(invoice_number, "待补全", 24)
+        role_part = _safe_field(role, "原件", 6) if role else "原件"
+        stem = f"{cat_part}_{amt_part}_{num_part}_{role_part}"
     else:
-        filename = f"{clean_stem}{ext}"
+        # Legacy mode: use original filename stem
+        raw_stem = name_path.stem
+        stem = _WINDOWS_ILLEGAL.sub("_", raw_stem)
+        stem = re.sub(r"[_\s]+", "_", stem).strip("_")
+        if not stem:
+            stem = "file"
+
+    # 4. Compose filename with optional date prefix
+    if prefix_date:
+        # Skip re-adding date prefix if it's already there
+        if re.match(r"^\d{4}-\d{2}-\d{2}_", stem):
+            filename = f"{stem}{ext}"
+        else:
+            filename = f"{date_to_use}_{stem}{ext}"
+    else:
+        filename = f"{stem}{ext}"
+
+    # 5. Truncate if too long, preserving extension
+    if len(filename) > _MAX_FILENAME_LEN:
+        keep = _MAX_FILENAME_LEN - len(ext)
+        filename = filename[:keep] + ext
 
     return filename
 
