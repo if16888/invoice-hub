@@ -5,6 +5,7 @@ import tempfile
 import shutil
 import os
 from pathlib import Path
+from email.message import EmailMessage
 
 from scripts.invoice_fetch.link_downloader import (
     extract_links_with_metadata_from_html,
@@ -51,6 +52,125 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertIn("http://www.nuonuo.com/info", low_urls)
         self.assertIn("http://ntf.nuonuo.com/baoxiao", low_urls)
 
+    def test_link_extraction_includes_receipt_and_meal_keywords(self):
+        html = """
+        <html>
+            <body>
+                <a href="https://example.com/receipt/detail?id=1">查看消费凭证</a>
+                <a href="https://example.com/order/detail?kind=meal&id=2">订单详情</a>
+            </body>
+        </html>
+        """
+        raw_items = extract_links_with_metadata_from_html(html)
+        self.assertEqual(
+            [item["url"] for item in raw_items],
+            [
+                "https://example.com/receipt/detail?id=1",
+                "https://example.com/order/detail?kind=meal&id=2",
+            ],
+        )
+        high_items, low_items = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender=False)
+        self.assertEqual([item["url"] for item in high_items], [item["url"] for item in raw_items])
+        self.assertEqual(low_items, [])
+
+    def test_download_from_email_logs_redacted_summary_when_no_downloads(self):
+        msg = EmailMessage()
+        msg["Subject"] = "高铁上餐费报销凭证"
+        msg["From"] = "finance@example.com"
+        msg.set_content(
+            """
+            <html><body>
+                <a href="https://example.com/receipt/detail?id=1&token=secret">查看消费凭证</a>
+            </body></html>
+            """,
+            subtype="html",
+        )
+
+        dl = LinkDownloader(download_dir=self.tmp_dir)
+
+        with patch.object(dl, "_download_url", return_value=None), self.assertLogs(
+            "scripts.invoice_fetch.link_downloader", level="INFO"
+        ) as logs:
+            res = dl.download_from_email(msg, 123, "2026-06-07")
+
+        self.assertEqual(res, [])
+        log_text = "\n".join(logs.output)
+        self.assertIn("found=", log_text)
+        self.assertIn("attempted=", log_text)
+        self.assertIn("subject=", log_text)
+        self.assertIn("sender=", log_text)
+        self.assertNotIn("secret", log_text)
+        self.assertNotIn("https://example.com/receipt/detail", log_text)
+
+    def test_download_from_email_dedupes_pdf_and_ofd_same_stem(self):
+        pdf_file = Path(self.tmp_dir) / "invoice.pdf"
+        ofd_file = Path(self.tmp_dir) / "invoice.ofd"
+        pdf_file.write_bytes(b"%PDF-1.4 synthetic pdf")
+        ofd_file.write_bytes(b"PK\x03\x04 synthetic ofd")
+
+        msg = EmailMessage()
+        msg.set_content(
+            """
+            <html><body>
+              <a href="https://example.com/invoice/pdf">下载发票</a>
+              <a href="https://example.com/invoice/ofd">下载发票</a>
+            </body></html>
+            """,
+            subtype="html",
+        )
+
+        dl = LinkDownloader(self.tmp_dir)
+
+        def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+            file_path = pdf_file if idx == 0 else ofd_file
+            filename = "invoice.pdf" if idx == 0 else "invoice.ofd"
+            return DownloadedFile(
+                url=url,
+                file_path=str(file_path),
+                filename=filename,
+                size=file_path.stat().st_size,
+                is_invoice=True,
+                source_type="official_download",
+            )
+
+        with patch.object(dl, "_download_url", side_effect=fake_download):
+            results = dl.download_from_email(msg, 77, "2026-06-13")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].filename, "invoice.pdf")
+
+    def test_download_from_email_dedupes_homologous_pdf_and_ofd(self):
+        from scripts.invoice_fetch.link_downloader import DownloadedFile, _dedupe_downloaded_files
+
+        # 1. invoice_77_0_resp.pdf + invoice_77_1_resp.ofd -> Keep PDF
+        f1 = DownloadedFile("url1", "p1", "invoice_77_0_resp.pdf", 100, True, "official_download")
+        f2 = DownloadedFile("url2", "p2", "invoice_77_1_resp.ofd", 200, True, "official_download")
+        res1 = _dedupe_downloaded_files([f1, f2])
+        self.assertEqual(len(res1), 1)
+        self.assertEqual(res1[0].filename, "invoice_77_0_resp.pdf")
+
+        # 2. 狮王府电子发票.pdf + 电子发票.ofd -> Keep PDF
+        f3 = DownloadedFile("url3", "p3", "狮王府电子发票.pdf", 100, True, "official_download")
+        f4 = DownloadedFile("url4", "p4", "电子发票.ofd", 200, True, "official_download")
+        res2 = _dedupe_downloaded_files([f3, f4])
+        self.assertEqual(len(res2), 1)
+        self.assertEqual(res2[0].filename, "狮王府电子发票.pdf")
+
+        # 3. invoice_a.pdf + invoice_b.pdf -> Keep both
+        f5 = DownloadedFile("url5", "p5", "invoice_a.pdf", 100, True, "official_download")
+        f6 = DownloadedFile("url6", "p6", "invoice_b.pdf", 200, True, "official_download")
+        res3 = _dedupe_downloaded_files([f5, f6])
+        self.assertEqual(len(res3), 2)
+
+        # 4. invoice_a.pdf + invoice_b.pdf + invoice_b.ofd -> Keep invoice_a.pdf & invoice_b.pdf
+        f7 = DownloadedFile("url7", "p7", "invoice_b.ofd", 150, True, "official_download")
+        res4 = _dedupe_downloaded_files([f5, f6, f7])
+        self.assertEqual(len(res4), 2)
+        filenames = [f.filename for f in res4]
+        self.assertIn("invoice_a.pdf", filenames)
+        self.assertIn("invoice_b.pdf", filenames)
+        self.assertNotIn("invoice_b.ofd", filenames)
+
     def test_verify_and_clean_file(self):
         # 1. 测试 PDF (必须大于等于 500 字节)
         pdf_path = Path(self.tmp_dir) / "test.pdf"
@@ -68,20 +188,85 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertFalse(_verify_and_clean_file(bad_path))
         self.assertFalse(bad_path.exists()) # 校验是否已被删除
 
+    def test_download_destination_stays_inside_save_directory(self):
+        from scripts.invoice_fetch import link_downloader
+
+        save_dir = Path(self.tmp_dir) / "downloads"
+        save_dir.mkdir()
+
+        relative_escape = link_downloader._safe_download_destination(
+            save_dir,
+            r"..\..\config.json",
+            "invoice_1_0.pdf",
+        )
+        absolute_escape = link_downloader._safe_download_destination(
+            save_dir,
+            r"C:\Windows\Temp\invoice.pdf",
+            "invoice_1_1.pdf",
+        )
+
+        self.assertEqual(relative_escape.parent, save_dir.resolve())
+        self.assertEqual(relative_escape.name, "config.json")
+        self.assertEqual(absolute_escape.parent, save_dir.resolve())
+        self.assertEqual(absolute_escape.name, "invoice.pdf")
+
+    def test_browser_request_guard_blocks_private_redirect_target(self):
+        from scripts.invoice_fetch import link_downloader
+
+        blocked_route = MagicMock()
+        blocked_route.request.url = "http://127.0.0.1/private-invoice"
+        link_downloader._route_browser_request(blocked_route)
+        blocked_route.abort.assert_called_once_with("blockedbyclient")
+        blocked_route.continue_.assert_not_called()
+
+        shared_address_route = MagicMock()
+        shared_address_route.request.url = "http://100.64.0.1/private-invoice"
+        link_downloader._route_browser_request(shared_address_route)
+        shared_address_route.abort.assert_called_once_with("blockedbyclient")
+        shared_address_route.continue_.assert_not_called()
+
+        public_route = MagicMock()
+        public_route.request.url = "https://example.com/invoice.pdf"
+        with patch.object(
+            link_downloader,
+            "_host_resolves_to_public_addresses",
+            return_value=True,
+        ):
+            link_downloader._route_browser_request(public_route)
+        public_route.continue_.assert_called_once_with()
+        public_route.abort.assert_not_called()
+
+        private_dns_route = MagicMock()
+        private_dns_route.request.url = "https://invoice.example/private-target"
+        with patch.object(
+            link_downloader,
+            "_host_resolves_to_public_addresses",
+            return_value=False,
+        ):
+            link_downloader._route_browser_request(private_dns_route)
+        private_dns_route.abort.assert_called_once_with("blockedbyclient")
+        private_dns_route.continue_.assert_not_called()
+
+        browser_internal_route = MagicMock()
+        browser_internal_route.request.url = "about:blank"
+        link_downloader._route_browser_request(browser_internal_route)
+        browser_internal_route.continue_.assert_called_once_with()
+        browser_internal_route.abort.assert_not_called()
+
     @patch("playwright.sync_api.sync_playwright")
     def test_invoice_page_detection_and_processor(self, mock_playwright):
         # 1. 模拟 Playwright page
         mock_page = MagicMock()
-        
+
         # 统一使用 side_effect 返回字符串，防止 evaluate 返回 Mock 实例
         mock_page.evaluate.side_effect = lambda js, *args: "电子发票\n发票号码: 123456\n开票日期: 2026-06-07\n销售方: 某公司"
 
         dl = LinkDownloader(download_dir=self.tmp_dir)
-        
+
         # 2. 模拟匹配
         url = "http://nnfp.jss.com.cn/scan-invoice/invoiceShow"
         save_dir = Path(self.tmp_dir)
-        
+
         # Mock pdf generation to output a fake pdf (>= 500 bytes)
         def fake_pdf(path):
             Path(path).write_bytes(b"%PDF-1.4\nfallback" + b"p" * 1000)

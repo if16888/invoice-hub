@@ -62,7 +62,40 @@ def _normalize_path_list(raw_value) -> list[str]:
     return normalized
 
 
-def _copy_into_attachments(src_value: str, runtime_dir: Path, attachments_dir: Path) -> str:
+def _normalize_export_date_prefix(raw_value: str) -> str:
+    text = str(raw_value or "").strip()
+    if not text:
+        return "unknown-date"
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    text = re.sub(r"[^\dA-Za-z-]+", "-", text).strip("-")
+    return text or "unknown-date"
+
+
+def _prefix_export_filename(filename: str, date_prefix: str) -> str:
+    basename = Path(str(filename or "")).name
+    safe_prefix = _normalize_export_date_prefix(date_prefix)
+
+    if safe_prefix != "unknown-date":
+        if basename.startswith("unknown-date_"):
+            basename = basename[len("unknown-date_"):]
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}_", basename):
+        return basename
+
+    return f"{safe_prefix}_{basename}"
+
+
+def _copy_into_attachments(
+    src_value: str,
+    runtime_dir: Path,
+    attachments_dir: Path,
+    *,
+    date_prefix: str = "",
+) -> str:
     if not src_value:
         return ""
     src_path = Path(src_value)
@@ -72,9 +105,10 @@ def _copy_into_attachments(src_value: str, runtime_dir: Path, attachments_dir: P
         _log.warning("Attachment file not found at: %s (skipped)", mask_path(src_path))
         return ""
 
-    dest_path = attachments_dir / src_path.name
+    dest_name = _prefix_export_filename(src_path.name, date_prefix)
+    dest_path = attachments_dir / dest_name
     if dest_path.exists():
-        stem = src_path.stem
+        stem = dest_path.stem
         ext = src_path.suffix
         counter = 1
         while True:
@@ -89,6 +123,16 @@ def _copy_into_attachments(src_value: str, runtime_dir: Path, attachments_dir: P
     _log.info("Copied export file: %s -> %s", mask_path(src_path), mask_path(copied_relative_path))
     return copied_relative_path
 
+
+
+def _invoice_sort_key(inv: dict) -> tuple:
+    inv_date = (inv.get("invoice_date") or "").strip()
+    exp_date = (inv.get("expense_date") or "").strip()
+    mail_date = (inv.get("mail_date") or "").strip()
+    effective_date = inv_date or exp_date or mail_date or "9999-12-31"
+    inv_num = (inv.get("invoice_number") or "").strip()
+    inv_id = inv.get("id") or 0
+    return (effective_date, inv_num, inv_id)
 
 
 def export_claim_package(
@@ -145,6 +189,8 @@ def export_claim_package(
     if not invoices:
         raise ValueError(f"报销组“{claim['name']}”筛选后没有符合条件的可导出发票。")
 
+    invoices.sort(key=_invoice_sort_key)
+
     if reimbursement_config is None:
         reimbursement_config = load_config_safe().get("reimbursement", {})
 
@@ -175,16 +221,27 @@ def export_claim_package(
         inv_copy["warning"] = warning
         copied_relative_path = ""
         orig_attachment_path = inv.get("attachment_path", "")
+        export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or inv.get("mail_date") or "unknown-date"
 
         if orig_attachment_path:
-            copied_relative_path = _copy_into_attachments(orig_attachment_path, runtime_dir, attachments_dir)
+            copied_relative_path = _copy_into_attachments(
+                orig_attachment_path,
+                runtime_dir,
+                attachments_dir,
+                date_prefix=export_date_prefix,
+            )
         else:
             _log.info("No attachment path found for invoice ID %s", inv.get("id"))
 
         raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
         copied_extra_paths = []
         for extra_path in raw_extra_paths:
-            copied_extra_path = _copy_into_attachments(extra_path, runtime_dir, attachments_dir)
+            copied_extra_path = _copy_into_attachments(
+                extra_path,
+                runtime_dir,
+                attachments_dir,
+                date_prefix=export_date_prefix,
+            )
             if copied_extra_path:
                 copied_extra_paths.append(copied_extra_path)
 

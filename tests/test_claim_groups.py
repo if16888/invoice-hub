@@ -272,14 +272,14 @@ class ClaimGroupsTests(unittest.TestCase):
                 ws = wb["发票汇总"]
 
                 # Columns check: spreadsheet should map correctly
-                self.assertEqual(ws.cell(row=2, column=1).value, "NUM123")  # row 1 is header
-                self.assertEqual(ws.cell(row=3, column=1).value, "NUM456")
+                self.assertEqual(ws.cell(row=2, column=1).value, "NUM456")  # row 1 is header
+                self.assertEqual(ws.cell(row=3, column=1).value, "NUM123")
 
                 # Check attachments copied
                 att_export_dir = export_dir / "attachments"
                 self.assertTrue(att_export_dir.exists())
-                self.assertTrue((att_export_dir / "meal.pdf").exists())
-                self.assertTrue((att_export_dir / "taxi.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-19_meal.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-18_taxi.pdf").exists())
 
                 # Check manifest.json
                 manifest_file = export_dir / "manifest.json"
@@ -293,14 +293,104 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(manifest["item_count"], 2)
 
                 item1 = manifest["items"][0]
-                self.assertEqual(item1["invoice_number"], "NUM123")
-                self.assertEqual(item1["copied_attachment_path"], "attachments/meal.pdf")
+                self.assertEqual(item1["invoice_number"], "NUM456")
+                self.assertEqual(item1["copied_attachment_path"], "attachments/2026-05-18_taxi.pdf")
                 self.assertEqual(item1["review_status"], "approved")
 
                 item2 = manifest["items"][1]
-                self.assertEqual(item2["invoice_number"], "NUM456")
-                self.assertEqual(item2["copied_attachment_path"], "attachments/taxi.pdf")
+                self.assertEqual(item2["invoice_number"], "NUM123")
+                self.assertEqual(item2["copied_attachment_path"], "attachments/2026-05-19_meal.pdf")
                 self.assertEqual(item2["review_status"], "approved")
+
+    def test_export_package_natural_sorting_by_effective_date(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root = Path(td) / "project"
+            runtime_dir = project_root / "runtime"
+            db_path = runtime_dir / "invoices.db"
+
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Natural Sorting Trip")
+
+                att_dir = runtime_dir / "attachments" / "2026-06-01"
+                att_dir.mkdir(parents=True, exist_ok=True)
+
+                pdfA = att_dir / "invoiceA.pdf"
+                pdfA.write_bytes(b"%PDF-1.4 invoiceA")
+                pdfB = att_dir / "invoiceB.pdf"
+                pdfB.write_bytes(b"%PDF-1.4 invoiceB")
+                pdfC = att_dir / "invoiceC.pdf"
+                pdfC.write_bytes(b"%PDF-1.4 invoiceC")
+
+                # A: invoice_date=2026-06-10
+                idA = db.insert_invoice({
+                    "invoice_number": "NUM_A",
+                    "total_amount": "10.00",
+                    "seller_name": "Seller A",
+                    "invoice_date": "2026-06-10",
+                    "attachment_path": "attachments/2026-06-01/invoiceA.pdf",
+                    "review_status": review_status.APPROVED
+                })
+
+                # B: invoice_date="", expense_date=2026-05-01
+                idB = db.insert_invoice({
+                    "invoice_number": "NUM_B",
+                    "total_amount": "20.00",
+                    "seller_name": "Seller B",
+                    "invoice_date": "",
+                    "expense_date": "2026-05-01",
+                    "attachment_path": "attachments/2026-06-01/invoiceB.pdf",
+                    "review_status": review_status.APPROVED
+                })
+
+                # C: invoice_date=2026-05-20
+                idC = db.insert_invoice({
+                    "invoice_number": "NUM_C",
+                    "total_amount": "30.00",
+                    "seller_name": "Seller C",
+                    "invoice_date": "2026-05-20",
+                    "attachment_path": "attachments/2026-06-01/invoiceC.pdf",
+                    "review_status": review_status.APPROVED
+                })
+
+                db.add_invoice_to_claim(claim_id, idA)
+                db.add_invoice_to_claim(claim_id, idB)
+                db.add_invoice_to_claim(claim_id, idC)
+
+                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+
+                # Check spreadsheet rows order
+                xlsx_file = export_dir / "reimbursement.xlsx"
+                wb = openpyxl.load_workbook(xlsx_file)
+                ws = wb["发票汇总"]
+                # Row 2 (first invoice) should be B (NUM_B)
+                self.assertEqual(ws.cell(row=2, column=1).value, "NUM_B")
+                # Row 3 (second invoice) should be C (NUM_C)
+                self.assertEqual(ws.cell(row=3, column=1).value, "NUM_C")
+                # Row 4 (third invoice) should be A (NUM_A)
+                self.assertEqual(ws.cell(row=4, column=1).value, "NUM_A")
+
+                # Check manifest items sorting
+                manifest_file = export_dir / "manifest.json"
+                with open(manifest_file, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+
+                self.assertEqual(manifest["item_count"], 3)
+
+                # Check item B
+                item0 = manifest["items"][0]
+                self.assertEqual(item0["invoice_number"], "NUM_B")
+                # Ensure filename prefix uses expense_date (2026-05-01)
+                self.assertEqual(item0["copied_attachment_path"], "attachments/2026-05-01_invoiceB.pdf")
+
+                # Check item C
+                item1 = manifest["items"][1]
+                self.assertEqual(item1["invoice_number"], "NUM_C")
+                self.assertEqual(item1["copied_attachment_path"], "attachments/2026-05-20_invoiceC.pdf")
+
+                # Check item A
+                item2 = manifest["items"][2]
+                self.assertEqual(item2["invoice_number"], "NUM_A")
+                self.assertEqual(item2["copied_attachment_path"], "attachments/2026-06-10_invoiceA.pdf")
 
     def test_export_package_includes_supporting_documents(self):
         with tempfile.TemporaryDirectory() as td:
@@ -337,8 +427,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
 
                 att_export_dir = export_dir / "attachments"
-                self.assertTrue((att_export_dir / "hotel_invoice.pdf").exists())
-                self.assertTrue((att_export_dir / "hotel_folio.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-20_hotel_invoice.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-20_hotel_folio.pdf").exists())
 
                 manifest_file = export_dir / "manifest.json"
                 with open(manifest_file, "r", encoding="utf-8") as f:
@@ -346,10 +436,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 self.assertEqual(manifest["item_count"], 1)
                 item = manifest["items"][0]
-                self.assertEqual(item["attachment_path"], "attachments/hotel_invoice.pdf")
-                self.assertEqual(item["extra_paths"], ["attachments/hotel_folio.pdf"])
-                self.assertEqual(item["copied_attachment_path"], "attachments/hotel_invoice.pdf")
-                self.assertEqual(item["copied_extra_paths"], ["attachments/hotel_folio.pdf"])
+                self.assertEqual(item["attachment_path"], "attachments/2026-05-20_hotel_invoice.pdf")
+                self.assertEqual(item["extra_paths"], ["attachments/2026-05-20_hotel_folio.pdf"])
+                self.assertEqual(item["copied_attachment_path"], "attachments/2026-05-20_hotel_invoice.pdf")
+                self.assertEqual(item["copied_extra_paths"], ["attachments/2026-05-20_hotel_folio.pdf"])
                 self.assertNotIn("file_hash", item)
 
                 xlsx_file = export_dir / "reimbursement.xlsx"

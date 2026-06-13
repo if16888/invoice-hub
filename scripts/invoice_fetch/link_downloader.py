@@ -10,15 +10,17 @@ import ipaddress
 import logging
 import os
 import re
+import socket
 import time
 import threading
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
-from .log_privacy import mask_filename, mask_url_for_log
+from .log_privacy import mask_email, mask_filename, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
 
@@ -53,6 +55,22 @@ _LINK_KEYWORDS = [
     "nuonuo",
     "baiwang",
     "51fapiao",
+    "\u9910\u8d39",
+    "\u9910\u996e",
+    "\u7528\u9910",
+    "\u5c0f\u7968",
+    "\u7535\u5b50\u5c0f\u7968",
+    "\u6d88\u8d39\u51ed\u8bc1",
+    "\u8ba2\u5355\u8be6\u60c5",
+    "\u652f\u4ed8\u51ed\u8bc1",
+    "meal",
+    "catering",
+    "food",
+    "train",
+    "rail",
+    "\u9ad8\u94c1",
+    "\u94c1\u8def",
+    "\u52a8\u8f66",
 ]
 
 _EXCLUDE_PATTERNS = [
@@ -129,29 +147,104 @@ def _is_safe_download_url(url: str) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return True
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    return ip.is_global
 
 
-def extract_links_with_metadata_from_html(html: str) -> list[dict]:
-    """Extract invoice-related URLs along with their anchor text from email HTML body."""
+@lru_cache(maxsize=256)
+def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
+    """Fail closed unless every resolved address is publicly routable."""
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None:
+        return literal_ip.is_global
+
+    try:
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    addresses = {record[4][0] for record in records if record[4]}
+    if not addresses:
+        return False
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        if not ip.is_global:
+            return False
+    return True
+
+
+def _is_safe_browser_request_url(url: str) -> bool:
+    """Allow browser-internal resources and public HTTP(S) destinations."""
+    parsed = urlparse(str(url or ""))
+    scheme = parsed.scheme.lower()
+    if scheme in {"about", "blob", "data"}:
+        return True
+    if not _is_safe_download_url(url):
+        return False
+    port = parsed.port or (443 if scheme == "https" else 80)
+    return _host_resolves_to_public_addresses(parsed.hostname or "", port)
+
+
+def _route_browser_request(route) -> None:
+    """Abort browser requests that target local or otherwise unsafe URLs."""
+    url = str(route.request.url or "")
+    if _is_safe_browser_request_url(url):
+        route.continue_()
+        return
+    fingerprint = hashlib.sha256(url.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    _log.warning("Blocked unsafe browser request: <%s>", fingerprint)
+    route.abort("blockedbyclient")
+
+
+def _safe_download_destination(
+    save_dir: str | Path,
+    suggested_filename: str,
+    fallback_filename: str,
+) -> Path:
+    """Return a sanitized download path contained by *save_dir*."""
+    root = Path(save_dir).resolve()
+    raw_name = str(suggested_filename or fallback_filename or "").replace("\\", "/")
+    basename = raw_name.rsplit("/", 1)[-1]
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", basename).strip(" .")
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = re.sub(
+            r'[<>:"/\\|?*\x00-\x1f]',
+            "_",
+            str(fallback_filename or "invoice_download"),
+        ).strip(" .")
+
+    candidate = (root / safe_name).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        candidate = (root / Path(fallback_filename or "invoice_download").name).resolve()
+    return candidate
+
+
+def _extract_links_with_metadata_from_html_and_stats(html: str) -> tuple[list[dict], dict]:
     if not html:
-        return []
+        return [], {
+            "anchor_count": 0,
+            "unsafe_skipped": 0,
+            "excluded_skipped": 0,
+        }
     results: list[dict] = []
+    unsafe_skipped = 0
+    excluded_skipped = 0
     try:
         soup = BeautifulSoup(html, "html.parser")
-        for a in soup.find_all("a", href=True):
+        anchors = soup.find_all("a", href=True)
+        for a in anchors:
             url = a["href"].strip()
             text = a.get_text(strip=True)
             if not url or url.startswith(("mailto:", "#")):
                 continue
             if not _is_safe_download_url(url):
+                unsafe_skipped += 1
                 continue
             parsed = urlparse(url)
             combined = " ".join(
@@ -165,8 +258,25 @@ def extract_links_with_metadata_from_html(html: str) -> list[dict]:
             if has_invoice_host or has_invoice_context:
                 if not any(ex in url.lower() for ex in _EXCLUDE_PATTERNS):
                     results.append({"url": url, "text": text})
+                else:
+                    excluded_skipped += 1
     except Exception as exc:
         _log.warning("HTML link parse failed: %s", exc)
+        return [], {
+            "anchor_count": 0,
+            "unsafe_skipped": unsafe_skipped,
+            "excluded_skipped": excluded_skipped,
+        }
+    return results, {
+        "anchor_count": len(anchors) if "anchors" in locals() else 0,
+        "unsafe_skipped": unsafe_skipped,
+        "excluded_skipped": excluded_skipped,
+    }
+
+
+def extract_links_with_metadata_from_html(html: str) -> list[dict]:
+    """Extract invoice-related URLs along with their anchor text from email HTML body."""
+    results, _stats = _extract_links_with_metadata_from_html_and_stats(html)
     return results
 
 
@@ -239,7 +349,13 @@ def _dedup_and_prioritize_with_metadata(raw_items: list[dict], is_nuonuo_sender:
             "baoxiao", "ntf", "bmjc"
         ]
         combined_text = (text + " " + url_lower).lower()
-        is_low = any(kw in combined_text for kw in low_priority_keywords)
+        special_priority_keywords = [
+            "receipt", "meal", "catering", "food", "train", "rail", "高铁", "铁路", "动车",
+            "餐费", "餐饮", "用餐", "小票", "电子小票", "消费凭证", "订单详情", "支付凭证",
+        ]
+        is_low = any(kw in combined_text for kw in low_priority_keywords) and not any(
+            kw in combined_text for kw in special_priority_keywords
+        )
 
         if is_low:
             low_items.append(item)
@@ -275,6 +391,131 @@ def _dedup_and_prioritize(links: list[str]) -> list[str]:
     raw_items = [{"url": u, "text": ""} for u in links]
     high, low = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender=False)
     return [item["url"] for item in high] + [item["url"] for item in low]
+
+
+def _download_result_sort_key(item: DownloadedFile) -> tuple[int, int, int, str]:
+    name = Path(item.filename or item.file_path or "").name
+    suffix = Path(name).suffix.lower()
+    ext_rank = {
+        ".pdf": 0,
+        ".ofd": 1,
+    }.get(suffix, 2)
+    source_rank = {
+        "official_download": 0,
+        "official_response": 1,
+        "embedded_pdf": 2,
+        "invoice_page_pdf_fallback": 3,
+    }.get(str(item.source_type or ""), 4)
+    return (ext_rank, source_rank, -int(item.size or 0), name.lower())
+
+
+def _are_stems_homologous(pdf_stem: str, ofd_stem: str) -> bool:
+    """Check if a PDF filename stem and an OFD filename stem are homologous (same source)."""
+    p_lower = pdf_stem.lower().strip()
+    o_lower = ofd_stem.lower().strip()
+    if p_lower == o_lower:
+        return True
+
+    # 1. Check digit-normalized pattern equivalence (e.g. invoice_77_0_resp vs invoice_77_1_resp)
+    p_norm = re.sub(r'\d+', '#', p_lower)
+    o_norm = re.sub(r'\d+', '#', o_lower)
+    if p_norm == o_norm:
+        return True
+
+    # 2. Check substring homology (e.g. 狮王府电子发票.pdf vs 电子发票.ofd)
+    # The shorter stem must have a minimum length of 4 to prevent false positive matches
+    if len(p_lower) >= 4 and len(o_lower) >= 4:
+        if p_lower in o_lower or o_lower in p_lower:
+            return True
+
+    return False
+
+
+def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFile]:
+    # Group results by suffix
+    pdfs = []
+    ofds = []
+    others = []
+    for item in results:
+        name = item.filename or item.file_path or ""
+        suffix = Path(name).suffix.lower()
+        if suffix == ".pdf":
+            pdfs.append(item)
+        elif suffix == ".ofd":
+            ofds.append(item)
+        else:
+            others.append(item)
+
+    # 1. Deduplicate pdfs by stem, keeping the one with best priority (smaller sort key)
+    best_pdf_by_stem: dict[str, DownloadedFile] = {}
+    for item in pdfs:
+        stem = Path(item.filename or item.file_path or "").stem.lower()
+        if stem not in best_pdf_by_stem:
+            best_pdf_by_stem[stem] = item
+        else:
+            if _download_result_sort_key(item) < _download_result_sort_key(best_pdf_by_stem[stem]):
+                best_pdf_by_stem[stem] = item
+    unique_pdfs = list(best_pdf_by_stem.values())
+
+    # 2. Deduplicate ofds by stem, keeping the one with best priority
+    best_ofd_by_stem: dict[str, DownloadedFile] = {}
+    for item in ofds:
+        stem = Path(item.filename or item.file_path or "").stem.lower()
+        if stem not in best_ofd_by_stem:
+            best_ofd_by_stem[stem] = item
+        else:
+            if _download_result_sort_key(item) < _download_result_sort_key(best_ofd_by_stem[stem]):
+                best_ofd_by_stem[stem] = item
+    unique_ofds = list(best_ofd_by_stem.values())
+
+    # 3. Match OFDs with homologous PDFs and mark for discard
+    discarded_ofd_ids = set()
+
+    # Special Rule: If exactly 1 PDF and 1 OFD total in the batch, prioritize PDF and discard OFD.
+    if len(unique_pdfs) == 1 and len(unique_ofds) == 1:
+        discarded_ofd_ids.add(id(unique_ofds[0]))
+        _log.info(
+            "PDF/OFD Deduplication: Exactly 1 PDF and 1 OFD found. Retaining PDF '%s' and discarding OFD '%s'",
+            mask_filename(unique_pdfs[0].filename),
+            mask_filename(unique_ofds[0].filename)
+        )
+    else:
+        for ofd in unique_ofds:
+            ofd_stem = Path(ofd.filename or ofd.file_path or "").stem
+            matched_pdf = None
+            for pdf in unique_pdfs:
+                pdf_stem = Path(pdf.filename or pdf.file_path or "").stem
+                if _are_stems_homologous(pdf_stem, ofd_stem):
+                    matched_pdf = pdf
+                    break
+            if matched_pdf:
+                discarded_ofd_ids.add(id(ofd))
+                _log.info(
+                    "PDF/OFD Deduplication: Found homologous PDF '%s' for OFD '%s'. Discarding OFD.",
+                    mask_filename(matched_pdf.filename),
+                    mask_filename(ofd.filename)
+                )
+            else:
+                _log.info(
+                    "PDF/OFD Deduplication: OFD '%s' has no homologous PDF. Keeping it.",
+                    mask_filename(ofd.filename)
+                )
+
+    # Reconstruct the list preserving the original order of items that are kept
+    final_results = []
+    seen_ids = set()
+    for item in results:
+        item_id = id(item)
+        if item_id in seen_ids:
+            continue
+        is_kept_pdf = any(id(p) == item_id for p in unique_pdfs)
+        is_kept_ofd = any(id(o) == item_id for o in unique_ofds) and item_id not in discarded_ofd_ids
+        is_other = any(id(x) == item_id for x in others)
+
+        if is_kept_pdf or is_kept_ofd or is_other:
+            final_results.append(item)
+            seen_ids.add(item_id)
+    return final_results
 
 
 def _save_download_to_path(download, dest: Path) -> bool:
@@ -560,16 +801,14 @@ class LinkDownloader:
         self.close()
 
     def download_from_email(self, msg, mail_uid: int, date_str: str = "") -> list[DownloadedFile]:
-        html = extract_html_from_message(msg)
-        if not html:
-            return []
-
-        raw_items = extract_links_with_metadata_from_html(html)
-        if not raw_items:
-            return []
-
+        subject = ""
         sender = ""
         if msg:
+            if hasattr(msg, "get"):
+                try:
+                    subject = msg.get("Subject", "") or ""
+                except Exception:
+                    pass
             if hasattr(msg, "get"):
                 try:
                     sender = msg.get("From", "") or ""
@@ -581,6 +820,27 @@ class LinkDownloader:
                 except Exception:
                     pass
         is_nuonuo_sender = "invoice@info.nuonuo.com" in str(sender)
+
+        html = extract_html_from_message(msg)
+        raw_stats = {
+            "anchor_count": 0,
+            "unsafe_skipped": 0,
+            "excluded_skipped": 0,
+        }
+        if html:
+            raw_items, raw_stats = _extract_links_with_metadata_from_html_and_stats(html)
+        else:
+            raw_items = []
+
+        if not raw_items:
+            _log.info(
+                "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=0 skipped_unsafe=%d skipped_low_priority=0 attempted=0 failed=0",
+                redact_text(subject, "subject"),
+                mask_email(sender),
+                raw_stats.get("anchor_count", 0),
+                raw_stats.get("unsafe_skipped", 0),
+            )
+            return []
 
         high_items, low_items = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender)
 
@@ -650,15 +910,31 @@ class LinkDownloader:
                     filtered_results.append(r)
             results = filtered_results
 
+        before_dedupe_count = len(results)
+        results = _dedupe_downloaded_files(results)
+        deduped_removed = max(0, before_dedupe_count - len(results))
+
         elapsed = time.perf_counter() - start_time
         success = len(results)
-        failed = attempted_count - success
+        failed = max(0, attempted_count - success - deduped_removed)
         official_success = sum(1 for r in results if r.source_type != "invoice_page_pdf_fallback")
         fallback_success = sum(1 for r in results if r.source_type == "invoice_page_pdf_fallback")
         _log.info(
             "链接下载摘要: found=%d deduped=%d success=%d official_success=%d fallback_success=%d failed=%d skipped_cached=%d attempted=%d prioritized=%d low_priority_skipped=%d elapsed=%.1fs",
             found, deduped, success, official_success, fallback_success, failed, skipped_cached, attempted_count, prioritized, low_priority_skipped, elapsed,
         )
+        if success == 0:
+            _log.info(
+                "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=%d skipped_unsafe=%d skipped_low_priority=%d attempted=%d failed=%d",
+                redact_text(subject, "subject"),
+                mask_email(sender),
+                found,
+                deduped,
+                raw_stats.get("unsafe_skipped", 0),
+                low_priority_skipped,
+                attempted_count,
+                failed,
+            )
         return results
 
     def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False) -> tuple[str | None, str | None, str | None] | None:
@@ -789,8 +1065,11 @@ class LinkDownloader:
                             locator.first.click()
                         if download_info:
                             download = download_info.value
-                            fname = download.suggested_filename or f"invoice_{mail_uid}_{idx}.pdf"
-                            dest = save_dir / fname
+                            dest = _safe_download_destination(
+                                save_dir,
+                                download.suggested_filename,
+                                f"invoice_{mail_uid}_{idx}.pdf",
+                            )
                             if _save_download_to_path(download, dest):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
@@ -902,6 +1181,7 @@ class LinkDownloader:
             )
             ctx = self._browser.new_context(accept_downloads=True, user_agent=desktop_ua)
             page = ctx.new_page()
+            page.route("**/*", _route_browser_request)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             downloaded_path: str | None = None
@@ -913,8 +1193,11 @@ class LinkDownloader:
             def _on_download(download):
                 nonlocal downloaded_path, download_started
                 download_started = True
-                fname = download.suggested_filename or f"invoice_{mail_uid}_{idx}.pdf"
-                dest = save_dir / fname
+                dest = _safe_download_destination(
+                    save_dir,
+                    download.suggested_filename,
+                    f"invoice_{mail_uid}_{idx}.pdf",
+                )
                 if dest.exists():
                     downloaded_path = str(dest)
                     download_done.set()
@@ -965,6 +1248,14 @@ class LinkDownloader:
                 page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
             except Exception:
                 pass
+            final_url = str(getattr(page, "url", "") or "")
+            if final_url and not _is_safe_browser_request_url(final_url):
+                _log.warning(
+                    "Blocked unsafe final browser destination: <%s>",
+                    self._url_fingerprint(final_url),
+                )
+                self.failed_url_fingerprints.add(self._url_fingerprint(url))
+                return None
 
             # 1. Try JSS/Nuonuo site specific download logic first
             res_handle = self._handle_nuonuo_invoice_page(page, url, save_dir, mail_uid, idx, disable_fallback=disable_fallback)
