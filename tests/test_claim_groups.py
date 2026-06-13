@@ -278,8 +278,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 # Check attachments copied
                 att_export_dir = export_dir / "attachments"
                 self.assertTrue(att_export_dir.exists())
-                self.assertTrue((att_export_dir / "meal.pdf").exists())
-                self.assertTrue((att_export_dir / "taxi.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-19_meal.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-18_taxi.pdf").exists())
 
                 # Check manifest.json
                 manifest_file = export_dir / "manifest.json"
@@ -294,12 +294,12 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 item1 = manifest["items"][0]
                 self.assertEqual(item1["invoice_number"], "NUM123")
-                self.assertEqual(item1["copied_attachment_path"], "attachments/meal.pdf")
+                self.assertEqual(item1["copied_attachment_path"], "attachments/2026-05-19_meal.pdf")
                 self.assertEqual(item1["review_status"], "approved")
 
                 item2 = manifest["items"][1]
                 self.assertEqual(item2["invoice_number"], "NUM456")
-                self.assertEqual(item2["copied_attachment_path"], "attachments/taxi.pdf")
+                self.assertEqual(item2["copied_attachment_path"], "attachments/2026-05-18_taxi.pdf")
                 self.assertEqual(item2["review_status"], "approved")
 
     def test_export_package_includes_supporting_documents(self):
@@ -337,8 +337,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
 
                 att_export_dir = export_dir / "attachments"
-                self.assertTrue((att_export_dir / "hotel_invoice.pdf").exists())
-                self.assertTrue((att_export_dir / "hotel_folio.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-20_hotel_invoice.pdf").exists())
+                self.assertTrue((att_export_dir / "2026-05-20_hotel_folio.pdf").exists())
 
                 manifest_file = export_dir / "manifest.json"
                 with open(manifest_file, "r", encoding="utf-8") as f:
@@ -346,10 +346,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 self.assertEqual(manifest["item_count"], 1)
                 item = manifest["items"][0]
-                self.assertEqual(item["attachment_path"], "attachments/hotel_invoice.pdf")
-                self.assertEqual(item["extra_paths"], ["attachments/hotel_folio.pdf"])
-                self.assertEqual(item["copied_attachment_path"], "attachments/hotel_invoice.pdf")
-                self.assertEqual(item["copied_extra_paths"], ["attachments/hotel_folio.pdf"])
+                self.assertEqual(item["attachment_path"], "attachments/2026-05-20_hotel_invoice.pdf")
+                self.assertEqual(item["extra_paths"], ["attachments/2026-05-20_hotel_folio.pdf"])
+                self.assertEqual(item["copied_attachment_path"], "attachments/2026-05-20_hotel_invoice.pdf")
+                self.assertEqual(item["copied_extra_paths"], ["attachments/2026-05-20_hotel_folio.pdf"])
                 self.assertNotIn("file_hash", item)
 
                 xlsx_file = export_dir / "reimbursement.xlsx"

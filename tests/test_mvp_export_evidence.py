@@ -108,8 +108,8 @@ class MvpExportEvidenceTests(unittest.TestCase):
 
                 export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
 
-            self.assertTrue((export_dir / "attachments" / "hotel_invoice.pdf").exists())
-            self.assertTrue((export_dir / "attachments" / "hotel_folio.pdf").exists())
+            self.assertTrue((export_dir / "attachments" / "2026-05-20_hotel_invoice.pdf").exists())
+            self.assertTrue((export_dir / "attachments" / "2026-05-20_hotel_folio.pdf").exists())
 
             with open(export_dir / "manifest.json", "r", encoding="utf-8") as f:
                 manifest = json.load(f)
@@ -117,9 +117,9 @@ class MvpExportEvidenceTests(unittest.TestCase):
             item = manifest["items"][0]
             self.assertEqual(item["invoice_number"], "HOTEL-001")
             self.assertEqual(item["extra_type"], "水单")
-            self.assertEqual(item["attachment_path"], "attachments/hotel_invoice.pdf")
-            self.assertEqual(item["extra_paths"], ["attachments/hotel_folio.pdf"])
-            self.assertEqual(item["copied_extra_paths"], ["attachments/hotel_folio.pdf"])
+            self.assertEqual(item["attachment_path"], "attachments/2026-05-20_hotel_invoice.pdf")
+            self.assertEqual(item["extra_paths"], ["attachments/2026-05-20_hotel_folio.pdf"])
+            self.assertEqual(item["copied_extra_paths"], ["attachments/2026-05-20_hotel_folio.pdf"])
             self.assertNotIn("file_hash", item)
             self.assertTrue(item["has_extra"])
             self.assertFalse(item["missing_extra"])
@@ -131,6 +131,90 @@ class MvpExportEvidenceTests(unittest.TestCase):
             self.assertIn("个人备注", headers)
             note_col = headers.index("个人备注") + 1
             self.assertEqual(ws.cell(row=2, column=note_col).value, "项目A现场支持住宿")
+
+
+    def test_claim_export_prefixes_attachment_names_by_date_and_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root = Path(td) / "project"
+            runtime_dir = project_root / "runtime"
+            db_path = runtime_dir / "invoices.db"
+
+            invoice_dir = runtime_dir / "attachments" / "2026-05-21"
+            invoice_dir.mkdir(parents=True, exist_ok=True)
+            invoice_pdf = invoice_dir / "2026-05-21_meal_invoice.pdf"
+            invoice_pdf.write_bytes(b"%PDF-1.4 invoice")
+
+            fallback_dir = runtime_dir / "attachments" / "unknown_date"
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            fallback_pdf = fallback_dir / "receipt.pdf"
+            fallback_pdf.write_bytes(b"%PDF-1.4 receipt")
+            fallback_extra = fallback_dir / "receipt-support.pdf"
+            fallback_extra.write_bytes(b"%PDF-1.4 receipt extra")
+            unknown_pdf = fallback_dir / "plain.pdf"
+            unknown_pdf.write_bytes(b"%PDF-1.4 unknown")
+
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Date Prefix Claim")
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "DATE-001",
+                    "total_amount": "128.00",
+                    "seller_name": "Vendor A",
+                    "invoice_date": "2026-05-21",
+                    "expense_date": "2026-05-21",
+                    "category": "餐饮",
+                    "attachment_path": "attachments/2026-05-21/2026-05-21_meal_invoice.pdf",
+                    "extra_paths": [],
+                    "has_extra": False,
+                    "missing_extra": False,
+                    "review_status": review_status.APPROVED,
+                })
+                fallback_id = db.insert_invoice({
+                    "invoice_number": "DATE-002",
+                    "total_amount": "64.00",
+                    "seller_name": "Vendor B",
+                    "invoice_date": "",
+                    "expense_date": "2026-05-22",
+                    "category": "餐饮",
+                    "attachment_path": "attachments/unknown_date/receipt.pdf",
+                    "extra_paths": ["attachments/unknown_date/receipt-support.pdf"],
+                    "has_extra": True,
+                    "missing_extra": False,
+                    "review_status": review_status.APPROVED,
+                })
+                unknown_id = db.insert_invoice({
+                    "invoice_number": "DATE-003",
+                    "total_amount": "16.00",
+                    "seller_name": "Vendor C",
+                    "invoice_date": "",
+                    "expense_date": "",
+                    "category": "餐饮",
+                    "attachment_path": "attachments/unknown_date/plain.pdf",
+                    "extra_paths": [],
+                    "has_extra": False,
+                    "missing_extra": False,
+                    "review_status": review_status.APPROVED,
+                })
+                db.add_invoice_to_claim(claim_id, invoice_id)
+                db.add_invoice_to_claim(claim_id, fallback_id)
+                db.add_invoice_to_claim(claim_id, unknown_id)
+
+                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+
+            self.assertTrue((export_dir / "attachments" / "2026-05-21_meal_invoice.pdf").exists())
+            self.assertTrue((export_dir / "attachments" / "2026-05-22_receipt.pdf").exists())
+            self.assertTrue((export_dir / "attachments" / "2026-05-22_receipt-support.pdf").exists())
+            self.assertTrue((export_dir / "attachments" / "unknown-date_plain.pdf").exists())
+
+            with open(export_dir / "manifest.json", "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+
+            items = {item["invoice_number"]: item for item in manifest["items"]}
+            self.assertEqual(items["DATE-001"]["attachment_path"], "attachments/2026-05-21_meal_invoice.pdf")
+            self.assertEqual(items["DATE-001"]["extra_paths"], [])
+            self.assertEqual(items["DATE-002"]["attachment_path"], "attachments/2026-05-22_receipt.pdf")
+            self.assertEqual(items["DATE-002"]["extra_paths"], ["attachments/2026-05-22_receipt-support.pdf"])
+            self.assertEqual(items["DATE-003"]["attachment_path"], "attachments/unknown-date_plain.pdf")
+            self.assertEqual(items["DATE-003"]["extra_paths"], [])
 
 
 if __name__ == "__main__":

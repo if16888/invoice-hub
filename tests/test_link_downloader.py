@@ -5,6 +5,7 @@ import tempfile
 import shutil
 import os
 from pathlib import Path
+from email.message import EmailMessage
 
 from scripts.invoice_fetch.link_downloader import (
     extract_links_with_metadata_from_html,
@@ -50,6 +51,93 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertIn("http://www.nuonuo.com/help", low_urls)
         self.assertIn("http://www.nuonuo.com/info", low_urls)
         self.assertIn("http://ntf.nuonuo.com/baoxiao", low_urls)
+
+    def test_link_extraction_includes_receipt_and_meal_keywords(self):
+        html = """
+        <html>
+            <body>
+                <a href="https://example.com/receipt/detail?id=1">查看消费凭证</a>
+                <a href="https://example.com/order/detail?kind=meal&id=2">订单详情</a>
+            </body>
+        </html>
+        """
+        raw_items = extract_links_with_metadata_from_html(html)
+        self.assertEqual(
+            [item["url"] for item in raw_items],
+            [
+                "https://example.com/receipt/detail?id=1",
+                "https://example.com/order/detail?kind=meal&id=2",
+            ],
+        )
+        high_items, low_items = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender=False)
+        self.assertEqual([item["url"] for item in high_items], [item["url"] for item in raw_items])
+        self.assertEqual(low_items, [])
+
+    def test_download_from_email_logs_redacted_summary_when_no_downloads(self):
+        msg = EmailMessage()
+        msg["Subject"] = "高铁上餐费报销凭证"
+        msg["From"] = "finance@example.com"
+        msg.set_content(
+            """
+            <html><body>
+                <a href="https://example.com/receipt/detail?id=1&token=secret">查看消费凭证</a>
+            </body></html>
+            """,
+            subtype="html",
+        )
+
+        dl = LinkDownloader(download_dir=self.tmp_dir)
+
+        with patch.object(dl, "_download_url", return_value=None), self.assertLogs(
+            "scripts.invoice_fetch.link_downloader", level="INFO"
+        ) as logs:
+            res = dl.download_from_email(msg, 123, "2026-06-07")
+
+        self.assertEqual(res, [])
+        log_text = "\n".join(logs.output)
+        self.assertIn("found=", log_text)
+        self.assertIn("attempted=", log_text)
+        self.assertIn("subject=", log_text)
+        self.assertIn("sender=", log_text)
+        self.assertNotIn("secret", log_text)
+        self.assertNotIn("https://example.com/receipt/detail", log_text)
+
+    def test_download_from_email_dedupes_pdf_and_ofd_same_stem(self):
+        pdf_file = Path(self.tmp_dir) / "invoice.pdf"
+        ofd_file = Path(self.tmp_dir) / "invoice.ofd"
+        pdf_file.write_bytes(b"%PDF-1.4 synthetic pdf")
+        ofd_file.write_bytes(b"PK\x03\x04 synthetic ofd")
+
+        msg = EmailMessage()
+        msg.set_content(
+            """
+            <html><body>
+              <a href="https://example.com/invoice/pdf">下载发票</a>
+              <a href="https://example.com/invoice/ofd">下载发票</a>
+            </body></html>
+            """,
+            subtype="html",
+        )
+
+        dl = LinkDownloader(self.tmp_dir)
+
+        def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+            file_path = pdf_file if idx == 0 else ofd_file
+            filename = "invoice.pdf" if idx == 0 else "invoice.ofd"
+            return DownloadedFile(
+                url=url,
+                file_path=str(file_path),
+                filename=filename,
+                size=file_path.stat().st_size,
+                is_invoice=True,
+                source_type="official_download",
+            )
+
+        with patch.object(dl, "_download_url", side_effect=fake_download):
+            results = dl.download_from_email(msg, 77, "2026-06-13")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].filename, "invoice.pdf")
 
     def test_verify_and_clean_file(self):
         # 1. 测试 PDF (必须大于等于 500 字节)

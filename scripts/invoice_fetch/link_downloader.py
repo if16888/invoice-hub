@@ -20,7 +20,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
-from .log_privacy import mask_filename, mask_url_for_log
+from .log_privacy import mask_email, mask_filename, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
 
@@ -55,6 +55,22 @@ _LINK_KEYWORDS = [
     "nuonuo",
     "baiwang",
     "51fapiao",
+    "\u9910\u8d39",
+    "\u9910\u996e",
+    "\u7528\u9910",
+    "\u5c0f\u7968",
+    "\u7535\u5b50\u5c0f\u7968",
+    "\u6d88\u8d39\u51ed\u8bc1",
+    "\u8ba2\u5355\u8be6\u60c5",
+    "\u652f\u4ed8\u51ed\u8bc1",
+    "meal",
+    "catering",
+    "food",
+    "train",
+    "rail",
+    "\u9ad8\u94c1",
+    "\u94c1\u8def",
+    "\u52a8\u8f66",
 ]
 
 _EXCLUDE_PATTERNS = [
@@ -209,19 +225,26 @@ def _safe_download_destination(
     return candidate
 
 
-def extract_links_with_metadata_from_html(html: str) -> list[dict]:
-    """Extract invoice-related URLs along with their anchor text from email HTML body."""
+def _extract_links_with_metadata_from_html_and_stats(html: str) -> tuple[list[dict], dict]:
     if not html:
-        return []
+        return [], {
+            "anchor_count": 0,
+            "unsafe_skipped": 0,
+            "excluded_skipped": 0,
+        }
     results: list[dict] = []
+    unsafe_skipped = 0
+    excluded_skipped = 0
     try:
         soup = BeautifulSoup(html, "html.parser")
-        for a in soup.find_all("a", href=True):
+        anchors = soup.find_all("a", href=True)
+        for a in anchors:
             url = a["href"].strip()
             text = a.get_text(strip=True)
             if not url or url.startswith(("mailto:", "#")):
                 continue
             if not _is_safe_download_url(url):
+                unsafe_skipped += 1
                 continue
             parsed = urlparse(url)
             combined = " ".join(
@@ -235,8 +258,25 @@ def extract_links_with_metadata_from_html(html: str) -> list[dict]:
             if has_invoice_host or has_invoice_context:
                 if not any(ex in url.lower() for ex in _EXCLUDE_PATTERNS):
                     results.append({"url": url, "text": text})
+                else:
+                    excluded_skipped += 1
     except Exception as exc:
         _log.warning("HTML link parse failed: %s", exc)
+        return [], {
+            "anchor_count": 0,
+            "unsafe_skipped": unsafe_skipped,
+            "excluded_skipped": excluded_skipped,
+        }
+    return results, {
+        "anchor_count": len(anchors) if "anchors" in locals() else 0,
+        "unsafe_skipped": unsafe_skipped,
+        "excluded_skipped": excluded_skipped,
+    }
+
+
+def extract_links_with_metadata_from_html(html: str) -> list[dict]:
+    """Extract invoice-related URLs along with their anchor text from email HTML body."""
+    results, _stats = _extract_links_with_metadata_from_html_and_stats(html)
     return results
 
 
@@ -309,7 +349,13 @@ def _dedup_and_prioritize_with_metadata(raw_items: list[dict], is_nuonuo_sender:
             "baoxiao", "ntf", "bmjc"
         ]
         combined_text = (text + " " + url_lower).lower()
-        is_low = any(kw in combined_text for kw in low_priority_keywords)
+        special_priority_keywords = [
+            "receipt", "meal", "catering", "food", "train", "rail", "高铁", "铁路", "动车",
+            "餐费", "餐饮", "用餐", "小票", "电子小票", "消费凭证", "订单详情", "支付凭证",
+        ]
+        is_low = any(kw in combined_text for kw in low_priority_keywords) and not any(
+            kw in combined_text for kw in special_priority_keywords
+        )
 
         if is_low:
             low_items.append(item)
@@ -345,6 +391,36 @@ def _dedup_and_prioritize(links: list[str]) -> list[str]:
     raw_items = [{"url": u, "text": ""} for u in links]
     high, low = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender=False)
     return [item["url"] for item in high] + [item["url"] for item in low]
+
+
+def _download_result_sort_key(item: DownloadedFile) -> tuple[int, int, int, str]:
+    name = Path(item.filename or item.file_path or "").name
+    suffix = Path(name).suffix.lower()
+    ext_rank = {
+        ".pdf": 0,
+        ".ofd": 1,
+    }.get(suffix, 2)
+    source_rank = {
+        "official_download": 0,
+        "official_response": 1,
+        "embedded_pdf": 2,
+        "invoice_page_pdf_fallback": 3,
+    }.get(str(item.source_type or ""), 4)
+    return (ext_rank, source_rank, -int(item.size or 0), name.lower())
+
+
+def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFile]:
+    best_by_key: dict[str, DownloadedFile] = {}
+    order: list[str] = []
+    for item in results:
+        key = Path(item.filename or item.file_path or "").stem.lower()
+        if key not in best_by_key:
+            best_by_key[key] = item
+            order.append(key)
+            continue
+        if _download_result_sort_key(item) < _download_result_sort_key(best_by_key[key]):
+            best_by_key[key] = item
+    return [best_by_key[key] for key in order]
 
 
 def _save_download_to_path(download, dest: Path) -> bool:
@@ -630,16 +706,14 @@ class LinkDownloader:
         self.close()
 
     def download_from_email(self, msg, mail_uid: int, date_str: str = "") -> list[DownloadedFile]:
-        html = extract_html_from_message(msg)
-        if not html:
-            return []
-
-        raw_items = extract_links_with_metadata_from_html(html)
-        if not raw_items:
-            return []
-
+        subject = ""
         sender = ""
         if msg:
+            if hasattr(msg, "get"):
+                try:
+                    subject = msg.get("Subject", "") or ""
+                except Exception:
+                    pass
             if hasattr(msg, "get"):
                 try:
                     sender = msg.get("From", "") or ""
@@ -651,6 +725,27 @@ class LinkDownloader:
                 except Exception:
                     pass
         is_nuonuo_sender = "invoice@info.nuonuo.com" in str(sender)
+
+        html = extract_html_from_message(msg)
+        raw_stats = {
+            "anchor_count": 0,
+            "unsafe_skipped": 0,
+            "excluded_skipped": 0,
+        }
+        if html:
+            raw_items, raw_stats = _extract_links_with_metadata_from_html_and_stats(html)
+        else:
+            raw_items = []
+
+        if not raw_items:
+            _log.info(
+                "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=0 skipped_unsafe=%d skipped_low_priority=0 attempted=0 failed=0",
+                redact_text(subject, "subject"),
+                mask_email(sender),
+                raw_stats.get("anchor_count", 0),
+                raw_stats.get("unsafe_skipped", 0),
+            )
+            return []
 
         high_items, low_items = _dedup_and_prioritize_with_metadata(raw_items, is_nuonuo_sender)
 
@@ -720,15 +815,31 @@ class LinkDownloader:
                     filtered_results.append(r)
             results = filtered_results
 
+        before_dedupe_count = len(results)
+        results = _dedupe_downloaded_files(results)
+        deduped_removed = max(0, before_dedupe_count - len(results))
+
         elapsed = time.perf_counter() - start_time
         success = len(results)
-        failed = attempted_count - success
+        failed = max(0, attempted_count - success - deduped_removed)
         official_success = sum(1 for r in results if r.source_type != "invoice_page_pdf_fallback")
         fallback_success = sum(1 for r in results if r.source_type == "invoice_page_pdf_fallback")
         _log.info(
             "链接下载摘要: found=%d deduped=%d success=%d official_success=%d fallback_success=%d failed=%d skipped_cached=%d attempted=%d prioritized=%d low_priority_skipped=%d elapsed=%.1fs",
             found, deduped, success, official_success, fallback_success, failed, skipped_cached, attempted_count, prioritized, low_priority_skipped, elapsed,
         )
+        if success == 0:
+            _log.info(
+                "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=%d skipped_unsafe=%d skipped_low_priority=%d attempted=%d failed=%d",
+                redact_text(subject, "subject"),
+                mask_email(sender),
+                found,
+                deduped,
+                raw_stats.get("unsafe_skipped", 0),
+                low_priority_skipped,
+                attempted_count,
+                failed,
+            )
         return results
 
     def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False) -> tuple[str | None, str | None, str | None] | None:

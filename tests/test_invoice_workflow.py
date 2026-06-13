@@ -1731,6 +1731,133 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
         self.assertEqual([f.filename for f in files], ["invoice_0.pdf", "invoice_1.pdf"])
 
+    def test_download_from_email_prefers_pdf_over_ofd_from_same_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            pdf_file = base / "invoice.pdf"
+            ofd_file = base / "invoice.ofd"
+            pdf_file.write_bytes(b"%PDF-1.4 synthetic pdf")
+            ofd_file.write_bytes(b"PK\x03\x04 synthetic ofd")
+
+            msg = email.message.EmailMessage()
+            msg.set_content(
+                """
+                <html><body>
+                  <a href="https://example.com/invoice/pdf">下载发票</a>
+                  <a href="https://example.com/invoice/ofd">下载发票</a>
+                </body></html>
+                """,
+                subtype="html",
+            )
+
+            dl = LinkDownloader(base / "downloads")
+
+            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+                if idx == 0:
+                    return DownloadedFile(
+                        url=url,
+                        file_path=str(pdf_file),
+                        filename="invoice.pdf",
+                        size=pdf_file.stat().st_size,
+                        is_invoice=True,
+                        source_type="official_download",
+                    )
+                return DownloadedFile(
+                    url=url,
+                    file_path=str(ofd_file),
+                    filename="invoice.ofd",
+                    size=ofd_file.stat().st_size,
+                    is_invoice=True,
+                    source_type="official_download",
+                )
+
+            with patch.object(dl, "_download_url", side_effect=fake_download):
+                results = dl.download_from_email(msg, 77, "2026-06-13")
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].filename, "invoice.pdf")
+
+    def test_process_email_prefers_downloaded_pdf_over_failed_ofd(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments = runtime / "attachments"
+            attachments.mkdir(parents=True, exist_ok=True)
+
+            pdf_file = base / "invoice.pdf"
+            ofd_file = base / "invoice.ofd"
+            pdf_file.write_bytes(b"%PDF-1.4 synthetic pdf")
+            ofd_file.write_bytes(b"PK\x03\x04 synthetic ofd")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice download"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 13 Jun 2026 10:00:00 +0800"
+            msg.set_content(
+                """
+                <html><body>
+                  <a href="https://example.com/invoice/pdf">下载发票</a>
+                  <a href="https://example.com/invoice/ofd">下载发票</a>
+                </body></html>
+                """,
+                subtype="html",
+            )
+
+            dl = LinkDownloader(base / "downloads")
+
+            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+                if idx == 0:
+                    return DownloadedFile(
+                        url=url,
+                        file_path=str(pdf_file),
+                        filename="invoice.pdf",
+                        size=pdf_file.stat().st_size,
+                        is_invoice=True,
+                        source_type="official_download",
+                    )
+                return DownloadedFile(
+                    url=url,
+                    file_path=str(ofd_file),
+                    filename="invoice.ofd",
+                    size=ofd_file.stat().st_size,
+                    is_invoice=True,
+                    source_type="official_download",
+                )
+
+            class PathAwareParser:
+                def parse_pdf(self, path):
+                    if str(path).lower().endswith(".ofd"):
+                        return InvoiceInfo(
+                            parse_success=False,
+                            parse_note="OFD parse failed",
+                        )
+                    return InvoiceInfo(
+                        invoice_number="PAIR-001",
+                        invoice_date="2026-06-13",
+                        total_amount="88.00",
+                        seller_name="Synthetic Seller",
+                        invoice_type="电子发票",
+                        parse_success=True,
+                    )
+
+            with (
+                patch.object(dl, "_download_url", side_effect=fake_download),
+                InvoiceDB(runtime / "invoices.db") as db,
+            ):
+                recorded = cli._process_email(
+                    cli.MailMessage(uid=77, raw_msg=msg),
+                    StaticAttachmentHandler(attachments, []),
+                    PathAwareParser(),
+                    dl,
+                    db,
+                    {},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_number"], "PAIR-001")
+
     def test_excel_export_adds_summary_exception_sheet_and_file_links(self):
         rows = [
             {

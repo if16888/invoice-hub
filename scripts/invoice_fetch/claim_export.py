@@ -62,7 +62,35 @@ def _normalize_path_list(raw_value) -> list[str]:
     return normalized
 
 
-def _copy_into_attachments(src_value: str, runtime_dir: Path, attachments_dir: Path) -> str:
+def _normalize_export_date_prefix(raw_value: str) -> str:
+    text = str(raw_value or "").strip()
+    if not text:
+        return "unknown-date"
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    text = re.sub(r"[^\dA-Za-z-]+", "-", text).strip("-")
+    return text or "unknown-date"
+
+
+def _prefix_export_filename(filename: str, date_prefix: str) -> str:
+    basename = Path(str(filename or "")).name
+    safe_prefix = _normalize_export_date_prefix(date_prefix)
+    prefixed = f"{safe_prefix}_{basename}"
+    if basename.startswith(f"{safe_prefix}_"):
+        return basename
+    return prefixed
+
+
+def _copy_into_attachments(
+    src_value: str,
+    runtime_dir: Path,
+    attachments_dir: Path,
+    *,
+    date_prefix: str = "",
+) -> str:
     if not src_value:
         return ""
     src_path = Path(src_value)
@@ -72,9 +100,10 @@ def _copy_into_attachments(src_value: str, runtime_dir: Path, attachments_dir: P
         _log.warning("Attachment file not found at: %s (skipped)", mask_path(src_path))
         return ""
 
-    dest_path = attachments_dir / src_path.name
+    dest_name = _prefix_export_filename(src_path.name, date_prefix)
+    dest_path = attachments_dir / dest_name
     if dest_path.exists():
-        stem = src_path.stem
+        stem = dest_path.stem
         ext = src_path.suffix
         counter = 1
         while True:
@@ -175,16 +204,27 @@ def export_claim_package(
         inv_copy["warning"] = warning
         copied_relative_path = ""
         orig_attachment_path = inv.get("attachment_path", "")
+        export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or "unknown-date"
 
         if orig_attachment_path:
-            copied_relative_path = _copy_into_attachments(orig_attachment_path, runtime_dir, attachments_dir)
+            copied_relative_path = _copy_into_attachments(
+                orig_attachment_path,
+                runtime_dir,
+                attachments_dir,
+                date_prefix=export_date_prefix,
+            )
         else:
             _log.info("No attachment path found for invoice ID %s", inv.get("id"))
 
         raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
         copied_extra_paths = []
         for extra_path in raw_extra_paths:
-            copied_extra_path = _copy_into_attachments(extra_path, runtime_dir, attachments_dir)
+            copied_extra_path = _copy_into_attachments(
+                extra_path,
+                runtime_dir,
+                attachments_dir,
+                date_prefix=export_date_prefix,
+            )
             if copied_extra_path:
                 copied_extra_paths.append(copied_extra_path)
 
