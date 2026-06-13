@@ -83,13 +83,36 @@ def _parse_paths(val) -> list[str]:
     return [str(val)]
 
 
+_DATE_SORT_SENTINEL = "9999-12-31"  # empty/invalid dates sort last
+
+
+def _effective_date(row: dict) -> str:
+    """Return the best available date string for sorting.
+
+    Priority: expense_date -> invoice_date -> mail_date -> created_at.
+    Empty or invalid dates return '9999-12-31' so they sort to the end.
+    """
+    for key in ("expense_date", "invoice_date", "mail_date", "created_at"):
+        val = str(row.get(key) or "").strip()
+        if val and val != "unknown-date":
+            return val
+    return _DATE_SORT_SENTINEL
+
+
 def export_excel(rows: list[dict], dest: str | Path) -> Path:
-    """Write *rows* (from ``InvoiceDB.get_all_invoices()``) to an Excel file."""
+    """Write *rows* (from ``InvoiceDB.get_all_invoices()``) to an Excel file.
+
+    The caller's list is not mutated; rows are sorted internally by effective date.
+    """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    # Stable sort by effective date ascending — empty dates last
+    # Use a new list so original rows are not mutated.
+    sorted_rows = sorted(rows, key=_effective_date)
+
     columns = list(_COLUMNS)
-    if any(r.get("review_status") for r in rows):
+    if any(r.get("review_status") for r in sorted_rows):
         columns.append(("review_status", "审核状态", 12))
 
     wb = Workbook()
@@ -110,7 +133,7 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
     ws.freeze_panes = "A2"
 
     # ── Data rows ────────────────────────────────────────────────────
-    for row_idx, row in enumerate(rows, 2):
+    for row_idx, row in enumerate(sorted_rows, 2):
         is_alt = row_idx % 2 == 0
         for col_idx, (key, _, _) in enumerate(columns, 1):
             val = row.get(key, "")
@@ -138,11 +161,11 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
                 cell.hyperlink = str(val)
                 cell.font = _LINK_FONT
 
-    _add_summary_sheet(wb, rows)
-    _add_exception_sheet(wb, rows)
+    _add_summary_sheet(wb, sorted_rows)
+    _add_exception_sheet(wb, sorted_rows)
 
     wb.save(str(dest))
-    _log.info("Excel 已导出: %s (%d 条记录)", dest.name, len(rows))
+    _log.info("Excel 已导出: %s (%d 条记录)", dest.name, len(sorted_rows))
     return dest
 
 

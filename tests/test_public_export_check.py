@@ -152,6 +152,7 @@ class TestPublicExportCheck(unittest.TestCase):
                 [
                     "git",
                     "add",
+                    "-f",
                     "real_invoice.pdf",
                     "reimbursement.xlsx",
                     "config.json",
@@ -178,7 +179,7 @@ class TestPublicExportCheck(unittest.TestCase):
             backup.parent.mkdir(parents=True)
             backup.write_bytes(b"sqlite backup")
             subprocess.run(
-                ["git", "add", *REQUIRED_PUBLIC_FILES, "runtime/backups/invoices-20260609-123456-before-test.db"],
+                ["git", "add", "-f", *REQUIRED_PUBLIC_FILES, "runtime/backups/invoices-20260609-123456-before-test.db"],
                 cwd=root,
                 check=True,
                 capture_output=True,
@@ -205,7 +206,7 @@ class TestPublicExportCheck(unittest.TestCase):
             claude_state.parent.mkdir(parents=True)
             claude_state.write_text("{}\n", encoding="utf-8")
             subprocess.run(
-                ["git", "add", *REQUIRED_PUBLIC_FILES, ".claude/settings.local.json"],
+                ["git", "add", "-f", *REQUIRED_PUBLIC_FILES, ".claude/settings.local.json"],
                 cwd=root,
                 check=True,
                 capture_output=True,

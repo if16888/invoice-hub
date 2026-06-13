@@ -85,6 +85,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._last_scan_summary = {}
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
+        self._select_row_hint = -1  # hint for post-delete row selection
 
         self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
@@ -195,24 +196,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_import_local.clicked.connect(self._import_local_clicked)
         self.btn_import_local.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_import_local.setProperty("class", "ToolbarActionBtn")
+        self.btn_import_local.setAutoDefault(False)
+        self.btn_import_local.setDefault(False)
         action_layout.addWidget(self.btn_import_local)
 
         self.btn_mobile_upload = QPushButton("扫码上传")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         self.btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_mobile_upload.setProperty("class", "ToolbarActionBtn")
+        self.btn_mobile_upload.setAutoDefault(False)
+        self.btn_mobile_upload.setDefault(False)
         action_layout.addWidget(self.btn_mobile_upload)
 
         self.btn_scan_email = QPushButton("扫描邮箱")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
         self.btn_scan_email.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_scan_email.setProperty("class", "ToolbarActionBtn")
+        self.btn_scan_email.setAutoDefault(False)
+        self.btn_scan_email.setDefault(False)
         action_layout.addWidget(self.btn_scan_email)
 
         self.btn_toolbar_export = QPushButton("一键导出")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
         self.btn_toolbar_export.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_toolbar_export.setProperty("class", "ToolbarActionBtn")
+        self.btn_toolbar_export.setAutoDefault(False)
+        self.btn_toolbar_export.setDefault(False)
         action_layout.addWidget(self.btn_toolbar_export)
 
         # "更多  ▼" consolidated drop-down menu
@@ -588,6 +597,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_delete_or_restore=self._handle_detail_delete_clicked,
             on_open_file=self._open_attachment,
             on_add_attachment=self._add_attachment_manually,
+            on_add_evidence=self._add_evidence_manually,
             on_retry_download=self._retry_download_link,
             on_open_evidence=self._open_extra_docs,
             on_copy_number=self._copy_invoice_number,
@@ -1213,7 +1223,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.table.selectionModel().clearCurrentIndex()
 
             if target_row == -1 and len(self.invoices_list) > 0:
-                target_row = 0
+                # Use row hint from delete operation if available, else fall back to row 0
+                hint = getattr(self, "_select_row_hint", -1)
+                if hint >= 0:
+                    target_row = min(hint, len(self.invoices_list) - 1)
+                else:
+                    target_row = 0
+            # Consume the hint after use so it doesn't affect unrelated reloads
+            self._select_row_hint = -1
             if target_row != -1:
                 self.table.selectRow(target_row)
             self._set_right_panel_state(True)
@@ -1915,11 +1932,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _delete_selected_invoices(self):
-        selected_indexes = self.table.selectionModel().selectedRows()
+        selected_indexes = self.table.selectionModel().selectedRows(0)
+        if not selected_indexes:
+            selected_indexes = self.table.selectionModel().selectedIndexes()
         if not selected_indexes:
             return
 
-        count = len(selected_indexes)
+        # Deduplicate row numbers
+        seen_rows = set()
+        unique_indexes = []
+        for idx in selected_indexes:
+            r = idx.row()
+            if 0 <= r < len(self.invoices_list) and r not in seen_rows:
+                seen_rows.add(r)
+                unique_indexes.append(idx)
+
+        if not unique_indexes:
+            return
+
+        count = len(unique_indexes)
         reply = QMessageBox.question(
             self, "确认删除",
             f"确定要删除选中的 {count} 张发票吗？\n删除后发票将不会显示在列表中，但保留数据库恢复能力。",
@@ -1928,8 +1959,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
+        # Record minimum selected row before deletion so we can restore nearby selection
+        min_selected_row = min(idx.row() for idx in unique_indexes)
+
         success_count = 0
-        for idx in selected_indexes:
+        for idx in unique_indexes:
             inv = self.invoices_list[idx.row()]
             inv_id = inv.get("id")
             if inv_id and self.db.soft_delete_invoice(inv_id):
@@ -1937,17 +1971,33 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.write_log(f"🗑️ [删除发票] 成功删除 {success_count}/{count} 张发票。")
         self.statusBar().showMessage(f"成功删除 {success_count} 张发票", 4000)
+        # Hint: after reload, select the row at the same position (or last row if needed)
+        self._select_row_hint = min_selected_row
         self._load_invoices()
         self._load_claims()
 
     def _restore_selected_invoices(self):
-        selected_indexes = self.table.selectionModel().selectedRows()
+        selected_indexes = self.table.selectionModel().selectedRows(0)
+        if not selected_indexes:
+            selected_indexes = self.table.selectionModel().selectedIndexes()
         if not selected_indexes:
             return
 
-        count = len(selected_indexes)
-        success_count = 0
+        # Deduplicate row numbers
+        seen_rows = set()
+        unique_indexes = []
         for idx in selected_indexes:
+            r = idx.row()
+            if 0 <= r < len(self.invoices_list) and r not in seen_rows:
+                seen_rows.add(r)
+                unique_indexes.append(idx)
+
+        if not unique_indexes:
+            return
+
+        count = len(unique_indexes)
+        success_count = 0
+        for idx in unique_indexes:
             inv = self.invoices_list[idx.row()]
             inv_id = inv.get("id")
             if inv_id and self.db.restore_invoice(inv_id):
@@ -2048,6 +2098,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 invoice_date=self.current_invoice.get("invoice_date"),
                 expense_date=self.current_invoice.get("expense_date"),
                 fallback_date=self.current_invoice.get("mail_date"),
+                category=self.current_invoice.get("category"),
+                total_amount=self.current_invoice.get("total_amount"),
+                invoice_number=self.current_invoice.get("invoice_number"),
+                role="原件",
             )
             if not dest_name.lower().endswith(ext):
                 dest_name = os.path.splitext(dest_name)[0] + ext
@@ -2092,6 +2146,110 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except Exception as e:
             _log.error("手动补齐原件失败: %s", e)
             QMessageBox.critical(self, "错误", f"补齐原件失败: {e}")
+
+    def _add_evidence_manually(self):
+        if not self.current_invoice:
+            return
+
+        inv_id = self.current_invoice["id"]
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择证明材料",
+            "",
+            "证明文件 (*.pdf *.ofd *.png *.jpg *.jpeg *.docx *.xlsx *.zip);;所有文件 (*.*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            src_file = Path(file_path)
+            ext = src_file.suffix.lower()
+
+            date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
+            if "-" in date_str:
+                date_dir_name = date_str[:10]
+            else:
+                date_dir_name = "unknown_date"
+
+            dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            from scripts.invoice_fetch.attachment_handler import build_managed_attachment_name
+            dest_name = build_managed_attachment_name(
+                original_name=src_file.name,
+                invoice_date=self.current_invoice.get("invoice_date"),
+                expense_date=self.current_invoice.get("expense_date"),
+                fallback_date=self.current_invoice.get("mail_date"),
+                category=self.current_invoice.get("category"),
+                total_amount=self.current_invoice.get("total_amount"),
+                invoice_number=self.current_invoice.get("invoice_number"),
+                role="证明材料",
+            )
+            if not dest_name.lower().endswith(ext):
+                dest_name = os.path.splitext(dest_name)[0] + ext
+
+            dest_path = dest_dir / dest_name
+            if dest_path.exists():
+                stem = dest_path.stem
+                for n in range(1, 100):
+                    cand = dest_dir / f"{stem}_{n}{ext}"
+                    if not cand.exists():
+                        dest_path = cand
+                        break
+
+            import shutil
+            shutil.copy2(src_file, dest_path)
+
+            rel_path = f"attachments/{date_dir_name}/{dest_path.name}"
+
+            # Append rel_path to invoice's extra_paths and save to DB
+            import json
+            raw_extra = self.current_invoice.get("extra_paths")
+            extra_paths = []
+            if raw_extra:
+                if isinstance(raw_extra, list):
+                    extra_paths = [str(p) for p in raw_extra if p]
+                elif isinstance(raw_extra, str):
+                    try:
+                        parsed = json.loads(raw_extra)
+                        if isinstance(parsed, list):
+                            extra_paths = [str(p) for p in parsed if p]
+                        else:
+                            extra_paths = [str(raw_extra)]
+                    except Exception:
+                        extra_paths = [str(raw_extra)]
+                else:
+                    extra_paths = [str(raw_extra)]
+
+            # Deduplicate paths
+            seen_normalized = {str(p).lower().replace("\\", "/") for p in extra_paths}
+            norm_rel_path = rel_path.lower().replace("\\", "/")
+            if norm_rel_path not in seen_normalized:
+                extra_paths.append(rel_path)
+
+            extra_paths_str = json.dumps(extra_paths, ensure_ascii=False)
+            self.db.update_invoice_file_paths(inv_id, extra_paths=extra_paths_str)
+
+            # Update memory state
+            self.current_invoice["extra_paths"] = extra_paths_str
+            self.current_invoice["has_extra"] = 1
+            self.current_invoice["missing_extra"] = 0
+
+            # Refresh GUI and preview
+            self._update_detail_fields(self.current_invoice)
+            from .helpers import resolve_invoice_documents_with_evidence
+            self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
+            self.current_preview_index = 0
+            self._update_document_preview()
+            self._load_invoices()
+
+            _log.info("用户手动补齐证明材料: invoice_id=%s, filename=%s", inv_id, dest_path.name)
+            self.statusBar().showMessage("手动补齐证明材料成功", 3000)
+
+        except Exception as e:
+            _log.error("手动补齐证明材料失败: %s", e)
+            QMessageBox.critical(self, "错误", f"补齐证明材料失败: {e}")
 
     def _retry_download_link(self):
         if not self.current_invoice:
@@ -2140,6 +2298,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     invoice_date=self.current_invoice.get("invoice_date"),
                     expense_date=self.current_invoice.get("expense_date"),
                     fallback_date=self.current_invoice.get("mail_date"),
+                    category=self.current_invoice.get("category"),
+                    total_amount=self.current_invoice.get("total_amount"),
+                    invoice_number=self.current_invoice.get("invoice_number"),
+                    role="原件",
                 )
                 if not dest_name.lower().endswith(ext):
                     dest_name = os.path.splitext(dest_name)[0] + ext
@@ -2691,6 +2853,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         include_to_review = (box.clickedButton() == btn_include_all)
 
+        self._set_action_busy(self.btn_toolbar_export, "导出中...")
         try:
             # Trigger standard package exporter
             from ..claim_export import export_claim_package
@@ -2763,6 +2926,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except Exception as e:
             _log.error("Failed to export claim package: %s", e)
             QMessageBox.critical(self, "错误", f"打包导出失败: {e}")
+        finally:
+            self._clear_action_busy(self.btn_toolbar_export, "一键导出")
 
     # ── Operations Bar Handlers ───────────────────────────────────────
 
@@ -2823,6 +2988,62 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.write_log("已打开 GitHub Issues 页面。")
         self.statusBar().showMessage("已打开 GitHub Issues", 3000)
 
+    def _get_toolbar_action_buttons(self) -> list:
+        """Return all top-level toolbar action buttons for busy-state management."""
+        btns = []
+        for attr in ("btn_import_local", "btn_mobile_upload", "btn_scan_email", "btn_toolbar_export"):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btns.append(btn)
+        return btns
+
+    def _set_action_busy(self, active_btn, busy_text: str):
+        """Mark *active_btn* as the running action: show busy text, disable others.
+
+        The active button gets a 'busy' QSS property so it stays visually blue/active,
+        while other toolbar buttons are disabled (grey) and cleared of focus.
+        """
+        active_btn.setProperty("_original_text", active_btn.text())
+        active_btn.setText(busy_text)
+        # Mark as busy via QSS property (styled as active in CSS)
+        active_btn.setProperty("busy", "true")
+        active_btn.clearFocus()
+
+        # Save enabled states of all toolbar buttons
+        self._toolbar_btn_states = {}
+        for btn in self._get_toolbar_action_buttons():
+            self._toolbar_btn_states[btn] = btn.isEnabled()
+
+        # Disable all buttons
+        for btn in self._get_toolbar_action_buttons():
+            btn.setEnabled(False)
+            btn.clearFocus()
+
+        # Polish to pick up the new property value in QSS
+        active_btn.style().unpolish(active_btn)
+        active_btn.style().polish(active_btn)
+
+        # Process events so the visual change renders immediately
+        QApplication.processEvents()
+
+    def _clear_action_busy(self, active_btn, original_text: str):
+        """Restore all toolbar buttons to their normal enabled state."""
+        stored = active_btn.property("_original_text")
+        active_btn.setText(stored if stored else original_text)
+        active_btn.setProperty("busy", "false")
+        active_btn.style().unpolish(active_btn)
+        active_btn.style().polish(active_btn)
+
+        # Restore saved states if they exist
+        saved_states = getattr(self, "_toolbar_btn_states", {})
+        for btn in self._get_toolbar_action_buttons():
+            if btn in saved_states:
+                btn.setEnabled(saved_states[btn])
+            else:
+                btn.setEnabled(True)
+        self._toolbar_btn_states = {}
+        QApplication.processEvents()
+
     def _import_local_clicked(self):
         """Trigger QFileDialog to choose a directory for invoice importing."""
         folder = QFileDialog.getExistingDirectory(self, "选择本地发票文件夹")
@@ -2832,8 +3053,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         path = Path(folder)
         self.write_log(f"📁 [本地导入] 已选择本地文件夹: {path.absolute()}")
         self.statusBar().showMessage(f"正在读取与导入本地发票: {path.name}...")
-        self.btn_import_local.setEnabled(False)
-        self.btn_scan_email.setEnabled(False)
+        self._set_action_busy(self.btn_import_local, "导入中...")
 
         # Spawn asynchronous thread worker
         self.import_worker = LocalImportWorker(path, self.db_path)
@@ -2842,9 +3062,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_worker.start()
 
     def _mobile_upload_clicked(self):
-        dialog = MobileUploadDialog(self, self.db_path)
-        dialog.upload_finished.connect(self._mobile_upload_finished)
-        dialog.exec()
+        self._set_action_busy(self.btn_mobile_upload, "等待上传...")
+        try:
+            dialog = MobileUploadDialog(self, self.db_path)
+            dialog.upload_finished.connect(self._mobile_upload_finished)
+            dialog.exec()
+        finally:
+            self._clear_action_busy(self.btn_mobile_upload, "扫码上传")
 
     def _mobile_upload_finished(self):
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
@@ -2862,8 +3086,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _import_local_finished(self, stats: dict):
-        self.btn_import_local.setEnabled(True)
-        self.btn_scan_email.setEnabled(True)
+        self._clear_action_busy(self.btn_import_local, "导入发票")
         added = stats.get("added", 0)
         duplicates = stats.get("duplicates", 0)
         conflicts = stats.get("conflicts", 0)
@@ -2883,8 +3106,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._load_invoices()
 
     def _import_local_error(self, err_msg: str):
-        self.btn_import_local.setEnabled(True)
-        self.btn_scan_email.setEnabled(True)
+        self._clear_action_busy(self.btn_import_local, "导入发票")
         self.write_log(f"❌ [本地导入] 失败: {err_msg}")
         self.statusBar().showMessage("本地发票导入失败！", 4000)
         QMessageBox.critical(self, "错误", f"本地导入执行出错: {err_msg}")
@@ -2943,8 +3165,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.write_log("\U0001f4e5 [\u90ae\u7bb1\u626b\u63cf] \u589e\u91cf\u62c9\u53d6\u4efb\u52a1\u5df2\u542f\u52a8...")
         self.statusBar().showMessage("\u6b63\u5728\u5efa\u7acb\u90ae\u7bb1\u8fde\u63a5\u5e76\u626b\u63cf\u63a5\u6536\u90ae\u4ef6...")
-        self.btn_import_local.setEnabled(False)
-        self.btn_scan_email.setEnabled(False)
+        self._set_action_busy(self.btn_scan_email, "扫描中...")
 
         # Spawn asynchronous thread worker
         self.scan_worker = EmailScanWorker(self.db_path)
@@ -2954,8 +3175,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.scan_worker.start()
 
     def _scan_email_finished(self, res: dict):
-        self.btn_import_local.setEnabled(True)
-        self.btn_scan_email.setEnabled(True)
+        self._clear_action_busy(self.btn_scan_email, "扫描邮箱")
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary
 
@@ -3049,8 +3269,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _scan_email_error(self, err_msg: str):
-        self.btn_import_local.setEnabled(True)
-        self.btn_scan_email.setEnabled(True)
+        self._clear_action_busy(self.btn_scan_email, "扫描邮箱")
         self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
         self.statusBar().showMessage("邮箱扫描处理失败！", 4000)
         QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")

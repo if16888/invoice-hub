@@ -645,8 +645,8 @@ class MobileUploadTests(unittest.TestCase):
             inv = invoices[0]
             self.assertEqual(inv["invoice_number"], "MOB999")
 
-            # Must point to attachments/2026-06-13/2026-06-13_invoice.pdf
-            expected_rel = str(Path("attachments") / "2026-06-13" / "2026-06-13_invoice.pdf")
+            # Must point to attachments/2026-06-13/2026-06-13_其他_199.00_MOB999_原件.pdf
+            expected_rel = str(Path("attachments") / "2026-06-13" / "2026-06-13_\u5176\u4ed6_199.00_MOB999_\u539f\u4ef6.pdf")
             self.assertEqual(os.path.normpath(inv["attachment_path"]), os.path.normpath(expected_rel))
 
             # The archived file must exist

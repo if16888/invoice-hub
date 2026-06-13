@@ -403,6 +403,18 @@ QPushButton.ToolbarActionBtn:disabled {
     color: #9CA3AF;
     border-color: #E5E7EB;
 }
+/* Busy = active action running: stays visually blue to indicate progress */
+QPushButton.ToolbarActionBtn[busy="true"] {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: 1.5px solid #1D4ED8;
+    font-weight: 700;
+}
+QPushButton.ToolbarActionBtn[busy="true"]:disabled {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border-color: #1D4ED8;
+}
 
 QPushButton.SelectionCard {
     background-color: #FFFFFF;
