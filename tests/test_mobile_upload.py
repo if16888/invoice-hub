@@ -586,5 +586,72 @@ class MobileUploadTests(unittest.TestCase):
                 app.processEvents()
 
 
+    def test_mobile_upload_attachment_path_unifies_to_attachments(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+
+            # Setup a synthetic mobile upload server
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            # Create the upload path using the session's folder under inbox/mobile_upload
+            upload_dir = session.original_dir
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            invoice_pdf = upload_dir / "invoice.pdf"
+            invoice_pdf.write_bytes(b"%PDF-1.4 synthetic invoice pdf")
+
+            from scripts.invoice_fetch.services import import_local_directory
+            from scripts.invoice_fetch.db import InvoiceDB
+            from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+            import scripts.invoice_fetch.__main__ as cli
+
+            mock_parser = unittest.mock.MagicMock()
+            mock_parser.parse_pdf.return_value = InvoiceInfo(
+                invoice_number="MOB999",
+                invoice_code="CODE999",
+                invoice_date="2026-06-13",
+                total_amount="199.00",
+                seller_name="Mobile Corp",
+                invoice_type="电子发票",
+                parse_success=True,
+            )
+
+            with patch.object(cli, "RUNTIME_DIR", runtime_dir),                  patch("scripts.invoice_fetch.services.InvoiceParser", return_value=mock_parser):
+
+                stats = import_local_directory(
+                    import_dir=session.original_dir,
+                    db_path=db_path,
+                    file_paths=[invoice_pdf],
+                )
+
+            self.assertEqual(stats.get("added"), 1)
+
+            # The original file must remain intact inside inbox/mobile_upload
+            self.assertTrue(invoice_pdf.exists())
+
+            # The DB record must refer to the archived unified path
+            with InvoiceDB(db_path) as db:
+                invoices = db.get_all_invoices()
+
+            self.assertEqual(len(invoices), 1)
+            inv = invoices[0]
+            self.assertEqual(inv["invoice_number"], "MOB999")
+
+            # Must point to attachments/2026-06-13/2026-06-13_invoice.pdf
+            expected_rel = str(Path("attachments") / "2026-06-13" / "2026-06-13_invoice.pdf")
+            self.assertEqual(os.path.normpath(inv["attachment_path"]), os.path.normpath(expected_rel))
+
+            # The archived file must exist
+            self.assertTrue((runtime_dir / inv["attachment_path"]).exists())
+
+
 if __name__ == "__main__":
     unittest.main()

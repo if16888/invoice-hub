@@ -2025,6 +2025,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
             inv_num = self.current_invoice.get("invoice_number") or ""
             inv_code = self.current_invoice.get("invoice_code") or ""
+            code = inv_code or inv_num
             date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
 
             if "-" in date_str:

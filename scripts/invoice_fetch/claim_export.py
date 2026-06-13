@@ -126,16 +126,13 @@ def _copy_into_attachments(
 
 
 def _invoice_sort_key(inv: dict) -> tuple:
-    inv_date = inv.get("invoice_date") or ""
-    exp_date = inv.get("expense_date") or ""
-    mail_date = inv.get("mail_date") or ""
+    inv_date = (inv.get("invoice_date") or "").strip()
+    exp_date = (inv.get("expense_date") or "").strip()
+    mail_date = (inv.get("mail_date") or "").strip()
+    effective_date = inv_date or exp_date or mail_date or "9999-12-31"
+    inv_num = (inv.get("invoice_number") or "").strip()
     inv_id = inv.get("id") or 0
-    return (
-        0 if inv_date else 1, inv_date,
-        0 if exp_date else 1, exp_date,
-        0 if mail_date else 1, mail_date,
-        inv_id
-    )
+    return (effective_date, inv_num, inv_id)
 
 
 def export_claim_package(
@@ -224,7 +221,7 @@ def export_claim_package(
         inv_copy["warning"] = warning
         copied_relative_path = ""
         orig_attachment_path = inv.get("attachment_path", "")
-        export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or "unknown-date"
+        export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or inv.get("mail_date") or "unknown-date"
 
         if orig_attachment_path:
             copied_relative_path = _copy_into_attachments(

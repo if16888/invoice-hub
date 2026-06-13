@@ -2008,6 +2008,9 @@ def _import_local_directory(
         ext = src.suffix.lower()
         try:
             preserve_source_path = _path_is_within(src, runtime_root)
+            if preserve_source_path and ("inbox/mobile_upload" in src.as_posix() or "inbox\\mobile_upload" in str(src)):
+                preserve_source_path = False
+
             if ext == ".zip":
                 extracted = _extract_local_zip(src, att_dir)
                 if not extracted:
