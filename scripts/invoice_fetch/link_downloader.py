@@ -409,18 +409,113 @@ def _download_result_sort_key(item: DownloadedFile) -> tuple[int, int, int, str]
     return (ext_rank, source_rank, -int(item.size or 0), name.lower())
 
 
+def _are_stems_homologous(pdf_stem: str, ofd_stem: str) -> bool:
+    """Check if a PDF filename stem and an OFD filename stem are homologous (same source)."""
+    p_lower = pdf_stem.lower().strip()
+    o_lower = ofd_stem.lower().strip()
+    if p_lower == o_lower:
+        return True
+
+    # 1. Check digit-normalized pattern equivalence (e.g. invoice_77_0_resp vs invoice_77_1_resp)
+    p_norm = re.sub(r'\d+', '#', p_lower)
+    o_norm = re.sub(r'\d+', '#', o_lower)
+    if p_norm == o_norm:
+        return True
+
+    # 2. Check substring homology (e.g. 狮王府电子发票.pdf vs 电子发票.ofd)
+    # The shorter stem must have a minimum length of 4 to prevent false positive matches
+    if len(p_lower) >= 4 and len(o_lower) >= 4:
+        if p_lower in o_lower or o_lower in p_lower:
+            return True
+
+    return False
+
+
 def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFile]:
-    best_by_key: dict[str, DownloadedFile] = {}
-    order: list[str] = []
+    # Group results by suffix
+    pdfs = []
+    ofds = []
+    others = []
     for item in results:
-        key = Path(item.filename or item.file_path or "").stem.lower()
-        if key not in best_by_key:
-            best_by_key[key] = item
-            order.append(key)
+        name = item.filename or item.file_path or ""
+        suffix = Path(name).suffix.lower()
+        if suffix == ".pdf":
+            pdfs.append(item)
+        elif suffix == ".ofd":
+            ofds.append(item)
+        else:
+            others.append(item)
+
+    # 1. Deduplicate pdfs by stem, keeping the one with best priority (smaller sort key)
+    best_pdf_by_stem: dict[str, DownloadedFile] = {}
+    for item in pdfs:
+        stem = Path(item.filename or item.file_path or "").stem.lower()
+        if stem not in best_pdf_by_stem:
+            best_pdf_by_stem[stem] = item
+        else:
+            if _download_result_sort_key(item) < _download_result_sort_key(best_pdf_by_stem[stem]):
+                best_pdf_by_stem[stem] = item
+    unique_pdfs = list(best_pdf_by_stem.values())
+
+    # 2. Deduplicate ofds by stem, keeping the one with best priority
+    best_ofd_by_stem: dict[str, DownloadedFile] = {}
+    for item in ofds:
+        stem = Path(item.filename or item.file_path or "").stem.lower()
+        if stem not in best_ofd_by_stem:
+            best_ofd_by_stem[stem] = item
+        else:
+            if _download_result_sort_key(item) < _download_result_sort_key(best_ofd_by_stem[stem]):
+                best_ofd_by_stem[stem] = item
+    unique_ofds = list(best_ofd_by_stem.values())
+
+    # 3. Match OFDs with homologous PDFs and mark for discard
+    discarded_ofd_ids = set()
+
+    # Special Rule: If exactly 1 PDF and 1 OFD total in the batch, prioritize PDF and discard OFD.
+    if len(unique_pdfs) == 1 and len(unique_ofds) == 1:
+        discarded_ofd_ids.add(id(unique_ofds[0]))
+        _log.info(
+            "PDF/OFD Deduplication: Exactly 1 PDF and 1 OFD found. Retaining PDF '%s' and discarding OFD '%s'",
+            mask_filename(unique_pdfs[0].filename),
+            mask_filename(unique_ofds[0].filename)
+        )
+    else:
+        for ofd in unique_ofds:
+            ofd_stem = Path(ofd.filename or ofd.file_path or "").stem
+            matched_pdf = None
+            for pdf in unique_pdfs:
+                pdf_stem = Path(pdf.filename or pdf.file_path or "").stem
+                if _are_stems_homologous(pdf_stem, ofd_stem):
+                    matched_pdf = pdf
+                    break
+            if matched_pdf:
+                discarded_ofd_ids.add(id(ofd))
+                _log.info(
+                    "PDF/OFD Deduplication: Found homologous PDF '%s' for OFD '%s'. Discarding OFD.",
+                    mask_filename(matched_pdf.filename),
+                    mask_filename(ofd.filename)
+                )
+            else:
+                _log.info(
+                    "PDF/OFD Deduplication: OFD '%s' has no homologous PDF. Keeping it.",
+                    mask_filename(ofd.filename)
+                )
+
+    # Reconstruct the list preserving the original order of items that are kept
+    final_results = []
+    seen_ids = set()
+    for item in results:
+        item_id = id(item)
+        if item_id in seen_ids:
             continue
-        if _download_result_sort_key(item) < _download_result_sort_key(best_by_key[key]):
-            best_by_key[key] = item
-    return [best_by_key[key] for key in order]
+        is_kept_pdf = any(id(p) == item_id for p in unique_pdfs)
+        is_kept_ofd = any(id(o) == item_id for o in unique_ofds) and item_id not in discarded_ofd_ids
+        is_other = any(id(x) == item_id for x in others)
+
+        if is_kept_pdf or is_kept_ofd or is_other:
+            final_results.append(item)
+            seen_ids.add(item_id)
+    return final_results
 
 
 def _save_download_to_path(download, dest: Path) -> bool:

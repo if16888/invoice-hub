@@ -84,6 +84,67 @@ def _safe_name(name: str, max_len: int = 80) -> str:
     return name[:max_len] if len(name) > max_len else name
 
 
+def _normalize_export_date_prefix(raw_value: str) -> str:
+    from datetime import datetime
+    text = str(raw_value or "").strip()
+    if not text:
+        return "unknown-date"
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return "unknown-date"
+
+
+def build_managed_attachment_name(
+    *,
+    original_name: str,
+    invoice_date: str | None = None,
+    expense_date: str | None = None,
+    fallback_date: str | None = None,
+    prefix_date: bool = True,
+) -> str:
+    """Build a unified, Windows-safe filename for a managed attachment.
+
+    YYYY-MM-DD_原文件名.ext
+    """
+    # 1. Date Priority: invoice_date -> expense_date -> fallback_date -> unknown-date
+    date_to_use = None
+    for d in [invoice_date, expense_date, fallback_date]:
+        if d:
+            normalized = _normalize_export_date_prefix(d)
+            if normalized and normalized != "unknown-date":
+                date_to_use = normalized
+                break
+    if not date_to_use:
+        date_to_use = "unknown-date"
+
+    # 2. Extract stem and extension
+    name_path = Path(original_name)
+    stem = name_path.stem
+    ext = name_path.suffix.lower()
+
+    # 3. Clean Windows illegal characters
+    clean_stem = re.sub(r'[\\/:*?"<>|]', "_", stem)
+    clean_stem = re.sub(r"[_\s]+", "_", clean_stem).strip("_")
+
+    if not clean_stem:
+        clean_stem = "file"
+
+    # 4. Check if YYYY-MM-DD_ is already present
+    if prefix_date:
+        if re.match(r"^\d{4}-\d{2}-\d{2}_", clean_stem):
+            filename = f"{clean_stem}{ext}"
+        else:
+            filename = f"{date_to_use}_{clean_stem}{ext}"
+    else:
+        filename = f"{clean_stem}{ext}"
+
+    return filename
+
+
+
 def _payload_matches_extension(payload: bytes, ext: str) -> bool:
     """Return whether file bytes match the claimed safe extension."""
     if ext == ".pdf":
@@ -215,8 +276,12 @@ class AttachmentHandler:
                             if not _payload_matches_extension(inner_payload, inner_ext):
                                 _log.warning("  ZIP inner file content does not match extension, skipped: %s", mask_filename(inner_name))
                                 continue
-                            inner_safe = _safe_name(os.path.splitext(inner_name)[0]) + inner_ext
-                            dest = date_dir / f"{_safe_name(os.path.splitext(filename)[0])}_{inner_safe}"
+                            inner_combined_name = f"{os.path.splitext(filename)[0]}_{inner_name}"
+                            inner_safe = build_managed_attachment_name(
+                                original_name=inner_combined_name,
+                                fallback_date=date_str,
+                            )
+                            dest = date_dir / inner_safe
                             if dest.exists():
                                 stem = dest.stem
                                 for n in range(1, 100):
@@ -243,7 +308,10 @@ class AttachmentHandler:
                 except zipfile.BadZipFile:
                     _log.info("  ZIP 附件不是有效压缩包，跳过: %s", mask_filename(filename))
                     continue
-            safe = _safe_name(os.path.splitext(filename)[0]) + ext
+            safe = build_managed_attachment_name(
+                original_name=filename,
+                fallback_date=date_str,
+            )
             dest = date_dir / safe
 
             # Avoid overwriting

@@ -139,6 +139,38 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].filename, "invoice.pdf")
 
+    def test_download_from_email_dedupes_homologous_pdf_and_ofd(self):
+        from scripts.invoice_fetch.link_downloader import DownloadedFile, _dedupe_downloaded_files
+
+        # 1. invoice_77_0_resp.pdf + invoice_77_1_resp.ofd -> Keep PDF
+        f1 = DownloadedFile("url1", "p1", "invoice_77_0_resp.pdf", 100, True, "official_download")
+        f2 = DownloadedFile("url2", "p2", "invoice_77_1_resp.ofd", 200, True, "official_download")
+        res1 = _dedupe_downloaded_files([f1, f2])
+        self.assertEqual(len(res1), 1)
+        self.assertEqual(res1[0].filename, "invoice_77_0_resp.pdf")
+
+        # 2. 狮王府电子发票.pdf + 电子发票.ofd -> Keep PDF
+        f3 = DownloadedFile("url3", "p3", "狮王府电子发票.pdf", 100, True, "official_download")
+        f4 = DownloadedFile("url4", "p4", "电子发票.ofd", 200, True, "official_download")
+        res2 = _dedupe_downloaded_files([f3, f4])
+        self.assertEqual(len(res2), 1)
+        self.assertEqual(res2[0].filename, "狮王府电子发票.pdf")
+
+        # 3. invoice_a.pdf + invoice_b.pdf -> Keep both
+        f5 = DownloadedFile("url5", "p5", "invoice_a.pdf", 100, True, "official_download")
+        f6 = DownloadedFile("url6", "p6", "invoice_b.pdf", 200, True, "official_download")
+        res3 = _dedupe_downloaded_files([f5, f6])
+        self.assertEqual(len(res3), 2)
+
+        # 4. invoice_a.pdf + invoice_b.pdf + invoice_b.ofd -> Keep invoice_a.pdf & invoice_b.pdf
+        f7 = DownloadedFile("url7", "p7", "invoice_b.ofd", 150, True, "official_download")
+        res4 = _dedupe_downloaded_files([f5, f6, f7])
+        self.assertEqual(len(res4), 2)
+        filenames = [f.filename for f in res4]
+        self.assertIn("invoice_a.pdf", filenames)
+        self.assertIn("invoice_b.pdf", filenames)
+        self.assertNotIn("invoice_b.ofd", filenames)
+
     def test_verify_and_clean_file(self):
         # 1. 测试 PDF (必须大于等于 500 字节)
         pdf_path = Path(self.tmp_dir) / "test.pdf"
@@ -225,16 +257,16 @@ class TestLinkDownloader(unittest.TestCase):
     def test_invoice_page_detection_and_processor(self, mock_playwright):
         # 1. 模拟 Playwright page
         mock_page = MagicMock()
-        
+
         # 统一使用 side_effect 返回字符串，防止 evaluate 返回 Mock 实例
         mock_page.evaluate.side_effect = lambda js, *args: "电子发票\n发票号码: 123456\n开票日期: 2026-06-07\n销售方: 某公司"
 
         dl = LinkDownloader(download_dir=self.tmp_dir)
-        
+
         # 2. 模拟匹配
         url = "http://nnfp.jss.com.cn/scan-invoice/invoiceShow"
         save_dir = Path(self.tmp_dir)
-        
+
         # Mock pdf generation to output a fake pdf (>= 500 bytes)
         def fake_pdf(path):
             Path(path).write_bytes(b"%PDF-1.4\nfallback" + b"p" * 1000)

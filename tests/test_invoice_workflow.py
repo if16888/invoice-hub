@@ -1070,7 +1070,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             src.write_bytes(b"new")
             date_dir = att_dir / "2026-05-18"
             date_dir.mkdir(parents=True)
-            existing = date_dir / "meal_20_1001.pdf"
+            existing = date_dir / "2026-05-18_new.pdf"
             existing.write_bytes(b"old")
 
             with patch.object(cli, "RUNTIME_DIR", runtime):
@@ -1078,7 +1078,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     str(src), "1001", "2026-05-18", att_dir,
                     category="meal", total_amount="20", invoice_number="1001")
 
-            self.assertEqual(rel, str(Path("attachments") / "2026-05-18" / "meal_20_1001_1.pdf"))
+            self.assertEqual(rel, str(Path("attachments") / "2026-05-18" / "2026-05-18_new_1.pdf"))
             self.assertTrue((runtime / rel).exists())
             self.assertTrue(existing.exists())
 
@@ -1096,7 +1096,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     str(src), "1001", "../../etc", att_dir,
                     category="meal", total_amount="20", invoice_number="1001")
 
-            self.assertEqual(rel, str(Path("attachments") / "unknown_date" / "meal_20_1001.pdf"))
+            self.assertEqual(rel, str(Path("attachments") / "unknown_date" / "unknown-date_new.pdf"))
             self.assertTrue((runtime / rel).exists())
             self.assertNotIn("..", Path(rel).parts)
 
@@ -2789,7 +2789,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
             extra_paths = json.loads(rows[0]["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
-            self.assertIn("DIDI999888_ex.pdf", extra_paths[0].replace("\\", "/"))
+            self.assertIn("用车明细.pdf", extra_paths[0].replace("\\", "/"))
             self.assertTrue(rows[0]["has_extra"])
             self.assertFalse(rows[0]["missing_extra"])
 
@@ -3346,8 +3346,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             extra_paths = json.loads(rows[0]["extra_paths"])
             self.assertEqual(len(extra_paths), 2)
-            self.assertIn("DIDI777_ex.pdf", extra_paths[0].replace("\\", "/"))
-            self.assertIn("DIDI777_ex_1.pdf", extra_paths[1].replace("\\", "/"))
+            self.assertIn("行程单1.pdf", extra_paths[0].replace("\\", "/"))
+            self.assertIn("用车明细2.pdf", extra_paths[1].replace("\\", "/"))
 
     def test_multiple_success_invoice_pdfs_and_multiple_extras(self):
         """多个解析成功 invoice_pdf + 多个 extra，按发票号/日期金额唯一匹配，不能全量互挂"""
@@ -3431,8 +3431,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(extra_paths1), 1)
             self.assertEqual(len(extra_paths2), 1)
 
-            self.assertIn("DIDI001_ex.pdf", extra_paths1[0].replace("\\", "/"))
-            self.assertIn("DIDI002_ex.pdf", extra_paths2[0].replace("\\", "/"))
+            self.assertIn("行程单_DIDI001.pdf", extra_paths1[0].replace("\\", "/"))
+            self.assertIn("行程单_DIDI002.pdf", extra_paths2[0].replace("\\", "/"))
 
     def test_extract_item_names_cjk_asterisk(self):
         """测试从发票文本中提取前 3 个明细项目名称"""

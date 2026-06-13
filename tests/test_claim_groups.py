@@ -272,8 +272,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 ws = wb["发票汇总"]
 
                 # Columns check: spreadsheet should map correctly
-                self.assertEqual(ws.cell(row=2, column=1).value, "NUM123")  # row 1 is header
-                self.assertEqual(ws.cell(row=3, column=1).value, "NUM456")
+                self.assertEqual(ws.cell(row=2, column=1).value, "NUM456")  # row 1 is header
+                self.assertEqual(ws.cell(row=3, column=1).value, "NUM123")
 
                 # Check attachments copied
                 att_export_dir = export_dir / "attachments"
@@ -293,13 +293,13 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(manifest["item_count"], 2)
 
                 item1 = manifest["items"][0]
-                self.assertEqual(item1["invoice_number"], "NUM123")
-                self.assertEqual(item1["copied_attachment_path"], "attachments/2026-05-19_meal.pdf")
+                self.assertEqual(item1["invoice_number"], "NUM456")
+                self.assertEqual(item1["copied_attachment_path"], "attachments/2026-05-18_taxi.pdf")
                 self.assertEqual(item1["review_status"], "approved")
 
                 item2 = manifest["items"][1]
-                self.assertEqual(item2["invoice_number"], "NUM456")
-                self.assertEqual(item2["copied_attachment_path"], "attachments/2026-05-18_taxi.pdf")
+                self.assertEqual(item2["invoice_number"], "NUM123")
+                self.assertEqual(item2["copied_attachment_path"], "attachments/2026-05-19_meal.pdf")
                 self.assertEqual(item2["review_status"], "approved")
 
     def test_export_package_includes_supporting_documents(self):

@@ -2025,7 +2025,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
             inv_num = self.current_invoice.get("invoice_number") or ""
             inv_code = self.current_invoice.get("invoice_code") or ""
-            code = inv_code or inv_num
             date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
 
             if "-" in date_str:
@@ -2036,10 +2035,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
             dest_dir.mkdir(parents=True, exist_ok=True)
 
-            if code:
-                dest_name = f"{code}{ext}"
-            else:
-                dest_name = f"manual_{inv_id}{ext}"
+            from scripts.invoice_fetch.attachment_handler import build_managed_attachment_name
+            dest_name = build_managed_attachment_name(
+                original_name=src_file.name,
+                invoice_date=self.current_invoice.get("invoice_date"),
+                expense_date=self.current_invoice.get("expense_date"),
+                fallback_date=self.current_invoice.get("mail_date"),
+            )
+            if not dest_name.lower().endswith(ext):
+                dest_name = os.path.splitext(dest_name)[0] + ext
 
             dest_path = dest_dir / dest_name
             if dest_path.exists():
@@ -2123,10 +2127,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 code = inv_code or inv_num
 
                 dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
-                if code:
-                    dest_name = f"{code}{ext}"
-                else:
-                    dest_name = f"downloaded_{inv_id}{ext}"
+                from scripts.invoice_fetch.attachment_handler import build_managed_attachment_name
+                dest_name = build_managed_attachment_name(
+                    original_name=src_path.name,
+                    invoice_date=self.current_invoice.get("invoice_date"),
+                    expense_date=self.current_invoice.get("expense_date"),
+                    fallback_date=self.current_invoice.get("mail_date"),
+                )
+                if not dest_name.lower().endswith(ext):
+                    dest_name = os.path.splitext(dest_name)[0] + ext
 
                 dest_path = dest_dir / dest_name
                 if dest_path.resolve() != src_path.resolve():

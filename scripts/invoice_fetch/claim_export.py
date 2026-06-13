@@ -78,10 +78,15 @@ def _normalize_export_date_prefix(raw_value: str) -> str:
 def _prefix_export_filename(filename: str, date_prefix: str) -> str:
     basename = Path(str(filename or "")).name
     safe_prefix = _normalize_export_date_prefix(date_prefix)
-    prefixed = f"{safe_prefix}_{basename}"
-    if basename.startswith(f"{safe_prefix}_"):
+
+    if safe_prefix != "unknown-date":
+        if basename.startswith("unknown-date_"):
+            basename = basename[len("unknown-date_"):]
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}_", basename):
         return basename
-    return prefixed
+
+    return f"{safe_prefix}_{basename}"
 
 
 def _copy_into_attachments(
@@ -118,6 +123,19 @@ def _copy_into_attachments(
     _log.info("Copied export file: %s -> %s", mask_path(src_path), mask_path(copied_relative_path))
     return copied_relative_path
 
+
+
+def _invoice_sort_key(inv: dict) -> tuple:
+    inv_date = inv.get("invoice_date") or ""
+    exp_date = inv.get("expense_date") or ""
+    mail_date = inv.get("mail_date") or ""
+    inv_id = inv.get("id") or 0
+    return (
+        0 if inv_date else 1, inv_date,
+        0 if exp_date else 1, exp_date,
+        0 if mail_date else 1, mail_date,
+        inv_id
+    )
 
 
 def export_claim_package(
@@ -173,6 +191,8 @@ def export_claim_package(
 
     if not invoices:
         raise ValueError(f"报销组“{claim['name']}”筛选后没有符合条件的可导出发票。")
+
+    invoices.sort(key=_invoice_sort_key)
 
     if reimbursement_config is None:
         reimbursement_config = load_config_safe().get("reimbursement", {})

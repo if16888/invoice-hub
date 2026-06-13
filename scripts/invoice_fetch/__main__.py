@@ -26,7 +26,7 @@ from .config import get_email_accounts, load_config, load_config_safe, RUNTIME_D
 from .credentials import get_auth_code
 from .db import InvoiceDB, is_pending_evidence_invoice
 from .excel_export import export_excel
-from .attachment_handler import AttachmentHandler
+from .attachment_handler import AttachmentHandler, build_managed_attachment_name
 from .invoice_parser import InvoiceParser, parse_html_body, parse_subject
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .mail_fetcher import MailFetcher
@@ -340,8 +340,11 @@ def _rename_by_invoice_code(
     att_dir: Path, is_extra: bool = False,
     category: str = "", total_amount: str = "", invoice_number: str = "",
     source_mode: str | None = None,
+    original_name: str | None = None,
+    expense_date: str | None = None,
+    fallback_date: str | None = None,
 ) -> str:
-    """Rename a file to ``{date}/{category}_{amount}_{invoice_number}.pdf``.
+    """Rename a file to ``{date}/{YYYY-MM-DD_original_filename.ext}``.
 
     Returns the new relative path under RUNTIME_DIR.
 
@@ -350,8 +353,8 @@ def _rename_by_invoice_code(
     - ``"reprocess"`` / ``"repair"`` – INFO (safe re-download / reprocess)
     If ``None`` (default), defers to the module-level ``_rename_source_mode``.
     """
-    if not file_path or not invoice_code:
-        return file_path  # can't rename without a code
+    if not file_path:
+        return file_path
 
     src = Path(file_path)
     if not src.exists():
@@ -361,15 +364,18 @@ def _rename_by_invoice_code(
     date_dir = att_dir / _safe_date_dirname(invoice_date)
     date_dir.mkdir(parents=True, exist_ok=True)
 
-    # New naming: {category}_{amount}_{invoice_number}.pdf
-    safe_cat = (category or "其他").replace("/", "_").replace("\\", "_").replace(":", "_")
-    amt = total_amount or ""
-    num = invoice_number or invoice_code
+    # Build the unified filename
+    orig_name_to_use = original_name or src.name
+    new_name = build_managed_attachment_name(
+        original_name=orig_name_to_use,
+        invoice_date=invoice_date,
+        expense_date=expense_date,
+        fallback_date=fallback_date,
+    )
 
-    if is_extra:
-        new_name = f"{safe_cat}_{amt}_{num}_ex{ext}"
-    else:
-        new_name = f"{safe_cat}_{amt}_{num}{ext}"
+    # Ensure extension matches src extension
+    if not new_name.lower().endswith(ext):
+        new_name = os.path.splitext(new_name)[0] + ext
 
     dest = date_dir / new_name
     # Avoid overwriting a different file; keep both invoices visible.
@@ -693,16 +699,42 @@ def _attach_evidence_to_invoice(
     file_path: Path,
 ) -> bool:
     """Attach evidence to an invoice, deduplicating by path and file content."""
-    stored_path = _runtime_relative(file_path)
+    code = invoice.get("invoice_code") or invoice.get("invoice_number") or "extra"
+    inv_date = invoice.get("invoice_date") or invoice.get("mail_date") or "unknown_date"
+    att_dir = RUNTIME_DIR / "attachments"
+
+    renamed_rel = _rename_by_invoice_code(
+        str(file_path),
+        invoice_code=code,
+        invoice_date=inv_date,
+        att_dir=att_dir,
+        is_extra=True,
+        category=invoice.get("category") or "",
+        total_amount=invoice.get("total_amount") or "",
+        invoice_number=invoice.get("invoice_number") or "",
+        expense_date=invoice.get("expense_date"),
+        fallback_date=invoice.get("mail_date") or invoice.get("created_at"),
+    )
+    if not renamed_rel:
+        return False
+
+    resolved_path = RUNTIME_DIR / renamed_rel
+    stored_path = renamed_rel
+
     extra_paths = _normalize_path_list(invoice.get("extra_paths"))
     if stored_path in extra_paths:
         return False
 
-    file_hash = _sha256_file(file_path) if file_path.exists() else ""
+    file_hash = _sha256_file(resolved_path) if resolved_path.exists() else ""
     if file_hash:
         for existing_path in extra_paths:
             resolved = _resolve_runtime_path(existing_path)
             if resolved and _sha256_file(resolved) == file_hash:
+                if resolved.resolve() != resolved_path.resolve():
+                    try:
+                        resolved_path.unlink()
+                    except OSError:
+                        pass
                 return False
 
     extra_paths.append(stored_path)
@@ -715,7 +747,7 @@ def _attach_evidence_to_invoice(
     _log.info(
         "  已将证明材料关联到发票: invoice_id=%s file=%s",
         invoice["id"],
-        mask_filename(file_path.name),
+        mask_filename(resolved_path.name),
     )
     return True
 
@@ -732,6 +764,8 @@ def _attach_email_extras_to_invoice(
     invoice_number: str,
     kept_paths: set,
     attached_source_paths: set[str] | None = None,
+    expense_date: str | None = None,
+    fallback_date: str | None = None,
 ) -> list[str]:
     """Rename and associate extra files with an invoice, avoiding duplicate paths or file hashes.
 
@@ -771,7 +805,10 @@ def _attach_email_extras_to_invoice(
         ep = _rename_by_invoice_code(
             e.file_path, code, inv_date, att_base, is_extra=True,
             category=category, total_amount=total_amount,
-            invoice_number=invoice_number
+            invoice_number=invoice_number,
+            original_name=getattr(e, "original_name", None),
+            expense_date=expense_date,
+            fallback_date=fallback_date,
         )
         if ep:
             if ep in current_extras:
@@ -1565,11 +1602,35 @@ def _insert_local_exception(
         if int(existing_by_hash.get("is_deleted") or 0) == 0 and existing_by_hash.get("attachment_path"):
             _log.info("  本地导入跳过重复文件: %s", mask_filename(original_name))
             return "duplicate", None
-        db.update_invoice_file_paths(existing_by_hash["id"], attachment_path=_runtime_relative(file_path))
+        category, _, _ = _classify(original_name, "local import", "", categories)
+        import_date = datetime.now().strftime("%Y-%m-%d")
+        att_dir = RUNTIME_DIR / "attachments"
+        attachment_path = _rename_by_invoice_code(
+            str(file_path),
+            invoice_code="exception",
+            invoice_date=import_date,
+            att_dir=att_dir,
+            category=category,
+            original_name=original_name,
+            fallback_date=import_date,
+        )
+        db.update_invoice_file_paths(existing_by_hash["id"], attachment_path=attachment_path)
         _log.info("  本地导入恢复已删除待处理文件: %s", mask_filename(original_name))
         return "pending_manual", existing_by_hash["id"]
 
     category, extra_type, extra_required = _classify(original_name, "local import", "", categories)
+    import_date = datetime.now().strftime("%Y-%m-%d")
+    att_dir = RUNTIME_DIR / "attachments"
+    attachment_path = _rename_by_invoice_code(
+        str(file_path),
+        invoice_code="exception",
+        invoice_date=import_date,
+        att_dir=att_dir,
+        category=category,
+        original_name=original_name,
+        fallback_date=import_date,
+    )
+
     rec = {
         "invoice_number": "",
         "invoice_code": "",
@@ -1591,7 +1652,7 @@ def _insert_local_exception(
         "mail_sender": "local import",
         "parse_success": False,
         "parse_note": note,
-        "attachment_path": _runtime_relative(file_path),
+        "attachment_path": attachment_path,
         "extra_paths": [],
         "file_hash": file_hash,
     }
@@ -1813,6 +1874,9 @@ def _import_local_pdf(
                     category=category,
                     total_amount=info.total_amount,
                     invoice_number=info.invoice_number,
+                    original_name=source_name,
+                    expense_date=info.expense_date,
+                    fallback_date=datetime.now().strftime("%Y-%m-%d"),
                 )
             rec = {
                 "invoice_number": info.invoice_number,
@@ -1862,6 +1926,9 @@ def _import_local_pdf(
             category=category,
             total_amount=info.total_amount,
             invoice_number=info.invoice_number,
+            original_name=source_name,
+            expense_date=info.expense_date,
+            fallback_date=datetime.now().strftime("%Y-%m-%d"),
         )
     rec = {
         "invoice_number": info.invoice_number,
@@ -2054,18 +2121,20 @@ def _rename_receipt_file(
     date_dir = att_dir / _safe_date_dirname(invoice_date)
     date_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_cat = (category or "其他").replace("/", "_").replace("\\", "_").replace(":", "_")
-    hint = Path(filename_hint or src.stem).stem
-    hint = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in hint).strip("_")
-    if len(hint) > 40:
-        hint = hint[:40]
-    new_name = f"{safe_cat}_receipt_{mail_uid}"
-    if hint:
-        new_name = f"{new_name}_{hint}"
-    dest = date_dir / f"{new_name}{ext}"
+    orig_name_to_use = filename_hint or src.name
+    new_name = build_managed_attachment_name(
+        original_name=orig_name_to_use,
+        invoice_date=invoice_date,
+        fallback_date=invoice_date,
+    )
+    if not new_name.lower().endswith(ext):
+        new_name = os.path.splitext(new_name)[0] + ext
+
+    dest = date_dir / new_name
     if dest.exists() and dest != src:
+        stem = dest.stem
         for n in range(1, 100):
-            candidate = date_dir / f"{new_name}_{n}{ext}"
+            candidate = date_dir / f"{stem}_{n}{ext}"
             if not candidate.exists():
                 dest = candidate
                 break
@@ -2335,7 +2404,10 @@ def _process_email(
                             dl.file_path, code, info.invoice_date or msg.date,
                             att_handler._base,
                             category=category, total_amount=info.total_amount,
-                            invoice_number=info.invoice_number)
+                            invoice_number=info.invoice_number,
+                            original_name=dl.filename,
+                            expense_date=info.expense_date,
+                            fallback_date=msg.date)
                         if repaired_attachment_path:
                             kept_paths.add(str((att_handler._base.parent / repaired_attachment_path).resolve()))
 
@@ -2355,6 +2427,8 @@ def _process_email(
                             invoice_number=info.invoice_number,
                             kept_paths=kept_paths,
                             attached_source_paths=attached_extra_source_paths,
+                            expense_date=info.expense_date,
+                            fallback_date=msg.date,
                         )
 
                     if _refresh_invoice_from_parse(
@@ -2413,7 +2487,10 @@ def _process_email(
                             dl.file_path, code, info.invoice_date or msg.date,
                             att_handler._base,
                             category=cat_ld, total_amount=info.total_amount,
-                            invoice_number=info.invoice_number)
+                            invoice_number=info.invoice_number,
+                            original_name=dl.filename,
+                            expense_date=info.expense_date,
+                            fallback_date=msg.date)
                         if backfill_path:
                             backfill_abs = str((att_handler._base.parent / backfill_path).resolve())
                             if backfill_abs not in kept_paths:
@@ -2442,6 +2519,8 @@ def _process_email(
                             invoice_number=info.invoice_number,
                             kept_paths=kept_paths,
                             attached_source_paths=attached_extra_source_paths,
+                            expense_date=info.expense_date,
+                            fallback_date=msg.date,
                         )
                     link_pdf_skipped_as_duplicate = True
                     recorded += 1
@@ -2457,7 +2536,10 @@ def _process_email(
                     dl.file_path, code, info.invoice_date or msg.date,
                     att_handler._base,
                     category=cat, total_amount=info.total_amount,
-                    invoice_number=info.invoice_number)
+                    invoice_number=info.invoice_number,
+                    original_name=dl.filename,
+                    expense_date=info.expense_date,
+                    fallback_date=msg.date)
                 if att_path:
                     kept_paths.add(str((att_handler._base.parent / att_path).resolve()))
                 rec = {
@@ -2502,6 +2584,8 @@ def _process_email(
                             invoice_number=info.invoice_number,
                             kept_paths=kept_paths,
                             attached_source_paths=attached_extra_source_paths,
+                            expense_date=info.expense_date,
+                            fallback_date=msg.date,
                         )
                     recorded += 1
                     _log.info("  ✅ 已入库(链接下载): %s (%s)", mask_invoice_number(info.invoice_number), cat)
@@ -2572,7 +2656,10 @@ def _process_email(
                     att.file_path, code, info.invoice_date or msg.date,
                     att_handler._base,
                     category=cat, total_amount=info.total_amount,
-                    invoice_number=info.invoice_number)
+                    invoice_number=info.invoice_number,
+                    original_name=att.original_name,
+                    expense_date=info.expense_date,
+                    fallback_date=msg.date)
                 if repaired_attachment_path:
                     kept_paths.add(str((att_handler._base.parent / repaired_attachment_path).resolve()))
 
@@ -2592,6 +2679,8 @@ def _process_email(
                     invoice_number=info.invoice_number,
                     kept_paths=kept_paths,
                     attached_source_paths=attached_extra_source_paths,
+                    expense_date=info.expense_date,
+                    fallback_date=msg.date,
                 )
 
             if _refresh_invoice_from_parse(
@@ -2645,7 +2734,10 @@ def _process_email(
                     att.file_path, code, info.invoice_date or msg.date,
                     att_handler._base,
                     category=cat_dup, total_amount=info.total_amount,
-                    invoice_number=info.invoice_number)
+                    invoice_number=info.invoice_number,
+                    original_name=att.original_name,
+                    expense_date=info.expense_date,
+                    fallback_date=msg.date)
                 if dup_att_path:
                     dup_abs = str((att_handler._base.parent / dup_att_path).resolve())
                     if dup_abs not in kept_paths:
@@ -2671,6 +2763,8 @@ def _process_email(
                     invoice_number=info.invoice_number,
                     kept_paths=kept_paths,
                     attached_source_paths=attached_extra_source_paths,
+                    expense_date=info.expense_date,
+                    fallback_date=msg.date,
                 )
             recorded += 1
             continue
@@ -2690,7 +2784,10 @@ def _process_email(
         att_path = _rename_by_invoice_code(
             att.file_path, code, inv_date, att_handler._base,
             category=cat, total_amount=info.total_amount,
-            invoice_number=info.invoice_number)
+            invoice_number=info.invoice_number,
+            original_name=att.original_name,
+            expense_date=info.expense_date,
+            fallback_date=msg.date)
         if att_path:
             kept_paths.add(str((att_handler._base.parent / att_path).resolve()))
 
