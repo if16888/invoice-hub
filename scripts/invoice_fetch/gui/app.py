@@ -1558,6 +1558,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         menu.exec(self.table.mapToGlobal(pos))
 
+    def _capture_selection_row_hint(self) -> int:
+        """Return the first valid selected row for post-refresh selection fallback."""
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return -1
+
+        selected_indexes = selection_model.selectedRows(0)
+        if not selected_indexes:
+            selected_indexes = selection_model.selectedIndexes()
+
+        rows = {
+            index.row()
+            for index in selected_indexes
+            if 0 <= index.row() < len(self.invoices_list)
+        }
+        return min(rows) if rows else -1
+
     def _reparse_selected_invoices(self):
         """Reparse PDF metadata in-place for selected invoices, updating DB values."""
         selected_indexes = self.table.selectionModel().selectedRows()
@@ -1674,6 +1691,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 parse_failed_files.append(f"发票 ID {inv_id}: 异常 ({str(e)})")
 
         # Reload data
+        self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
         self._on_table_selection_changed()
@@ -1909,6 +1927,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QApplication.restoreOverrideCursor()
             self.statusBar().clearMessage()
 
+        self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
         self._on_table_selection_changed()
@@ -1959,9 +1978,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        # Record minimum selected row before deletion so we can restore nearby selection
-        min_selected_row = min(idx.row() for idx in unique_indexes)
-
         success_count = 0
         for idx in unique_indexes:
             inv = self.invoices_list[idx.row()]
@@ -1971,8 +1987,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.write_log(f"🗑️ [删除发票] 成功删除 {success_count}/{count} 张发票。")
         self.statusBar().showMessage(f"成功删除 {success_count} 张发票", 4000)
-        # Hint: after reload, select the row at the same position (or last row if needed)
-        self._select_row_hint = min_selected_row
+        self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
 
@@ -2005,6 +2020,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.write_log(f"🔄 [恢复发票] 成功恢复 {success_count}/{count} 张发票。")
         self.statusBar().showMessage(f"成功恢复 {success_count} 张发票", 4000)
+        self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
 
@@ -2737,6 +2753,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             dialog_title = "关联结果" if linked_count else "未关联"
             QMessageBox.information(self, dialog_title, msg)
             self._load_claims()
+            self._select_row_hint = self._capture_selection_row_hint()
             self._load_invoices()
             return {
                 "linked": linked_count,
@@ -2780,6 +2797,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.statusBar().showMessage(f"已从报销组【{claim_name}】中取消关联 {unlinked_count} 张发票", 3000)
             QMessageBox.information(self, "成功", f"已成功取消关联 {unlinked_count} 张发票！")
             self._load_claims()
+            self._select_row_hint = self._capture_selection_row_hint()
             self._load_invoices()
 
         except Exception as e:

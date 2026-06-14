@@ -226,3 +226,184 @@ class TestGUIFixes(unittest.TestCase):
         # So selection should be auto-restored to row 0.
         self.assertEqual(app.table.currentRow(), 0)
         self.assertEqual(app.table.item(0, 3).text(), "111")  # Column 3 shows invoice number
+
+    def test_link_to_claim_keeps_original_invoice_selected_when_still_visible(self):
+        app = self.review_app
+        claim_id = app.db.create_claim_group("Selection claim")
+        app._load_claims()
+        claim_idx = app.combo_claims.findData(claim_id)
+        self.assertGreaterEqual(claim_idx, 0)
+        app.combo_claims.setCurrentIndex(claim_idx)
+
+        app.table.selectRow(1)
+        self.app.processEvents()
+        selected_id = app.invoices_list[1]["id"]
+
+        with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._link_invoices_to_claim()
+        self.app.processEvents()
+
+        self.assertEqual(app.invoices_list[app.table.currentRow()]["id"], selected_id)
+
+    def test_link_to_claim_under_unlinked_filter_keeps_same_row_position(self):
+        app = self.review_app
+        claim_id = app.db.create_claim_group("Filtered selection claim")
+        app._load_claims()
+        claim_idx = app.combo_claims.findData(claim_id)
+        self.assertGreaterEqual(claim_idx, 0)
+        app.combo_claims.setCurrentIndex(claim_idx)
+
+        app.chk_unlinked.setChecked(True)
+        app.search_reload_timer.stop()
+        app._load_invoices()
+        self.assertEqual(app.table.rowCount(), 3)
+
+        app.table.selectRow(1)
+        self.app.processEvents()
+        removed_id = app.invoices_list[1]["id"]
+        expected_id = app.invoices_list[2]["id"]
+
+        with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._link_invoices_to_claim()
+        self.app.processEvents()
+
+        self.assertEqual(app.table.currentRow(), 1)
+        self.assertEqual(app.invoices_list[1]["id"], expected_id)
+        self.assertNotIn(removed_id, [inv["id"] for inv in app.invoices_list])
+
+    def test_capture_selection_row_hint_uses_valid_minimum_row(self):
+        app = self.review_app
+        original_table = app.table
+        selection_model = MagicMock()
+        fake_table = MagicMock()
+        fake_table.selectionModel.return_value = selection_model
+
+        row_one = MagicMock()
+        row_one.row.return_value = 1
+        row_two = MagicMock()
+        row_two.row.return_value = 2
+        invalid_row = MagicMock()
+        invalid_row.row.return_value = 99
+
+        try:
+            app.table = fake_table
+            selection_model.selectedRows.return_value = [row_two]
+            selection_model.selectedIndexes.return_value = [row_one]
+            self.assertEqual(app._capture_selection_row_hint(), 2)
+
+            selection_model.selectedRows.return_value = []
+            selection_model.selectedIndexes.return_value = [
+                row_two,
+                row_one,
+                row_one,
+                invalid_row,
+            ]
+            self.assertEqual(app._capture_selection_row_hint(), 1)
+
+            selection_model.selectedIndexes.return_value = [invalid_row]
+            self.assertEqual(app._capture_selection_row_hint(), -1)
+        finally:
+            app.table = original_table
+
+    def test_unlink_from_claim_keeps_original_invoice_selected(self):
+        app = self.review_app
+        claim_id = app.db.create_claim_group("Unlink selection claim")
+        selected_id = app.invoices_list[1]["id"]
+        self.assertTrue(app.db.add_invoice_to_claim(claim_id, selected_id))
+        app._load_claims()
+        claim_idx = app.combo_claims.findData(claim_id)
+        self.assertGreaterEqual(claim_idx, 0)
+        app.combo_claims.setCurrentIndex(claim_idx)
+        app._load_invoices()
+
+        selected_row = next(
+            idx for idx, inv in enumerate(app.invoices_list)
+            if inv["id"] == selected_id
+        )
+        app.table.selectRow(selected_row)
+        self.app.processEvents()
+
+        with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._unlink_selected_invoices()
+        self.app.processEvents()
+
+        self.assertEqual(app.invoices_list[app.table.currentRow()]["id"], selected_id)
+
+    def test_restore_invoice_keeps_original_invoice_selected(self):
+        app = self.review_app
+        selected_id = app.invoices_list[1]["id"]
+        self.assertTrue(app.db.soft_delete_invoice(selected_id))
+        app.chk_show_deleted.setChecked(True)
+        app.search_reload_timer.stop()
+        app._load_invoices()
+
+        selected_row = next(
+            idx for idx, inv in enumerate(app.invoices_list)
+            if inv["id"] == selected_id
+        )
+        app.table.selectRow(selected_row)
+        self.app.processEvents()
+        app._restore_selected_invoices()
+        self.app.processEvents()
+
+        self.assertEqual(app.invoices_list[app.table.currentRow()]["id"], selected_id)
+        self.assertEqual(app.db.get_invoice(selected_id)["is_deleted"], 0)
+
+    def test_context_actions_capture_selection_row_hint_before_reload(self):
+        app = self.review_app
+        claim_id = app.db.create_claim_group("Context action claim")
+        app._load_claims()
+        claim_idx = app.combo_claims.findData(claim_id)
+        self.assertGreaterEqual(claim_idx, 0)
+        app.combo_claims.setCurrentIndex(claim_idx)
+
+        app.table.selectRow(1)
+        self.app.processEvents()
+
+        captured_hints = []
+
+        def record_reload():
+            captured_hints.append(app._select_row_hint)
+
+        with patch.object(app, "_load_invoices", side_effect=record_reload), \
+                patch.object(app, "_load_claims"), \
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._link_invoices_to_claim()
+        self.assertEqual(captured_hints[-1], 1)
+
+        captured_hints.clear()
+        with patch.object(app, "_load_invoices", side_effect=record_reload), \
+                patch.object(app, "_load_claims"), \
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._unlink_selected_invoices()
+        self.assertEqual(captured_hints[-1], 1)
+
+        selected_id = app.invoices_list[1]["id"]
+        app.db.soft_delete_invoice(selected_id)
+        captured_hints.clear()
+        with patch.object(app, "_load_invoices", side_effect=record_reload), \
+                patch.object(app, "_load_claims"):
+            app._restore_selected_invoices()
+        self.assertEqual(captured_hints[-1], 1)
+
+        captured_hints.clear()
+        with patch.object(app, "_load_invoices", side_effect=record_reload), \
+                patch.object(app, "_load_claims"), \
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._reparse_selected_invoices()
+        self.assertEqual(captured_hints[-1], 1)
+
+        class FakeDownloader:
+            def __init__(self, download_dir):
+                self.download_dir = download_dir
+
+            def close(self):
+                return None
+
+        captured_hints.clear()
+        with patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
+                patch.object(app, "_load_invoices", side_effect=record_reload), \
+                patch.object(app, "_load_claims"), \
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+            app._redownload_selected_invoices()
+        self.assertEqual(captured_hints[-1], 1)
