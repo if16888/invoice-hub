@@ -117,11 +117,11 @@ class ExpenseDateTests(unittest.TestCase):
 
             # 2. Open via InvoiceDB which runs migration
             with InvoiceDB(db_path) as db:
-                # Check version is 6
+                # Check current schema version after migration.
                 cursor = db._conn.cursor()
                 cursor.execute("PRAGMA user_version")
                 ver = cursor.fetchone()[0]
-                self.assertEqual(ver, 6)
+                self.assertEqual(ver, 7)
 
                 # Verify new columns exist
                 cursor.execute("PRAGMA table_info(invoices)")

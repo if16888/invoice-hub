@@ -3187,7 +3187,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Spawn asynchronous thread worker
         self.scan_worker = EmailScanWorker(self.db_path)
-        self.scan_worker.log.connect(self.write_log)
+        self.scan_worker.log.connect(
+            lambda text: self.write_log(text, mirror_to_file=False)
+        )
         self.scan_worker.finished.connect(self._scan_email_finished)
         self.scan_worker.error.connect(self._scan_email_error)
         self.scan_worker.start()
@@ -3201,6 +3203,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "✅ [邮箱扫描] 完成！"
             f"新增 {summary['new']}，恢复 {summary['restored']}，重复 {summary['duplicates']}，"
             f"链接失败 {summary['link_failed']}，待重试 {summary['pending_retry']}。"
+        )
+        self.write_log(
+            "[扫描摘要] "
+            f"rule_excluded={summary['rule_excluded']} "
+            f"no_candidate_link={summary['no_candidate_link']} "
+            f"download_failed={summary['download_failed']} "
+            f"manual_required={summary['manual_review_required']} "
+            f"parse_failed={summary['parse_failed']}"
         )
         self.statusBar().showMessage(self._format_scan_summary_status(summary), 6000)
 
@@ -3251,6 +3261,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 duplicates,
             ),
             "link_failed": link_failed,
+            "rule_excluded": int(res.get("rule_excluded", 0) or 0),
+            "no_candidate_link": int(res.get("no_candidate_link", 0) or 0),
+            "download_failed": int(res.get("download_failed", 0) or 0),
+            "parse_failed": int(res.get("parse_failed", 0) or 0),
             "manual_review_required": manual_review_required,
             "pending_retry": max(int(res.get("pending_retry", 0) or 0), pending_retry),
             "failed": int(res.get("failed", res.get("failed_count", 0)) or 0),
@@ -3277,8 +3291,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"- 新增记录（发票或待补全材料）: {summary.get('new', 0)} 条\n"
             f"- 恢复软删除: {summary.get('restored', 0)} 条\n"
             f"- 重复已存在: {summary.get('duplicates', 0)} 条\n"
-            f"- 链接下载失败: {summary.get('link_failed', 0)} 封\n"
-            f"- 其中需人工确认材料: {summary.get('manual_review_required', 0)} 条\n"
+            f"- 规则排除历史误分类: {summary.get('rule_excluded', 0)} 封\n"
+            f"- 未找到候选链接: {summary.get('no_candidate_link', 0)} 封\n"
+            f"- 链接下载失败: {summary.get('download_failed', 0)} 封\n"
+            f"- 需人工确认材料: {summary.get('manual_review_required', 0)} 条\n"
+            f"- 下载内容解析失败: {summary.get('parse_failed', 0)} 封\n"
             f"- 待重试: {summary.get('pending_retry', 0)} 封\n"
             f"- 处理失败: {summary.get('failed', 0)} 封\n"
             f"失败摘要:\n{failure_text}\n\n"

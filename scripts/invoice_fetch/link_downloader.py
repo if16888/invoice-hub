@@ -20,7 +20,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
-from .log_privacy import mask_email, mask_filename, mask_url_for_log, redact_text
+from .log_privacy import mask_filename, mask_sender_header, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
 
@@ -827,6 +827,12 @@ class LinkDownloader:
             "unsafe_skipped": 0,
             "excluded_skipped": 0,
         }
+        self.last_download_diagnostics = {
+            "found_links": 0,
+            "candidate_links": 0,
+            "attempted": 0,
+            "failed": 0,
+        }
         if html:
             raw_items, raw_stats = _extract_links_with_metadata_from_html_and_stats(html)
         else:
@@ -836,7 +842,7 @@ class LinkDownloader:
             _log.info(
                 "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=0 skipped_unsafe=%d skipped_low_priority=0 attempted=0 failed=0",
                 redact_text(subject, "subject"),
-                mask_email(sender),
+                mask_sender_header(sender),
                 raw_stats.get("anchor_count", 0),
                 raw_stats.get("unsafe_skipped", 0),
             )
@@ -917,6 +923,12 @@ class LinkDownloader:
         elapsed = time.perf_counter() - start_time
         success = len(results)
         failed = max(0, attempted_count - success - deduped_removed)
+        self.last_download_diagnostics = {
+            "found_links": found,
+            "candidate_links": deduped,
+            "attempted": attempted_count,
+            "failed": failed,
+        }
         official_success = sum(1 for r in results if r.source_type != "invoice_page_pdf_fallback")
         fallback_success = sum(1 for r in results if r.source_type == "invoice_page_pdf_fallback")
         _log.info(
@@ -927,7 +939,7 @@ class LinkDownloader:
             _log.info(
                 "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=%d skipped_unsafe=%d skipped_low_priority=%d attempted=%d failed=%d",
                 redact_text(subject, "subject"),
-                mask_email(sender),
+                mask_sender_header(sender),
                 found,
                 deduped,
                 raw_stats.get("unsafe_skipped", 0),

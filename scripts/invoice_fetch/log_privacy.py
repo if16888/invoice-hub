@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from email.utils import parseaddr
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -27,6 +28,15 @@ def mask_email(value: str) -> str:
     else:
         masked_local = f"{local[0]}***{local[-1]}"
     return f"{masked_local}@{domain}"
+
+
+def mask_sender_header(sender: str) -> str:
+    """Mask only the address portion of a display-name sender header."""
+    text = str(sender or "").strip()
+    if not text:
+        return ""
+    _, address = parseaddr(text)
+    return mask_email(address) if address else redact_text(text, "sender")
 
 
 def mask_uid(value: object) -> str:

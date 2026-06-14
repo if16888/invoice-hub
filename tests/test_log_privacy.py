@@ -1,11 +1,13 @@
 import logging
 import unittest
+from unittest.mock import Mock, patch
 
 from scripts.invoice_fetch.log_privacy import (
     PrivacyLogFilter,
     mask_email,
     mask_filename,
     mask_invoice_number,
+    mask_sender_header,
     mask_url_for_log,
     sanitize_log_message,
 )
@@ -47,6 +49,14 @@ class LogPrivacyTests(unittest.TestCase):
         self.assertEqual(mask_invoice_number("26322000003477340276"), "26***76")
         self.assertIn("https://example.com/<redacted:", mask_url_for_log("https://example.com/a?b=c"))
 
+    def test_mask_sender_header_extracts_address_before_masking(self):
+        self.assertEqual(
+            mask_sender_header('"GitHub" <notifications@github.com>'),
+            "n***s@github.com",
+        )
+        self.assertEqual(mask_sender_header("plain@example.com"), "p***n@example.com")
+        self.assertEqual(mask_sender_header(""), "")
+
     def test_privacy_filter_sanitizes_rendered_log_record(self):
         record = logging.LogRecord(
             name="invoice_fetch",
@@ -65,6 +75,40 @@ class LogPrivacyTests(unittest.TestCase):
         self.assertNotIn("4050", rendered)
         self.assertNotIn("餐饮管理有限公司", rendered)
         self.assertNotIn("26322000003477340276", rendered)
+
+    def test_gui_write_log_sanitizes_before_file_mirror(self):
+        from scripts.invoice_fetch.gui.log_diagnostics_mixin import LogDiagnosticsMixin
+
+        target = Mock()
+        with patch("logging.getLogger") as get_logger:
+            LogDiagnosticsMixin.write_log(
+                target,
+                "user@example.com https://example.com/path?token=secret",
+            )
+
+        mirrored = get_logger.return_value.log.call_args.args[1]
+        self.assertNotIn("user@example.com", mirrored)
+        self.assertNotIn("token=secret", mirrored)
+        target.txt_log.append.assert_called_once_with(mirrored)
+
+    def test_gui_write_log_can_skip_file_mirror_for_forwarded_messages(self):
+        from scripts.invoice_fetch.gui.log_diagnostics_mixin import LogDiagnosticsMixin
+
+        target = Mock()
+        with patch("logging.getLogger") as get_logger:
+            LogDiagnosticsMixin.write_log(
+                target,
+                "already logged",
+                mirror_to_file=False,
+            )
+
+        get_logger.assert_not_called()
+
+    def test_exception_sanitization(self):
+        exc = Exception("Connection failed to user@example.com with token=secret")
+        sanitized = sanitize_log_message(str(exc))
+        self.assertNotIn("user@example.com", sanitized)
+        self.assertIn("u***r@example.com", sanitized)
 
 
 if __name__ == "__main__":
