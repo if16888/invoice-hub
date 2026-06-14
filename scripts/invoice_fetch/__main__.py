@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,16 @@ def __getattr__(name: str):
 
 _log = logging.getLogger("invoice_fetch")
 _log.addFilter(PrivacyLogFilter())
+
+
+@dataclass(frozen=True)
+class PendingEmailResult:
+    """Structured pending-email outcome with legacy truthiness compatibility."""
+
+    status: str
+
+    def __bool__(self) -> bool:
+        return self.status in {"recorded", "duplicate", "manual_required"}
 
 STATUS_LABELS = {
     review_status.TO_REVIEW: "待审核",
@@ -128,6 +139,8 @@ def _setup_logging(verbose: bool = False):
 
     # Suppress verbose third-party loggers to clean up output
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
+    for logger_name in ("urllib3", "keyring", "asyncio", "win32ctypes", "PIL"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
@@ -3085,6 +3098,20 @@ def _process_email(
                 _log.warning("  链接下载未获得官方 PDF/OFD，保留为待下载重试")
             _log.warning("  ⚠️ 未发现可用的发票附件或下载链接，且无法从主题提取有效信息")
 
+    diagnostics = getattr(link_dl, "last_download_diagnostics", {}) or {}
+    if recorded > 0:
+        process_outcome = "recorded"
+    elif invoice_pdfs or downloaded:
+        process_outcome = "parse_failed"
+    elif int(diagnostics.get("attempted", 0) or 0) > 0:
+        process_outcome = "download_failed"
+    else:
+        process_outcome = "no_candidate_link"
+    try:
+        link_dl.last_process_outcome = process_outcome
+    except (AttributeError, TypeError):
+        pass
+
     return recorded
 
 
@@ -3657,6 +3684,11 @@ def _scan_mailboxes_with_db(
     pending_manual = 0
     failed = 0
     failed_summaries: list[str] = []
+    rule_excluded = 0
+    no_candidate_link = 0
+    download_failed = 0
+    parse_failed = 0
+    ai_auth_failed = False
 
     account_contexts: list[dict] = []
     for account in accounts:
@@ -3720,7 +3752,15 @@ def _scan_mailboxes_with_db(
                         f"Scan complete for {mask_email(email_addr)}: "
                         f"{len(headers)} headers, {inserted_headers} new headers"
                     )
-                    _run_classify(db, ai_cfg, no_ai, mailbox_key=mailbox_key)
+                    classify_result = _run_classify(
+                        db,
+                        ai_cfg,
+                        no_ai or ai_auth_failed,
+                        mailbox_key=mailbox_key,
+                    ) or {}
+                    if classify_result.get("auth_failed"):
+                        ai_auth_failed = True
+                        emit("AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类。")
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
                 failed_summaries.append(f"scan failed for {mask_email(email_addr)}: {exc}")
@@ -3732,7 +3772,10 @@ def _scan_mailboxes_with_db(
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
             try:
-                pending = db.get_invoice_emails_to_download(mailbox_key=mailbox_key)
+                pending = db.get_invoice_emails_to_download(
+                    mailbox_key=mailbox_key,
+                    bypass_cooldown=retry_failed,
+                )
                 if not pending:
                     emit(f"No invoice emails pending download for {mask_email(email_addr)}")
                     continue
@@ -3744,12 +3787,31 @@ def _scan_mailboxes_with_db(
                     port=account.get("imap", {}).get("port", 993),
                 ) as fetcher:
                     for row in pending:
+                        rule_result, rule_reason = rule_classify(
+                            row.get("subject", ""),
+                            row.get("sender", ""),
+                        )
+                        if rule_result == 0:
+                            db.classify_email(
+                                row["uid"],
+                                False,
+                                "rule_pre_download",
+                                rule_reason,
+                                mailbox_key=mailbox_key,
+                            )
+                            db.clear_email_download_failure(mailbox_key, row["uid"])
+                            rule_excluded += 1
+                            emit(
+                                "Rule excluded historical false positive: "
+                                f"{mask_uid(row.get('uid', 0))}"
+                            )
+                            continue
                         classified_invoice += 1
                         try:
                             before_active_count = db.count_invoices()
                             before_total_count = db.count_invoices(include_deleted=True)
                             before_pending_manual = db.count_pending_manual_invoices()
-                            recorded = _handle_pending_email(
+                            outcome = _handle_pending_email(
                                 row=row,
                                 fetcher=fetcher,
                                 folder=folder,
@@ -3763,7 +3825,12 @@ def _scan_mailboxes_with_db(
                             after_active_count = db.count_invoices()
                             after_total_count = db.count_invoices(include_deleted=True)
                             after_pending_manual = db.count_pending_manual_invoices()
-                            if recorded:
+                            if isinstance(outcome, PendingEmailResult):
+                                outcome_status = outcome.status
+                            else:
+                                outcome_status = "recorded" if outcome else "download_failed"
+                            if outcome:
+                                db.clear_email_download_failure(mailbox_key, row["uid"])
                                 downloaded_emails += 1
                                 pending_manual += max(
                                     0,
@@ -3781,11 +3848,38 @@ def _scan_mailboxes_with_db(
                                 restored_deleted += restored_delta
                                 if new_delta == 0 and restored_delta == 0:
                                     duplicates += 1
+                            elif outcome_status == "no_candidate_link":
+                                no_candidate_link += 1
+                                db.record_email_download_failure(
+                                    mailbox_key,
+                                    row["uid"],
+                                    "no_candidate_link",
+                                    "No candidate invoice link or attachment",
+                                )
                             else:
+                                if outcome_status == "parse_failed":
+                                    parse_failed += 1
+                                else:
+                                    download_failed += 1
                                 failed += 1
-                                failed_summaries.append(f"Failed to process uid={row.get('uid')}")
+                                db.record_email_download_failure(
+                                    mailbox_key,
+                                    row["uid"],
+                                    outcome_status,
+                                    f"Failed to process {mask_uid(row.get('uid', 0))}",
+                                )
+                                failed_summaries.append(
+                                    f"{outcome_status}: {mask_uid(row.get('uid', 0))}"
+                                )
                         except Exception as exc:
+                            download_failed += 1
                             failed += 1
+                            db.record_email_download_failure(
+                                mailbox_key,
+                                row["uid"],
+                                "download_failed",
+                                sanitize_log_message(str(exc)),
+                            )
                             failed_summaries.append(str(exc))
                             emit(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}")
             except Exception as exc:
@@ -3813,6 +3907,13 @@ def _scan_mailboxes_with_db(
         "failed": failed,
         "failed_count": failed,
         "failed_summaries": failed_summaries,
+        "rule_excluded": rule_excluded,
+        "no_candidate_link": no_candidate_link,
+        "download_failed": download_failed,
+        "manual_required": pending_manual,
+        "parse_failed": parse_failed,
+        "pending_retry": download_failed + parse_failed,
+        "ai_auth_failed": ai_auth_failed,
         "accounts_total": accounts_total,
         "accounts_success": accounts_success,
         "accounts_failed": accounts_failed,
@@ -3826,7 +3927,12 @@ def _scan_mailboxes_with_db(
         ],
     }
 
-def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool, mailbox_key: str | None = None):
+def _run_classify(
+    db: InvoiceDB,
+    ai_cfg: dict,
+    no_ai: bool,
+    mailbox_key: str | None = None,
+) -> dict:
     """Run rule + AI classification on unclassified emails."""
     if mailbox_key is None:
         all_unclassified = db.get_unclassified_emails()
@@ -3900,6 +4006,7 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool, mailbox_key: str | N
                 batch_size=ai_cfg.get("batch_size", 20),
             )
             results = ai.classify_batch(still_unknown)
+            auth_failed = bool(getattr(ai, "auth_failed", False))
             classified_results = [r for r in results if r.get("is_invoice") is not None]
             pending_count = len(results) - len(classified_results)
             db.bulk_classify([
@@ -3908,8 +4015,12 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool, mailbox_key: str | N
                  "mailbox_key": mailbox_key or "legacy"}
                 for r in classified_results
             ], mailbox_key=mailbox_key or "legacy")
-            if pending_count:
+            if pending_count and not auth_failed:
                 _log.warning("⚠️ AI 分类 API 失败，%d 封邮件将在下次运行时重试", pending_count)
+
+            if auth_failed:
+                _log.error("AI API Key 鉴权失败，请检查设置")
+                return {"auth_failed": True}
 
             # Save confirmed senders to whitelist
             uid_to_sender = {
@@ -3941,6 +4052,7 @@ def _run_classify(db: InvoiceDB, ai_cfg: dict, no_ai: bool, mailbox_key: str | N
     stats = db.get_email_stats()
     _log.info("分类结果: 发票 %d, 非发票 %d, 未分类 %d",
               stats["invoice"], stats["not_invoice"], stats["unclassified"])
+    return {"auth_failed": False}
 
 
 def _print_stats(db: InvoiceDB, excel_path):
@@ -3972,7 +4084,7 @@ def _handle_pending_email(
     db: InvoiceDB,
     categories: dict,
     config: dict | None = None,
-) -> bool:
+) -> PendingEmailResult:
     """Fetch and process one pending invoice email.
 
     Returns True only when at least one invoice record was created. This avoids
@@ -3981,10 +4093,20 @@ def _handle_pending_email(
     msg = fetcher.fetch_by_uid(row["uid"], folder=folder)
     if not msg:
         _log.warning("  获取 %s 失败，跳过", mask_uid(row["uid"]))
-        return False
+        return PendingEmailResult("download_failed")
     if not msg.date:
         msg.date = row.get("mail_date", "")
 
+    try:
+        link_dl.last_download_diagnostics = {
+            "found_links": 0,
+            "candidate_links": 0,
+            "attempted": 0,
+            "failed": 0,
+        }
+        link_dl.last_process_outcome = ""
+    except (AttributeError, TypeError):
+        pass
     recorded = _process_email(
         msg,
         att_handler,
@@ -3997,10 +4119,39 @@ def _handle_pending_email(
     )
     if recorded > 0:
         db.mark_downloaded(row["uid"], mailbox_key=row.get("mailbox_key", "legacy"))
-        return True
+        return PendingEmailResult("recorded")
 
-    _log.warning("  %s 未成功入库，保留为待下载以便重试", mask_uid(row["uid"]))
-    return False
+    process_outcome = str(
+        getattr(link_dl, "last_process_outcome", "") or ""
+    )
+    if process_outcome in {
+        "no_candidate_link",
+        "download_failed",
+        "parse_failed",
+    }:
+        return PendingEmailResult(process_outcome)
+
+    diagnostics = getattr(link_dl, "last_download_diagnostics", {}) or {}
+    candidate_links = int(diagnostics.get("candidate_links", 0) or 0)
+    attempted = int(diagnostics.get("attempted", 0) or 0)
+    failed = int(diagnostics.get("failed", 0) or 0)
+    if candidate_links == 0:
+        _log.info(
+            "  %s 未找到候选发票链接或附件，不自动重试",
+            mask_uid(row["uid"]),
+        )
+        return PendingEmailResult("no_candidate_link")
+    if attempted > 0 and failed > 0:
+        _log.warning(
+            "  %s 候选链接下载失败，将按冷却策略重试",
+            mask_uid(row["uid"]),
+        )
+        return PendingEmailResult("download_failed")
+    _log.warning(
+        "  %s 下载内容解析失败，将按冷却策略重试",
+        mask_uid(row["uid"]),
+    )
+    return PendingEmailResult("parse_failed")
 
 
 def import_local_directory(

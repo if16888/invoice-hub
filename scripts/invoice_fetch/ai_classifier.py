@@ -40,6 +40,19 @@ _SYSTEM_PROMPT = """\
 """
 
 
+class AIAuthError(RuntimeError):
+    """Raised when an AI provider rejects the configured credential."""
+
+    def __init__(self, provider: str, model: str, status_code: int):
+        self.provider = provider
+        self.model = model
+        self.status_code = int(status_code)
+        super().__init__(
+            f"AI authentication failed: provider={provider}, "
+            f"model={model}, status={status_code}"
+        )
+
+
 class AIClassifier:
     """Batch email classifier using an optional cloud AI provider."""
 
@@ -48,6 +61,7 @@ class AIClassifier:
         self.provider = (provider or "none").lower()
         self.model = model or _DEFAULT_MODELS.get(self.provider, "")
         self.batch_size = batch_size
+        self.auth_failed = False
         self.api_key = ""
         if self.provider != "none":
             self.api_key = get_ai_api_key(self.provider)
@@ -74,8 +88,23 @@ class AIClassifier:
             total_batches = (total + self.batch_size - 1) // self.batch_size
             _log.info("  AI 分类: 批次 %d/%d (%d 封)",
                       batch_num, total_batches, len(chunk))
-            batch_result = self._call_api(chunk)
-            results.extend(batch_result)
+            try:
+                batch_result = self._call_api(chunk)
+                results.extend(batch_result)
+            except AIAuthError as exc:
+                self.auth_failed = True
+                _log.error(
+                    "AI API Key 鉴权失败，请检查设置: provider=%s, model=%s, status=%d",
+                    exc.provider,
+                    exc.model,
+                    exc.status_code,
+                )
+                remaining = emails[i:]
+                results.extend(self._mark_batch_unclassified(
+                    remaining,
+                    "AI 鉴权失败，已暂停本轮 AI 分类",
+                ))
+                break
         return results
 
     def _call_api(self, chunk: list[dict]) -> list[dict]:
@@ -161,6 +190,8 @@ class AIClassifier:
                 },
                 timeout=60,
             )
+        except AIAuthError:
+            raise
         except requests.RequestException as exc:
             _log.error(
                 "DeepSeek API 调用失败: provider=%s, model=%s, error=%s",
@@ -188,6 +219,8 @@ class AIClassifier:
                 },
                 timeout=60,
             )
+        except AIAuthError:
+            raise
         except requests.RequestException as exc:
             _log.error(
                 "Gemini API 调用失败: provider=%s, model=%s, error=%s",
@@ -214,6 +247,14 @@ class AIClassifier:
                 return resp
             except requests.RequestException as exc:
                 last_exc = exc
+                response = getattr(exc, "response", None)
+                status_code = getattr(response, "status_code", None)
+                if status_code in (401, 403):
+                    raise AIAuthError(
+                        self.provider,
+                        self.model,
+                        int(status_code),
+                    ) from exc
                 if attempt == 0:
                     _log.warning(
                         "AI 分类 API 失败，1 秒后重试: provider=%s, model=%s, error=%s",

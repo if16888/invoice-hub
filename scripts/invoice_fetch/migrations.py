@@ -286,3 +286,30 @@ def check_and_migrate(conn: sqlite3.Connection):
                 pass
             _log.exception("CRITICAL: Database migration to V6 failed! Error: %s", e)
             raise e
+
+    # 8. Migration to V7: Persist email download retry cooldowns
+    if version < 7:
+        _log.info("Migrating database schema: V6 -> V7")
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS email_download_failures (
+                    mailbox_key TEXT NOT NULL DEFAULT 'legacy',
+                    uid INTEGER NOT NULL,
+                    reason_code TEXT NOT NULL DEFAULT '',
+                    fail_count INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at TEXT,
+                    last_error_at TEXT NOT NULL DEFAULT '',
+                    last_error_summary TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(mailbox_key, uid)
+                )
+            """)
+            cursor.execute("PRAGMA user_version = 7")
+            conn.commit()
+            _log.info("Database migration to V7 completed successfully.")
+        except Exception as e:
+            try:
+                conn.rollback()
+            except sqlite3.OperationalError:
+                pass
+            _log.exception("CRITICAL: Database migration to V7 failed! Error: %s", e)
+            raise e

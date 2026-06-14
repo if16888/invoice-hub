@@ -2,6 +2,7 @@
 """Log drawer and diagnostic metadata behavior for the main window."""
 
 import json
+import logging
 import sys
 
 from PySide6.QtCore import QTimer
@@ -122,10 +123,18 @@ class LogDiagnosticsMixin:
             QApplication.clipboard().setText(log_text)
             self.statusBar().showMessage("日志已复制到剪贴板", 2000)
 
-    def write_log(self, text: str):
+    def write_log(
+        self,
+        text: str,
+        level: int = logging.INFO,
+        mirror_to_file: bool = True,
+    ):
         """Append log line to bottom operation log panel."""
-        self.txt_log.append(sanitize_log_message(text))
+        sanitized = sanitize_log_message(text)
+        self.txt_log.append(sanitized)
         self.txt_log.ensureCursorVisible()
+        if mirror_to_file:
+            logging.getLogger("invoice_fetch.gui").log(level, sanitized)
 
     def _open_runtime_dir(self):
         """Open the local runtime directory safely."""

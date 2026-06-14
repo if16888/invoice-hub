@@ -66,10 +66,9 @@ def scan_email_and_download(
 
     def log(msg: str):
         msg = sanitize_log_message(str(msg or ""))
+        _log.info(msg)
         if log_callback:
             log_callback(msg)
-        else:
-            _log.info(msg)
 
     try:
         cfg = load_config_safe(config_path)

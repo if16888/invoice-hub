@@ -6,7 +6,7 @@ import json
 import logging
 import sqlite3
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -219,22 +219,95 @@ class InvoiceDB:
             )
         self._conn.commit()
 
-    def get_invoice_emails_to_download(self, mailbox_key: str | None = None) -> list[dict]:
+    def get_invoice_emails_to_download(
+        self,
+        mailbox_key: str | None = None,
+        *,
+        bypass_cooldown: bool = False,
+    ) -> list[dict]:
         """Return emails marked as invoice but not yet downloaded."""
+        cooldown_clause = ""
+        if not bypass_cooldown:
+            cooldown_clause = """
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM email_download_failures f
+                    WHERE f.mailbox_key = emails.mailbox_key
+                      AND f.uid = emails.uid
+                      AND (
+                          f.reason_code = 'no_candidate_link'
+                          OR COALESCE(f.next_retry_at, '') > datetime('now', 'localtime')
+                      )
+                )
+            """
         if mailbox_key is None:
             rows = self._conn.execute(
                 "SELECT mailbox_key, uid, subject, sender, mail_date "
                 "FROM emails WHERE is_invoice = 1 AND downloaded = 0 "
+                f"{cooldown_clause} "
                 "ORDER BY mail_date DESC"
             ).fetchall()
         else:
             rows = self._conn.execute(
                 "SELECT mailbox_key, uid, subject, sender, mail_date "
                 "FROM emails WHERE is_invoice = 1 AND downloaded = 0 AND mailbox_key = ? "
+                f"{cooldown_clause} "
                 "ORDER BY mail_date DESC",
                 (self._normalize_mailbox_key(mailbox_key),),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def record_email_download_failure(
+        self,
+        mailbox_key: str,
+        uid: int,
+        reason_code: str,
+        error_summary: str = "",
+    ) -> None:
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
+        row = self._conn.execute(
+            "SELECT fail_count FROM email_download_failures "
+            "WHERE mailbox_key = ? AND uid = ?",
+            (mailbox_key, uid),
+        ).fetchone()
+        fail_count = int(row["fail_count"] if row else 0) + 1
+        if reason_code == "no_candidate_link":
+            next_retry_at = None
+        else:
+            hours = 1 if fail_count == 1 else 6 if fail_count == 2 else 24
+            next_retry_at = (
+                datetime.now() + timedelta(hours=hours)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        self._conn.execute(
+            """
+            INSERT INTO email_download_failures (
+                mailbox_key, uid, reason_code, fail_count, next_retry_at,
+                last_error_at, last_error_summary
+            ) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), ?)
+            ON CONFLICT(mailbox_key, uid) DO UPDATE SET
+                reason_code = excluded.reason_code,
+                fail_count = excluded.fail_count,
+                next_retry_at = excluded.next_retry_at,
+                last_error_at = excluded.last_error_at,
+                last_error_summary = excluded.last_error_summary
+            """,
+            (
+                mailbox_key,
+                uid,
+                reason_code,
+                fail_count,
+                next_retry_at,
+                str(error_summary or "")[:500],
+            ),
+        )
+        self._conn.commit()
+
+    def clear_email_download_failure(self, mailbox_key: str, uid: int) -> None:
+        self._conn.execute(
+            "DELETE FROM email_download_failures WHERE mailbox_key = ? AND uid = ?",
+            (self._normalize_mailbox_key(mailbox_key), uid),
+        )
+        self._conn.commit()
 
     def mark_downloaded(self, uid: int, mailbox_key: str = "legacy"):
         """Mark an email as downloaded/processed."""

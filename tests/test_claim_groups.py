@@ -77,7 +77,7 @@ class ClaimGroupsTests(unittest.TestCase):
             # Check user_version
             cursor.execute("PRAGMA user_version")
             version = cursor.fetchone()[0]
-            self.assertIn(version, (2, 3, 4, 5, 6))
+            self.assertIn(version, (2, 3, 4, 5, 6, 7))
 
             # Check claim_groups columns
             cursor.execute("PRAGMA table_info(claim_groups)")
@@ -1761,6 +1761,224 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertEqual(len(res["failed_summaries"]), 1)
             self.assertIn("synthetic parser failure", res["failed_summaries"][0])
             self.assertTrue(any("Failed to process" in line for line in logs))
+
+    def test_scan_email_excludes_historical_github_false_positive_before_fetch(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            fetch_calls = []
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def fetch_by_uid(self, uid, folder="INBOX"):
+                self.fetch_calls.append(uid)
+                raise AssertionError("rule-excluded email must not be fetched")
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "rule_excluded.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email": {"address": "synthetic_user@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"folder": "INBOX", "months_back": 1},
+                "ai": {"provider": "none"},
+                "categories": {},
+            }), encoding="utf-8")
+            with InvoiceDB(db_path) as db:
+                db.upsert_email(
+                    7001,
+                    "[if16888/invoice-hub] Workflow run failed",
+                    "GitHub <notifications@github.com>",
+                    "2026-06-14",
+                )
+                db.classify_email(7001, True, by="legacy_ai", reason="old result")
+
+            with patch(
+                "scripts.invoice_fetch.__main__.get_auth_code",
+                return_value="synthetic-auth-code",
+            ), patch(
+                "scripts.invoice_fetch.__main__.MailFetcher",
+                FakeMailFetcher,
+            ):
+                result = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                )
+
+            with InvoiceDB(db_path) as db:
+                row = db._conn.execute(
+                    "SELECT is_invoice, downloaded, classify_by FROM emails WHERE uid = 7001"
+                ).fetchone()
+
+        self.assertEqual(FakeMailFetcher.fetch_calls, [])
+        self.assertEqual(result["rule_excluded"], 1)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertEqual(tuple(row), (0, 0, "rule_pre_download"))
+
+    def test_download_result_buckets_do_not_count_no_candidate_as_failure(self):
+        from scripts.invoice_fetch import __main__ as cli_main
+
+        result = cli_main.PendingEmailResult("no_candidate_link")
+        self.assertFalse(result)
+        self.assertEqual(result.status, "no_candidate_link")
+
+    def test_download_failure_backoff_and_manual_bypass(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = InvoiceDB(Path(td) / "retry.db")
+            db.upsert_email(
+                7101,
+                "Synthetic invoice",
+                "billing@example.com",
+                "2026-06-14",
+            )
+            db.classify_email(7101, True, by="test")
+            db.record_email_download_failure(
+                "legacy",
+                7101,
+                "download_failed",
+                "synthetic timeout",
+            )
+
+            cooled = db.get_invoice_emails_to_download()
+            manual = db.get_invoice_emails_to_download(bypass_cooldown=True)
+            db._conn.execute(
+                "UPDATE email_download_failures "
+                "SET next_retry_at = '2000-01-01 00:00:00' "
+                "WHERE mailbox_key = 'legacy' AND uid = 7101"
+            )
+            db._conn.commit()
+            after_cooldown = db.get_invoice_emails_to_download()
+            row = db._conn.execute(
+                "SELECT fail_count, next_retry_at FROM email_download_failures "
+                "WHERE mailbox_key = 'legacy' AND uid = 7101"
+            ).fetchone()
+            db.close()
+
+        self.assertEqual(cooled, [])
+        self.assertEqual([item["uid"] for item in manual], [7101])
+        self.assertEqual([item["uid"] for item in after_cooldown], [7101])
+        self.assertEqual(row["fail_count"], 1)
+        self.assertTrue(row["next_retry_at"])
+
+    def test_scan_summary_separates_no_candidate_and_download_failure(self):
+        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "bucketed.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email": {"address": "synthetic_user@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"folder": "INBOX", "months_back": 1},
+                "ai": {"provider": "none"},
+                "categories": {},
+            }), encoding="utf-8")
+            with InvoiceDB(db_path) as db:
+                for uid in (7201, 7202):
+                    db.upsert_email(
+                        uid,
+                        f"电子发票 synthetic {uid}",
+                        "billing@example.com",
+                        "2026-06-14",
+                    )
+                    db.classify_email(uid, True, by="test")
+
+            with patch(
+                "scripts.invoice_fetch.__main__.get_auth_code",
+                return_value="synthetic-auth-code",
+            ), patch(
+                "scripts.invoice_fetch.__main__.MailFetcher",
+                FakeMailFetcher,
+            ), patch(
+                "scripts.invoice_fetch.__main__._handle_pending_email",
+                side_effect=[
+                    cli_main.PendingEmailResult("no_candidate_link"),
+                    cli_main.PendingEmailResult("download_failed"),
+                ],
+            ):
+                result = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    download_only=True,
+                )
+
+        self.assertEqual(result["no_candidate_link"], 1)
+        self.assertEqual(result["download_failed"], 1)
+        self.assertEqual(result["parse_failed"], 0)
+        self.assertEqual(result["failed_count"], 1)
+
+    def test_ai_auth_failure_pauses_later_mailbox_ai_calls(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def scan_headers(self, **kwargs):
+                return []
+
+        calls = []
+
+        def fake_run_classify(db, ai_cfg, no_ai, mailbox_key=None):
+            calls.append((mailbox_key, no_ai))
+            return {"auth_failed": len(calls) == 1}
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "ai_pause.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email_accounts": [
+                    {"address": "account_a@example.com", "enabled": True},
+                    {"address": "account_b@example.com", "enabled": True},
+                ],
+                "ai": {"provider": "deepseek"},
+                "categories": {},
+            }), encoding="utf-8")
+
+            with patch(
+                "scripts.invoice_fetch.__main__.get_auth_code",
+                return_value="synthetic-auth-code",
+            ), patch(
+                "scripts.invoice_fetch.__main__.MailFetcher",
+                FakeMailFetcher,
+            ), patch(
+                "scripts.invoice_fetch.__main__._run_classify",
+                side_effect=fake_run_classify,
+            ):
+                result = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    scan_only=True,
+                )
+
+        self.assertEqual(calls[0][1], False)
+        self.assertEqual(calls[1][1], True)
+        self.assertTrue(result["ai_auth_failed"])
 
     def test_scan_email_processes_multiple_mailboxes_sequentially(self):
         from scripts.invoice_fetch.services import scan_email_and_download
