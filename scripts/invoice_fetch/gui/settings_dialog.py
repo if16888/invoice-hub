@@ -847,6 +847,9 @@ class SettingsDialog(QDialog):
 
         try:
             save_config(self.cfg)
+            from ..ai_classifier import clear_provider_session_paused
+            clear_provider_session_paused(ai_provider)
+
             self.parent.config = _load_config_safe_compat()
             self.parent.write_log(f"⚙️ [设置保存] 全局 config.json AI 辅助分类配置已成功保存。")
             QMessageBox.information(self, "成功", "AI 分类配置已成功保存！")

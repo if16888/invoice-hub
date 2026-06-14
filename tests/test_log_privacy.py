@@ -104,6 +104,12 @@ class LogPrivacyTests(unittest.TestCase):
 
         get_logger.assert_not_called()
 
+    def test_exception_sanitization(self):
+        exc = Exception("Connection failed to user@example.com with token=secret")
+        sanitized = sanitize_log_message(str(exc))
+        self.assertNotIn("user@example.com", sanitized)
+        self.assertIn("u***r@example.com", sanitized)
+
 
 if __name__ == "__main__":
     unittest.main()

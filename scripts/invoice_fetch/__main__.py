@@ -3763,8 +3763,8 @@ def _scan_mailboxes_with_db(
                         emit("AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类。")
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
-                failed_summaries.append(f"scan failed for {mask_email(email_addr)}: {exc}")
-                emit(f"Scan failed for {mask_email(email_addr)}: {exc}")
+                failed_summaries.append(sanitize_log_message(f"scan failed for {mask_email(email_addr)}: {exc}"))
+                emit(sanitize_log_message(f"Scan failed for {mask_email(email_addr)}: {exc}"))
 
     if not scan_only:
         for account in account_contexts:
@@ -3880,12 +3880,12 @@ def _scan_mailboxes_with_db(
                                 "download_failed",
                                 sanitize_log_message(str(exc)),
                             )
-                            failed_summaries.append(str(exc))
-                            emit(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}")
+                            failed_summaries.append(sanitize_log_message(str(exc)))
+                            emit(sanitize_log_message(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}"))
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
-                failed_summaries.append(f"download failed for {mask_email(email_addr)}: {exc}")
-                emit(f"Download failed for {mask_email(email_addr)}: {exc}")
+                failed_summaries.append(sanitize_log_message(f"download failed for {mask_email(email_addr)}: {exc}"))
+                emit(sanitize_log_message(f"Download failed for {mask_email(email_addr)}: {exc}"))
 
     link_dl.close()
     accounts_failed = len(failed_account_keys)
@@ -3994,6 +3994,12 @@ def _run_classify(
     # AI classification
     still_unknown = db.get_unclassified_emails(mailbox_key=mailbox_key)
     provider = str(ai_cfg.get("provider", "none") or "none").strip().lower()
+
+    from .ai_classifier import is_provider_session_paused
+    if still_unknown and provider != "none" and is_provider_session_paused(provider):
+        _log.warning("AI 已因鉴权失败暂停，请检查 API Key。")
+        return {"auth_failed": True}
+
     ai_disabled = no_ai or provider in {"", "none", "off", "disabled"}
     if still_unknown and not ai_disabled:
         try:
