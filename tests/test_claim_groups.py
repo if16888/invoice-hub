@@ -4809,6 +4809,29 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_scan_summary_counts_result_buckets_as_link_risk_without_log_match(self):
+        try:
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+            window = InvoiceReviewApp.__new__(InvoiceReviewApp)
+            summary = window._build_scan_summary(
+                {
+                    "download_failed": 2,
+                    "no_candidate_link": 1,
+                    "parse_failed": 3,
+                },
+                logs=[],
+            )
+
+            self.assertEqual(summary["download_failed"], 2)
+            self.assertEqual(summary["no_candidate_link"], 1)
+            self.assertEqual(summary["parse_failed"], 3)
+            self.assertEqual(summary["link_failed"], 6)
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_status_filter_does_not_zero_other_filter_counts(self):
         try:
             from PySide6.QtWidgets import QApplication

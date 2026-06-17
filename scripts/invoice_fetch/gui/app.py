@@ -3304,6 +3304,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             res.get("manual_review_required", res.get("pending_manual", 0)) or 0
         )
         downloaded = int(res.get("downloaded", 0) or 0)
+        no_candidate_link = int(res.get("no_candidate_link", 0) or 0)
+        download_failed = int(res.get("download_failed", 0) or 0)
+        parse_failed = int(res.get("parse_failed", 0) or 0)
+        link_failed = max(link_failed, no_candidate_link + download_failed + parse_failed)
         failed_summaries = [str(x or "") for x in (res.get("failed_summaries") or [])]
         return {
             "scanned_headers": int(
@@ -3332,9 +3336,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ),
             "link_failed": link_failed,
             "rule_excluded": int(res.get("rule_excluded", 0) or 0),
-            "no_candidate_link": int(res.get("no_candidate_link", 0) or 0),
-            "download_failed": int(res.get("download_failed", 0) or 0),
-            "parse_failed": int(res.get("parse_failed", 0) or 0),
+            "no_candidate_link": no_candidate_link,
+            "download_failed": download_failed,
+            "parse_failed": parse_failed,
             "manual_review_required": manual_review_required,
             "pending_retry": max(int(res.get("pending_retry", 0) or 0), pending_retry),
             "failed": int(res.get("failed", res.get("failed_count", 0)) or 0),

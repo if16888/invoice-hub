@@ -5,6 +5,7 @@ import tempfile
 import shutil
 import os
 import time
+import subprocess
 from pathlib import Path
 from email.message import EmailMessage
 
@@ -24,6 +25,21 @@ class TestLinkDownloader(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
+
+    def test_link_downloader_class_is_defined_once(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        pattern = "class " + "LinkDownloader"
+        result = subprocess.run(
+            ["git", "grep", "-n", pattern],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        matches = [line for line in result.stdout.splitlines() if line]
+
+        self.assertEqual(len(matches), 1, result.stdout)
+        self.assertIn("scripts/invoice_fetch/link_downloader.py", matches[0])
 
     def test_link_priority_routing(self):
         # 1. 构造 HTML，包含高优先级“下载发票”和多个官网/低优先级链接
