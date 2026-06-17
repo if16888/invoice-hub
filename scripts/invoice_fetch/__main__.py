@@ -3920,6 +3920,7 @@ def _scan_mailboxes_with_db(
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
             pending_for_account: list[dict] = []
+            handled_pending_uids: set[int] = set()
             try:
                 pending_for_account = db.get_invoice_emails_to_download(
                     mailbox_key=mailbox_key,
@@ -3954,6 +3955,7 @@ def _scan_mailboxes_with_db(
                                 "Rule excluded historical false positive: "
                                 f"{mask_uid(row.get('uid', 0))}"
                             )
+                            handled_pending_uids.add(int(row["uid"]))
                             continue
                         classified_invoice += 1
                         try:
@@ -4033,15 +4035,20 @@ def _scan_mailboxes_with_db(
                             )
                             failed_summaries.append(sanitize_log_message(str(exc)))
                             emit(sanitize_log_message(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}"))
+                        handled_pending_uids.add(int(row["uid"]))
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
-                pending_count = len(pending_for_account)
+                unfinished_rows = [
+                    row for row in pending_for_account
+                    if int(row["uid"]) not in handled_pending_uids
+                ]
+                pending_count = len(unfinished_rows)
                 if pending_count:
                     classified_invoice += pending_count
                     download_failed += pending_count
                     failed += pending_count
                     error_summary = sanitize_log_message(str(exc))
-                    for row in pending_for_account:
+                    for row in unfinished_rows:
                         db.record_email_download_failure(
                             mailbox_key,
                             row["uid"],
@@ -4063,6 +4070,12 @@ def _scan_mailboxes_with_db(
                 else:
                     failed_summaries.append(sanitize_log_message(f"download failed for {mask_email(email_addr)}: {exc}"))
                     emit(sanitize_log_message(f"Download failed for {mask_email(email_addr)}: {exc}"))
+
+    if ai_auth_failed:
+        pending_total = len(db.get_unclassified_emails())
+        if pending_total > ai_pending_classification:
+            ai_pending_classification = pending_total
+            emit(f"AI 已暂停，{ai_pending_classification} 封邮件待分类。")
 
     link_dl.close()
     accounts_failed = len(failed_account_keys)

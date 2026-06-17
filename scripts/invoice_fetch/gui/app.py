@@ -79,6 +79,19 @@ def _bucket_redownload_status(status: str) -> str:
     return "download_failed"
 
 
+def _is_file_valid_and_openable(path) -> bool:
+    if not path:
+        return False
+    try:
+        if not os.path.exists(path):
+            return False
+        with open(path, "rb") as f:
+            f.read(10)
+        return True
+    except Exception:
+        return False
+
+
 def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details: list[str] | None = None) -> str:
     failure_details = failure_details or []
     msg = (
@@ -89,6 +102,9 @@ def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details
         f"下载失败: {int(buckets.get('download_failed', 0) or 0)} 张\n"
         f"无候选链接: {int(buckets.get('no_candidate_link', 0) or 0)} 张"
     )
+    if int(buckets.get("duplicate_only", 0) or 0) > 0 and int(buckets.get("file_restored", 0) or 0) == 0:
+        msg += "\n\n已确认是已有发票，但未恢复原件文件。可能需要手动补充原件或稍后重试。"
+
     if failure_details:
         msg += "\n\n以下发票仍然失败:\n" + "\n".join(failure_details[:10])
         if len(failure_details) > 10:
@@ -98,7 +114,23 @@ def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details
 
 class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def __init__(self, db_path: Path, splash=None, startup_probe: bool = False):
+        # Guard against invalid QFont point size warning (point size <= 0)
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QFont
+        app = QApplication.instance()
+        if app:
+            f = app.font()
+            if f.pointSize() <= 0:
+                f.setPointSize(9)
+                app.setFont(f)
+
         super().__init__()
+        # Guard main window font as well
+        f = self.font()
+        if f.pointSize() <= 0:
+            f.setPointSize(9)
+            self.setFont(f)
+
         self.splash = splash
         self.startup_probe = startup_probe
         import time as _time_mod
@@ -1512,7 +1544,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 buyer_warning=buyer_check_warning,
                 date_warning=get_date_warning(inv),
             )
-            if buyer_check_warning == "购方抬头不匹配，可能导致退单":
+            if buyer_check_warning.startswith("购买方抬头不匹配"):
                 # Buyer title risk surfaced near buyer field, not in summary card.
                 cfg = load_config_safe()
                 expected = str(cfg.get("reimbursement", {}).get("buyer_name") or "").strip()
@@ -1978,6 +2010,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     reread_status = getattr(reread_ok, "status", "")
                     if reread_ok:
                         status = reread_status or "recorded"
+
+                        if status == "duplicate":
+                            refreshed = self.db.get_invoice(inv_id)
+                            refreshed_att_path = refreshed.get("attachment_path") if refreshed else None
+                            resolved_path = self._resolve_attachment_path(refreshed_att_path) if refreshed_att_path else None
+
+                            file_ok = _is_file_valid_and_openable(resolved_path)
+                            if not file_ok:
+                                status = "download_failed"
+
                         bucket = _bucket_redownload_status(status)
                         redownload_buckets[bucket] += 1
                         if bucket == "file_restored":
@@ -1991,7 +2033,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         else:
                             reread_failed_count += 1
                             failed_count += 1
-                            download_failed_files.append(f"发票 ID {inv_id}: {status}")
+                            diagnostics = getattr(downloader, "last_download_diagnostics", {}) or {}
+                            attempted = int(diagnostics.get("attempted", 0) or 0)
+                            failed = int(diagnostics.get("failed", 0) or 0)
+                            if attempted > 0 and failed > 0:
+                                fail_reason = "链接下载失败并且未恢复原件"
+                            else:
+                                fail_reason = "未恢复原件文件"
+                            download_failed_files.append(f"发票 ID {inv_id}: {fail_reason}")
+                            self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件后仍未成功恢复原件")
                         continue
 
                     if reread_status == "no_candidate_link":
@@ -2034,7 +2084,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if no_url_count:
             msg += f"\n\n{no_url_count} 张没有直接下载链接，已尝试从邮件重新读取。"
 
-        QMessageBox.information(self, "重新下载结果", msg)
+        if (redownload_buckets.get("download_failed", 0) > 0 or
+            (redownload_buckets.get("duplicate_only", 0) > 0 and redownload_buckets.get("file_restored", 0) == 0)):
+            QMessageBox.warning(self, "重新下载结果", msg)
+        else:
+            QMessageBox.information(self, "重新下载结果", msg)
         self.write_log(
             "📥 [重新下载] 完成。"
             f"file_restored={redownload_buckets['file_restored']} "

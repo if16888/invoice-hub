@@ -44,6 +44,7 @@ QMainWindow {
 }
 QWidget {
     font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 9pt;
     color: #111827;
 }
 QLabel {

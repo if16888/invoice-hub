@@ -22,8 +22,8 @@ class ReimbursementValidationTests(unittest.TestCase):
         self.assertEqual(buyer_warning({"buyer_name": "\u793a\u4f8b\u79d1\u6280\u6709\u9650\u516c\u53f8"}, cfg), "")
         self.assertEqual(buyer_warning({"buyer_name": ""}, cfg), "\u8d2d\u65b9\u62ac\u5934\u5f85\u6838\u5bf9")
         self.assertEqual(
-            buyer_warning({"buyer_name": "\u5176\u4ed6\u516c\u53f8"}, cfg),
-            "\u8d2d\u65b9\u62ac\u5934\u4e0d\u5339\u914d\uff0c\u53ef\u80fd\u5bfc\u81f4\u9000\u5355",
+            buyer_warning({"buyer_name": "其他公司"}, cfg),
+            "购买方抬头不匹配：当前：其他公司；期望：示例科技有限公司",
         )
 
     def test_claim_export_records_buyer_warning_in_manifest_and_excel(self):
@@ -61,7 +61,7 @@ class ReimbursementValidationTests(unittest.TestCase):
                 )
 
             manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
-            warning = "购方抬头不匹配，可能导致退单"
+            warning = "购买方抬头不匹配：当前：其他公司；期望：示例科技有限公司"
             self.assertEqual(manifest["items"][0]["warning"], warning)
 
             wb = load_workbook(export_dir / "reimbursement.xlsx")
