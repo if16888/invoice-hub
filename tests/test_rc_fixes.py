@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests covering the 4 P1 fixes in Invoice Hub v0.1.3-rc1."""
+"""Unit tests covering the 4 P1 fixes in Invoice Hub v0.1.3-rc2."""
 
 import os
 import sys
