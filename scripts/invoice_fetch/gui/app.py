@@ -1313,7 +1313,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         claim_idx = self.combo_claims.currentIndex() if hasattr(self, "combo_claims") else -1
         if claim_idx < 0:
-            self.lbl_claim_total.setText("当前报销组 0 张｜合计 ¥0.00")
+            self.lbl_claim_total.setText("当前报销组 0 张，合计 ¥0.00；当前发票未加入")
+            if hasattr(self, "btn_add_to_claim"):
+                self.btn_add_to_claim.setText("加入当前发票")
+                self.btn_add_to_claim.setEnabled(False)
             if hasattr(self, "btn_export"):
                 self.btn_export.setEnabled(False)
             return
@@ -1323,7 +1326,29 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except Exception as exc:
             _log.debug("Failed to calculate claim total: %s", exc)
             invoices = []
-        self.lbl_claim_total.setText(f"当前报销组 {format_amount_total(invoices)}")
+
+        txt = self.combo_claims.currentText()
+        if ": " in txt:
+            group_name = txt.split(": ", 1)[1]
+            if " [" in group_name:
+                group_name = group_name.split(" [", 1)[0]
+        else:
+            group_name = txt
+
+        current_invoice_in_group = False
+        if getattr(self, "current_invoice", None):
+            inv_id = self.current_invoice.get("id")
+            if any(i.get("id") == inv_id for i in invoices):
+                current_invoice_in_group = True
+
+        from ..reimbursement import amount_total
+        count, total, has_missing = amount_total(invoices)
+        suffix = "，部分金额缺失" if has_missing else ""
+        self.lbl_claim_total.setText(f"{group_name}：{count} 张，合计 ¥{total:.2f}{suffix}；当前发票{'已' if current_invoice_in_group else '未'}加入")
+        
+        if hasattr(self, "btn_add_to_claim"):
+            self.btn_add_to_claim.setText(f"加入到 {group_name}")
+            self.btn_add_to_claim.setEnabled(True)
         if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(True)
 
@@ -1479,14 +1504,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             note_content = str(inv.get("confirmed_note") or "").strip()
             self._detail_panel.set_note(note_content)
 
+            buyer_check_warning = self._buyer_warning(inv)
             # Update summary card via panel
             self._detail_panel.set_summary(
                 amount=total_amt, status=status, date=display_date,
                 category=category, seller=seller, number=inv_num,
+                buyer_warning=buyer_check_warning,
                 date_warning=get_date_warning(inv),
             )
-
-            buyer_check_warning = self._buyer_warning(inv)
             if buyer_check_warning == "购方抬头不匹配，可能导致退单":
                 # Buyer title risk surfaced near buyer field, not in summary card.
                 cfg = load_config_safe()
@@ -2766,6 +2791,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.txt_new_claim.clear()
             self._load_claims()
             self.statusBar().showMessage(f"成功创建报销组: '{name}'", 3000)
+            if hasattr(self._detail_panel, "new_claim_widget"):
+                self._detail_panel.new_claim_widget.setVisible(False)
+            if hasattr(self._detail_panel, "btn_new_claim_toggle"):
+                self._detail_panel.btn_new_claim_toggle.setVisible(True)
+            QMessageBox.information(self, "创建成功", f"已创建并选中报销组“{name}”；当前发票尚未加入。")
         except Exception as e:
             _log.error("Failed to create claim group: %s", e)
             QMessageBox.critical(self, "错误", f"新建报销组失败: {e}")

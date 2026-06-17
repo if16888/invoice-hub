@@ -136,9 +136,11 @@ class InvoiceDetailPanel(QWidget):
 
     def _toggle_new_claim_input(self):
         """Show/hide the new-claim-group input row."""
-        visible = not self.new_claim_widget.isVisible()
+        visible = self.new_claim_widget.isHidden()
         self.new_claim_widget.setVisible(visible)
-        self.btn_new_claim_toggle.setText("− 取消" if visible else "+ 新建报销组")
+        self.btn_new_claim_toggle.setVisible(not visible)
+        if visible:
+            self.txt_new_claim.setFocus()
 
     # ── public detail API ────────────────────────────────────────
 
@@ -180,6 +182,8 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_sum_category.setText("—")
         self.lbl_date_warning.clear()
         self.lbl_date_warning.setVisible(False)
+        self.lbl_buyer_warning.clear()
+        self.lbl_buyer_warning.setVisible(False)
         self._set_summary_placeholder()
         self.txt_buyer.setPlaceholderText("")
         # Notes
@@ -271,6 +275,12 @@ class InvoiceDetailPanel(QWidget):
         else:
             self.lbl_date_warning.setVisible(False)
 
+        if buyer_warning:
+            self.lbl_buyer_warning.setText(f"⚠️ {buyer_warning}")
+            self.lbl_buyer_warning.setVisible(True)
+        else:
+            self.lbl_buyer_warning.setVisible(False)
+
     def set_form_fields(self, *, inv_id: str = "", number: str = "",
                         date: str = "", invoice_date: str = "",
                         date_source: str = "", seller: str = "", buyer: str = "",
@@ -339,8 +349,36 @@ class InvoiceDetailPanel(QWidget):
 
     def set_dirty_state(self, dirty: bool):
         """Update save button and dirty hint."""
-        self.btn_save_draft.setEnabled(dirty)
-        self.lbl_dirty_hint.setText("已修改" if dirty else "")
+        was_dirty = self.btn_save_draft.isEnabled()
+        if dirty:
+            if hasattr(self, "_saved_timer") and self._saved_timer.isActive():
+                self._saved_timer.stop()
+            self.btn_save_draft.setProperty("class", "PrimaryBtn")
+            self.btn_save_draft.setEnabled(True)
+            self.lbl_dirty_hint.setText("已修改")
+            self.lbl_dirty_hint.setStyleSheet("color: #D97706; font-weight: bold;")
+        else:
+            self.btn_save_draft.setProperty("class", "OutlineBtn")
+            self.btn_save_draft.setEnabled(False)
+            if was_dirty:
+                self.lbl_dirty_hint.setText("已保存")
+                self.lbl_dirty_hint.setStyleSheet("color: #059669; font-weight: bold;")
+                from PySide6.QtCore import QTimer
+                if not hasattr(self, "_saved_timer"):
+                    self._saved_timer = QTimer(self)
+                    self._saved_timer.setSingleShot(True)
+                    self._saved_timer.timeout.connect(self._clear_saved_text)
+                self._saved_timer.start(2000)
+            else:
+                if not (hasattr(self, "_saved_timer") and self._saved_timer.isActive()):
+                    self.lbl_dirty_hint.setText("")
+        self._refresh_widget_style(self.btn_save_draft)
+
+    def _clear_saved_text(self):
+        try:
+            self.lbl_dirty_hint.setText("")
+        except RuntimeError:
+            pass
 
     def set_claim_summary(self, text: str = "", export_enabled: bool = False):
         """Update claim group summary text and export button state."""
@@ -565,6 +603,13 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_date_warning.setVisible(False)
         summary_layout.addWidget(self.lbl_date_warning)
 
+        # Buyer warning (hidden by default)
+        self.lbl_buyer_warning = QLabel("")
+        self.lbl_buyer_warning.setWordWrap(True)
+        self.lbl_buyer_warning.setProperty("class", "InlineWarning")
+        self.lbl_buyer_warning.setVisible(False)
+        summary_layout.addWidget(self.lbl_buyer_warning)
+
         # Row 5: review action buttons
         self.inline_review_layout = QHBoxLayout()
         self.inline_review_layout.setSpacing(8)
@@ -669,7 +714,7 @@ class InvoiceDetailPanel(QWidget):
         core_title_row.addWidget(self.btn_save_draft)
         detail_core_layout.addLayout(core_title_row)
 
-        # Form grid — 4 rows, readable layout
+        # Form grid — 3 rows, compact layout
         core_fields = QWidget()
         self.invoice_core_grid = QGridLayout(core_fields)
         self.invoice_core_grid.setContentsMargins(0, 0, 0, 0)
@@ -711,13 +756,11 @@ class InvoiceDetailPanel(QWidget):
         self.invoice_core_grid.addWidget(core_label("消费类型:"), 1, 2)
         self.invoice_core_grid.addWidget(self.combo_category, 1, 3)
 
-        # Row 2: seller (full width)
-        self.invoice_core_grid.addWidget(core_label("销售方:"), 2, 0)
-        self.invoice_core_grid.addWidget(self.txt_seller, 2, 1, 1, 3)
-
-        # Row 3: buyer (full width)
-        self.invoice_core_grid.addWidget(core_label("购买方:"), 3, 0)
-        self.invoice_core_grid.addWidget(self.txt_buyer, 3, 1, 1, 3)
+        # Row 2: buyer | seller (compactly sharing one row side-by-side)
+        self.invoice_core_grid.addWidget(core_label("购买方:"), 2, 0)
+        self.invoice_core_grid.addWidget(self.txt_buyer, 2, 1)
+        self.invoice_core_grid.addWidget(core_label("销售方:"), 2, 2)
+        self.invoice_core_grid.addWidget(self.txt_seller, 2, 3)
 
         self.invoice_core_grid.setColumnStretch(1, 1)
         self.invoice_core_grid.setColumnStretch(3, 1)
@@ -726,7 +769,7 @@ class InvoiceDetailPanel(QWidget):
         add_workbench_divider()
 
         # ═══════════════════════════════════════════════════════════
-        # Zone 3 — 材料与报销 (merged files + claim group)
+        # Zone 3 — 材料
         # ═══════════════════════════════════════════════════════════
         self.detail_files_section = QFrame()
         self.detail_files_section.setProperty("class", "DetailSection")
@@ -734,7 +777,7 @@ class InvoiceDetailPanel(QWidget):
         detail_files_layout = QVBoxLayout(self.detail_files_section)
         detail_files_layout.setContentsMargins(16, 12, 16, 14)
         detail_files_layout.setSpacing(8)
-        files_title = QLabel("材料与报销")
+        files_title = QLabel("材料")
         files_title.setProperty("class", "SectionTitle")
         detail_files_layout.addWidget(files_title)
 
@@ -827,30 +870,61 @@ class InvoiceDetailPanel(QWidget):
         self.combo_supporting_docs.setVisible(False)
         detail_files_layout.addWidget(self.combo_supporting_docs)
 
-        claim_divider = QFrame()
-        claim_divider.setProperty("class", "DetailSubDivider")
-        claim_divider.setFrameShape(QFrame.HLine)
-        claim_divider.setFixedHeight(1)
-        detail_files_layout.addWidget(claim_divider)
+        # Expose claim_setup_section for backward compat
+        self.claim_setup_section = QFrame()
+        self.claim_setup_section.setProperty("class", "DetailSection")
+        self.claim_setup_section.setProperty("variant", "flat")
+        claim_setup_layout = QVBoxLayout(self.claim_setup_section)
+        claim_setup_layout.setContentsMargins(16, 12, 16, 14)
+        claim_setup_layout.setSpacing(8)
 
-        claim_heading_row = QHBoxLayout()
-        claim_heading_row.setContentsMargins(0, 2, 0, 0)
-        claim_heading_row.setSpacing(8)
-        claim_heading = QLabel("报销归组")
-        claim_heading.setProperty("class", "SectionEyebrow")
-        claim_heading_row.addWidget(claim_heading)
-        claim_heading_row.addStretch(1)
-        self.btn_new_claim_toggle = QPushButton("+ 新建报销组")
+        # Title row
+        claim_title_row = QHBoxLayout()
+        claim_title_row.setContentsMargins(0, 0, 0, 0)
+        claim_title_row.setSpacing(8)
+        claim_title = QLabel("报销组")
+        claim_title.setProperty("class", "SectionTitle")
+        claim_title_row.addWidget(claim_title)
+        claim_title_row.addStretch(1)
+
+        self.btn_new_claim_toggle = QPushButton("+ 新建组")
         self.btn_new_claim_toggle.setProperty("class", "TextBtn")
         self.btn_new_claim_toggle.clicked.connect(self._toggle_new_claim_input)
-        claim_heading_row.addWidget(self.btn_new_claim_toggle)
-        detail_files_layout.addLayout(claim_heading_row)
+        claim_title_row.addWidget(self.btn_new_claim_toggle)
+        claim_setup_layout.addLayout(claim_title_row)
+
+        # Inline new claim widget (initially hidden)
+        self.new_claim_widget = QWidget()
+        new_claim_layout = QHBoxLayout(self.new_claim_widget)
+        new_claim_layout.setContentsMargins(0, 2, 0, 0)
+        new_claim_layout.setSpacing(6)
+        self.txt_new_claim = QLineEdit()
+        self.txt_new_claim.setPlaceholderText("输入新报销组名称...")
+        self.txt_new_claim.setMinimumHeight(28)
+        new_claim_layout.addWidget(self.txt_new_claim, 1)
+
+        self.btn_create_claim = QPushButton("确认")
+        self.btn_create_claim.setProperty("class", "SecondaryBtn")
+        self.btn_create_claim.setMinimumHeight(28)
+        self.btn_create_claim.setMaximumWidth(60)
+        self.btn_create_claim.clicked.connect(self._cb.on_create_claim)
+        new_claim_layout.addWidget(self.btn_create_claim)
+
+        self.btn_cancel_create_claim = QPushButton("取消")
+        self.btn_cancel_create_claim.setProperty("class", "SecondaryBtn")
+        self.btn_cancel_create_claim.setMinimumHeight(28)
+        self.btn_cancel_create_claim.setMaximumWidth(60)
+        self.btn_cancel_create_claim.clicked.connect(self._toggle_new_claim_input)
+        new_claim_layout.addWidget(self.btn_cancel_create_claim)
+
+        self.new_claim_widget.setVisible(False)
+        claim_setup_layout.addWidget(self.new_claim_widget)
 
         # — claim group row —
         claim_row = QHBoxLayout()
         claim_row.setContentsMargins(0, 0, 0, 0)
         claim_row.setSpacing(6)
-        claim_label = QLabel("报销组:")
+        claim_label = QLabel("选择组:")
         claim_label.setProperty("class", "FieldLabel")
         claim_label.setMinimumWidth(52)
         claim_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -865,48 +939,37 @@ class InvoiceDetailPanel(QWidget):
         self.btn_refresh_claims.setMaximumWidth(52)
         self.btn_refresh_claims.setProperty("class", "SecondaryBtn")
         claim_row.addWidget(self.btn_refresh_claims)
-        detail_files_layout.addLayout(claim_row)
+        claim_setup_layout.addLayout(claim_row)
 
         # — claim total + actions row —
         claim_total_row = QHBoxLayout()
         claim_total_row.setContentsMargins(0, 0, 0, 0)
         claim_total_row.setSpacing(8)
-        self.lbl_claim_total = QLabel("当前组 0 张｜合计 ¥0.00")
+        self.lbl_claim_total = QLabel("当前报销组 0 张，合计 ¥0.00；当前发票未加入")
         self.lbl_claim_total.setStyleSheet("color: #374151; border: none; background: transparent;")
+        self.lbl_claim_total.setWordWrap(True)
         claim_total_row.addWidget(self.lbl_claim_total, 1)
+        claim_setup_layout.addLayout(claim_total_row)
+
+        claim_actions_row = QHBoxLayout()
+        claim_actions_row.setContentsMargins(0, 0, 0, 0)
+        claim_actions_row.setSpacing(8)
 
         self.btn_add_to_claim = QPushButton("加入当前发票")
         self.btn_add_to_claim.clicked.connect(self._cb.on_link_to_claim)
         self.btn_add_to_claim.setProperty("class", "SecondaryBtn")
         self.btn_add_to_claim.setMinimumHeight(28)
-        self.btn_add_to_claim.setMaximumWidth(130)
-        claim_total_row.addWidget(self.btn_add_to_claim)
+        self.btn_add_to_claim.setMaximumWidth(180)
+        claim_actions_row.addWidget(self.btn_add_to_claim, 1)
 
         self.btn_export = QPushButton("导出报销包")
         self.btn_export.setProperty("class", "SecondaryBtn")
         self.btn_export.setEnabled(False)
         self.btn_export.setMinimumHeight(28)
-        self.btn_export.setMaximumWidth(120)
+        self.btn_export.setMaximumWidth(180)
         self.btn_export.clicked.connect(self._cb.on_export_claim)
-        claim_total_row.addWidget(self.btn_export)
-        detail_files_layout.addLayout(claim_total_row)
-
-        self.new_claim_widget = QWidget()
-        new_claim_layout = QHBoxLayout(self.new_claim_widget)
-        new_claim_layout.setContentsMargins(0, 2, 0, 0)
-        new_claim_layout.setSpacing(6)
-        self.txt_new_claim = QLineEdit()
-        self.txt_new_claim.setPlaceholderText("输入新报销组名称...")
-        self.txt_new_claim.setMinimumHeight(28)
-        new_claim_layout.addWidget(self.txt_new_claim, 1)
-        self.btn_create_claim = QPushButton("确认新建")
-        self.btn_create_claim.setProperty("class", "SecondaryBtn")
-        self.btn_create_claim.setMinimumHeight(28)
-        self.btn_create_claim.setMaximumWidth(100)
-        self.btn_create_claim.clicked.connect(self._cb.on_create_claim)
-        new_claim_layout.addWidget(self.btn_create_claim)
-        self.new_claim_widget.setVisible(False)
-        detail_files_layout.addWidget(self.new_claim_widget)
+        claim_actions_row.addWidget(self.btn_export, 1)
+        claim_setup_layout.addLayout(claim_actions_row)
 
         # Export summary (hidden, one-liner)
         self.lbl_export_summary = QLabel()
@@ -914,12 +977,14 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_export_summary.setWordWrap(True)
         self.lbl_export_summary.setText("上一次导出：暂无")
         self.lbl_export_summary.setVisible(False)
-        detail_files_layout.addWidget(self.lbl_export_summary)
+        claim_setup_layout.addWidget(self.lbl_export_summary)
 
         # Also expose claim_setup_section for backward compat
-        self.claim_setup_section = self.detail_files_section
+        self.claim_setup_section = self.claim_setup_section
 
         workbench_layout.addWidget(self.detail_files_section)
+        add_workbench_divider()
+        workbench_layout.addWidget(self.claim_setup_section)
         add_workbench_divider()
 
         # ═══════════════════════════════════════════════════════════

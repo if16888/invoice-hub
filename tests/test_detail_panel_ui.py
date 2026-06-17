@@ -100,6 +100,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         """Calling set_dirty_state(True) must enable btn_save_draft."""
         self.panel.set_dirty_state(True)
         self.assertTrue(self.panel.btn_save_draft.isEnabled())
+        self.assertEqual(self.panel.btn_save_draft.property("class"), "PrimaryBtn")
         self.assertEqual(self.panel.lbl_dirty_hint.text(), "已修改")
 
     def test_save_button_disabled_after_clear_dirty(self):
@@ -107,6 +108,10 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.set_dirty_state(True)
         self.panel.set_dirty_state(False)
         self.assertFalse(self.panel.btn_save_draft.isEnabled())
+        self.assertEqual(self.panel.btn_save_draft.property("class"), "OutlineBtn")
+        self.assertEqual(self.panel.lbl_dirty_hint.text(), "已保存")
+        if hasattr(self.panel, "_saved_timer"):
+            self.panel._saved_timer.timeout.emit()
         self.assertEqual(self.panel.lbl_dirty_hint.text(), "")
 
     # ── 4. More source info collapsed by default ────────────────────────────
@@ -270,6 +275,57 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.set_attachment_state(has_file=True, file_name="invoice.pdf", file_path="/tmp/invoice.pdf")
         self.assertFalse(self.panel.btn_open_file.isHidden())
         self.assertEqual(self.panel.btn_add_attachment.text(), "替换")
+
+    # ── 12. Inline claim creation toggling ───────────────────────────────────
+
+    def test_inline_claim_creation_toggling(self):
+        """Clicking btn_new_claim_toggle shows the inline creation row, and cancel hides it."""
+        # By default, new_claim_widget is hidden, btn_new_claim_toggle is visible
+        self.assertTrue(self.panel.new_claim_widget.isHidden())
+        self.assertFalse(self.panel.btn_new_claim_toggle.isHidden())
+
+        # Click "+ 新建组"
+        self.panel.btn_new_claim_toggle.click()
+        self.assertFalse(self.panel.new_claim_widget.isHidden())
+        self.assertTrue(self.panel.btn_new_claim_toggle.isHidden())
+
+        # Click "取消"
+        self.panel.btn_cancel_create_claim.click()
+        self.assertTrue(self.panel.new_claim_widget.isHidden())
+        self.assertFalse(self.panel.btn_new_claim_toggle.isHidden())
+
+    # ── 13. Callback wiring for materials buttons ───────────────────────────
+
+    def test_materials_buttons_callback_wiring(self):
+        """Buttons in the Materials zone must trigger their respective callbacks."""
+        called = {}
+        from scripts.invoice_fetch.gui.invoice_detail_panel import InvoiceDetailPanel, InvoiceDetailCallbacks
+        cb = InvoiceDetailCallbacks(
+            on_open_file=lambda: called.update({"open_file": True}),
+            on_add_attachment=lambda: called.update({"add_attachment": True}),
+            on_open_evidence=lambda: called.update({"open_evidence": True}),
+            on_add_evidence=lambda: called.update({"add_evidence": True}),
+        )
+        panel = InvoiceDetailPanel(callbacks=cb)
+
+        panel.btn_open_file.setEnabled(True)
+        panel.btn_open_file.click()
+        self.assertTrue(called.get("open_file"))
+
+        panel.btn_add_attachment.setEnabled(True)
+        panel.btn_add_attachment.click()
+        self.assertTrue(called.get("add_attachment"))
+
+        panel.btn_open_extra_files.setEnabled(True)
+        panel.btn_open_extra_files.click()
+        self.assertTrue(called.get("open_evidence"))
+
+        panel.btn_add_evidence.setEnabled(True)
+        panel.btn_add_evidence.click()
+        self.assertTrue(called.get("add_evidence"))
+
+        panel.close()
+        panel.deleteLater()
 
 
 if __name__ == "__main__":

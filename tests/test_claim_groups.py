@@ -3113,6 +3113,9 @@ class ClaimGroupsTests(unittest.TestCase):
                         refreshed = window.db.get_invoice(invoice_id)
                         self.assertEqual(refreshed["buyer_name"], expected_buyer)
                         self.assertFalse(window.btn_save_draft.isEnabled())
+                        self.assertEqual(window.lbl_dirty_hint.text(), "已保存")
+                        if hasattr(window._detail_panel, "_saved_timer"):
+                            window._detail_panel._saved_timer.timeout.emit()
                         self.assertEqual(window.lbl_dirty_hint.text(), "")
                         # Buyer warning cleared from tooltip after correction
                         self.assertNotIn("抬头不匹配", window.txt_buyer.toolTip())
@@ -3626,7 +3629,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("已选中 2 张", status_text)
                     self.assertIn("合计 ¥12.30", status_text)
                     self.assertIn("部分金额缺失", status_text)
-                    self.assertIn("当前报销组 2 张｜合计 ¥12.30", window.lbl_claim_total.text())
+                    self.assertIn("sum claim：2 张，合计 ¥12.30", window.lbl_claim_total.text())
                     self.assertIn("部分金额缺失", window.lbl_claim_total.text())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -4484,6 +4487,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(refreshed["buyer_name"], "新购买方")
                     self.assertEqual(refreshed["category"], "餐饮")
                     self.assertFalse(window.btn_save_draft.isEnabled())
+                    self.assertEqual(window.lbl_dirty_hint.text(), "已保存")
+                    if hasattr(window._detail_panel, "_saved_timer"):
+                        window._detail_panel._saved_timer.timeout.emit()
                     self.assertEqual(window.lbl_dirty_hint.text(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -5502,6 +5508,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._save_invoice_fields()
                     app.processEvents()
                     self.assertFalse(window.btn_save_draft.isEnabled())
+                    self.assertEqual(window.lbl_dirty_hint.text(), "已保存")
+                    if hasattr(window._detail_panel, "_saved_timer"):
+                        window._detail_panel._saved_timer.timeout.emit()
                     self.assertEqual(window.lbl_dirty_hint.text(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
