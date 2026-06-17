@@ -3823,6 +3823,7 @@ def _scan_mailboxes_with_db(
     download_failed = 0
     parse_failed = 0
     ai_auth_failed = False
+    ai_pending_classification = 0
 
     account_contexts: list[dict] = []
     for account in accounts:
@@ -3894,7 +3895,13 @@ def _scan_mailboxes_with_db(
                     ) or {}
                     if classify_result.get("auth_failed"):
                         ai_auth_failed = True
-                        emit("AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类。")
+                        ai_pending_classification += int(
+                            classify_result.get("pending_classification", 0) or 0
+                        )
+                        if ai_pending_classification:
+                            emit(f"AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类，{ai_pending_classification} 封邮件待分类。")
+                        else:
+                            emit("AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类。")
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
                 failed_summaries.append(sanitize_log_message(f"scan failed for {mask_email(email_addr)}: {exc}"))
@@ -3905,22 +3912,23 @@ def _scan_mailboxes_with_db(
             mailbox_key = account.get("mailbox_key", "legacy")
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
+            pending_for_account: list[dict] = []
             try:
-                pending = db.get_invoice_emails_to_download(
+                pending_for_account = db.get_invoice_emails_to_download(
                     mailbox_key=mailbox_key,
                     bypass_cooldown=retry_failed,
                 )
-                if not pending:
+                if not pending_for_account:
                     emit(f"No invoice emails pending download for {mask_email(email_addr)}")
                     continue
-                emit(f"Downloading {len(pending)} invoice emails for {mask_email(email_addr)}")
+                emit(f"Downloading {len(pending_for_account)} invoice emails for {mask_email(email_addr)}")
                 with MailFetcher(
                     address=email_addr,
                     auth_code=account["auth_code"],
                     server=account.get("imap", {}).get("server", "imap.qq.com"),
                     port=account.get("imap", {}).get("port", 993),
                 ) as fetcher:
-                    for row in pending:
+                    for row in pending_for_account:
                         rule_result, rule_reason = rule_classify(
                             row.get("subject", ""),
                             row.get("sender", ""),
@@ -4020,8 +4028,34 @@ def _scan_mailboxes_with_db(
                             emit(sanitize_log_message(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}"))
             except Exception as exc:
                 failed_account_keys.add(mailbox_key)
-                failed_summaries.append(sanitize_log_message(f"download failed for {mask_email(email_addr)}: {exc}"))
-                emit(sanitize_log_message(f"Download failed for {mask_email(email_addr)}: {exc}"))
+                pending_count = len(pending_for_account)
+                if pending_count:
+                    classified_invoice += pending_count
+                    download_failed += pending_count
+                    failed += pending_count
+                    error_summary = sanitize_log_message(str(exc))
+                    for row in pending_for_account:
+                        db.record_email_download_failure(
+                            mailbox_key,
+                            row["uid"],
+                            "download_failed",
+                            error_summary,
+                        )
+                    failed_summaries.append(
+                        sanitize_log_message(
+                            f"download failed for {mask_email(email_addr)}: "
+                            f"{pending_count} pending invoice emails incomplete: {exc}"
+                        )
+                    )
+                    emit(
+                        sanitize_log_message(
+                            f"Download failed for {mask_email(email_addr)}: "
+                            f"{pending_count} pending invoice emails will retry: {exc}"
+                        )
+                    )
+                else:
+                    failed_summaries.append(sanitize_log_message(f"download failed for {mask_email(email_addr)}: {exc}"))
+                    emit(sanitize_log_message(f"Download failed for {mask_email(email_addr)}: {exc}"))
 
     link_dl.close()
     accounts_failed = len(failed_account_keys)
@@ -4050,6 +4084,7 @@ def _scan_mailboxes_with_db(
         "parse_failed": parse_failed,
         "pending_retry": download_failed + parse_failed,
         "ai_auth_failed": ai_auth_failed,
+        "ai_pending_classification": ai_pending_classification,
         "accounts_total": accounts_total,
         "accounts_success": accounts_success,
         "accounts_failed": accounts_failed,
@@ -4134,7 +4169,7 @@ def _run_classify(
     from .ai_classifier import is_provider_session_paused
     if still_unknown and provider != "none" and is_provider_session_paused(provider):
         _log.warning("AI 已因鉴权失败暂停，请检查 API Key。")
-        return {"auth_failed": True}
+        return {"auth_failed": True, "pending_classification": len(still_unknown)}
 
     ai_disabled = no_ai or provider in {"", "none", "off", "disabled"}
     if still_unknown and not ai_disabled:
@@ -4162,7 +4197,7 @@ def _run_classify(
 
             if auth_failed:
                 _log.error("AI API Key 鉴权失败，请检查设置")
-                return {"auth_failed": True}
+                return {"auth_failed": True, "pending_classification": len(still_unknown)}
 
             # Save confirmed senders to whitelist
             uid_to_sender = {

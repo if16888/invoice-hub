@@ -1762,6 +1762,84 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertIn("synthetic parser failure", res["failed_summaries"][0])
             self.assertTrue(any("Failed to process" in line for line in logs))
 
+    def test_scan_email_counts_mailbox_level_download_failure_for_pending_headers(self):
+        from scripts.invoice_fetch.services import scan_email_and_download
+
+        class FakeMailFetcher:
+            created = 0
+
+            def __init__(self, *args, **kwargs):
+                self.index = FakeMailFetcher.created
+                FakeMailFetcher.created += 1
+
+            def __enter__(self):
+                if self.index == 1:
+                    raise TimeoutError("[WinError 10060] synthetic IMAP timeout")
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def scan_headers(self, **kwargs):
+                return [
+                    {
+                        "uid": uid,
+                        "subject": f"Synthetic invoice header {uid}",
+                        "sender": "billing@example.com",
+                        "date": "2026-06-14",
+                    }
+                    for uid in range(8001, 8009)
+                ]
+
+        def fake_run_classify(db, ai_cfg, no_ai, mailbox_key=None):
+            for uid in range(8001, 8005):
+                db.classify_email(
+                    uid,
+                    True,
+                    by="test",
+                    reason="synthetic invoice",
+                    mailbox_key=mailbox_key or "legacy",
+                )
+            return {"auth_failed": False}
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "mailbox_download_timeout.db"
+            config_file = Path(td) / "config.json"
+            config_file.write_text(json.dumps({
+                "email": {"address": "synthetic_user@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"folder": "INBOX", "months_back": 1},
+                "ai": {"provider": "none"},
+                "categories": {},
+            }), encoding="utf-8")
+
+            logs = []
+            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.__main__._run_classify", side_effect=fake_run_classify):
+                res = scan_email_and_download(
+                    db_path,
+                    config_path=config_file,
+                    log_callback=logs.append,
+                )
+
+            with InvoiceDB(db_path) as db:
+                failure_count = db._conn.execute(
+                    "SELECT COUNT(*) FROM email_download_failures "
+                    "WHERE reason_code = 'download_failed'"
+                ).fetchone()[0]
+
+        self.assertEqual(res["new_email_headers"], 8)
+        self.assertEqual(res["classified_invoice"], 4)
+        self.assertEqual(res["downloaded"], 0)
+        self.assertEqual(res["new"], 0)
+        self.assertEqual(res["download_failed"], 4)
+        self.assertEqual(res["pending_retry"], 4)
+        self.assertEqual(res["failed_count"], 4)
+        self.assertEqual(failure_count, 4)
+        self.assertTrue(any("Downloading 4 invoice emails" in line for line in logs))
+        self.assertTrue(any("Download failed" in line for line in logs))
+
     def test_scan_email_excludes_historical_github_false_positive_before_fetch(self):
         from scripts.invoice_fetch.services import scan_email_and_download
 
@@ -2105,7 +2183,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
         def fake_run_classify(db, ai_cfg, no_ai, mailbox_key=None):
             calls.append((mailbox_key, no_ai))
-            return {"auth_failed": len(calls) == 1}
+            return {
+                "auth_failed": len(calls) == 1,
+                "pending_classification": 3 if len(calls) == 1 else 0,
+            }
 
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "ai_pause.db"
@@ -2138,6 +2219,7 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertEqual(calls[0][1], False)
         self.assertEqual(calls[1][1], True)
         self.assertTrue(result["ai_auth_failed"])
+        self.assertEqual(result["ai_pending_classification"], 3)
 
     def test_scan_email_processes_multiple_mailboxes_sequentially(self):
         from scripts.invoice_fetch.services import scan_email_and_download
@@ -4827,6 +4909,61 @@ class ClaimGroupsTests(unittest.TestCase):
             self.assertEqual(summary["no_candidate_link"], 1)
             self.assertEqual(summary["parse_failed"], 3)
             self.assertEqual(summary["link_failed"], 6)
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_scan_summary_surfaces_header_only_download_stage_failure(self):
+        try:
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+            window = InvoiceReviewApp.__new__(InvoiceReviewApp)
+            summary = window._build_scan_summary(
+                {
+                    "scanned_headers": 9,
+                    "new_email_headers": 8,
+                    "classified_invoice": 4,
+                    "downloaded_emails": 0,
+                    "new_invoice_records": 0,
+                    "download_failed": 4,
+                    "pending_retry": 4,
+                    "failed": 4,
+                },
+                logs=[],
+            )
+
+            self.assertEqual(summary["new_email_headers"], 8)
+            self.assertEqual(summary["new"], 0)
+            self.assertEqual(summary["classified_invoice"], 4)
+            self.assertEqual(summary["downloaded_emails"], 0)
+            self.assertEqual(summary["download_failed"], 4)
+            self.assertEqual(summary["pending_retry"], 4)
+            self.assertEqual(summary["link_failed"], 4)
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_scan_summary_message_mentions_ai_pause_pending_classification(self):
+        try:
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+            window = InvoiceReviewApp.__new__(InvoiceReviewApp)
+            summary = window._build_scan_summary(
+                {
+                    "ai_auth_failed": True,
+                    "ai_pending_classification": 5,
+                },
+                logs=[],
+            )
+            message = window._format_scan_summary_message(summary)
+
+            self.assertTrue(summary["ai_auth_failed"])
+            self.assertEqual(summary["ai_pending_classification"], 5)
+            self.assertIn("AI", message)
+            self.assertIn("5", message)
+            self.assertIn("待分类", message)
         except Exception as e:
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")

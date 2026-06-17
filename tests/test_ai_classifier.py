@@ -132,7 +132,8 @@ class AIClassifierAuthTests(unittest.TestCase):
 
         with patch("scripts.invoice_fetch.__main__._log") as mock_log:
             res = _run_classify(db, ai_cfg, no_ai=False, mailbox_key="test")
-            self.assertEqual(res, {"auth_failed": True})
+            self.assertEqual(res["auth_failed"], True)
+            self.assertEqual(res["pending_classification"], 1)
             mock_log.warning.assert_any_call("AI 已因鉴权失败暂停，请检查 API Key。")
 
         clear_all_session_paused()

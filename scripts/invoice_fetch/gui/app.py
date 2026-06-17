@@ -3280,7 +3280,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"no_candidate_link={summary['no_candidate_link']} "
             f"download_failed={summary['download_failed']} "
             f"manual_required={summary['manual_review_required']} "
-            f"parse_failed={summary['parse_failed']}"
+            f"parse_failed={summary['parse_failed']} "
+            f"ai_auth_failed={summary['ai_auth_failed']} "
+            f"ai_pending_classification={summary['ai_pending_classification']}"
         )
         self.statusBar().showMessage(self._format_scan_summary_status(summary), 6000)
 
@@ -3309,6 +3311,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         parse_failed = int(res.get("parse_failed", 0) or 0)
         link_failed = max(link_failed, no_candidate_link + download_failed + parse_failed)
         failed_summaries = [str(x or "") for x in (res.get("failed_summaries") or [])]
+        ai_pending_classification = int(res.get("ai_pending_classification", 0) or 0)
         return {
             "scanned_headers": int(
                 res.get("scanned_headers", res.get("scanned", 0)) or 0
@@ -3343,6 +3346,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "pending_retry": max(int(res.get("pending_retry", 0) or 0), pending_retry),
             "failed": int(res.get("failed", res.get("failed_count", 0)) or 0),
             "failed_summaries": failed_summaries[:5],
+            "ai_auth_failed": bool(res.get("ai_auth_failed", False)),
+            "ai_pending_classification": ai_pending_classification,
         }
 
     def _format_scan_summary_status(self, summary: dict) -> str:
@@ -3356,6 +3361,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _format_scan_summary_message(self, summary: dict) -> str:
         failures = [str(line or "") for line in (summary.get("failed_summaries") or [])]
         failure_text = "\n".join(f"  - {line}" for line in failures[:5]) if failures else "无"
+        ai_pending = int(summary.get("ai_pending_classification", 0) or 0)
+        ai_text = ""
+        if summary.get("ai_auth_failed"):
+            ai_text = f"- AI 已暂停，{ai_pending} 封邮件待分类。\n"
         return (
             "邮箱增量扫描完成。\n\n"
             f"- 扫描邮件头: {summary.get('scanned_headers', 0)} 封\n"
@@ -3372,6 +3381,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"- 下载内容解析失败: {summary.get('parse_failed', 0)} 封\n"
             f"- 待重试: {summary.get('pending_retry', 0)} 封\n"
             f"- 处理失败: {summary.get('failed', 0)} 封\n"
+            f"{ai_text}"
             f"失败摘要:\n{failure_text}\n\n"
             "说明：新入库邮件头不等于新增发票；需人工确认材料不是处理失败。\n"
             "如果没有看到预期发票，请清空筛选，或用发票号、购买方、金额搜索。"
