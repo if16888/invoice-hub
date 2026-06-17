@@ -57,7 +57,13 @@ class PendingEmailResult:
     status: str
 
     def __bool__(self) -> bool:
-        return self.status in {"recorded", "duplicate", "manual_required"}
+        return self.status in {
+            "recorded",
+            "file_restored",
+            "metadata_refreshed",
+            "duplicate",
+            "manual_required",
+        }
 
 STATUS_LABELS = {
     review_status.TO_REVIEW: "待审核",
@@ -398,6 +404,19 @@ def _rename_by_invoice_code(
     # Avoid overwriting a different file; keep both invoices visible.
     effective_mode = source_mode if source_mode is not None else _rename_source_mode
     if dest.exists() and dest != src:
+        try:
+            if _sha256_file(dest) == _sha256_file(src):
+                if is_extra:
+                    src.unlink()
+                else:
+                    src.unlink()
+                _log.info("  检测到相同附件内容，复用已存在文件: %s", mask_filename(dest.name))
+                try:
+                    return os.path.relpath(str(dest), RUNTIME_DIR)
+                except ValueError:
+                    return str(dest)
+        except Exception:
+            pass
         stem = dest.stem
         for n in range(1, 100):
             candidate = date_dir / f"{stem}_{n}{ext}"
@@ -2293,8 +2312,59 @@ def _insert_pending_image_record(
          "download_url": "",
          "mailbox_key": mailbox_key,
          "file_hash": file_hash,
-     }
+    }
     return db.insert_invoice(rec)
+
+
+def _insert_unsupported_ofd_record(
+    *,
+    msg: MailMessage,
+    db: InvoiceDB,
+    file_path: str,
+    filename_hint: str,
+    mailbox_key: str,
+) -> int:
+    src = Path(file_path)
+    file_hash = _sha256_file(src) if src.exists() else ""
+    if file_hash:
+        existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+        if existing:
+            if int(existing.get("is_deleted") or 0) == 1:
+                db.restore_deleted_invoices_by_file_hashes({file_hash})
+                return int(existing.get("id") or 0)
+            return 0
+
+    rec = {
+        "invoice_number": "",
+        "invoice_code": "",
+        "invoice_date": msg.date or "",
+        "expense_date": msg.date or "",
+        "date_source": "mail_date",
+        "amount": "",
+        "total_amount": "",
+        "seller_name": "",
+        "buyer_name": "",
+        "invoice_type": "OFD待手动处理",
+        "category": "其他",
+        "has_extra": False,
+        "extra_type": "",
+        "missing_extra": False,
+        "mail_uid": msg.uid,
+        "mail_subject": msg.subject,
+        "mail_date": msg.date,
+        "mail_sender": msg.sender,
+        "parse_success": False,
+        "parse_note": "unsupported_ofd: 当前版本暂不解析 OFD，请手动转换或补充 PDF 原件",
+        "attachment_path": _runtime_relative(src),
+        "extra_paths": [],
+        "download_url": "",
+        "mailbox_key": mailbox_key,
+        "file_hash": file_hash,
+    }
+    row_id = db.insert_invoice(rec)
+    if row_id:
+        _log.info("  OFD 暂不解析，已作为待人工处理记录入库: %s", mask_filename(filename_hint))
+    return row_id
 
 
 def _process_email(
@@ -2314,6 +2384,7 @@ def _process_email(
     # 1. Extract attachments
     attachments = att_handler.extract(msg.raw_msg, msg.uid, date_str=msg.date)
     invoice_pdfs = [a for a in attachments if a.is_invoice and a.file_path.lower().endswith(".pdf")]
+    invoice_ofds = [a for a in attachments if a.is_invoice and a.file_path.lower().endswith(".ofd")]
     extra_files = [a for a in attachments if a.is_extra]
     parsed_invoice_pdfs = [
         (att, parser.parse_pdf(att.file_path))
@@ -2323,7 +2394,32 @@ def _process_email(
     attached_extra_source_paths: set[str] = set()
     link_pdf_skipped_as_duplicate = False
     link_download_failed = False
+    manual_required_recorded = False
+    metadata_refreshed_recorded = False
+    file_restored_recorded = False
     recorded = 0
+
+    def set_process_outcome(status: str) -> None:
+        try:
+            link_dl.last_process_outcome = status
+        except (AttributeError, TypeError):
+            pass
+
+    for att in invoice_ofds:
+        row_id = _insert_unsupported_ofd_record(
+            msg=msg,
+            db=db,
+            file_path=att.file_path,
+            filename_hint=att.original_name,
+            mailbox_key=mailbox_key,
+        )
+        if row_id:
+            recorded += 1
+            manual_required_recorded = True
+            try:
+                kept_paths.add(str(Path(att.file_path).resolve()))
+            except Exception:
+                pass
 
     # 2. Try downloading links via browser in addition to attachments
     combined_text = (msg.subject + " " + msg.sender).lower()
@@ -2345,10 +2441,30 @@ def _process_email(
         if not skip_for_attachment:
             downloaded = link_dl.download_from_email(msg.raw_msg, msg.uid, msg.date)
 
+    downloaded_ofds = [
+        dl for dl in downloaded
+        if dl.is_invoice and str(dl.file_path).lower().endswith(".ofd")
+    ]
+    for dl in downloaded_ofds:
+        row_id = _insert_unsupported_ofd_record(
+            msg=msg,
+            db=db,
+            file_path=dl.file_path,
+            filename_hint=dl.filename,
+            mailbox_key=mailbox_key,
+        )
+        if row_id:
+            recorded += 1
+            manual_required_recorded = True
+            try:
+                kept_paths.add(str(Path(dl.file_path).resolve()))
+            except Exception:
+                pass
+
     downloaded_invoice_items = [
         (dl, parser.parse_pdf(dl.file_path))
         for dl in downloaded
-        if dl.is_invoice
+        if dl.is_invoice and str(dl.file_path).lower().endswith(".pdf")
     ]
     parsed_invoice_infos = [
         info for _, info in (downloaded_invoice_items + parsed_invoice_pdfs)
@@ -2476,11 +2592,13 @@ def _process_email(
                                 existing["id"],
                                 attachment_path=repaired_attachment_path,
                             )
+                            file_restored_recorded = True
                             _log.info(
                                 "  已刷新重复发票元数据(链接下载)并修复附件路径: %s",
                                 mask_invoice_number(info.invoice_number),
                             )
                         else:
+                            metadata_refreshed_recorded = True
                             _log.info("  已刷新重复发票元数据(链接下载): %s", mask_invoice_number(info.invoice_number))
                         if not was_deleted:
                             _log_existing_invoice_duplicate(existing, "link_download_parsed_pdf")
@@ -2519,6 +2637,7 @@ def _process_email(
                             if db.update_invoice_attachment_path_if_missing(
                                 duplicate["id"], backfill_path, file_hash=file_hash_val or None,
                             ):
+                                file_restored_recorded = True
                                 _log.info("重复发票已有记录缺少原件，已回填链接下载文件: existing_id=%d", duplicate["id"])
                             else:
                                 _log.debug("重复发票已有原件，跳过链接文件回填")
@@ -2590,6 +2709,7 @@ def _process_email(
                 }
                 row_id = db.insert_invoice(rec)
                 if row_id:
+                    file_restored_recorded = True
                     invoice_extras = extras_for_invoice(info)
                     if invoice_extras:
                         _attach_email_extras_to_invoice(
@@ -2728,8 +2848,10 @@ def _process_email(
                         existing["id"],
                         attachment_path=repaired_attachment_path,
                     )
+                    file_restored_recorded = True
                     _log.info("  已刷新重复发票元数据并修复附件路径: %s", mask_invoice_number(info.invoice_number))
                 else:
+                    metadata_refreshed_recorded = True
                     _log.info("  已刷新重复发票元数据: %s", mask_invoice_number(info.invoice_number))
                 if not was_deleted:
                     _log_existing_invoice_duplicate(existing, "attachment_parsed_pdf")
@@ -2766,6 +2888,7 @@ def _process_email(
                     if db.update_invoice_attachment_path_if_missing(
                         duplicate["id"], dup_att_path, file_hash=file_hash_val or None,
                     ):
+                        file_restored_recorded = True
                         _log.info("重复发票已有记录缺少原件，已回填附件路径: existing_id=%d", duplicate["id"])
                     else:
                         _log.debug("重复发票已有原件，跳过附件文件回填")
@@ -2839,6 +2962,7 @@ def _process_email(
         }
         row_id = db.insert_invoice(rec)
         if row_id:
+            file_restored_recorded = True
             if invoice_extras:
                 _attach_email_extras_to_invoice(
                     db=db,
@@ -3027,9 +3151,11 @@ def _process_email(
                         parse_note="从主题/正文提取",
                     ):
                         recorded += 1
+                        metadata_refreshed_recorded = True
                         _log.info("  已刷新重复发票元数据(主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                         if not was_deleted:
                             _log_existing_invoice_duplicate(existing, "subject_body_invoice_number")
+                    set_process_outcome("metadata_refreshed" if recorded else "duplicate")
                     return recorded
 
             existing = _find_existing_invoice_for_parse(db, "", amount, seller, include_deleted=True)
@@ -3040,11 +3166,13 @@ def _process_email(
                     _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                     _log_existing_invoice_duplicate(existing, "subject_body_seller_amount")
                 recorded += 1
+                set_process_outcome("duplicate")
                 return recorded
 
             if db.is_duplicate(dedup_key, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                 recorded += 1
+                set_process_outcome("duplicate")
                 return recorded
 
             rec = {
@@ -3075,6 +3203,7 @@ def _process_email(
             row_id = db.insert_invoice(rec)
             if row_id:
                 recorded += 1
+                manual_required_recorded = True
                 _log.info("  📝 从主题/正文提取: %s — 待手动下载", redact_text(dedup_key, "dedup_key"))
 
     # Clean up any leftover attachment files that were not successfully kept
@@ -3099,7 +3228,15 @@ def _process_email(
             _log.warning("  ⚠️ 未发现可用的发票附件或下载链接，且无法从主题提取有效信息")
 
     diagnostics = getattr(link_dl, "last_download_diagnostics", {}) or {}
-    if recorded > 0:
+    if manual_required_recorded:
+        process_outcome = "manual_required"
+    elif file_restored_recorded:
+        process_outcome = "file_restored"
+    elif metadata_refreshed_recorded:
+        process_outcome = "metadata_refreshed"
+    elif link_pdf_skipped_as_duplicate:
+        process_outcome = "duplicate"
+    elif recorded > 0:
         process_outcome = "recorded"
     elif invoice_pdfs or downloaded:
         process_outcome = "parse_failed"
@@ -3107,10 +3244,7 @@ def _process_email(
         process_outcome = "download_failed"
     else:
         process_outcome = "no_candidate_link"
-    try:
-        link_dl.last_process_outcome = process_outcome
-    except (AttributeError, TypeError):
-        pass
+    set_process_outcome(process_outcome)
 
     return recorded
 
@@ -3836,6 +3970,8 @@ def _scan_mailboxes_with_db(
                                     0,
                                     after_pending_manual - before_pending_manual,
                                 )
+                                if outcome_status == "manual_required" and after_pending_manual <= before_pending_manual:
+                                    pending_manual += 1
                                 new_delta = max(
                                     0,
                                     after_total_count - before_total_count,
@@ -4123,17 +4259,25 @@ def _handle_pending_email(
         mailbox_key=row.get("mailbox_key", "legacy"),
         config=config,
     )
-    if recorded > 0:
-        db.mark_downloaded(row["uid"], mailbox_key=row.get("mailbox_key", "legacy"))
-        return PendingEmailResult("recorded")
-
     process_outcome = str(
         getattr(link_dl, "last_process_outcome", "") or ""
     )
+    if recorded > 0:
+        db.mark_downloaded(row["uid"], mailbox_key=row.get("mailbox_key", "legacy"))
+        if process_outcome in {
+            "file_restored",
+            "metadata_refreshed",
+            "manual_required",
+            "duplicate",
+        }:
+            return PendingEmailResult(process_outcome)
+        return PendingEmailResult("recorded")
+
     if process_outcome in {
         "no_candidate_link",
         "download_failed",
         "parse_failed",
+        "duplicate",
     }:
         return PendingEmailResult(process_outcome)
 

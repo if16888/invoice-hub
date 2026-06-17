@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import tempfile
 import shutil
 import os
+import time
 from pathlib import Path
 from email.message import EmailMessage
 
@@ -12,6 +13,7 @@ from scripts.invoice_fetch.link_downloader import (
     _dedup_and_prioritize_with_metadata,
     _dedup_and_prioritize,
     _verify_and_clean_file,
+    _save_download_to_path,
     LinkDownloader,
     DownloadedFile
 )
@@ -101,6 +103,51 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertIn("sender=", log_text)
         self.assertNotIn("secret", log_text)
         self.assertNotIn("https://example.com/receipt/detail", log_text)
+
+    def test_download_from_email_stops_when_single_email_budget_exhausted(self):
+        msg = EmailMessage()
+        msg["Subject"] = "电子发票"
+        msg["From"] = "finance@example.com"
+        msg.set_content(
+            """
+            <html><body>
+                <a href="https://example.com/invoice/one.pdf">下载发票</a>
+                <a href="https://example.com/invoice/two.pdf">下载发票</a>
+            </body></html>
+            """,
+            subtype="html",
+        )
+
+        dl = LinkDownloader(download_dir=self.tmp_dir)
+        dl._max_seconds_per_email = 1
+
+        attempts = []
+
+        def fake_download(url, *args, **kwargs):
+            attempts.append(url)
+            return None
+
+        with patch.object(dl, "_download_url", side_effect=fake_download), \
+                patch("scripts.invoice_fetch.link_downloader.time.perf_counter", side_effect=[0, 2, 2]):
+            result = dl.download_from_email(msg, 123, "2026-06-14")
+
+        self.assertEqual(result, [])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(dl.last_download_diagnostics["attempted"], 1)
+        self.assertTrue(dl.last_download_diagnostics["timed_out"])
+
+    def test_save_download_to_path_times_out_without_blocking(self):
+        class SlowDownload:
+            def save_as(self, path):
+                time.sleep(0.2)
+                Path(path).write_bytes(b"%PDF-1.4 slow")
+
+        dest = Path(self.tmp_dir) / "slow.pdf"
+        started = time.perf_counter()
+        ok = _save_download_to_path(SlowDownload(), dest, timeout_ms=1)
+
+        self.assertFalse(ok)
+        self.assertLess(time.perf_counter() - started, 0.1)
 
     def test_download_from_email_dedupes_pdf_and_ofd_same_stem(self):
         pdf_file = Path(self.tmp_dir) / "invoice.pdf"

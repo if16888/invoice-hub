@@ -88,6 +88,12 @@ def sanitize_log_message(value: object) -> str:
     text = str(value or "")
     if not text:
         return ""
+    text = re.sub(
+        r"(?:^|(?<=\s))(?:(?:runtime|attachments|downloads|exports)[\\/])?[^\s]+[\\/][^\s]*\.(?:pdf|ofd|png|jpe?g|bmp|heic|xlsx|zip)\b",
+        lambda m: mask_path(m.group(0)),
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"[A-Za-z]:\\[^\s]+", lambda m: mask_path(m.group(0)), text)
     text = re.sub(r"[\w.+-]+@[\w.-]+\.\w+", lambda m: mask_email(m.group(0)), text)
     text = re.sub(r"https?://\S+", lambda m: mask_url_for_log(m.group(0)), text)

@@ -36,6 +36,16 @@ class LogPrivacyTests(unittest.TestCase):
         self.assertNotIn(r"C:\Users\alice", text)
         self.assertNotIn("26322000003477340276", text)
 
+    def test_sanitizes_relative_attachment_business_filename(self):
+        text = sanitize_log_message(
+            "保存 attachments/2026-06-14/2026-06-14_餐饮_169.08_26322000003477340276_原件.pdf"
+        )
+
+        self.assertIn("file#", text)
+        self.assertNotIn("餐饮", text)
+        self.assertNotIn("169.08", text)
+        self.assertNotIn("26322000003477340276", text)
+
     def test_masks_filename_without_preserving_business_name(self):
         masked = mask_filename("餐饮_169.08_26322000003477340276.pdf")
 

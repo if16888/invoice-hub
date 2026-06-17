@@ -1830,6 +1830,165 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(result.status, "no_candidate_link")
 
+    def test_pending_email_preserves_manual_required_status_after_insert(self):
+        from email.message import EmailMessage
+        from scripts.invoice_fetch import __main__ as cli_main
+
+        msg = EmailMessage()
+        msg["Subject"] = "电子发票 synthetic"
+        msg["From"] = "billing@example.com"
+        msg["Date"] = "2026-06-14"
+        msg.set_content("invoice metadata only")
+        msg.uid = 7301
+        msg.date = "2026-06-14"
+        msg.subject = msg["Subject"]
+        msg.sender = msg["From"]
+        msg.raw_msg = msg
+
+        class FakeFetcher:
+            def fetch_by_uid(self, uid, folder="INBOX"):
+                return msg
+
+        class FakeLinkDownloader:
+            last_process_outcome = ""
+            last_download_diagnostics = {}
+
+        def fake_process_email(*args, **kwargs):
+            args[3].last_process_outcome = "manual_required"
+            return 1
+
+        db = Mock()
+        with patch.object(cli_main, "_process_email", side_effect=fake_process_email):
+            result = cli_main._handle_pending_email(
+                row={"uid": 7301, "mail_date": "2026-06-14", "mailbox_key": "legacy"},
+                fetcher=FakeFetcher(),
+                folder="INBOX",
+                att_handler=Mock(),
+                parser=Mock(),
+                link_dl=FakeLinkDownloader(),
+                db=db,
+                categories={},
+            )
+
+        self.assertEqual(result.status, "manual_required")
+        db.mark_downloaded.assert_called_once_with(7301, mailbox_key="legacy")
+
+    def test_ofd_attachment_becomes_manual_required_without_pdf_parser_error(self):
+        from email.message import EmailMessage
+        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch.attachment_handler import Attachment
+
+        msg = EmailMessage()
+        msg["Subject"] = "电子发票 OFD"
+        msg["From"] = "billing@example.com"
+        msg["Date"] = "2026-06-14"
+        msg.set_content("OFD invoice")
+        msg.uid = 7401
+        msg.date = "2026-06-14"
+        msg.subject = msg["Subject"]
+        msg.sender = msg["From"]
+        msg.raw_msg = msg
+
+        class FakeAttachmentHandler:
+            def __init__(self, base):
+                self._base = base
+
+            def extract(self, *args, **kwargs):
+                ofd_path = self._base / "2026-06-14" / "invoice.ofd"
+                ofd_path.parent.mkdir(parents=True, exist_ok=True)
+                ofd_path.write_bytes(b"PK\x03\x04 synthetic ofd.xml" + b"x" * 600)
+                return [
+                    Attachment(
+                        file_path=str(ofd_path),
+                        original_name="电子发票.ofd",
+                        content_type="application/octet-stream",
+                        size=ofd_path.stat().st_size,
+                        is_invoice=True,
+                    )
+                ]
+
+        class ParserMustNotRun:
+            def parse_pdf(self, path):
+                raise AssertionError(f"PDF parser must not parse OFD: {path}")
+
+        class FakeLinkDownloader:
+            last_download_diagnostics = {}
+            last_process_outcome = ""
+
+            def download_from_email(self, *args, **kwargs):
+                return []
+
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            att_dir = runtime / "attachments"
+            with InvoiceDB(Path(td) / "ofd.db") as db, patch.object(cli_main, "RUNTIME_DIR", runtime):
+                recorded = cli_main._process_email(
+                    msg,
+                    FakeAttachmentHandler(att_dir),
+                    ParserMustNotRun(),
+                    FakeLinkDownloader(),
+                    db,
+                    {},
+                    mailbox_key="legacy",
+                )
+                rows = db.list_invoices(include_deleted=True)
+
+        self.assertEqual(recorded, 1)
+        self.assertEqual(rows[0]["review_status"], "to_review")
+        self.assertIn("unsupported_ofd", rows[0]["parse_note"])
+
+    def test_redownload_bucket_summary_distinguishes_duplicate_from_file_restore(self):
+        from scripts.invoice_fetch.gui.app import _format_redownload_bucket_summary
+
+        text = _format_redownload_bucket_summary(
+            count=3,
+            buckets={
+                "file_restored": 1,
+                "metadata_refreshed": 0,
+                "duplicate_only": 1,
+                "download_failed": 1,
+                "no_candidate_link": 0,
+            },
+            failure_details=["发票 ID 3: 下载失败"],
+        )
+
+        self.assertIn("原文件修复成功: 1 张", text)
+        self.assertIn("仅命中已有重复记录: 1 张", text)
+        self.assertIn("下载失败: 1 张", text)
+        self.assertNotIn("成功处理: 3 张", text)
+
+    def test_rename_reuses_existing_same_hash_attachment(self):
+        from scripts.invoice_fetch import __main__ as cli_main
+
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            att_dir = runtime / "attachments"
+            source_dir = runtime / "downloads"
+            source_dir.mkdir(parents=True)
+            existing_dir = att_dir / "2026-06-14"
+            existing_dir.mkdir(parents=True)
+            src = source_dir / "download.pdf"
+            content = b"%PDF-1.4 same invoice" + b"x" * 600
+            src.write_bytes(content)
+            existing = existing_dir / "2026-06-14_餐饮_169.08_26322000003477340276_原件.pdf"
+            existing.write_bytes(content)
+
+            with patch.object(cli_main, "RUNTIME_DIR", runtime):
+                rel = cli_main._rename_by_invoice_code(
+                    str(src),
+                    "26322000003477340276",
+                    "2026-06-14",
+                    att_dir,
+                    category="餐饮",
+                    total_amount="169.08",
+                    invoice_number="26322000003477340276",
+                    source_mode="reprocess",
+                )
+
+            self.assertEqual(Path(rel).name, existing.name)
+            self.assertFalse(src.exists())
+            self.assertFalse((existing_dir / "2026-06-14_餐饮_169.08_26322000003477340276_原件_1.pdf").exists())
+
     def test_download_failure_backoff_and_manual_bypass(self):
         with tempfile.TemporaryDirectory() as td:
             db = InvoiceDB(Path(td) / "retry.db")
@@ -3588,6 +3747,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                from scripts.invoice_fetch.__main__ import PendingEmailResult
                 cfg = {
                     "email": {
                         "address": "user@example.com",
@@ -3607,7 +3767,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy-auth"), \
                         patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                         patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", FakeMailFetcher), \
-                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=True) as mock_handle:
+                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=PendingEmailResult("file_restored")) as mock_handle:
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
                         window._deferred_init()

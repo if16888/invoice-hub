@@ -518,16 +518,36 @@ def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFi
     return final_results
 
 
-def _save_download_to_path(download, dest: Path) -> bool:
+def _save_download_to_path(download, dest: Path, timeout_ms: int = 30_000) -> bool:
     """Persist a Playwright download to *dest* without leaking callback errors."""
     if dest.exists():
         return True
-    try:
-        download.save_as(str(dest))
-        return True
-    except Exception as exc:
-        _log.warning("Download save failed for %s: %s", mask_filename(dest.name), exc)
+    result: dict[str, object] = {"ok": False, "error": None}
+
+    def _worker() -> None:
+        try:
+            download.save_as(str(dest))
+            result["ok"] = True
+        except Exception as exc:
+            result["error"] = exc
+
+    timeout_seconds = max(0.001, float(timeout_ms or 30_000) / 1000.0)
+    thread = threading.Thread(target=_worker, name="invoice-download-save", daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        _log.warning(
+            "Download save timed out for %s after %.1fs",
+            mask_filename(dest.name),
+            timeout_seconds,
+        )
         return False
+    if result["ok"]:
+        return True
+    if result["error"] is not None:
+        _log.warning("Download save failed for %s: %s", mask_filename(dest.name), result["error"])
+        return False
+    return False
 
 
 class LinkDownloader:
@@ -545,6 +565,7 @@ class LinkDownloader:
         if cfg_timeout is not None:
             self._timeout = int(cfg_timeout)
         self._max_links_per_email = int(link_cfg.get("max_links_per_email", 5))
+        self._max_seconds_per_email = float(link_cfg.get("max_seconds_per_email", 120))
         self._skip_when_attachment_invoice_present = bool(
             link_cfg.get("skip_when_attachment_invoice_present", True)
         )
@@ -699,6 +720,7 @@ class LinkDownloader:
         if cfg_timeout is not None:
             self._timeout = int(cfg_timeout)
         self._max_links_per_email = int(link_cfg.get("max_links_per_email", 5))
+        self._max_seconds_per_email = float(link_cfg.get("max_seconds_per_email", 120))
         self._skip_when_attachment_invoice_present = bool(
             link_cfg.get("skip_when_attachment_invoice_present", True)
         )
@@ -859,13 +881,22 @@ class LinkDownloader:
         attempted_count = 0
         low_priority_skipped = 0
         has_official_success = False
+        timed_out = False
 
         start_time = time.perf_counter()
+
+        def email_budget_exhausted() -> bool:
+            if self._max_seconds_per_email <= 0 or attempted_count == 0:
+                return False
+            return (time.perf_counter() - start_time) >= self._max_seconds_per_email
 
         # 1. Try high priority links first
         high_success = False
         for item in high_items:
             if attempted_count >= self._max_links_per_email:
+                break
+            if email_budget_exhausted():
+                timed_out = True
                 break
             url = item["url"]
             fp = self._url_fingerprint(url)
@@ -887,6 +918,10 @@ class LinkDownloader:
         else:
             for item in low_items:
                 if attempted_count >= self._max_links_per_email:
+                    low_priority_skipped += 1
+                    continue
+                if email_budget_exhausted():
+                    timed_out = True
                     low_priority_skipped += 1
                     continue
                 url = item["url"]
@@ -928,6 +963,8 @@ class LinkDownloader:
             "candidate_links": deduped,
             "attempted": attempted_count,
             "failed": failed,
+            "timed_out": timed_out,
+            "elapsed": elapsed,
         }
         official_success = sum(1 for r in results if r.source_type != "invoice_page_pdf_fallback")
         fallback_success = sum(1 for r in results if r.source_type == "invoice_page_pdf_fallback")
@@ -935,6 +972,13 @@ class LinkDownloader:
             "链接下载摘要: found=%d deduped=%d success=%d official_success=%d fallback_success=%d failed=%d skipped_cached=%d attempted=%d prioritized=%d low_priority_skipped=%d elapsed=%.1fs",
             found, deduped, success, official_success, fallback_success, failed, skipped_cached, attempted_count, prioritized, low_priority_skipped, elapsed,
         )
+        if timed_out:
+            _log.warning(
+                "链接下载达到单邮件耗时上限: attempted=%d elapsed=%.1fs limit=%.1fs",
+                attempted_count,
+                elapsed,
+                self._max_seconds_per_email,
+            )
         if success == 0:
             _log.info(
                 "Link download diagnostic: subject=%s sender=%s found_links=%d candidate_links=%d skipped_unsafe=%d skipped_low_priority=%d attempted=%d failed=%d",
@@ -1082,7 +1126,7 @@ class LinkDownloader:
                                 download.suggested_filename,
                                 f"invoice_{mail_uid}_{idx}.pdf",
                             )
-                            if _save_download_to_path(download, dest):
+                            if _save_download_to_path(download, dest, self._timeout):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
                                     return str(dest), "official_download", None
@@ -1193,6 +1237,8 @@ class LinkDownloader:
             )
             ctx = self._browser.new_context(accept_downloads=True, user_agent=desktop_ua)
             page = ctx.new_page()
+            ctx.set_default_timeout(self._timeout)
+            ctx.set_default_navigation_timeout(self._timeout)
             page.route("**/*", _route_browser_request)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
@@ -1214,7 +1260,7 @@ class LinkDownloader:
                     downloaded_path = str(dest)
                     download_done.set()
                     return
-                if _save_download_to_path(download, dest):
+                if _save_download_to_path(download, dest, self._timeout):
                     downloaded_path = str(dest)
                 download_done.set()
 

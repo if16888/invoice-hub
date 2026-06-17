@@ -57,6 +57,45 @@ CONFIG_CATEGORY_LABELS = {
 }
 
 
+REDOWNLOAD_BUCKETS = (
+    "file_restored",
+    "metadata_refreshed",
+    "duplicate_only",
+    "download_failed",
+    "no_candidate_link",
+)
+
+
+def _bucket_redownload_status(status: str) -> str:
+    status = str(status or "")
+    if status == "file_restored":
+        return "file_restored"
+    if status in {"metadata_refreshed", "manual_required", "recorded"}:
+        return "metadata_refreshed"
+    if status == "duplicate":
+        return "duplicate_only"
+    if status == "no_candidate_link":
+        return "no_candidate_link"
+    return "download_failed"
+
+
+def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details: list[str] | None = None) -> str:
+    failure_details = failure_details or []
+    msg = (
+        f"已完成 {count} 张发票的重新下载流程！\n\n"
+        f"原文件修复成功: {int(buckets.get('file_restored', 0) or 0)} 张\n"
+        f"仅刷新元数据/待手动下载: {int(buckets.get('metadata_refreshed', 0) or 0)} 张\n"
+        f"仅命中已有重复记录: {int(buckets.get('duplicate_only', 0) or 0)} 张\n"
+        f"下载失败: {int(buckets.get('download_failed', 0) or 0)} 张\n"
+        f"无候选链接: {int(buckets.get('no_candidate_link', 0) or 0)} 张"
+    )
+    if failure_details:
+        msg += "\n\n以下发票仍然失败:\n" + "\n".join(failure_details[:10])
+        if len(failure_details) > 10:
+            msg += f"\n... 以及其他 {len(failure_details) - 10} 个文件"
+    return msg
+
+
 class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def __init__(self, db_path: Path, splash=None, startup_probe: bool = False):
         super().__init__()
@@ -1731,6 +1770,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         reread_count = 0
         reread_success_count = 0
         reread_failed_count = 0
+        redownload_buckets = {key: 0 for key in REDOWNLOAD_BUCKETS}
 
         from ..attachment_handler import AttachmentHandler
         from ..config import get_email_accounts
@@ -1861,6 +1901,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                     )
                                     self.db._conn.commit()
                                     success_count += 1
+                                    redownload_buckets["file_restored"] += 1
                                     direct_download_ok = True
                                     self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
                             else:
@@ -1879,6 +1920,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     no_url_count += 1
                     failed_count += 1
                     failure_detail = fallback_reason or "无邮件 UID，无法重新读取邮件"
+                    if download_url or fallback_reason:
+                        redownload_buckets["download_failed"] += 1
+                    else:
+                        redownload_buckets["no_candidate_link"] += 1
                     download_failed_files.append(f"发票 ID {inv_id}: {failure_detail}")
                     self.write_log(f"❌ [重新下载] 发票 ID {inv_id} {failure_detail}")
                     continue
@@ -1905,19 +1950,42 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         db=self.db,
                         categories=categories,
                     )
+                    reread_status = getattr(reread_ok, "status", "")
                     if reread_ok:
-                        success_count += 1
-                        reread_success_count += 1
-                        self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 已通过重新读取邮件修复")
+                        status = reread_status or "recorded"
+                        bucket = _bucket_redownload_status(status)
+                        redownload_buckets[bucket] += 1
+                        if bucket == "file_restored":
+                            success_count += 1
+                            reread_success_count += 1
+                            self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 已通过重新读取邮件修复原文件")
+                        elif bucket == "metadata_refreshed":
+                            self.write_log(f"ℹ️ [重新下载] 发票 ID {inv_id} 仅刷新元数据或仍需手动下载")
+                        elif bucket == "duplicate_only":
+                            self.write_log(f"ℹ️ [重新下载] 发票 ID {inv_id} 仅命中已有重复记录")
+                        else:
+                            reread_failed_count += 1
+                            failed_count += 1
+                            download_failed_files.append(f"发票 ID {inv_id}: {status}")
+                        continue
+
+                    if reread_status == "no_candidate_link":
+                        redownload_buckets["no_candidate_link"] += 1
+                        reread_failed_count += 1
+                        failed_count += 1
+                        download_failed_files.append(f"发票 ID {inv_id}: 无候选下载链接")
+                        self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 无候选下载链接")
                         continue
 
                     reread_failed_count += 1
                     failed_count += 1
+                    redownload_buckets["download_failed"] += 1
                     download_failed_files.append(f"发票 ID {inv_id}: 重新读取邮件后仍未成功入库")
                     self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 重新读取邮件后仍未成功入库")
                 except Exception as e:
                     reread_failed_count += 1
                     failed_count += 1
+                    redownload_buckets["download_failed"] += 1
                     download_failed_files.append(f"发票 ID {inv_id}: 重新读取邮件失败 ({str(e)})")
                     self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件失败: {e}")
         finally:
@@ -1932,7 +2000,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._load_claims()
         self._on_table_selection_changed()
 
-        msg = f"已完成 {count} 张发票的重新下载流程！\n\n成功处理: {success_count} 张"
+        msg = _format_redownload_bucket_summary(count, redownload_buckets, download_failed_files)
         if reread_count:
             msg += (
                 f"\n\n其中 {reread_count} 张需要重新读取邮件，"
@@ -1940,14 +2008,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
         if no_url_count:
             msg += f"\n\n{no_url_count} 张没有直接下载链接，已尝试从邮件重新读取。"
-        if download_failed_files:
-            msg += f"\n\n以下发票仍然失败:\n" + "\n".join(download_failed_files[:10])
-            if len(download_failed_files) > 10:
-                msg += f"\n... 以及其他 {len(download_failed_files)-10} 个文件"
 
         QMessageBox.information(self, "重新下载结果", msg)
         self.write_log(
-            f"📥 [重新下载] 完成。成功: {success_count}, 回读邮件: {reread_success_count}/{reread_count}, 失败: {failed_count}"
+            "📥 [重新下载] 完成。"
+            f"file_restored={redownload_buckets['file_restored']} "
+            f"metadata_refreshed={redownload_buckets['metadata_refreshed']} "
+            f"duplicate_only={redownload_buckets['duplicate_only']} "
+            f"download_failed={redownload_buckets['download_failed']} "
+            f"no_candidate_link={redownload_buckets['no_candidate_link']} "
+            f"回读邮件: {reread_success_count}/{reread_count}, 失败: {failed_count}"
         )
 
     def _delete_selected_invoices(self):
