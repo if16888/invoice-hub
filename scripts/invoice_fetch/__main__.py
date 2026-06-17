@@ -2460,6 +2460,13 @@ def _process_email(
                 kept_paths.add(str(Path(dl.file_path).resolve()))
             except Exception:
                 pass
+        else:
+            link_pdf_skipped_as_duplicate = True
+            try:
+                if os.path.exists(dl.file_path):
+                    os.remove(dl.file_path)
+            except Exception:
+                pass
 
     downloaded_invoice_items = [
         (dl, parser.parse_pdf(dl.file_path))

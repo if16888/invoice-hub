@@ -522,32 +522,12 @@ def _save_download_to_path(download, dest: Path, timeout_ms: int = 30_000) -> bo
     """Persist a Playwright download to *dest* without leaking callback errors."""
     if dest.exists():
         return True
-    result: dict[str, object] = {"ok": False, "error": None}
-
-    def _worker() -> None:
-        try:
-            download.save_as(str(dest))
-            result["ok"] = True
-        except Exception as exc:
-            result["error"] = exc
-
-    timeout_seconds = max(0.001, float(timeout_ms or 30_000) / 1000.0)
-    thread = threading.Thread(target=_worker, name="invoice-download-save", daemon=True)
-    thread.start()
-    thread.join(timeout_seconds)
-    if thread.is_alive():
-        _log.warning(
-            "Download save timed out for %s after %.1fs",
-            mask_filename(dest.name),
-            timeout_seconds,
-        )
-        return False
-    if result["ok"]:
+    try:
+        download.save_as(str(dest))
         return True
-    if result["error"] is not None:
-        _log.warning("Download save failed for %s: %s", mask_filename(dest.name), result["error"])
+    except Exception as exc:
+        _log.warning("Download save failed for %s: %s", mask_filename(dest.name), exc)
         return False
-    return False
 
 
 def _verify_and_clean_file(path: str | Path) -> bool:

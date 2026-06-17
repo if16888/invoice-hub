@@ -152,18 +152,15 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertEqual(dl.last_download_diagnostics["attempted"], 1)
         self.assertTrue(dl.last_download_diagnostics["timed_out"])
 
-    def test_save_download_to_path_times_out_without_blocking(self):
-        class SlowDownload:
+    def test_save_download_to_path_swallows_exception(self):
+        class FaultyDownload:
             def save_as(self, path):
-                time.sleep(0.2)
-                Path(path).write_bytes(b"%PDF-1.4 slow")
+                raise RuntimeError("Save failed")
 
-        dest = Path(self.tmp_dir) / "slow.pdf"
-        started = time.perf_counter()
-        ok = _save_download_to_path(SlowDownload(), dest, timeout_ms=1)
-
+        dest = Path(self.tmp_dir) / "faulty.pdf"
+        ok = _save_download_to_path(FaultyDownload(), dest)
         self.assertFalse(ok)
-        self.assertLess(time.perf_counter() - started, 0.1)
+        self.assertFalse(dest.exists())
 
     def test_download_from_email_dedupes_pdf_and_ofd_same_stem(self):
         pdf_file = Path(self.tmp_dir) / "invoice.pdf"
@@ -542,6 +539,27 @@ class TestLinkDownloader(unittest.TestCase):
 
             self.assertTrue(any("发票展示页面 PDF 副本未参与结构化解析" in m for m in info_msgs))
             self.assertFalse(any("下载的 PDF 解析失败" in m for m in warning_msgs))
+
+    def test_save_download_to_path_runs_in_same_thread(self):
+        import threading
+        class MockDownload:
+            def __init__(self):
+                self.thread_id = None
+                self.called = False
+
+            def save_as(self, path):
+                self.called = True
+                self.thread_id = threading.current_thread().ident
+
+        mock_download = MockDownload()
+        dest = Path(self.tmp_dir) / "test_thread.pdf"
+        
+        current_thread_id = threading.current_thread().ident
+        ok = _save_download_to_path(mock_download, dest)
+        
+        self.assertTrue(ok)
+        self.assertTrue(mock_download.called)
+        self.assertEqual(mock_download.thread_id, current_thread_id)
 
 if __name__ == "__main__":
     unittest.main()

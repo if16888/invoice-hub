@@ -4119,6 +4119,118 @@ class InvoiceWorkflowTests(unittest.TestCase):
                         f"{fpath.relative_to(repo_root)}: {repr(match.group(0))}"
                     )
 
+    def test_ofd_downloaded_does_not_call_pdf_parser(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments = runtime / "attachments"
+            attachments.mkdir(parents=True, exist_ok=True)
+
+            ofd_file = base / "invoice.ofd"
+            ofd_file.write_bytes(b"PK\x03\x04 synthetic ofd.xml" + b"x" * 600)
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice download ofd"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 13 Jun 2026 10:00:00 +0800"
+            msg.set_content(
+                """
+                <html><body>
+                  <a href="https://example.com/invoice/ofd">下载发票</a>
+                </body></html>
+                """,
+                subtype="html",
+            )
+
+            dl = LinkDownloader(base / "downloads")
+
+            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+                return DownloadedFile(
+                    url=url,
+                    file_path=str(ofd_file),
+                    filename="invoice.ofd",
+                    size=ofd_file.stat().st_size,
+                    is_invoice=True,
+                    source_type="official_download",
+                )
+
+            class FailIfCalledParser:
+                def parse_pdf(self, path):
+                    raise AssertionError(f"PDF parser must not be called on OFD: {path}")
+
+            with (
+                patch.object(dl, "_download_url", side_effect=fake_download),
+                InvoiceDB(runtime / "invoices.db") as db,
+            ):
+                recorded = cli._process_email(
+                    cli.MailMessage(uid=88, raw_msg=msg),
+                    StaticAttachmentHandler(attachments, []),
+                    FailIfCalledParser(),
+                    dl,
+                    db,
+                    {},
+                )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "OFD待手动处理")
+            self.assertIn("unsupported_ofd", rows[0]["parse_note"])
+
+    def test_link_download_save_as_exception_enters_download_failed(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments = runtime / "attachments"
+            attachments.mkdir(parents=True, exist_ok=True)
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice download fail"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 13 Jun 2026 10:00:00 +0800"
+            msg.set_content(
+                """
+                <html><body>
+                  <a href="https://example.com/invoice/pdf">下载发票</a>
+                </body></html>
+                """,
+                subtype="html",
+            )
+
+            dl = LinkDownloader(base / "downloads")
+
+            mail_msg = cli.MailMessage(uid=99, raw_msg=msg)
+            mock_fetcher = Mock()
+            mock_fetcher.fetch_by_uid.return_value = mail_msg
+
+            with (
+                patch.object(dl, "_download_url", return_value=None),
+                InvoiceDB(runtime / "invoices.db") as db,
+            ):
+                recorded = cli._process_email(
+                    mail_msg,
+                    StaticAttachmentHandler(attachments, []),
+                    Mock(),
+                    dl,
+                    db,
+                    {},
+                )
+                
+                result = cli._handle_pending_email(
+                    row={"uid": 99, "mailbox_key": "legacy"},
+                    fetcher=mock_fetcher,
+                    folder="INBOX",
+                    att_handler=StaticAttachmentHandler(attachments, []),
+                    parser=Mock(),
+                    link_dl=dl,
+                    db=db,
+                    categories={},
+                )
+                
+            self.assertEqual(recorded, 0)
+            self.assertEqual(result.status, "download_failed")
+            self.assertEqual(dl.last_download_diagnostics["attempted"], 1)
+            self.assertEqual(dl.last_download_diagnostics["failed"], 1)
 
 
 if __name__ == "__main__":
