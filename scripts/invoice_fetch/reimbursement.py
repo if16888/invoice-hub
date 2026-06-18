@@ -24,11 +24,8 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
     if not actual:
         return BUYER_MISSING_WARNING
 
-    if expected:
-        if _norm_text(actual) != _norm_text(expected):
-            return f"购买方抬头不匹配：当前：{actual}；期望：{expected}"
-    else:
-        return "购买方名称与常用抬头不同，请确认"
+    if expected and _norm_text(actual) != _norm_text(expected):
+        return f"购买方抬头不匹配：当前：{actual}；期望：{expected}"
 
     return ""
 

@@ -26,6 +26,12 @@ class ReimbursementValidationTests(unittest.TestCase):
             "购买方抬头不匹配：当前：其他公司；期望：示例科技有限公司",
         )
 
+    def test_buyer_warning_without_expected_preset_only_warns_when_missing(self):
+        cfg = {"reimbursement": {"strict_buyer_check": True}}
+
+        self.assertEqual(buyer_warning({"buyer_name": "任意公司"}, cfg), "")
+        self.assertEqual(buyer_warning({"buyer_name": ""}, cfg), "购方抬头待核对")
+
     def test_claim_export_records_buyer_warning_in_manifest_and_excel(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

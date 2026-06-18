@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
-from PySide6.QtCore import Qt, QUrl, QTimer, QEvent
+from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint
 from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction
 
@@ -37,6 +37,15 @@ from .mobile_upload_dialog import MobileUploadDialog
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .settings_dialog import SettingsDialog
 from .workers import EmailScanWorker, LocalImportWorker
+from .column_filters import (
+    COLUMN_DEFINITIONS,
+    COLUMN_KEYS,
+    ColumnFilterPopup,
+    apply_column_filters,
+    has_active_filters,
+    is_filter_active,
+    unique_column_values,
+)
 
 _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
@@ -151,6 +160,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._invoice_snapshot = None
         self._suspend_dirty_tracking = False
         self._is_first_load = True
+        self.column_filters: dict[str, dict] = {}
+        self._column_filters_load_all = False
+        self._column_filter_popup = None
         self._deferred_init_done = False
         self._first_load_notice = None
         self._last_scan_summary = {}
@@ -428,9 +440,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.table = QTableWidget()
         self.table.setColumnCount(8)
-        self.table.setHorizontalHeaderLabels([
-            "状态", "费用日期", "金额", "发票号码", "销售方", "消费类型", "来源", "报销组"
-        ])
+        self.table.setHorizontalHeaderLabels([f"{label} ▾" for _key, label, _kind in COLUMN_DEFINITIONS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -439,6 +449,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.verticalHeader().setMinimumSectionSize(24)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
 
         # Set explicit column widths for readability
         self.table.setColumnWidth(0, 72)   # 状态
@@ -795,6 +806,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _schedule_invoice_reload(self, *_args):
         # Debounce invoice reloads when search/filter controls change.
+        self._column_filters_load_all = False
         if hasattr(self, "search_reload_timer"):
             self.search_reload_timer.start()
 
@@ -807,10 +819,68 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.chk_show_deleted.setChecked(False)
         if hasattr(self, "search_reload_timer"):
             self.search_reload_timer.stop()
+        self.column_filters.clear()
+        self._column_filters_load_all = False
+        self._refresh_column_filter_headers()
         self.current_filter_status = None
         for s, btn in self.filter_buttons.items():
             btn.setChecked(s == "all")
         self._load_invoices()
+
+    def _column_filter_value_getters(self) -> dict:
+        return {
+            "status": self._get_invoice_display_status,
+            "source": self._get_invoice_source,
+        }
+
+    def _refresh_column_filter_headers(self):
+        if not hasattr(self, "table"):
+            return
+        for index, (key, label, _kind) in enumerate(COLUMN_DEFINITIONS):
+            marker = " ●" if is_filter_active(self.column_filters.get(key)) else " ▾"
+            item = self.table.horizontalHeaderItem(index)
+            if item is None:
+                item = QTableWidgetItem()
+                self.table.setHorizontalHeaderItem(index, item)
+            item.setText(f"{label}{marker}")
+            item.setToolTip("已启用列筛选" if marker.strip() == "●" else "点击筛选此列")
+
+    def _set_column_filter(self, key: str, spec: dict):
+        if key not in COLUMN_KEYS:
+            return
+        if is_filter_active(spec):
+            self.column_filters[key] = dict(spec)
+        else:
+            self.column_filters.pop(key, None)
+        self._column_filters_load_all = False
+        self._refresh_column_filter_headers()
+        self._load_invoices()
+
+    def _show_column_filter_popup(self, section: int):
+        if section < 0 or section >= len(COLUMN_DEFINITIONS):
+            return
+        key, _label, _kind = COLUMN_DEFINITIONS[section]
+        try:
+            include_deleted = self.chk_show_deleted.isChecked()
+            rows = self.db.list_invoices(status=None, limit=None, include_deleted=include_deleted)
+        except Exception as exc:
+            _log.warning("Unable to load column filter values: %s", exc)
+            rows = []
+        values = unique_column_values(rows, key, self._column_filter_value_getters())
+        popup = ColumnFilterPopup(
+            key,
+            values,
+            self.column_filters.get(key),
+            self._set_column_filter,
+            self,
+        )
+        header = self.table.horizontalHeader()
+        popup.move(header.viewport().mapToGlobal(QPoint(
+            header.sectionViewportPosition(section),
+            header.height(),
+        )))
+        self._column_filter_popup = popup
+        popup.show()
 
     def _base_filter_label(self, status) -> str:
         return self.filter_base_labels.get(status, str(status))
@@ -1008,6 +1078,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _change_filter(self, status):
         # Handle top-bar filter button clicks and update UI checked state.
+        self._column_filters_load_all = False
         self.current_filter_status = None if status == "all" else status
         for s, btn in self.filter_buttons.items():
             btn.setChecked(s == status)
@@ -1023,6 +1094,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _load_all_invoices_clicked(self):
         """User clicked 'Load All' to bypass the first-load limit."""
         self._is_first_load = False
+        if has_active_filters(self.column_filters):
+            self._column_filters_load_all = True
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._load_invoices()
@@ -1040,13 +1113,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         prev_id = self.current_invoice.get("id") if getattr(self, "current_invoice", None) else None
+        prev_row = self.table.currentRow() if hasattr(self, "table") else -1
 
         # Determine query limit for first load: if _is_first_load is True and no search text/quick filter is active
         needle = self.txt_search.text().strip().lower() if hasattr(self, "txt_search") else ""
         unlinked_only = self.chk_unlinked.isChecked() if hasattr(self, "chk_unlinked") else False
         needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
 
-        is_default_view = not needle and not unlinked_only and not needs_fix_only
+        column_filters_active = has_active_filters(self.column_filters)
+        is_default_view = not needle and not unlinked_only and not needs_fix_only and not column_filters_active
         limit_val = None
         first_load_limited = False
         if self._is_first_load and is_default_view and self.current_filter_status is None:
@@ -1057,11 +1132,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
-            display_source = self.db.list_invoices(
-                status=self.current_filter_status,
-                limit=limit_val,
-                include_deleted=include_deleted
-            )
+            if column_filters_active:
+                display_source = self.db.list_invoices(
+                    status=None,
+                    limit=None,
+                    include_deleted=include_deleted,
+                )
+            else:
+                display_source = self.db.list_invoices(
+                    status=self.current_filter_status,
+                    limit=limit_val,
+                    include_deleted=include_deleted
+                )
             if is_default_view:
                 counts = {
                     "all": self.db.count_invoices_for_status(status=None, include_deleted=include_deleted),
@@ -1071,6 +1153,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     ERROR: self.db.count_invoices_for_status(status=ERROR, include_deleted=include_deleted),
                 }
                 count_source = []
+            elif column_filters_active:
+                count_source = display_source
             else:
                 count_source = self.db.list_invoices(
                     status=None,
@@ -1094,7 +1178,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             unlinked_only,
             needs_fix_only,
         )
-        if is_default_view and counts is not None:
+        displayed_invoices = apply_column_filters(
+            displayed_invoices,
+            self.column_filters,
+            self._column_filter_value_getters(),
+        )
+        if column_filters_active:
+            count_filtered_invoices = displayed_invoices
+            if self.current_filter_status is not None:
+                displayed_invoices = [
+                    inv for inv in displayed_invoices
+                    if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
+                ]
+            total_column_matches = len(displayed_invoices)
+            if not self._column_filters_load_all and total_column_matches > 100:
+                displayed_invoices = displayed_invoices[:100]
+                first_load_limited = True
+        elif is_default_view and counts is not None:
             count_filtered_invoices = counts
         else:
             count_filtered_invoices = self._apply_non_status_filters(
@@ -1109,7 +1209,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._update_filter_counts(count_filtered_invoices)
 
         # Track limited first-load state for UI hints
-        total_matching = count_filtered_invoices.get("all", 0) if isinstance(count_filtered_invoices, dict) else len(count_filtered_invoices)
+        if column_filters_active:
+            total_matching = total_column_matches
+        else:
+            total_matching = count_filtered_invoices.get("all", 0) if isinstance(count_filtered_invoices, dict) else len(count_filtered_invoices)
         if first_load_limited and total_matching > len(displayed_invoices):
             self._limited_first_load_active = True
             self._limited_first_load_total = total_matching
@@ -1296,6 +1399,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if target_row == -1 and len(self.invoices_list) > 0:
                 # Use row hint from delete operation if available, else fall back to row 0
                 hint = getattr(self, "_select_row_hint", -1)
+                if hint < 0:
+                    hint = prev_row
                 if hint >= 0:
                     target_row = min(hint, len(self.invoices_list) - 1)
                 else:
