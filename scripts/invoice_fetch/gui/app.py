@@ -452,6 +452,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
+        self._refresh_column_filter_headers()
 
         # Set explicit column widths for readability
         self.table.setColumnWidth(0, 72)   # 状态
@@ -839,13 +840,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not hasattr(self, "table"):
             return
         for index, (key, label, _kind) in enumerate(COLUMN_DEFINITIONS):
-            marker = " ●" if is_filter_active(self.column_filters.get(key)) else " ▾"
+            active = is_filter_active(self.column_filters.get(key))
+            marker = "●" if active else "▾"
             item = self.table.horizontalHeaderItem(index)
             if item is None:
                 item = QTableWidgetItem()
                 self.table.setHorizontalHeaderItem(index, item)
-            item.setText(f"{label}{marker}")
-            item.setToolTip("已启用列筛选" if marker.strip() == "●" else "点击筛选此列")
+            item.setText(f"{label} {marker}")
+            item.setToolTip(self._column_filter_header_tooltip(label, active))
+
+    def _column_filter_header_tooltip(self, label: str, active: bool) -> str:
+        if active:
+            return f"{label}：已启用列筛选，点击右侧修改"
+        return f"{label}：点击列标题右侧筛选"
 
     def _set_column_filter(self, key: str, spec: dict):
         if key not in COLUMN_KEYS:
@@ -870,8 +877,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         local_x = press_pos.x() - left
         if local_x < 0 or local_x > width:
             return False
-        marker_left = max(0, width - 18)
-        marker_right = max(0, width - 6)
+        marker_left = max(0, width - 30)
+        marker_right = width
         return marker_left <= local_x <= marker_right
 
     def _show_column_filter_popup(self, section: int):

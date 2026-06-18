@@ -125,7 +125,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertNotIn("●", window.table.horizontalHeaderItem(5).text())
         self.assertEqual(set(self._numbers(window)), {"FOOD", "HOTEL"})
 
-    def test_supported_headers_open_compact_filter_popup_only_near_marker(self):
+    def test_header_center_click_does_not_open_filter_popup(self):
         window = self._make_window([
             {"invoice_number": "FOOD", "category": "餐饮"},
             {"invoice_number": "HOTEL", "category": "住宿"},
@@ -139,6 +139,14 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
         self.assertIsNone(window._column_filter_popup)
 
+    def test_supported_headers_open_filter_popup_near_widened_marker_area(self):
+        window = self._make_window([
+            {"invoice_number": "FOOD", "category": "餐饮"},
+            {"invoice_number": "HOTEL", "category": "住宿"},
+        ])
+
+        header = window.table.horizontalHeader()
+        section = 5
         near_marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 10
         window._column_filter_header_press_pos = QPoint(near_marker_x, header.height() // 2)
         window._show_column_filter_popup(section)
@@ -150,6 +158,45 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(popup.search_edit.placeholderText(), "搜索值")
         self.assertEqual(popup.value_list.count(), 2)
         popup.close()
+
+    def test_right_side_clickable_area_works_for_narrow_columns(self):
+        window = self._make_window([
+            {"invoice_number": "FOOD", "category": "餐饮"},
+            {"invoice_number": "HOTEL", "category": "住宿"},
+        ])
+
+        section = 0
+        window.table.setColumnWidth(section, 24)
+        self.app.processEvents()
+        header = window.table.horizontalHeader()
+        right_edge_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 1
+        window._column_filter_header_press_pos = QPoint(right_edge_x, header.height() // 2)
+        window._show_column_filter_popup(section)
+        self.app.processEvents()
+
+        self.assertIsNotNone(window._column_filter_popup)
+
+    def test_active_filter_header_tooltip_is_clear(self):
+        window = self._make_window([
+            {"invoice_number": "FOOD", "category": "餐饮"},
+            {"invoice_number": "HOTEL", "category": "住宿"},
+        ])
+
+        window._set_column_filter("category", {"values": {"住宿"}})
+        tooltip = window.table.horizontalHeaderItem(5).toolTip()
+
+        self.assertIn("已启用列筛选", tooltip)
+        self.assertIn("点击右侧修改", tooltip)
+
+    def test_inactive_filter_header_tooltip_is_clear(self):
+        window = self._make_window([
+            {"invoice_number": "FOOD", "category": "餐饮"},
+            {"invoice_number": "HOTEL", "category": "住宿"},
+        ])
+
+        tooltip = window.table.horizontalHeaderItem(5).toolTip()
+
+        self.assertIn("点击列标题右侧筛选", tooltip)
 
     def test_empty_value_selection_remains_active_when_popup_reopens(self):
         from PySide6.QtCore import Qt
