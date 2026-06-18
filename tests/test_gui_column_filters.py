@@ -159,6 +159,41 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(popup.value_list.count(), 2)
         popup.close()
 
+    def test_seller_header_visible_marker_opens_filter_popup(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        window = self._make_window([
+            {"invoice_number": "A", "seller_name": "Alpha"},
+            {"invoice_number": "B", "seller_name": "Beta"},
+        ])
+        window.resize(1500, 800)
+        window.show()
+        self.app.processEvents()
+
+        header = window.table.horizontalHeader()
+        section = 4
+        item = window.table.horizontalHeaderItem(section)
+        text_width = header.fontMetrics().horizontalAdvance(item.text())
+        marker_width = header.fontMetrics().horizontalAdvance("▾")
+        marker_x = (
+            header.sectionViewportPosition(section)
+            + (header.sectionSize(section) - text_width) // 2
+            + text_width
+            - marker_width // 2
+        )
+        QTest.mouseClick(
+            header.viewport(),
+            Qt.LeftButton,
+            Qt.NoModifier,
+            QPoint(marker_x, header.height() // 2),
+        )
+        self.app.processEvents()
+
+        self.assertIsNotNone(window._column_filter_popup)
+        self.assertEqual(window._column_filter_popup.key, "seller_name")
+        window._column_filter_popup.close()
+
     def test_right_side_clickable_area_works_for_narrow_columns(self):
         window = self._make_window([
             {"invoice_number": "FOOD", "category": "餐饮"},

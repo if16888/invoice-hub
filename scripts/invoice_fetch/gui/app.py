@@ -879,7 +879,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return False
         marker_left = max(0, width - 30)
         marker_right = width
-        return marker_left <= local_x <= marker_right
+        if marker_left <= local_x <= marker_right:
+            return True
+
+        item = self.table.horizontalHeaderItem(section)
+        if item is None:
+            return False
+        metrics = header.fontMetrics()
+        text_width = metrics.horizontalAdvance(item.text())
+        marker_width = metrics.horizontalAdvance("▾")
+        alignment = item.textAlignment() or header.defaultAlignment()
+        if alignment & Qt.AlignRight:
+            text_left = max(0, width - text_width)
+        elif alignment & Qt.AlignHCenter:
+            text_left = max(0, (width - text_width) // 2)
+        else:
+            text_left = 0
+        visible_marker_left = max(0, text_left + text_width - marker_width - 8)
+        visible_marker_right = min(width, text_left + text_width + 8)
+        return visible_marker_left <= local_x <= visible_marker_right
 
     def _show_column_filter_popup(self, section: int):
         if section < 0 or section >= len(COLUMN_DEFINITIONS):
