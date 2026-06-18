@@ -15,7 +15,7 @@ class ColumnFilterTests(unittest.TestCase):
                 "total_amount": "18.50",
                 "seller_name": "Alpha Coffee",
                 "category": "餐饮",
-                "claim_name": "六月报销",
+                "claim_group_name": "六月报销",
             },
             {
                 "id": 2,
@@ -25,7 +25,7 @@ class ColumnFilterTests(unittest.TestCase):
                 "total_amount": "120.00",
                 "seller_name": "Beta Hotel",
                 "category": "住宿",
-                "claim_name": "",
+                "claim_group": "",
             },
             {
                 "id": 3,
@@ -35,7 +35,7 @@ class ColumnFilterTests(unittest.TestCase):
                 "total_amount": "45.00",
                 "seller_name": "Alpha Travel",
                 "category": "交通",
-                "claim_name": "六月报销",
+                "claim_group": "六月报销",
             },
         ]
 
@@ -67,6 +67,16 @@ class ColumnFilterTests(unittest.TestCase):
         result = apply_column_filters(self.rows, {"total_amount": {"min": "20", "max": "100"}})
         self.assertEqual([row["id"] for row in result], [3])
 
+    def test_amount_range_handles_decimal_and_blank_values(self):
+        rows = [
+            {"id": 10, "total_amount": "18.75"},
+            {"id": 11, "total_amount": ""},
+            {"id": 12, "total_amount": "21.25"},
+        ]
+
+        result = apply_column_filters(rows, {"total_amount": {"min": "18.5", "max": "20.0"}})
+        self.assertEqual([row["id"] for row in result], [10])
+
     def test_combines_multiple_filters_with_and_logic(self):
         result = apply_column_filters(
             self.rows,
@@ -81,6 +91,16 @@ class ColumnFilterTests(unittest.TestCase):
     def test_empty_checked_value_set_matches_no_rows(self):
         result = apply_column_filters(self.rows, {"category": {"values": set()}})
         self.assertEqual(result, [])
+
+    def test_filters_claim_group_aliases(self):
+        rows = [
+            {"id": 11, "invoice_number": "CG-1", "claim_group_name": "test1"},
+            {"id": 12, "invoice_number": "CG-2", "claim_group": "test2"},
+            {"id": 13, "invoice_number": "CG-3", "claim_name": "test3"},
+        ]
+
+        result = apply_column_filters(rows, {"claim_name": {"values": {"test1"}}})
+        self.assertEqual([row["id"] for row in result], [11])
 
 
 if __name__ == "__main__":

@@ -38,12 +38,21 @@ COLUMN_DEFINITIONS = (
 COLUMN_KEYS = tuple(item[0] for item in COLUMN_DEFINITIONS)
 COLUMN_LABELS = {key: label for key, label, _kind in COLUMN_DEFINITIONS}
 COLUMN_KINDS = {key: kind for key, _label, kind in COLUMN_DEFINITIONS}
+CLAIM_GROUP_FIELD_KEYS = ("claim_name", "claim_group_name", "claim_group")
 
 
 def column_value(row: dict, key: str, value_getters: dict[str, ValueGetter] | None = None) -> str:
     getter = (value_getters or {}).get(key)
     if getter is not None:
-        return str(getter(row) or "").strip()
+        getter_value = str(getter(row) or "").strip()
+        if getter_value or key != "claim_name":
+            return getter_value
+    if key == "claim_name":
+        for claim_key in CLAIM_GROUP_FIELD_KEYS:
+            value = str(row.get(claim_key) or "").strip()
+            if value:
+                return value
+        return ""
     if key == "expense_date":
         return str(row.get("expense_date") or row.get("invoice_date") or "").strip()
     return str(row.get(key) or "").strip()

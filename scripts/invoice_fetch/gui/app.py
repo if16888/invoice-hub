@@ -163,6 +163,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.column_filters: dict[str, dict] = {}
         self._column_filters_load_all = False
         self._column_filter_popup = None
+        self._column_filter_header_press_pos: QPoint | None = None
         self._deferred_init_done = False
         self._first_load_notice = None
         self._last_scan_summary = {}
@@ -450,6 +451,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
+        self.table.horizontalHeader().viewport().installEventFilter(self)
 
         # Set explicit column widths for readability
         self.table.setColumnWidth(0, 72)   # 状态
@@ -856,8 +858,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_column_filter_headers()
         self._load_invoices()
 
+    def _should_open_column_filter_popup(self, section: int) -> bool:
+        if not hasattr(self, "table") or section < 0:
+            return False
+        header = self.table.horizontalHeader()
+        press_pos = getattr(self, "_column_filter_header_press_pos", None)
+        if press_pos is None:
+            return False
+        left = header.sectionViewportPosition(section)
+        width = header.sectionSize(section)
+        local_x = press_pos.x() - left
+        if local_x < 0 or local_x > width:
+            return False
+        marker_left = max(0, width - 18)
+        marker_right = max(0, width - 6)
+        return marker_left <= local_x <= marker_right
+
     def _show_column_filter_popup(self, section: int):
         if section < 0 or section >= len(COLUMN_DEFINITIONS):
+            return
+        if not self._should_open_column_filter_popup(section):
+            self._column_filter_header_press_pos = None
             return
         key, _label, _kind = COLUMN_DEFINITIONS[section]
         try:
@@ -881,6 +902,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )))
         self._column_filter_popup = popup
         popup.show()
+        self._column_filter_header_press_pos = None
+
+    def eventFilter(self, obj, event):
+        header = self.table.horizontalHeader() if hasattr(self, "table") else None
+        if header is not None and obj is header.viewport():
+            if event.type() == QEvent.MouseButtonPress:
+                self._column_filter_header_press_pos = event.position().toPoint()
+        return super().eventFilter(obj, event)
 
     def _base_filter_label(self, status) -> str:
         return self.filter_base_labels.get(status, str(status))
@@ -914,7 +943,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     ) -> list[dict]:
         filtered: list[dict] = []
         for inv in invoices:
-            claim_name = str(inv.get("claim_name") or "").strip()
+            claim_name = self._get_invoice_claim_group(inv)
             quality = self._get_invoice_quality(inv)
 
             if unlinked_only and claim_name:
@@ -962,6 +991,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if mail_uid is not None:
             return "邮箱"
         return "未知"
+
+    def _get_invoice_claim_group(self, inv: dict) -> str:
+        for key in ("claim_name", "claim_group_name", "claim_group"):
+            value = str(inv.get(key) or "").strip()
+            if value:
+                return value
+        return ""
 
     def _get_invoice_quality(self, inv: dict) -> str:
         inv_num = str(inv.get("invoice_number") or "").strip()
@@ -1254,7 +1290,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 total_amt = str(inv.get("total_amount") or "")
                 category = str(inv.get("category") or "未分类")
                 seller = str(inv.get("seller_name") or "")
-                claim_name = str(inv.get("claim_name") or "")
+                claim_name = self._get_invoice_claim_group(inv)
                 attachment_path = str(inv.get("attachment_path") or "")
                 display_status = self._get_invoice_display_status(inv)
                 source_text = self._get_invoice_source(inv)

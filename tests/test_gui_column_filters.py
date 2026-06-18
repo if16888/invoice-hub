@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PySide6.QtCore import QPoint
+
 from scripts.invoice_fetch.db import InvoiceDB
 
 
@@ -37,6 +39,7 @@ class GuiColumnFilterTests(unittest.TestCase):
                     "mail_uid": row.get("mail_uid"),
                     "mail_sender": row.get("mail_sender", ""),
                     "attachment_path": row.get("attachment_path", ""),
+                    "claim_name": row.get("claim_name", ""),
                 }
                 db.insert_invoice(payload)
 
@@ -122,18 +125,27 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertNotIn("●", window.table.horizontalHeaderItem(5).text())
         self.assertEqual(set(self._numbers(window)), {"FOOD", "HOTEL"})
 
-    def test_supported_headers_open_compact_filter_popup(self):
+    def test_supported_headers_open_compact_filter_popup_only_near_marker(self):
         window = self._make_window([
             {"invoice_number": "FOOD", "category": "餐饮"},
             {"invoice_number": "HOTEL", "category": "住宿"},
         ])
 
-        self.assertEqual(window.table.columnCount(), 8)
-        self.assertTrue(all("▾" in window.table.horizontalHeaderItem(i).text() for i in range(8)))
-        window._show_column_filter_popup(5)
+        header = window.table.horizontalHeader()
+        section = 5
+        center_x = header.sectionViewportPosition(section) + header.sectionSize(section) // 2
+        window._column_filter_header_press_pos = QPoint(center_x, header.height() // 2)
+        window._show_column_filter_popup(section)
+        self.app.processEvents()
+        self.assertIsNone(window._column_filter_popup)
+
+        near_marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 10
+        window._column_filter_header_press_pos = QPoint(near_marker_x, header.height() // 2)
+        window._show_column_filter_popup(section)
         self.app.processEvents()
 
         popup = window._column_filter_popup
+        self.assertIsNotNone(popup)
         self.assertEqual(popup.key, "category")
         self.assertEqual(popup.search_edit.placeholderText(), "搜索值")
         self.assertEqual(popup.value_list.count(), 2)
@@ -150,6 +162,11 @@ class GuiColumnFilterTests(unittest.TestCase):
         window._set_column_filter("category", {"values": set()})
         self.assertEqual(window.table.rowCount(), 0)
         self.assertIn("●", window.table.horizontalHeaderItem(5).text())
+        header = window.table.horizontalHeader()
+        window._column_filter_header_press_pos = QPoint(
+            header.sectionViewportPosition(5) + header.sectionSize(5) - 10,
+            header.height() // 2,
+        )
         window._show_column_filter_popup(5)
         self.app.processEvents()
 
