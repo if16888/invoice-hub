@@ -463,6 +463,10 @@ def save_config(cfg: dict, path: str | Path | None = None) -> None:
 
     _strip_secrets(clean_cfg)
 
+    ai_cfg = clean_cfg.get("ai")
+    if isinstance(ai_cfg, dict):
+        ai_cfg.pop("enabled", None)
+
     import sys
     if path is None:
         if getattr(sys, "frozen", False):

@@ -2255,7 +2255,7 @@ class SettingsDialog(QDialog):
         self.cfg.setdefault("ai", {})
         self.cfg["ai"]["provider"] = ai_provider
         self.cfg["ai"]["model"] = ai_model
-        self.cfg["ai"]["enabled"] = (ai_provider != "none")
+        self.cfg["ai"].pop("enabled", None)
 
         try:
             save_config(self.cfg)

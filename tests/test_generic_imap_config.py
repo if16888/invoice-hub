@@ -283,6 +283,20 @@ class GenericImapConfigTests(unittest.TestCase):
             self.assertNotIn("my_secret_code", saved_content)
             self.assertNotIn("auth_code", saved_content)
 
+    def test_save_config_strips_legacy_ai_enabled_flag(self):
+        from scripts.invoice_fetch.config import save_config
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            save_config({
+                "email": {"address": "test@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"months_back": 3},
+                "ai": {"provider": "deepseek", "model": "deepseek-chat", "enabled": True},
+            }, path=path)
+
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("enabled", saved["ai"])
+
     def test_ai_provider_none_does_not_affect_validation(self):
         validate_config_gui({
             "email": {
