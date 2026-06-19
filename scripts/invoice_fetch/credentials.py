@@ -36,21 +36,13 @@ def get_auth_code(email: str) -> str:
     return secret
 
 
-def get_ai_api_key(provider: str) -> str:
-    """Retrieve the AI API key for *provider* from OS keyring or env fallback."""
-    if not provider or provider.lower() in {"", "none"}:
-        raise ValueError("AI 分类未启用，无法获取 API Key")
+def _ai_keyring_service(provider: str, profile_id: str = "") -> str:
+    if profile_id:
+        return f"invoice-hub:ai-profile:{profile_id}"
+    return f"invoice-hub:ai:{provider}"
 
-    service = f"invoice-hub:ai:{provider}"
-    try:
-        secret = keyring.get_password(service, "default")
-        if secret:
-            _log.debug("AI API key 已从系统 Keyring 加载 (provider=%s)", provider)
-            return secret
-    except Exception:
-        pass
 
-    # Fallback to environment variable
+def _get_ai_key_from_environment(provider: str) -> str:
     import os
     env_map = {
         "deepseek": "DEEPSEEK_API_KEY",
@@ -67,35 +59,56 @@ def get_ai_api_key(provider: str) -> str:
             env_var, env_var,
         )
         raise SystemExit(1)
+    return key
+
+
+def get_ai_api_key(provider: str, profile_id: str = "") -> str:
+    """Retrieve the AI API key for *provider* from OS keyring or env fallback."""
+    if not provider or provider.lower() in {"", "none"}:
+        raise ValueError("AI 分类未启用，无法获取 API Key")
+
+    services = []
+    if profile_id:
+        services.append(_ai_keyring_service(provider, profile_id))
+    services.append(_ai_keyring_service(provider))
+
+    for service in services:
+        try:
+            secret = keyring.get_password(service, "default")
+            if secret:
+                _log.debug("AI API key 已从系统 Keyring 加载 (service=%s)", service)
+                return secret
+        except Exception:
+            continue
+
+    key = _get_ai_key_from_environment(provider)
     _log.debug("AI API key 已从环境变量加载 (provider=%s)", provider)
     return key
 
 
-def set_ai_api_key(provider: str, api_key: str) -> None:
+def set_ai_api_key(provider: str, api_key: str, profile_id: str = "") -> None:
     """Store the AI API key for *provider* in OS keyring."""
-    service = f"invoice-hub:ai:{provider}"
+    service = _ai_keyring_service(provider, profile_id)
     keyring.set_password(service, "default", api_key)
-    _log.info("AI API 凭据已安全更新到系统 Keyring Store (provider=%s)", provider)
+    _log.info("AI API 凭据已安全更新到系统 Keyring Store (service=%s)", service)
 
 
-def has_ai_api_key(provider: str) -> bool:
+def has_ai_api_key(provider: str, profile_id: str = "") -> bool:
     """Check if the AI API key for *provider* exists in OS keyring."""
     if not provider:
         return False
-    service = f"invoice-hub:ai:{provider}"
     try:
-        secret = keyring.get_password(service, "default")
-        return bool(secret)
-    except Exception:
+        return bool(get_ai_api_key(provider, profile_id=profile_id))
+    except (ValueError, SystemExit):
         return False
 
 
-def delete_ai_api_key(provider: str) -> None:
+def delete_ai_api_key(provider: str, profile_id: str = "") -> None:
     """Delete the AI API key for *provider* from OS keyring."""
-    service = f"invoice-hub:ai:{provider}"
+    service = _ai_keyring_service(provider, profile_id)
     try:
         keyring.delete_password(service, "default")
-        _log.info("AI API 凭据已从系统 Keyring Store 中删除 (provider=%s)", provider)
+        _log.info("AI API 凭据已从系统 Keyring Store 中删除 (service=%s)", service)
     except Exception:
         pass
 
