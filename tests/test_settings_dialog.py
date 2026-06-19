@@ -218,7 +218,31 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
         config = self._multi_account_config("abc@outlook.com")
         dialog = self._make_dialog(config)
         self._select(dialog, "outlook")
-        self.assertIn("暂不支持测试/扫描", dialog.lbl_cred_status.text())
+        self.assertIn("已保存 Outlook 账号，但当前版本暂不支持测试/扫描", dialog.lbl_cred_status.text())
+
+    def test_unsaved_outlook_email_does_not_show_saved_status(self):
+        dialog = self._make_dialog()
+        self._select(dialog, "outlook")
+        dialog.txt_email.setText("new_unsaved@outlook.com")
+        status_text = dialog.lbl_cred_status.text()
+        self.assertNotIn("已保存", status_text)
+        self.assertIn("Outlook 当前版本暂不支持配置/测试", status_text)
+
+    def test_saved_outlook_email_shows_saved_but_unsupported_status(self):
+        config = self._multi_account_config("abc@outlook.com")
+        dialog = self._make_dialog(config)
+        self._select(dialog, "outlook")
+        status_text = dialog.lbl_cred_status.text()
+        self.assertIn("已保存 Outlook 账号，但当前版本暂不支持测试/扫描", status_text)
+
+    def test_auth_code_help_text_has_no_typo(self):
+        dialog = self._make_dialog()
+        self._select(dialog, "qq")
+        with patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information") as info:
+            dialog._show_auth_code_help()
+            help_text = info.call_args.args[2]
+            self.assertIn("读取邮件的专属密码", help_text)
+            self.assertNotIn("读取邮件 of 专属密码", help_text)
 
     def test_app_password_guidance_removed_from_outlook_help(self):
         dialog = self._make_dialog()
@@ -246,7 +270,7 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
 
             self._select(dialog, "outlook")
 
-        self.assertIn("暂不支持测试/扫描", dialog.lbl_cred_status.text())
+        self.assertIn("已保存 Outlook 账号，但当前版本暂不支持测试/扫描", dialog.lbl_cred_status.text())
 
     def _save_without_side_effects(self, dialog):
         dialog.test_success = True

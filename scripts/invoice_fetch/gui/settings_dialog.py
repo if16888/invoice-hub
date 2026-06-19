@@ -725,7 +725,11 @@ class SettingsDialog(QDialog):
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
             return
         if self._get_selected_provider() == "outlook":
-            self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>已保存，但当前版本暂不支持测试/扫描</b></font>")
+            email_normalized = self._normalize_address(email)
+            if email_normalized in self._saved_accounts_by_address:
+                self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>已保存 Outlook 账号，但当前版本暂不支持测试/扫描</b></font>")
+            else:
+                self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>Outlook 当前版本暂不支持配置/测试</b></font>")
             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             return
         if has_auth_code(email):
@@ -824,7 +828,7 @@ class SettingsDialog(QDialog):
             self,
             "如何获取邮箱授权码？",
             "<b>什么是授权码？</b><br>"
-            "授权码（或应用专用密码）是专门用于第三方程序读取邮件 of 专属密码，<b>绝非您的邮箱登录密码</b>，可随时注销。<br><br>"
+            "授权码（或应用专用密码）是专门用于第三方程序读取邮件的专属密码，<b>绝非您的邮箱登录密码</b>，可随时注销。<br><br>"
             "<b>获取步骤：</b><br>"
             "• <b>QQ邮箱：</b><br>"
             "  1. 登录网页版 QQ 邮箱。<br>"
