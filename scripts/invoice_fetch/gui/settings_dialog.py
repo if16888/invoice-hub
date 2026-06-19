@@ -99,11 +99,18 @@ class SettingsDialog(QDialog):
         self.current_step = 1
         self._loading_initial_values = True
         self._applying_provider_defaults = False
+        self._loading_account_values = False
         self._advanced_settings_dirty = False
         self._active_provider = "qq"
+        self._email_is_user_draft = False
+        self._loaded_account_address = ""
+        self._loaded_account_mailbox_key = ""
+        self._loaded_account_provider = ""
+        self._missing_saved_provider = ""
 
         from ..config import _EMAIL_PROVIDER_PRESETS
         self.cfg = _load_config_safe_compat()
+        self._build_saved_account_maps()
 
         # Tab Widget to isolate Mailbox setup from AI Setup
         self.main_layout = QVBoxLayout(self)
@@ -454,22 +461,30 @@ class SettingsDialog(QDialog):
         layout.addLayout(ai_footer)
 
     def _load_initial_values(self):
-        # Email settings
+        current_email = self.cfg.get("email", {}).get("address", "")
         current_provider = self.cfg.get("email", {}).get("provider", "qq")
-        self._select_provider_card(current_provider)
-
-        self.txt_email.setText(self.cfg.get("email", {}).get("address", ""))
-        self.txt_months.setText(str(self.cfg.get("search", {}).get("months_back", 3)))
-
-        if current_provider == "custom":
-            self.advanced_group.setVisible(True)
-            self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
-            self._set_advanced_values(
-                self.cfg.get("imap", {}).get("server", ""),
-                self.cfg.get("imap", {}).get("port", 993),
-            )
+        current_account = self._saved_accounts_by_address.get(self._normalize_address(current_email))
+        if current_account is None:
+            current_account = self._first_saved_account(current_provider)
+        if current_account is not None:
+            self._load_saved_account(current_account)
         else:
-            self._apply_provider_defaults(current_provider)
+            self._select_provider_card(current_provider)
+            self._loading_account_values = True
+            try:
+                self.txt_email.setText(current_email)
+                self.txt_months.setText(str(self.cfg.get("search", {}).get("months_back", 3)))
+            finally:
+                self._loading_account_values = False
+            if current_provider == "custom":
+                self.advanced_group.setVisible(True)
+                self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
+                self._set_advanced_values(
+                    self.cfg.get("imap", {}).get("server", ""),
+                    self.cfg.get("imap", {}).get("port", 993),
+                )
+            else:
+                self._apply_provider_defaults(current_provider)
 
         # AI settings
         ai_prov = self.cfg.get("ai", {}).get("provider", "none")
@@ -478,6 +493,91 @@ class SettingsDialog(QDialog):
         if saved_model:
             self.txt_ai_model.setCurrentText(saved_model)
 
+        self._update_cred_status_label()
+
+    @staticmethod
+    def _normalize_address(address):
+        return str(address or "").strip().lower()
+
+    def _build_saved_account_maps(self):
+        self._saved_accounts = []
+        self._saved_accounts_by_provider = {}
+        self._saved_accounts_by_address = {}
+        self._saved_accounts_by_mailbox_key = {}
+
+        raw_accounts = self.cfg.get("email_accounts")
+        if isinstance(raw_accounts, list):
+            self._saved_accounts.extend(
+                dict(account) for account in raw_accounts if isinstance(account, dict)
+            )
+
+        legacy_email = self.cfg.get("email", {})
+        legacy_address = self._normalize_address(legacy_email.get("address"))
+        if legacy_address and not any(
+            self._normalize_address(account.get("address")) == legacy_address
+            for account in self._saved_accounts
+        ):
+            self._saved_accounts.append({
+                "name": legacy_email.get("name", ""),
+                "enabled": True,
+                "provider": legacy_email.get("provider", "qq"),
+                "address": legacy_email.get("address", ""),
+                "username": legacy_email.get("username") or legacy_email.get("address", ""),
+                "imap": dict(self.cfg.get("imap", {})),
+                "search": dict(self.cfg.get("search", {})),
+                "mailbox_key": legacy_email.get("mailbox_key") or legacy_address,
+            })
+
+        for account in self._saved_accounts:
+            provider = str(account.get("provider") or "custom").lower()
+            address = self._normalize_address(account.get("address"))
+            mailbox_key = self._normalize_address(account.get("mailbox_key"))
+            self._saved_accounts_by_provider.setdefault(provider, []).append(account)
+            if address:
+                self._saved_accounts_by_address[address] = account
+            if mailbox_key:
+                self._saved_accounts_by_mailbox_key[mailbox_key] = account
+
+    def _first_saved_account(self, provider):
+        accounts = self._saved_accounts_by_provider.get(provider, [])
+        return next((account for account in accounts if account.get("enabled", True)), None) or (
+            accounts[0] if accounts else None
+        )
+
+    def _is_saved_address(self, address):
+        return self._normalize_address(address) in self._saved_accounts_by_address
+
+    def _load_saved_account(self, account):
+        provider = str(account.get("provider") or "custom").lower()
+        address = str(account.get("address") or "").strip()
+        imap = account.get("imap") if isinstance(account.get("imap"), dict) else {}
+        search = account.get("search") if isinstance(account.get("search"), dict) else {}
+
+        self._loading_account_values = True
+        try:
+            self._select_provider_card(provider)
+            self.txt_email.setText(address)
+            self.txt_months.setText(str(search.get("months_back") or 3))
+            if provider == "custom":
+                self.advanced_group.setVisible(True)
+                self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
+            else:
+                self.advanced_group.setVisible(False)
+                self.btn_toggle_advanced.setText("显示高级 IMAP 设置 ▼")
+            if imap.get("server"):
+                self._set_advanced_values(imap.get("server"), imap.get("port", 993))
+            else:
+                self._apply_provider_defaults(provider)
+        finally:
+            self._loading_account_values = False
+
+        self._email_is_user_draft = False
+        self._loaded_account_address = self._normalize_address(address)
+        self._loaded_account_mailbox_key = self._normalize_address(account.get("mailbox_key"))
+        self._loaded_account_provider = provider
+        self._missing_saved_provider = ""
+        self._advanced_settings_dirty = False
+        self._update_provider_hint()
         self._update_cred_status_label()
 
     def _get_selected_provider(self):
@@ -515,7 +615,27 @@ class SettingsDialog(QDialog):
                 return
 
         self._active_provider = provider
-        self._adjust_email_for_provider(provider)
+        saved_account = self._first_saved_account(provider)
+        if saved_account is not None:
+            self._load_saved_account(saved_account)
+            return
+
+        current_email = self.txt_email.text().strip()
+        can_rewrite_draft = self._email_is_user_draft and not self._is_saved_address(current_email)
+        self._missing_saved_provider = provider
+        self._loaded_account_address = ""
+        self._loaded_account_mailbox_key = ""
+        self._loaded_account_provider = ""
+        self._loading_account_values = True
+        try:
+            if can_rewrite_draft:
+                self._adjust_email_for_provider(provider)
+            else:
+                self.txt_email.clear()
+                self._adjust_email_for_provider(provider)
+        finally:
+            self._loading_account_values = False
+        self._email_is_user_draft = can_rewrite_draft
         if provider == "custom":
             self.advanced_group.setVisible(True)
             self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
@@ -572,7 +692,12 @@ class SettingsDialog(QDialog):
         self.lbl_outlook_guidance.setVisible(provider == "outlook")
         email = self.txt_email.text().strip()
         domain = email.rsplit("@", 1)[1].lower() if "@" in email else ""
-        if provider == "outlook" and domain and domain not in OUTLOOK_FAMILY_DOMAINS:
+        if self._missing_saved_provider == provider and not email:
+            provider_name = PROVIDER_EMAIL_NAMES.get(provider, "邮箱")
+            self.lbl_provider_hint.setText(
+                f"未找到已保存的 {provider_name} 邮箱，请输入完整邮箱地址。"
+            )
+        elif provider == "outlook" and domain and domain not in OUTLOOK_FAMILY_DOMAINS:
             self.lbl_provider_hint.setText(
                 "公司/学校 Microsoft 365 邮箱可能不支持授权码 IMAP，可能需要 OAuth2，当前版本暂不支持。"
             )
@@ -596,11 +721,31 @@ class SettingsDialog(QDialog):
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
 
     def _on_email_text_changed(self):
+        if not self._loading_initial_values and not self._loading_account_values:
+            self._email_is_user_draft = True
+            self._missing_saved_provider = ""
         email = self.txt_email.text().strip().lower()
         domain = email.rsplit("@", 1)[1] if "@" in email else ""
         provider = DOMAIN_TO_PROVIDER.get(domain)
-        if provider:
+        if provider and self._loaded_account_provider and provider != self._loaded_account_provider:
+            self._loaded_account_address = ""
+            self._loaded_account_mailbox_key = ""
+            self._loaded_account_provider = ""
+        if provider and provider != self._get_selected_provider():
+            if self._advanced_settings_dirty:
+                reply = QMessageBox.question(
+                    self,
+                    "重置 IMAP 参数",
+                    "高级 IMAP 参数已手工修改。是否重置为识别邮箱的默认服务器、端口和 SSL/TLS 设置？",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply == QMessageBox.No:
+                    self._update_provider_hint()
+                    self._update_cred_status_label()
+                    return
             self._select_provider_card(provider)
+            self._apply_provider_defaults(provider)
         self._update_provider_hint()
         self._update_cred_status_label()
 
@@ -873,6 +1018,26 @@ class SettingsDialog(QDialog):
         email = self.txt_email.text().strip()
         provider = self._get_selected_provider()
         months_str = self.txt_months.text().strip()
+        raw_accounts = self.cfg.get("email_accounts")
+        email_accounts = [
+            dict(existing)
+            for existing in raw_accounts
+            if isinstance(existing, dict)
+        ] if isinstance(raw_accounts, list) else []
+        if not isinstance(raw_accounts, list):
+            legacy_email = self.cfg.get("email", {})
+            legacy_address = str(legacy_email.get("address") or "").strip()
+            if legacy_address:
+                email_accounts.append({
+                    "name": legacy_email.get("name", ""),
+                    "enabled": True,
+                    "provider": legacy_email.get("provider", "qq"),
+                    "address": legacy_address,
+                    "username": legacy_email.get("username") or legacy_address,
+                    "imap": dict(self.cfg.get("imap", {})),
+                    "search": dict(self.cfg.get("search", {})),
+                    "mailbox_key": legacy_email.get("mailbox_key") or legacy_address.lower(),
+                })
 
         if provider == "custom":
             imap_server = self.txt_imap_server.text().strip()
@@ -978,23 +1143,33 @@ class SettingsDialog(QDialog):
                 "folder": "INBOX",
                 "months_back": int(months_str),
             },
-            "mailbox_key": email.lower(),
         }
-        raw_accounts = self.cfg.get("email_accounts")
-        email_accounts = [
-            dict(existing)
-            for existing in raw_accounts
-            if isinstance(existing, dict)
-        ] if isinstance(raw_accounts, list) else []
         match_index = next(
             (
                 index
                 for index, existing in enumerate(email_accounts)
                 if str(existing.get("address") or "").strip().lower() == email.lower()
                 or str(existing.get("mailbox_key") or "").strip().lower() == email.lower()
+                or (
+                    self._loaded_account_address
+                    and str(existing.get("address") or "").strip().lower()
+                    == self._loaded_account_address
+                )
+                or (
+                    self._loaded_account_mailbox_key
+                    and str(existing.get("mailbox_key") or "").strip().lower()
+                    == self._loaded_account_mailbox_key
+                )
             ),
             None,
         )
+        if match_index is None:
+            account["mailbox_key"] = email.lower()
+        else:
+            account["mailbox_key"] = (
+                str(email_accounts[match_index].get("mailbox_key") or "").strip()
+                or email.lower()
+            )
         if match_index is None:
             email_accounts.append(account)
         else:

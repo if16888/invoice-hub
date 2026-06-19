@@ -18,10 +18,10 @@ class SettingsDialogTestMixin:
         widget.deleteLater()
         self.app.processEvents()
 
-    def _make_dialog(self):
+    def _make_dialog(self, config=None, *, saved_addresses=()):
         from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
-        config = {
+        config = config or {
             "email": {"provider": "qq", "address": "if16888@qq.com"},
             "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
             "search": {"folder": "INBOX", "months_back": 3},
@@ -34,7 +34,10 @@ class SettingsDialogTestMixin:
         with patch(
             "scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat",
             return_value=config,
-        ), patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=False):
+        ), patch(
+            "scripts.invoice_fetch.credentials.has_auth_code",
+            side_effect=lambda address: address in saved_addresses,
+        ):
             dialog = SettingsDialog(parent)
         self.addCleanup(self._cleanup_widget, dialog)
         return dialog
@@ -46,34 +49,95 @@ class SettingsDialogTestMixin:
 
 class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
 
-    def test_switching_known_provider_rewrites_only_email_domain(self):
+    def _multi_account_config(self, outlook_address="abc@outlook.com"):
+        return {
+            "email": {"provider": "qq", "address": "if16888@qq.com"},
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+            "email_accounts": [
+                {
+                    "name": "QQ",
+                    "enabled": True,
+                    "provider": "qq",
+                    "address": "if16888@qq.com",
+                    "username": "if16888@qq.com",
+                    "mailbox_key": "qq-primary",
+                    "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 3},
+                },
+                {
+                    "name": "Outlook",
+                    "enabled": True,
+                    "provider": "outlook",
+                    "address": outlook_address,
+                    "username": outlook_address,
+                    "mailbox_key": "outlook-primary",
+                    "imap": {"server": "outlook.office365.com", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 6},
+                },
+            ],
+            "ai": {"provider": "none", "model": "", "enabled": False},
+        }
+
+    def test_saved_outlook_account_is_loaded_when_selecting_outlook(self):
+        dialog = self._make_dialog(self._multi_account_config())
+
+        self._select(dialog, "outlook")
+
+        self.assertEqual(dialog.txt_email.text(), "abc@outlook.com")
+        self.assertEqual(dialog.txt_months.text(), "6")
+        self.assertEqual(dialog.txt_imap_server.text(), "outlook.office365.com")
+
+    def test_selecting_outlook_does_not_rewrite_saved_qq_email_when_no_outlook_account_exists(self):
         dialog = self._make_dialog()
 
         self._select(dialog, "outlook")
-        self.assertEqual(dialog.txt_email.text(), "if16888@outlook.com")
-        self._select(dialog, "gmail")
-        self.assertEqual(dialog.txt_email.text(), "if16888@gmail.com")
-        self._select(dialog, "qq")
-        self.assertEqual(dialog.txt_email.text(), "if16888@qq.com")
 
-    def test_outlook_keeps_hotmail_and_live_family_domains(self):
+        self.assertNotEqual(dialog.txt_email.text(), "if16888@outlook.com")
+
+    def test_selecting_outlook_with_no_saved_account_clears_email_and_sets_placeholder(self):
         dialog = self._make_dialog()
+
+        self._select(dialog, "outlook")
+
+        self.assertEqual(dialog.txt_email.text(), "")
+        self.assertEqual(dialog.txt_email.placeholderText(), "请输入完整 Outlook 邮箱地址")
+        self.assertIn("未找到已保存的 Outlook 邮箱", dialog.lbl_provider_hint.text())
+
+    def test_saved_hotmail_live_accounts_load_as_outlook_family(self):
         for email in ("abc@hotmail.com", "abc@live.com"):
-            dialog.txt_email.setText(email)
+            dialog = self._make_dialog(self._multi_account_config(email))
 
             self._select(dialog, "outlook")
 
             self.assertEqual(dialog.txt_email.text(), email)
 
-    def test_outlook_keeps_custom_domain_and_shows_oauth_warning(self):
-        dialog = self._make_dialog()
-        dialog.txt_email.setText("abc@company.com")
+    def test_saved_company_domain_outlook_account_loads_as_is_and_shows_oauth_hint(self):
+        dialog = self._make_dialog(self._multi_account_config("abc@company.com"))
 
         self._select(dialog, "outlook")
 
         self.assertEqual(dialog.txt_email.text(), "abc@company.com")
         self.assertIn("Microsoft 365", dialog.lbl_provider_hint.text())
         self.assertIn("OAuth2", dialog.lbl_provider_hint.text())
+
+    def test_manual_draft_email_can_rewrite_suffix(self):
+        dialog = self._make_dialog()
+        dialog.txt_email.setText("new-user@qq.com")
+
+        self._select(dialog, "outlook")
+
+        self.assertEqual(dialog.txt_email.text(), "new-user@outlook.com")
+
+    def test_typing_outlook_email_applies_outlook_defaults(self):
+        dialog = self._make_dialog()
+
+        dialog.txt_email.setText("new-user@outlook.com")
+        self.app.processEvents()
+
+        self.assertEqual(dialog._get_selected_provider(), "outlook")
+        self.assertEqual(dialog.txt_imap_server.text(), "outlook.office365.com")
+        self.assertEqual(dialog.txt_imap_port.text(), "993")
 
     def test_custom_provider_never_rewrites_email_domain(self):
         dialog = self._make_dialog()
@@ -142,6 +206,62 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertIn("993", help_text)
         self.assertIn("OAuth2", help_text)
 
+    def test_credential_status_uses_exact_loaded_email(self):
+        config = self._multi_account_config("saved@hotmail.com")
+        with patch("scripts.invoice_fetch.credentials.has_auth_code") as has_auth_code:
+            has_auth_code.side_effect = lambda address: address == "saved@hotmail.com"
+            dialog = self._make_dialog(config)
+            has_auth_code.reset_mock()
+
+            self._select(dialog, "outlook")
+
+        has_auth_code.assert_called_with("saved@hotmail.com")
+        self.assertIn("已安全保存到系统凭据管理器", dialog.lbl_cred_status.text())
+
+    def _save_without_side_effects(self, dialog):
+        dialog.test_success = True
+        with patch("scripts.invoice_fetch.config.save_config"), patch(
+            "scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat",
+            return_value={"loaded": True},
+        ), patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"), patch(
+            "scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning"
+        ), patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.critical"), patch(
+            "scripts.invoice_fetch.credentials.has_auth_code", return_value=False
+        ):
+            dialog._save_mailbox_settings()
+
+    def test_saving_outlook_preserves_existing_qq_account_in_email_accounts(self):
+        dialog = self._make_dialog(self._multi_account_config())
+        self._select(dialog, "outlook")
+
+        self._save_without_side_effects(dialog)
+
+        addresses = {account["address"] for account in dialog.cfg["email_accounts"]}
+        self.assertEqual(addresses, {"if16888@qq.com", "abc@outlook.com"})
+        outlook = next(
+            account for account in dialog.cfg["email_accounts"]
+            if account["address"] == "abc@outlook.com"
+        )
+        self.assertEqual(outlook["mailbox_key"], "outlook-primary")
+
+    def test_typing_new_outlook_account_preserves_loaded_qq_account(self):
+        dialog = self._make_dialog()
+        dialog.txt_email.setText("new-user@outlook.com")
+
+        self._save_without_side_effects(dialog)
+
+        addresses = {account["address"] for account in dialog.cfg["email_accounts"]}
+        self.assertEqual(addresses, {"if16888@qq.com", "new-user@outlook.com"})
+
+    def test_saving_qq_preserves_existing_outlook_account_in_email_accounts(self):
+        dialog = self._make_dialog(self._multi_account_config())
+        self._select(dialog, "qq")
+
+        self._save_without_side_effects(dialog)
+
+        addresses = {account["address"] for account in dialog.cfg["email_accounts"]}
+        self.assertEqual(addresses, {"if16888@qq.com", "abc@outlook.com"})
+
 
 class OutlookConnectionDiagnosticsTests(SettingsDialogTestMixin, unittest.TestCase):
     AUTH_CODE = "outlook-secret-must-not-leak"
@@ -149,6 +269,7 @@ class OutlookConnectionDiagnosticsTests(SettingsDialogTestMixin, unittest.TestCa
     def _run_failure(self, message):
         dialog = self._make_dialog()
         self._select(dialog, "outlook")
+        dialog.txt_email.setText("tester@outlook.com")
         dialog.txt_auth_code.setText(self.AUTH_CODE)
         with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as fetcher_cls:
             fetcher_cls.return_value.connect.side_effect = RuntimeError(message)
