@@ -305,8 +305,8 @@ class SettingsDialog(QDialog):
         self.txt_imap_server = QLineEdit()
         self.txt_imap_port = QLineEdit()
         self.lbl_imap_security = QLabel("SSL/TLS（启用）")
-        self.txt_imap_server.textChanged.connect(self._mark_advanced_settings_dirty)
-        self.txt_imap_port.textChanged.connect(self._mark_advanced_settings_dirty)
+        self.txt_imap_server.textChanged.connect(self._on_advanced_settings_changed)
+        self.txt_imap_port.textChanged.connect(self._on_advanced_settings_changed)
         adv_layout.addRow("IMAP 服务器:", self.txt_imap_server)
         adv_layout.addRow("IMAP 端口:", self.txt_imap_port)
         adv_layout.addRow("连接安全:", self.lbl_imap_security)
@@ -688,10 +688,18 @@ class SettingsDialog(QDialog):
             self.btn_toggle_advanced.setText("显示高级 IMAP 设置 ▼")
             self._apply_provider_defaults(provider)
         self._update_provider_hint()
+        self._update_cred_status_label()
+        self._update_wizard_ui()
 
     def _mark_advanced_settings_dirty(self, *_args):
         if not self._loading_initial_values and not self._applying_provider_defaults:
             self._advanced_settings_dirty = True
+
+    def _on_advanced_settings_changed(self, *_args):
+        self._mark_advanced_settings_dirty()
+        self._update_provider_hint()
+        self._update_cred_status_label()
+        self._update_wizard_ui()
 
     def _set_advanced_values(self, server, port):
         self._applying_provider_defaults = True

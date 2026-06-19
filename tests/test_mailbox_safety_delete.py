@@ -523,6 +523,22 @@ class MailboxSafetyDeleteTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(dialog._get_selected_provider(), "qq")
         self.assertTrue(dialog.btn_next.isEnabled())
 
+    def test_switching_to_provider_without_saved_account_disables_delete_button(self):
+        config = {
+            "email_accounts": [
+                {"address": "qq1@qq.com", "provider": "qq", "enabled": True, "mailbox_key": "qq1"}
+            ]
+        }
+        dialog = self._make_dialog(config, saved_addresses=("qq1@qq.com",))
+        dialog.txt_email.setText("qq1@qq.com")
+        self.app.processEvents()
+        self.assertTrue(dialog.btn_delete_mailbox.isEnabled())
+
+        # Switch to outlook which has no saved account
+        self._select(dialog, "outlook")
+        self.app.processEvents()
+        self.assertFalse(dialog.btn_delete_mailbox.isEnabled())
+
 
 if __name__ == "__main__":
     unittest.main()
