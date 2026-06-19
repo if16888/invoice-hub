@@ -1,7 +1,8 @@
-﻿import json
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import requests
 
@@ -106,6 +107,49 @@ class PrivacyDefaultTests(unittest.TestCase):
         self.assertNotIn("secret-token", safe)
         self.assertNotIn("generativelanguage", safe)
         self.assertNotIn("key=", safe)
+
+    @patch("scripts.invoice_fetch.ai_classifier.get_ai_api_key", return_value="test-key")
+    def test_classifier_loads_profile_scoped_key(self, mock_get_key):
+        AIClassifier(
+            provider="deepseek",
+            model="deepseek-chat",
+            batch_size=20,
+            profile_id="ai-main",
+        )
+        mock_get_key.assert_called_once_with("deepseek", profile_id="ai-main")
+
+    def test_run_classify_forwards_active_profile_id(self):
+        captured = {}
+
+        class FakeClassifier:
+            auth_failed = False
+
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def classify_batch(self, emails):
+                return [{"uid": emails[0]["uid"], "is_invoice": True, "reason": "test"}]
+
+        db = MagicMock()
+        db.get_unclassified_emails.return_value = [{
+            "uid": 1,
+            "subject": "普通邮件",
+            "sender": "sender@example.com",
+            "mailbox_key": "mailbox-one",
+        }]
+        db.is_trusted_sender.return_value = False
+        ai_cfg = {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "batch_size": 20,
+            "profile_id": "ai-main",
+        }
+        import scripts.invoice_fetch.__main__ as invoice_main
+        with patch.object(invoice_main, "AIClassifier", FakeClassifier, create=True), patch.object(
+            invoice_main, "rule_classify", return_value=(-1, "未命中本地规则")
+        ):
+            invoice_main._run_classify(db, ai_cfg, no_ai=False, mailbox_key="mailbox-one")
+        self.assertEqual(captured["profile_id"], "ai-main")
 
 
 if __name__ == "__main__":

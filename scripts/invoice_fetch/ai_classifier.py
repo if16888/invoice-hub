@@ -84,15 +84,21 @@ class AIAuthError(RuntimeError):
 class AIClassifier:
     """Batch email classifier using an optional cloud AI provider."""
 
-    def __init__(self, provider: str = "none",
-                 model: str = "", batch_size: int = 20):
+    def __init__(
+        self,
+        provider: str = "none",
+        model: str = "",
+        batch_size: int = 20,
+        profile_id: str = "",
+    ):
         self.provider = (provider or "none").lower()
         self.model = model or _DEFAULT_MODELS.get(self.provider, "")
         self.batch_size = batch_size
+        self.profile_id = str(profile_id or "")
         self.auth_failed = False
         self.api_key = ""
         if self.provider != "none":
-            self.api_key = get_ai_api_key(self.provider)
+            self.api_key = get_ai_api_key(self.provider, profile_id=self.profile_id)
         _log.info("AI 分类器: provider=%s, model=%s, batch=%d",
                   self.provider, self.model, batch_size)
 
