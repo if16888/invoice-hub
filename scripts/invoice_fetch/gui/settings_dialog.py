@@ -101,59 +101,59 @@ class MailboxConfigRow(QFrame):
         self.parent_dialog = parent
         self.account = dict(account)
         self.mailbox_key = str(account.get("mailbox_key") or account.get("address") or "")
-        
+
         self.setProperty("class", "SettingsListRow")
         self.setFrameShape(QFrame.StyledPanel)
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
-        
+
         # Checkbox for enabled/disabled state
         self.chk_enabled = QCheckBox()
         self.chk_enabled.setChecked(self.account.get("enabled", True))
         self.chk_enabled.toggled.connect(self._on_toggled)
         layout.addWidget(self.chk_enabled)
-        
+
         # Info layout: Vertical (Name & Masked Address)
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
-        
+
         lbl_name = QLabel(self.account.get("name") or "未命名")
         lbl_name.setProperty("class", "SettingsListRowName")
-        
+
         # Mask address
         from ..config import mask_email
         masked_address = mask_email(self.account.get("address") or "")
         lbl_address = QLabel(masked_address)
         lbl_address.setProperty("class", "SettingsListRowDesc")
-        
+
         info_layout.addWidget(lbl_name)
         info_layout.addWidget(lbl_address)
         layout.addLayout(info_layout)
-        
+
         layout.addStretch()
-        
+
         # Provider badge
         provider_name = PROVIDER_EMAIL_NAMES.get(self.account.get("provider", "custom"), "自定义 IMAP")
         lbl_provider = QLabel(provider_name)
         lbl_provider.setProperty("class", "StatusBadge")
         lbl_provider.setProperty("variant", "info")
         layout.addWidget(lbl_provider)
-        
+
         # Scan range summary
         months = int((self.account.get("search") or {}).get("months_back", 3))
         lbl_range = QLabel(f"最近 {months} 个月")
         lbl_range.setProperty("class", "SettingsListRowMeta")
         layout.addWidget(lbl_range)
-        
+
         # Actions: Edit and Delete
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_edit.setFixedSize(50, 24)
         self.btn_edit.setProperty("class", "SecondaryBtn")
         layout.addWidget(self.btn_edit)
-        
+
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self._on_delete)
         self.btn_delete.setFixedSize(50, 24)
@@ -184,39 +184,39 @@ class AIProfileRow(QFrame):
         self.parent_dialog = parent
         self.profile = dict(profile)
         self.profile_id = str(profile["profile_id"])
-        
+
         self.setProperty("class", "SettingsListRow")
         self.setFrameShape(QFrame.StyledPanel)
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
-        
+
         # Info layout: Vertical (Name & Provider/Model)
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
-        
+
         lbl_name = QLabel(self.profile.get("name") or "未命名")
         lbl_name.setProperty("class", "SettingsListRowName")
-        
+
         provider = str(self.profile.get("provider") or "").title()
         model = self.profile.get("model") or ""
         lbl_model = QLabel(f"{provider} - {model}")
         lbl_model.setProperty("class", "SettingsListRowDesc")
-        
+
         info_layout.addWidget(lbl_name)
         info_layout.addWidget(lbl_model)
         layout.addLayout(info_layout)
-        
+
         layout.addStretch()
-        
+
         # API Key status badge
         key_status_text = "🔑 已保存" if key_available else "🔑 未设置"
         lbl_key_status = QLabel(key_status_text)
         lbl_key_status.setProperty("class", "StatusBadge")
         lbl_key_status.setProperty("variant", "success" if key_available else "warning")
         layout.addWidget(lbl_key_status)
-        
+
         # Activation state / Set as current button
         self.is_enabled = self.profile.get("enabled", False)
         if self.is_enabled:
@@ -230,14 +230,14 @@ class AIProfileRow(QFrame):
             self.btn_activate.setFixedSize(70, 24)
             self.btn_activate.setProperty("class", "PrimaryBtn")
             layout.addWidget(self.btn_activate)
-            
+
         # Actions: Edit and Delete
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_edit.setFixedSize(50, 24)
         self.btn_edit.setProperty("class", "SecondaryBtn")
         layout.addWidget(self.btn_edit)
-        
+
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self._on_delete)
         self.btn_delete.setFixedSize(50, 24)
@@ -591,22 +591,22 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self.page_settings_home)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
-        
+
         lbl_title = QLabel("系统配置中心")
         lbl_title.setProperty("class", "SettingsSectionTitle")
         layout.addWidget(lbl_title)
-        
+
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
-        
+
         self.tab_mailbox_list = QWidget()
         self._init_mailbox_list_tab()
         self.tab_widget.addTab(self.tab_mailbox_list, "邮箱账号")
-        
+
         self.tab_ai_list = QWidget()
         self._init_ai_list_tab()
         self.tab_widget.addTab(self.tab_ai_list, "AI 模型")
-        
+
         home_footer = QHBoxLayout()
         btn_close_home = QPushButton("关闭")
         btn_close_home.clicked.connect(self.accept)
@@ -626,78 +626,78 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self.tab_mailbox_list)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        
+
         header_layout = QHBoxLayout()
         lbl_section = QLabel("已配置的邮箱列表")
         lbl_section.setProperty("class", "SettingsListHeader")
-        
+
         self.btn_add_mailbox = QPushButton("新增邮箱账号")
         self.btn_add_mailbox.clicked.connect(self._open_new_mailbox_editor)
         self.btn_add_mailbox.setProperty("class", "PrimaryBtn")
         self.btn_add_mailbox.setFixedHeight(26)
-        
+
         header_layout.addWidget(lbl_section)
         header_layout.addStretch()
         header_layout.addWidget(self.btn_add_mailbox)
         layout.addLayout(header_layout)
-        
+
         self.mailbox_scroll = QScrollArea()
         self.mailbox_scroll.setWidgetResizable(True)
         self.mailbox_scroll.setFrameShape(QFrame.NoFrame)
         self.mailbox_scroll.setStyleSheet("background-color: transparent;")
-        
+
         self.mailbox_scroll_content = QWidget()
         self.mailbox_scroll_content.setStyleSheet("background-color: transparent;")
         self.mailbox_list_layout = QVBoxLayout(self.mailbox_scroll_content)
         self.mailbox_list_layout.setContentsMargins(0, 0, 0, 0)
         self.mailbox_list_layout.setSpacing(6)
         self.mailbox_list_layout.addStretch()
-        
+
         self.mailbox_scroll.setWidget(self.mailbox_scroll_content)
         layout.addWidget(self.mailbox_scroll)
-        
+
         self.mailbox_rows = []
 
     def _init_ai_list_tab(self):
         layout = QVBoxLayout(self.tab_ai_list)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        
+
         header_layout = QHBoxLayout()
         self.lbl_ai_global_status = QLabel("AI 功能未启用")
         self.lbl_ai_global_status.setProperty("class", "SettingsListHeader")
-        
+
         self.btn_disable_ai_action = QPushButton("停用 AI")
         self.btn_disable_ai_action.clicked.connect(self._disable_ai)
         self.btn_disable_ai_action.setProperty("class", "SecondaryBtn")
         self.btn_disable_ai_action.setFixedHeight(26)
-        
+
         self.btn_add_ai = QPushButton("新增 AI 配置")
         self.btn_add_ai.clicked.connect(self._open_new_ai_editor)
         self.btn_add_ai.setProperty("class", "PrimaryBtn")
         self.btn_add_ai.setFixedHeight(26)
-        
+
         header_layout.addWidget(self.lbl_ai_global_status)
         header_layout.addStretch()
         header_layout.addWidget(self.btn_disable_ai_action)
         header_layout.addWidget(self.btn_add_ai)
         layout.addLayout(header_layout)
-        
+
         self.ai_scroll = QScrollArea()
         self.ai_scroll.setWidgetResizable(True)
         self.ai_scroll.setFrameShape(QFrame.NoFrame)
         self.ai_scroll.setStyleSheet("background-color: transparent;")
-        
+
         self.ai_scroll_content = QWidget()
         self.ai_scroll_content.setStyleSheet("background-color: transparent;")
         self.ai_list_layout = QVBoxLayout(self.ai_scroll_content)
         self.ai_list_layout.setContentsMargins(0, 0, 0, 0)
         self.ai_list_layout.setSpacing(6)
         self.ai_list_layout.addStretch()
-        
+
         self.ai_scroll.setWidget(self.ai_scroll_content)
         layout.addWidget(self.ai_scroll)
-        
+
         self.ai_rows = []
 
     def _refresh_mailbox_list(self):
@@ -705,14 +705,14 @@ class SettingsDialog(QDialog):
             self.mailbox_list_layout.removeWidget(row)
             row.deleteLater()
         self.mailbox_rows.clear()
-        
+
         raw_accounts = self.cfg.get("email_accounts")
         email_accounts = [
             dict(existing)
             for existing in raw_accounts
             if isinstance(existing, dict)
         ] if isinstance(raw_accounts, list) else []
-        
+
         if not email_accounts:
             legacy_email = self.cfg.get("email", {})
             legacy_address = str(legacy_email.get("address") or "").strip()
@@ -733,7 +733,7 @@ class SettingsDialog(QDialog):
                     save_config(self.cfg)
                 except Exception:
                     pass
-        
+
         if not email_accounts:
             lbl_empty = QLabel("尚未配置任何邮箱账号，请点击上方“新增邮箱账号”。")
             lbl_empty.setAlignment(Qt.AlignCenter)
@@ -754,16 +754,16 @@ class SettingsDialog(QDialog):
             self.ai_list_layout.removeWidget(row)
             row.deleteLater()
         self.ai_rows.clear()
-        
+
         from ..ai_profiles import get_ai_profiles
         profiles = get_ai_profiles(self.cfg)
-        
+
         active = next((profile for profile in profiles if profile["enabled"]), None)
         if active:
             self.lbl_ai_global_status.setText(f"AI 功能已启用：{active['name']}")
         else:
             self.lbl_ai_global_status.setText("AI 功能未启用")
-            
+
         if not profiles:
             lbl_empty = QLabel("尚未保存任何 AI 配置，点击“新增 AI 配置”开始。")
             lbl_empty.setAlignment(Qt.AlignCenter)
@@ -788,26 +788,26 @@ class SettingsDialog(QDialog):
             for existing in raw_accounts
             if isinstance(existing, dict)
         ] if isinstance(raw_accounts, list) else []
-        
+
         enabled_count = sum(1 for acc in email_accounts if acc.get("enabled", True))
-        
+
         target_account = None
         for acc in email_accounts:
             if str(acc.get("mailbox_key") or acc.get("address") or "").strip().lower() == mailbox_key.lower():
                 target_account = acc
                 break
-                
+
         if not target_account:
             return
-            
+
         if not enabled and enabled_count <= 1 and target_account.get("enabled", True):
             QMessageBox.warning(self, "操作被拒绝", "至少需要保留一个启用的邮箱账号。")
             self._refresh_mailbox_list()
             return
-            
+
         target_account["enabled"] = enabled
         self.cfg["email_accounts"] = email_accounts
-        
+
         first_enabled = next((acc for acc in email_accounts if acc.get("enabled", True)), None)
         if first_enabled:
             self.cfg["email"] = {
@@ -817,7 +817,7 @@ class SettingsDialog(QDialog):
             }
             self.cfg["imap"] = dict(first_enabled.get("imap", {}))
             self.cfg["search"] = dict(first_enabled.get("search", {}))
-            
+
         from ..config import save_config
         try:
             save_config(self.cfg)
@@ -835,21 +835,21 @@ class SettingsDialog(QDialog):
             for existing in raw_accounts
             if isinstance(existing, dict)
         ] if isinstance(raw_accounts, list) else []
-        
+
         target_account = None
         for acc in email_accounts:
             if str(acc.get("mailbox_key") or acc.get("address") or "").strip().lower() == mailbox_key.lower():
                 target_account = acc
                 break
-                
+
         if not target_account:
             return
-            
+
         enabled_count = sum(1 for acc in email_accounts if acc.get("enabled", True))
         if enabled_count <= 1 and target_account.get("enabled", True):
             QMessageBox.warning(self, "操作被拒绝", "至少需要保留一个启用的邮箱账号。")
             return
-            
+
         reply = QMessageBox.question(
             self,
             "确认删除",
@@ -859,10 +859,10 @@ class SettingsDialog(QDialog):
         )
         if reply == QMessageBox.No:
             return
-            
+
         email_accounts = [acc for acc in email_accounts if acc != target_account]
         self.cfg["email_accounts"] = email_accounts
-        
+
         email = target_account.get("address", "")
         if email:
             from ..credentials import delete_auth_code
@@ -873,14 +873,14 @@ class SettingsDialog(QDialog):
             except Exception as e:
                 if hasattr(self.parent, "write_log"):
                     self.parent.write_log(f"⚠️ [安全凭证] 从凭据管理器移除邮箱 {email} 凭证失败: {e}")
-                    
+
         if hasattr(self.parent, "db") and self.parent.db:
             try:
                 self.parent.db.remove_mailbox_scan_state(mailbox_key)
             except Exception as e:
                 if hasattr(self.parent, "write_log"):
                     self.parent.write_log(f"⚠️ [数据库] 清除邮箱同步状态失败: {e}")
-                    
+
         first_enabled = next((acc for acc in email_accounts if acc.get("enabled", True)), None)
         if first_enabled:
             self.cfg["email"] = {
@@ -894,7 +894,7 @@ class SettingsDialog(QDialog):
             self.cfg["email"] = {"provider": "qq", "address": "", "username": ""}
             self.cfg["imap"] = {"server": "", "port": 993, "ssl": True}
             self.cfg["search"] = {"folder": "INBOX", "months_back": 3}
-            
+
         from ..config import save_config
         try:
             save_config(self.cfg)
@@ -926,7 +926,7 @@ class SettingsDialog(QDialog):
         self._apply_provider_defaults("qq")
         self.advanced_group.setVisible(False)
         self.btn_toggle_advanced.setText("显示高级 IMAP 设置 ▼")
-        
+
         self.current_step = 1
         self._update_wizard_ui()
         self.settings_stack.setCurrentWidget(self.page_mailbox_editor)
@@ -936,7 +936,7 @@ class SettingsDialog(QDialog):
         if not acc:
             QMessageBox.warning(self, "错误", f"找不到对应的邮箱配置: {mailbox_key}")
             return
-            
+
         self._load_saved_account(acc)
         self.current_step = 1
         self._update_wizard_ui()
@@ -946,44 +946,44 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self.page_ai_editor)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
-        
+
         self.lbl_ai_step_indicator = QLabel()
         self.lbl_ai_step_indicator.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_ai_step_indicator)
-        
+
         self.ai_step_stack = QStackedWidget()
         layout.addWidget(self.ai_step_stack)
-        
+
         self._init_ai_step1_view()
         self._init_ai_step2_view()
         self._init_ai_step3_view()
-        
+
         footer_layout = QHBoxLayout()
         self.btn_ai_prev = QPushButton("上一步")
         self.btn_ai_prev.clicked.connect(self._ai_goto_prev_step)
         self.btn_ai_prev.setProperty("class", "SecondaryBtn")
         self.btn_ai_prev.setFixedHeight(28)
-        
+
         self.btn_ai_next = QPushButton("下一步")
         self.btn_ai_next.clicked.connect(self._ai_goto_next_step)
         self.btn_ai_next.setProperty("class", "PrimaryBtn")
         self.btn_ai_next.setFixedHeight(28)
-        
+
         self.btn_ai_save_only = QPushButton("仅保存配置")
         self.btn_ai_save_only.clicked.connect(lambda: self._save_ai_profile_settings(activate=False))
         self.btn_ai_save_only.setProperty("class", "SecondaryBtn")
         self.btn_ai_save_only.setFixedHeight(28)
-        
+
         self.btn_ai_save_and_activate = QPushButton("保存并设为当前")
         self.btn_ai_save_and_activate.clicked.connect(lambda: self._save_ai_profile_settings(activate=True))
         self.btn_ai_save_and_activate.setProperty("class", "PrimaryBtn")
         self.btn_ai_save_and_activate.setFixedHeight(28)
-        
+
         self.btn_ai_cancel = QPushButton("取消")
         self.btn_ai_cancel.clicked.connect(lambda: self._show_settings_home("ai"))
         self.btn_ai_cancel.setProperty("class", "SecondaryBtn")
         self.btn_ai_cancel.setFixedHeight(28)
-        
+
         footer_layout.addWidget(self.btn_ai_prev)
         footer_layout.addStretch()
         footer_layout.addWidget(self.btn_ai_cancel)
@@ -997,28 +997,28 @@ class SettingsDialog(QDialog):
         widget.setWidgetResizable(True)
         widget.setFrameShape(QFrame.NoFrame)
         widget.setStyleSheet("background-color: transparent;")
-        
+
         scroll_content = QWidget()
         v_layout = QVBoxLayout(scroll_content)
         v_layout.setContentsMargins(0, 0, 0, 0)
         v_layout.setSpacing(12)
-        
+
         form_group = QGroupBox("AI 基本配置")
         form_layout = QFormLayout(form_group)
         form_layout.setSpacing(10)
-        
+
         self.txt_ai_name = QLineEdit()
         self.txt_ai_name.setPlaceholderText("例如：我的主要分类模型")
         self.txt_ai_name.textChanged.connect(self._update_ai_wizard_ui)
-        
+
         self.combo_ai_provider = QComboBox()
         self.combo_ai_provider.addItems(["deepseek", "gemini"])
         self.combo_ai_provider.currentTextChanged.connect(self._on_ai_wizard_provider_changed)
-        
+
         form_layout.addRow("配置名称:", self.txt_ai_name)
         form_layout.addRow("AI 提供商:", self.combo_ai_provider)
         v_layout.addWidget(form_group)
-        
+
         widget.setWidget(scroll_content)
         self.ai_step_stack.addWidget(widget)
 
@@ -1027,33 +1027,33 @@ class SettingsDialog(QDialog):
         widget.setWidgetResizable(True)
         widget.setFrameShape(QFrame.NoFrame)
         widget.setStyleSheet("background-color: transparent;")
-        
+
         scroll_content = QWidget()
         v_layout = QVBoxLayout(scroll_content)
         v_layout.setContentsMargins(0, 0, 0, 0)
         v_layout.setSpacing(12)
-        
+
         form_group = QGroupBox("模型与密钥配置")
         form_layout = QFormLayout(form_group)
         form_layout.setSpacing(10)
-        
+
         self.txt_ai_model = QComboBox()
         self.txt_ai_model.setEditable(True)
         self.txt_ai_model.lineEdit().setPlaceholderText("请选择或输入模型名称")
-        
+
         self.lbl_ai_key_title = QLabel("API Key:")
         self.txt_ai_key = SecurePasswordLineEdit()
         self.txt_ai_key.textChanged.connect(self._update_ai_wizard_ui)
-        
+
         self.lbl_ai_wizard_key_status = QLabel()
         self.lbl_ai_wizard_key_status.setWordWrap(True)
         self.lbl_ai_wizard_key_status.setStyleSheet("font-size: 11px;")
-        
+
         form_layout.addRow("模型名称:", self.txt_ai_model)
         form_layout.addRow(self.lbl_ai_wizard_key_status)
         form_layout.addRow(self.lbl_ai_key_title, self.txt_ai_key)
         v_layout.addWidget(form_group)
-        
+
         widget.setWidget(scroll_content)
         self.ai_step_stack.addWidget(widget)
 
@@ -1062,27 +1062,27 @@ class SettingsDialog(QDialog):
         widget.setWidgetResizable(True)
         widget.setFrameShape(QFrame.NoFrame)
         widget.setStyleSheet("background-color: transparent;")
-        
+
         scroll_content = QWidget()
         v_layout = QVBoxLayout(scroll_content)
         v_layout.setContentsMargins(0, 0, 0, 0)
         v_layout.setSpacing(12)
-        
+
         sum_group = QGroupBox("配置摘要")
         sum_layout = QFormLayout(sum_group)
         sum_layout.setSpacing(12)
-        
+
         self.lbl_ai_summary_name = QLabel()
         self.lbl_ai_summary_provider = QLabel()
         self.lbl_ai_summary_model = QLabel()
         self.lbl_ai_summary_key_status = QLabel()
-        
+
         sum_layout.addRow("配置名称:", self.lbl_ai_summary_name)
         sum_layout.addRow("服务提供商:", self.lbl_ai_summary_provider)
         sum_layout.addRow("所选模型:", self.lbl_ai_summary_model)
         sum_layout.addRow("API Key:", self.lbl_ai_summary_key_status)
         v_layout.addWidget(sum_group)
-        
+
         widget.setWidget(scroll_content)
         self.ai_step_stack.addWidget(widget)
 
@@ -1095,7 +1095,7 @@ class SettingsDialog(QDialog):
 
     def _update_ai_wizard_ui(self):
         self.ai_step_stack.setCurrentIndex(self.ai_current_step - 1)
-        
+
         if self.ai_current_step == 1:
             self.lbl_ai_step_indicator.setText('<font color="#2563EB"><b>① 基本信息</b></font>  ➜  ② 模型与密钥  ➜  ③ 确认并保存')
             self.btn_ai_prev.setEnabled(False)
@@ -1109,7 +1109,7 @@ class SettingsDialog(QDialog):
             self.btn_ai_next.setVisible(True)
             self.btn_ai_save_only.setVisible(False)
             self.btn_ai_save_and_activate.setVisible(False)
-            
+
             from ..credentials import has_ai_api_key
             provider = self.combo_ai_provider.currentText()
             has_key = has_ai_api_key(provider, self._editing_ai_profile_id)
@@ -1119,7 +1119,7 @@ class SettingsDialog(QDialog):
             else:
                 self.lbl_ai_wizard_key_status.setText("🔑 未找到已保存的 API Key。请输入有效的 API Key 凭据。")
                 self.txt_ai_key.setPlaceholderText("请输入 API Key")
-                
+
             self.btn_ai_next.setEnabled(True)
         elif self.ai_current_step == 3:
             self.lbl_ai_step_indicator.setText('① 基本信息  ➜  ② 模型与密钥  ➜  <font color="#2563EB"><b>③ 确认并保存</b></font>')
@@ -1127,26 +1127,26 @@ class SettingsDialog(QDialog):
             self.btn_ai_next.setVisible(False)
             self.btn_ai_save_only.setVisible(True)
             self.btn_ai_save_and_activate.setVisible(True)
-            
+
             self._update_ai_summary_fields()
 
     def _update_ai_summary_fields(self):
         self.lbl_ai_summary_name.setText(self.txt_ai_name.text().strip())
         self.lbl_ai_summary_provider.setText(self.combo_ai_provider.currentText())
         self.lbl_ai_summary_model.setText(self.txt_ai_model.currentText().strip())
-        
+
         provider = self.combo_ai_provider.currentText()
         from ..credentials import has_ai_api_key
         has_saved_key = has_ai_api_key(provider, self._editing_ai_profile_id)
         has_input_key = bool(self.txt_ai_key.text().strip())
-        
+
         if has_input_key:
             self.lbl_ai_summary_key_status.setText("已输入新 Key（保存时写入）")
         elif has_saved_key:
             self.lbl_ai_summary_key_status.setText("已保存（使用现有凭证）")
         else:
             self.lbl_ai_summary_key_status.setText("未设置（分类功能可能无法工作）")
-            
+
         is_key_available = has_saved_key or has_input_key
         self.btn_ai_save_and_activate.setEnabled(is_key_available)
 
@@ -1171,7 +1171,7 @@ class SettingsDialog(QDialog):
         self.txt_ai_key.clear()
         self.combo_ai_provider.setCurrentIndex(0)
         self._on_ai_wizard_provider_changed(self.combo_ai_provider.currentText())
-        
+
         self.ai_current_step = 1
         self._update_ai_wizard_ui()
         self.settings_stack.setCurrentWidget(self.page_ai_editor)
@@ -1183,14 +1183,14 @@ class SettingsDialog(QDialog):
         if not target:
             QMessageBox.warning(self, "错误", f"找不到对应的 AI 配置: {profile_id}")
             return
-            
+
         self._editing_ai_profile_id = profile_id
         self.txt_ai_name.setText(target.get("name", ""))
         self.combo_ai_provider.setCurrentText(target.get("provider", "deepseek"))
         self._on_ai_wizard_provider_changed(target.get("provider", "deepseek"))
         self.txt_ai_model.setCurrentText(target.get("model", ""))
         self.txt_ai_key.clear()
-        
+
         self.ai_current_step = 1
         self._update_ai_wizard_ui()
         self.settings_stack.setCurrentWidget(self.page_ai_editor)
@@ -1200,14 +1200,14 @@ class SettingsDialog(QDialog):
         name = self.txt_ai_name.text().strip()
         model = self.txt_ai_model.currentText().strip()
         key = self.txt_ai_key.text().strip()
-        
+
         if not name:
             QMessageBox.warning(self, "校验提示", "请填写配置名称。")
             return
         if not model:
             QMessageBox.warning(self, "校验提示", "请选择或输入模型名称。")
             return
-            
+
         if key:
             from ..credentials import set_ai_api_key
             try:
@@ -1217,18 +1217,18 @@ class SettingsDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"保存 AI 密钥凭据失败: {e}")
                 return
-                
+
         from ..ai_profiles import get_ai_profiles, apply_active_ai_profile
         profiles = get_ai_profiles(self.cfg)
-        
+
         existing = next((p for p in profiles if p["profile_id"] == self._editing_ai_profile_id), None)
-        
+
         if activate:
             for p in profiles:
                 p["enabled"] = False
-                
+
         is_active = activate or (existing.get("enabled", False) if existing else False)
-        
+
         profile_data = {
             "profile_id": self._editing_ai_profile_id,
             "name": name,
@@ -1236,26 +1236,26 @@ class SettingsDialog(QDialog):
             "model": model,
             "enabled": is_active
         }
-        
+
         if existing:
             idx = profiles.index(existing)
             profiles[idx] = profile_data
         else:
             profiles.append(profile_data)
-            
+
         apply_active_ai_profile(self.cfg, profiles)
-        
+
         from ..config import save_config
         try:
             save_config(self.cfg)
             from ..ai_classifier import clear_provider_session_paused
             clear_provider_session_paused(provider)
-            
+
             if hasattr(self.parent, "config"):
                 self.parent.config = _load_config_safe_compat()
             if hasattr(self.parent, "write_log"):
                 self.parent.write_log(f"⚙️ [设置保存] 全局 config.json AI 配置已更新。")
-                
+
             self.txt_ai_key.clear()
             QMessageBox.information(self, "成功", "AI 配置已成功保存！")
             self._persist_settings_and_refresh("ai")
@@ -1265,45 +1265,45 @@ class SettingsDialog(QDialog):
     def _set_active_ai_profile(self, profile_id: str):
         from ..ai_profiles import get_ai_profiles, apply_active_ai_profile
         profiles = get_ai_profiles(self.cfg)
-        
+
         target = next((p for p in profiles if p["profile_id"] == profile_id), None)
         if not target:
             return
-            
+
         from ..credentials import has_ai_api_key
         if not has_ai_api_key(target["provider"], target["profile_id"]):
             QMessageBox.warning(self, "无法启用 AI", "请先为该配置保存有效的 API Key。")
             return
-            
+
         for p in profiles:
             p["enabled"] = (p["profile_id"] == profile_id)
-            
+
         apply_active_ai_profile(self.cfg, profiles)
         self._persist_settings_and_refresh("ai")
 
     def _disable_ai(self):
         from ..ai_profiles import get_ai_profiles, apply_active_ai_profile
         profiles = get_ai_profiles(self.cfg)
-        
+
         for p in profiles:
             p["enabled"] = False
-            
+
         apply_active_ai_profile(self.cfg, profiles)
         self._persist_settings_and_refresh("ai")
 
     def _delete_ai_profile(self, profile_id: str):
         from ..ai_profiles import get_ai_profiles, apply_active_ai_profile
         profiles = get_ai_profiles(self.cfg)
-        
+
         target = next((p for p in profiles if p["profile_id"] == profile_id), None)
         if not target:
             return
-            
+
         is_active = target.get("enabled", False)
         warn_msg = "确认要删除该 AI 配置吗？"
         if is_active:
             warn_msg = "该配置当前正在使用，删除后 AI 辅助分类功能将被停用。确认删除吗？"
-            
+
         reply = QMessageBox.question(
             self,
             "确认删除",
@@ -1313,20 +1313,20 @@ class SettingsDialog(QDialog):
         )
         if reply == QMessageBox.No:
             return
-            
+
         profiles = [p for p in profiles if p["profile_id"] != profile_id]
         apply_active_ai_profile(self.cfg, profiles)
-        
+
         from ..config import save_config
         try:
             save_config(self.cfg)
-            
+
             from ..credentials import delete_ai_api_key
             delete_ai_api_key(target["provider"], profile_id=profile_id)
-            
+
             if hasattr(self.parent, "write_log"):
                 self.parent.write_log(f"🗑️ [安全凭证] AI 配置 {target.get('name')} 的凭证已清除。")
-                
+
             self._persist_settings_and_refresh("ai")
             QMessageBox.information(self, "成功", "AI 配置已成功删除。")
         except Exception as e:
