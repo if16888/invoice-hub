@@ -82,13 +82,13 @@ class AIProfileAdapterTests(unittest.TestCase):
 
     def test_enabled_profile_projects_runtime_ai_fields(self):
         adapter = self._adapter()
-        cfg = {"ai": {"provider": "none", "model": "", "batch_size": 20}}
+        cfg = {"ai": {"provider": "none", "model": "", "batch_size": 15}}
         profiles = [self._profile(
             profile_id=" gemini-fast ",
             name=" Gemini Fast ",
             provider="GEMINI",
             model=" gemini-2.5-flash ",
-            batch_size=5,
+            batch_size=99,
         )]
 
         result = adapter.apply_active_ai_profile(cfg, profiles)
@@ -96,7 +96,7 @@ class AIProfileAdapterTests(unittest.TestCase):
         self.assertEqual(result["ai"]["provider"], "gemini")
         self.assertEqual(result["ai"]["model"], "gemini-2.5-flash")
         self.assertEqual(result["ai"]["profile_id"], "gemini-fast")
-        self.assertEqual(result["ai"]["batch_size"], 5)
+        self.assertEqual(result["ai"]["batch_size"], 15)
 
     def test_multiple_enabled_profiles_are_rejected(self):
         adapter = self._adapter()

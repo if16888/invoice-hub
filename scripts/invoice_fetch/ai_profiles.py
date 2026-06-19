@@ -135,6 +135,6 @@ def apply_active_ai_profile(
         "provider": active["provider"],
         "model": active["model"],
         "profile_id": active["profile_id"],
-        "batch_size": active.get("batch_size", batch_size),
+        "batch_size": batch_size,
     })
     return cfg
