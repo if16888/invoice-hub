@@ -26,6 +26,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.addCleanup(temp_dir.cleanup)
         db_path = Path(temp_dir.name) / "column_filters.db"
         with InvoiceDB(db_path) as db:
+            claim_ids = {}
             for row in rows:
                 payload = {
                     "invoice_number": row.get("invoice_number", "INV"),
@@ -38,10 +39,14 @@ class GuiColumnFilterTests(unittest.TestCase):
                     "review_status": row.get("review_status", "to_review"),
                     "mail_uid": row.get("mail_uid"),
                     "mail_sender": row.get("mail_sender", ""),
-                    "attachment_path": row.get("attachment_path", ""),
-                    "claim_name": row.get("claim_name", ""),
+                    "attachment_path": row.get("attachment_path", "file.pdf"),
                 }
-                db.insert_invoice(payload)
+                inv_id = db.insert_invoice(payload)
+                claim_name = row.get("claim_name")
+                if claim_name:
+                    if claim_name not in claim_ids:
+                        claim_ids[claim_name] = db.create_claim_group(claim_name)
+                    db.add_invoice_to_claim(claim_ids[claim_name], inv_id)
 
         config = {"reimbursement": {"strict_buyer_check": False}}
         config_patch = patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=config)
@@ -310,6 +315,122 @@ class GuiColumnFilterTests(unittest.TestCase):
         window._load_all_invoices_clicked()
         self.assertEqual(window.table.rowCount(), 105)
         self.assertTrue(all(row["category"] == "目标" for row in window.invoices_list))
+
+    def test_first_column_naming_and_material_only(self):
+        # 表格第一列如果显示“待补全”，列名应为“资料”或“资料状态”。
+        # 第一列改为“资料”，只显示资料状态；审核状态仅由顶部和右侧表达。
+        window = self._make_window([
+            {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"}, # 待补全
+        ])
+        header_text = window.table.horizontalHeaderItem(0).text()
+        self.assertTrue("资料" in header_text or "资料状态" in header_text)
+        
+        # Check first column text
+        item_text = window.table.item(0, 0).text()
+        self.assertEqual(item_text, "待补全")
+
+    def test_top_checkbox_bidirectional_sync_needs_fix(self):
+        # 勾选“待补全”等价于资料状态列过滤。
+        # 清除资料状态列过滤会同步取消顶部“待补全”。
+        window = self._make_window([
+            {"invoice_number": "INV-1", "category": "餐饮"}, # 正常
+            {"invoice_number": "", "total_amount": "50.00"}, # 待补全
+        ])
+        
+        # Check that needs_fix checkbox is initially unchecked
+        self.assertFalse(window.chk_needs_fix.isChecked())
+        
+        # Toggle top checkbox to check
+        window.chk_needs_fix.setChecked(True)
+        self.app.processEvents()
+        
+        # Check that it filters to only needs_fix (which is the empty invoice number row)
+        self.assertEqual(len(window.invoices_list), 1)
+        self.assertEqual(window.invoices_list[0]["total_amount"], "50.00")
+        
+        # Verify column_filters has been updated
+        self.assertIn("status", window.column_filters)
+        
+        # Clear column filter status manually
+        window._set_column_filter("status", {})
+        self.app.processEvents()
+        
+        # Check that top checkbox is automatically unchecked
+        self.assertFalse(window.chk_needs_fix.isChecked())
+        # Check that all invoices are loaded again
+        self.assertEqual(len(window.invoices_list), 2)
+
+    def test_top_checkbox_bidirectional_sync_unlinked(self):
+        # 勾选“未关联报销组”等价于报销组列过滤为未加入。
+        # 清除报销组列过滤会同步取消顶部“未关联报销组”。
+        window = self._make_window([
+            {"invoice_number": "INV-1", "claim_name": "Group-A"},
+            {"invoice_number": "INV-2", "claim_name": ""},
+        ])
+        
+        self.assertFalse(window.chk_unlinked.isChecked())
+        
+        # Check unlinked
+        window.chk_unlinked.setChecked(True)
+        self.app.processEvents()
+        
+        self.assertEqual(len(window.invoices_list), 1)
+        self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-2")
+        
+        # Clear claim_name filter manually
+        window._set_column_filter("claim_name", {})
+        self.app.processEvents()
+        
+        self.assertFalse(window.chk_unlinked.isChecked())
+        self.assertEqual(len(window.invoices_list), 2)
+
+    def test_reset_clears_all_filter_states_chips_and_markers(self):
+        # 重置会清空顶部过滤、搜索、列过滤、active marker、筛选摘要。
+        window = self._make_window([
+            {"invoice_number": "INV-1", "category": "餐饮"},
+            {"invoice_number": "", "total_amount": "50.00"},
+        ])
+        
+        window.txt_search.setText("INV")
+        window.chk_needs_fix.setChecked(True)
+        window._set_column_filter("category", {"values": {"餐饮"}})
+        window.current_filter_status = "approved"
+        
+        self.app.processEvents()
+        
+        # Reset
+        window._reset_invoice_filters()
+        self.app.processEvents()
+        
+        self.assertEqual(window.txt_search.text(), "")
+        self.assertFalse(window.chk_needs_fix.isChecked())
+        self.assertFalse(window.chk_unlinked.isChecked())
+        self.assertEqual(window.column_filters, {})
+        self.assertIsNone(window.current_filter_status)
+        self.assertFalse(window.filter_chips_widget.isVisible())
+        self.assertNotIn("●", window.table.horizontalHeaderItem(0).text())
+
+    def test_top_review_counts_dynamic_under_non_review_filters(self):
+        # 顶部审核状态数字在待补全过滤条件下仍正确。
+        window = self._make_window([
+            {"invoice_number": "INV-1", "review_status": "approved"}, # 正常, approved
+            {"invoice_number": "", "total_amount": "50.00", "review_status": "to_review"}, # 待补全, to_review
+            {"invoice_number": "", "total_amount": "10.00", "review_status": "approved"}, # 待补全, approved
+        ])
+        
+        # Apply "待补全" filter
+        window.chk_needs_fix.setChecked(True)
+        self.app.processEvents()
+        
+        # Buttons texts should reflect only the "待补全" invoices (which are 2 in total: 1 to_review, 1 approved)
+        to_review_text = window.filter_buttons["to_review"].text()
+        approved_text = window.filter_buttons["approved"].text()
+        all_text = window.filter_buttons["all"].text()
+        
+        self.assertTrue("1" in to_review_text)
+        self.assertTrue("1" in approved_text)
+        self.assertTrue("2" in all_text)
+        self.assertEqual(all_text.split()[0], "当前范围全部")
 
 
 if __name__ == "__main__":

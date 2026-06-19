@@ -2993,7 +2993,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Assert load succeeded
                     self.assertEqual(len(window.invoices_list), 1)
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 0).text(), "待审核")
+                    self.assertEqual(window.table.item(0, 0).text(), "缺原件")
                     self.assertEqual(window.table.item(0, 1).text(), "2026-05-24")
                     self.assertEqual(window.table.item(0, 2).text(), "123.45")
                     self.assertEqual(window.table.item(0, 3).text(), "NUM999")
@@ -5491,7 +5491,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._load_invoices()
 
                     expected = {
-                        "all": "全部 2",
+                        "all": "当前范围全部 2",
                         "to_review": "待审核 1",
                         "approved": "已通过 1",
                         "ignored": "已忽略 0",

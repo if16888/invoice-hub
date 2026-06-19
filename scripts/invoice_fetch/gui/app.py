@@ -40,6 +40,7 @@ from .workers import EmailScanWorker, LocalImportWorker
 from .column_filters import (
     COLUMN_DEFINITIONS,
     COLUMN_KEYS,
+    COLUMN_LABELS,
     ColumnFilterPopup,
     apply_column_filters,
     has_active_filters,
@@ -367,7 +368,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(8)
 
-        lbl_filter = QLabel("状态筛选:")
+        lbl_filter = QLabel("审核状态:")
         lbl_filter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         filter_layout.addWidget(lbl_filter)
 
@@ -405,11 +406,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         search_layout.addWidget(self.txt_search, 2)
 
         self.chk_unlinked = QCheckBox("未关联报销组")
-        self.chk_unlinked.stateChanged.connect(self._schedule_invoice_reload)
+        self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
         search_layout.addWidget(self.chk_unlinked)
 
-        self.chk_needs_fix = QCheckBox("未识别/待补全")
-        self.chk_needs_fix.stateChanged.connect(self._schedule_invoice_reload)
+        self.chk_needs_fix = QCheckBox("资料待补全")
+        self.chk_needs_fix.stateChanged.connect(self._on_chk_needs_fix_changed)
         search_layout.addWidget(self.chk_needs_fix)
 
         self.chk_show_deleted = QCheckBox("显示已删除")
@@ -424,6 +425,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         search_layout.addStretch()
         main_layout.addLayout(search_layout)
+
+        # 1c. Active Filter Chips Summary
+        self.filter_chips_widget = QWidget()
+        self.filter_chips_layout = QHBoxLayout(self.filter_chips_widget)
+        self.filter_chips_layout.setContentsMargins(5, 2, 5, 2)
+        self.filter_chips_layout.setSpacing(6)
+
+        self.lbl_chips_title = QLabel("已启用:")
+        self.lbl_chips_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.lbl_chips_title.setStyleSheet("color: #4B5563;")
+        self.filter_chips_layout.addWidget(self.lbl_chips_title)
+
+        self.chips_container_layout = QHBoxLayout()
+        self.chips_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.chips_container_layout.setSpacing(6)
+        self.filter_chips_layout.addLayout(self.chips_container_layout)
+
+        self.filter_chips_layout.addStretch()
+
+        main_layout.addWidget(self.filter_chips_widget)
+        self.filter_chips_widget.setVisible(False)
 
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
@@ -819,15 +841,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _reset_invoice_filters(self):
         # Reset search and quick filters to the default view.
         self.txt_search.setText("")
+        
+        # Block signals to prevent redundant loads during reset
+        self.chk_unlinked.blockSignals(True)
+        self.chk_needs_fix.blockSignals(True)
         self.chk_unlinked.setChecked(False)
         self.chk_needs_fix.setChecked(False)
+        self.chk_unlinked.blockSignals(False)
+        self.chk_needs_fix.blockSignals(False)
+
         if hasattr(self, "chk_show_deleted"):
             self.chk_show_deleted.setChecked(False)
         if hasattr(self, "search_reload_timer"):
             self.search_reload_timer.stop()
+            
         self.column_filters.clear()
         self._column_filters_load_all = False
+        self._limited_first_load_active = False
+        self._limited_first_load_total = 0
         self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
+        
         self.current_filter_status = None
         for s, btn in self.filter_buttons.items():
             btn.setChecked(s == "all")
@@ -835,7 +869,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _column_filter_value_getters(self) -> dict:
         return {
-            "status": self._get_invoice_display_status,
+            "status": self._get_invoice_data_status,
             "source": self._get_invoice_source,
         }
 
@@ -864,6 +898,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.column_filters[key] = dict(spec)
         else:
             self.column_filters.pop(key, None)
+        self._sync_column_filters_to_checkboxes()
+        self._update_filter_summary_chips()
         self._column_filters_load_all = False
         self._refresh_column_filter_headers()
         self._load_invoices()
@@ -940,6 +976,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return super().eventFilter(obj, event)
 
     def _base_filter_label(self, status) -> str:
+        if status == "all":
+            needle = self.txt_search.text().strip() if hasattr(self, "txt_search") else ""
+            column_filters_active = has_active_filters(self.column_filters) if hasattr(self, "column_filters") else False
+            if needle or column_filters_active:
+                return "当前范围全部"
+            return "全部"
         return self.filter_base_labels.get(status, str(status))
 
     def _update_filter_counts(self, invoices_or_counts):
@@ -1038,18 +1080,154 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return "待补全"
         return ""
 
-    def _get_invoice_display_status(self, inv: dict) -> str:
-        review_status = inv.get("review_status") or TO_REVIEW
-        quality = self._get_invoice_quality(inv)
-        if quality:
-            return quality
-        status_mapping = {
-            TO_REVIEW: "待审核",
-            APPROVED: "已通过",
-            IGNORED: "已忽略",
-            ERROR: "异常",
-        }
-        return status_mapping.get(review_status, str(review_status))
+    def _get_invoice_data_status(self, inv: dict) -> str:
+        inv_num = str(inv.get("invoice_number") or "").strip()
+        total_amt = str(inv.get("total_amount") or "").strip()
+        inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
+        seller = str(inv.get("seller_name") or "").strip()
+        attachment_path = str(inv.get("attachment_path") or "").strip()
+        missing_extra = bool(inv.get("missing_extra"))
+
+        if not inv_num and not total_amt and not seller:
+            return "未识别"
+        if not inv_num or not total_amt or not inv_date or not seller:
+            return "待补全"
+        if not attachment_path:
+            return "缺原件"
+        if missing_extra:
+            return "缺证明"
+        return "正常"
+
+    def _on_chk_needs_fix_changed(self, state):
+        if state == Qt.Checked or state == 2:
+            self.column_filters["status"] = {"values": {"未识别", "待补全", "缺原件", "缺证明"}}
+        else:
+            self.column_filters.pop("status", None)
+        self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
+        self._load_invoices()
+
+    def _on_chk_unlinked_changed(self, state):
+        if state == Qt.Checked or state == 2:
+            self.column_filters["claim_name"] = {"values": {"(空白)"}}
+        else:
+            self.column_filters.pop("claim_name", None)
+        self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
+        self._load_invoices()
+
+    def _sync_column_filters_to_checkboxes(self):
+        if hasattr(self, "chk_needs_fix"):
+            self.chk_needs_fix.blockSignals(True)
+            status_filter = self.column_filters.get("status")
+            if status_filter and "values" in status_filter:
+                vals = set(status_filter["values"])
+                self.chk_needs_fix.setChecked(vals == {"未识别", "待补全", "缺原件", "缺证明"})
+            else:
+                self.chk_needs_fix.setChecked(False)
+            self.chk_needs_fix.blockSignals(False)
+
+        if hasattr(self, "chk_unlinked"):
+            self.chk_unlinked.blockSignals(True)
+            claim_filter = self.column_filters.get("claim_name")
+            if claim_filter and "values" in claim_filter:
+                vals = set(claim_filter["values"])
+                self.chk_unlinked.setChecked(vals == {"(空白)"})
+            else:
+                self.chk_unlinked.setChecked(False)
+            self.chk_unlinked.blockSignals(False)
+
+    def _update_filter_summary_chips(self):
+        while self.chips_container_layout.count():
+            item = self.chips_container_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        chips_to_add = []
+        for key, spec in self.column_filters.items():
+            if not is_filter_active(spec):
+                continue
+            label = COLUMN_LABELS.get(key, key)
+            if key == "status":
+                vals = set(spec.get("values") or ())
+                if vals == {"未识别", "待补全", "缺原件", "缺证明"}:
+                    chips_to_add.append(("待补全", key))
+                else:
+                    summary = ",".join(sorted(vals))
+                    if len(summary) > 15:
+                        summary = summary[:12] + "..."
+                    chips_to_add.append((f"{label}: {summary}", key))
+            elif key == "claim_name":
+                vals = set(spec.get("values") or ())
+                if vals == {"(空白)"}:
+                    chips_to_add.append(("未关联报销组", key))
+                else:
+                    summary = ",".join(sorted(vals))
+                    if len(summary) > 15:
+                        summary = summary[:12] + "..."
+                    chips_to_add.append((f"{label}: {summary}", key))
+            elif "values" in spec:
+                vals = set(spec["values"] or ())
+                summary = ",".join(sorted(vals))
+                if len(summary) > 15:
+                    summary = summary[:12] + "..."
+                chips_to_add.append((f"{label}: {summary}", key))
+            elif key == "total_amount":
+                min_v = spec.get("min", "")
+                max_v = spec.get("max", "")
+                if min_v and max_v:
+                    chips_to_add.append((f"金额: {min_v}~{max_v}", key))
+                elif min_v:
+                    chips_to_add.append((f"金额 >= {min_v}", key))
+                elif max_v:
+                    chips_to_add.append((f"金额 <= {max_v}", key))
+            elif "quick" in spec:
+                quick_disp = {
+                    "today": "今天",
+                    "week": "本周",
+                    "month": "本月",
+                    "last_30_days": "最近 30 天",
+                }.get(spec["quick"], spec["quick"])
+                chips_to_add.append((f"费用日期: {quick_disp}", key))
+
+        needle = self.txt_search.text().strip()
+        if needle:
+            chips_to_add.append((f"搜索: {needle}", "search"))
+
+        if chips_to_add:
+            self.filter_chips_widget.setVisible(True)
+            for text, key in chips_to_add:
+                btn = QPushButton(f"{text} ✕")
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #EFF6FF;
+                        color: #2563EB;
+                        border: 1px solid #BFDBFE;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-size: 11px;
+                        font-weight: 500;
+                    }
+                    QPushButton:hover {
+                        background-color: #DBEAFE;
+                        color: #1D4ED8;
+                        border-color: #2563EB;
+                    }
+                """)
+                btn.clicked.connect(lambda checked=False, k=key: self._clear_single_filter(k))
+                self.chips_container_layout.addWidget(btn)
+        else:
+            self.filter_chips_widget.setVisible(False)
+
+    def _clear_single_filter(self, key):
+        if key == "search":
+            self.txt_search.setText("")
+        else:
+            self.column_filters.pop(key, None)
+            self._sync_column_filters_to_checkboxes()
+            self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
+        self._load_invoices()
 
     def _get_invoice_snapshot(self, inv: dict) -> dict:
         return {
@@ -1181,34 +1359,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Determine query limit for first load: if _is_first_load is True and no search text/quick filter is active
         needle = self.txt_search.text().strip().lower() if hasattr(self, "txt_search") else ""
-        unlinked_only = self.chk_unlinked.isChecked() if hasattr(self, "chk_unlinked") else False
-        needs_fix_only = self.chk_needs_fix.isChecked() if hasattr(self, "chk_needs_fix") else False
-
         column_filters_active = has_active_filters(self.column_filters)
-        is_default_view = not needle and not unlinked_only and not needs_fix_only and not column_filters_active
+        is_default_view = not needle and not column_filters_active
+
         limit_val = None
-        first_load_limited = False
         if self._is_first_load and is_default_view and self.current_filter_status is None:
             limit_val = 100
-            first_load_limited = True
 
         counts = None
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
-            if column_filters_active:
-                display_source = self.db.list_invoices(
-                    status=None,
-                    limit=None,
-                    include_deleted=include_deleted,
-                )
-            else:
+            if is_default_view:
+                # Optimized path: avoid loading all records
                 display_source = self.db.list_invoices(
                     status=self.current_filter_status,
                     limit=limit_val,
                     include_deleted=include_deleted
                 )
-            if is_default_view:
                 counts = {
                     "all": self.db.count_invoices_for_status(status=None, include_deleted=include_deleted),
                     TO_REVIEW: self.db.count_invoices_for_status(status=TO_REVIEW, include_deleted=include_deleted),
@@ -1216,11 +1384,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     IGNORED: self.db.count_invoices_for_status(status=IGNORED, include_deleted=include_deleted),
                     ERROR: self.db.count_invoices_for_status(status=ERROR, include_deleted=include_deleted),
                 }
-                count_source = []
-            elif column_filters_active:
-                count_source = display_source
             else:
-                count_source = self.db.list_invoices(
+                display_source = self.db.list_invoices(
                     status=None,
                     limit=None,
                     include_deleted=include_deleted,
@@ -1232,57 +1397,85 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             _log.error("Failed to load invoices from DB: %s", e)
             QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
             display_source = []
-            count_source = []
-            counts = None
 
         filter_start = time.perf_counter()
-        displayed_invoices = self._apply_non_status_filters(
-            display_source,
-            needle,
-            unlinked_only,
-            needs_fix_only,
-        )
-        displayed_invoices = apply_column_filters(
-            displayed_invoices,
-            self.column_filters,
-            self._column_filter_value_getters(),
-        )
-        if column_filters_active:
-            count_filtered_invoices = displayed_invoices
-            if self.current_filter_status is not None:
-                displayed_invoices = [
-                    inv for inv in displayed_invoices
-                    if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
-                ]
-            total_column_matches = len(displayed_invoices)
-            if not self._column_filters_load_all and total_column_matches > 100:
-                displayed_invoices = displayed_invoices[:100]
-                first_load_limited = True
-        elif is_default_view and counts is not None:
-            count_filtered_invoices = counts
+        
+        # 1. Apply global search
+        if is_default_view:
+            filtered_invoices = display_source
         else:
-            count_filtered_invoices = self._apply_non_status_filters(
-                count_source,
-                needle,
-                unlinked_only,
-                needs_fix_only,
-            )
-        filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
+            filtered_invoices = display_source
+            if needle:
+                temp = []
+                for inv in filtered_invoices:
+                    claim_name = self._get_invoice_claim_group(inv)
+                    haystack = " ".join([
+                        str(inv.get("invoice_number") or ""),
+                        str(inv.get("seller_name") or ""),
+                        str(inv.get("buyer_name") or ""),
+                        str(inv.get("total_amount") or ""),
+                        str(inv.get("mail_subject") or ""),
+                        str(inv.get("category") or ""),
+                        str(inv.get("attachment_path") or ""),
+                        claim_name,
+                    ]).lower()
+                    if needle in haystack:
+                        temp.append(inv)
+                filtered_invoices = temp
 
+            # 2. Apply column filters
+            filtered_invoices = apply_column_filters(
+                filtered_invoices,
+                self.column_filters,
+                self._column_filter_value_getters(),
+            )
+
+        # 3. Dynamic count calculation for review status buttons
+        if counts is None:
+            counts = {
+                "all": len(filtered_invoices),
+                TO_REVIEW: 0,
+                APPROVED: 0,
+                IGNORED: 0,
+                ERROR: 0,
+            }
+            for inv in filtered_invoices:
+                rev_status = inv.get("review_status") or TO_REVIEW
+                if rev_status in counts:
+                    counts[rev_status] += 1
+
+        self._update_filter_counts(counts)
+
+        # 4. Filter by review status
+        displayed_invoices = filtered_invoices
+        if not is_default_view and self.current_filter_status is not None:
+            displayed_invoices = [
+                inv for inv in displayed_invoices
+                if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
+            ]
+
+        # 5. Apply first-load limit of 100 rows
+        total_matching = len(displayed_invoices)
+        if is_default_view:
+            total_matching = counts.get("all") if self.current_filter_status is None else counts.get(self.current_filter_status, 0)
+
+        first_load_limited = False
+        if self._limited_first_load_active and total_matching > 100:
+            displayed_invoices = displayed_invoices[:100]
+            first_load_limited = True
+        elif limit_val is not None and total_matching > 100:
+            first_load_limited = True
+
+        filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
         self.invoices_list = displayed_invoices
-        self._update_filter_counts(count_filtered_invoices)
 
         # Track limited first-load state for UI hints
-        if column_filters_active:
-            total_matching = total_column_matches
-        else:
-            total_matching = count_filtered_invoices.get("all", 0) if isinstance(count_filtered_invoices, dict) else len(count_filtered_invoices)
-        if first_load_limited and total_matching > len(displayed_invoices):
+        if first_load_limited:
             self._limited_first_load_active = True
             self._limited_first_load_total = total_matching
             shown = len(displayed_invoices)
             notice = (
-                f"首屏已加载最近 {shown} / {total_matching} 张。"
+                f"当前范围全部 {total_matching} 张 (首屏已加载最近 {shown} 张)。"
                 f"点击\"加载全部\"查看完整列表，或使用搜索/筛选缩小范围。"
             )
             self._first_load_notice = notice
@@ -1320,7 +1513,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 seller = str(inv.get("seller_name") or "")
                 claim_name = self._get_invoice_claim_group(inv)
                 attachment_path = str(inv.get("attachment_path") or "")
-                display_status = self._get_invoice_display_status(inv)
+                display_status = self._get_invoice_data_status(inv)
                 source_text = self._get_invoice_source(inv)
                 review_status = inv.get("review_status") or TO_REVIEW
                 quality = self._get_invoice_quality(inv)
@@ -1351,19 +1544,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     if col == 2:
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     elif col == 0:
-                        if display_status == "已通过":
+                        if display_status == "正常":
                             item.setForeground(QColor("#059669"))
-                        elif display_status == "已忽略":
-                            item.setForeground(QColor("#6B7280"))
-                        elif display_status == "异常":
-                            item.setForeground(QColor("#DC2626"))
-                        elif display_status == "待补全":
-                            item.setForeground(QColor("#D97706"))
-                        elif display_status == "未识别":
-                            item.setForeground(QColor("#D97706"))
                         else:
                             item.setForeground(QColor("#D97706"))
-                        item.setToolTip(f"审核状态: {review_status}\n数据质量: {quality or '正常'}")
+                        status_mapping = {
+                            "to_review": "待审核",
+                            "approved": "已通过",
+                            "ignored": "已忽略",
+                            "error": "异常",
+                        }
+                        rev_chinese = status_mapping.get(review_status, str(review_status))
+                        item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
                     elif col == 1:
                         date_source_disp = {
                             "travel_date": "乘车日期",

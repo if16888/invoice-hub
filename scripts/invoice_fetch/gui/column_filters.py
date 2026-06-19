@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 ValueGetter = Callable[[dict], str]
 
 COLUMN_DEFINITIONS = (
-    ("status", "状态", "values"),
+    ("status", "资料", "values"),
     ("expense_date", "费用日期", "date"),
     ("total_amount", "金额", "amount"),
     ("invoice_number", "发票号码", "values"),
