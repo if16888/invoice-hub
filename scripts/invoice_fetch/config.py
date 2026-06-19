@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .ai_profiles import apply_active_ai_profile, get_ai_profiles
 from .log_privacy import mask_email
 
 _log = logging.getLogger(__name__)
@@ -63,18 +64,11 @@ _DEFAULTS = {
     "search": {"folder": "INBOX", "months_back": 3},
     "email_accounts": [],
     "ai": {"provider": "none", "model": "", "batch_size": 20},
+    "ai_profiles": [],
     "reimbursement": {"buyer_name": "", "buyer_tax_id": "", "strict_buyer_check": False},
     "playwright": {"channel": "auto"},
     "categories": {},
 }
-
-_DEFAULT_AI_MODELS = {
-    "none": "",
-    "deepseek": "deepseek-chat",
-    "gemini": "gemini-2.0-flash",
-}
-
-_VALID_AI_PROVIDERS = set(_DEFAULT_AI_MODELS)
 
 # Project root: two levels up from this file → d:\01_workspace\win\bill
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -297,18 +291,8 @@ def _normalize_config(
     source_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _normalize_email_imap_config(cfg, source_cfg)
-
-    ai_cfg = cfg.setdefault("ai", {})
-    provider = (ai_cfg.get("provider") or "none").lower()
-    if provider not in _VALID_AI_PROVIDERS:
-        raise SystemExit(
-            f"AI 服务提供商不支持: {provider}. "
-            f"支持: {', '.join(sorted(_VALID_AI_PROVIDERS))}"
-        )
-    ai_cfg["provider"] = provider
-    if not ai_cfg.get("model"):
-        ai_cfg["model"] = _DEFAULT_AI_MODELS.get(provider, "")
-    return cfg
+    profiles = get_ai_profiles(cfg, source_cfg)
+    return apply_active_ai_profile(cfg, profiles)
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
@@ -412,7 +396,7 @@ def validate_config_gui(cfg: dict) -> None:
     """Validate configuration fields for GUI settings. Raises ValueError if invalid."""
     try:
         cfg = _normalize_config(_deep_merge(_DEFAULTS, cfg), cfg)
-    except SystemExit as exc:
+    except (SystemExit, ValueError) as exc:
         raise ValueError(str(exc) or "邮箱配置无效。") from None
 
     if not cfg.get("email_accounts"):
