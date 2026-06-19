@@ -1056,6 +1056,43 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(claims[1]["id"], id1)
                 self.assertEqual(claims[1]["name"], "Claim A")
 
+    def test_delete_claim_group_only_when_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            with InvoiceDB(Path(td) / "claims.db") as db:
+                empty_claim = db.create_claim_group("Empty")
+                used_claim = db.create_claim_group("Used")
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "DEL-CLAIM-001",
+                    "seller_name": "Seller",
+                    "total_amount": "10.00",
+                })
+                self.assertTrue(db.add_invoice_to_claim(used_claim, invoice_id))
+
+                self.assertTrue(db.delete_claim_group_if_empty(empty_claim))
+                self.assertIsNone(db.get_claim_group(empty_claim))
+                self.assertFalse(db.delete_claim_group_if_empty(used_claim))
+                self.assertEqual(db.last_error, "not_empty")
+                self.assertIsNotNone(db.get_claim_group(used_claim))
+
+    def test_delete_claim_group_cleans_orphan_links(self):
+        with tempfile.TemporaryDirectory() as td:
+            with InvoiceDB(Path(td) / "claims.db") as db:
+                claim_id = db.create_claim_group("Orphan only")
+                db._conn.execute(
+                    "INSERT INTO claim_group_items (claim_id, invoice_id) VALUES (?, ?)",
+                    (claim_id, 999999),
+                )
+                db._conn.commit()
+
+                self.assertEqual(db.get_claim_invoices(claim_id), [])
+                self.assertTrue(db.delete_claim_group_if_empty(claim_id))
+                self.assertIsNone(db.get_claim_group(claim_id))
+                remaining = db._conn.execute(
+                    "SELECT COUNT(*) FROM claim_group_items WHERE claim_id = ?",
+                    (claim_id,),
+                ).fetchone()[0]
+                self.assertEqual(remaining, 0)
+
     @patch("scripts.invoice_fetch.__main__.InvoiceDB")
     @patch("scripts.invoice_fetch.gui.start_gui")
     def test_desktop_subcommand_dispatch(self, mock_start_gui, mock_db):
@@ -3552,6 +3589,9 @@ class ClaimGroupsTests(unittest.TestCase):
                             window.table.model().index(row, 0),
                             QItemSelectionModel.Select | QItemSelectionModel.Rows,
                         )
+                    app.processEvents()
+                    self.assertTrue(window.btn_add_to_claim.isEnabled())
+                    self.assertTrue(window.btn_add_to_claim.text().startswith("加入 "))
 
                     with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok) as mock_info:
                         result = window._link_invoices_to_claim()
@@ -3559,14 +3599,14 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     self.assertEqual(result, {
                         "linked": 1,
-                        "duplicate": 1,
+                        "assigned": 1,
                         "evidence_only": 1,
                         "failed": 0,
                     })
                     self.assertEqual(mock_info.call_args.args[1], "关联结果")
                     message = mock_info.call_args.args[2]
                     self.assertIn("成功关联 1 张发票", message)
-                    self.assertIn("重复 1 张", message)
+                    self.assertIn("已归组跳过 1 张", message)
                     self.assertIn("跳过待关联证明材料 1 张", message)
                     claim_invoice_ids = {
                         row["id"] for row in window.db.get_claim_invoices(claim_id)
@@ -3749,8 +3789,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("已选中 2 张", status_text)
                     self.assertIn("合计 ¥12.30", status_text)
                     self.assertIn("部分金额缺失", status_text)
-                    self.assertIn("sum claim：2 张，合计 ¥12.30", window.lbl_claim_total.text())
+                    self.assertIn("sum claim：2 条记录 · 合计 ¥12.30", window.lbl_claim_total.text())
                     self.assertIn("部分金额缺失", window.lbl_claim_total.text())
+                    self.assertFalse(window.lbl_claim_total.isHidden())
+                    self.assertFalse(window.btn_delete_claim.isEnabled())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -5939,12 +5981,89 @@ class ClaimGroupsTests(unittest.TestCase):
                 app.processEvents()
 
                 self.assertEqual(window.table.item(0, 7).text(), "—")
+                new_idx = window.combo_claims.findData(window._NEW_CLAIM_VALUE)
+                self.assertGreaterEqual(new_idx, 0)
+                window.combo_claims.setCurrentIndex(new_idx)
+                app.processEvents()
+                self.assertFalse(window.new_claim_widget.isHidden())
+                window.combo_claims.setCurrentIndex(idx)
+                app.processEvents()
+                self.assertTrue(window.new_claim_widget.isHidden())
+                self.assertEqual(window.btn_add_to_claim.text(), "加入 Claim B")
+                self.assertTrue(window.btn_add_to_claim.isEnabled())
+                self.assertTrue(window.btn_delete_claim.isEnabled())
                 with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
                     window._link_invoices_to_claim()
                 app.processEvents()
 
                 self.assertEqual(window.combo_claims.currentData(), claim_b)
                 self.assertEqual(window.table.item(0, 7).text(), "Claim B")
+                self.assertEqual(window.btn_add_to_claim.text(), "已在 Claim B")
+                self.assertFalse(window.btn_add_to_claim.isEnabled())
+                self.assertFalse(window.btn_delete_claim.isEnabled())
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+    def test_gui_delete_empty_claim_refreshes_dropdown(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            app = QApplication.instance() or QApplication(sys.argv)
+        except (ImportError, RuntimeError, OSError) as e:
+            self.skipTest(f"Skipping GUI test: {e}")
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_gui_delete_empty_claim.db"
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Disposable")
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(db_path, splash=None)
+            try:
+                window._deferred_init()
+                app.processEvents()
+                idx = window.combo_claims.findData(claim_id)
+                window.combo_claims.setCurrentIndex(idx)
+                app.processEvents()
+                self.assertTrue(window.btn_delete_claim.isEnabled())
+
+                with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+                    window._delete_empty_claim()
+                app.processEvents()
+
+                self.assertIsNone(window.db.get_claim_group(claim_id))
+                self.assertEqual(window.combo_claims.findData(claim_id), -1)
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+    def test_gui_locate_missing_attachment_opens_default_directory(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance() or QApplication(sys.argv)
+        except (ImportError, RuntimeError, OSError) as e:
+            self.skipTest(f"Skipping GUI test: {e}")
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_gui_default_attachment_dir.db"
+            runtime_dir = Path(td) / "runtime"
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(db_path, splash=None)
+            try:
+                window.current_invoice = {"attachment_path": ""}
+                with patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", runtime_dir), \
+                     patch.object(window, "_open_local_path") as open_path:
+                    window._locate_attachment()
+
+                default_dir = runtime_dir / "attachments"
+                self.assertTrue(default_dir.is_dir())
+                open_path.assert_called_once_with(default_dir)
             finally:
                 if hasattr(window, "db") and window.db is not None:
                     window.db.close()

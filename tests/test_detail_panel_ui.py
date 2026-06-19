@@ -187,9 +187,9 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         )
         self.assertIn("行程单.pdf", self.panel.lbl_evidence_name.text())
         self.assertTrue(self.panel.btn_open_extra_files.isEnabled())
-        self.assertFalse(
+        self.assertTrue(
             self.panel.btn_open_extra_files.isHidden(),
-            "Open button must be visible when a doc is present"
+            "Filename interaction replaces the visible open button"
         )
         self.assertEqual(self.panel.btn_add_evidence.text(), "替换")
 
@@ -242,6 +242,36 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsInstance(self.panel.btn_add_to_claim, QPushButton)
         self.assertIsInstance(self.panel.btn_export, QPushButton)
 
+    def test_claim_group_controls_share_one_compact_row(self):
+        """Claim selection and actions occupy equal left/right halves."""
+        self.assertIs(self.panel.claim_row.itemAt(0).widget(), self.panel.claim_left_widget)
+        self.assertIs(self.panel.claim_row.itemAt(1).widget(), self.panel.claim_actions_widget)
+        self.assertEqual(self.panel.claim_row.stretch(0), 1)
+        self.assertEqual(self.panel.claim_row.stretch(1), 1)
+        self.assertLessEqual(self.panel.combo_claims.maximumWidth(), 360)
+        self.assertTrue(self.panel.btn_refresh_claims.isHidden())
+        self.assertFalse(self.panel.lbl_claim_total.isHidden())
+
+    def test_claim_combo_aligns_with_first_column_fields(self):
+        """Claim, material and core first-column fields share the same x coordinate."""
+        self.panel.resize(760, 850)
+        self.panel.show()
+        self.app.processEvents()
+        claim_x = self.panel.combo_claims.mapTo(self.panel, self.panel.combo_claims.rect().topLeft()).x()
+        material_x = self.panel.txt_path.mapTo(self.panel, self.panel.txt_path.rect().topLeft()).x()
+        core_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
+        self.assertLessEqual(abs(claim_x - material_x), 2)
+        self.assertLessEqual(abs(claim_x - core_x), 2)
+
+    def test_empty_claim_delete_button_exists_in_summary_row(self):
+        """Deleting an empty group is available beside the summary, not in the main action half."""
+        from PySide6.QtWidgets import QPushButton
+        self.assertIsInstance(self.panel.btn_delete_claim, QPushButton)
+        self.assertIs(
+            self.panel.claim_summary_row.itemAt(self.panel.claim_summary_row.count() - 1).widget(),
+            self.panel.btn_delete_claim,
+        )
+
     # ── 9. get_form_values includes all editable fields ─────────────────────
 
     def test_get_form_values_returns_all_fields(self):
@@ -271,28 +301,63 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertEqual(self.panel.btn_add_attachment.text(), "补充")
 
     def test_attachment_row_shows_replace_when_file_exists(self):
-        """When attachment exists, btn_open_file is visible, btn_add_attachment is '替换'."""
+        """When attachment exists, action buttons stay hidden and replacement state is retained."""
         self.panel.set_attachment_state(has_file=True, file_name="invoice.pdf", file_path="/tmp/invoice.pdf")
-        self.assertFalse(self.panel.btn_open_file.isHidden())
+        self.assertTrue(self.panel.btn_open_file.isHidden())
         self.assertEqual(self.panel.btn_add_attachment.text(), "替换")
+
+    def test_material_actions_are_hidden_and_double_clickable(self):
+        """Material filenames replace visible action buttons and support double-click editing."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from scripts.invoice_fetch.gui.invoice_detail_panel import InvoiceDetailPanel, InvoiceDetailCallbacks
+
+        called = []
+        panel = InvoiceDetailPanel(callbacks=InvoiceDetailCallbacks(
+            on_open_dir=lambda: called.append("directory"),
+            on_add_evidence=lambda: called.append("evidence"),
+        ))
+        panel.show()
+        self.app.processEvents()
+        panel.update_evidence_row([{"label": "proof.pdf", "path": "/tmp/proof.pdf"}])
+
+        for button in (
+            panel.btn_open_file,
+            panel.btn_add_attachment,
+            panel.btn_retry_download,
+            panel.btn_open_extra_files,
+            panel.btn_add_evidence,
+        ):
+            self.assertTrue(button.isHidden())
+
+        QTest.mouseDClick(panel.txt_path, Qt.LeftButton)
+        QTest.mouseDClick(panel.lbl_evidence_name, Qt.LeftButton)
+        self.assertEqual(called, ["directory", "evidence"])
+        panel.close()
+        panel.deleteLater()
+
+    def test_detail_scrollbar_is_hidden_by_default(self):
+        """The first view must not display a vertical scrollbar."""
+        from PySide6.QtCore import Qt
+        self.assertEqual(
+            self.panel.right_content_widget.verticalScrollBarPolicy(),
+            Qt.ScrollBarAlwaysOff,
+        )
 
     # ── 12. Inline claim creation toggling ───────────────────────────────────
 
     def test_inline_claim_creation_toggling(self):
-        """Clicking btn_new_claim_toggle shows the inline creation row, and cancel hides it."""
-        # By default, new_claim_widget is hidden, btn_new_claim_toggle is visible
+        """Selecting the dropdown's new-group item shows creation, and cancel hides it."""
         self.assertTrue(self.panel.new_claim_widget.isHidden())
-        self.assertFalse(self.panel.btn_new_claim_toggle.isHidden())
-
-        # Click "+ 新建组"
-        self.panel.btn_new_claim_toggle.click()
+        self.panel.combo_claims.addItem("＋ 新建报销组…", self.panel.NEW_CLAIM_VALUE)
+        self.panel.combo_claims.setCurrentIndex(0)
+        self.panel._set_new_claim_input_visible(True)
         self.assertFalse(self.panel.new_claim_widget.isHidden())
         self.assertTrue(self.panel.btn_new_claim_toggle.isHidden())
 
-        # Click "取消"
         self.panel.btn_cancel_create_claim.click()
         self.assertTrue(self.panel.new_claim_widget.isHidden())
-        self.assertFalse(self.panel.btn_new_claim_toggle.isHidden())
+        self.assertTrue(self.panel.btn_new_claim_toggle.isHidden())
 
     # ── 13. Callback wiring for materials buttons ───────────────────────────
 
@@ -305,6 +370,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
             on_add_attachment=lambda: called.update({"add_attachment": True}),
             on_open_evidence=lambda: called.update({"open_evidence": True}),
             on_add_evidence=lambda: called.update({"add_evidence": True}),
+            on_delete_claim=lambda: called.update({"delete_claim": True}),
         )
         panel = InvoiceDetailPanel(callbacks=cb)
 
@@ -323,6 +389,10 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         panel.btn_add_evidence.setEnabled(True)
         panel.btn_add_evidence.click()
         self.assertTrue(called.get("add_evidence"))
+
+        panel.btn_delete_claim.setEnabled(True)
+        panel.btn_delete_claim.click()
+        self.assertTrue(called.get("delete_claim"))
 
         panel.close()
         panel.deleteLater()

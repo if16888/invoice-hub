@@ -122,6 +122,7 @@ def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details
 
 
 class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+    _NEW_CLAIM_VALUE = InvoiceDetailPanel.NEW_CLAIM_VALUE
     def __init__(self, db_path: Path, splash=None, startup_probe: bool = False):
         # Guard against invalid QFont point size warning (point size <= 0)
         from PySide6.QtWidgets import QApplication
@@ -689,6 +690,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_locate_file=self._locate_attachment_file,
             on_open_dir=self._locate_attachment,
             on_create_claim=self._create_claim,
+            on_delete_claim=self._delete_empty_claim,
             on_link_to_claim=self._link_invoices_to_claim,
             on_refresh_claims=self._load_claims,
             on_export_claim=self._export_claim_package,
@@ -756,6 +758,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_create_claim = dp.btn_create_claim
         self.lbl_claim_total = dp.lbl_claim_total
         self.btn_export = dp.btn_export
+        self.btn_delete_claim = dp.btn_delete_claim
         self.lbl_export_summary = dp.lbl_export_summary
         # Notes
         self.review_note_section = dp.review_note_section
@@ -1484,26 +1487,33 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"rows={len(self.invoices_list)}"
         )
 
-    def _load_claims(self):
+    def _load_claims(self, selected_claim_id=None):
         """Populate the claim groups dropdown from DB."""
-        current_claim_id = self.combo_claims.currentData() if hasattr(self, "combo_claims") else None
+        current_claim_id = selected_claim_id
+        if current_claim_id is None and hasattr(self, "combo_claims"):
+            current_claim_id = self.combo_claims.currentData()
+        if current_claim_id == self._NEW_CLAIM_VALUE:
+            current_claim_id = None
         try:
             claims = self.db.list_claim_groups()
         except Exception as e:
             _log.error("Failed to load claim groups from DB: %s", e)
             claims = []
 
+        self.combo_claims.blockSignals(True)
         self.combo_claims.clear()
         for c in claims:
             period = ""
             if c.get("period_start") or c.get("period_end"):
-                period = f" [{c.get('period_start')}~{c.get('period_end')}]"
-            display_text = f"{c.get('id')}: {c.get('name')}{period}"
+                period = f" - {c.get('period_start')}~{c.get('period_end')}"
+            display_text = f"{c.get('name')}{period}"
             self.combo_claims.addItem(display_text, c.get("id"))
+        self.combo_claims.addItem("＋ 新建报销组…", self._NEW_CLAIM_VALUE)
         if current_claim_id is not None:
             idx = self.combo_claims.findData(current_claim_id)
             if idx >= 0:
                 self.combo_claims.setCurrentIndex(idx)
+        self.combo_claims.blockSignals(False)
         self._update_claim_total()
 
     def _update_claim_total(self):
@@ -1511,44 +1521,80 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         claim_idx = self.combo_claims.currentIndex() if hasattr(self, "combo_claims") else -1
         if claim_idx < 0:
-            self.lbl_claim_total.setText("当前报销组 0 张，合计 ¥0.00；当前发票未加入")
+            self.lbl_claim_total.setText("0 条记录 · 合计 ¥0.00")
             if hasattr(self, "btn_add_to_claim"):
-                self.btn_add_to_claim.setText("加入当前发票")
+                self.btn_add_to_claim.setText("加入")
+                self.btn_add_to_claim.setToolTip("请先选择报销组")
                 self.btn_add_to_claim.setEnabled(False)
             if hasattr(self, "btn_export"):
                 self.btn_export.setEnabled(False)
+            if hasattr(self, "btn_delete_claim"):
+                self.btn_delete_claim.setEnabled(False)
             return
         claim_id = self.combo_claims.itemData(claim_idx)
+        if claim_id == self._NEW_CLAIM_VALUE:
+            self._detail_panel._set_new_claim_input_visible(True)
+            self.lbl_claim_total.setText("输入名称并确认后即可加入发票")
+            self.btn_add_to_claim.setText("加入")
+            self.btn_add_to_claim.setEnabled(False)
+            self.btn_export.setEnabled(False)
+            self.btn_delete_claim.setEnabled(False)
+            return
+
+        self._detail_panel._set_new_claim_input_visible(False)
         try:
             invoices = self.db.get_claim_invoices(claim_id)
         except Exception as exc:
             _log.debug("Failed to calculate claim total: %s", exc)
             invoices = []
 
-        txt = self.combo_claims.currentText()
-        if ": " in txt:
-            group_name = txt.split(": ", 1)[1]
-            if " [" in group_name:
-                group_name = group_name.split(" [", 1)[0]
-        else:
-            group_name = txt
-
-        current_invoice_in_group = False
-        if getattr(self, "current_invoice", None):
-            inv_id = self.current_invoice.get("id")
-            if any(i.get("id") == inv_id for i in invoices):
-                current_invoice_in_group = True
+        group_name = self.combo_claims.currentText().strip()
+        if " - " in group_name:
+            group_name = group_name.split(" - ", 1)[0]
 
         from ..reimbursement import amount_total
         count, total, has_missing = amount_total(invoices)
         suffix = "，部分金额缺失" if has_missing else ""
-        self.lbl_claim_total.setText(f"{group_name}：{count} 张，合计 ¥{total:.2f}{suffix}；当前发票{'已' if current_invoice_in_group else '未'}加入")
+        self.lbl_claim_total.setText(f"{group_name}：{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
         
         if hasattr(self, "btn_add_to_claim"):
-            self.btn_add_to_claim.setText(f"加入到 {group_name}")
-            self.btn_add_to_claim.setEnabled(True)
+            existing_group = ""
+            can_add = False
+            if getattr(self, "current_invoice", None):
+                inv_id = self.current_invoice.get("id")
+                existing_group = self._get_invoice_claim_group(self.current_invoice)
+                try:
+                    can_add = self.db.count_claim_links(inv_id) == 0
+                except Exception as exc:
+                    _log.debug("Failed to inspect invoice claim links: %s", exc)
+            elif hasattr(self, "table") and self.table.selectionModel():
+                for index in self.table.selectionModel().selectedRows():
+                    invoice = self.invoices_list[index.row()]
+                    if is_pending_evidence_invoice(invoice):
+                        continue
+                    try:
+                        if self.db.count_claim_links(invoice.get("id")) == 0:
+                            can_add = True
+                            break
+                    except Exception as exc:
+                        _log.debug("Failed to inspect selected invoice claim links: %s", exc)
+            display_group = group_name if len(group_name) <= 12 else f"{group_name[:12]}…"
+            if can_add:
+                self.btn_add_to_claim.setText(f"加入 {display_group}")
+                self.btn_add_to_claim.setToolTip(f"将当前选中的未归组发票加入“{group_name}”")
+            else:
+                assigned_name = existing_group or "其他报销组"
+                display_assigned = assigned_name if len(assigned_name) <= 12 else f"{assigned_name[:12]}…"
+                self.btn_add_to_claim.setText(f"已在 {display_assigned}")
+                self.btn_add_to_claim.setToolTip("当前发票已有报销组，不能重复加入")
+            self.btn_add_to_claim.setEnabled(can_add)
         if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(True)
+        if hasattr(self, "btn_delete_claim"):
+            self.btn_delete_claim.setEnabled(count == 0)
+            self.btn_delete_claim.setToolTip(
+                "删除当前空报销组" if count == 0 else "当前报销组有关联记录，不能删除"
+            )
 
     def _clear_detail_form(self):
         # Reset right hand details form to generic empty/placeholder state.
@@ -1621,6 +1667,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.current_preview_docs = []
             self.current_preview_index = 0
             self._update_document_preview()
+            self._update_claim_total()
             return
 
         self._set_selection_total_status(selected_indexes)
@@ -1767,6 +1814,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._show_preview_status(self._preview_empty_message)
             if hasattr(self, "lbl_closing_desc"):
                 self.lbl_closing_desc.setText("已选中多张发票，请使用下方或右键菜单进行批量操作。")
+
+        self._update_claim_total()
 
     def _show_table_context_menu(self, pos):
         selected_indexes = self.table.selectionModel().selectedRows()
@@ -2712,21 +2761,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _locate_attachment(self):
         """Open the folder containing the current attachment."""
-        if not self.current_invoice or not self.current_invoice.get("attachment_path"):
-            return
-        attachment_path = str(self.current_invoice.get("attachment_path") or "")
-        file_path = self._resolve_attachment_path(attachment_path)
-        if not file_path:
-            return
+        default_dir = RUNTIME_DIR / "attachments"
+        attachment_path = ""
+        file_path = None
+        if self.current_invoice:
+            attachment_path = str(self.current_invoice.get("attachment_path") or "")
+            file_path = self._resolve_attachment_path(attachment_path)
 
-        target_dir = file_path.parent if file_path.is_file() else file_path
-        if not target_dir.exists():
-            QMessageBox.warning(
-                self,
-                "警告",
-                f"文件夹不存在于路径:\n{target_dir}\n\n原始记录:\n{attachment_path}",
-            )
-            return
+        if file_path and file_path.is_file():
+            target_dir = file_path.parent
+        else:
+            target_dir = default_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
 
         self._open_local_path(target_dir)
         self.statusBar().showMessage(f"已打开附件所在目录: {target_dir}", 2000)
@@ -3007,18 +3053,45 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         try:
-            self.db.create_claim_group(name=name)
+            claim_id = self.db.create_claim_group(name=name)
             self.txt_new_claim.clear()
-            self._load_claims()
+            self._load_claims(selected_claim_id=claim_id)
             self.statusBar().showMessage(f"成功创建报销组: '{name}'", 3000)
             if hasattr(self._detail_panel, "new_claim_widget"):
                 self._detail_panel.new_claim_widget.setVisible(False)
-            if hasattr(self._detail_panel, "btn_new_claim_toggle"):
-                self._detail_panel.btn_new_claim_toggle.setVisible(True)
             QMessageBox.information(self, "创建成功", f"已创建并选中报销组“{name}”；当前发票尚未加入。")
         except Exception as e:
             _log.error("Failed to create claim group: %s", e)
             QMessageBox.critical(self, "错误", f"新建报销组失败: {e}")
+
+    def _delete_empty_claim(self):
+        """Delete the selected claim group after confirming it has no records."""
+        claim_idx = self.combo_claims.currentIndex()
+        if claim_idx < 0:
+            return
+        claim_id = self.combo_claims.itemData(claim_idx)
+        if claim_id == self._NEW_CLAIM_VALUE:
+            return
+        claim_name = self.combo_claims.currentText().split(" - ", 1)[0].strip()
+        if QMessageBox.question(
+            self,
+            "删除报销组",
+            f"确定删除空报销组“{claim_name}”吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+
+        if not self.db.delete_claim_group_if_empty(claim_id):
+            if getattr(self.db, "last_error", "") == "not_empty":
+                QMessageBox.warning(self, "无法删除", "当前报销组已有记录，不能删除。")
+            else:
+                QMessageBox.warning(self, "无法删除", "报销组不存在或已被删除。")
+            self._load_claims()
+            return
+
+        self._load_claims()
+        self.statusBar().showMessage(f"已删除空报销组：{claim_name}", 3000)
 
     def _link_invoices_to_claim(self):
         """Map selected invoices to the dropdown claim group in the SQLite DB."""
@@ -3033,22 +3106,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         claim_id = self.combo_claims.itemData(claim_idx)
+        if claim_id == self._NEW_CLAIM_VALUE:
+            QMessageBox.warning(self, "选择为空", "请先创建或选择目标报销组！")
+            return
         claim_name = self.combo_claims.currentText()
         linked_count = 0
-        duplicate_count = 0
+        assigned_count = 0
         evidence_only_count = 0
         failed_count = 0
 
         try:
             for idx in selected_indexes:
                 inv = self.invoices_list[idx.row()]
+                if self.db.count_claim_links(inv["id"]) > 0:
+                    assigned_count += 1
+                    continue
                 success = self.db.add_invoice_to_claim(claim_id, inv["id"])
                 if success:
                     linked_count += 1
                     continue
                 error = getattr(self.db, "last_error", "")
                 if error == "integrity_error":
-                    duplicate_count += 1
+                    assigned_count += 1
                 elif error == "evidence_only":
                     evidence_only_count += 1
                 else:
@@ -3057,8 +3136,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             message_parts = []
             if linked_count:
                 message_parts.append(f"成功关联 {linked_count} 张发票")
-            if duplicate_count:
-                message_parts.append(f"重复 {duplicate_count} 张")
+            if assigned_count:
+                message_parts.append(f"已归组跳过 {assigned_count} 张")
             if evidence_only_count:
                 message_parts.append(f"跳过待关联证明材料 {evidence_only_count} 张")
             if failed_count:
@@ -3077,7 +3156,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._load_invoices()
             return {
                 "linked": linked_count,
-                "duplicate": duplicate_count,
+                "assigned": assigned_count,
                 "evidence_only": evidence_only_count,
                 "failed": failed_count,
             }
@@ -3087,7 +3166,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QMessageBox.critical(self, "错误", f"关联发票失败: {e}")
             return {
                 "linked": linked_count,
-                "duplicate": duplicate_count,
+                "assigned": assigned_count,
                 "evidence_only": evidence_only_count,
                 "failed": failed_count + 1,
             }

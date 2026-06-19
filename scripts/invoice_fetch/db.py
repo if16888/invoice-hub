@@ -1264,6 +1264,39 @@ class InvoiceDB:
         ).fetchone()
         return dict(row) if row else None
 
+    def delete_claim_group_if_empty(self, claim_id: int) -> bool:
+        """Delete a claim group only when no invoice records reference it."""
+        claim = self.get_claim_group(claim_id)
+        if not claim:
+            self._set_last_error("not_found")
+            return False
+        with self._conn:
+            self._conn.execute(
+                """
+                DELETE FROM claim_group_items
+                WHERE claim_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM invoices WHERE invoices.id = claim_group_items.invoice_id
+                  )
+                """,
+                (claim_id,),
+            )
+            cursor = self._conn.execute(
+                """
+                DELETE FROM claim_groups
+                WHERE id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM claim_group_items WHERE claim_id = ?
+                  )
+                """,
+                (claim_id, claim_id),
+            )
+        if cursor.rowcount <= 0:
+            self._set_last_error("not_empty")
+            return False
+        self._set_last_error("")
+        return True
+
     def list_claim_groups(self) -> list[dict]:
         """List all claim groups ordered by ID descending."""
         rows = self._conn.execute("SELECT * FROM claim_groups ORDER BY id DESC").fetchall()
