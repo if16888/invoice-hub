@@ -472,19 +472,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.verticalHeader().setMinimumSectionSize(24)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
+        self.table.installEventFilter(self)
         self._refresh_column_filter_headers()
 
-        # Set explicit column widths for readability
-        self.table.setColumnWidth(0, 72)   # 状态
-        self.table.setColumnWidth(1, 96)   # 日期
-        self.table.setColumnWidth(2, 88)   # 金额
-        self.table.setColumnWidth(3, 190)  # 发票号码
-        self.table.setColumnWidth(5, 72)   # 类型
-        self.table.setColumnWidth(6, 72)   # 来源
-        self.table.setColumnWidth(7, 110)  # 报销组
+        # Set explicit column widths for readability and set up minimum limits
+        self._min_column_widths = {0: 64, 1: 100, 2: 80, 3: 160, 4: 260, 5: 96, 6: 86, 7: 96}
+        self.table.setColumnWidth(0, 64)   # 资料
+        self.table.setColumnWidth(1, 100)  # 费用日期
+        self.table.setColumnWidth(2, 80)   # 金额
+        self.table.setColumnWidth(3, 160)  # 发票号码
+        self.table.setColumnWidth(4, 260)  # 销售方
+        self.table.setColumnWidth(5, 96)   # 消费类型
+        self.table.setColumnWidth(6, 86)   # 来源
+        self.table.setColumnWidth(7, 96)   # 报销组
+
+        # Enforce minimum column widths on interactive resize
+        self.table.horizontalHeader().sectionResized.connect(self._on_header_section_resized)
 
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_table_context_menu)
@@ -968,12 +973,45 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         popup.show()
         self._column_filter_header_press_pos = None
 
+    def _on_header_section_resized(self, index, old_size, new_size):
+        if getattr(self, "_ignore_min_widths", False):
+            return
+        min_w = getattr(self, "_min_column_widths", {}).get(index)
+        if min_w is not None and new_size < min_w:
+            header = self.table.horizontalHeader()
+            header.blockSignals(True)
+            self.table.setColumnWidth(index, min_w)
+            header.blockSignals(False)
+        self._adjust_column_4_width()
+
+    def _adjust_column_4_width(self):
+        if getattr(self, "_ignore_min_widths", False):
+            return
+        if not hasattr(self, "table") or self.table is None:
+            return
+        viewport_w = self.table.viewport().width()
+        if viewport_w <= 0:
+            return
+        other_w = 0
+        for i in range(8):
+            if i != 4:
+                other_w += self.table.columnWidth(i)
+        target_w = max(260, viewport_w - other_w)
+        header = self.table.horizontalHeader()
+        header.blockSignals(True)
+        self.table.setColumnWidth(4, target_w)
+        header.blockSignals(False)
+
     def eventFilter(self, obj, event):
         header = self.table.horizontalHeader() if hasattr(self, "table") else None
         if header is not None and obj is header.viewport():
             if event.type() == QEvent.MouseButtonPress:
                 self._column_filter_header_press_pos = event.position().toPoint()
+        elif hasattr(self, "table") and obj is self.table:
+            if event.type() == QEvent.Resize:
+                self._adjust_column_4_width()
         return super().eventFilter(obj, event)
+
 
     def _base_filter_label(self, status) -> str:
         if status == "all":

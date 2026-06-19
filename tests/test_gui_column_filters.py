@@ -207,6 +207,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         ])
 
         section = 0
+        window._ignore_min_widths = True
         window.table.setColumnWidth(section, 24)
         self.app.processEvents()
         header = window.table.horizontalHeader()
@@ -216,6 +217,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
 
         self.assertIsNotNone(window._column_filter_popup)
+        window._column_filter_popup.close()
 
     def test_active_filter_header_tooltip_is_clear(self):
         window = self._make_window([
@@ -594,6 +596,61 @@ class GuiColumnFilterTests(unittest.TestCase):
         summary_msg = mock_warn.call_args[0][2]
         self.assertIn("下载失败: 1 张", summary_msg)
         self.assertNotIn("仅命中已有重复记录: 1 张", summary_msg)
+
+    def test_column_header_minimum_widths_and_label_visibility(self):
+        window = self._make_window([
+            {"invoice_number": "A", "seller_name": "Alpha"},
+        ])
+        window.resize(1200, 800)
+        window.show()
+        self.app.processEvents()
+
+        # 1. Verify minimum widths
+        expected_min_widths = {
+            0: 64,   # 资料
+            1: 100,  # 费用日期
+            2: 80,   # 金额
+            3: 160,  # 发票号码
+            4: 260,  # 销售方
+            5: 96,   # 消费类型
+            6: 86,   # 来源
+            7: 96,   # 报销组
+        }
+        for index, min_w in expected_min_widths.items():
+            self.assertGreaterEqual(
+                window.table.columnWidth(index), min_w,
+                f"Column {index} width is {window.table.columnWidth(index)}, expected at least {min_w}"
+            )
+
+        # 2. Verify that resizing below minimum width is blocked/corrected
+        for index, min_w in expected_min_widths.items():
+            if index == 4:
+                continue
+            window.table.setColumnWidth(index, 20)
+            self.app.processEvents()
+            self.assertEqual(
+                window.table.columnWidth(index), min_w,
+                f"Column {index} width did not revert to minimum {min_w}"
+            )
+
+        # 3. Verify that “消费类型” (index 5) has enough width to show full label plus filter marker
+        header = window.table.horizontalHeader()
+        item = window.table.horizontalHeaderItem(5)
+        text_width = header.fontMetrics().horizontalAdvance(item.text())
+        column_width = window.table.columnWidth(5)
+        self.assertGreater(
+            column_width, text_width + 10,
+            f"Column 5 width ({column_width}) is not enough for label width ({text_width}) plus padding"
+        )
+
+        # 4. Verify “来源” (index 6) and “报销组” (index 7) fit their labels and markers comfortably too
+        for idx in [6, 7]:
+            col_w = window.table.columnWidth(idx)
+            lbl_w = header.fontMetrics().horizontalAdvance(window.table.horizontalHeaderItem(idx).text())
+            self.assertGreater(
+                col_w, lbl_w + 10,
+                f"Column {idx} width ({col_w}) is not enough for label width ({lbl_w}) plus padding"
+            )
 
 
 if __name__ == "__main__":
