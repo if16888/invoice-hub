@@ -4,6 +4,7 @@
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
@@ -11,6 +12,75 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import load_config_safe
+
+
+SAVED_SECRET_PLACEHOLDER = "已安全保存，重新输入可覆盖"
+PROVIDER_EMAIL_SUFFIXES = {
+    "qq": "qq.com",
+    "netease_163": "163.com",
+    "netease_126": "126.com",
+    "gmail": "gmail.com",
+    "outlook": "outlook.com",
+}
+KNOWN_PROVIDER_DOMAINS = {
+    "qq.com", "163.com", "126.com", "gmail.com",
+    "outlook.com", "hotmail.com", "live.com",
+}
+OUTLOOK_FAMILY_DOMAINS = {"outlook.com", "hotmail.com", "live.com"}
+DOMAIN_TO_PROVIDER = {
+    "qq.com": "qq",
+    "163.com": "netease_163",
+    "126.com": "netease_126",
+    "gmail.com": "gmail",
+    "outlook.com": "outlook",
+    "hotmail.com": "outlook",
+    "live.com": "outlook",
+}
+PROVIDER_EMAIL_NAMES = {
+    "qq": "QQ",
+    "netease_163": "163",
+    "netease_126": "126",
+    "gmail": "Gmail",
+    "outlook": "Outlook",
+    "custom": "自定义 IMAP",
+}
+
+
+class SecurePasswordLineEdit(QLineEdit):
+    """Password input that accepts paste but never exports selected text."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEchoMode(QLineEdit.Password)
+
+    def copy(self):
+        return None
+
+    def cut(self):
+        return None
+
+    def keyPressEvent(self, event):
+        if event.matches(QKeySequence.Copy) or event.matches(QKeySequence.Cut):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def createStandardContextMenu(self):
+        menu = super().createStandardContextMenu()
+        blocked_shortcuts = {
+            QKeySequence(QKeySequence.Copy).toString(QKeySequence.NativeText),
+            QKeySequence(QKeySequence.Cut).toString(QKeySequence.NativeText),
+        }
+        for action in list(menu.actions()):
+            shortcut = action.text().rsplit("\t", 1)[-1]
+            if shortcut in blocked_shortcuts:
+                menu.removeAction(action)
+        return menu
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu()
+        menu.exec(event.globalPos())
+        menu.deleteLater()
 
 
 def _load_config_safe_compat():
@@ -27,6 +97,10 @@ class SettingsDialog(QDialog):
         self.resize(650, 580)
         self.test_success = False
         self.current_step = 1
+        self._loading_initial_values = True
+        self._applying_provider_defaults = False
+        self._advanced_settings_dirty = False
+        self._active_provider = "qq"
 
         from ..config import _EMAIL_PROVIDER_PRESETS
         self.cfg = _load_config_safe_compat()
@@ -51,6 +125,9 @@ class SettingsDialog(QDialog):
 
         # Load initial values
         self._load_initial_values()
+        self._loading_initial_values = False
+        self._advanced_settings_dirty = False
+        self._update_provider_hint()
 
     def _init_mailbox_wizard_tab(self):
         layout = QVBoxLayout(self.tab_mailbox)
@@ -179,10 +256,15 @@ class SettingsDialog(QDialog):
         self.txt_email.setPlaceholderText("your_email@example.com")
         self.txt_email.textChanged.connect(self._on_email_text_changed)
 
+        self.lbl_provider_hint = QLabel()
+        self.lbl_provider_hint.setWordWrap(True)
+        self.lbl_provider_hint.setStyleSheet("color: #D97706; font-size: 11px;")
+
         self.txt_months = QLineEdit("3")
         self.txt_months.setPlaceholderText("1-24")
 
         form_layout.addRow("邮箱地址:", self.txt_email)
+        form_layout.addRow("", self.lbl_provider_hint)
         form_layout.addRow("搜索最近 N 个月:", self.txt_months)
         v_layout.addWidget(form_group)
 
@@ -198,8 +280,12 @@ class SettingsDialog(QDialog):
         adv_layout.setSpacing(8)
         self.txt_imap_server = QLineEdit()
         self.txt_imap_port = QLineEdit()
+        self.lbl_imap_security = QLabel("SSL/TLS（启用）")
+        self.txt_imap_server.textChanged.connect(self._mark_advanced_settings_dirty)
+        self.txt_imap_port.textChanged.connect(self._mark_advanced_settings_dirty)
         adv_layout.addRow("IMAP 服务器:", self.txt_imap_server)
         adv_layout.addRow("IMAP 端口:", self.txt_imap_port)
+        adv_layout.addRow("连接安全:", self.lbl_imap_security)
         v_layout.addWidget(self.advanced_group)
 
         self.advanced_group.setVisible(False)
@@ -226,13 +312,21 @@ class SettingsDialog(QDialog):
         alert_layout.addWidget(alert_text)
         layout.addWidget(alert_box)
 
+        self.lbl_outlook_guidance = QLabel(
+            "个人 Outlook/Hotmail/Live 邮箱可尝试使用应用密码 + IMAP。\n"
+            "公司/学校 Microsoft 365 邮箱通常需要 OAuth2/Graph，当前版本暂不支持授权码 IMAP。"
+        )
+        self.lbl_outlook_guidance.setWordWrap(True)
+        self.lbl_outlook_guidance.setStyleSheet("color: #92400E; font-size: 11px;")
+        self.lbl_outlook_guidance.setVisible(False)
+        layout.addWidget(self.lbl_outlook_guidance)
+
         # Form fields
         form = QFormLayout()
         form.setSpacing(12)
 
         auth_input_layout = QHBoxLayout()
-        self.txt_auth_code = QLineEdit()
-        self.txt_auth_code.setEchoMode(QLineEdit.Password)
+        self.txt_auth_code = SecurePasswordLineEdit()
         self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
         self.txt_auth_code.textChanged.connect(self._on_auth_code_changed)
 
@@ -323,8 +417,7 @@ class SettingsDialog(QDialog):
         self.lbl_ai_key_status.setStyleSheet("font-size: 11px;")
 
         self.lbl_ai_key_title = QLabel("API Key:")
-        self.txt_ai_key = QLineEdit()
-        self.txt_ai_key.setEchoMode(QLineEdit.Password)
+        self.txt_ai_key = SecurePasswordLineEdit()
 
         ai_form.addRow("AI 分类提供商:", self.combo_ai_provider)
         ai_form.addRow("模型名称:", self.txt_ai_model)
@@ -371,13 +464,12 @@ class SettingsDialog(QDialog):
         if current_provider == "custom":
             self.advanced_group.setVisible(True)
             self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
-            self.txt_imap_server.setText(self.cfg.get("imap", {}).get("server", ""))
-            self.txt_imap_port.setText(str(self.cfg.get("imap", {}).get("port", 993)))
+            self._set_advanced_values(
+                self.cfg.get("imap", {}).get("server", ""),
+                self.cfg.get("imap", {}).get("port", 993),
+            )
         else:
-            from ..config import _EMAIL_PROVIDER_PRESETS
-            preset = _EMAIL_PROVIDER_PRESETS.get(current_provider, _EMAIL_PROVIDER_PRESETS["qq"])
-            self.txt_imap_server.setText(preset["server"])
-            self.txt_imap_port.setText(str(preset["port"]))
+            self._apply_provider_defaults(current_provider)
 
         # AI settings
         ai_prov = self.cfg.get("ai", {}).get("provider", "none")
@@ -397,6 +489,7 @@ class SettingsDialog(QDialog):
     def _select_provider_card(self, provider):
         if provider in self.cards:
             self.cards[provider].setChecked(True)
+            self._active_provider = provider
             self._refresh_provider_card_visuals()
 
     def _refresh_provider_card_visuals(self):
@@ -408,41 +501,107 @@ class SettingsDialog(QDialog):
     def _on_provider_card_clicked(self, checked_btn):
         self._refresh_provider_card_visuals()
         provider = self._get_selected_provider()
+        previous_provider = self._active_provider
+        if provider != "custom" and self._advanced_settings_dirty:
+            reply = QMessageBox.question(
+                self,
+                "重置 IMAP 参数",
+                "高级 IMAP 参数已手工修改。是否重置为所选邮箱的默认服务器、端口和 SSL/TLS 设置？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply == QMessageBox.No:
+                self._select_provider_card(previous_provider)
+                return
+
+        self._active_provider = provider
+        self._adjust_email_for_provider(provider)
         if provider == "custom":
             self.advanced_group.setVisible(True)
             self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
         else:
             self.advanced_group.setVisible(False)
             self.btn_toggle_advanced.setText("显示高级 IMAP 设置 ▼")
-            from ..config import _EMAIL_PROVIDER_PRESETS
-            preset = _EMAIL_PROVIDER_PRESETS.get(provider)
-            if preset:
-                self.txt_imap_server.setText(preset["server"])
-                self.txt_imap_port.setText(str(preset["port"]))
+            self._apply_provider_defaults(provider)
+        self._update_provider_hint()
+
+    def _mark_advanced_settings_dirty(self, *_args):
+        if not self._loading_initial_values and not self._applying_provider_defaults:
+            self._advanced_settings_dirty = True
+
+    def _set_advanced_values(self, server, port):
+        self._applying_provider_defaults = True
+        try:
+            self.txt_imap_server.setText(str(server or ""))
+            self.txt_imap_port.setText(str(port or 993))
+            self.lbl_imap_security.setText("SSL/TLS（启用）")
+        finally:
+            self._applying_provider_defaults = False
+
+    def _apply_provider_defaults(self, provider):
+        from ..config import _EMAIL_PROVIDER_PRESETS
+
+        preset = _EMAIL_PROVIDER_PRESETS.get(provider)
+        if preset:
+            self._set_advanced_values(preset["server"], preset["port"])
+            self._advanced_settings_dirty = False
+
+    def _adjust_email_for_provider(self, provider):
+        provider_name = PROVIDER_EMAIL_NAMES.get(provider, "邮箱")
+        if provider == "custom":
+            self.txt_email.setPlaceholderText("请输入完整邮箱地址")
+            return
+
+        self.txt_email.setPlaceholderText(f"请输入完整 {provider_name} 邮箱地址")
+        email = self.txt_email.text().strip()
+        if not email or "@" not in email:
+            return
+        local_part, domain = email.rsplit("@", 1)
+        domain = domain.lower()
+        if not local_part or not domain:
+            return
+        if provider == "outlook" and domain in OUTLOOK_FAMILY_DOMAINS:
+            return
+        if domain in KNOWN_PROVIDER_DOMAINS:
+            self.txt_email.setText(f"{local_part}@{PROVIDER_EMAIL_SUFFIXES[provider]}")
+
+    def _update_provider_hint(self):
+        if not hasattr(self, "lbl_provider_hint"):
+            return
+        provider = self._get_selected_provider()
+        self.lbl_outlook_guidance.setVisible(provider == "outlook")
+        email = self.txt_email.text().strip()
+        domain = email.rsplit("@", 1)[1].lower() if "@" in email else ""
+        if provider == "outlook" and domain and domain not in OUTLOOK_FAMILY_DOMAINS:
+            self.lbl_provider_hint.setText(
+                "公司/学校 Microsoft 365 邮箱可能不支持授权码 IMAP，可能需要 OAuth2，当前版本暂不支持。"
+            )
+        elif provider != "custom" and domain and domain not in KNOWN_PROVIDER_DOMAINS:
+            self.lbl_provider_hint.setText("检测到自定义域名邮箱，请确认服务器和认证方式。")
+        else:
+            self.lbl_provider_hint.setText("")
 
     def _update_cred_status_label(self):
         from ..credentials import has_auth_code
         email = self.txt_email.text().strip()
         if not email:
-            self.lbl_cred_status.setText("🔒 授权码状态：<b>未输入邮箱地址</b>")
+            self.lbl_cred_status.setText("🔒 授权状态：<b>未输入邮箱地址</b>")
+            self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
             return
         if has_auth_code(email):
-            self.lbl_cred_status.setText("🔒 授权码状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
+            self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
+            self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
         else:
-            self.lbl_cred_status.setText("🔒 授权码状态：<font color='#EF4444'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
+            self.lbl_cred_status.setText("🔒 授权状态：<font color='#EF4444'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
+            self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
 
     def _on_email_text_changed(self):
         email = self.txt_email.text().strip().lower()
-        if "@qq.com" in email:
-            self._select_provider_card("qq")
-        elif "@163.com" in email:
-            self._select_provider_card("netease_163")
-        elif "@126.com" in email:
-            self._select_provider_card("netease_126")
-        elif "@gmail.com" in email:
-            self._select_provider_card("gmail")
-        elif "@outlook.com" in email or "@hotmail.com" in email or "@live.com" in email:
-            self._select_provider_card("outlook")
+        domain = email.rsplit("@", 1)[1] if "@" in email else ""
+        provider = DOMAIN_TO_PROVIDER.get(domain)
+        if provider:
+            self._select_provider_card(provider)
+        self._update_provider_hint()
         self._update_cred_status_label()
 
     def _on_auth_code_changed(self):
@@ -486,7 +645,7 @@ class SettingsDialog(QDialog):
             self.lbl_ai_key_status.setText(
                 "🔑 API Key 状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>（输入新值可覆盖，留空则保持不变）"
             )
-            self.txt_ai_key.setPlaceholderText("••••••••••••••••")
+            self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
         else:
             self.lbl_ai_key_status.setText(
                 "🔑 API Key 状态：<font color='#EF4444'><b>尚未配置</b></font>"
@@ -494,6 +653,20 @@ class SettingsDialog(QDialog):
             self.txt_ai_key.setPlaceholderText("请输入 API Key")
 
     def _show_auth_code_help(self):
+        if self._get_selected_provider() == "outlook":
+            QMessageBox.information(
+                self,
+                "Outlook 授权码与 IMAP 设置",
+                "<b>Outlook / Hotmail / Live 设置</b><br>"
+                "• 用户名：使用完整邮箱地址。<br>"
+                "• 凭据：账号支持时可尝试应用密码。<br>"
+                "• 服务器：outlook.office365.com<br>"
+                "• 端口：993<br>"
+                "• 安全连接：SSL/TLS<br><br>"
+                "如果公司/学校 Microsoft 365 邮箱测试失败，账号可能要求 OAuth2。"
+                "Invoice Hub v0.1.3 当前暂不支持 OAuth2。",
+            )
+            return
         QMessageBox.information(
             self,
             "如何获取邮箱授权码？",
@@ -651,22 +824,50 @@ class SettingsDialog(QDialog):
         except Exception as e:
             self.test_success = False
             self.lbl_test_result.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 11px;")
-            err_msg = str(e).lower()
-            if "login failed" in err_msg or "authentication failed" in err_msg or "credential" in err_msg or "invalid credentials" in err_msg or "authori" in err_msg or "登录失败" in err_msg:
-                friendly = "❌ 测试连接失败：授权码错误或 IMAP 服务未开启"
-            elif "getaddrinfo" in err_msg or "timed out" in err_msg or "timeout" in err_msg or "connection timed out" in err_msg:
-                friendly = "❌ 测试连接失败：网络连接失败"
-            elif "refused" in err_msg or "connection refused" in err_msg or "wrong port" in err_msg or "socket" in err_msg or "ssl" in err_msg:
-                friendly = "❌ 测试连接失败：IMAP服务器/端口配置有误"
-            elif "未找到授权码" in err_msg:
-                friendly = "❌ 测试连接失败：未找到授权码"
-            else:
-                friendly = "❌ 测试连接失败：授权码错误或 IMAP 未开启；或网络、服务器、端口配置有误。"
+            friendly = self._format_connection_failure(provider, server, port, e, auth_code)
             self.lbl_test_result.setText(friendly)
         finally:
             self.btn_test.setEnabled(True)
             self.btn_test.setText("测试连接")
             QApplication.restoreOverrideCursor()
+
+    def _format_connection_failure(self, provider, server, port, error, auth_code=""):
+        from ..log_privacy import sanitize_log_message
+
+        raw_reason = str(error or "")
+        if auth_code:
+            raw_reason = raw_reason.replace(auth_code, "<redacted>")
+        err_msg = raw_reason.lower()
+        oauth_markers = (
+            "oauth", "basic authentication disabled", "basic auth disabled",
+            "login disabled", "modern authentication", "authenticate disabled",
+        )
+        network_markers = (
+            "getaddrinfo", "timed out", "timeout", "connection timed out",
+            "network is unreachable", "proxy", "firewall",
+        )
+        auth_markers = (
+            "login failed", "authentication failed", "credential",
+            "invalid credentials", "authori", "登录失败",
+        )
+        if provider == "outlook" and any(marker in err_msg for marker in oauth_markers):
+            return "❌ 该 Outlook/Microsoft 365 账号可能不支持授权码 IMAP 登录，需要 OAuth2。当前版本暂不支持。"
+        if any(marker in err_msg for marker in network_markers):
+            if provider == "outlook":
+                return f"❌ 无法连接 {server}:{port}，请检查网络、代理或防火墙。"
+            return "❌ 测试连接失败：网络连接失败"
+        if any(marker in err_msg for marker in auth_markers):
+            if provider == "outlook":
+                return "❌ 认证失败，请确认邮箱地址完整、授权码/应用密码正确。"
+            return "❌ 测试连接失败：授权码错误或 IMAP 服务未开启"
+        if any(marker in err_msg for marker in ("refused", "wrong port", "socket", "ssl")):
+            return "❌ 测试连接失败：IMAP服务器/端口配置有误"
+        if "未找到授权码" in err_msg:
+            return "❌ 测试连接失败：未找到授权码"
+        safe_reason = sanitize_log_message(raw_reason).strip()
+        if provider == "outlook" and safe_reason:
+            return f"❌ Outlook IMAP 连接失败：{safe_reason}"
+        return "❌ 测试连接失败：授权码错误或 IMAP 未开启；或网络、服务器、端口配置有误。"
 
     def _save_mailbox_settings(self):
         email = self.txt_email.text().strip()
@@ -721,14 +922,24 @@ class SettingsDialog(QDialog):
 
         # Save credentials to system Keyring
         auth_code = self.txt_auth_code.text().strip()
+        credential_available = False
         if auth_code:
             from ..credentials import set_auth_code
             try:
                 set_auth_code(email, auth_code)
+                credential_available = True
                 self.parent.write_log(f"💾 [安全凭证] 邮箱 {email} 的授权码凭证已自动保存到 Windows 凭据管理器中。")
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"保存凭据失败: {e}")
                 return
+        else:
+            from ..credentials import get_auth_code, has_auth_code
+            if has_auth_code(email):
+                try:
+                    credential_available = bool(get_auth_code(email))
+                except (Exception, SystemExit):
+                    # Saving non-secret settings remains allowed if credential access fails.
+                    pass
 
         # Update configuration
         self.cfg.setdefault("email", {})
@@ -794,6 +1005,12 @@ class SettingsDialog(QDialog):
             save_config(self.cfg)
             self.parent.config = _load_config_safe_compat()
             self.parent.write_log(f"⚙️ [设置保存] 全局 config.json 邮箱服务配置已成功保存。")
+            self.txt_auth_code.clear()
+            if credential_available:
+                self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
+                self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
+            else:
+                self._update_cred_status_label()
             QMessageBox.information(self, "成功", "邮箱设置已成功保存！")
             self.accept()
         except Exception as e:
@@ -852,6 +1069,7 @@ class SettingsDialog(QDialog):
 
             self.parent.config = _load_config_safe_compat()
             self.parent.write_log(f"⚙️ [设置保存] 全局 config.json AI 辅助分类配置已成功保存。")
+            self.txt_ai_key.clear()
             QMessageBox.information(self, "成功", "AI 分类配置已成功保存！")
             self._on_ai_provider_changed()
         except Exception as e:
