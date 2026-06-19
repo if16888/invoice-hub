@@ -1743,7 +1743,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.btn_add_to_claim.setToolTip("当前发票已有报销组，不能重复加入")
             self.btn_add_to_claim.setEnabled(can_add)
         if hasattr(self, "btn_export"):
-            self.btn_export.setEnabled(True)
+            self.btn_export.setEnabled(count > 0)
         if hasattr(self, "btn_delete_claim"):
             self.btn_delete_claim.setEnabled(count == 0)
             self.btn_delete_claim.setToolTip(
@@ -3454,6 +3454,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_id = self.combo_claims.itemData(claim_idx)
         claim_name = self.combo_claims.currentText()
         preflight_stats = self._claim_export_preflight_stats(claim_id)
+        total_invoices = (
+            preflight_stats.get(APPROVED, 0)
+            + preflight_stats.get(TO_REVIEW, 0)
+            + preflight_stats.get(IGNORED, 0)
+            + preflight_stats.get(ERROR, 0)
+        )
+        if total_invoices == 0:
+            QMessageBox.warning(self, "关联空", "当前报销组内没有发票，无法导出！")
+            return
         preflight_text = self._format_claim_export_preflight_text(preflight_stats)
 
         # Premium selection dialog for export range

@@ -1393,6 +1393,12 @@ class ClaimGroupsTests(unittest.TestCase):
                 db_path = Path(td) / "test_ops.db"
                 with InvoiceDB(db_path) as db:
                     claim_id = db.create_claim_group("Test Claim")
+                    inv_id = db.insert_invoice({
+                        "invoice_number": "INV123",
+                        "total_amount": "100.00",
+                        "review_status": "approved",
+                    })
+                    db.add_invoice_to_claim(claim_id, inv_id)
                     from PySide6.QtWidgets import QApplication
                     qapp = QApplication.instance() or QApplication([])
 
@@ -1461,6 +1467,40 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertIn("导出已通过 + 待审核发票", text)
                 self.assertIn("ignored/error 永远跳过", text)
                 self.assertNotIn("所有已关联文件", text)
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+    def test_gui_export_empty_claim_group_warning(self):
+        from scripts.invoice_fetch.gui import PYSIDE6_AVAILABLE
+        if not PYSIDE6_AVAILABLE:
+            self.skipTest("PySide6 is not available in this environment. Skipping GUI test.")
+
+        from PySide6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_gui_export_empty.db"
+            with InvoiceDB(db_path) as db:
+                claim_id = db.create_claim_group("Empty Group")
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(db_path, splash=None)
+            window._deferred_init()
+            app.processEvents()
+            try:
+                window.combo_claims.setCurrentIndex(window.combo_claims.findData(claim_id))
+                app.processEvents()
+
+                self.assertFalse(window.btn_export.isEnabled())
+
+                with patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+                    window._export_claim_package()
+                    mock_warn.assert_called_once_with(window, "关联空", "当前报销组内没有发票，无法导出！")
             finally:
                 if hasattr(window, "db") and window.db is not None:
                     window.db.close()
