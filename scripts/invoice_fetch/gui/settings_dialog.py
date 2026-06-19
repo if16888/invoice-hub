@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QStackedWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from ..config import load_config_safe
+from ..config import load_config_safe, is_outlook_like_account
+
 
 
 SAVED_SECRET_PLACEHOLDER = "已安全保存，重新输入可覆盖"
@@ -160,6 +161,12 @@ class SettingsDialog(QDialog):
 
         # Footer Buttons
         footer_layout = QHBoxLayout()
+        self.btn_delete_mailbox = QPushButton("删除当前邮箱配置")
+        self.btn_delete_mailbox.clicked.connect(self._delete_current_mailbox)
+        self.btn_delete_mailbox.setStyleSheet("background-color: #FEE2E2; color: #DC2626; border: 1px solid #FCA5A5; font-size: 11px; padding: 4px 8px; border-radius: 4px;")
+        self.btn_delete_mailbox.setFixedHeight(28)
+        self.btn_delete_mailbox.setEnabled(False)
+
         self.btn_prev = QPushButton("上一步")
         self.btn_prev.clicked.connect(self._goto_prev_step)
         self.btn_prev.setProperty("class", "SecondaryBtn")
@@ -180,12 +187,14 @@ class SettingsDialog(QDialog):
         self.btn_cancel_wizard.setProperty("class", "SecondaryBtn")
         self.btn_cancel_wizard.setFixedHeight(28)
 
+        footer_layout.addWidget(self.btn_delete_mailbox)
         footer_layout.addWidget(self.btn_prev)
         footer_layout.addStretch()
         footer_layout.addWidget(self.btn_cancel_wizard)
         footer_layout.addWidget(self.btn_next)
         footer_layout.addWidget(self.btn_save_wizard)
         layout.addLayout(footer_layout)
+
 
         # Refresh UI state
         self._update_wizard_ui()
@@ -554,6 +563,30 @@ class SettingsDialog(QDialog):
     def _is_saved_address(self, address):
         return self._normalize_address(address) in self._saved_accounts_by_address
 
+    def _is_valid_email(self, email):
+        email = (email or "").strip()
+        if not email or "@" not in email:
+            return False
+        parts = email.split("@", 1)
+        return len(parts[0]) > 0 and len(parts[1]) > 0
+
+    def _update_delete_button_state(self):
+        email = self.txt_email.text().strip()
+        email_clean = self._normalize_address(email)
+        selected_provider = self._get_selected_provider()
+        provider_accounts = self._saved_accounts_by_provider.get(selected_provider, [])
+
+        is_delete_enabled = False
+        if email_clean and provider_accounts:
+            for acc in provider_accounts:
+                acc_addr = self._normalize_address(acc.get("address"))
+                acc_key = self._normalize_address(acc.get("mailbox_key"))
+                if acc_addr == email_clean or acc_key == email_clean:
+                    is_delete_enabled = True
+                    break
+
+        self.btn_delete_mailbox.setEnabled(is_delete_enabled)
+
     def _load_saved_account(self, account):
         provider = str(account.get("provider") or "custom").lower()
         address = str(account.get("address") or "").strip()
@@ -609,7 +642,11 @@ class SettingsDialog(QDialog):
         self._refresh_provider_card_visuals()
         provider = self._get_selected_provider()
         previous_provider = self._active_provider
+        if previous_provider == provider:
+            return
+
         if provider != "custom" and self._advanced_settings_dirty:
+
             reply = QMessageBox.question(
                 self,
                 "重置 IMAP 参数",
@@ -696,19 +733,45 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "lbl_provider_hint"):
             return
         provider = self._get_selected_provider()
-        self.lbl_outlook_guidance.setVisible(False)
-        self.lbl_outlook_step1_warning.setVisible(provider == "outlook")
-        if hasattr(self, "btn_next") and self.current_step == 1:
-            self.btn_next.setEnabled(provider != "outlook")
-
         email = self.txt_email.text().strip()
+        if provider == "custom":
+            server = self.txt_imap_server.text().strip()
+        else:
+            from ..config import _EMAIL_PROVIDER_PRESETS
+            preset = _EMAIL_PROVIDER_PRESETS.get(provider, {})
+            server = preset.get("server", "")
+
+        is_outlook_like = is_outlook_like_account(provider, email, server)
+
+        self.lbl_outlook_guidance.setVisible(False)
+        self.lbl_outlook_step1_warning.setVisible(is_outlook_like)
+        if is_outlook_like:
+            if provider == "custom":
+                self.lbl_outlook_step1_warning.setText(
+                    "检测到 Outlook/Microsoft IMAP 服务器。当前版本不支持授权码/应用密码方式连接 Outlook，需要 OAuth2/XOAUTH2，因此不能保存为可扫描账号。"
+                )
+            else:
+                self.lbl_outlook_step1_warning.setText(
+                    "Outlook/Hotmail/Live 及 Microsoft 365 邮箱需要 OAuth2/XOAUTH2 登录。当前版本暂不支持 Outlook 邮箱扫描。"
+                )
+
+        if hasattr(self, "btn_next") and self.current_step == 1:
+            is_valid = self._is_valid_email(email)
+            self.btn_next.setEnabled(provider != "outlook" and not is_outlook_like and is_valid)
+
         domain = email.rsplit("@", 1)[1].lower() if "@" in email else ""
-        if self._missing_saved_provider == provider and not email:
+        if provider == "outlook" and not email:
+            self.lbl_provider_hint.setText(
+                "未找到已保存的 Outlook 邮箱。Outlook 当前版本暂不支持配置/测试。"
+            )
+        elif not self._saved_accounts and not email:
+            self.lbl_provider_hint.setText("尚未配置邮箱，请选择邮箱类型并输入完整邮箱地址。")
+        elif self._missing_saved_provider == provider and not email:
             provider_name = PROVIDER_EMAIL_NAMES.get(provider, "邮箱")
             self.lbl_provider_hint.setText(
                 f"未找到已保存的 {provider_name} 邮箱，请输入完整邮箱地址。"
             )
-        elif provider == "outlook" and domain and domain not in OUTLOOK_FAMILY_DOMAINS:
+        elif (provider == "outlook" or is_outlook_like) and domain and domain not in OUTLOOK_FAMILY_DOMAINS:
             self.lbl_provider_hint.setText(
                 "公司/学校 Microsoft 365 邮箱可能不支持授权码 IMAP，可能需要 OAuth2，当前版本暂不支持。"
             )
@@ -720,18 +783,34 @@ class SettingsDialog(QDialog):
     def _update_cred_status_label(self):
         from ..credentials import has_auth_code
         email = self.txt_email.text().strip()
+
+        # Update delete button state
+        self._update_delete_button_state()
+
         if not email:
             self.lbl_cred_status.setText("🔒 授权状态：<b>未输入邮箱地址</b>")
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
             return
-        if self._get_selected_provider() == "outlook":
-            email_normalized = self._normalize_address(email)
-            if email_normalized in self._saved_accounts_by_address:
+
+        provider = self._get_selected_provider()
+        if provider == "custom":
+            server = self.txt_imap_server.text().strip()
+        else:
+            from ..config import _EMAIL_PROVIDER_PRESETS
+            preset = _EMAIL_PROVIDER_PRESETS.get(provider, {})
+            server = preset.get("server", "")
+
+        is_outlook_like = is_outlook_like_account(provider, email, server)
+
+        if is_outlook_like:
+            email_clean = self._normalize_address(email)
+            if email_clean in self._saved_accounts_by_address:
                 self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>已保存 Outlook 账号，但当前版本暂不支持测试/扫描</b></font>")
             else:
                 self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>Outlook 当前版本暂不支持配置/测试</b></font>")
             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             return
+
         if has_auth_code(email):
             self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
@@ -739,12 +818,29 @@ class SettingsDialog(QDialog):
             self.lbl_cred_status.setText("🔒 授权状态：<font color='#EF4444'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
 
+
     def _on_email_text_changed(self):
-        if not self._loading_initial_values and not self._loading_account_values:
-            self._email_is_user_draft = True
-            self._missing_saved_provider = ""
-        email = self.txt_email.text().strip().lower()
-        domain = email.rsplit("@", 1)[1] if "@" in email else ""
+        if self._loading_initial_values or self._loading_account_values:
+            return
+
+        email = self.txt_email.text().strip()
+        email_clean = self._normalize_address(email)
+
+        # Enable/disable the delete button dynamically
+        self._update_delete_button_state()
+
+        has_saved = self._is_saved_address(email_clean)
+        # If it is a saved email, auto-load all its configuration!
+        if has_saved:
+            if self._loaded_account_address != email_clean:
+                saved_acc = self._saved_accounts_by_address[email_clean]
+                self._load_saved_account(saved_acc)
+                return
+
+        self._email_is_user_draft = True
+        self._missing_saved_provider = ""
+        email_lower = email.lower()
+        domain = email_lower.rsplit("@", 1)[1] if "@" in email_lower else ""
         provider = DOMAIN_TO_PROVIDER.get(domain)
         if provider and self._loaded_account_provider and provider != self._loaded_account_provider:
             self._loaded_account_address = ""
@@ -767,6 +863,7 @@ class SettingsDialog(QDialog):
             self._apply_provider_defaults(provider)
         self._update_provider_hint()
         self._update_cred_status_label()
+
 
     def _on_auth_code_changed(self):
         self.test_success = False
@@ -889,7 +986,16 @@ class SettingsDialog(QDialog):
             self.lbl_step_indicator.setText('<font color="#2563EB"><b>① 选择邮箱</b></font>  ➜  ② 填写授权码  ➜  ③ 测试并保存')
             self.btn_prev.setEnabled(False)
             self.btn_next.setVisible(True)
-            self.btn_next.setEnabled(self._get_selected_provider() != "outlook")
+            is_valid = self._is_valid_email(self.txt_email.text())
+            provider = self._get_selected_provider()
+            if provider == "custom":
+                server = self.txt_imap_server.text().strip()
+            else:
+                from ..config import _EMAIL_PROVIDER_PRESETS
+                preset = _EMAIL_PROVIDER_PRESETS.get(provider, {})
+                server = preset.get("server", "")
+            is_outlook_like = is_outlook_like_account(provider, self.txt_email.text().strip(), server)
+            self.btn_next.setEnabled(provider != "outlook" and not is_outlook_like and is_valid)
             self.btn_save_wizard.setVisible(False)
         elif self.current_step == 2:
             self.lbl_step_indicator.setText('① 选择邮箱  ➜  <font color="#2563EB"><b>② 填写授权码</b></font>  ➜  ③ 测试并保存')
@@ -947,34 +1053,33 @@ class SettingsDialog(QDialog):
                 return
 
         provider = self._get_selected_provider()
-        if provider == "outlook":
-            QMessageBox.warning(
-                self,
-                "测试连接",
-                "Outlook 邮箱目前需要 OAuth2/XOAUTH2 认证。当前版本暂不支持 Outlook 邮箱测试/扫描。"
-            )
-            return
-
         if provider == "custom":
             server = self.txt_imap_server.text().strip()
             port_str = self.txt_imap_port.text().strip()
             if not server or not port_str:
                 QMessageBox.warning(self, "校验提示", "自定义 IMAP 必须填写服务器与端口。")
                 return
-
-            server_lower = server.lower()
-            if "outlook" in server_lower or "office365" in server_lower or "hotmail" in server_lower:
-                QMessageBox.warning(
-                    self,
-                    "测试连接",
-                    "检测到 Outlook IMAP 服务器。Outlook 需要 OAuth2/XOAUTH2，当前版本授权码登录方式不支持。"
-                )
-                return
         else:
             from ..config import _EMAIL_PROVIDER_PRESETS
             preset = _EMAIL_PROVIDER_PRESETS.get(provider)
             server = preset["server"]
             port_str = str(preset["port"])
+
+        if is_outlook_like_account(provider, email, server):
+            if provider == "outlook":
+                QMessageBox.warning(
+                    self,
+                    "测试连接",
+                    "Outlook 邮箱目前需要 OAuth2/XOAUTH2 认证。当前版本暂不支持 Outlook 邮箱测试/扫描。"
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "测试连接",
+                    "检测到 Outlook IMAP 服务器。Outlook 需要 OAuth2/XOAUTH2，当前版本授权码登录方式不支持。"
+                )
+            return
+
 
         try:
             port = int(port_str)
@@ -1081,6 +1186,24 @@ class SettingsDialog(QDialog):
             imap_server = preset["server"]
             imap_port_str = str(preset["port"])
 
+        is_outlook_like = is_outlook_like_account(provider, email, imap_server)
+        if is_outlook_like:
+            has_saved = False
+            for acc in email_accounts:
+                acc_addr = str(acc.get("address") or "").strip().lower()
+                acc_key = str(acc.get("mailbox_key") or "").strip().lower()
+                if acc_addr == email.lower() or acc_key == email.lower():
+                    has_saved = True
+                    break
+
+            if not has_saved:
+                QMessageBox.warning(
+                    self,
+                    "设置验证失败",
+                    "检测到 Outlook/Microsoft IMAP 服务器。当前版本不支持授权码/应用密码方式连接 Outlook，需要 OAuth2/XOAUTH2，因此不能保存为可扫描账号。"
+                )
+                return
+
         proposed_cfg = {
             "email": {
                 "provider": provider,
@@ -1163,7 +1286,7 @@ class SettingsDialog(QDialog):
         }
         account = {
             "name": provider_names.get(provider, provider),
-            "enabled": True,
+            "enabled": not is_outlook_like,
             "provider": provider,
             "address": email,
             "username": email,
@@ -1183,16 +1306,6 @@ class SettingsDialog(QDialog):
                 for index, existing in enumerate(email_accounts)
                 if str(existing.get("address") or "").strip().lower() == email.lower()
                 or str(existing.get("mailbox_key") or "").strip().lower() == email.lower()
-                or (
-                    self._loaded_account_address
-                    and str(existing.get("address") or "").strip().lower()
-                    == self._loaded_account_address
-                )
-                or (
-                    self._loaded_account_mailbox_key
-                    and str(existing.get("mailbox_key") or "").strip().lower()
-                    == self._loaded_account_mailbox_key
-                )
             ),
             None,
         )
@@ -1208,6 +1321,7 @@ class SettingsDialog(QDialog):
         else:
             email_accounts[match_index] = account
         self.cfg["email_accounts"] = email_accounts
+
 
         try:
             save_config(self.cfg)
@@ -1282,3 +1396,158 @@ class SettingsDialog(QDialog):
             self._on_ai_provider_changed()
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存 AI 配置文件失败: {e}")
+
+    def _delete_current_mailbox(self):
+        email = self.txt_email.text().strip()
+        if not email:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "删除邮箱配置只会移除该邮箱的登录设置、授权码和扫描同步状态，不会删除已导入的发票、本地附件或报销组。是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.No:
+            return
+
+        normalized_email = self._normalize_address(email)
+
+        # 1. Remove the matching account from cfg["email_accounts"] by address or mailbox_key
+        raw_accounts = self.cfg.get("email_accounts")
+        email_accounts = [
+            dict(existing)
+            for existing in raw_accounts
+            if isinstance(existing, dict)
+        ] if isinstance(raw_accounts, list) else []
+
+        updated_accounts = []
+        target_account = None
+        for acc in email_accounts:
+            acc_addr = self._normalize_address(acc.get("address"))
+            acc_key = self._normalize_address(acc.get("mailbox_key"))
+            if acc_addr == normalized_email or acc_key == normalized_email:
+                target_account = acc
+            else:
+                updated_accounts.append(acc)
+
+        self.cfg["email_accounts"] = updated_accounts
+
+        # 2. Remove the corresponding keyring credential if possible
+        from ..credentials import delete_auth_code
+        try:
+            delete_auth_code(email)
+            if hasattr(self.parent, "write_log"):
+                self.parent.write_log(f"🗑️ [安全凭证] 邮箱 {email} 的授权码凭证已从凭据管理器中移除。")
+        except Exception as e:
+            if hasattr(self.parent, "write_log"):
+                self.parent.write_log(f"⚠️ [安全凭证] 从凭据管理器移除邮箱 {email} 凭证失败: {e}")
+
+        # 3. Remove related scan cursor/sync state for that mailbox_key if such state exists
+        mailbox_key = ""
+        if target_account:
+            mailbox_key = target_account.get("mailbox_key") or ""
+        if not mailbox_key:
+            mailbox_key = normalized_email
+
+        if hasattr(self.parent, "db") and self.parent.db:
+            try:
+                self.parent.db.remove_mailbox_scan_state(mailbox_key)
+            except Exception as e:
+                if hasattr(self.parent, "write_log"):
+                    self.parent.write_log(f"⚠️ [数据库] 清除邮箱同步状态失败: {e}")
+
+        # 4. If legacy cfg["email"] points to the deleted account, set it to the next enabled supported account, or clear it if none exists
+        legacy_email = self.cfg.get("email", {})
+        legacy_addr = self._normalize_address(legacy_email.get("address"))
+        if legacy_addr == normalized_email or not updated_accounts:
+            # Find the next enabled supported account
+            next_acc = None
+            for acc in updated_accounts:
+                p = acc.get("provider", "")
+                addr = acc.get("address", "")
+                srv = acc.get("imap", {}).get("server", "")
+                if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
+                    next_acc = acc
+                    break
+
+            if next_acc:
+                self.cfg["email"] = {
+                    "provider": next_acc.get("provider", "qq"),
+                    "address": next_acc.get("address", ""),
+                    "username": next_acc.get("username", next_acc.get("address", "")),
+                }
+                self.cfg["imap"] = dict(next_acc.get("imap", {}))
+                self.cfg["search"] = dict(next_acc.get("search", {}))
+            else:
+                # clear it if none exists
+                self.cfg["email"] = {"provider": "qq", "address": "", "username": ""}
+                self.cfg["imap"] = {"server": "", "port": 993, "ssl": True}
+                self.cfg["search"] = {"folder": "INBOX", "months_back": 3}
+
+        # 5. Save the configuration
+        from ..config import save_config
+        try:
+            save_config(self.cfg)
+            if hasattr(self.parent, "config"):
+                self.parent.config = _load_config_safe_compat()
+            if hasattr(self.parent, "write_log"):
+                self.parent.write_log(f"⚙️ [设置保存] 邮箱配置已删除。")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存配置文件失败: {e}")
+            return
+
+        # 6. Rebuild saved account maps
+        self._build_saved_account_maps()
+
+        # 7. Clear stale loaded account state before deciding what to load
+        self._loaded_account_address = ""
+        self._loaded_account_mailbox_key = ""
+        self._loaded_account_provider = ""
+
+        # Find enabled and supported accounts
+        enabled_supported_accounts = []
+        for acc in self._saved_accounts:
+            p = acc.get("provider", "")
+            addr = acc.get("address", "")
+            srv = acc.get("imap", {}).get("server", "")
+            if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
+                enabled_supported_accounts.append(acc)
+
+        next_to_load = None
+        if enabled_supported_accounts:
+            # Prefer the primary account if it still exists in the enabled & supported list
+            primary_email = self._normalize_address(self.cfg.get("email", {}).get("address", ""))
+            for acc in enabled_supported_accounts:
+                if self._normalize_address(acc.get("address")) == primary_email:
+                    next_to_load = acc
+                    break
+            # Otherwise choose the first enabled non-Outlook-like account
+            if not next_to_load:
+                next_to_load = enabled_supported_accounts[0]
+
+        if next_to_load:
+            self._load_saved_account(next_to_load)
+        else:
+            self._loading_account_values = True
+            try:
+                self.txt_email.clear()
+                self.txt_months.setText("3")
+                self.txt_auth_code.clear()
+                self._select_provider_card("qq")
+                self._apply_provider_defaults("qq")
+                self.advanced_group.setVisible(False)
+                self.btn_toggle_advanced.setText("显示高级 IMAP 设置 ▼")
+            finally:
+                self._loading_account_values = False
+            self._loaded_account_address = ""
+            self._loaded_account_mailbox_key = ""
+            self._loaded_account_provider = ""
+            self._missing_saved_provider = ""
+            self._update_delete_button_state()
+            self._update_provider_hint()
+            self._update_cred_status_label()
+            self._update_wizard_ui()
+
+        QMessageBox.information(self, "成功", "邮箱配置已删除，已导入发票不会被删除。")

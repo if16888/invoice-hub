@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .config import get_email_accounts, load_config, load_config_safe, RUNTIME_DIR, PROJECT_ROOT
+from .config import get_email_accounts, load_config, load_config_safe, RUNTIME_DIR, PROJECT_ROOT, is_outlook_like_account
 from .credentials import get_auth_code
 from .db import InvoiceDB, is_pending_evidence_invoice
 from .excel_export import export_excel
@@ -3492,9 +3492,11 @@ def _cmd_evidence_repair(args: argparse.Namespace, db: InvoiceDB):
 
     provider = acc.get("provider", "")
     server = acc.get("imap", {}).get("server", "")
-    if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
-        print(f"错误: 邮箱 {addr} 当前版本暂不支持 Outlook 邮箱扫描/修复（需要 OAuth2）")
+    if is_outlook_like_account(provider, addr, server):
+        print(f"跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：{mask_email(addr)}")
         sys.exit(1)
+
+
 
     print(f"正在连接邮箱 {addr} 并获取邮件 UID: {uid}...")
     with MailFetcher(
@@ -3841,11 +3843,18 @@ def _scan_mailboxes_with_db(
     account_contexts: list[dict] = []
     for account in accounts:
         address = account.get("address", "")
+        provider = account.get("provider", "")
+        server = account.get("imap", {}).get("server", "")
+        if is_outlook_like_account(provider, address, server):
+            emit(f"⚠️ 跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：{mask_email(address)}")
+            continue
+
         try:
             auth_code = get_auth_code(address)
         except SystemExit as exc:
             raise ValueError(f"未配置邮箱授权码安全凭证: {mask_email(address)}，请前往 [设置] 页面配置。") from exc
         account_contexts.append({**account, "auth_code": auth_code})
+
 
     if retry_failed:
         for account in account_contexts:
@@ -3871,8 +3880,8 @@ def _scan_mailboxes_with_db(
 
             provider = account.get("provider", "")
             server = account.get("imap", {}).get("server", "")
-            if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
-                emit(f"⚠️ 跳过 Outlook 邮箱 [{mask_email(email_addr)}]：当前版本暂不支持 Outlook 邮箱扫描（需要 OAuth2）")
+            if is_outlook_like_account(provider, email_addr, server):
+                emit(f"⚠️ 跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：{mask_email(email_addr)}")
                 continue
             months_back = int(account.get("search", {}).get("months_back", months or 3) or (months or 3))
             try:
@@ -3934,9 +3943,10 @@ def _scan_mailboxes_with_db(
 
             provider = account.get("provider", "")
             server = account.get("imap", {}).get("server", "")
-            if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
-                emit(f"⚠️ 跳过 Outlook 邮箱下载 [{mask_email(email_addr)}]：当前版本暂不支持 Outlook 邮箱下载（需要 OAuth2）")
+            if is_outlook_like_account(provider, email_addr, server):
+                emit(f"⚠️ 跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：{mask_email(email_addr)}")
                 continue
+
             pending_for_account: list[dict] = []
             handled_pending_uids: set[int] = set()
             try:
@@ -4693,10 +4703,11 @@ def _reprocess_email_records(
 
                 provider = acc.get("provider", "")
                 server = acc.get("imap", {}).get("server", "")
-                if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
-                    _log.warning("邮箱 %s 当前版本暂不支持 Outlook 邮箱扫描/修复（需要 OAuth2）", mask_email(acc["address"]))
+                if is_outlook_like_account(provider, acc["address"], server):
+                    _log.warning("跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：%s", mask_email(acc["address"]))
                     failed_count += len(pending)
                     continue
+
 
                 _log.info("正在连接邮箱 %s...", mask_email(acc["address"]))
                 with MailFetcher(

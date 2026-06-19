@@ -26,6 +26,37 @@ _PLACEHOLDER_EMAIL_ADDRESSES = {
     "your_email@example.com",
 }
 
+
+def is_outlook_like_account(provider: str, address: str, server: str) -> bool:
+    """Return True if the provider, address domain, or server host is Outlook/Microsoft-like."""
+    p = str(provider or "").strip().lower()
+    addr = str(address or "").strip().lower()
+    srv = str(server or "").strip().lower()
+
+    if p == "outlook":
+        return True
+
+    # Check server host indicators
+    if srv:
+        if (
+            "outlook.office365.com" in srv
+            or "imap-mail.outlook.com" in srv
+            or "imap.outlook.com" in srv
+            or "office365" in srv
+            or "outlook" in srv
+            or "hotmail" in srv
+        ):
+            return True
+
+    # Check address domain specifically (not the username/local part)
+    if addr and "@" in addr:
+        domain = addr.rsplit("@", 1)[1]
+        if domain in {"outlook.com", "hotmail.com", "live.com", "msn.com"}:
+            return True
+
+    return False
+
+
 _DEFAULTS = {
     "email": {"provider": "qq", "address": "", "username": ""},
     "imap": {"server": "", "port": 993, "ssl": True},

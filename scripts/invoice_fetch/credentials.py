@@ -115,3 +115,21 @@ def has_auth_code(email: str) -> bool:
         return bool(secret)
     except Exception:
         return False
+
+
+def delete_auth_code(email: str) -> None:
+    """Delete the mailbox app password/auth code for *email* from OS keyring.
+
+    This operation is idempotent and does not raise errors if the credential does not exist.
+    """
+    if not email:
+        return
+    try:
+        keyring.delete_password(KEYRING_SERVICE, email)
+        _log.info("邮箱凭据已从系统 Keyring Store 中删除")
+    except Exception as e:
+        err_msg = str(e)
+        if "not found" in err_msg.lower() or "passworddeleteerror" in type(e).__name__.lower():
+            pass
+        else:
+            _log.warning("从凭据管理器移除邮箱凭证失败: %s", err_msg)

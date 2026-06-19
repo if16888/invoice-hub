@@ -13,6 +13,23 @@ class SettingsDialogTestMixin:
         except (ImportError, RuntimeError) as exc:
             raise unittest.SkipTest(f"Skipping GUI tests: {exc}")
 
+    def setUp(self):
+        super().setUp() if hasattr(super(), "setUp") else None
+        self._saved_addresses = set()
+        # Mock keyring completely to avoid accessing the live Windows Credential Vault
+        self._keyring_patches = [
+            patch("keyring.get_password", side_effect=lambda svc, username: "dummy_pass" if username in self._saved_addresses else None),
+            patch("keyring.set_password", side_effect=lambda svc, username, password: self._saved_addresses.add(username)),
+            patch("keyring.delete_password", side_effect=lambda svc, username: self._saved_addresses.discard(username)),
+        ]
+        for p in self._keyring_patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._keyring_patches:
+            p.stop()
+        super().tearDown() if hasattr(super(), "tearDown") else None
+
     def _cleanup_widget(self, widget):
         widget.close()
         widget.deleteLater()
@@ -27,6 +44,7 @@ class SettingsDialogTestMixin:
             "search": {"folder": "INBOX", "months_back": 3},
             "ai": {"provider": "none", "model": "", "enabled": False},
         }
+        self._saved_addresses = set(saved_addresses)
         parent = QWidget()
         parent.config = {}
         parent.write_log = MagicMock()
@@ -34,9 +52,6 @@ class SettingsDialogTestMixin:
         with patch(
             "scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat",
             return_value=config,
-        ), patch(
-            "scripts.invoice_fetch.credentials.has_auth_code",
-            side_effect=lambda address: address in saved_addresses,
         ):
             dialog = SettingsDialog(parent)
         self.addCleanup(self._cleanup_widget, dialog)
@@ -258,6 +273,8 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
         dialog = self._make_dialog()
         for provider in ("qq", "netease_163", "netease_126", "gmail", "custom"):
             self._select(dialog, provider)
+            dialog.txt_email.setText("test@example.com")
+            self.app.processEvents()
             self.assertTrue(dialog.btn_next.isEnabled())
             self.assertTrue(dialog.lbl_outlook_step1_warning.isHidden())
 
@@ -299,13 +316,19 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(outlook["mailbox_key"], "outlook-primary")
 
     def test_typing_new_outlook_account_preserves_loaded_qq_account(self):
+        # Under v0.1.3 safety rules, saving a new Outlook account is blocked
         dialog = self._make_dialog()
         dialog.txt_email.setText("new-user@outlook.com")
+        dialog.test_success = True
 
-        self._save_without_side_effects(dialog)
+        with patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning") as mock_warn:
+            dialog._save_mailbox_settings()
+            mock_warn.assert_called_once()
 
-        addresses = {account["address"] for account in dialog.cfg["email_accounts"]}
-        self.assertEqual(addresses, {"if16888@qq.com", "new-user@outlook.com"})
+        # The new outlook account should not be in the config
+        addresses = {account["address"] for account in dialog.cfg.get("email_accounts", [])}
+        self.assertNotIn("new-user@outlook.com", addresses)
+
 
     def test_saving_qq_preserves_existing_outlook_account_in_email_accounts(self):
         dialog = self._make_dialog(self._multi_account_config())

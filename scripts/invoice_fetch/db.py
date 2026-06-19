@@ -1125,6 +1125,20 @@ class InvoiceDB:
         self._conn.commit()
         _log.info("已清空已处理邮件记录")
 
+    def remove_mailbox_scan_state(self, mailbox_key: str) -> None:
+        """Remove scan cursor/sync state (emails and processed_emails) for the given mailbox_key.
+
+        This does NOT delete any invoice rows in the invoices table.
+        """
+        if not mailbox_key:
+            return
+        m_key = self._normalize_mailbox_key(mailbox_key)
+        self._conn.execute("DELETE FROM emails WHERE mailbox_key = ?", (m_key,))
+        self._conn.execute("DELETE FROM processed_emails WHERE mailbox_key = ?", (m_key,))
+        self._conn.commit()
+        _log.info("已清空邮箱 %s 的邮件扫描与处理同步状态", m_key)
+
+
     def reset_invoices(self):
         """Clear the invoices table (full baseline reset)."""
         self._conn.execute("DELETE FROM invoices")
