@@ -3490,6 +3490,12 @@ def _cmd_evidence_repair(args: argparse.Namespace, db: InvoiceDB):
         print(f"错误: 邮箱 {addr} 的授权码为空。")
         sys.exit(1)
 
+    provider = acc.get("provider", "")
+    server = acc.get("imap", {}).get("server", "")
+    if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
+        print(f"错误: 邮箱 {addr} 当前版本暂不支持 Outlook 邮箱扫描/修复（需要 OAuth2）")
+        sys.exit(1)
+
     print(f"正在连接邮箱 {addr} 并获取邮件 UID: {uid}...")
     with MailFetcher(
         address=addr,
@@ -3862,6 +3868,12 @@ def _scan_mailboxes_with_db(
             mailbox_key = account.get("mailbox_key", "legacy")
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
+
+            provider = account.get("provider", "")
+            server = account.get("imap", {}).get("server", "")
+            if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
+                emit(f"⚠️ 跳过 Outlook 邮箱 [{mask_email(email_addr)}]：当前版本暂不支持 Outlook 邮箱扫描（需要 OAuth2）")
+                continue
             months_back = int(account.get("search", {}).get("months_back", months or 3) or (months or 3))
             try:
                 since = "" if folder != "INBOX" else db.get_last_scanned_date(mailbox_key=mailbox_key)
@@ -3919,6 +3931,12 @@ def _scan_mailboxes_with_db(
             mailbox_key = account.get("mailbox_key", "legacy")
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
+
+            provider = account.get("provider", "")
+            server = account.get("imap", {}).get("server", "")
+            if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
+                emit(f"⚠️ 跳过 Outlook 邮箱下载 [{mask_email(email_addr)}]：当前版本暂不支持 Outlook 邮箱下载（需要 OAuth2）")
+                continue
             pending_for_account: list[dict] = []
             handled_pending_uids: set[int] = set()
             try:
@@ -4670,6 +4688,13 @@ def _reprocess_email_records(
             if pending:
                 if not acc.get("auth_code"):
                     _log.warning("获取邮箱 %s 的授权码为空，无法下载该邮箱下的 %d 封邮件", mask_email(acc["address"]), len(pending))
+                    failed_count += len(pending)
+                    continue
+
+                provider = acc.get("provider", "")
+                server = acc.get("imap", {}).get("server", "")
+                if provider == "outlook" or "outlook" in server.lower() or "office365" in server.lower() or "hotmail" in server.lower():
+                    _log.warning("邮箱 %s 当前版本暂不支持 Outlook 邮箱扫描/修复（需要 OAuth2）", mask_email(acc["address"]))
                     failed_count += len(pending)
                     continue
 

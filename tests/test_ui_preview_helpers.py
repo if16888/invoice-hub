@@ -265,6 +265,10 @@ class TestUIPreviewGUI(unittest.TestCase):
             window = InvoiceReviewApp(self.db_path, splash=None)
             try:
                 window._deferred_init()
+                app.processEvents()
+                self.assertEqual(window.table.rowCount(), 1)
+                window.table.clearSelection()
+                app.processEvents()
                 window.table.selectRow(0)
                 window._on_table_selection_changed()
                 app.processEvents()

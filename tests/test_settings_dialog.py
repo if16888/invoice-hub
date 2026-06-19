@@ -191,20 +191,51 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(dialog.txt_imap_server.text(), "imap.company.example")
         self.assertEqual(dialog.txt_imap_port.text(), "1993")
 
-    def test_outlook_inline_guidance_and_help_dialog_are_specific(self):
+    def test_outlook_provider_card_marks_oauth_required(self):
+        from PySide6.QtWidgets import QLabel
+        dialog = self._make_dialog()
+        card = dialog.cards["outlook"]
+        labels = card.findChildren(QLabel)
+        self.assertTrue(any("需要 OAuth2，当前版本暂不支持" in lbl.text() for lbl in labels))
+
+    def test_selecting_outlook_disables_auth_code_flow(self):
         dialog = self._make_dialog()
         self._select(dialog, "outlook")
+        self.assertFalse(dialog.btn_next.isEnabled())
+        self.assertFalse(dialog.lbl_outlook_step1_warning.isHidden())
 
-        self.assertIn("个人 Outlook/Hotmail/Live", dialog.lbl_outlook_guidance.text())
-        self.assertIn("OAuth2/Graph", dialog.lbl_outlook_guidance.text())
+    def test_outlook_next_step_blocked_with_oauth_message(self):
+        dialog = self._make_dialog()
+        self._select(dialog, "outlook")
+        dialog.txt_email.setText("test@outlook.com")
+        with patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning") as mock_warn:
+            dialog._goto_next_step()
+            mock_warn.assert_called_once()
+            self.assertIn("暂不支持", mock_warn.call_args[0][2])
+            self.assertEqual(dialog.current_step, 1)
+
+    def test_saved_outlook_account_is_shown_as_unsupported_not_tested(self):
+        config = self._multi_account_config("abc@outlook.com")
+        dialog = self._make_dialog(config)
+        self._select(dialog, "outlook")
+        self.assertIn("暂不支持测试/扫描", dialog.lbl_cred_status.text())
+
+    def test_app_password_guidance_removed_from_outlook_help(self):
+        dialog = self._make_dialog()
+        self._select(dialog, "outlook")
         with patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information") as info:
             dialog._show_auth_code_help()
+            help_text = info.call_args.args[2]
+            self.assertNotIn("应用密码", help_text)
+            self.assertNotIn("可尝试", help_text)
+            self.assertIn("暂不支持", help_text)
 
-        help_text = info.call_args.args[2]
-        self.assertIn("完整邮箱地址", help_text)
-        self.assertIn("outlook.office365.com", help_text)
-        self.assertIn("993", help_text)
-        self.assertIn("OAuth2", help_text)
+    def test_existing_qq_163_126_gmail_custom_imap_flows_remain_unchanged(self):
+        dialog = self._make_dialog()
+        for provider in ("qq", "netease_163", "netease_126", "gmail", "custom"):
+            self._select(dialog, provider)
+            self.assertTrue(dialog.btn_next.isEnabled())
+            self.assertTrue(dialog.lbl_outlook_step1_warning.isHidden())
 
     def test_credential_status_uses_exact_loaded_email(self):
         config = self._multi_account_config("saved@hotmail.com")
@@ -215,8 +246,7 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
 
             self._select(dialog, "outlook")
 
-        has_auth_code.assert_called_with("saved@hotmail.com")
-        self.assertIn("已安全保存到系统凭据管理器", dialog.lbl_cred_status.text())
+        self.assertIn("暂不支持测试/扫描", dialog.lbl_cred_status.text())
 
     def _save_without_side_effects(self, dialog):
         dialog.test_success = True
@@ -264,36 +294,32 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
 
 
 class OutlookConnectionDiagnosticsTests(SettingsDialogTestMixin, unittest.TestCase):
-    AUTH_CODE = "outlook-secret-must-not-leak"
 
-    def _run_failure(self, message):
+    def test_outlook_test_does_not_call_imaplib_login(self):
         dialog = self._make_dialog()
         self._select(dialog, "outlook")
         dialog.txt_email.setText("tester@outlook.com")
-        dialog.txt_auth_code.setText(self.AUTH_CODE)
-        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as fetcher_cls:
-            fetcher_cls.return_value.connect.side_effect = RuntimeError(message)
+        dialog.txt_auth_code.setText("dummy")
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as fetcher_cls, \
+             patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning") as mock_warn:
             dialog._test_connection_clicked()
-        return dialog.lbl_test_result.text()
+            fetcher_cls.assert_not_called()
+            mock_warn.assert_called_once()
+            self.assertIn("暂不支持", mock_warn.call_args[0][2])
 
-    def test_outlook_auth_failure_is_actionable_and_sanitized(self):
-        result = self._run_failure(f"authentication failed: {self.AUTH_CODE}")
-
-        self.assertIn("认证失败", result)
-        self.assertIn("邮箱地址完整", result)
-        self.assertNotIn(self.AUTH_CODE, result)
-
-    def test_outlook_oauth_required_failure_is_classified_before_auth_failure(self):
-        result = self._run_failure("LOGIN disabled: Basic authentication disabled, OAuth2 required")
-
-        self.assertIn("需要 OAuth2", result)
-        self.assertIn("当前版本暂不支持", result)
-
-    def test_outlook_timeout_has_network_proxy_and_firewall_guidance(self):
-        result = self._run_failure("connection timed out")
-
-        self.assertIn("outlook.office365.com:993", result)
-        self.assertIn("网络、代理或防火墙", result)
+    def test_custom_imap_outlook_host_reports_oauth_required(self):
+        dialog = self._make_dialog()
+        self._select(dialog, "custom")
+        dialog.txt_email.setText("tester@custom.com")
+        dialog.txt_auth_code.setText("dummy")
+        dialog.txt_imap_server.setText("outlook.office365.com")
+        dialog.txt_imap_port.setText("993")
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as fetcher_cls, \
+             patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning") as mock_warn:
+            dialog._test_connection_clicked()
+            fetcher_cls.assert_not_called()
+            mock_warn.assert_called_once()
+            self.assertIn("检测到 Outlook IMAP 服务器", mock_warn.call_args[0][2])
 
 
 if __name__ == "__main__":

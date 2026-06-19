@@ -220,7 +220,7 @@ class SettingsDialog(QDialog):
             ("netease_163", "163 网易邮箱", "经典个人邮箱\n连接速度极快"),
             ("netease_126", "126 网易邮箱", "网易精品邮\n收发稳定高效"),
             ("gmail", "Gmail", "谷歌邮箱服务\n需海外网络代理"),
-            ("outlook", "Outlook", "微软官方邮箱\n支持商务与个人"),
+            ("outlook", "Outlook", "需要 OAuth2，当前版本暂不支持"),
             ("custom", "自定义 IMAP", "支持任意符合协议\n的第三方邮箱服务")
         ]
 
@@ -253,6 +253,14 @@ class SettingsDialog(QDialog):
 
         self.provider_group.buttonClicked.connect(self._on_provider_card_clicked)
         v_layout.addWidget(grid_widget)
+
+        self.lbl_outlook_step1_warning = QLabel(
+            "Outlook/Hotmail/Live 及 Microsoft 365 邮箱需要 OAuth2/XOAUTH2 登录。当前版本暂不支持 Outlook 邮箱扫描。"
+        )
+        self.lbl_outlook_step1_warning.setWordWrap(True)
+        self.lbl_outlook_step1_warning.setStyleSheet("color: #B45309; font-size: 11px; background-color: #FEF3C7; border: 1px solid #FCD34D; padding: 8px; border-radius: 4px; margin-top: 4px;")
+        self.lbl_outlook_step1_warning.setVisible(False)
+        v_layout.addWidget(self.lbl_outlook_step1_warning)
 
         # Form layout for input fields
         form_group = QGroupBox("邮箱基本配置")
@@ -320,8 +328,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(alert_box)
 
         self.lbl_outlook_guidance = QLabel(
-            "个人 Outlook/Hotmail/Live 邮箱可尝试使用应用密码 + IMAP。\n"
-            "公司/学校 Microsoft 365 邮箱通常需要 OAuth2/Graph，当前版本暂不支持授权码 IMAP。"
+            "Outlook/Hotmail/Live 及 Microsoft 365 邮箱需要 OAuth2/XOAUTH2 登录。当前版本暂不支持 Outlook 邮箱扫描。"
         )
         self.lbl_outlook_guidance.setWordWrap(True)
         self.lbl_outlook_guidance.setStyleSheet("color: #92400E; font-size: 11px;")
@@ -689,7 +696,11 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "lbl_provider_hint"):
             return
         provider = self._get_selected_provider()
-        self.lbl_outlook_guidance.setVisible(provider == "outlook")
+        self.lbl_outlook_guidance.setVisible(False)
+        self.lbl_outlook_step1_warning.setVisible(provider == "outlook")
+        if hasattr(self, "btn_next") and self.current_step == 1:
+            self.btn_next.setEnabled(provider != "outlook")
+
         email = self.txt_email.text().strip()
         domain = email.rsplit("@", 1)[1].lower() if "@" in email else ""
         if self._missing_saved_provider == provider and not email:
@@ -712,6 +723,10 @@ class SettingsDialog(QDialog):
         if not email:
             self.lbl_cred_status.setText("🔒 授权状态：<b>未输入邮箱地址</b>")
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
+            return
+        if self._get_selected_provider() == "outlook":
+            self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>已保存，但当前版本暂不支持测试/扫描</b></font>")
+            self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             return
         if has_auth_code(email):
             self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
@@ -801,22 +816,15 @@ class SettingsDialog(QDialog):
         if self._get_selected_provider() == "outlook":
             QMessageBox.information(
                 self,
-                "Outlook 授权码与 IMAP 设置",
-                "<b>Outlook / Hotmail / Live 设置</b><br>"
-                "• 用户名：使用完整邮箱地址。<br>"
-                "• 凭据：账号支持时可尝试应用密码。<br>"
-                "• 服务器：outlook.office365.com<br>"
-                "• 端口：993<br>"
-                "• 安全连接：SSL/TLS<br><br>"
-                "如果公司/学校 Microsoft 365 邮箱测试失败，账号可能要求 OAuth2。"
-                "Invoice Hub v0.1.3 当前暂不支持 OAuth2。",
+                "Outlook 邮箱设置说明",
+                "Outlook/Hotmail/Live 和 Microsoft 365 邮箱目前需要 OAuth2/XOAUTH2 认证。Invoice Hub v0.1.3 暂不支持 Outlook 邮箱扫描。后续版本可通过 Microsoft OAuth2/MSAL 支持。",
             )
             return
         QMessageBox.information(
             self,
             "如何获取邮箱授权码？",
             "<b>什么是授权码？</b><br>"
-            "授权码（或应用专用密码）是专门用于第三方程序读取邮件的专属密码，<b>绝非您的邮箱登录密码</b>，可随时注销。<br><br>"
+            "授权码（或应用专用密码）是专门用于第三方程序读取邮件 of 专属密码，<b>绝非您的邮箱登录密码</b>，可随时注销。<br><br>"
             "<b>获取步骤：</b><br>"
             "• <b>QQ邮箱：</b><br>"
             "  1. 登录网页版 QQ 邮箱。<br>"
@@ -833,10 +841,6 @@ class SettingsDialog(QDialog):
             "  2. 进入「安全性」 ➜ 「双重验证」并开启。<br>"
             "  3. 搜索并进入「应用专用密码」创建专有密码，获取 <b>16 位专用密码</b>。<br>"
             "  4. 确保在网页版 Gmail 设置 ➜ 「转发和 POP/IMAP」中手动启用了 IMAP 收信。<br><br>"
-            "• <b>Outlook / Hotmail 邮箱：</b><br>"
-            "  1. 登录网页版微软账号中心 (account.microsoft.com)。<br>"
-            "  2. 进入「安全性」 ➜ 「高级安全选项」。<br>"
-            "  3. 开启「双重验证」后，在下方生成「应用密码」进行登录。<br><br>"
             "<b>隐私安全说明：</b><br>"
             "您的授权码直接交由 Windows 系统级别的凭据管理器加密存储，不会以明文写入配置，更不会上传至任何第三方服务器。"
         )
@@ -848,6 +852,13 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, "校验提示", "请先填写邮箱地址。")
                 return
             provider = self._get_selected_provider()
+            if provider == "outlook":
+                QMessageBox.warning(
+                    self,
+                    "邮箱类型暂不支持",
+                    "Outlook/Hotmail/Live 及 Microsoft 365 邮箱需要 OAuth2/XOAUTH2 登录。当前版本暂不支持 Outlook 邮箱扫描。"
+                )
+                return
             if provider == "custom":
                 server = self.txt_imap_server.text().strip()
                 port = self.txt_imap_port.text().strip()
@@ -874,6 +885,7 @@ class SettingsDialog(QDialog):
             self.lbl_step_indicator.setText('<font color="#2563EB"><b>① 选择邮箱</b></font>  ➜  ② 填写授权码  ➜  ③ 测试并保存')
             self.btn_prev.setEnabled(False)
             self.btn_next.setVisible(True)
+            self.btn_next.setEnabled(self._get_selected_provider() != "outlook")
             self.btn_save_wizard.setVisible(False)
         elif self.current_step == 2:
             self.lbl_step_indicator.setText('① 选择邮箱  ➜  <font color="#2563EB"><b>② 填写授权码</b></font>  ➜  ③ 测试并保存')
@@ -931,11 +943,28 @@ class SettingsDialog(QDialog):
                 return
 
         provider = self._get_selected_provider()
+        if provider == "outlook":
+            QMessageBox.warning(
+                self,
+                "测试连接",
+                "Outlook 邮箱目前需要 OAuth2/XOAUTH2 认证。当前版本暂不支持 Outlook 邮箱测试/扫描。"
+            )
+            return
+
         if provider == "custom":
             server = self.txt_imap_server.text().strip()
             port_str = self.txt_imap_port.text().strip()
             if not server or not port_str:
                 QMessageBox.warning(self, "校验提示", "自定义 IMAP 必须填写服务器与端口。")
+                return
+
+            server_lower = server.lower()
+            if "outlook" in server_lower or "office365" in server_lower or "hotmail" in server_lower:
+                QMessageBox.warning(
+                    self,
+                    "测试连接",
+                    "检测到 Outlook IMAP 服务器。Outlook 需要 OAuth2/XOAUTH2，当前版本授权码登录方式不支持。"
+                )
                 return
         else:
             from ..config import _EMAIL_PROVIDER_PRESETS
