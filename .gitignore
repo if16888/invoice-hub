@@ -1,5 +1,8 @@
 # Runtime and generated data
 runtime/
+invoice_fetch_runtime/
+diagnostics/
+diagnostic_*.zip
 scratch/
 bench-local/
 output/
@@ -20,6 +23,8 @@ real-samples/
 
 # Credentials and config with secrets
 config.json
+settings.json
+keyring*
 config.yaml
 .env
 .env.*
@@ -36,9 +41,14 @@ business_blueprint*.md
 *.jpg
 *.jpeg
 *.png
+*.webp
 *.bmp
 *.heic
 *.zip
+*.7z
+*.rar
+*.exe
+*.msi
 *.xlsx
 *.xls
 *.csv
@@ -50,6 +60,7 @@ business_blueprint*.md
 # Build artifacts (PyInstaller)
 build/
 dist/
+*.spec
 
 # Python
 venv/
@@ -59,6 +70,8 @@ __pycache__/
 *.pyo
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
