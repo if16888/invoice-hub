@@ -409,7 +409,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
         search_layout.addWidget(self.chk_unlinked)
 
-        self.chk_needs_fix = QCheckBox("资料待补全")
+        self.chk_needs_fix = QCheckBox("待补全")
         self.chk_needs_fix.stateChanged.connect(self._on_chk_needs_fix_changed)
         search_layout.addWidget(self.chk_needs_fix)
 
@@ -478,8 +478,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_column_filter_headers()
 
         # Set explicit column widths for readability and set up minimum limits
-        self._min_column_widths = {0: 64, 1: 100, 2: 80, 3: 160, 4: 260, 5: 96, 6: 86, 7: 96}
-        self.table.setColumnWidth(0, 64)   # 资料
+        self._min_column_widths = {0: 76, 1: 100, 2: 80, 3: 160, 4: 260, 5: 96, 6: 86, 7: 96}
+        self.table.setColumnWidth(0, 76)   # 完整性
         self.table.setColumnWidth(1, 100)  # 费用日期
         self.table.setColumnWidth(2, 80)   # 金额
         self.table.setColumnWidth(3, 160)  # 发票号码

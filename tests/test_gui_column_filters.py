@@ -320,13 +320,13 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertTrue(all(row["category"] == "目标" for row in window.invoices_list))
 
     def test_first_column_naming_and_material_only(self):
-        # 表格第一列如果显示“待补全”，列名应为“资料”或“资料状态”。
-        # 第一列改为“资料”，只显示资料状态；审核状态仅由顶部和右侧表达。
+        # 表格第一列如果显示“待补全”，列名应为“完整性”。
+        # 第一列改为“完整性”，只显示完整性状态；审核状态仅由顶部和右侧表达。
         window = self._make_window([
             {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"}, # 待补全
         ])
         header_text = window.table.horizontalHeaderItem(0).text()
-        self.assertTrue("资料" in header_text or "资料状态" in header_text)
+        self.assertTrue("完整性" in header_text)
         
         # Check first column text
         item_text = window.table.item(0, 0).text()
@@ -607,7 +607,7 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         # 1. Verify minimum widths
         expected_min_widths = {
-            0: 64,   # 资料
+            0: 76,   # 完整性
             1: 100,  # 费用日期
             2: 80,   # 金额
             3: 160,  # 发票号码
