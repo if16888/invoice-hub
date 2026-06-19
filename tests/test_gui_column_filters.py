@@ -40,6 +40,7 @@ class GuiColumnFilterTests(unittest.TestCase):
                     "mail_uid": row.get("mail_uid"),
                     "mail_sender": row.get("mail_sender", ""),
                     "attachment_path": row.get("attachment_path", "file.pdf"),
+                    "download_url": row.get("download_url", ""),
                 }
                 inv_id = db.insert_invoice(payload)
                 claim_name = row.get("claim_name")
@@ -431,6 +432,168 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertTrue("1" in approved_text)
         self.assertTrue("2" in all_text)
         self.assertEqual(all_text.split()[0], "当前范围全部")
+
+    @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
+    @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")
+    def test_redownload_direct_ofd_download_should_not_call_pdf_parser(self, mock_parser_cls, mock_dl_cls):
+        mock_dl = mock_dl_cls.return_value
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        ofd_file = Path(temp_dir.name) / "test.ofd"
+        ofd_file.write_bytes(b"OFD content")
+
+        class FakeDownloadedFile:
+            file_path = str(ofd_file)
+
+        mock_dl._download_url.return_value = FakeDownloadedFile()
+
+        mock_parser = mock_parser_cls.return_value
+        mock_parser.parse_pdf.side_effect = AssertionError("parse_pdf should not be called for OFD")
+
+        window = self._make_window([
+            {
+                "invoice_number": "OFD123",
+                "download_url": "http://example.com/inv.ofd",
+                "mail_uid": 1001,
+                "mail_date": "2026-06-19",
+                "attachment_path": "",
+            }
+        ])
+
+        window.table.selectRow(0)
+
+        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
+             patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+            window._redownload_selected_invoices()
+
+        mock_parser.parse_pdf.assert_not_called()
+
+    @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
+    @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")
+    def test_redownload_direct_ofd_download_should_keep_original_and_mark_manual_required(self, mock_parser_cls, mock_dl_cls):
+        mock_dl = mock_dl_cls.return_value
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        ofd_file = Path(temp_dir.name) / "test.ofd"
+        ofd_file.write_bytes(b"OFD content")
+
+        class FakeDownloadedFile:
+            file_path = str(ofd_file)
+
+        mock_dl._download_url.return_value = FakeDownloadedFile()
+        mock_parser = mock_parser_cls.return_value
+
+        window = self._make_window([
+            {
+                "invoice_number": "OFD456",
+                "download_url": "http://example.com/inv.ofd",
+                "mail_uid": 1002,
+                "mail_date": "2026-06-19",
+                "attachment_path": "",
+            }
+        ])
+        inv_id = window.invoices_list[0]["id"]
+
+        window.table.selectRow(0)
+
+        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
+             patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+            window._redownload_selected_invoices()
+
+        refreshed = window.db.get_invoice(inv_id)
+        att_path = refreshed.get("attachment_path")
+        self.assertTrue(att_path.endswith(".ofd"))
+
+        resolved_path = Path(window._resolve_attachment_path(att_path))
+        self.assertTrue(resolved_path.exists())
+        self.assertEqual(resolved_path.read_bytes(), b"OFD content")
+
+        self.assertIn("OFD 原件已恢复，需手动处理/转换后再解析。", refreshed.get("parse_note"))
+        mock_warn.assert_not_called()
+        mock_info.assert_called_once()
+        summary_msg = mock_info.call_args[0][2]
+        self.assertIn("仅刷新元数据/待手动下载: 1 张", summary_msg)
+        self.assertIn("下载失败: 0 张", summary_msg)
+
+    @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
+    @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")
+    def test_redownload_direct_pdf_parse_failure_should_keep_failure_bucket(self, mock_parser_cls, mock_dl_cls):
+        mock_dl = mock_dl_cls.return_value
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        pdf_file = Path(temp_dir.name) / "test.pdf"
+        pdf_file.write_bytes(b"invalid pdf content")
+
+        class FakeDownloadedFile:
+            file_path = str(pdf_file)
+
+        mock_dl._download_url.return_value = FakeDownloadedFile()
+
+        mock_parser = mock_parser_cls.return_value
+        class FakeParsedInfo:
+            parse_success = False
+            parse_note = "corrupted pdf structure"
+        mock_parser.parse_pdf.return_value = FakeParsedInfo()
+
+        window = self._make_window([
+            {
+                "invoice_number": "PDF789",
+                "download_url": "http://example.com/inv.pdf",
+                "mail_uid": None,
+                "mail_date": "2026-06-19",
+                "attachment_path": "",
+            }
+        ])
+
+        window.table.selectRow(0)
+
+        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
+             patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+            window._redownload_selected_invoices()
+
+        self.assertFalse(pdf_file.exists())
+        mock_warn.assert_called_once()
+        summary_msg = mock_warn.call_args[0][2]
+        self.assertIn("下载失败: 1 张", summary_msg)
+        self.assertIn("链接下载后解析失败: corrupted pdf structure", summary_msg)
+
+    @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
+    @patch("scripts.invoice_fetch.mail_fetcher.MailFetcher")
+    @patch("scripts.invoice_fetch.__main__._handle_pending_email")
+    @patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=True)
+    @patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="fake_code")
+    @patch("scripts.invoice_fetch.config.get_email_accounts")
+    def test_redownload_duplicate_missing_file_should_still_report_not_restored(
+        self, mock_get_accounts, mock_has_auth, mock_get_auth, mock_handle_email, mock_mail_fetcher, mock_dl_cls
+    ):
+        mock_get_accounts.return_value = [{"address": "test@example.com", "mailbox_key": "legacy"}]
+        mock_dl = mock_dl_cls.return_value
+        mock_dl._download_url.return_value = None
+
+        class FakeRereadResult:
+            status = "duplicate"
+        mock_handle_email.return_value = FakeRereadResult()
+
+        window = self._make_window([
+            {
+                "invoice_number": "DUP999",
+                "download_url": "",
+                "mail_uid": 1003,
+                "mail_date": "2026-06-19",
+                "attachment_path": "non_existent_file.pdf",
+            }
+        ])
+
+        window.table.selectRow(0)
+
+        with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
+             patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+            window._redownload_selected_invoices()
+
+        mock_warn.assert_called_once()
+        summary_msg = mock_warn.call_args[0][2]
+        self.assertIn("下载失败: 1 张", summary_msg)
+        self.assertNotIn("仅命中已有重复记录: 1 张", summary_msg)
 
 
 if __name__ == "__main__":

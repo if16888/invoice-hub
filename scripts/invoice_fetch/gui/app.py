@@ -1004,40 +1004,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for status, btn in self.filter_buttons.items():
             btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
 
-    def _apply_non_status_filters(
-        self,
-        invoices: list[dict],
-        needle: str,
-        unlinked_only: bool,
-        needs_fix_only: bool,
-    ) -> list[dict]:
-        filtered: list[dict] = []
-        for inv in invoices:
-            claim_name = self._get_invoice_claim_group(inv)
-            quality = self._get_invoice_quality(inv)
-
-            if unlinked_only and claim_name:
-                continue
-            if needs_fix_only and quality not in {"未识别", "待补全"}:
-                continue
-
-            if needle:
-                haystack = " ".join([
-                    str(inv.get("invoice_number") or ""),
-                    str(inv.get("seller_name") or ""),
-                    str(inv.get("buyer_name") or ""),
-                    str(inv.get("total_amount") or ""),
-                    str(inv.get("mail_subject") or ""),
-                    str(inv.get("category") or ""),
-                    str(inv.get("attachment_path") or ""),
-                    claim_name,
-                ]).lower()
-                if needle not in haystack:
-                    continue
-
-            filtered.append(inv)
-        return filtered
-
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
             self.txt_search.setText("")
@@ -1070,15 +1036,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return ""
 
     def _get_invoice_quality(self, inv: dict) -> str:
-        inv_num = str(inv.get("invoice_number") or "").strip()
-        total_amt = str(inv.get("total_amount") or "").strip()
-        inv_date = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
-        seller = str(inv.get("seller_name") or "").strip()
-        if not inv_num and not total_amt and not seller:
-            return "未识别"
-        if not inv_num or not total_amt or not inv_date or not seller:
-            return "待补全"
-        return ""
+        status = self._get_invoice_data_status(inv)
+        if status == "正常":
+            return ""
+        return status
 
     def _get_invoice_data_status(self, inv: dict) -> str:
         inv_num = str(inv.get("invoice_number") or "").strip()
@@ -1222,6 +1183,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _clear_single_filter(self, key):
         if key == "search":
             self.txt_search.setText("")
+            if hasattr(self, "search_reload_timer"):
+                self.search_reload_timer.stop()
         else:
             self.column_filters.pop(key, None)
             self._sync_column_filters_to_checkboxes()
@@ -1516,7 +1479,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 display_status = self._get_invoice_data_status(inv)
                 source_text = self._get_invoice_source(inv)
                 review_status = inv.get("review_status") or TO_REVIEW
-                quality = self._get_invoice_quality(inv)
                 buyer_check_warning = self._buyer_warning(inv)
                 date_warn = get_date_warning(inv)
                 combined_warning = ""
@@ -2310,68 +2272,121 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     try:
                         dl = downloader._download_url(download_url, mail_uid or 0, inv_id, mail_date)
                         if dl and dl.file_path and os.path.exists(dl.file_path):
-                            info = parser.parse_pdf(dl.file_path)
-                            if info.parse_success:
-                                from ..__main__ import _classify, _rename_by_invoice_code
-                                cat, extra_type, extra_req = _classify(
-                                    inv.get("mail_subject") or "",
-                                    inv.get("mail_sender") or "",
-                                    info.seller_name,
-                                    categories,
-                                )
-                                code = info.invoice_code or info.invoice_number
+                            suffix = os.path.splitext(dl.file_path)[1].lower()
+                            if suffix == ".pdf":
+                                info = parser.parse_pdf(dl.file_path)
+                                if info.parse_success:
+                                    from ..__main__ import _classify, _rename_by_invoice_code
+                                    cat, extra_type, extra_req = _classify(
+                                        inv.get("mail_subject") or "",
+                                        inv.get("mail_sender") or "",
+                                        info.seller_name,
+                                        categories,
+                                    )
+                                    code = info.invoice_code or info.invoice_number
+                                    att_path = _rename_by_invoice_code(
+                                        dl.file_path,
+                                        code,
+                                        info.invoice_date or mail_date,
+                                        RUNTIME_DIR / "attachments",
+                                        category=cat,
+                                        total_amount=info.total_amount,
+                                        invoice_number=info.invoice_number,
+                                        source_mode="reprocess",
+                                    )
+                                    updated = self.db.update_invoice_parsed_metadata(
+                                        invoice_id=inv_id,
+                                        invoice_number=info.invoice_number,
+                                        invoice_code=info.invoice_code,
+                                        invoice_date=info.invoice_date,
+                                        amount=info.amount,
+                                        total_amount=info.total_amount,
+                                        seller_name=info.seller_name,
+                                        buyer_name=info.buyer_name,
+                                        invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
+                                        category=cat,
+                                        has_extra=inv.get("has_extra") or False,
+                                        extra_type=extra_type,
+                                        missing_extra=extra_req,
+                                        parse_success=True,
+                                        parse_note="重新下载后解析",
+                                        item_name=getattr(info, "item_name", ""),
+                                        expense_date=getattr(info, "expense_date", ""),
+                                        date_source=getattr(info, "date_source", ""),
+                                    )
+                                    if not updated:
+                                        if getattr(self.db, "last_error", "") == "unique_conflict":
+                                            fallback_reason = "解析结果与已有发票唯一键冲突"
+                                            self.write_log(
+                                                f"⚠️ [重新下载] 发票 ID {inv_id} 更新元数据时发生唯一键冲突，尝试回读邮件"
+                                            )
+                                        else:
+                                            fallback_reason = "解析结果写入数据库失败"
+                                    else:
+                                        self.db._conn.execute(
+                                            "UPDATE invoices SET attachment_path = ? WHERE id = ?",
+                                            (att_path, inv_id),
+                                        )
+                                        self.db._conn.commit()
+                                        success_count += 1
+                                        redownload_buckets["file_restored"] += 1
+                                        direct_download_ok = True
+                                        self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
+                                else:
+                                    fallback_reason = f"链接下载后解析失败: {info.parse_note}"
+                                    if os.path.exists(dl.file_path):
+                                        self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 下载的文件是 PDF 但解析失败，正在删除临时文件: {dl.file_path}")
+                                        os.remove(dl.file_path)
+                            elif suffix == ".ofd":
+                                from ..__main__ import _rename_by_invoice_code
+                                code = inv.get("invoice_code") or inv.get("invoice_number") or ""
+                                inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
+                                cat = inv.get("category") or "其他"
+                                amt = inv.get("total_amount") or ""
+                                inv_num = inv.get("invoice_number") or ""
                                 att_path = _rename_by_invoice_code(
                                     dl.file_path,
                                     code,
-                                    info.invoice_date or mail_date,
+                                    inv_date,
                                     RUNTIME_DIR / "attachments",
                                     category=cat,
-                                    total_amount=info.total_amount,
-                                    invoice_number=info.invoice_number,
+                                    total_amount=amt,
+                                    invoice_number=inv_num,
                                     source_mode="reprocess",
                                 )
-                                updated = self.db.update_invoice_parsed_metadata(
-                                    invoice_id=inv_id,
-                                    invoice_number=info.invoice_number,
-                                    invoice_code=info.invoice_code,
-                                    invoice_date=info.invoice_date,
-                                    amount=info.amount,
-                                    total_amount=info.total_amount,
-                                    seller_name=info.seller_name,
-                                    buyer_name=info.buyer_name,
-                                    invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
-                                    category=cat,
-                                    has_extra=inv.get("has_extra") or False,
-                                    extra_type=extra_type,
-                                    missing_extra=extra_req,
-                                    parse_success=True,
-                                    parse_note="重新下载后解析",
-                                    item_name=getattr(info, "item_name", ""),
-                                    expense_date=getattr(info, "expense_date", ""),
-                                    date_source=getattr(info, "date_source", ""),
+                                self.db._conn.execute(
+                                    "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
+                                    (att_path, "OFD 原件已恢复，需手动处理/转换后再解析。", inv_id),
                                 )
-                                if not updated:
-                                    if getattr(self.db, "last_error", "") == "unique_conflict":
-                                        fallback_reason = "解析结果与已有发票唯一键冲突"
-                                        self.write_log(
-                                            f"⚠️ [重新下载] 发票 ID {inv_id} 更新元数据时发生唯一键冲突，尝试回读邮件"
-                                        )
-                                    else:
-                                        fallback_reason = "解析结果写入数据库失败"
-                                else:
-                                    self.db._conn.execute(
-                                        "UPDATE invoices SET attachment_path = ? WHERE id = ?",
-                                        (att_path, inv_id),
-                                    )
-                                    self.db._conn.commit()
-                                    success_count += 1
-                                    redownload_buckets["file_restored"] += 1
-                                    direct_download_ok = True
-                                    self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
+                                self.db._conn.commit()
+                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} OFD 原件已恢复，需手动处理/转换后再解析。")
+                                redownload_buckets["metadata_refreshed"] += 1
+                                direct_download_ok = True
                             else:
-                                fallback_reason = f"链接下载后解析失败: {info.parse_note}"
-                                if os.path.exists(dl.file_path):
-                                    os.remove(dl.file_path)
+                                from ..__main__ import _rename_by_invoice_code
+                                code = inv.get("invoice_code") or inv.get("invoice_number") or ""
+                                inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
+                                cat = inv.get("category") or "其他"
+                                amt = inv.get("total_amount") or ""
+                                inv_num = inv.get("invoice_number") or ""
+                                att_path = _rename_by_invoice_code(
+                                    dl.file_path,
+                                    code,
+                                    inv_date,
+                                    RUNTIME_DIR / "attachments",
+                                    category=cat,
+                                    total_amount=amt,
+                                    invoice_number=inv_num,
+                                    source_mode="reprocess",
+                                )
+                                self.db._conn.execute(
+                                    "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
+                                    (att_path, f"下载了不支持的文件类型 ({suffix})，需手动处理。", inv_id),
+                                )
+                                self.db._conn.commit()
+                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 下载了不支持的文件类型 ({suffix})，已保存，需手动处理。")
+                                redownload_buckets["metadata_refreshed"] += 1
+                                direct_download_ok = True
                         else:
                             fallback_reason = "下载超时或链接失效"
                     except Exception as e:

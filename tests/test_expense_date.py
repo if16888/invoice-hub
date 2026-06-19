@@ -359,6 +359,7 @@ class ExpenseDateTests(unittest.TestCase):
                     "expense_date": "2026-05-07",
                     "total_amount": "100.00",
                     "seller_name": "Test Seller",
+                    "attachment_path": "dummy.pdf",
                 }
                 self.assertEqual(window._get_invoice_quality(inv_ok), "")
 
