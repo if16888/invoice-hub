@@ -628,5 +628,82 @@ QTabBar::tab:hover {
     background-color: #F9FAFB;
     color: #111827;
 }
+
+/* Settings Center Components */
+QFrame.SettingsListRow {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+}
+QFrame.SettingsListRow:hover {
+    border-color: #3B82F6;
+    background-color: #F9FAFB;
+}
+QLabel.SettingsListRowName {
+    font-weight: bold;
+    font-size: 13px;
+    color: #111827;
+}
+QLabel.SettingsListRowDesc {
+    color: #6B7280;
+    font-size: 11px;
+}
+QLabel.SettingsListRowMeta {
+    color: #374151;
+    font-size: 12px;
+    padding: 2px 6px;
+}
+QLabel.SettingsListHeader {
+    font-weight: bold;
+    font-size: 13px;
+    color: #374151;
+}
+QLabel.SettingsSectionTitle {
+    font-size: 16px;
+    font-weight: bold;
+    color: #1E3A8A;
+}
+QLabel.EmptyStateText {
+    color: #6B7280;
+    font-size: 13px;
+    padding: 20px;
+}
+QPushButton.SettingsDangerBtn {
+    background-color: #FEE2E2;
+    color: #DC2626;
+    border: 1px solid #FCA5A5;
+    border-radius: 4px;
+}
+QPushButton.SettingsDangerBtn:hover {
+    background-color: #FEF2F2;
+    color: #B91C1C;
+    border-color: #EF4444;
+}
+QPushButton.SettingsDangerBtn:pressed {
+    background-color: #FDE8E8;
+    color: #991B1B;
+}
+
+/* StatusBadge Variants */
+QLabel.StatusBadge[variant="active"] {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: none;
+}
+QLabel.StatusBadge[variant="success"] {
+    background-color: #D1FAE5;
+    color: #065F46;
+    border: 1px solid #A7F3D0;
+}
+QLabel.StatusBadge[variant="warning"] {
+    background-color: #FEF3C7;
+    color: #D97706;
+    border: 1px solid #FCD34D;
+}
+QLabel.StatusBadge[variant="info"] {
+    background-color: #EFF6FF;
+    color: #1E40AF;
+    border: 1px solid #BFDBFE;
+}
 """ + MENU_STYLE + """
 """

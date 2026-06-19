@@ -468,29 +468,28 @@ class GenericImapConfigTests(unittest.TestCase):
                 "search": {"months_back": 3},
             }
 
-            # 1. Switch to deepseek and verify default model
+            # 1. Open new AI editor
+            dialog._open_new_ai_editor()
+
+            # 2. Switch to deepseek and verify default model is deepseek-chat
             dialog.combo_ai_provider.setCurrentText("deepseek")
-            self.assertEqual(dialog.txt_ai_model.currentText(), "deepseek-v4-flash")
+            self.assertEqual(dialog.txt_ai_model.currentText(), "deepseek-chat")
 
-            # 2. Switch to gemini and verify default model
+            # 3. Switch to gemini and verify default model is gemini-2.0-flash
             dialog.combo_ai_provider.setCurrentText("gemini")
-            self.assertEqual(dialog.txt_ai_model.currentText(), "gemini-2.5-flash")
+            self.assertEqual(dialog.txt_ai_model.currentText(), "gemini-2.0-flash")
 
-            # 3. Switch to none and verify model/API inputs are inactive
-            dialog.combo_ai_provider.setCurrentText("none")
-            self.assertEqual(dialog.txt_ai_model.currentText(), "")
-            self.assertFalse(dialog.txt_ai_model.isEnabled())
-            self.assertFalse(dialog.txt_ai_key.isVisible())
-
-            # 4. Enter a custom model name and save
+            # 4. Fill name, select custom model and save
+            dialog.txt_ai_name.setText("My Custom DeepSeek")
             dialog.combo_ai_provider.setCurrentText("deepseek")
             dialog.txt_ai_model.setCurrentText("deepseek-custom-model")
 
             with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
-                 patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
-                 patch("scripts.invoice_fetch.gui.app.QMessageBox.warning") as mock_warning, \
-                 patch("scripts.invoice_fetch.gui.app.QMessageBox.critical") as mock_critical:
-                dialog._save_ai_settings()
+                 patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"), \
+                 patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning") as mock_warning, \
+                 patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.critical") as mock_critical, \
+                 patch("scripts.invoice_fetch.gui.settings_dialog.SettingsDialog._persist_settings_and_refresh"):
+                dialog._save_ai_profile_settings(activate=True)
                 mock_save.assert_called_once()
                 mock_warning.assert_not_called()
                 mock_critical.assert_not_called()
