@@ -501,7 +501,8 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.assertTrue(window._limited_first_load_active)
                 self.assertEqual(window._limited_first_load_total, 120)
                 self.assertFalse(window.btn_load_all.isHidden())
-                self.assertIn("120", window.btn_load_all.text())
+                self.assertEqual(window.btn_load_all.text(), "加载全部")
+                self.assertIn("120", window.btn_load_all.toolTip())
 
                 # Reset filter should reload everything, exceeding the 100 limit since _is_first_load is now False
                 window._reset_invoice_filters()
@@ -554,11 +555,66 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.assertIn("120", window.filter_buttons["all"].text())
                 # Load-all button should be visible
                 self.assertFalse(window.btn_load_all.isHidden())
-                self.assertIn("加载全部 120 张", window.btn_load_all.text())
+                self.assertEqual(window.btn_load_all.text(), "加载全部")
+                self.assertIn("120", window.btn_load_all.toolTip())
                 # Status bar should show limited info
                 status_text = window.lbl_status_left.text()
                 self.assertIn("100 / 120", status_text)
                 self.assertIn("首屏限量加载", status_text)
+
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                app.processEvents()
+
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_status_bar_load_all_button_not_clipped(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            from scripts.invoice_fetch.db import InvoiceDB
+            with InvoiceDB(self.db_path) as db:
+                for i in range(254):
+                    db.insert_invoice({
+                        "invoice_number": f"CLIP_{i:04d}",
+                        "total_amount": "10.00",
+                        "seller_name": "Clip Seller",
+                        "invoice_date": "2026-06-01",
+                        "category": "Office",
+                        "review_status": "to_review"
+                    })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            window = InvoiceReviewApp(self.db_path, splash=None)
+            try:
+                window.resize(980, 850)
+                window._deferred_init()
+                window.show()
+                app.processEvents()
+                app.processEvents()
+
+                self.assertTrue(window.btn_load_all.isVisible())
+                self.assertEqual(window.btn_load_all.text(), "加载全部")
+                self.assertIn("254", window.btn_load_all.toolTip())
+                self.assertGreaterEqual(
+                    window.btn_load_all.geometry().width(),
+                    window.btn_load_all.fontMetrics().horizontalAdvance(window.btn_load_all.text()) + 24,
+                )
+                self.assertGreaterEqual(
+                    window.btn_toggle_log.geometry().width(),
+                    window.btn_toggle_log.fontMetrics().horizontalAdvance(window.btn_toggle_log.text()) + 24,
+                )
+                self.assertIn("100 / 254", window.lbl_status_left.text())
+                self.assertIn("首屏限量加载", window.lbl_status_left.text())
+                self.assertGreaterEqual(window.status_bar.height(), 36)
 
             finally:
                 if hasattr(window, "db") and window.db is not None:

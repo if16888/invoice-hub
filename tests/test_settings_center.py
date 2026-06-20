@@ -3,6 +3,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
 from tests.test_settings_dialog import SettingsDialogTestMixin
@@ -348,8 +349,8 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         row = AIProfileRow(profile, key_source="env", parent=dialog)
         self.assertFalse(row.btn_activate.isHidden())
         self.assertTrue(row.btn_activate.isEnabled())
-        self.assertEqual(row.btn_activate.text(), "启用")
-        self.assertTrue(row.btn_activate.minimumWidth() >= 76)
+        self.assertEqual(row.btn_activate.text(), "启用 AI")
+        self.assertTrue(row.btn_activate.minimumWidth() >= 84)
 
         emitted = False
         def on_activate(pid):
@@ -423,15 +424,18 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
              patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load):
             self.assertEqual(len(dialog.ai_rows), 1)
             row = dialog.ai_rows[0]
-            self.assertEqual(row.btn_activate.text(), "启用")
+            self.assertEqual(row.btn_activate.text(), "启用 AI")
             row.btn_activate.click()
             mock_save.assert_called_once()
             self.assertTrue(dialog.cfg["ai_profiles"][0]["enabled"])
             self.assertEqual(dialog.cfg["ai"]["provider"], "deepseek")
             self.assertEqual(dialog.cfg["ai"]["profile_id"], "ai-one")
 
-    def test_disabled_ai_profile_row_geometry(self):
-        config = {
+    def test_ai_disabled_profile_row_text_visible_in_real_dialog(self):
+        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
+        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+
+        dialog = self._make_dialog(config={
             "email": {"provider": "qq", "address": "your_email@qq.com"},
             "ai": {"provider": "none", "model": "", "enabled": False},
             "ai_profiles": [
@@ -443,20 +447,42 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                     "enabled": False,
                 }
             ],
-        }
-        dialog = self._make_dialog(config=config)
+        })
+        dialog.setStyleSheet(APP_STYLESHEET)
+        dialog.resize(650, 580)
         dialog.tab_widget.setCurrentIndex(1)
+        dialog._refresh_ai_profile_list()
         dialog.show()
+        self.app.processEvents()
         QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
+        self.assertIsInstance(row, AIProfileRow)
+        self.assertEqual(row.btn_activate.text(), "启用 AI")
         self.assertTrue(row.btn_activate.isVisible())
-        self.assertEqual(row.btn_activate.text(), "启用")
-        self.assertTrue(row.btn_activate.geometry().width() >= row.btn_activate.sizeHint().width())
+        self.assertGreaterEqual(
+            row.btn_activate.geometry().width(),
+            row.btn_activate.fontMetrics().horizontalAdvance(row.btn_activate.text()) + 24,
+        )
+        self.assertTrue(row.lbl_key_status.isVisible())
+        self.assertTrue(row.btn_edit.isVisible())
+        self.assertTrue(row.btn_delete.isVisible())
 
-    def test_active_ai_profile_row_geometry(self):
-        config = {
+        key_x = row.lbl_key_status.mapTo(row, QPoint(0, 0)).x()
+        activate_x = row.btn_activate.mapTo(row, QPoint(0, 0)).x()
+        edit_x = row.btn_edit.mapTo(row, QPoint(0, 0)).x()
+        delete_x = row.btn_delete.mapTo(row, QPoint(0, 0)).x()
+
+        self.assertLess(key_x, activate_x)
+        self.assertLess(activate_x + row.btn_activate.width(), edit_x + 1)
+        self.assertLess(edit_x + row.btn_edit.width(), delete_x + 1)
+
+    def test_ai_active_profile_row_text_visible_in_real_dialog(self):
+        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
+        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+
+        dialog = self._make_dialog(config={
             "email": {"provider": "qq", "address": "your_email@qq.com"},
             "ai": {"provider": "deepseek", "model": "deepseek-chat", "profile_id": "ai-one", "enabled": True},
             "ai_profiles": [
@@ -468,18 +494,36 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                     "enabled": True,
                 }
             ],
-        }
-        dialog = self._make_dialog(config=config)
+        })
+        dialog.setStyleSheet(APP_STYLESHEET)
+        dialog.resize(650, 580)
         dialog.tab_widget.setCurrentIndex(1)
+        dialog._refresh_ai_profile_list()
         dialog.show()
+        self.app.processEvents()
         QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
+        self.assertIsInstance(row, AIProfileRow)
         self.assertTrue(hasattr(row, "lbl_active"))
         self.assertEqual(row.lbl_active.text(), "当前生效")
         self.assertTrue(row.lbl_active.isVisible())
-        self.assertTrue(row.lbl_active.geometry().width() >= row.lbl_active.sizeHint().width())
+        self.assertGreaterEqual(
+            row.lbl_active.geometry().width(),
+            row.lbl_active.fontMetrics().horizontalAdvance(row.lbl_active.text()) + 24,
+        )
+        self.assertTrue(row.btn_edit.isVisible())
+        self.assertTrue(row.btn_delete.isVisible())
+
+        key_x = row.lbl_key_status.mapTo(row, QPoint(0, 0)).x()
+        active_x = row.lbl_active.mapTo(row, QPoint(0, 0)).x()
+        edit_x = row.btn_edit.mapTo(row, QPoint(0, 0)).x()
+        delete_x = row.btn_delete.mapTo(row, QPoint(0, 0)).x()
+
+        self.assertLess(key_x, active_x)
+        self.assertLess(active_x + row.lbl_active.width(), edit_x + 1)
+        self.assertLess(edit_x + row.btn_edit.width(), delete_x + 1)
 
     def test_status_badge_styles_present(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
@@ -489,7 +533,9 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertIn('QLabel.StatusBadge[variant="info"]', APP_STYLESHEET)
 
     def test_disabled_ai_row_geometric_order(self):
-        config = {
+        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+
+        dialog = self._make_dialog(config={
             "email": {"provider": "qq", "address": "your_email@qq.com"},
             "ai": {"provider": "none", "model": "", "enabled": False},
             "ai_profiles": [
@@ -501,23 +547,27 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                     "enabled": False,
                 }
             ],
-        }
-        dialog = self._make_dialog(config=config)
+        })
+        dialog.setStyleSheet(APP_STYLESHEET)
+        dialog.resize(650, 580)
         dialog.tab_widget.setCurrentIndex(1)
+        dialog._refresh_ai_profile_list()
         dialog.show()
+        self.app.processEvents()
         QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
 
-        # Get visual rectangles/geometries
-        key_badge_rect = row.lbl_key_status.geometry()
-        btn_activate_rect = row.btn_activate.geometry()
-        btn_edit_rect = row.btn_edit.geometry()
+        key_x = row.lbl_key_status.mapTo(row, QPoint(0, 0)).x()
+        activate_x = row.btn_activate.mapTo(row, QPoint(0, 0)).x()
+        edit_x = row.btn_edit.mapTo(row, QPoint(0, 0)).x()
+        delete_x = row.btn_delete.mapTo(row, QPoint(0, 0)).x()
 
-        self.assertTrue(btn_activate_rect.width() > 0)
-        self.assertTrue(key_badge_rect.x() + key_badge_rect.width() <= btn_activate_rect.x())
-        self.assertTrue(btn_activate_rect.x() + btn_activate_rect.width() <= btn_edit_rect.x())
+        self.assertTrue(row.btn_activate.width() > 0)
+        self.assertLess(key_x + row.lbl_key_status.width(), activate_x + 1)
+        self.assertLess(activate_x + row.btn_activate.width(), edit_x + 1)
+        self.assertLess(edit_x + row.btn_edit.width(), delete_x + 1)
 
     def test_combobox_popup_styles_present(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET

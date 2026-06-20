@@ -4,7 +4,7 @@ Invoice Hub Reusable UI Helper Components.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QPushButton, QLabel, QFrame, QHBoxLayout
+from PySide6.QtWidgets import QPushButton, QLabel, QFrame, QHBoxLayout, QSizePolicy, QLayout
 
 
 def make_button(text: str, variant: str = "secondary", min_width: int = None, tooltip: str = None) -> QPushButton:
@@ -15,6 +15,7 @@ def make_button(text: str, variant: str = "secondary", min_width: int = None, to
     btn.setProperty("variant", variant)
     btn.setAutoDefault(False)
     btn.setDefault(False)
+    btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
 
     # Apply height constraints
     if variant == "toolbar":
@@ -24,22 +25,12 @@ def make_button(text: str, variant: str = "secondary", min_width: int = None, to
     else:
         btn.setFixedHeight(28)
 
-    # Determine default min_width based on text and variant
-    char_count = len(text)
-    if min_width is not None:
-        default_w = min_width
-    else:
-        if char_count <= 2:
-            if variant == "primary":
-                default_w = 76
-            elif variant == "danger":
-                default_w = 56
-            else:
-                default_w = 56
-        else:
-            default_w = btn.sizeHint().width() + 16
-
-    btn.setMinimumWidth(max(default_w, btn.sizeHint().width()))
+    btn.ensurePolished()
+    text_width = btn.fontMetrics().horizontalAdvance(btn.text())
+    size_hint_width = btn.sizeHint().width()
+    requested_min_width = int(min_width or 0)
+    actual_min_width = max(text_width + 24, size_hint_width, requested_min_width)
+    btn.setMinimumWidth(actual_min_width)
 
     if tooltip:
         btn.setToolTip(tooltip)
@@ -55,6 +46,7 @@ def make_badge(text: str, variant: str = "muted", min_width: int = None, tooltip
     lbl.setProperty("class", "StatusBadge")
     lbl.setProperty("variant", variant)
     lbl.setAlignment(Qt.AlignCenter)
+    lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     default_w = min_width or 0
     lbl.setMinimumWidth(max(default_w, lbl.sizeHint().width() + 12))
@@ -81,13 +73,16 @@ def build_action_cluster(widgets: list, min_width: int = None) -> QFrame:
     """
     frame = QFrame()
     frame.setProperty("class", "ActionCluster")
+    frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     
     layout = QHBoxLayout(frame)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(8)
     layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    layout.setSizeConstraint(QLayout.SetFixedSize)
     
     for w in widgets:
+        w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         layout.addWidget(w)
         
     if min_width is not None:
