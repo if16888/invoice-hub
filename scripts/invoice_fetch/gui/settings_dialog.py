@@ -197,8 +197,10 @@ class AIProfileRow(QFrame):
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
 
-        # Info layout: Vertical (Name & Provider/Model)
-        info_layout = QVBoxLayout()
+        # Info container (Widget + QVBoxLayout)
+        info_widget = QWidget()
+        info_layout = QVBoxLayout(info_widget)
+        info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
 
         lbl_name = QLabel(self.profile.get("name") or "未命名")
@@ -211,17 +213,31 @@ class AIProfileRow(QFrame):
 
         info_layout.addWidget(lbl_name)
         info_layout.addWidget(lbl_model)
-        layout.addLayout(info_layout)
+        layout.addWidget(info_widget, stretch=1)
 
-        layout.addStretch()
+        # Action container (Widget + QHBoxLayout)
+        action_widget = QWidget()
+        action_layout = QHBoxLayout(action_widget)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(8)
+        action_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         # API Key status badge
         key_status_label = AI_KEY_SOURCE_LABELS.get(key_source, AI_KEY_SOURCE_LABELS["missing"])
-        key_status_text = f"🔑 {key_status_label}"
-        lbl_key_status = QLabel(key_status_text)
-        lbl_key_status.setProperty("class", "StatusBadge")
-        lbl_key_status.setProperty("variant", "success" if key_source != "missing" else "warning")
-        layout.addWidget(lbl_key_status)
+        self.lbl_key_status = QLabel(key_status_label)
+        self.lbl_key_status.setProperty("class", "StatusBadge")
+        self.lbl_key_status.setProperty("variant", "success" if key_source != "missing" else "warning")
+        self.lbl_key_status.setMinimumWidth(80)
+        self.lbl_key_status.setAlignment(Qt.AlignCenter)
+
+        tooltip_map = {
+            "profile": "此 AI 配置已保存专属 API Key",
+            "provider": "沿用旧版全局 Provider Key；重新输入 API Key 可保存为配置专属 Key",
+            "env": "当前使用系统环境变量中的 API Key",
+            "missing": "尚未设置 API Key，启用前需要配置"
+        }
+        self.lbl_key_status.setToolTip(tooltip_map.get(key_source, tooltip_map["missing"]))
+        action_layout.addWidget(self.lbl_key_status)
 
         # Activation state / Set as current button
         self.is_enabled = self.profile.get("enabled", False)
@@ -229,26 +245,33 @@ class AIProfileRow(QFrame):
             self.lbl_active = QLabel("当前生效")
             self.lbl_active.setProperty("class", "StatusBadge")
             self.lbl_active.setProperty("variant", "active")
-            layout.addWidget(self.lbl_active)
+            self.lbl_active.setMinimumWidth(72)
+            self.lbl_active.setAlignment(Qt.AlignCenter)
+            action_layout.addWidget(self.lbl_active)
         else:
             self.btn_activate = QPushButton("启用")
             self.btn_activate.clicked.connect(self._on_activate)
             self.btn_activate.setProperty("class", "PrimaryBtn")
-            self.btn_activate.setFixedWidth(60)
-            layout.addWidget(self.btn_activate)
+            self.btn_activate.setMinimumWidth(76)
+            self.btn_activate.setFixedHeight(28)
+            action_layout.addWidget(self.btn_activate)
 
         # Actions: Edit and Delete
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_edit.setProperty("class", "SecondaryBtn")
-        self.btn_edit.setFixedWidth(50)
-        layout.addWidget(self.btn_edit)
+        self.btn_edit.setMinimumWidth(56)
+        self.btn_edit.setFixedHeight(28)
+        action_layout.addWidget(self.btn_edit)
 
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self._on_delete)
         self.btn_delete.setProperty("class", "SettingsDangerBtn")
-        self.btn_delete.setFixedWidth(50)
-        layout.addWidget(self.btn_delete)
+        self.btn_delete.setMinimumWidth(56)
+        self.btn_delete.setFixedHeight(28)
+        action_layout.addWidget(self.btn_delete)
+
+        layout.addWidget(action_widget, stretch=0)
 
     def _on_activate(self):
         self.activate_requested.emit(self.profile_id)

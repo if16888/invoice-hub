@@ -704,23 +704,23 @@ QPushButton.SettingsDangerBtn:pressed {
 
 /* StatusBadge Variants */
 QLabel.StatusBadge[variant="active"] {
-    background-color: #2563EB;
-    color: #FFFFFF;
-    border: none;
+    background-color: #DBEAFE;
+    color: #1D4ED8;
+    border: 1px solid #93C5FD;
 }
 QLabel.StatusBadge[variant="success"] {
-    background-color: #D1FAE5;
-    color: #065F46;
-    border: 1px solid #A7F3D0;
+    background-color: #DCFCE7;
+    color: #166534;
+    border: 1px solid #86EFAC;
 }
 QLabel.StatusBadge[variant="warning"] {
     background-color: #FEF3C7;
-    color: #D97706;
+    color: #92400E;
     border: 1px solid #FCD34D;
 }
 QLabel.StatusBadge[variant="info"] {
     background-color: #EFF6FF;
-    color: #1E40AF;
+    color: #1D4ED8;
     border: 1px solid #BFDBFE;
 }
 """ + MENU_STYLE + """
