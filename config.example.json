@@ -47,10 +47,27 @@
     "folder": "INBOX",
     "months_back": 3
   },
+  "ai_profiles": [
+    {
+      "profile_id": "profile-deepseek-default",
+      "name": "DeepSeek 官方配置",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "enabled": false
+    },
+    {
+      "profile_id": "profile-gemini-default",
+      "name": "Gemini 官方配置",
+      "provider": "gemini",
+      "model": "gemini-2.5-flash",
+      "enabled": false
+    }
+  ],
   "ai": {
     "provider": "none",
     "model": "",
-    "batch_size": 20
+    "batch_size": 20,
+    "profile_id": ""
   },
   "reimbursement": {
     "buyer_name": "示例科技有限公司",

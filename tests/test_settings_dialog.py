@@ -1,3 +1,4 @@
+import copy
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -102,6 +103,15 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(dialog.txt_email.text(), "abc@outlook.com")
         self.assertEqual(dialog.txt_months.text(), "6")
         self.assertEqual(dialog.txt_imap_server.text(), "outlook.office365.com")
+
+    def test_saved_outlook_account_name_is_loaded_into_editor(self):
+        config = self._multi_account_config("abc@outlook.com")
+        config["email_accounts"][1]["name"] = "海外报销邮箱"
+        dialog = self._make_dialog(config)
+
+        self._select(dialog, "outlook")
+
+        self.assertEqual(dialog.txt_mailbox_name.text(), "海外报销邮箱")
 
     def test_selecting_outlook_does_not_rewrite_saved_qq_email_when_no_outlook_account_exists(self):
         dialog = self._make_dialog()
@@ -291,9 +301,18 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
 
     def _save_without_side_effects(self, dialog):
         dialog.test_success = True
-        with patch("scripts.invoice_fetch.config.save_config"), patch(
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load(path=None):
+            return copy.deepcopy(persisted_cfg)
+
+        with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save), patch(
             "scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat",
-            return_value={"loaded": True},
+            side_effect=fake_load,
         ), patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"), patch(
             "scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning"
         ), patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.critical"), patch(
@@ -314,6 +333,32 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
             if account["address"] == "abc@outlook.com"
         )
         self.assertEqual(outlook["mailbox_key"], "outlook-primary")
+
+    def test_saving_mailbox_returns_to_settings_home_page(self):
+        dialog = self._make_dialog()
+        dialog._open_new_mailbox_editor()
+        dialog.txt_email.setText("tester@qq.com")
+        dialog.txt_auth_code.setText("new-auth-code")
+        dialog.test_success = True
+
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load():
+            return copy.deepcopy(persisted_cfg)
+
+        with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+             patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load), \
+             patch("scripts.invoice_fetch.credentials.set_auth_code"), \
+             patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"):
+            dialog._save_mailbox_settings()
+
+        mock_save.assert_called_once()
+        self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_settings_home)
+        self.assertEqual(dialog.tab_widget.currentIndex(), 0)
 
     def test_typing_new_outlook_account_preserves_loaded_qq_account(self):
         # Under v0.1.3 safety rules, saving a new Outlook account is blocked

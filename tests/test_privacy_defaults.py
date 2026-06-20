@@ -1,7 +1,8 @@
-﻿import json
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import requests
 
@@ -46,6 +47,11 @@ class PrivacyDefaultTests(unittest.TestCase):
         self.assertIsNone(results[0]["is_invoice"])
         self.assertIn("AI 分类未启用", results[0]["reason"])
 
+    @patch("scripts.invoice_fetch.ai_classifier.get_ai_api_key", return_value="")
+    def test_ai_classifier_defaults_gemini_to_25_flash(self, _mock_get_key):
+        ai = AIClassifier(provider="gemini", model="", batch_size=20)
+
+        self.assertEqual(ai.model, "gemini-2.5-flash")
     def test_ai_masking_redacts_common_sensitive_patterns(self):
         masked = AIClassifier._mask_sensitive_info(
             '张三 <tester@example.com> 手机 13812345678 订单 20260520123456789'
@@ -90,13 +96,13 @@ class PrivacyDefaultTests(unittest.TestCase):
     def test_ai_request_error_summary_does_not_leak_url_or_key(self):
         request = requests.Request(
             "POST",
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=secret-token",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=secret-token",
         ).prepare()
         response = requests.Response()
         response.status_code = 403
         response.request = request
         exc = requests.HTTPError(
-            "403 Client Error for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=secret-token",
+            "403 Client Error for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=secret-token",
             response=response,
         )
 
@@ -106,6 +112,49 @@ class PrivacyDefaultTests(unittest.TestCase):
         self.assertNotIn("secret-token", safe)
         self.assertNotIn("generativelanguage", safe)
         self.assertNotIn("key=", safe)
+
+    @patch("scripts.invoice_fetch.ai_classifier.get_ai_api_key", return_value="test-key")
+    def test_classifier_loads_profile_scoped_key(self, mock_get_key):
+        AIClassifier(
+            provider="deepseek",
+            model="deepseek-chat",
+            batch_size=20,
+            profile_id="ai-main",
+        )
+        mock_get_key.assert_called_once_with("deepseek", profile_id="ai-main")
+
+    def test_run_classify_forwards_active_profile_id(self):
+        captured = {}
+
+        class FakeClassifier:
+            auth_failed = False
+
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def classify_batch(self, emails):
+                return [{"uid": emails[0]["uid"], "is_invoice": True, "reason": "test"}]
+
+        db = MagicMock()
+        db.get_unclassified_emails.return_value = [{
+            "uid": 1,
+            "subject": "普通邮件",
+            "sender": "sender@example.com",
+            "mailbox_key": "mailbox-one",
+        }]
+        db.is_trusted_sender.return_value = False
+        ai_cfg = {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "batch_size": 20,
+            "profile_id": "ai-main",
+        }
+        import scripts.invoice_fetch.__main__ as invoice_main
+        with patch.object(invoice_main, "AIClassifier", FakeClassifier, create=True), patch.object(
+            invoice_main, "rule_classify", return_value=(-1, "未命中本地规则")
+        ):
+            invoice_main._run_classify(db, ai_cfg, no_ai=False, mailbox_key="mailbox-one")
+        self.assertEqual(captured["profile_id"], "ai-main")
 
 
 if __name__ == "__main__":
