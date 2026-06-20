@@ -815,6 +815,11 @@ class SettingsDialog(QDialog):
         if not target_account:
             return
 
+        enabled_count = sum(
+            1 for acc in email_accounts
+            if acc.get("enabled", True)
+        )
+
         if not enabled and enabled_count <= 1 and target_account.get("enabled", True):
             QMessageBox.warning(self, "操作被拒绝", "至少需要保留一个启用的邮箱账号。")
             self._refresh_mailbox_list()

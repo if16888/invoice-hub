@@ -62,6 +62,89 @@ class SettingsCenterMailboxTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(dialog._loaded_account_mailbox_key, "second@qq.com")
         self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_mailbox_editor)
 
+    def test_disable_one_of_two_enabled_mailboxes_succeeds(self):
+        dialog = self._make_dialog()
+        dialog.cfg["email_accounts"] = [
+            {
+                "mailbox_key": "qq1",
+                "name": "QQ1",
+                "enabled": True,
+                "provider": "qq",
+                "address": "qq1@qq.com",
+                "username": "qq1@qq.com",
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+            },
+            {
+                "mailbox_key": "qq2",
+                "name": "QQ2",
+                "enabled": True,
+                "provider": "qq",
+                "address": "qq2@qq.com",
+                "username": "qq2@qq.com",
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+            }
+        ]
+        dialog._build_saved_account_maps()
+        with patch("scripts.invoice_fetch.config.save_config") as mock_save:
+            dialog._set_mailbox_enabled("qq1", False)
+        mock_save.assert_called_once()
+        self.assertFalse(dialog.cfg["email_accounts"][0]["enabled"])
+        self.assertTrue(dialog.cfg["email_accounts"][1]["enabled"])
+
+    def test_disable_last_enabled_mailbox_is_rejected(self):
+        dialog = self._make_dialog()
+        dialog.cfg["email_accounts"] = [
+            {
+                "mailbox_key": "qq1",
+                "name": "QQ1",
+                "enabled": True,
+                "provider": "qq",
+                "address": "qq1@qq.com",
+                "username": "qq1@qq.com",
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+            }
+        ]
+        dialog._build_saved_account_maps()
+        with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
+             patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
+            dialog._set_mailbox_enabled("qq1", False)
+        mock_warn.assert_called_once()
+        mock_save.assert_not_called()
+        self.assertTrue(dialog.cfg["email_accounts"][0]["enabled"])
+
+    def test_enable_disabled_mailbox_succeeds(self):
+        dialog = self._make_dialog()
+        dialog.cfg["email_accounts"] = [
+            {
+                "mailbox_key": "qq1",
+                "name": "QQ1",
+                "enabled": True,
+                "provider": "qq",
+                "address": "qq1@qq.com",
+                "username": "qq1@qq.com",
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+            },
+            {
+                "mailbox_key": "disabled-key",
+                "name": "QQ2",
+                "enabled": False,
+                "provider": "qq",
+                "address": "qq2@qq.com",
+                "username": "qq2@qq.com",
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+            }
+        ]
+        dialog._build_saved_account_maps()
+        with patch("scripts.invoice_fetch.config.save_config") as mock_save:
+            dialog._set_mailbox_enabled("disabled-key", True)
+        mock_save.assert_called_once()
+        self.assertTrue(dialog.cfg["email_accounts"][1]["enabled"])
+
 
 class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
 
