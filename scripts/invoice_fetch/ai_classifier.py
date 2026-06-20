@@ -54,7 +54,7 @@ _ENDPOINTS = {
 _DEFAULT_MODELS = {
     "none": "",
     "deepseek": "deepseek-chat",
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-flash",
 }
 
 _SYSTEM_PROMPT = """\

@@ -9,7 +9,7 @@ VALID_AI_PROVIDERS = {"deepseek", "gemini"}
 
 _DEFAULT_AI_MODELS = {
     "deepseek": "deepseek-chat",
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-flash",
 }
 
 _LEGACY_PROFILE_NAMES = {

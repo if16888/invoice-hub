@@ -612,6 +612,80 @@ class GenericImapConfigTests(unittest.TestCase):
                 self.skipTest(f"Skipping SettingsDialog GUI test: {e}")
             raise
 
+    def test_settings_dialog_preserves_stable_mailbox_key_when_provider_changes(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
+            import sys
+            from unittest.mock import MagicMock, patch
+
+            app = QApplication.instance() or QApplication(sys.argv)
+            from scripts.invoice_fetch.gui.app import SettingsDialog
+
+            parent = QWidget()
+            parent.write_log = MagicMock()
+            parent.config = {}
+            dialog = SettingsDialog(parent)
+            dialog.cfg = {
+                "email": {"provider": "qq", "address": "old@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+                "email_accounts": [
+                    {
+                        "name": "Research Inbox",
+                        "enabled": True,
+                        "provider": "qq",
+                        "address": "old@qq.com",
+                        "username": "old@qq.com",
+                        "mailbox_key": "stable-1",
+                        "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                        "search": {"folder": "INBOX", "months_back": 3},
+                    }
+                ],
+            }
+            dialog._build_saved_account_maps()
+            dialog._open_mailbox_editor("stable-1")
+            dialog.cards["gmail"].click()
+            self.assertEqual(dialog._loaded_account_mailbox_key, "stable-1")
+            self.assertEqual(dialog.txt_mailbox_name.text(), "Research Inbox")
+            dialog.txt_email.setText("new@gmail.com")
+            dialog.txt_auth_code.setText("new-auth-code")
+            dialog.test_success = False
+
+            persisted_cfg = copy.deepcopy(dialog.cfg)
+
+            def fake_save(cfg, path=None):
+                nonlocal persisted_cfg
+                persisted_cfg = copy.deepcopy(cfg)
+
+            def fake_load(path=None):
+                return copy.deepcopy(persisted_cfg)
+
+            with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+                 patch("scripts.invoice_fetch.gui.app.load_config_safe", side_effect=fake_load), \
+                 patch("scripts.invoice_fetch.credentials.set_auth_code") as mock_set_auth, \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.question", return_value=QMessageBox.Yes), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.warning"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
+                dialog._save_mailbox_settings()
+
+            mock_save.assert_called_once()
+            mock_set_auth.assert_called_once_with("new@gmail.com", "new-auth-code")
+            self.assertEqual(len(dialog.cfg["email_accounts"]), 1)
+            saved = dialog.cfg["email_accounts"][0]
+            self.assertEqual(saved["address"], "new@gmail.com")
+            self.assertEqual(saved["provider"], "gmail")
+            self.assertEqual(saved["mailbox_key"], "stable-1")
+            self.assertEqual(saved["name"], "Research Inbox")
+
+            dialog.close()
+            dialog.deleteLater()
+            app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping SettingsDialog GUI test: {e}")
+            raise
+
     def test_settings_dialog_ai_provider_model_switching_and_custom_save(self):
         try:
             from PySide6.QtWidgets import QApplication, QWidget
@@ -639,9 +713,9 @@ class GenericImapConfigTests(unittest.TestCase):
             dialog.combo_ai_provider.setCurrentText("deepseek")
             self.assertEqual(dialog.txt_ai_model.currentText(), "deepseek-chat")
 
-            # 3. Switch to gemini and verify default model is gemini-2.0-flash
+            # 3. Switch to gemini and verify default model is gemini-2.5-flash
             dialog.combo_ai_provider.setCurrentText("gemini")
-            self.assertEqual(dialog.txt_ai_model.currentText(), "gemini-2.0-flash")
+            self.assertEqual(dialog.txt_ai_model.currentText(), "gemini-2.5-flash")
 
             # 4. Fill name, select custom model and save
             dialog.txt_ai_name.setText("My Custom DeepSeek")

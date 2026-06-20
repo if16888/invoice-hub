@@ -49,6 +49,15 @@ class AIProfileAdapterTests(unittest.TestCase):
 
         self.assertEqual(adapter.get_ai_profiles(cfg, source_cfg=cfg), [])
 
+    def test_legacy_gemini_uses_gemini_2_5_flash_default(self):
+        adapter = self._adapter()
+        cfg = {"ai": {"provider": "gemini", "model": "", "batch_size": 20}}
+
+        profiles = adapter.get_ai_profiles(cfg, source_cfg=cfg)
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0]["model"], "gemini-2.5-flash")
+
     def test_explicit_empty_profiles_override_legacy_ai(self):
         adapter = self._adapter()
         source_cfg = {

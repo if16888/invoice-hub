@@ -47,6 +47,11 @@ class PrivacyDefaultTests(unittest.TestCase):
         self.assertIsNone(results[0]["is_invoice"])
         self.assertIn("AI 分类未启用", results[0]["reason"])
 
+    @patch("scripts.invoice_fetch.ai_classifier.get_ai_api_key", return_value="")
+    def test_ai_classifier_defaults_gemini_to_25_flash(self, _mock_get_key):
+        ai = AIClassifier(provider="gemini", model="", batch_size=20)
+
+        self.assertEqual(ai.model, "gemini-2.5-flash")
     def test_ai_masking_redacts_common_sensitive_patterns(self):
         masked = AIClassifier._mask_sensitive_info(
             '张三 <tester@example.com> 手机 13812345678 订单 20260520123456789'
@@ -91,13 +96,13 @@ class PrivacyDefaultTests(unittest.TestCase):
     def test_ai_request_error_summary_does_not_leak_url_or_key(self):
         request = requests.Request(
             "POST",
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=secret-token",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=secret-token",
         ).prepare()
         response = requests.Response()
         response.status_code = 403
         response.request = request
         exc = requests.HTTPError(
-            "403 Client Error for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=secret-token",
+            "403 Client Error for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=secret-token",
             response=response,
         )
 
