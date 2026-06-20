@@ -2,6 +2,7 @@
 """Invoice Hub mailbox and AI settings dialog."""
 
 import sys
+from copy import deepcopy
 from uuid import uuid4
 
 from PySide6.QtCore import Qt, Signal
@@ -45,6 +46,12 @@ PROVIDER_EMAIL_NAMES = {
     "gmail": "Gmail",
     "outlook": "Outlook",
     "custom": "自定义 IMAP",
+}
+AI_KEY_SOURCE_LABELS = {
+    "profile": "配置专属 Key",
+    "provider": "旧版 Provider Key",
+    "env": "环境变量 Key",
+    "missing": "未配置",
 }
 
 
@@ -179,7 +186,7 @@ class AIProfileRow(QFrame):
     edit_requested = Signal(str)
     delete_requested = Signal(str)
 
-    def __init__(self, profile: dict, key_available: bool, parent=None):
+    def __init__(self, profile: dict, key_source: str, parent=None):
         super().__init__(parent)
         self.parent_dialog = parent
         self.profile = dict(profile)
@@ -211,10 +218,11 @@ class AIProfileRow(QFrame):
         layout.addStretch()
 
         # API Key status badge
-        key_status_text = "🔑 已保存" if key_available else "🔑 未设置"
+        key_status_label = AI_KEY_SOURCE_LABELS.get(key_source, AI_KEY_SOURCE_LABELS["missing"])
+        key_status_text = f"🔑 {key_status_label}"
         lbl_key_status = QLabel(key_status_text)
         lbl_key_status.setProperty("class", "StatusBadge")
-        lbl_key_status.setProperty("variant", "success" if key_available else "warning")
+        lbl_key_status.setProperty("variant", "success" if key_source != "missing" else "warning")
         layout.addWidget(lbl_key_status)
 
         # Activation state / Set as current button
@@ -275,6 +283,7 @@ class SettingsDialog(QDialog):
         self._loaded_account_provider = ""
         self._missing_saved_provider = ""
         self._editing_ai_profile_id = ""
+        self._editing_existing_mailbox = False
 
         from ..config import _EMAIL_PROVIDER_PRESETS
         self.cfg = _load_config_safe_compat()
@@ -450,7 +459,12 @@ class SettingsDialog(QDialog):
         self.txt_email.setPlaceholderText("your_email@example.com")
         self.txt_email.textChanged.connect(self._on_email_text_changed)
 
+        self.txt_mailbox_name = QLineEdit()
+        self.txt_mailbox_name.setPlaceholderText("例如：报销邮箱")
+        self.txt_mailbox_name.textChanged.connect(self._update_wizard_ui)
+
         self.lbl_provider_hint = QLabel()
+        form_layout.addRow("邮箱名称:", self.txt_mailbox_name)
         self.lbl_provider_hint.setWordWrap(True)
         self.lbl_provider_hint.setStyleSheet("color: #D97706; font-size: 11px;")
 
@@ -555,9 +569,11 @@ class SettingsDialog(QDialog):
         self.lbl_sum_provider = QLabel()
         self.lbl_sum_email = QLabel()
         self.lbl_sum_months = QLabel()
+        self.lbl_sum_name = QLabel()
         self.lbl_sum_protocol = QLabel()
 
         sum_form.addRow("邮箱提供商:", self.lbl_sum_provider)
+        sum_form.addRow("邮箱名称:", self.lbl_sum_name)
         sum_form.addRow("邮箱账号:", self.lbl_sum_email)
         sum_form.addRow("检索月份范围:", self.lbl_sum_months)
         sum_form.addRow("接收协议/服务器:", self.lbl_sum_protocol)
@@ -771,10 +787,10 @@ class SettingsDialog(QDialog):
             self.ai_list_layout.insertWidget(0, lbl_empty)
             self.ai_rows.append(lbl_empty)
         else:
-            from ..credentials import has_ai_api_key
+            from ..credentials import get_ai_api_key_source
             for idx, p in enumerate(profiles):
-                key_avail = has_ai_api_key(p["provider"], p["profile_id"])
-                row = AIProfileRow(p, key_avail, self)
+                key_source = get_ai_api_key_source(p["provider"], p["profile_id"])
+                row = AIProfileRow(p, key_source, self)
                 row.edit_requested.connect(self._open_ai_editor)
                 row.delete_requested.connect(self._delete_ai_profile)
                 row.activate_requested.connect(self._set_active_ai_profile)
@@ -860,8 +876,36 @@ class SettingsDialog(QDialog):
         if reply == QMessageBox.No:
             return
 
-        email_accounts = [acc for acc in email_accounts if acc != target_account]
-        self.cfg["email_accounts"] = email_accounts
+        updated_accounts = [acc for acc in email_accounts if acc != target_account]
+        updated_cfg = deepcopy(self.cfg)
+        updated_cfg["email_accounts"] = updated_accounts
+
+        first_enabled = next((acc for acc in updated_accounts if acc.get("enabled", True)), None)
+        if first_enabled:
+            updated_cfg["email"] = {
+                "provider": first_enabled.get("provider", "qq"),
+                "address": first_enabled.get("address", ""),
+                "username": first_enabled.get("username", first_enabled.get("address", "")),
+            }
+            updated_cfg["imap"] = dict(first_enabled.get("imap", {}))
+            updated_cfg["search"] = dict(first_enabled.get("search", {}))
+        else:
+            updated_cfg["email"] = {"provider": "qq", "address": "", "username": ""}
+            updated_cfg["imap"] = {"server": "", "port": 993, "ssl": True}
+            updated_cfg["search"] = {"folder": "INBOX", "months_back": 3}
+
+        from ..config import save_config
+        try:
+            save_config(updated_cfg)
+            self.cfg = updated_cfg
+            if hasattr(self.parent, "config"):
+                self.parent.config = _load_config_safe_compat()
+            self._build_saved_account_maps()
+            self._refresh_mailbox_list()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存配置失败: {e}")
+            return
+        email_accounts = updated_accounts
 
         email = target_account.get("address", "")
         if email:
@@ -914,11 +958,15 @@ class SettingsDialog(QDialog):
             self.tab_widget.setCurrentIndex(1)
 
     def _open_new_mailbox_editor(self):
+        self._editing_existing_mailbox = False
         self._loaded_account_mailbox_key = ""
         self._loaded_account_address = ""
         self._loaded_account_provider = ""
         self._missing_saved_provider = ""
+        self._email_is_user_draft = False
+        self.test_success = False
         self.txt_email.clear()
+        self.txt_mailbox_name.setText(self._provider_display_name("qq"))
         self.txt_months.setText("3")
         self.txt_auth_code.clear()
         self.txt_auth_code.setPlaceholderText("请输入授权码/应用密码")
@@ -938,6 +986,7 @@ class SettingsDialog(QDialog):
             return
 
         self._load_saved_account(acc)
+        self._editing_existing_mailbox = True
         self.current_step = 1
         self._update_wizard_ui()
         self.settings_stack.setCurrentWidget(self.page_mailbox_editor)
@@ -1110,14 +1159,30 @@ class SettingsDialog(QDialog):
             self.btn_ai_save_only.setVisible(False)
             self.btn_ai_save_and_activate.setVisible(False)
 
-            from ..credentials import has_ai_api_key
+            from ..credentials import get_ai_api_key_source
             provider = self.combo_ai_provider.currentText()
-            has_key = has_ai_api_key(provider, self._editing_ai_profile_id)
-            if has_key:
-                self.lbl_ai_wizard_key_status.setText("🔒 <font color='#10B981'><b>API Key 已安全保存。</b></font>如需覆盖，请在下方输入新 Key。")
+            key_source = get_ai_api_key_source(provider, self._editing_ai_profile_id)
+            source_label = AI_KEY_SOURCE_LABELS.get(key_source, AI_KEY_SOURCE_LABELS["missing"])
+
+            if key_source == "profile":
+                self.lbl_ai_wizard_key_status.setText(
+                    f"API Key 状态：<font color='#10B981'><b>当前配置专属 Key</b></font>（{source_label}）"
+                )
+                self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
+            elif key_source == "provider":
+                self.lbl_ai_wizard_key_status.setText(
+                    f"API Key 状态：<font color='#3B82F6'><b>旧版 Provider Key</b></font>（{source_label}）"
+                )
+                self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
+            elif key_source == "env":
+                self.lbl_ai_wizard_key_status.setText(
+                    f"API Key 状态：<font color='#8B5CF6'><b>环境变量提供</b></font>（{source_label}）"
+                )
                 self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             else:
-                self.lbl_ai_wizard_key_status.setText("🔑 未找到已保存的 API Key。请输入有效的 API Key 凭据。")
+                self.lbl_ai_wizard_key_status.setText(
+                    f"API Key 状态：<font color='#EF4444'><b>未配置</b></font>（{source_label}）"
+                )
                 self.txt_ai_key.setPlaceholderText("请输入 API Key")
 
             self.btn_ai_next.setEnabled(True)
@@ -1136,18 +1201,22 @@ class SettingsDialog(QDialog):
         self.lbl_ai_summary_model.setText(self.txt_ai_model.currentText().strip())
 
         provider = self.combo_ai_provider.currentText()
-        from ..credentials import has_ai_api_key
-        has_saved_key = has_ai_api_key(provider, self._editing_ai_profile_id)
+        from ..credentials import get_ai_api_key_source
+        key_source = get_ai_api_key_source(provider, self._editing_ai_profile_id)
         has_input_key = bool(self.txt_ai_key.text().strip())
 
         if has_input_key:
             self.lbl_ai_summary_key_status.setText("已输入新 Key（保存时写入）")
-        elif has_saved_key:
-            self.lbl_ai_summary_key_status.setText("已保存（使用现有凭证）")
+        elif key_source == "profile":
+            self.lbl_ai_summary_key_status.setText("已保存（当前配置专属 Key）")
+        elif key_source == "provider":
+            self.lbl_ai_summary_key_status.setText("已保存（旧版 Provider Key）")
+        elif key_source == "env":
+            self.lbl_ai_summary_key_status.setText("来自环境变量（无需单独保存）")
         else:
-            self.lbl_ai_summary_key_status.setText("未设置（分类功能可能无法工作）")
+            self.lbl_ai_summary_key_status.setText("未设置（需要输入 API Key）")
 
-        is_key_available = has_saved_key or has_input_key
+        is_key_available = key_source != "missing" or has_input_key
         self.btn_ai_save_and_activate.setEnabled(is_key_available)
 
     def _ai_goto_next_step(self):
@@ -1279,7 +1348,7 @@ class SettingsDialog(QDialog):
             p["enabled"] = (p["profile_id"] == profile_id)
 
         apply_active_ai_profile(self.cfg, profiles)
-        self._persist_settings_and_refresh("ai")
+        self._save_config_and_refresh("ai")
 
     def _disable_ai(self):
         from ..ai_profiles import get_ai_profiles, apply_active_ai_profile
@@ -1289,7 +1358,7 @@ class SettingsDialog(QDialog):
             p["enabled"] = False
 
         apply_active_ai_profile(self.cfg, profiles)
-        self._persist_settings_and_refresh("ai")
+        self._save_config_and_refresh("ai")
 
     def _delete_ai_profile(self, profile_id: str):
         from ..ai_profiles import get_ai_profiles, apply_active_ai_profile
@@ -1341,6 +1410,11 @@ class SettingsDialog(QDialog):
         self._refresh_ai_profile_list()
         self._show_settings_home(tab_name)
 
+    def _save_config_and_refresh(self, tab_name: str):
+        from ..config import save_config
+        save_config(self.cfg)
+        self._persist_settings_and_refresh(tab_name)
+
     def _load_initial_values(self):
         current_email = self.cfg.get("email", {}).get("address", "")
         current_provider = self.cfg.get("email", {}).get("provider", "qq")
@@ -1379,6 +1453,26 @@ class SettingsDialog(QDialog):
     @staticmethod
     def _normalize_address(address):
         return str(address or "").strip().lower()
+
+    @staticmethod
+    def _provider_display_name(provider: str) -> str:
+        return PROVIDER_EMAIL_NAMES.get(str(provider or "").lower(), "邮箱")
+
+    def _find_account_index(self, email_accounts, *identifiers):
+        normalized_ids = {
+            self._normalize_address(identifier)
+            for identifier in identifiers
+            if str(identifier or "").strip()
+        }
+        if not normalized_ids:
+            return None
+
+        for index, account in enumerate(email_accounts):
+            account_address = self._normalize_address(account.get("address"))
+            account_key = self._normalize_address(account.get("mailbox_key"))
+            if account_address in normalized_ids or account_key in normalized_ids:
+                return index
+        return None
 
     def _build_saved_account_maps(self):
         self._saved_accounts = []
@@ -1455,12 +1549,14 @@ class SettingsDialog(QDialog):
     def _load_saved_account(self, account):
         provider = str(account.get("provider") or "custom").lower()
         address = str(account.get("address") or "").strip()
+        mailbox_name = str(account.get("name") or "").strip()
         imap = account.get("imap") if isinstance(account.get("imap"), dict) else {}
         search = account.get("search") if isinstance(account.get("search"), dict) else {}
 
         self._loading_account_values = True
         try:
             self._select_provider_card(provider)
+            self.txt_mailbox_name.setText(mailbox_name)
             self.txt_email.setText(address)
             self.txt_months.setText(str(search.get("months_back") or 3))
             if provider == "custom":
@@ -1477,6 +1573,7 @@ class SettingsDialog(QDialog):
             self._loading_account_values = False
 
         self._email_is_user_draft = False
+        self.test_success = False
         self._loaded_account_address = self._normalize_address(address)
         self._loaded_account_mailbox_key = self._normalize_address(account.get("mailbox_key"))
         self._loaded_account_provider = provider
@@ -1524,6 +1621,7 @@ class SettingsDialog(QDialog):
                 return
 
         self._active_provider = provider
+        self.test_success = False
         saved_account = self._first_saved_account(provider)
         if saved_account is not None:
             self._load_saved_account(saved_account)
@@ -1545,6 +1643,7 @@ class SettingsDialog(QDialog):
         finally:
             self._loading_account_values = False
         self._email_is_user_draft = can_rewrite_draft
+        self._editing_existing_mailbox = False
         if provider == "custom":
             self.advanced_group.setVisible(True)
             self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
@@ -1552,6 +1651,8 @@ class SettingsDialog(QDialog):
             self.advanced_group.setVisible(False)
             self.btn_toggle_advanced.setText("显示高级 IMAP 设置 ▼")
             self._apply_provider_defaults(provider)
+        if not self._loaded_account_mailbox_key and not self.txt_mailbox_name.text().strip():
+            self.txt_mailbox_name.setText(self._provider_display_name(provider))
         self._update_provider_hint()
         self._update_cred_status_label()
         self._update_wizard_ui()
@@ -1562,6 +1663,7 @@ class SettingsDialog(QDialog):
 
     def _on_advanced_settings_changed(self, *_args):
         self._mark_advanced_settings_dirty()
+        self.test_success = False
         self._update_provider_hint()
         self._update_cred_status_label()
         self._update_wizard_ui()
@@ -1698,6 +1800,7 @@ class SettingsDialog(QDialog):
 
         email = self.txt_email.text().strip()
         email_clean = self._normalize_address(email)
+        self.test_success = False
 
         # Enable/disable the delete button dynamically
         self._update_delete_button_state()
@@ -1750,6 +1853,9 @@ class SettingsDialog(QDialog):
 
     def _on_ai_provider_changed(self):
         provider = self.combo_ai_provider.currentText()
+        self._on_ai_wizard_provider_changed(provider)
+        self._update_ai_wizard_ui()
+        return
 
         # Populate model items based on provider
         self.txt_ai_model.clear()
@@ -1894,6 +2000,7 @@ class SettingsDialog(QDialog):
             "custom": "自定义 IMAP"
         }
         self.lbl_sum_provider.setText(prov_map.get(provider, "QQ 邮箱"))
+        self.lbl_sum_name.setText(self.txt_mailbox_name.text().strip() or self._provider_display_name(provider))
         self.lbl_sum_email.setText(self.txt_email.text().strip())
         self.lbl_sum_months.setText(f"最近 {self.txt_months.text().strip()} 个月")
 
@@ -2029,14 +2136,15 @@ class SettingsDialog(QDialog):
         email = self.txt_email.text().strip()
         provider = self._get_selected_provider()
         months_str = self.txt_months.text().strip()
-        raw_accounts = self.cfg.get("email_accounts")
+        updated_cfg = deepcopy(self.cfg)
+        raw_accounts = updated_cfg.get("email_accounts")
         email_accounts = [
             dict(existing)
             for existing in raw_accounts
             if isinstance(existing, dict)
         ] if isinstance(raw_accounts, list) else []
         if not isinstance(raw_accounts, list):
-            legacy_email = self.cfg.get("email", {})
+            legacy_email = updated_cfg.get("email", {})
             legacy_address = str(legacy_email.get("address") or "").strip()
             if legacy_address:
                 email_accounts.append({
@@ -2061,13 +2169,12 @@ class SettingsDialog(QDialog):
 
         is_outlook_like = is_outlook_like_account(provider, email, imap_server)
         if is_outlook_like:
-            has_saved = False
-            for acc in email_accounts:
-                acc_addr = str(acc.get("address") or "").strip().lower()
-                acc_key = str(acc.get("mailbox_key") or "").strip().lower()
-                if acc_addr == email.lower() or acc_key == email.lower():
-                    has_saved = True
-                    break
+            has_saved = self._find_account_index(
+                email_accounts,
+                email,
+                self._loaded_account_mailbox_key,
+                self._loaded_account_address,
+            ) is not None
 
             if not has_saved:
                 QMessageBox.warning(
@@ -2103,19 +2210,24 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "设置验证失败", str(val_err))
             return
 
-        if not self.test_success:
-            reply = QMessageBox.question(
+        auth_code = self.txt_auth_code.text().strip()
+        existing_identifiers = [email]
+        if self._editing_existing_mailbox:
+            existing_identifiers.insert(0, self._loaded_account_mailbox_key or self._loaded_account_address)
+        existing_index = self._find_account_index(email_accounts, *existing_identifiers)
+        existing_account = email_accounts[existing_index] if existing_index is not None else None
+        address_changed = bool(existing_account) and self._normalize_address(existing_account.get("address")) != self._normalize_address(email)
+
+        from ..credentials import has_auth_code
+        if address_changed and not self.test_success and not auth_code and not has_auth_code(email):
+            QMessageBox.warning(
                 self,
-                "连接未验证",
-                "邮箱连接尚未测试成功，是否仍保存？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                "设置验证失败",
+                "邮箱地址已变更，请先输入新的授权码并测试连接，或确认新地址已有可用授权码。"
             )
-            if reply == QMessageBox.No:
-                return
+            return
 
         # Save credentials to system Keyring
-        auth_code = self.txt_auth_code.text().strip()
         credential_available = False
         if auth_code:
             from ..credentials import set_auth_code
@@ -2135,30 +2247,22 @@ class SettingsDialog(QDialog):
                     # Saving non-secret settings remains allowed if credential access fails.
                     pass
 
-        # Update configuration
-        self.cfg.setdefault("email", {})
-        self.cfg.setdefault("imap", {})
-        self.cfg.setdefault("search", {})
-        self.cfg.setdefault("ai", {})
-        self.cfg["email"]["provider"] = provider
-        self.cfg["email"]["address"] = email
-        self.cfg["email"]["username"] = email
-        self.cfg["imap"]["server"] = imap_server
-        self.cfg["imap"]["port"] = int(imap_port_str)
-        self.cfg["imap"]["ssl"] = True
-        self.cfg["search"]["folder"] = "INBOX"
-        self.cfg["search"]["months_back"] = int(months_str)
+        account_name = self.txt_mailbox_name.text().strip()
+        if existing_account:
+            account_name = account_name or str(existing_account.get("name") or "").strip()
+        if not account_name:
+            account_name = self._provider_display_name(provider)
 
-        provider_names = {
-            "qq": "QQ 邮箱",
-            "netease_163": "163 网易邮箱",
-            "netease_126": "126 网易邮箱",
-            "gmail": "Gmail",
-            "outlook": "Outlook",
-            "custom": "自定义 IMAP",
-        }
+        stable_mailbox_key = ""
+        if existing_account:
+            stable_mailbox_key = str(existing_account.get("mailbox_key") or "").strip()
+        if not stable_mailbox_key:
+            stable_mailbox_key = self._normalize_address(self._loaded_account_mailbox_key or self._loaded_account_address or email)
+        if not stable_mailbox_key:
+            stable_mailbox_key = email.lower()
+
         account = {
-            "name": provider_names.get(provider, provider),
+            "name": account_name,
             "enabled": not is_outlook_like,
             "provider": provider,
             "address": email,
@@ -2172,32 +2276,32 @@ class SettingsDialog(QDialog):
                 "folder": "INBOX",
                 "months_back": int(months_str),
             },
+            "mailbox_key": stable_mailbox_key,
         }
-        match_index = next(
-            (
-                index
-                for index, existing in enumerate(email_accounts)
-                if str(existing.get("address") or "").strip().lower() == email.lower()
-                or str(existing.get("mailbox_key") or "").strip().lower() == email.lower()
-            ),
-            None,
-        )
-        if match_index is None:
-            account["mailbox_key"] = email.lower()
-        else:
-            account["mailbox_key"] = (
-                str(email_accounts[match_index].get("mailbox_key") or "").strip()
-                or email.lower()
-            )
-        if match_index is None:
+
+        if existing_index is None:
             email_accounts.append(account)
         else:
-            email_accounts[match_index] = account
-        self.cfg["email_accounts"] = email_accounts
+            email_accounts[existing_index] = account
+
+        updated_cfg["email_accounts"] = email_accounts
+        updated_cfg.setdefault("email", {})
+        updated_cfg.setdefault("imap", {})
+        updated_cfg.setdefault("search", {})
+        updated_cfg.setdefault("ai", {})
+        updated_cfg["email"]["provider"] = provider
+        updated_cfg["email"]["address"] = email
+        updated_cfg["email"]["username"] = email
+        updated_cfg["imap"]["server"] = imap_server
+        updated_cfg["imap"]["port"] = int(imap_port_str)
+        updated_cfg["imap"]["ssl"] = True
+        updated_cfg["search"]["folder"] = "INBOX"
+        updated_cfg["search"]["months_back"] = int(months_str)
 
 
         try:
-            save_config(self.cfg)
+            save_config(updated_cfg)
+            self.cfg = updated_cfg
             self.parent.config = _load_config_safe_compat()
             self.parent.write_log(f"⚙️ [设置保存] 全局 config.json 邮箱服务配置已成功保存。")
             self.txt_auth_code.clear()
@@ -2207,14 +2311,12 @@ class SettingsDialog(QDialog):
             else:
                 self._update_cred_status_label()
             QMessageBox.information(self, "成功", "邮箱设置已成功保存！")
-            self.accept()
+            self._persist_settings_and_refresh("mailboxes")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存配置文件失败: {e}")
 
     def _save_ai_settings(self):
-        ai_provider = self.combo_ai_provider.currentText()
-        ai_model = self.txt_ai_model.currentText().strip()
-        ai_key = self.txt_ai_key.text().strip()
+        return self._save_ai_profile_settings(activate=False)
 
         proposed_cfg = {
             "email": self.cfg.get("email", {
@@ -2305,7 +2407,44 @@ class SettingsDialog(QDialog):
             else:
                 updated_accounts.append(acc)
 
-        self.cfg["email_accounts"] = updated_accounts
+        updated_cfg = deepcopy(self.cfg)
+        updated_cfg["email_accounts"] = updated_accounts
+        legacy_email = updated_cfg.get("email", {})
+        legacy_addr = self._normalize_address(legacy_email.get("address"))
+        if legacy_addr == normalized_email or not updated_accounts:
+            next_acc = None
+            for acc in updated_accounts:
+                p = acc.get("provider", "")
+                addr = acc.get("address", "")
+                srv = acc.get("imap", {}).get("server", "")
+                if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
+                    next_acc = acc
+                    break
+
+            if next_acc:
+                updated_cfg["email"] = {
+                    "provider": next_acc.get("provider", "qq"),
+                    "address": next_acc.get("address", ""),
+                    "username": next_acc.get("username", next_acc.get("address", "")),
+                }
+                updated_cfg["imap"] = dict(next_acc.get("imap", {}))
+                updated_cfg["search"] = dict(next_acc.get("search", {}))
+            else:
+                updated_cfg["email"] = {"provider": "qq", "address": "", "username": ""}
+                updated_cfg["imap"] = {"server": "", "port": 993, "ssl": True}
+                updated_cfg["search"] = {"folder": "INBOX", "months_back": 3}
+
+        from ..config import save_config
+        try:
+            save_config(updated_cfg)
+            self.cfg = updated_cfg
+            if hasattr(self.parent, "config"):
+                self.parent.config = _load_config_safe_compat()
+            self._build_saved_account_maps()
+            self._refresh_mailbox_list()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存配置文件失败: {e}")
+            return
 
         # 2. Remove the corresponding keyring credential if possible
         from ..credentials import delete_auth_code

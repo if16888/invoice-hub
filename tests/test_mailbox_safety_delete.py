@@ -1,4 +1,5 @@
 import sys
+import copy
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -187,6 +188,24 @@ class MailboxSafetyDeleteTests(SettingsDialogTestMixin, unittest.TestCase):
             dialog._delete_current_mailbox()
             mock_delete.assert_called_once_with("if16888@qq.com")
 
+    def test_delete_current_mailbox_skips_secret_and_scan_state_when_save_fails(self):
+        dialog = self._make_dialog(self._multi_account_config(), saved_addresses=("if16888@qq.com",))
+        dialog.parent.db = MagicMock()
+        dialog.txt_email.setText("if16888@qq.com")
+        self.app.processEvents()
+
+        with patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.question", return_value=QMessageBox.Yes), \
+             patch("scripts.invoice_fetch.config.save_config", side_effect=RuntimeError("boom")) as mock_save, \
+             patch("scripts.invoice_fetch.credentials.delete_auth_code") as mock_delete, \
+             patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.critical"):
+            dialog._delete_current_mailbox()
+
+        mock_save.assert_called_once()
+        mock_delete.assert_not_called()
+        dialog.parent.db.remove_mailbox_scan_state.assert_not_called()
+        self.assertEqual(len(dialog.cfg["email_accounts"]), 2)
+        self.assertEqual(dialog.cfg["email_accounts"][0]["address"], "if16888@qq.com")
+
     def test_delete_current_mailbox_preserves_other_same_provider_accounts(self):
         config = {
             "email_accounts": [
@@ -297,10 +316,30 @@ class MailboxSafetyDeleteTests(SettingsDialogTestMixin, unittest.TestCase):
     # 3. Multiple same-provider accounts tests
     def test_saving_second_qq_account_appends_not_overwrites_first(self):
         dialog = self._make_dialog()
+        dialog.cfg["email_accounts"] = [{
+            "name": "QQ",
+            "enabled": True,
+            "provider": "qq",
+            "address": "if16888@qq.com",
+            "username": "if16888@qq.com",
+            "mailbox_key": "if16888@qq.com",
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+        }]
         dialog.txt_email.setText("b@qq.com")
         dialog.test_success = True
-        
-        with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
+
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load(path=None):
+            return copy.deepcopy(persisted_cfg)
+
+        with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+             patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load), \
              patch("scripts.invoice_fetch.credentials.set_auth_code"), \
              patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"):
             dialog._save_mailbox_settings()
@@ -317,11 +356,21 @@ class MailboxSafetyDeleteTests(SettingsDialogTestMixin, unittest.TestCase):
         dialog = self._make_dialog(config, saved_addresses=("qq1@qq.com",))
         dialog.txt_email.setText("qq1@qq.com")
         self.app.processEvents()
-        
+
         dialog.txt_months.setText("12")
         dialog.test_success = True
-        
-        with patch("scripts.invoice_fetch.config.save_config"), \
+
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load(path=None):
+            return copy.deepcopy(persisted_cfg)
+
+        with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save), \
+             patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load), \
              patch("scripts.invoice_fetch.credentials.set_auth_code"), \
              patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"):
             dialog._save_mailbox_settings()

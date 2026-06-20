@@ -143,7 +143,8 @@ class SettingsSecretPrivacyTests(unittest.TestCase):
 
         get_auth_code.assert_called_once_with("tester@qq.com")
         set_auth_code.assert_not_called()
-        self.assertEqual(dialog.result(), QDialog.Accepted)
+        self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_settings_home)
+        self.assertEqual(dialog.tab_widget.currentIndex(), 0)
 
     def test_new_credential_overwrites_saved_value_and_field_is_cleared(self):
         dialog, parent = self._make_dialog(saved=True)

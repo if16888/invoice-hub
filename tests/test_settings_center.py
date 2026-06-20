@@ -1,3 +1,4 @@
+import copy
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -78,26 +79,67 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
 
     def test_set_current_disables_every_other_profile(self):
         dialog = self._make_dialog()
+        dialog.cfg["email_accounts"] = [{
+            "name": "默认邮箱",
+            "enabled": True,
+            "provider": "qq",
+            "address": "if16888@qq.com",
+            "username": "if16888@qq.com",
+            "mailbox_key": "if16888@qq.com",
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+        }]
         dialog.cfg["ai_profiles"] = [
             {"profile_id": "one", "name": "一", "provider": "deepseek", "model": "m1", "enabled": True},
             {"profile_id": "two", "name": "二", "provider": "gemini", "model": "m2", "enabled": False},
         ]
-        # Stub the credential check to pass
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load():
+            return copy.deepcopy(persisted_cfg)
+
         with patch("scripts.invoice_fetch.credentials.has_ai_api_key", return_value=True), \
-             patch("scripts.invoice_fetch.gui.settings_dialog.SettingsDialog._persist_settings_and_refresh"):
+             patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+             patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load):
             dialog._set_active_ai_profile("two")
+        mock_save.assert_called_once()
         enabled = [p["profile_id"] for p in dialog.cfg["ai_profiles"] if p["enabled"]]
         self.assertEqual(enabled, ["two"])
         self.assertEqual(dialog.cfg["ai"]["profile_id"], "two")
 
     def test_disable_ai_keeps_profiles_and_clears_active_projection(self):
         dialog = self._make_dialog()
+        dialog.cfg["email_accounts"] = [{
+            "name": "默认邮箱",
+            "enabled": True,
+            "provider": "qq",
+            "address": "if16888@qq.com",
+            "username": "if16888@qq.com",
+            "mailbox_key": "if16888@qq.com",
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+        }]
         dialog.cfg["ai_profiles"] = [
             {"profile_id": "one", "name": "一", "provider": "deepseek", "model": "m1", "enabled": True},
         ]
         before = len(dialog.cfg["ai_profiles"])
-        with patch("scripts.invoice_fetch.gui.settings_dialog.SettingsDialog._persist_settings_and_refresh"):
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load():
+            return copy.deepcopy(persisted_cfg)
+
+        with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+             patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load):
             dialog._disable_ai()
+        mock_save.assert_called_once()
         self.assertEqual(len(dialog.cfg["ai_profiles"]), before)
         self.assertFalse(any(p["enabled"] for p in dialog.cfg["ai_profiles"]))
         self.assertEqual(dialog.cfg["ai"]["provider"], "none")
