@@ -10,7 +10,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QScrollArea, QStackedWidget, QTabWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from .ui_components import make_button, make_badge, build_action_cluster
@@ -206,6 +206,7 @@ class AIProfileRow(QFrame):
 
         # Info container (Widget + QVBoxLayout)
         info_widget = QWidget()
+        info_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         info_layout = QVBoxLayout(info_widget)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
@@ -247,8 +248,14 @@ class AIProfileRow(QFrame):
             self.lbl_active = make_badge("当前生效", variant="active", min_width=72)
             action_widgets.append(self.lbl_active)
         else:
-            self.btn_activate = make_button("启用", variant="primary", min_width=76)
-            self.btn_activate.clicked.connect(self._on_activate)
+            if key_source == "missing":
+                self.btn_activate = make_button("配置 Key", variant="accent", min_width=84)
+                self.btn_activate.setToolTip("还未配置 API Key，点击进入编辑")
+                self.btn_activate.clicked.connect(self._on_edit)
+            else:
+                self.btn_activate = make_button("启用 AI", variant="accent", min_width=84)
+                self.btn_activate.setToolTip("使用已保存的 API Key 启用该 AI 配置")
+                self.btn_activate.clicked.connect(self._on_activate)
             action_widgets.append(self.btn_activate)
 
         # Actions: Edit and Delete
@@ -1775,7 +1782,7 @@ class SettingsDialog(QDialog):
 
         has_saved = self._is_saved_address(email_clean)
         # If it is a saved email, auto-load all its configuration!
-        if has_saved:
+        if has_saved and not self._editing_existing_mailbox:
             if self._loaded_account_address != email_clean:
                 saved_acc = self._saved_accounts_by_address[email_clean]
                 self._load_saved_account(saved_acc)

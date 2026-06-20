@@ -576,9 +576,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status_bar = QWidget()
         self.status_bar = status_bar
         status_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        status_bar.setFixedHeight(32)
+        status_bar.setFixedHeight(36)
         status_layout = QHBoxLayout(status_bar)
-        status_layout.setContentsMargins(6, 2, 6, 2)
+        status_layout.setContentsMargins(6, 3, 6, 3)
 
         self.lbl_status_left = QLabel("当前筛选 0 张")
         self.lbl_status_left.setFont(QFont("Segoe UI", 9))
@@ -597,10 +597,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Right container
         right_container = QWidget()
+        right_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         right_layout = QHBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
         right_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        right_layout.setSizeConstraint(QLayout.SetFixedSize)
 
         self.lbl_version = QLabel(APP_VERSION)
         self.lbl_version.setFont(QFont("Segoe UI", 8))
@@ -609,15 +611,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         right_layout.addWidget(self.lbl_version)
 
         self.btn_load_all = make_button("加载全部", variant="secondary", min_width=56)
-        self.btn_load_all.setFixedHeight(24)
         self.btn_load_all.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_load_all.setToolTip("首屏仅加载了部分记录，点击加载完整列表")
+        self.btn_load_all.ensurePolished()
+        self.btn_load_all.setMinimumWidth(
+            max(
+                self.btn_load_all.fontMetrics().horizontalAdvance(self.btn_load_all.text()) + 24,
+                self.btn_load_all.sizeHint().width(),
+                56,
+            )
+        )
+        self.btn_load_all.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_load_all.setToolTip("首屏仅加载部分记录，点击加载完整列表")
         self.btn_load_all.clicked.connect(self._load_all_invoices_clicked)
         self.btn_load_all.setVisible(False)
         right_layout.addWidget(self.btn_load_all)
 
         self.btn_toggle_log = make_button("展开日志", variant="secondary", min_width=76)
-        self.btn_toggle_log.setFixedHeight(24)
+        self.btn_toggle_log.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_toggle_log.clicked.connect(self._toggle_log)
         right_layout.addWidget(self.btn_toggle_log)
 
@@ -667,8 +677,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Bottom dock area keeps the status bar pinned while the log drawer expands separately.
         self.bottom_panel = QWidget()
         self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.bottom_panel.setMinimumHeight(32)
-        self.bottom_panel.setMaximumHeight(32)
+        self.bottom_panel.setMinimumHeight(36)
+        self.bottom_panel.setMaximumHeight(36)
         bottom_layout = QVBoxLayout(self.bottom_panel)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(4)
@@ -1459,7 +1469,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Show/hide the load-all button
         if hasattr(self, "btn_load_all"):
             if self._limited_first_load_active:
-                self.btn_load_all.setText(f"加载全部 {self._limited_first_load_total} 张")
+                shown = len(self.invoices_list) if self.invoices_list else 100
+                self.btn_load_all.setText("加载全部")
+                self.btn_load_all.setToolTip(
+                    f"首屏仅加载 {shown} / {self._limited_first_load_total} 张，点击加载完整列表"
+                )
                 self.btn_load_all.setVisible(True)
             else:
                 self.btn_load_all.setVisible(False)
