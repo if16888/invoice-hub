@@ -363,6 +363,40 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertTrue(emitted)
 
     def test_disable_ai_button_hidden_or_disabled_when_no_active_profile(self):
+        config_inactive = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "none", "model": "", "enabled": False},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": False,
+                }
+            ],
+        }
+        dialog_inactive = self._make_dialog(config=config_inactive)
+        self.assertTrue(dialog_inactive.btn_disable_ai_action.isHidden())
+
+        config_active = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "deepseek", "model": "deepseek-chat", "profile_id": "ai-one", "enabled": True},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": True,
+                }
+            ],
+        }
+        dialog_active = self._make_dialog(config=config_active)
+        self.assertFalse(dialog_active.btn_disable_ai_action.isHidden())
+        self.assertTrue(dialog_active.btn_disable_ai_action.isEnabled())
+
+    def test_ai_enable_button_integration(self):
         config = {
             "email": {"provider": "qq", "address": "your_email@qq.com"},
             "ai": {"provider": "none", "model": "", "enabled": False},
@@ -377,7 +411,26 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
             ],
         }
         dialog = self._make_dialog(config=config)
-        self.assertFalse(dialog.btn_disable_ai_action.isVisible())
+        persisted_cfg = copy.deepcopy(dialog.cfg)
+
+        def fake_save(cfg, path=None):
+            nonlocal persisted_cfg
+            persisted_cfg = copy.deepcopy(cfg)
+
+        def fake_load():
+            return copy.deepcopy(persisted_cfg)
+
+        with patch("scripts.invoice_fetch.credentials.has_ai_api_key", return_value=True), \
+             patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+             patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load):
+            self.assertEqual(len(dialog.ai_rows), 1)
+            row = dialog.ai_rows[0]
+            self.assertEqual(row.btn_activate.text(), "启用")
+            row.btn_activate.click()
+            mock_save.assert_called_once()
+            self.assertTrue(dialog.cfg["ai_profiles"][0]["enabled"])
+            self.assertEqual(dialog.cfg["ai"]["provider"], "deepseek")
+            self.assertEqual(dialog.cfg["ai"]["profile_id"], "ai-one")
 
     def test_combobox_popup_styles_present(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET

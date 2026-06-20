@@ -756,9 +756,11 @@ class SettingsDialog(QDialog):
         if active:
             self.lbl_ai_global_status.setText(f"AI 功能已启用：{active['name']}")
             self.btn_disable_ai_action.setVisible(True)
+            self.btn_disable_ai_action.setEnabled(True)
         else:
             self.lbl_ai_global_status.setText("AI 功能未启用")
             self.btn_disable_ai_action.setVisible(False)
+            self.btn_disable_ai_action.setEnabled(False)
 
         if not profiles:
             lbl_empty = QLabel("尚未保存任何 AI 配置，点击“新增 AI 配置”开始。")
