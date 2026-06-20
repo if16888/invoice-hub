@@ -1905,7 +1905,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
             self.assertEqual(window.txt_path.text(), "未下载原件（可重试下载或手动补原件）")
             self.assertTrue(window.btn_add_attachment.isEnabled())
             self.assertTrue(window.btn_retry_download.isEnabled())
-            self.assertFalse(window.btn_retry_download.isVisible())
+            self.assertTrue(window.btn_retry_download.isVisible())
             self.assertEqual(window.txt_path.statusTip(), "双击补充原件")
             self.assertFalse(window.btn_open_file.isEnabled())
         finally:

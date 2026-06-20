@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QStackedWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from .ui_components import make_button, make_badge, build_action_cluster
+
 from ..config import load_config_safe, is_outlook_like_account
 
 
@@ -111,6 +113,9 @@ class MailboxConfigRow(QFrame):
 
         self.setProperty("class", "SettingsListRow")
         self.setFrameShape(QFrame.StyledPanel)
+        
+        enabled = self.account.get("enabled", True)
+        self.setProperty("disabled", "false" if enabled else "true")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -118,12 +123,14 @@ class MailboxConfigRow(QFrame):
 
         # Checkbox for enabled/disabled state
         self.chk_enabled = QCheckBox()
-        self.chk_enabled.setChecked(self.account.get("enabled", True))
+        self.chk_enabled.setChecked(enabled)
         self.chk_enabled.toggled.connect(self._on_toggled)
         layout.addWidget(self.chk_enabled)
 
         # Info layout: Vertical (Name & Masked Address)
-        info_layout = QVBoxLayout()
+        info_widget = QWidget()
+        info_layout = QVBoxLayout(info_widget)
+        info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
 
         lbl_name = QLabel(self.account.get("name") or "未命名")
@@ -137,39 +144,36 @@ class MailboxConfigRow(QFrame):
 
         info_layout.addWidget(lbl_name)
         info_layout.addWidget(lbl_address)
-        layout.addLayout(info_layout)
-
-        layout.addStretch()
+        layout.addWidget(info_widget, stretch=1)
 
         # Provider badge
         provider_name = PROVIDER_EMAIL_NAMES.get(self.account.get("provider", "custom"), "自定义 IMAP")
-        lbl_provider = QLabel(provider_name)
-        lbl_provider.setProperty("class", "StatusBadge")
-        lbl_provider.setProperty("variant", "info")
-        layout.addWidget(lbl_provider)
+        self.lbl_provider = make_badge(provider_name, variant="info")
 
         # Scan range summary
         months = int((self.account.get("search") or {}).get("months_back", 3))
-        lbl_range = QLabel(f"最近 {months} 个月")
-        lbl_range.setProperty("class", "SettingsListRowMeta")
-        layout.addWidget(lbl_range)
+        self.lbl_range = make_badge(f"最近 {months} 个月", variant="muted")
 
         # Actions: Edit and Delete
-        self.btn_edit = QPushButton("编辑")
+        self.btn_edit = make_button("编辑", variant="secondary", min_width=56)
         self.btn_edit.clicked.connect(self._on_edit)
-        self.btn_edit.setProperty("class", "SecondaryBtn")
-        layout.addWidget(self.btn_edit)
 
-        self.btn_delete = QPushButton("删除")
+        self.btn_delete = make_button("删除", variant="danger", min_width=56)
         self.btn_delete.clicked.connect(self._on_delete)
-        self.btn_delete.setProperty("class", "SettingsDangerBtn")
-        layout.addWidget(self.btn_delete)
+
+        # Build action cluster
+        action_widgets = [self.lbl_provider, self.lbl_range, self.btn_edit, self.btn_delete]
+        self.action_cluster = build_action_cluster(action_widgets)
+        layout.addWidget(self.action_cluster, stretch=0)
 
     def summary_text(self) -> str:
         months = int((self.account.get("search") or {}).get("months_back", 3))
         return f"最近 {months} 个月"
 
     def _on_toggled(self, checked):
+        self.setProperty("disabled", "false" if checked else "true")
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.enabled_requested.emit(self.mailbox_key, checked)
 
     def _on_edit(self):
@@ -193,6 +197,9 @@ class AIProfileRow(QFrame):
         self.setProperty("class", "SettingsListRow")
         self.setFrameShape(QFrame.StyledPanel)
 
+        self.is_enabled = self.profile.get("enabled", False)
+        self.setProperty("active", "true" if self.is_enabled else "false")
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
@@ -215,63 +222,47 @@ class AIProfileRow(QFrame):
         info_layout.addWidget(lbl_model)
         layout.addWidget(info_widget, stretch=1)
 
-        # Action container (Widget + QHBoxLayout)
-        action_widget = QWidget()
-        action_layout = QHBoxLayout(action_widget)
-        action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(8)
-        action_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        # API Key status badge
+        # API Key status badge mapping
         key_status_label = AI_KEY_SOURCE_LABELS.get(key_source, AI_KEY_SOURCE_LABELS["missing"])
-        self.lbl_key_status = QLabel(key_status_label)
-        self.lbl_key_status.setProperty("class", "StatusBadge")
-        self.lbl_key_status.setProperty("variant", "success" if key_source != "missing" else "warning")
-        self.lbl_key_status.setMinimumWidth(80)
-        self.lbl_key_status.setAlignment(Qt.AlignCenter)
+        badge_variant = "success"
+        if key_source == "missing":
+            badge_variant = "warning"
+        elif key_source in ("provider", "env"):
+            badge_variant = "muted"
+            
+        self.lbl_key_status = make_badge(key_status_label, variant=badge_variant, min_width=80)
 
         tooltip_map = {
             "profile": "此 AI 配置已保存专属 API Key",
-            "provider": "沿用旧版全局 Provider Key；重新输入 API Key 可保存为配置专属 Key",
+            "provider": "沿用旧版全局 Provider Key；重新输入 API Key 可覆盖",
             "env": "当前使用系统环境变量中的 API Key",
             "missing": "尚未设置 API Key，启用前需要配置"
         }
         self.lbl_key_status.setToolTip(tooltip_map.get(key_source, tooltip_map["missing"]))
-        action_layout.addWidget(self.lbl_key_status)
+
+        action_widgets = [self.lbl_key_status]
 
         # Activation state / Set as current button
-        self.is_enabled = self.profile.get("enabled", False)
         if self.is_enabled:
-            self.lbl_active = QLabel("当前生效")
-            self.lbl_active.setProperty("class", "StatusBadge")
-            self.lbl_active.setProperty("variant", "active")
-            self.lbl_active.setMinimumWidth(72)
-            self.lbl_active.setAlignment(Qt.AlignCenter)
-            action_layout.addWidget(self.lbl_active)
+            self.lbl_active = make_badge("当前生效", variant="active", min_width=72)
+            action_widgets.append(self.lbl_active)
         else:
-            self.btn_activate = QPushButton("启用")
+            self.btn_activate = make_button("启用", variant="primary", min_width=76)
             self.btn_activate.clicked.connect(self._on_activate)
-            self.btn_activate.setProperty("class", "PrimaryBtn")
-            self.btn_activate.setMinimumWidth(76)
-            self.btn_activate.setFixedHeight(28)
-            action_layout.addWidget(self.btn_activate)
+            action_widgets.append(self.btn_activate)
 
         # Actions: Edit and Delete
-        self.btn_edit = QPushButton("编辑")
+        self.btn_edit = make_button("编辑", variant="secondary", min_width=56)
         self.btn_edit.clicked.connect(self._on_edit)
-        self.btn_edit.setProperty("class", "SecondaryBtn")
-        self.btn_edit.setMinimumWidth(56)
-        self.btn_edit.setFixedHeight(28)
-        action_layout.addWidget(self.btn_edit)
+        action_widgets.append(self.btn_edit)
 
-        self.btn_delete = QPushButton("删除")
+        self.btn_delete = make_button("删除", variant="danger", min_width=56)
         self.btn_delete.clicked.connect(self._on_delete)
-        self.btn_delete.setProperty("class", "SettingsDangerBtn")
-        self.btn_delete.setMinimumWidth(56)
-        self.btn_delete.setFixedHeight(28)
-        action_layout.addWidget(self.btn_delete)
+        action_widgets.append(self.btn_delete)
 
-        layout.addWidget(action_widget, stretch=0)
+        # Action cluster wrapper
+        self.action_cluster = build_action_cluster(action_widgets)
+        layout.addWidget(self.action_cluster, stretch=0)
 
     def _on_activate(self):
         self.activate_requested.emit(self.profile_id)
@@ -364,32 +355,22 @@ class SettingsDialog(QDialog):
 
         # Footer Buttons
         footer_layout = QHBoxLayout()
-        self.btn_delete_mailbox = QPushButton("删除当前邮箱配置")
+        self.btn_delete_mailbox = make_button("删除当前邮箱配置", variant="danger", min_width=120)
         self.btn_delete_mailbox.clicked.connect(self._delete_current_mailbox)
-        self.btn_delete_mailbox.setStyleSheet("background-color: #FEE2E2; color: #DC2626; border: 1px solid #FCA5A5; font-size: 11px; padding: 4px 8px; border-radius: 4px;")
-        self.btn_delete_mailbox.setFixedHeight(28)
         self.btn_delete_mailbox.setEnabled(False)
         self.btn_delete_mailbox.setVisible(False)
 
-        self.btn_prev = QPushButton("上一步")
+        self.btn_prev = make_button("上一步", variant="secondary", min_width=56)
         self.btn_prev.clicked.connect(self._goto_prev_step)
-        self.btn_prev.setProperty("class", "SecondaryBtn")
-        self.btn_prev.setFixedHeight(28)
 
-        self.btn_next = QPushButton("下一步")
+        self.btn_next = make_button("下一步", variant="primary", min_width=76)
         self.btn_next.clicked.connect(self._goto_next_step)
-        self.btn_next.setProperty("class", "PrimaryBtn")
-        self.btn_next.setFixedHeight(28)
 
-        self.btn_save_wizard = QPushButton("确定保存")
+        self.btn_save_wizard = make_button("确定保存", variant="primary", min_width=76)
         self.btn_save_wizard.clicked.connect(self._save_mailbox_settings)
-        self.btn_save_wizard.setProperty("class", "PrimaryBtn")
-        self.btn_save_wizard.setFixedHeight(28)
 
-        self.btn_cancel_wizard = QPushButton("取消")
+        self.btn_cancel_wizard = make_button("取消", variant="secondary", min_width=56)
         self.btn_cancel_wizard.clicked.connect(lambda: self._show_settings_home("mailboxes"))
-        self.btn_cancel_wizard.setProperty("class", "SecondaryBtn")
-        self.btn_cancel_wizard.setFixedHeight(28)
 
         footer_layout.addWidget(self.btn_delete_mailbox)
         footer_layout.addWidget(self.btn_prev)
@@ -471,7 +452,7 @@ class SettingsDialog(QDialog):
             "Outlook/Hotmail/Live 及 Microsoft 365 邮箱需要 OAuth2/XOAUTH2 登录。当前版本暂不支持 Outlook 邮箱扫描。"
         )
         self.lbl_outlook_step1_warning.setWordWrap(True)
-        self.lbl_outlook_step1_warning.setStyleSheet("color: #B45309; font-size: 11px; background-color: #FEF3C7; border: 1px solid #FCD34D; padding: 8px; border-radius: 4px; margin-top: 4px;")
+        self.lbl_outlook_step1_warning.setProperty("class", "InlineWarning")
         self.lbl_outlook_step1_warning.setVisible(False)
         v_layout.addWidget(self.lbl_outlook_step1_warning)
 
@@ -491,7 +472,7 @@ class SettingsDialog(QDialog):
         self.lbl_provider_hint = QLabel()
         form_layout.addRow("邮箱名称:", self.txt_mailbox_name)
         self.lbl_provider_hint.setWordWrap(True)
-        self.lbl_provider_hint.setStyleSheet("color: #D97706; font-size: 11px;")
+        self.lbl_provider_hint.setProperty("class", "InlineHint")
 
         self.txt_months = QLineEdit("3")
         self.txt_months.setPlaceholderText("1-24")
@@ -549,7 +530,7 @@ class SettingsDialog(QDialog):
             "Outlook/Hotmail/Live 及 Microsoft 365 邮箱需要 OAuth2/XOAUTH2 登录。当前版本暂不支持 Outlook 邮箱扫描。"
         )
         self.lbl_outlook_guidance.setWordWrap(True)
-        self.lbl_outlook_guidance.setStyleSheet("color: #92400E; font-size: 11px;")
+        self.lbl_outlook_guidance.setProperty("class", "InlineWarning")
         self.lbl_outlook_guidance.setVisible(False)
         layout.addWidget(self.lbl_outlook_guidance)
 
@@ -574,7 +555,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
 
         self.lbl_cred_status = QLabel()
-        self.lbl_cred_status.setStyleSheet("font-size: 11px;")
+        self.lbl_cred_status.setProperty("class", "StatusHint")
         layout.addWidget(self.lbl_cred_status)
         layout.addStretch()
 
@@ -611,14 +592,13 @@ class SettingsDialog(QDialog):
 
         self.lbl_test_result = QLabel("未进行连接测试。")
         self.lbl_test_result.setWordWrap(True)
-        self.lbl_test_result.setStyleSheet("color: #6B7280; font-size: 11px;")
+        self.lbl_test_result.setProperty("class", "StatusHint")
+        self.lbl_test_result.setProperty("variant", "muted")
         test_layout.addWidget(self.lbl_test_result)
 
         btn_test_layout = QHBoxLayout()
-        self.btn_test = QPushButton("测试连接")
+        self.btn_test = make_button("测试连接", variant="secondary", min_width=120)
         self.btn_test.clicked.connect(self._test_connection_clicked)
-        self.btn_test.setProperty("class", "SecondaryBtn")
-        self.btn_test.setFixedSize(120, 28)
         btn_test_layout.addWidget(self.btn_test)
         btn_test_layout.addStretch()
         test_layout.addLayout(btn_test_layout)
@@ -649,10 +629,8 @@ class SettingsDialog(QDialog):
         self.tab_widget.addTab(self.tab_ai_list, "AI 模型")
 
         home_footer = QHBoxLayout()
-        btn_close_home = QPushButton("关闭")
+        btn_close_home = make_button("关闭", variant="secondary", min_width=56)
         btn_close_home.clicked.connect(self.accept)
-        btn_close_home.setProperty("class", "SecondaryBtn")
-        btn_close_home.setFixedHeight(28)
         home_footer.addStretch()
         home_footer.addWidget(btn_close_home)
         layout.addLayout(home_footer)
@@ -672,10 +650,8 @@ class SettingsDialog(QDialog):
         lbl_section = QLabel("已配置的邮箱列表")
         lbl_section.setProperty("class", "SettingsListHeader")
 
-        self.btn_add_mailbox = QPushButton("新增邮箱账号")
+        self.btn_add_mailbox = make_button("新增邮箱账号", variant="primary", min_width=96)
         self.btn_add_mailbox.clicked.connect(self._open_new_mailbox_editor)
-        self.btn_add_mailbox.setProperty("class", "PrimaryBtn")
-        self.btn_add_mailbox.setFixedHeight(26)
 
         header_layout.addWidget(lbl_section)
         header_layout.addStretch()
@@ -708,15 +684,11 @@ class SettingsDialog(QDialog):
         self.lbl_ai_global_status = QLabel("AI 功能未启用")
         self.lbl_ai_global_status.setProperty("class", "SettingsListHeader")
 
-        self.btn_disable_ai_action = QPushButton("停用 AI")
+        self.btn_disable_ai_action = make_button("停用 AI", variant="secondary", min_width=72)
         self.btn_disable_ai_action.clicked.connect(self._disable_ai)
-        self.btn_disable_ai_action.setProperty("class", "SecondaryBtn")
-        self.btn_disable_ai_action.setFixedHeight(26)
 
-        self.btn_add_ai = QPushButton("新增 AI 配置")
+        self.btn_add_ai = make_button("新增 AI 配置", variant="primary", min_width=96)
         self.btn_add_ai.clicked.connect(self._open_new_ai_editor)
-        self.btn_add_ai.setProperty("class", "PrimaryBtn")
-        self.btn_add_ai.setFixedHeight(26)
 
         header_layout.addWidget(self.lbl_ai_global_status)
         header_layout.addStretch()
@@ -996,30 +968,20 @@ class SettingsDialog(QDialog):
         self._init_ai_step3_view()
 
         footer_layout = QHBoxLayout()
-        self.btn_ai_prev = QPushButton("上一步")
+        self.btn_ai_prev = make_button("上一步", variant="secondary", min_width=56)
         self.btn_ai_prev.clicked.connect(self._ai_goto_prev_step)
-        self.btn_ai_prev.setProperty("class", "SecondaryBtn")
-        self.btn_ai_prev.setFixedHeight(28)
 
-        self.btn_ai_next = QPushButton("下一步")
+        self.btn_ai_next = make_button("下一步", variant="primary", min_width=76)
         self.btn_ai_next.clicked.connect(self._ai_goto_next_step)
-        self.btn_ai_next.setProperty("class", "PrimaryBtn")
-        self.btn_ai_next.setFixedHeight(28)
 
-        self.btn_ai_save_only = QPushButton("仅保存配置")
+        self.btn_ai_save_only = make_button("仅保存配置", variant="secondary", min_width=76)
         self.btn_ai_save_only.clicked.connect(lambda: self._save_ai_profile_settings(activate=False))
-        self.btn_ai_save_only.setProperty("class", "SecondaryBtn")
-        self.btn_ai_save_only.setFixedHeight(28)
 
-        self.btn_ai_save_and_activate = QPushButton("保存并设为当前")
+        self.btn_ai_save_and_activate = make_button("保存并设为当前", variant="primary", min_width=110)
         self.btn_ai_save_and_activate.clicked.connect(lambda: self._save_ai_profile_settings(activate=True))
-        self.btn_ai_save_and_activate.setProperty("class", "PrimaryBtn")
-        self.btn_ai_save_and_activate.setFixedHeight(28)
 
-        self.btn_ai_cancel = QPushButton("取消")
+        self.btn_ai_cancel = make_button("取消", variant="secondary", min_width=56)
         self.btn_ai_cancel.clicked.connect(lambda: self._show_settings_home("ai"))
-        self.btn_ai_cancel.setProperty("class", "SecondaryBtn")
-        self.btn_ai_cancel.setFixedHeight(28)
 
         footer_layout.addWidget(self.btn_ai_prev)
         footer_layout.addStretch()
@@ -1084,7 +1046,7 @@ class SettingsDialog(QDialog):
 
         self.lbl_ai_wizard_key_status = QLabel()
         self.lbl_ai_wizard_key_status.setWordWrap(True)
-        self.lbl_ai_wizard_key_status.setStyleSheet("font-size: 11px;")
+        self.lbl_ai_wizard_key_status.setProperty("class", "StatusHint")
 
         form_layout.addRow("模型名称:", self.txt_ai_model)
         form_layout.addRow(self.lbl_ai_wizard_key_status)
@@ -1850,7 +1812,9 @@ class SettingsDialog(QDialog):
     def _on_auth_code_changed(self):
         self.test_success = False
         self.lbl_test_result.setText("邮箱授权码已更改，请重新进行连接测试。")
-        self.lbl_test_result.setStyleSheet("color: #D97706; font-size: 11px;")
+        self.lbl_test_result.setProperty("variant", "warning")
+        self.lbl_test_result.style().unpolish(self.lbl_test_result)
+        self.lbl_test_result.style().polish(self.lbl_test_result)
 
     def _toggle_advanced_settings(self):
         visible = not self.advanced_group.isVisible()
@@ -2039,7 +2003,9 @@ class SettingsDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self.btn_test.setEnabled(False)
         self.btn_test.setText("正在测试...")
-        self.lbl_test_result.setStyleSheet("color: #4B5563; font-size: 11px;")
+        self.lbl_test_result.setProperty("variant", "muted")
+        self.lbl_test_result.style().unpolish(self.lbl_test_result)
+        self.lbl_test_result.style().polish(self.lbl_test_result)
         self.lbl_test_result.setText("正在尝试连接 IMAP 服务器进行登录验证，请稍候...")
         QApplication.processEvents()
 
@@ -2051,11 +2017,15 @@ class SettingsDialog(QDialog):
 
             self.test_success = True
             prov_text = self.lbl_sum_provider.text()
-            self.lbl_test_result.setStyleSheet("color: #10B981; font-weight: bold; font-size: 11px;")
-            self.lbl_test_result.setText(f"✅ 已连接到 {prov_text}，可扫描最近 {self.txt_months.text().strip()} 个月发票邮件。")
+            self.lbl_test_result.setProperty("variant", "success")
+            self.lbl_test_result.style().unpolish(self.lbl_test_result)
+            self.lbl_test_result.style().polish(self.lbl_test_result)
+            self.lbl_test_result.setText(f"已连接到 {prov_text}，可扫描最近 {self.txt_months.text().strip()} 个月发票邮件。")
         except Exception as e:
             self.test_success = False
-            self.lbl_test_result.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 11px;")
+            self.lbl_test_result.setProperty("variant", "danger")
+            self.lbl_test_result.style().unpolish(self.lbl_test_result)
+            self.lbl_test_result.style().polish(self.lbl_test_result)
             friendly = self._format_connection_failure(provider, server, port, e, auth_code)
             self.lbl_test_result.setText(friendly)
         finally:

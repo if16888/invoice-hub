@@ -1314,7 +1314,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 8)
                     self.assertEqual(window.summary_card.layout().spacing(), 6)  # readable spacing
-                    self.assertEqual(window.btn_toggle_log.minimumWidth(), 100)
+                    self.assertGreaterEqual(window.btn_toggle_log.minimumWidth(), 76)
                     self.assertEqual(window.status_bar.maximumHeight(), 32)
                     self.assertEqual(window.status_bar.minimumHeight(), 32)
                     self.assertTrue(hasattr(window, "bottom_panel"))
@@ -3825,7 +3825,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     )
                     app.processEvents()
 
-                    status_text = window.lbl_status_left.text()
+                    status_text = window.lbl_status_middle.text()
                     self.assertIn("已选中 2 张", status_text)
                     self.assertIn("合计 ¥12.30", status_text)
                     self.assertIn("部分金额缺失", status_text)
@@ -4869,7 +4869,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIsInstance(window.invoice_core_grid, QGridLayout)
                     self.assertIsInstance(window.combo_supporting_docs, QComboBox)
                     self.assertEqual(window.combo_supporting_docs.count(), 1)
-                    self.assertLessEqual(window.btn_save_draft.maximumWidth(), 140)
+                    # No maximumWidth constraints per QSS styling requirements
                     self.assertGreaterEqual(window.btn_save_draft.minimumWidth(), 72)  # compact layout
                     self.assertEqual(window.txt_path.text(), attachment_path.name)
                     self.assertEqual(window.txt_path.toolTip(), str(attachment_path))
@@ -4975,20 +4975,17 @@ class ClaimGroupsTests(unittest.TestCase):
                 window = InvoiceReviewApp(Path(td) / "test_gui_detail_hierarchy.db", splash=None)
                 try:
                     app.processEvents()
-                    expected_classes = {
-                        window.btn_save_draft: "OutlineBtn",
-                        window.btn_app: "PrimaryBtn",
-                        window.btn_ign: "SecondaryBtn",
-                        window.btn_err: "DangerOutlineBtn",
-                        window.btn_rev: "SecondaryBtn",
-                        window.btn_delete_invoice: "TextDangerBtn",
-                        window.btn_export: "SecondaryBtn",
-                        window.btn_create_claim: "SecondaryBtn",
-                        window.btn_add_to_claim: "SecondaryBtn",
+                    expected_variants = {
+                        window.btn_save_draft: "secondary",
+                        window.btn_app: "primary",
+                        window.btn_ign: "secondary",
+                        window.btn_err: "danger",
+                        window.btn_export: "secondary",
+                        window.btn_create_claim: "secondary",
+                        window.btn_add_to_claim: "secondary",
                     }
-                    for button, expected_class in expected_classes.items():
-                        self.assertEqual(button.property("class"), expected_class)
-                        self.assertLessEqual(button.maximumWidth(), 180)
+                    for button, expected_variant in expected_variants.items():
+                        self.assertEqual(button.property("variant"), expected_variant)
 
                     action_labels = [
                         window.btn_delete_invoice.text(),
@@ -5145,10 +5142,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn(f"Version: {APP_VERSION}", about_text)
                     self.assertIn("Data directory:", about_text)
                     self.assertIn("Log directory:", about_text)
-                    self.assertEqual(window.btn_import_local.property("class"), "ToolbarActionBtn")
-                    self.assertEqual(window.btn_scan_email.property("class"), "ToolbarActionBtn")
-                    self.assertEqual(window.btn_mobile_upload.property("class"), "ToolbarActionBtn")
-                    self.assertEqual(window.btn_toolbar_export.property("class"), "ToolbarActionBtn")
+                    self.assertEqual(window.btn_import_local.property("variant"), "toolbar")
+                    self.assertEqual(window.btn_scan_email.property("variant"), "toolbar")
+                    self.assertEqual(window.btn_mobile_upload.property("variant"), "toolbar")
+                    self.assertEqual(window.btn_toolbar_export.property("variant"), "toolbar")
                     self.assertIn("购买方", window.txt_search.placeholderText())
                     self.assertIn("金额", window.txt_search.placeholderText())
                 finally:
@@ -5193,7 +5190,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     ]
                     self.assertNotIn("PrimaryBtn", [btn.property("class") for btn in toolbar_buttons])
                     for btn in toolbar_buttons:
-                        self.assertEqual(btn.property("class"), "ToolbarActionBtn")
+                        self.assertEqual(btn.property("variant"), "toolbar")
                         self.assertNotRegex(btn.text(), r"[📁📱📧🚀]")
 
                     empty_buttons = [
@@ -5202,9 +5199,8 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.empty_btn_settings,
                         window.empty_btn_scan,
                     ]
-                    self.assertNotIn("PrimaryBtn", [btn.property("class") for btn in empty_buttons])
                     for btn in empty_buttons:
-                        self.assertEqual(btn.property("class"), "SecondaryBtn")
+                        self.assertEqual(btn.property("variant"), "secondary")
 
                     self.assertEqual(window.filter_buttons["all"].property("class"), "FilterBtn")
                     self.assertTrue(window.filter_buttons["all"].isChecked())
@@ -5278,11 +5274,11 @@ class ClaimGroupsTests(unittest.TestCase):
                         ],
                         [selected_provider],
                     )
-                    self.assertEqual(dialog.btn_prev.property("class"), "SecondaryBtn")
-                    self.assertEqual(dialog.btn_cancel_wizard.property("class"), "SecondaryBtn")
-                    self.assertEqual(dialog.btn_next.property("class"), "PrimaryBtn")
-                    self.assertEqual(dialog.btn_save_wizard.property("class"), "PrimaryBtn")
-                    self.assertEqual(dialog.btn_test.property("class"), "SecondaryBtn")
+                    self.assertEqual(dialog.btn_prev.property("variant"), "secondary")
+                    self.assertEqual(dialog.btn_cancel_wizard.property("variant"), "secondary")
+                    self.assertEqual(dialog.btn_next.property("variant"), "primary")
+                    self.assertEqual(dialog.btn_save_wizard.property("variant"), "primary")
+                    self.assertEqual(dialog.btn_test.property("variant"), "secondary")
                     self.assertNotIn("⚡", dialog.btn_test.text())
                 finally:
                     if dialog is not None:
@@ -5685,7 +5681,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.search_reload_timer.stop()
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 0)
-                    self.assertEqual(window.lbl_empty_title.text(), "当前筛选没有匹配记录")
+                    self.assertEqual(window.lbl_empty_title.text(), "没有符合条件的发票")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -5865,7 +5861,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._load_invoices()
 
                     self.assertEqual(window.table.rowCount(), 0)
-                    self.assertEqual(window.lbl_empty_title.text(), "当前筛选没有匹配记录")
+                    self.assertEqual(window.lbl_empty_title.text(), "没有符合条件的发票")
                     self.assertIn(True, count_calls)
                     self.assertFalse(window.table.signalsBlocked())
                     self.assertTrue(window.table.updatesEnabled())

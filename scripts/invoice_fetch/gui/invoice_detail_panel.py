@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
+from .ui_components import make_button, make_badge, build_action_cluster
 
 
 class DoubleClickLineEdit(QLineEdit):
@@ -356,10 +357,12 @@ class InvoiceDetailPanel(QWidget):
             self.txt_path.setText(file_name if file_name else "")
             self.txt_path.setToolTip(file_path)
         self.btn_open_file.setEnabled(has_file)
-        self.btn_open_file.setVisible(False)
+        self.btn_open_file.setVisible(has_file)
+        self.btn_locate_file.setVisible(has_file)
         self.btn_add_attachment.setText("替换" if has_file else "补充")
+        self.btn_add_attachment.setVisible(True)
         self.btn_retry_download.setEnabled(not has_file and has_url)
-        self.btn_retry_download.setVisible(False)
+        self.btn_retry_download.setVisible(not has_file and has_url)
         self.btn_add_attachment.setEnabled(True)
         action = "替换" if has_file else "补充"
         self.txt_path.setStatusTip(f"双击{action}原件")
@@ -397,16 +400,18 @@ class InvoiceDetailPanel(QWidget):
         if dirty:
             if hasattr(self, "_saved_timer") and self._saved_timer.isActive():
                 self._saved_timer.stop()
-            self.btn_save_draft.setProperty("class", "PrimaryBtn")
+            self.btn_save_draft.setProperty("variant", "primary")
             self.btn_save_draft.setEnabled(True)
             self.lbl_dirty_hint.setText("已修改")
-            self.lbl_dirty_hint.setStyleSheet("color: #D97706; font-weight: bold;")
+            self.lbl_dirty_hint.setProperty("class", "StatusHint")
+            self.lbl_dirty_hint.setProperty("variant", "warning")
         else:
-            self.btn_save_draft.setProperty("class", "OutlineBtn")
+            self.btn_save_draft.setProperty("variant", "secondary")
             self.btn_save_draft.setEnabled(False)
             if was_dirty:
                 self.lbl_dirty_hint.setText("已保存")
-                self.lbl_dirty_hint.setStyleSheet("color: #059669; font-weight: bold;")
+                self.lbl_dirty_hint.setProperty("class", "StatusHint")
+                self.lbl_dirty_hint.setProperty("variant", "success")
                 from PySide6.QtCore import QTimer
                 if not hasattr(self, "_saved_timer"):
                     self._saved_timer = QTimer(self)
@@ -416,6 +421,7 @@ class InvoiceDetailPanel(QWidget):
             else:
                 if not (hasattr(self, "_saved_timer") and self._saved_timer.isActive()):
                     self.lbl_dirty_hint.setText("")
+        self._refresh_widget_style(self.lbl_dirty_hint)
         self._refresh_widget_style(self.btn_save_draft)
 
     def _clear_saved_text(self):
@@ -454,16 +460,24 @@ class InvoiceDetailPanel(QWidget):
             doc = items[0]
             label = doc.get("label") or doc.get("path", "").split("/")[-1].split("\\")[-1]
             max_chars = 40
-            display = (label[:max_chars] + "…") if len(label) > max_chars else label
-            self.lbl_evidence_name.setText(display)
-            self.lbl_evidence_name.setToolTip(f"{doc.get('path', '') or label}\n双击替换证明材料")
+            display_name = (label[:max_chars] + "…") if len(label) > max_chars else label
+            
+            if len(items) > 1:
+                self.lbl_evidence_name.setText(f"{display_name} +{len(items)-1}")
+                self.btn_add_evidence.setText("管理")
+            else:
+                self.lbl_evidence_name.setText(display_name)
+                self.btn_add_evidence.setText("替换/管理")
+                
+            self.lbl_evidence_name.setToolTip(f"{doc.get('path', '') or label}\n双击管理/替换证明材料")
             self.lbl_evidence_name.setVisible(True)
             self.lbl_evidence_missing.setVisible(False)
             self.lbl_evidence_dot.setProperty("class", "EvidenceDotPresent")
             self._refresh_widget_style(self.lbl_evidence_dot)
             self.btn_open_extra_files.setEnabled(True)
-            self.btn_open_extra_files.setVisible(False)
-            self.btn_add_evidence.setText("替换")
+            self.btn_open_extra_files.setVisible(True)
+            self.btn_add_evidence.setEnabled(True)
+            self.btn_add_evidence.setVisible(True)
         else:
             self.lbl_evidence_name.setVisible(False)
             self.lbl_evidence_missing.setVisible(True)
@@ -472,7 +486,8 @@ class InvoiceDetailPanel(QWidget):
             self.btn_open_extra_files.setEnabled(False)
             self.btn_open_extra_files.setVisible(False)
             self.btn_add_evidence.setText("补充")
-        self.btn_add_evidence.setVisible(False)
+            self.btn_add_evidence.setEnabled(True)
+            self.btn_add_evidence.setVisible(True)
 
     def get_selected_supporting_document(self) -> dict | None:
         """Return the currently selected supporting document, or None."""
@@ -518,7 +533,7 @@ class InvoiceDetailPanel(QWidget):
         self.right_content_widget = QScrollArea()
         self.right_content_widget.setWidgetResizable(True)
         self.right_content_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.right_content_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_content_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.right_content_widget.setFrameShape(QFrame.NoFrame)
 
         self.right_detail_content = QWidget()
@@ -561,7 +576,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.lbl_right_empty_title = QLabel("当前没有发票记录")
         self.lbl_right_empty_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.lbl_right_empty_title.setStyleSheet("color: #111827;")
+        self.lbl_right_empty_title.setProperty("class", "EmptyTitle")
         self.lbl_right_empty_title.setAlignment(Qt.AlignCenter)
         right_empty_card_layout.addWidget(self.lbl_right_empty_title)
 
@@ -570,7 +585,7 @@ class InvoiceDetailPanel(QWidget):
         )
         self.lbl_right_empty_desc.setWordWrap(True)
         self.lbl_right_empty_desc.setAlignment(Qt.AlignCenter)
-        self.lbl_right_empty_desc.setStyleSheet("color: #6B7280;")
+        self.lbl_right_empty_desc.setProperty("class", "EmptyDesc")
         right_empty_card_layout.addWidget(self.lbl_right_empty_desc)
 
         right_empty_layout.addWidget(right_empty_card)
@@ -614,7 +629,7 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_sum_category.setProperty("class", "DetailMeta")
         meta_row.addWidget(self.lbl_sum_category)
         sep1 = QLabel("|")
-        sep1.setStyleSheet("color: #D1D5DB; font-size: 13px;")
+        sep1.setProperty("class", "Separator")
         meta_row.addWidget(sep1)
         self.lbl_sum_date = QLabel("—")
         self.lbl_sum_date.setProperty("class", "DetailMeta")
@@ -660,24 +675,15 @@ class InvoiceDetailPanel(QWidget):
         self.inline_review_layout.setSpacing(8)
         self.inline_review_layout.setContentsMargins(0, 4, 0, 0)
 
-        self.btn_app = QPushButton("通过并下一张")
-        self.btn_app.setProperty("class", "PrimaryBtn")
-        self.btn_app.setMaximumWidth(120)
-        self.btn_app.setMinimumHeight(30)
+        self.btn_app = make_button("通过并下一张", variant="primary")
         self.btn_app.clicked.connect(self._cb.on_approve_next)
         self.inline_review_layout.addWidget(self.btn_app)
 
-        self.btn_ign = QPushButton("忽略")
-        self.btn_ign.setProperty("class", "SecondaryBtn")
-        self.btn_ign.setMaximumWidth(60)
-        self.btn_ign.setMinimumHeight(30)
+        self.btn_ign = make_button("忽略", variant="secondary")
         self.btn_ign.clicked.connect(self._cb.on_ignore)
         self.inline_review_layout.addWidget(self.btn_ign)
 
-        self.btn_err = QPushButton("异常")
-        self.btn_err.setProperty("class", "DangerOutlineBtn")
-        self.btn_err.setMaximumWidth(60)
-        self.btn_err.setMinimumHeight(30)
+        self.btn_err = make_button("异常", variant="danger")
         self.btn_err.clicked.connect(self._cb.on_mark_error)
         self.inline_review_layout.addWidget(self.btn_err)
 
@@ -695,10 +701,7 @@ class InvoiceDetailPanel(QWidget):
         self.action_locate_file.triggered.connect(self._cb.on_locate_file)
         self.action_open_dir.triggered.connect(self._cb.on_open_dir)
 
-        self.btn_inline_more = QPushButton("⋯")
-        self.btn_inline_more.setProperty("class", "SecondaryBtn")
-        self.btn_inline_more.setMaximumWidth(40)
-        self.btn_inline_more.setMinimumHeight(30)
+        self.btn_inline_more = make_button("⋯", variant="ghost")
         self.btn_inline_more.setMenu(self.inline_more_menu)
         self.inline_review_layout.addWidget(self.btn_inline_more)
         self.inline_review_layout.addStretch(1)
@@ -749,12 +752,8 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_dirty_hint.setProperty("class", "SectionHint")
         core_title_row.addWidget(self.lbl_dirty_hint)
 
-        self.btn_save_draft = QPushButton("保存")
+        self.btn_save_draft = make_button("保存", variant="secondary", min_width=72)
         self.btn_save_draft.setToolTip("保存字段修改")
-        self.btn_save_draft.setProperty("class", "OutlineBtn")
-        self.btn_save_draft.setMinimumWidth(72)
-        self.btn_save_draft.setMaximumWidth(100)
-        self.btn_save_draft.setMinimumHeight(28)
         self.btn_save_draft.clicked.connect(self._cb.on_save_fields)
         core_title_row.addWidget(self.btn_save_draft)
         detail_core_layout.addLayout(core_title_row)
@@ -770,23 +769,29 @@ class InvoiceDetailPanel(QWidget):
             lbl = QLabel(text)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setProperty("class", "FieldLabel")
-            lbl.setFixedWidth(56)
+            lbl.setFixedWidth(64)
             return lbl
 
         self.txt_number = QLineEdit()
         self.txt_number.setMinimumHeight(28)
+        self.txt_number.setMinimumWidth(100)
         self.txt_date = QLineEdit()
         self.txt_date.setMinimumHeight(28)
+        self.txt_date.setMinimumWidth(100)
         self.txt_date.setPlaceholderText("YYYY-MM-DD")
         self.txt_amount = QLineEdit()
         self.txt_amount.setMinimumHeight(28)
+        self.txt_amount.setMinimumWidth(100)
         self.combo_category = QComboBox()
         self.combo_category.setEditable(True)
         self.combo_category.setMinimumHeight(28)
+        self.combo_category.setMinimumWidth(100)
         self.txt_seller = QLineEdit()
         self.txt_seller.setMinimumHeight(28)
+        self.txt_seller.setMinimumWidth(100)
         self.txt_buyer = QLineEdit()
         self.txt_buyer.setMinimumHeight(28)
+        self.txt_buyer.setMinimumWidth(100)
         self.txt_seller.textChanged.connect(self.txt_seller.setToolTip)
         self.txt_buyer.textChanged.connect(self.txt_buyer.setToolTip)
 
@@ -829,85 +834,95 @@ class InvoiceDetailPanel(QWidget):
 
         # Original invoice and evidence share one compact row. File operations
         # are available by double-clicking the corresponding filename.
-        self.materials_row = QHBoxLayout()
-        self.materials_row.setContentsMargins(0, 0, 0, 0)
-        self.materials_row.setSpacing(10)
+        # Original invoice layout
+        self.original_row = QHBoxLayout()
+        self.original_row.setContentsMargins(0, 0, 0, 0)
+        self.original_row.setSpacing(10)
         attach_label = QLabel("原件:")
         attach_label.setProperty("class", "FieldLabel")
-        attach_label.setFixedWidth(56)
+        attach_label.setFixedWidth(64)
         attach_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.materials_row.addWidget(attach_label)
+        self.original_row.addWidget(attach_label)
+        
         self.txt_path = DoubleClickLineEdit()
         self.txt_path.setReadOnly(True)
         self.txt_path.setMinimumHeight(28)
         self.txt_path.setPlaceholderText("双击补充原件")
         self.txt_path.doubleClicked.connect(self._cb.on_open_dir)
-        self.materials_row.addWidget(self.txt_path, 1)
-        self.btn_open_file = QPushButton("查看")
+        self.original_row.addWidget(self.txt_path, 1)
+        
+        self.btn_open_file = make_button("打开", variant="secondary", min_width=56)
         self.btn_open_file.clicked.connect(self._cb.on_open_file)
-        self.btn_open_file.setMinimumHeight(28)
-        self.btn_open_file.setProperty("class", "SecondaryBtn")
         self.btn_open_file.setVisible(False)
-        self.materials_row.addWidget(self.btn_open_file)
-        self.btn_add_attachment = QPushButton("补原件")
+        
+        self.btn_locate_file = make_button("定位", variant="secondary", min_width=56)
+        self.btn_locate_file.clicked.connect(self._cb.on_locate_file)
+        
+        self.btn_add_attachment = make_button("补充", variant="secondary", min_width=56)
         self.btn_add_attachment.clicked.connect(self._cb.on_add_attachment)
-        self.btn_add_attachment.setMinimumHeight(28)
-        self.btn_add_attachment.setProperty("class", "SecondaryBtn")
         self.btn_add_attachment.setVisible(False)
-        self.materials_row.addWidget(self.btn_add_attachment)
-        self.btn_retry_download = QPushButton("重试下载")
+        
+        self.btn_retry_download = make_button("重下", variant="secondary", min_width=56)
         self.btn_retry_download.clicked.connect(self._cb.on_retry_download)
-        self.btn_retry_download.setMinimumHeight(28)
-        self.btn_retry_download.setProperty("class", "SecondaryBtn")
         self.btn_retry_download.setVisible(False)
-        self.materials_row.addWidget(self.btn_retry_download)
+        
+        self.original_actions_frame = build_action_cluster([
+            self.btn_open_file,
+            self.btn_locate_file,
+            self.btn_add_attachment,
+            self.btn_retry_download
+        ])
+        self.original_row.addWidget(self.original_actions_frame, 0)
+        detail_files_layout.addLayout(self.original_row)
 
+        # Evidence layout
+        self.evidence_row = QHBoxLayout()
+        self.evidence_row.setContentsMargins(0, 0, 0, 0)
+        self.evidence_row.setSpacing(10)
         evidence_label = QLabel("证明:")
         evidence_label.setProperty("class", "FieldLabel")
-        evidence_label.setFixedWidth(56)
+        evidence_label.setFixedWidth(64)
         evidence_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.materials_row.addWidget(evidence_label)
+        self.evidence_row.addWidget(evidence_label)
 
-        # Status dot: orange when missing, green when present
         self.lbl_evidence_dot = QLabel("●")
         self.lbl_evidence_dot.setFixedWidth(14)
         self.lbl_evidence_dot.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.lbl_evidence_dot.setProperty("class", "EvidenceDotMissing")
-        self.materials_row.addWidget(self.lbl_evidence_dot)
+        self.evidence_row.addWidget(self.lbl_evidence_dot)
 
-        # File name label (visible when a document exists)
         self.lbl_evidence_name = DoubleClickLabel("")
         self.lbl_evidence_name.setProperty("class", "EvidenceFileName")
         self.lbl_evidence_name.setMinimumHeight(28)
         self.lbl_evidence_name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.lbl_evidence_name.doubleClicked.connect(self._cb.on_add_evidence)
         self.lbl_evidence_name.setVisible(False)
-        self.materials_row.addWidget(self.lbl_evidence_name, 1)
+        self.evidence_row.addWidget(self.lbl_evidence_name, 1)
 
-        # Orange "missing" badge (visible when no supporting document)
-        self.lbl_evidence_missing = DoubleClickLabel("缺失 · 双击补充")
-        self.lbl_evidence_missing.setProperty("class", "EvidenceMissing")
-        self.lbl_evidence_missing.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.lbl_evidence_missing = DoubleClickLabel("缺失")
+        self.lbl_evidence_missing.setProperty("class", "StatusBadge")
+        self.lbl_evidence_missing.setProperty("variant", "warning")
+        self.lbl_evidence_missing.setAlignment(Qt.AlignCenter)
+        self.lbl_evidence_missing.setMinimumWidth(56)
         self.lbl_evidence_missing.setToolTip("双击补充证明材料")
         self.lbl_evidence_missing.doubleClicked.connect(self._cb.on_add_evidence)
-        self.materials_row.addWidget(self.lbl_evidence_missing, 1)
+        self.evidence_row.addWidget(self.lbl_evidence_missing, 1)
 
-        self.btn_open_extra_files = QPushButton("查看")
+        self.btn_open_extra_files = make_button("打开", variant="secondary", min_width=56)
         self.btn_open_extra_files.clicked.connect(self._cb.on_open_evidence)
-        self.btn_open_extra_files.setMinimumHeight(28)
-        self.btn_open_extra_files.setProperty("class", "SecondaryBtn")
         self.btn_open_extra_files.setEnabled(False)
         self.btn_open_extra_files.setVisible(False)
-        self.materials_row.addWidget(self.btn_open_extra_files)
 
-        self.btn_add_evidence = QPushButton("补充")
-        self.btn_add_evidence.setMinimumHeight(28)
-        self.btn_add_evidence.setProperty("class", "SecondaryBtn")
+        self.btn_add_evidence = make_button("补充", variant="secondary", min_width=56)
         self.btn_add_evidence.clicked.connect(self._cb.on_add_evidence)
         self.btn_add_evidence.setVisible(False)
-        self.materials_row.addWidget(self.btn_add_evidence)
 
-        detail_files_layout.addLayout(self.materials_row)
+        self.evidence_actions_frame = build_action_cluster([
+            self.btn_open_extra_files,
+            self.btn_add_evidence
+        ])
+        self.evidence_row.addWidget(self.evidence_actions_frame, 0)
+        detail_files_layout.addLayout(self.evidence_row)
 
         # Hidden QComboBox retained for backward-compat with on_supporting_doc_changed
         self.combo_supporting_docs = QComboBox()
@@ -935,7 +950,7 @@ class InvoiceDetailPanel(QWidget):
         claim_left_layout.setSpacing(10)
         claim_title = QLabel("报销组")
         claim_title.setProperty("class", "SectionTitle")
-        claim_title.setFixedWidth(56)
+        claim_title.setFixedWidth(64)
         claim_title.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         claim_left_layout.addWidget(claim_title)
 
@@ -953,12 +968,9 @@ class InvoiceDetailPanel(QWidget):
         self.btn_new_claim_toggle.clicked.connect(self._toggle_new_claim_input)
         self.btn_new_claim_toggle.setVisible(False)
 
-        self.btn_add_to_claim = QPushButton("加入")
+        self.btn_add_to_claim = make_button("加入", variant="secondary", min_width=56)
         self.btn_add_to_claim.setToolTip("将当前选中的发票加入此报销组")
         self.btn_add_to_claim.clicked.connect(self._cb.on_link_to_claim)
-        self.btn_add_to_claim.setProperty("class", "SecondaryBtn")
-        self.btn_add_to_claim.setMinimumHeight(28)
-        self.btn_add_to_claim.setMaximumWidth(170)
 
         self.claim_actions_widget = QWidget()
         claim_actions_layout = QHBoxLayout(self.claim_actions_widget)
@@ -967,12 +979,9 @@ class InvoiceDetailPanel(QWidget):
         claim_actions_layout.addStretch(1)
         claim_actions_layout.addWidget(self.btn_add_to_claim)
 
-        self.btn_export = QPushButton("导出")
+        self.btn_export = make_button("导出", variant="secondary", min_width=56)
         self.btn_export.setToolTip("导出当前报销组")
-        self.btn_export.setProperty("class", "SecondaryBtn")
         self.btn_export.setEnabled(False)
-        self.btn_export.setMinimumHeight(28)
-        self.btn_export.setMaximumWidth(64)
         self.btn_export.clicked.connect(self._cb.on_export_claim)
         claim_actions_layout.addWidget(self.btn_export)
         self.claim_row.addWidget(self.claim_actions_widget, 1)
@@ -988,17 +997,11 @@ class InvoiceDetailPanel(QWidget):
         self.txt_new_claim.setMinimumHeight(28)
         new_claim_layout.addWidget(self.txt_new_claim, 1)
 
-        self.btn_create_claim = QPushButton("确认")
-        self.btn_create_claim.setProperty("class", "SecondaryBtn")
-        self.btn_create_claim.setMinimumHeight(28)
-        self.btn_create_claim.setMaximumWidth(60)
+        self.btn_create_claim = make_button("确认", variant="secondary", min_width=56)
         self.btn_create_claim.clicked.connect(self._cb.on_create_claim)
         new_claim_layout.addWidget(self.btn_create_claim)
 
-        self.btn_cancel_create_claim = QPushButton("取消")
-        self.btn_cancel_create_claim.setProperty("class", "SecondaryBtn")
-        self.btn_cancel_create_claim.setMinimumHeight(28)
-        self.btn_cancel_create_claim.setMaximumWidth(60)
+        self.btn_cancel_create_claim = make_button("取消", variant="secondary", min_width=56)
         self.btn_cancel_create_claim.clicked.connect(self._toggle_new_claim_input)
         new_claim_layout.addWidget(self.btn_cancel_create_claim)
 
@@ -1012,17 +1015,15 @@ class InvoiceDetailPanel(QWidget):
         claim_setup_layout.addWidget(self.btn_refresh_claims)
 
         self.lbl_claim_total = QLabel("0 条记录 · 合计 ¥0.00")
-        self.lbl_claim_total.setStyleSheet("color: #374151; border: none; background: transparent;")
+        self.lbl_claim_total.setProperty("class", "ClaimTotal")
         self.lbl_claim_total.setVisible(True)
         self.claim_summary_row = QHBoxLayout()
         self.claim_summary_row.setContentsMargins(0, 0, 0, 0)
         self.claim_summary_row.setSpacing(8)
         self.claim_summary_row.addWidget(self.lbl_claim_total)
         self.claim_summary_row.addStretch(1)
-        self.btn_delete_claim = QPushButton("删除空组")
-        self.btn_delete_claim.setProperty("class", "TextDangerBtn")
+        self.btn_delete_claim = make_button("删除空组", variant="danger", min_width=76)
         self.btn_delete_claim.setToolTip("仅可删除没有关联记录的报销组")
-        self.btn_delete_claim.setMaximumWidth(80)
         self.btn_delete_claim.setEnabled(False)
         self.btn_delete_claim.clicked.connect(self._cb.on_delete_claim)
         self.claim_summary_row.addWidget(self.btn_delete_claim)
@@ -1030,7 +1031,7 @@ class InvoiceDetailPanel(QWidget):
 
         # Export summary (hidden, one-liner)
         self.lbl_export_summary = QLabel()
-        self.lbl_export_summary.setStyleSheet("color: #9CA3AF; border: none; background: transparent;")
+        self.lbl_export_summary.setProperty("class", "ExportSummary")
         self.lbl_export_summary.setWordWrap(True)
         self.lbl_export_summary.setText("上一次导出：暂无")
         self.lbl_export_summary.setVisible(False)
@@ -1063,7 +1064,7 @@ class InvoiceDetailPanel(QWidget):
         self.btn_toggle_note.clicked.connect(self._toggle_note_visibility)
         note_row.addWidget(self.btn_toggle_note)
         self.lbl_note_summary = QLabel("")
-        self.lbl_note_summary.setStyleSheet("color: #374151; border: none; background: transparent;")
+        self.lbl_note_summary.setProperty("class", "NoteSummary")
         self.lbl_note_summary.setWordWrap(True)
         self.lbl_note_summary.setVisible(False)
         note_row.addWidget(self.lbl_note_summary, 1)
@@ -1142,7 +1143,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.lbl_closing_desc = QLabel("")
         self.lbl_closing_desc.setWordWrap(True)
-        self.lbl_closing_desc.setStyleSheet("color: #4B5563; border: none; background: transparent;")
+        self.lbl_closing_desc.setProperty("class", "ClosingDesc")
         self.lbl_closing_desc.setVisible(False)
         closing_layout.addWidget(self.lbl_closing_desc)
         closing_layout.addStretch(1)

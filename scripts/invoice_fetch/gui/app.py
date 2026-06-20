@@ -30,6 +30,7 @@ from ..reimbursement import amount_total, buyer_warning, format_amount_total, ge
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
+from .ui_components import make_button, make_badge, make_filter_chip
 from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
@@ -278,42 +279,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_layout = QHBoxLayout()
         action_layout.setSpacing(8)
 
-        self.btn_import_local = QPushButton("导入发票")
+        self.btn_import_local = make_button("导入发票", variant="toolbar")
         self.btn_import_local.clicked.connect(self._import_local_clicked)
-        self.btn_import_local.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_import_local.setProperty("class", "ToolbarActionBtn")
-        self.btn_import_local.setAutoDefault(False)
-        self.btn_import_local.setDefault(False)
         action_layout.addWidget(self.btn_import_local)
 
-        self.btn_mobile_upload = QPushButton("扫码上传")
+        self.btn_mobile_upload = make_button("扫码上传", variant="toolbar")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
-        self.btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_mobile_upload.setProperty("class", "ToolbarActionBtn")
-        self.btn_mobile_upload.setAutoDefault(False)
-        self.btn_mobile_upload.setDefault(False)
         action_layout.addWidget(self.btn_mobile_upload)
 
-        self.btn_scan_email = QPushButton("扫描邮箱")
+        self.btn_scan_email = make_button("扫描邮箱", variant="toolbar")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
-        self.btn_scan_email.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_scan_email.setProperty("class", "ToolbarActionBtn")
-        self.btn_scan_email.setAutoDefault(False)
-        self.btn_scan_email.setDefault(False)
         action_layout.addWidget(self.btn_scan_email)
 
-        self.btn_toolbar_export = QPushButton("一键导出")
+        action_layout.addStretch()
+
+        self.btn_toolbar_export = make_button("一键导出", variant="toolbar")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
-        self.btn_toolbar_export.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_toolbar_export.setProperty("class", "ToolbarActionBtn")
-        self.btn_toolbar_export.setAutoDefault(False)
-        self.btn_toolbar_export.setDefault(False)
         action_layout.addWidget(self.btn_toolbar_export)
 
         # "更多  ▼" consolidated drop-down menu
-        self.btn_more = QPushButton("更多  ▼")
-        self.btn_more.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_more.setProperty("class", "ToolbarActionBtn")
+        self.btn_more = make_button("更多  ▼", variant="toolbar")
 
         self.more_menu = QMenu(self)
         self.more_menu.setToolTipsVisible(True)
@@ -361,14 +346,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_more.setMenu(self.more_menu)
         action_layout.addWidget(self.btn_more)
 
-        action_layout.addStretch()
         main_layout.addLayout(action_layout)
 
         # 1. Top Filter Bar
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(8)
 
-        lbl_filter = QLabel("审核状态:")
+        lbl_filter = QLabel("审核视图:")
         lbl_filter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         filter_layout.addWidget(lbl_filter)
 
@@ -385,6 +369,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             btn = QPushButton(text)
             btn.setProperty("class", "FilterBtn")
             btn.setCheckable(True)
+            btn.setAutoExclusive(True)
             btn.setMinimumWidth(86)
             btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             if status == "all":
@@ -402,6 +387,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.txt_search = QLineEdit()
         self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题")
+        self.txt_search.setClearButtonEnabled(True)
         self.txt_search.textChanged.connect(self._schedule_invoice_reload)
         search_layout.addWidget(self.txt_search, 2)
 
@@ -417,9 +403,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.chk_show_deleted.stateChanged.connect(self._schedule_invoice_reload)
         search_layout.addWidget(self.chk_show_deleted)
 
-        self.btn_reset_filters = QPushButton("重置")
-        self.btn_reset_filters.setProperty("class", "SecondaryBtn")
-        self.btn_reset_filters.setMaximumWidth(70)
+        self.btn_reset_filters = make_button("重置", variant="secondary", min_width=56)
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
         search_layout.addWidget(self.btn_reset_filters)
 
@@ -525,36 +509,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         btn_layout.setSpacing(10)
         btn_layout.setAlignment(Qt.AlignCenter)
 
-        self.empty_btn_import = QPushButton("导入发票")
+        self.empty_btn_import = make_button("导入发票", variant="secondary", min_width=56)
         self.empty_btn_import.clicked.connect(self._import_local_clicked)
-        self.empty_btn_import.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_import.setProperty("class", "SecondaryBtn")
 
-        self.empty_btn_settings = QPushButton("配置邮箱")
+        self.empty_btn_settings = make_button("配置邮箱", variant="secondary", min_width=56)
         self.empty_btn_settings.clicked.connect(self._open_settings_dialog)
-        self.empty_btn_settings.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_settings.setProperty("class", "SecondaryBtn")
 
-        self.empty_btn_scan = QPushButton("扫描邮箱")
+        self.empty_btn_scan = make_button("扫描邮箱", variant="secondary", min_width=56)
         self.empty_btn_scan.clicked.connect(self._scan_email_clicked)
-        self.empty_btn_scan.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_scan.setProperty("class", "SecondaryBtn")
 
-        self.empty_btn_mobile_upload = QPushButton("扫码上传")
+        self.empty_btn_mobile_upload = make_button("扫码上传", variant="secondary", min_width=56)
         self.empty_btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
-        self.empty_btn_mobile_upload.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_mobile_upload.setProperty("class", "SecondaryBtn")
 
         # Search / filter fail actions
-        self.empty_btn_clear_search = QPushButton("🧹 清空搜索")
+        self.empty_btn_clear_search = make_button("清空搜索", variant="primary", min_width=76)
         self.empty_btn_clear_search.clicked.connect(self._clear_search_clicked)
-        self.empty_btn_clear_search.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_clear_search.setProperty("class", "PrimaryBtn")
 
-        self.empty_btn_reset_filters = QPushButton("🔄 重置筛选")
+        self.empty_btn_reset_filters = make_button("重置筛选", variant="secondary", min_width=76)
         self.empty_btn_reset_filters.clicked.connect(self._reset_invoice_filters)
-        self.empty_btn_reset_filters.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.empty_btn_reset_filters.setProperty("class", "SecondaryBtn")
 
         btn_layout.addWidget(self.empty_btn_import)
         btn_layout.addWidget(self.empty_btn_mobile_upload)
@@ -608,34 +580,48 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status_layout = QHBoxLayout(status_bar)
         status_layout.setContentsMargins(6, 2, 6, 2)
 
-        self.lbl_status_left = QLabel("当前筛选 0 张｜未选择发票｜最近操作：系统就绪")
+        self.lbl_status_left = QLabel("当前筛选 0 张")
         self.lbl_status_left.setFont(QFont("Segoe UI", 9))
         self.lbl_status_left.setStyleSheet("color: #4B5563;")
+        self.lbl_status_left.setToolTip("当前发票筛选状态")
+        self.lbl_status_left.setMinimumWidth(120)
         status_layout.addWidget(self.lbl_status_left, 1)
+
+        self.lbl_status_middle = QLabel("未选择发票")
+        self.lbl_status_middle.setFont(QFont("Segoe UI", 9))
+        self.lbl_status_middle.setStyleSheet("color: #4B5563;")
+        self.lbl_status_middle.setToolTip("选中发票及金额合计")
+        self.lbl_status_middle.setAlignment(Qt.AlignCenter)
+        self.lbl_status_middle.setMinimumWidth(180)
+        status_layout.addWidget(self.lbl_status_middle, 1)
+
+        # Right container
+        right_container = QWidget()
+        right_layout = QHBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+        right_layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.lbl_version = QLabel(APP_VERSION)
         self.lbl_version.setFont(QFont("Segoe UI", 8))
         self.lbl_version.setStyleSheet("color: #6B7280;")
         self.lbl_version.setToolTip("当前 Invoice Hub 版本")
-        status_layout.addWidget(self.lbl_version)
+        right_layout.addWidget(self.lbl_version)
 
-        self.btn_load_all = QPushButton("加载全部")
-        self.btn_load_all.setProperty("class", "OutlineBtn")
+        self.btn_load_all = make_button("加载全部", variant="secondary", min_width=56)
         self.btn_load_all.setFixedHeight(24)
         self.btn_load_all.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.btn_load_all.setStyleSheet("padding: 2px 10px; font-size: 12px;")
         self.btn_load_all.setToolTip("首屏仅加载了部分记录，点击加载完整列表")
         self.btn_load_all.clicked.connect(self._load_all_invoices_clicked)
         self.btn_load_all.setVisible(False)
-        status_layout.addWidget(self.btn_load_all)
+        right_layout.addWidget(self.btn_load_all)
 
-        self.btn_toggle_log = QPushButton("展开日志")
-        self.btn_toggle_log.setProperty("class", "SecondaryBtn")
-        self.btn_toggle_log.setMinimumWidth(100)
+        self.btn_toggle_log = make_button("展开日志", variant="secondary", min_width=76)
         self.btn_toggle_log.setFixedHeight(24)
-        self.btn_toggle_log.setStyleSheet("padding: 2px 10px; font-size: 12px;")
         self.btn_toggle_log.clicked.connect(self._toggle_log)
-        status_layout.addWidget(self.btn_toggle_log)
+        right_layout.addWidget(self.btn_toggle_log)
+
+        status_layout.addWidget(right_container, 0)
 
         # Collapsible log drawer (hidden by default)
         self.log_container = QWidget()
@@ -1196,23 +1182,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if chips_to_add:
             self.filter_chips_widget.setVisible(True)
             for text, key in chips_to_add:
-                btn = QPushButton(f"{text} ✕")
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #EFF6FF;
-                        color: #2563EB;
-                        border: 1px solid #BFDBFE;
-                        border-radius: 4px;
-                        padding: 2px 6px;
-                        font-size: 11px;
-                        font-weight: 500;
-                    }
-                    QPushButton:hover {
-                        background-color: #DBEAFE;
-                        color: #1D4ED8;
-                        border-color: #2563EB;
-                    }
-                """)
+                btn = make_filter_chip(text, tooltip=text)
                 btn.clicked.connect(lambda checked=False, k=key: self._clear_single_filter(k))
                 self.chips_container_layout.addWidget(btn)
         else:
@@ -1616,7 +1586,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.empty_btn_clear_search.setVisible(False)
                 self.empty_btn_reset_filters.setVisible(False)
             else:
-                self.lbl_empty_title.setText("当前筛选没有匹配记录")
+                self.lbl_empty_title.setText("没有符合条件的发票")
                 self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
                 self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
                 self.lbl_guide.setVisible(True)
@@ -1632,7 +1602,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.current_invoice = None
             self.current_preview_docs = []
             self.current_preview_index = 0
-            self._preview_empty_message = "当前筛选没有匹配记录" if total_in_db > 0 else "请选择一张发票查看原件"
+            self._preview_empty_message = "没有符合条件的发票" if total_in_db > 0 else "请选择一张发票查看原件"
             self._update_document_preview()
             self._clear_detail_form()
             self._set_selection_total_status([])
@@ -1810,11 +1780,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _set_selection_total_status(self, selected_indexes):
         if not selected_indexes:
             prefix = self._format_status_count_prefix()
-            self.lbl_status_left.setText(f"{prefix}｜未选择发票｜最近操作：系统就绪")
+            self.lbl_status_left.setText(prefix)
+            self.lbl_status_left.setToolTip(prefix)
+            
+            mid_text = "未选择发票"
+            self.lbl_status_middle.setText(mid_text)
+            self.lbl_status_middle.setToolTip(mid_text)
             return
 
         def calculate_async():
-            # Ensure index still valid
             if not hasattr(self, "invoices_list") or not self.invoices_list:
                 return
             rows = []
@@ -1828,8 +1802,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 return
             prefix = self._format_status_count_prefix()
             count, total, has_missing = amount_total(rows)
-            suffix = "｜部分金额缺失" if has_missing else ""
-            self.lbl_status_left.setText(f"{prefix}｜已选中 {count} 张｜合计 ¥{total:.2f}{suffix}")
+            suffix = " (部分金额缺失)" if has_missing else ""
+            
+            self.lbl_status_left.setText(prefix)
+            self.lbl_status_left.setToolTip(prefix)
+            
+            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
+            self.lbl_status_middle.setText(mid_text)
+            self.lbl_status_middle.setToolTip(mid_text)
 
         QTimer.singleShot(0, calculate_async)
 
@@ -1882,10 +1862,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             first_inv = self.invoices_list[selected_indexes[0].row()]
             if first_inv.get("is_deleted") == 1:
                 self.btn_delete_invoice.setText("🔄 恢复发票")
-                self.btn_delete_invoice.setStyleSheet("background-color: #F0FDF4; color: #16A34A; border: 1px solid #86EFAC; padding: 6px; font-weight: bold; border-radius: 4px;")
+                self.btn_delete_invoice.setProperty("variant", "secondary")
             else:
                 self.btn_delete_invoice.setText("🗑️ 删除发票")
-                self.btn_delete_invoice.setStyleSheet("background-color: #FEF2F2; color: #DC2626; border: 1px solid #FCA5A5; padding: 6px; font-weight: bold; border-radius: 4px;")
+                self.btn_delete_invoice.setProperty("variant", "danger")
+            self._refresh_widget_style(self.btn_delete_invoice)
 
         if num_selected == 1:
             row_idx = selected_indexes[0].row()

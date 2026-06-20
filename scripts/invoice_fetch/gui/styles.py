@@ -723,5 +723,227 @@ QLabel.StatusBadge[variant="info"] {
     color: #1D4ED8;
     border: 1px solid #BFDBFE;
 }
+QLabel.StatusBadge[variant="muted"] {
+    background-color: #F3F4F6;
+    color: #4B5563;
+    border: 1px solid #E5E7EB;
+}
+QLabel.StatusBadge[variant="danger"] {
+    background-color: #FEE2E2;
+    color: #DC2626;
+    border: 1px solid #FCA5A5;
+}
+QLabel.StatusBadge[variant="placeholder"] {
+    background-color: transparent;
+    color: #9CA3AF;
+    border: 1px dashed #D1D5DB;
+}
+
+/* Button Variants */
+QPushButton[variant="primary"] {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: 1px solid #2563EB;
+    border-radius: 6px;
+    font-weight: 500;
+}
+QPushButton[variant="primary"]:hover {
+    background-color: #1D4ED8;
+    border-color: #1D4ED8;
+}
+QPushButton[variant="primary"]:pressed {
+    background-color: #1E40AF;
+    border-color: #1E40AF;
+}
+QPushButton[variant="primary"]:disabled {
+    background-color: #93C5FD;
+    border-color: #93C5FD;
+    color: #EFF6FF;
+}
+
+QPushButton[variant="secondary"] {
+    background-color: #FFFFFF;
+    color: #374151;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    font-weight: 500;
+}
+QPushButton[variant="secondary"]:hover {
+    background-color: #F9FAFB;
+    color: #111827;
+    border-color: #C4C6CA;
+}
+QPushButton[variant="secondary"]:pressed {
+    background-color: #F3F4F6;
+    border-color: #B2B4B7;
+}
+QPushButton[variant="secondary"]:disabled {
+    background-color: #F3F4F6;
+    color: #9CA3AF;
+    border-color: #E5E7EB;
+}
+
+QPushButton[variant="danger"] {
+    background-color: #FEE2E2;
+    color: #DC2626;
+    border: 1px solid #FCA5A5;
+    border-radius: 6px;
+    font-weight: 500;
+}
+QPushButton[variant="danger"]:hover {
+    background-color: #FEF2F2;
+    color: #B91C1C;
+    border-color: #EF4444;
+}
+QPushButton[variant="danger"]:pressed {
+    background-color: #FDE8E8;
+    color: #991B1B;
+    border-color: #F87171;
+}
+QPushButton[variant="danger"]:disabled {
+    background-color: #F3F4F6;
+    color: #9CA3AF;
+    border-color: #E5E7EB;
+}
+
+QPushButton[variant="ghost"] {
+    background-color: transparent;
+    color: #4B5563;
+    border: none;
+    border-radius: 6px;
+}
+QPushButton[variant="ghost"]:hover {
+    background-color: #F3F4F6;
+    color: #111827;
+}
+QPushButton[variant="ghost"]:pressed {
+    background-color: #E5E7EB;
+}
+QPushButton[variant="ghost"]:disabled {
+    color: #9CA3AF;
+}
+
+QPushButton[variant="toolbar"] {
+    background-color: #FFFFFF;
+    color: #374151;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: 500;
+}
+QPushButton[variant="toolbar"]:hover {
+    background-color: #F9FAFB;
+    border-color: #D1D5DB;
+    color: #111827;
+}
+QPushButton[variant="toolbar"]:pressed {
+    background-color: #F3F4F6;
+}
+QPushButton[variant="toolbar"]:disabled {
+    background-color: #F3F4F6;
+    color: #9CA3AF;
+    border-color: #E5E7EB;
+}
+
+QPushButton[variant="chip"] {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border: 1px solid #BFDBFE;
+    border-radius: 9999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 500;
+}
+QPushButton[variant="chip"]:hover {
+    background-color: #DBEAFE;
+}
+QPushButton[variant="chip"]:pressed {
+    background-color: #BFDBFE;
+}
+
+/* Row states and Action clusters */
+QFrame.SettingsListRow[active="true"] {
+    border-color: #3B82F6;
+    background-color: #EFF6FF;
+}
+QFrame.SettingsListRow[disabled="true"] {
+    background-color: #F9FAFB;
+    border-color: #E5E7EB;
+}
+QFrame.SettingsListRow[disabled="true"] QLabel {
+    color: #9CA3AF;
+}
+QFrame.ActionCluster {
+    border: none;
+    background: transparent;
+}
+
+/* Inline warnings and hints */
+QLabel.InlineWarning {
+    color: #B45309;
+    font-size: 11px;
+    background-color: #FEF3C7;
+    border: 1px solid #FCD34D;
+    padding: 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+}
+QLabel.InlineHint {
+    color: #D97706;
+    font-size: 11px;
+}
+QLabel.StatusHint {
+    font-size: 11px;
+    color: #374151;
+}
+QLabel.StatusHint[variant="success"] {
+    color: #10B981;
+    font-weight: bold;
+}
+QLabel.StatusHint[variant="danger"] {
+    color: #EF4444;
+    font-weight: bold;
+}
+QLabel.StatusHint[variant="warning"] {
+    color: #D97706;
+}
+QLabel.StatusHint[variant="muted"] {
+    color: #6B7280;
+}
+QLabel.EmptyTitle {
+    color: #111827;
+    font-size: 14px;
+    font-weight: bold;
+}
+QLabel.EmptyDesc {
+    color: #6B7280;
+    font-size: 12px;
+}
+QLabel.Separator {
+    color: #D1D5DB;
+}
+QLabel.ClaimTotal {
+    color: #374151;
+}
+QLabel.ExportSummary {
+    color: #9CA3AF;
+}
+QLabel.NoteSummary {
+    color: #374151;
+}
+QLabel.ClosingDesc {
+    color: #4B5563;
+}
+QPushButton[variant="toolbar"][busy="true"] {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: 1.5px solid #1D4ED8;
+    font-weight: 700;
+}
+QPushButton[variant="toolbar"][busy="true"]:disabled {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border-color: #1D4ED8;
+}
 """ + MENU_STYLE + """
 """

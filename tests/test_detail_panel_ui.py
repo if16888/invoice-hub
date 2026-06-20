@@ -100,7 +100,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         """Calling set_dirty_state(True) must enable btn_save_draft."""
         self.panel.set_dirty_state(True)
         self.assertTrue(self.panel.btn_save_draft.isEnabled())
-        self.assertEqual(self.panel.btn_save_draft.property("class"), "PrimaryBtn")
+        self.assertEqual(self.panel.btn_save_draft.property("variant"), "primary")
         self.assertEqual(self.panel.lbl_dirty_hint.text(), "已修改")
 
     def test_save_button_disabled_after_clear_dirty(self):
@@ -108,7 +108,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.set_dirty_state(True)
         self.panel.set_dirty_state(False)
         self.assertFalse(self.panel.btn_save_draft.isEnabled())
-        self.assertEqual(self.panel.btn_save_draft.property("class"), "OutlineBtn")
+        self.assertEqual(self.panel.btn_save_draft.property("variant"), "secondary")
         self.assertEqual(self.panel.lbl_dirty_hint.text(), "已保存")
         if hasattr(self.panel, "_saved_timer"):
             self.panel._saved_timer.timeout.emit()
@@ -187,11 +187,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         )
         self.assertIn("行程单.pdf", self.panel.lbl_evidence_name.text())
         self.assertTrue(self.panel.btn_open_extra_files.isEnabled())
-        self.assertTrue(
+        self.assertFalse(
             self.panel.btn_open_extra_files.isHidden(),
-            "Filename interaction replaces the visible open button"
+            "Open button should be visible in the ActionCluster when file exists"
         )
-        self.assertEqual(self.panel.btn_add_evidence.text(), "替换")
+        self.assertEqual(self.panel.btn_add_evidence.text(), "替换/管理")
 
     def test_evidence_row_filename_truncated_when_long(self):
         """Filenames longer than 40 chars are truncated with ellipsis."""
@@ -303,7 +303,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
     def test_attachment_row_shows_replace_when_file_exists(self):
         """When attachment exists, action buttons stay hidden and replacement state is retained."""
         self.panel.set_attachment_state(has_file=True, file_name="invoice.pdf", file_path="/tmp/invoice.pdf")
-        self.assertTrue(self.panel.btn_open_file.isHidden())
+        self.assertFalse(self.panel.btn_open_file.isHidden())
         self.assertEqual(self.panel.btn_add_attachment.text(), "替换")
 
     def test_material_actions_are_hidden_and_double_clickable(self):
@@ -321,14 +321,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.app.processEvents()
         panel.update_evidence_row([{"label": "proof.pdf", "path": "/tmp/proof.pdf"}])
 
-        for button in (
-            panel.btn_open_file,
-            panel.btn_add_attachment,
-            panel.btn_retry_download,
-            panel.btn_open_extra_files,
-            panel.btn_add_evidence,
-        ):
-            self.assertTrue(button.isHidden())
+        self.assertTrue(panel.btn_open_file.isHidden())
+        self.assertTrue(panel.btn_add_attachment.isHidden())
+        self.assertTrue(panel.btn_retry_download.isHidden())
+        self.assertFalse(panel.btn_open_extra_files.isHidden())  # visible as "打开"
+        self.assertFalse(panel.btn_add_evidence.isHidden())  # visible as "替换/管理" 
 
         QTest.mouseDClick(panel.txt_path, Qt.LeftButton)
         QTest.mouseDClick(panel.lbl_evidence_name, Qt.LeftButton)
@@ -341,7 +338,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         from PySide6.QtCore import Qt
         self.assertEqual(
             self.panel.right_content_widget.verticalScrollBarPolicy(),
-            Qt.ScrollBarAlwaysOff,
+            Qt.ScrollBarAsNeeded,
         )
 
     # ── 12. Inline claim creation toggling ───────────────────────────────────
