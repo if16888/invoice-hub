@@ -305,11 +305,11 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 # Verify detail_workbench is visible
                 self.assertTrue(window._detail_panel.detail_workbench.isVisible())
 
-                table_top = window.table.mapToGlobal(QPoint(0, 0)).y()
-                workbench_top = window._detail_panel.detail_workbench.mapToGlobal(QPoint(0, 0)).y()
+                table_top = window.table.mapTo(window, QPoint(0, 0)).y()
+                workbench_top = window._detail_panel.detail_workbench.mapTo(window, QPoint(0, 0)).y()
 
-                preview_bottom = window.preview_panel.mapToGlobal(QPoint(0, 0)).y() + window.preview_panel.height()
-                workbench_bottom = window._detail_panel.detail_workbench.mapToGlobal(QPoint(0, 0)).y() + window._detail_panel.detail_workbench.height()
+                preview_bottom = window.preview_panel.mapTo(window, QPoint(0, 0)).y() + window.preview_panel.height()
+                workbench_bottom = window._detail_panel.detail_workbench.mapTo(window, QPoint(0, 0)).y() + window._detail_panel.detail_workbench.height()
 
                 # Assert top/bottom coordinates align within a small tolerance.
                 self.assertLessEqual(abs(table_top - workbench_top), 6, "detail_workbench top is offset from table top by > 6px")
@@ -360,13 +360,13 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 panel.update_evidence_row([])
                 self.app.processEvents()
 
-                core_x = panel.txt_number.mapToGlobal(QPoint(0, 0)).x()
-                amount_x = panel.txt_amount.mapToGlobal(QPoint(0, 0)).x()
-                buyer_x = panel.txt_buyer.mapToGlobal(QPoint(0, 0)).x()
-                path_x = panel.txt_path.mapToGlobal(QPoint(0, 0)).x()
-                claim_x = panel.combo_claims.mapToGlobal(QPoint(0, 0)).x()
-                note_x = panel.txt_note.mapToGlobal(QPoint(0, 0)).x()
-                missing_x = panel.lbl_evidence_missing.mapToGlobal(QPoint(0, 0)).x()
+                core_x = panel.txt_number.mapTo(panel, QPoint(0, 0)).x()
+                amount_x = panel.txt_amount.mapTo(panel, QPoint(0, 0)).x()
+                buyer_x = panel.txt_buyer.mapTo(panel, QPoint(0, 0)).x()
+                path_x = panel.txt_path.mapTo(panel, QPoint(0, 0)).x()
+                claim_x = panel.combo_claims.mapTo(panel, QPoint(0, 0)).x()
+                note_x = panel.txt_note.mapTo(panel, QPoint(0, 0)).x()
+                missing_x = panel.lbl_evidence_missing.mapTo(panel, QPoint(0, 0)).x()
 
                 self.assertLessEqual(abs(core_x - amount_x), 4)
                 self.assertLessEqual(abs(core_x - buyer_x), 4)
@@ -378,10 +378,10 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                     {"label": "proof.pdf", "path": "/tmp/proof.pdf"}
                 ])
                 self.app.processEvents()
-                filename_x = panel.lbl_evidence_name.mapToGlobal(QPoint(0, 0)).x()
+                filename_x = panel.lbl_evidence_name.mapTo(panel, QPoint(0, 0)).x()
                 self.assertLessEqual(abs(path_x - filename_x), 6)
 
-                claim_actions_x = panel.claim_actions_widget.mapToGlobal(QPoint(0, 0)).x()
+                claim_actions_x = panel.claim_actions_widget.mapTo(panel, QPoint(0, 0)).x()
                 claim_combo_right = claim_x + panel.combo_claims.width()
                 self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
                 self.assertGreaterEqual(panel.claim_actions_widget.layout().indexOf(panel.btn_delete_claim), 0)
