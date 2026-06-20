@@ -79,6 +79,7 @@ htmlcov/
 .antigravitycli/
 .gemini/
 .claude/
+.superpowers/
 CLAUDE.md
 
 # Logs
