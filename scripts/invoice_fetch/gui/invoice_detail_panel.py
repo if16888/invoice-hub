@@ -3433,7 +3433,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.lbl_evidence_missing = DoubleClickLabel("缂哄け")
+        self.lbl_evidence_missing = DoubleClickLabel("缺失")
+
+
+
+        self.lbl_evidence_missing.setMinimumHeight(20)
 
 
 

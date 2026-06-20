@@ -159,6 +159,10 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
             self.panel.lbl_evidence_missing.isHidden(),
             "缺失 badge must not be hidden when no supporting documents"
         )
+        self.assertEqual(
+            self.panel.lbl_evidence_missing.text(),
+            "缺失"
+        )
         self.assertTrue(
             self.panel.lbl_evidence_name.isHidden(),
             "filename label must be hidden when no supporting documents"
