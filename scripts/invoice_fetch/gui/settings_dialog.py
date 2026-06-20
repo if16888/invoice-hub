@@ -248,8 +248,14 @@ class AIProfileRow(QFrame):
             self.lbl_active = make_badge("当前生效", variant="active", min_width=72)
             action_widgets.append(self.lbl_active)
         else:
-            self.btn_activate = make_button("启用 AI", variant="primary", min_width=84)
-            self.btn_activate.clicked.connect(self._on_activate)
+            if key_source == "missing":
+                self.btn_activate = make_button("配置 Key", variant="accent", min_width=84)
+                self.btn_activate.setToolTip("还未配置 API Key，点击进入编辑")
+                self.btn_activate.clicked.connect(self._on_edit)
+            else:
+                self.btn_activate = make_button("启用 AI", variant="accent", min_width=84)
+                self.btn_activate.setToolTip("使用已保存的 API Key 启用该 AI 配置")
+                self.btn_activate.clicked.connect(self._on_activate)
             action_widgets.append(self.btn_activate)
 
         # Actions: Edit and Delete

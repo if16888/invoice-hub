@@ -783,6 +783,34 @@ QPushButton[variant="secondary"]:disabled {
     border-color: #E5E7EB;
 }
 
+QPushButton[variant="accent"] {
+    background-color: #F8FBFF;
+    color: #1D4ED8;
+    border: 1px solid #BFDBFE;
+    border-radius: 6px;
+    font-weight: 600;
+}
+QPushButton[variant="accent"]:hover {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border-color: #93C5FD;
+}
+QPushButton[variant="accent"]:pressed {
+    background-color: #DBEAFE;
+    color: #1E40AF;
+    border-color: #60A5FA;
+}
+QPushButton[variant="accent"]:focus {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border-color: #2563EB;
+}
+QPushButton[variant="accent"]:disabled {
+    background-color: #F8FAFF;
+    color: #93C5FD;
+    border-color: #DBEAFE;
+}
+
 QPushButton[variant="danger"] {
     background-color: #FEE2E2;
     color: #DC2626;
