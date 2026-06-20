@@ -136,6 +136,24 @@ QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
     border: 1.5px solid #2563EB;
 }
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #111827;
+    border: 1px solid #D1D5DB;
+    selection-background-color: #DBEAFE;
+    selection-color: #1D4ED8;
+    outline: 0;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 26px;
+    padding: 4px 8px;
+    background-color: #FFFFFF;
+    color: #111827;
+}
+QComboBox QAbstractItemView::item:selected {
+    background-color: #DBEAFE;
+    color: #1D4ED8;
+}
 QLineEdit:read-only, QTextEdit:read-only, QPlainTextEdit:read-only {
     background-color: #F8FAFC;
     color: #374151;

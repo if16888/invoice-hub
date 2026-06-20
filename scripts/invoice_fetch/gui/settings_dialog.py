@@ -48,10 +48,10 @@ PROVIDER_EMAIL_NAMES = {
     "custom": "自定义 IMAP",
 }
 AI_KEY_SOURCE_LABELS = {
-    "profile": "配置专属 Key",
-    "provider": "旧版 Provider Key",
-    "env": "环境变量 Key",
-    "missing": "未配置",
+    "profile": "配置 Key",
+    "provider": "旧 Key",
+    "env": "环境变量",
+    "missing": "未设置",
 }
 
 
@@ -231,20 +231,23 @@ class AIProfileRow(QFrame):
             self.lbl_active.setProperty("variant", "active")
             layout.addWidget(self.lbl_active)
         else:
-            self.btn_activate = QPushButton("设为当前")
+            self.btn_activate = QPushButton("启用")
             self.btn_activate.clicked.connect(self._on_activate)
             self.btn_activate.setProperty("class", "PrimaryBtn")
+            self.btn_activate.setFixedWidth(60)
             layout.addWidget(self.btn_activate)
 
         # Actions: Edit and Delete
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_edit.setProperty("class", "SecondaryBtn")
+        self.btn_edit.setFixedWidth(50)
         layout.addWidget(self.btn_edit)
 
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self._on_delete)
         self.btn_delete.setProperty("class", "SettingsDangerBtn")
+        self.btn_delete.setFixedWidth(50)
         layout.addWidget(self.btn_delete)
 
     def _on_activate(self):
@@ -267,6 +270,8 @@ class SettingsDialog(QDialog):
         self.resize(650, 580)
         self.test_success = False
         self.current_step = 1
+        self.ai_current_step = 1
+        self._loading_ai_profile_values = False
         self._loading_initial_values = True
         self._applying_provider_defaults = False
         self._loading_account_values = False
@@ -750,8 +755,10 @@ class SettingsDialog(QDialog):
         active = next((profile for profile in profiles if profile["enabled"]), None)
         if active:
             self.lbl_ai_global_status.setText(f"AI 功能已启用：{active['name']}")
+            self.btn_disable_ai_action.setVisible(True)
         else:
             self.lbl_ai_global_status.setText("AI 功能未启用")
+            self.btn_disable_ai_action.setVisible(False)
 
         if not profiles:
             lbl_empty = QLabel("尚未保存任何 AI 配置，点击“新增 AI 配置”开始。")
@@ -1100,6 +1107,11 @@ class SettingsDialog(QDialog):
             self.txt_ai_model.setCurrentText("gemini-2.5-flash")
 
     def _update_ai_wizard_ui(self):
+        if getattr(self, "_loading_ai_profile_values", False):
+            return
+        if not hasattr(self, "ai_step_stack") or self.ai_step_stack is None:
+            return
+        self.ai_current_step = max(1, min(3, int(getattr(self, "ai_current_step", 1))))
         self.ai_step_stack.setCurrentIndex(self.ai_current_step - 1)
 
         if self.ai_current_step == 1:
@@ -1192,13 +1204,17 @@ class SettingsDialog(QDialog):
             self._update_ai_wizard_ui()
 
     def _open_new_ai_editor(self):
-        self._editing_ai_profile_id = f"ai-{uuid4().hex[:8]}"
-        self.txt_ai_name.clear()
-        self.txt_ai_key.clear()
-        self.combo_ai_provider.setCurrentIndex(0)
-        self._on_ai_wizard_provider_changed(self.combo_ai_provider.currentText())
-
         self.ai_current_step = 1
+        self._loading_ai_profile_values = True
+        try:
+            self._editing_ai_profile_id = f"ai-{uuid4().hex[:8]}"
+            self.txt_ai_name.clear()
+            self.txt_ai_key.clear()
+            self.combo_ai_provider.setCurrentIndex(0)
+            self._on_ai_wizard_provider_changed(self.combo_ai_provider.currentText())
+        finally:
+            self._loading_ai_profile_values = False
+
         self._update_ai_wizard_ui()
         self.settings_stack.setCurrentWidget(self.page_ai_editor)
 
@@ -1210,14 +1226,18 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "错误", f"找不到对应的 AI 配置: {profile_id}")
             return
 
-        self._editing_ai_profile_id = profile_id
-        self.txt_ai_name.setText(target.get("name", ""))
-        self.combo_ai_provider.setCurrentText(target.get("provider", "deepseek"))
-        self._on_ai_wizard_provider_changed(target.get("provider", "deepseek"))
-        self.txt_ai_model.setCurrentText(target.get("model", ""))
-        self.txt_ai_key.clear()
-
         self.ai_current_step = 1
+        self._loading_ai_profile_values = True
+        try:
+            self._editing_ai_profile_id = profile_id
+            self.txt_ai_name.setText(target.get("name", ""))
+            self.combo_ai_provider.setCurrentText(target.get("provider", "deepseek"))
+            self._on_ai_wizard_provider_changed(target.get("provider", "deepseek"))
+            self.txt_ai_model.setCurrentText(target.get("model", ""))
+            self.txt_ai_key.clear()
+        finally:
+            self._loading_ai_profile_values = False
+
         self._update_ai_wizard_ui()
         self.settings_stack.setCurrentWidget(self.page_ai_editor)
 
@@ -1282,7 +1302,11 @@ class SettingsDialog(QDialog):
             if hasattr(self.parent, "write_log"):
                 self.parent.write_log(f"⚙️ [设置保存] 全局 config.json AI 配置已更新。")
 
-            self.txt_ai_key.clear()
+            self._loading_ai_profile_values = True
+            try:
+                self.txt_ai_key.clear()
+            finally:
+                self._loading_ai_profile_values = False
             QMessageBox.information(self, "成功", "AI 配置已成功保存！")
             self._persist_settings_and_refresh("ai")
         except Exception as e:

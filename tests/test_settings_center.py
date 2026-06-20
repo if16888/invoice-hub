@@ -298,6 +298,93 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(len(dialog.ai_rows), 1)
         self.assertIsInstance(dialog.ai_rows[0], AIProfileRow)
 
+    def test_ai_current_step_initialized_on_dialog_creation(self):
+        dialog = self._make_dialog()
+        self.assertTrue(hasattr(dialog, "ai_current_step"))
+        self.assertEqual(dialog.ai_current_step, 1)
+        # Should not raise AttributeError
+        dialog._update_ai_wizard_ui()
+
+    def test_open_existing_ai_editor_does_not_raise_before_step_initialized(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "none", "model": "", "enabled": False},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": True,
+                }
+            ],
+        }
+        dialog = self._make_dialog(config=config)
+        # Should not raise AttributeError
+        dialog._open_ai_editor("ai-one")
+        self.assertEqual(dialog.ai_current_step, 1)
+
+    def test_save_ai_profile_clear_key_does_not_raise(self):
+        dialog = self._make_dialog()
+        dialog._open_new_ai_editor()
+        dialog.txt_ai_name.setText("My New AI")
+        dialog.txt_ai_key.setText("new-secret-key")
+        with patch("scripts.invoice_fetch.config.save_config"), \
+             patch("PySide6.QtWidgets.QMessageBox.information"), \
+             patch("scripts.invoice_fetch.credentials.set_ai_api_key"):
+            # Triggering save, should clear key and not raise AttributeError
+            dialog._save_ai_profile_settings(activate=True)
+
+    def test_disabled_ai_profile_row_has_visible_activate_button(self):
+        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
+        profile = {
+            "profile_id": "ai-one",
+            "name": "测试 AI",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "enabled": False,
+        }
+        dialog = self._make_dialog()
+        row = AIProfileRow(profile, key_source="env", parent=dialog)
+        self.assertFalse(row.btn_activate.isHidden())
+        self.assertTrue(row.btn_activate.isEnabled())
+        self.assertEqual(row.btn_activate.text(), "启用")
+        self.assertEqual(row.btn_activate.maximumWidth(), 60)
+        self.assertEqual(row.btn_edit.maximumWidth(), 50)
+        self.assertEqual(row.btn_delete.maximumWidth(), 50)
+
+        emitted = False
+        def on_activate(pid):
+            nonlocal emitted
+            emitted = True
+            self.assertEqual(pid, "ai-one")
+        row.activate_requested.connect(on_activate)
+        row.btn_activate.click()
+        self.assertTrue(emitted)
+
+    def test_disable_ai_button_hidden_or_disabled_when_no_active_profile(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "none", "model": "", "enabled": False},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": False,
+                }
+            ],
+        }
+        dialog = self._make_dialog(config=config)
+        self.assertFalse(dialog.btn_disable_ai_action.isVisible())
+
+    def test_combobox_popup_styles_present(self):
+        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+        self.assertIn("QComboBox QAbstractItemView", APP_STYLESHEET)
+        self.assertIn("selection-background-color", APP_STYLESHEET)
+        self.assertIn("selection-color", APP_STYLESHEET)
+
 
 if __name__ == "__main__":
     unittest.main()
