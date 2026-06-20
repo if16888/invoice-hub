@@ -309,7 +309,17 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 workbench_top = window._detail_panel.detail_workbench.mapTo(window, QPoint(0, 0)).y()
 
                 preview_bottom = window.preview_panel.mapTo(window, QPoint(0, 0)).y() + window.preview_panel.height()
-                workbench_bottom = window._detail_panel.detail_workbench.mapTo(window, QPoint(0, 0)).y() + window._detail_panel.detail_workbench.height()
+
+                scroll_area = window._detail_panel.right_content_widget
+                is_scrolling = scroll_area.verticalScrollBar().isVisible() or (
+                    window._detail_panel.detail_workbench.height() > scroll_area.viewport().height()
+                )
+                if is_scrolling:
+                    # When scrolling (e.g. on small displays in headless CI), the scroll area bottom aligns with preview bottom
+                    workbench_bottom = scroll_area.mapTo(window, QPoint(0, 0)).y() + scroll_area.height()
+                else:
+                    # When not scrolling, the workbench bottom itself expands to fill the space
+                    workbench_bottom = window._detail_panel.detail_workbench.mapTo(window, QPoint(0, 0)).y() + window._detail_panel.detail_workbench.height()
 
                 # Assert top/bottom coordinates align within a small tolerance.
                 self.assertLessEqual(abs(table_top - workbench_top), 6, "detail_workbench top is offset from table top by > 6px")
