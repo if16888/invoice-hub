@@ -1491,8 +1491,14 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             # 1. Test confirmed_note loaded to txt_note
             self.assertEqual(window.txt_note.toPlainText(), "这是一条测试个人备注")
 
-            # 2. Test note summary shows the note content
+            # 2. When note is loaded, editor is expanded (txt_note visible, lbl_note_summary hidden).
+            #    Collapse first to verify the summary label shows correctly.
+            window._toggle_note_visibility()
+            self.app.processEvents()
             self.assertIn("这是一条测试个人备注", window.lbl_note_summary.text())
+            # Expand again so we can edit below
+            window._toggle_note_visibility()
+            self.app.processEvents()
 
             # 3. Modify note and save
             window.txt_note.setPlainText("这是修改后的个人备注")

@@ -338,7 +338,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertTrue(panel.btn_add_attachment.isHidden())
         self.assertTrue(panel.btn_retry_download.isHidden())
         self.assertFalse(panel.btn_open_extra_files.isHidden())  # visible as "打开"
-        self.assertFalse(panel.btn_add_evidence.isHidden())  # visible as "替换/管理" 
+        self.assertFalse(panel.btn_add_evidence.isHidden())  # visible as "替换/管理"
 
         QTest.mouseDClick(panel.txt_path, Qt.LeftButton)
         QTest.mouseDClick(panel.lbl_evidence_name, Qt.LeftButton)
@@ -406,6 +406,75 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
         panel.close()
         panel.deleteLater()
+
+    # ── 14. Note section collapsed/expanded state ───────────────────────────
+
+    def test_note_collapsed_without_text_hides_summary_row(self):
+        """set_note('') must leave the note area fully collapsed: no summary, no editor row."""
+        self.panel.set_note("")
+        self.app.processEvents()
+
+        # txt_note must be hidden (own flag, independent of panel.show())
+        self.assertTrue(self.panel.txt_note.isHidden(),
+                        "txt_note should be hidden when no note text")
+        # lbl_note_summary must be hidden (no phantom 'summary' row)
+        self.assertTrue(self.panel.lbl_note_summary.isHidden(),
+                        "lbl_note_summary should be hidden when no note text")
+        # note_content_row (wrapper widget) must be hidden
+        if hasattr(self.panel, "note_content_row"):
+            self.assertTrue(self.panel.note_content_row.isHidden(),
+                            "note_content_row should be hidden when no note text")
+        # button text reverts to expand mode
+        self.assertEqual(self.panel.btn_toggle_note.text(), "备注 + 展开")
+
+    def test_note_collapsed_with_text_shows_summary(self):
+        """set_note('xxx') expands the editor; collapsing it must show lbl_note_summary with content."""
+        self.panel.set_note("客户项目说明")
+        self.app.processEvents()
+
+        # After set_note with text, editor should NOT be hidden (own hidden flag)
+        self.assertFalse(self.panel.txt_note.isHidden(),
+                         "txt_note should not be hidden after set_note with text")
+
+        # Now collapse via toggle
+        self.panel._toggle_note_visibility()
+        self.app.processEvents()
+
+        # Editor must be hidden
+        self.assertTrue(self.panel.txt_note.isHidden(),
+                        "txt_note should be hidden after collapsing")
+        # Summary must be visible and contain the note text
+        self.assertFalse(self.panel.lbl_note_summary.isHidden(),
+                         "lbl_note_summary should be visible after collapsing with text")
+        self.assertIn("客户项目说明", self.panel.lbl_note_summary.text(),
+                      "lbl_note_summary should contain the note text")
+        # Button text reflects collapsed state
+        self.assertEqual(self.panel.btn_toggle_note.text(), "备注 + 展开")
+
+    def test_note_expand_shows_editor(self):
+        """Clicking expand (toggle) from no-note collapsed state must reveal the txt_note editor."""
+        # Start from clean collapsed state (no note)
+        self.panel.set_note("")
+        self.app.processEvents()
+
+        # Verify collapsed (own hidden flag)
+        self.assertTrue(self.panel.txt_note.isHidden())
+
+        # Click expand
+        self.panel._toggle_note_visibility()
+        self.app.processEvents()
+
+        # Editor must now not be hidden (own hidden flag)
+        self.assertFalse(self.panel.txt_note.isHidden(),
+                         "txt_note should not be hidden after expanding")
+        if hasattr(self.panel, "note_content_row"):
+            self.assertFalse(self.panel.note_content_row.isHidden(),
+                             "note_content_row should be visible after expanding")
+        # Summary must be hidden (we're in editing mode)
+        self.assertTrue(self.panel.lbl_note_summary.isHidden(),
+                        "lbl_note_summary should be hidden while editor is open")
+        # Button text reflects expanded state
+        self.assertEqual(self.panel.btn_toggle_note.text(), "备注 + 收起")
 
 
 if __name__ == "__main__":

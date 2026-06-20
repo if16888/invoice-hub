@@ -694,71 +694,43 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-    def _toggle_note_visibility(self):
+    def _apply_note_state(self, expanded: bool):
+        """Apply the collapsed/expanded visual state for the note area.
 
-
-
+        Rules:
+        - expanded=True:  show note_content_row + txt_note, hide lbl_note_summary
+        - expanded=False, has text:  hide note_content_row, show lbl_note_summary with summary
+        - expanded=False, no text:   hide note_content_row, hide lbl_note_summary entirely
+        """
         if not hasattr(self, "txt_note") or not hasattr(self, "btn_toggle_note"):
-
-
-
             return
 
-
-
-        editing = not self.txt_note.isVisible()
-
-
-
-        self.txt_note.setVisible(editing)
-
-
-
-        if editing:
-
-
-
-            self.btn_toggle_note.setText("备注 + 收起")
-
-
-
+        if expanded:
+            self.txt_note.setVisible(True)
+            if hasattr(self, "note_content_row"):
+                self.note_content_row.setVisible(True)
             self.lbl_note_summary.setVisible(False)
-
-
-
+            self.btn_toggle_note.setText("备注 + 收起")
         else:
-
-
-
             note_text = self.txt_note.toPlainText().strip()
-
-
-
+            self.txt_note.setVisible(False)
+            if hasattr(self, "note_content_row"):
+                self.note_content_row.setVisible(False)
             if note_text:
-
-
-
                 summary = note_text[:60] + ("…" if len(note_text) > 60 else "")
-
-
-
                 self.lbl_note_summary.setText(f"备注: {summary}")
-
-
-
+                self.lbl_note_summary.setVisible(True)
             else:
-
-
-
-                self.lbl_note_summary.setText("备注可直接在这里修改")
-
-
-
-            self.lbl_note_summary.setVisible(True)
-
-
-
+                self.lbl_note_summary.setText("")
+                self.lbl_note_summary.setVisible(False)
             self.btn_toggle_note.setText("备注 + 展开")
+
+    def _toggle_note_visibility(self):
+        if not hasattr(self, "txt_note") or not hasattr(self, "btn_toggle_note"):
+            return
+
+        expanding = self.txt_note.isHidden()
+        self._apply_note_state(expanded=expanding)
 
 
 
@@ -1014,23 +986,9 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        # Notes
-
-
-
-        self.lbl_note_summary.setText("")
-
-
-
-        self.lbl_note_summary.setVisible(False)
-
-
-
-        self.btn_toggle_note.setText("备注 + 展开")
-
-
-
-        self.txt_note.setVisible(False)
+        # Notes — reset to: no text, collapsed, no content row, no summary
+        self.txt_note.setPlainText("")
+        self._apply_note_state(expanded=False)
 
 
 
@@ -1567,58 +1525,16 @@ class InvoiceDetailPanel(QWidget):
 
 
     def set_note(self, text: str):
+        """Set the personal note content and apply appropriate display state.
 
-
-
-        """Set the personal note content."""
-
-
-
+        - Empty text: collapse to header-only (no summary, no editor row)
+        - Non-empty text: expand editor so user can see and edit the content
+        """
         self.txt_note.setPlainText(text)
-
-
-
-        self.txt_note.setVisible(True)
-
-
-
         has_note = bool(text.strip())
-
-
-
-        if has_note:
-
-
-
-            summary = text[:60] + ("…" if len(text) > 60 else "")
-
-
-
-            self.lbl_note_summary.setText(f"备注: {summary}")
-
-
-
-            self.lbl_note_summary.setVisible(True)
-
-
-
-            self.btn_toggle_note.setText("备注 + 收起")
-
-
-
-        else:
-
-
-
-            self.lbl_note_summary.setText("备注可直接在这里修改")
-
-
-
-            self.lbl_note_summary.setVisible(True)
-
-
-
-            self.btn_toggle_note.setText("备注 + 收起")
+        # Always expand when there is real content so the user can read/edit it.
+        # Collapse cleanly when no note exists (no phantom 'summary' row shown).
+        self._apply_note_state(expanded=has_note)
 
 
 
@@ -4171,30 +4087,22 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.note_editor_row, self.note_editor_label, _ = create_labeled_action_row(
-
-
-
             "备注:",
-
-
-
             self.txt_note,
-
-
-
             [],
-
-
-
             label_alignment=Qt.AlignRight | Qt.AlignTop,
-
-
-
         )
 
+        # Wrap the editor row in a QWidget so it can be hidden as a unit.
+        # Add note_editor_row as a sub-layout to preserve its exact stretch factors.
+        self.note_content_row = QWidget()
+        note_content_row_layout = QVBoxLayout(self.note_content_row)
+        note_content_row_layout.setContentsMargins(0, 0, 0, 0)
+        note_content_row_layout.setSpacing(0)
+        note_content_row_layout.addLayout(self.note_editor_row)
+        self.note_content_row.setVisible(False)
 
-
-        review_note_layout.addLayout(self.note_editor_row)
+        review_note_layout.addWidget(self.note_content_row)
 
 
 
