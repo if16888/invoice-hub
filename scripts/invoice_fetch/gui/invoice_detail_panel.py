@@ -42,6 +42,28 @@ class DoubleClickLabel(QLabel):
         super().mouseDoubleClickEvent(event)
 
 
+def create_labeled_action_row(label_text: str, content_widget: QWidget, action_widgets: list[QWidget],
+                              *, label_width: int = 64, spacing: int = 10) -> tuple[QHBoxLayout, QLabel, QFrame]:
+    """Build a compact row with a fixed-width label, flexible content, and a fixed action cluster."""
+    row_layout = QHBoxLayout()
+    row_layout.setContentsMargins(0, 0, 0, 0)
+    row_layout.setSpacing(spacing)
+
+    label_widget = QLabel(label_text)
+    label_widget.setProperty("class", "FieldLabel")
+    label_widget.setFixedWidth(label_width)
+    label_widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    row_layout.addWidget(label_widget)
+
+    content_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    row_layout.addWidget(content_widget, 1)
+
+    action_cluster = build_action_cluster(action_widgets)
+    row_layout.addWidget(action_cluster, 0)
+
+    return row_layout, label_widget, action_cluster
+
+
 @dataclass
 class InvoiceDetailCallbacks:
     """Callbacks for InvoiceDetailPanel actions — wired by the owning window."""
@@ -887,9 +909,8 @@ class InvoiceDetailPanel(QWidget):
 
         self.lbl_evidence_dot = QLabel("●")
         self.lbl_evidence_dot.setFixedWidth(14)
-        self.lbl_evidence_dot.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.lbl_evidence_dot.setAlignment(Qt.AlignCenter)
         self.lbl_evidence_dot.setProperty("class", "EvidenceDotMissing")
-        self.evidence_row.addWidget(self.lbl_evidence_dot)
 
         self.lbl_evidence_name = DoubleClickLabel("")
         self.lbl_evidence_name.setProperty("class", "EvidenceFileName")
@@ -909,6 +930,7 @@ class InvoiceDetailPanel(QWidget):
         self.evidence_row.addWidget(self.lbl_evidence_missing, 1)
 
         self.btn_open_extra_files = make_button("打开", variant="secondary", min_width=56)
+        self.evidence_row.addWidget(self.lbl_evidence_dot)
         self.btn_open_extra_files.clicked.connect(self._cb.on_open_evidence)
         self.btn_open_extra_files.setEnabled(False)
         self.btn_open_extra_files.setVisible(False)
@@ -942,7 +964,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.claim_row = QHBoxLayout()
         self.claim_row.setContentsMargins(0, 0, 0, 0)
-        self.claim_row.setSpacing(0)
+        self.claim_row.setSpacing(10)
 
         self.claim_left_widget = QWidget()
         claim_left_layout = QHBoxLayout(self.claim_left_widget)
@@ -956,7 +978,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.combo_claims = QComboBox()
         self.combo_claims.setMinimumHeight(28)
-        self.combo_claims.setMaximumWidth(360)
+        self.combo_claims.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.combo_claims.currentIndexChanged.connect(self._cb.on_claim_combo_changed)
         claim_left_layout.addWidget(self.combo_claims, 1)
         self.claim_row.addWidget(self.claim_left_widget, 1)
@@ -973,10 +995,11 @@ class InvoiceDetailPanel(QWidget):
         self.btn_add_to_claim.clicked.connect(self._cb.on_link_to_claim)
 
         self.claim_actions_widget = QWidget()
+        self.claim_actions_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         claim_actions_layout = QHBoxLayout(self.claim_actions_widget)
-        claim_actions_layout.setContentsMargins(6, 0, 0, 0)
+        claim_actions_layout.setContentsMargins(0, 0, 0, 0)
         claim_actions_layout.setSpacing(8)
-        claim_actions_layout.addStretch(1)
+        claim_actions_layout.setSizeConstraint(QLayout.SetFixedSize)
         claim_actions_layout.addWidget(self.btn_add_to_claim)
 
         self.btn_export = make_button("导出", variant="secondary", min_width=56)
@@ -984,7 +1007,7 @@ class InvoiceDetailPanel(QWidget):
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self._cb.on_export_claim)
         claim_actions_layout.addWidget(self.btn_export)
-        self.claim_row.addWidget(self.claim_actions_widget, 1)
+        self.claim_row.addWidget(self.claim_actions_widget, 0)
         claim_setup_layout.addLayout(self.claim_row)
 
         # Inline new claim widget (initially hidden)
@@ -1075,7 +1098,16 @@ class InvoiceDetailPanel(QWidget):
         self.txt_note.setMaximumHeight(72)
         self.txt_note.setPlaceholderText("可填写报销说明、事项背景、客户/项目等。")
         self.txt_note.setVisible(False)
-        review_note_layout.addWidget(self.txt_note)
+        note_editor_row = QHBoxLayout()
+        note_editor_row.setContentsMargins(0, 0, 0, 0)
+        note_editor_row.setSpacing(10)
+        note_editor_label = QLabel("备注:")
+        note_editor_label.setProperty("class", "FieldLabel")
+        note_editor_label.setFixedWidth(64)
+        note_editor_label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        note_editor_row.addWidget(note_editor_label)
+        note_editor_row.addWidget(self.txt_note, 1)
+        review_note_layout.addLayout(note_editor_row)
         workbench_layout.addWidget(self.review_note_section)
         add_workbench_divider()
 

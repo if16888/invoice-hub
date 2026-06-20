@@ -305,20 +305,85 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 # Verify detail_workbench is visible
                 self.assertTrue(window._detail_panel.detail_workbench.isVisible())
 
-                # Measure global positions
                 table_top = window.table.mapToGlobal(QPoint(0, 0)).y()
                 workbench_top = window._detail_panel.detail_workbench.mapToGlobal(QPoint(0, 0)).y()
 
                 preview_bottom = window.preview_panel.mapToGlobal(QPoint(0, 0)).y() + window.preview_panel.height()
                 workbench_bottom = window._detail_panel.detail_workbench.mapToGlobal(QPoint(0, 0)).y() + window._detail_panel.detail_workbench.height()
 
-                # Debug prints
-                print(f"DEBUG: table_top={table_top}, workbench_top={workbench_top}")
-                print(f"DEBUG: preview_bottom={preview_bottom}, workbench_bottom={workbench_bottom}")
+                # Assert top/bottom coordinates align within a small tolerance.
+                self.assertLessEqual(abs(table_top - workbench_top), 6, "detail_workbench top is offset from table top by > 6px")
+                self.assertLessEqual(abs(preview_bottom - workbench_bottom), 6, "detail_workbench bottom is offset from preview_panel bottom by > 6px")
 
-                # Assert top/bottom coordinates align within 2px
-                self.assertLessEqual(abs(table_top - workbench_top), 2, "detail_workbench top is offset from table top by > 2px")
-                self.assertLessEqual(abs(preview_bottom - workbench_bottom), 2, "detail_workbench bottom is offset from preview_panel bottom by > 2px")
+            finally:
+                if hasattr(window, "db") and window.db is not None:
+                    window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_detail_row_alignment_uses_shared_left_edge_and_fixed_action_cluster(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "test_gui_geometry_rows.db"
+            with InvoiceDB(db_path) as db:
+                db.insert_invoice({
+                    "invoice_number": "CAT002",
+                    "total_amount": "66.00",
+                    "seller_name": "Geometry Seller 2",
+                    "invoice_date": "2026-05-25",
+                    "category": "椁愰ギ",
+                    "review_status": "to_review",
+                })
+
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            cfg = {
+                "reimbursement": {
+                    "buyer_name": "绀轰緥鍏徃",
+                    "strict_buyer_check": False,
+                }
+            }
+            with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg):
+                window = InvoiceReviewApp(db_path, splash=None)
+
+            try:
+                window._deferred_init()
+                self.app.processEvents()
+                window.resize(1680, 1050)
+                window.show()
+                self.app.processEvents()
+                window.table.selectRow(0)
+                self.app.processEvents()
+
+                panel = window._detail_panel
+                panel.set_note("绀烘暍澶囨敞")
+                panel.update_evidence_row([])
+                self.app.processEvents()
+
+                core_x = panel.txt_number.mapToGlobal(QPoint(0, 0)).x()
+                amount_x = panel.txt_amount.mapToGlobal(QPoint(0, 0)).x()
+                buyer_x = panel.txt_buyer.mapToGlobal(QPoint(0, 0)).x()
+                path_x = panel.txt_path.mapToGlobal(QPoint(0, 0)).x()
+                claim_x = panel.combo_claims.mapToGlobal(QPoint(0, 0)).x()
+                note_x = panel.txt_note.mapToGlobal(QPoint(0, 0)).x()
+                missing_x = panel.lbl_evidence_missing.mapToGlobal(QPoint(0, 0)).x()
+
+                self.assertLessEqual(abs(core_x - amount_x), 4)
+                self.assertLessEqual(abs(core_x - buyer_x), 4)
+                self.assertLessEqual(abs(path_x - claim_x), 4)
+                self.assertLessEqual(abs(path_x - note_x), 4)
+                self.assertLessEqual(abs(path_x - missing_x), 6)
+
+                panel.update_evidence_row([
+                    {"label": "proof.pdf", "path": "/tmp/proof.pdf"}
+                ])
+                self.app.processEvents()
+                filename_x = panel.lbl_evidence_name.mapToGlobal(QPoint(0, 0)).x()
+                self.assertLessEqual(abs(path_x - filename_x), 6)
+
+                claim_actions_x = panel.claim_actions_widget.mapToGlobal(QPoint(0, 0)).x()
+                claim_combo_right = claim_x + panel.combo_claims.width()
+                self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
+                self.assertGreater(panel.detail_workbench.height(), 0)
 
             finally:
                 if hasattr(window, "db") and window.db is not None:

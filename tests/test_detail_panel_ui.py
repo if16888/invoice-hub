@@ -243,12 +243,21 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsInstance(self.panel.btn_export, QPushButton)
 
     def test_claim_group_controls_share_one_compact_row(self):
-        """Claim selection and actions occupy equal left/right halves."""
-        self.assertIs(self.panel.claim_row.itemAt(0).widget(), self.panel.claim_left_widget)
-        self.assertIs(self.panel.claim_row.itemAt(1).widget(), self.panel.claim_actions_widget)
-        self.assertEqual(self.panel.claim_row.stretch(0), 1)
-        self.assertEqual(self.panel.claim_row.stretch(1), 1)
-        self.assertLessEqual(self.panel.combo_claims.maximumWidth(), 360)
+        """Claim selection, material, and note inputs should share the same left edge."""
+        self.panel.set_note("报销说明")
+        self.panel.resize(760, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        claim_x = self.panel.combo_claims.mapTo(self.panel, self.panel.combo_claims.rect().topLeft()).x()
+        material_x = self.panel.txt_path.mapTo(self.panel, self.panel.txt_path.rect().topLeft()).x()
+        note_x = self.panel.txt_note.mapTo(self.panel, self.panel.txt_note.rect().topLeft()).x()
+        self.assertLessEqual(abs(claim_x - material_x), 4)
+        self.assertLessEqual(abs(claim_x - note_x), 4)
+
+        claim_actions_x = self.panel.claim_actions_widget.mapTo(self.panel, self.panel.claim_actions_widget.rect().topLeft()).x()
+        claim_combo_right = claim_x + self.panel.combo_claims.width()
+        self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
         self.assertTrue(self.panel.btn_refresh_claims.isHidden())
         self.assertFalse(self.panel.lbl_claim_total.isHidden())
 
