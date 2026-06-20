@@ -1,3 +1,5 @@
+import copy
+import copy
 import json
 import tempfile
 import unittest
@@ -283,6 +285,20 @@ class GenericImapConfigTests(unittest.TestCase):
             self.assertNotIn("my_secret_code", saved_content)
             self.assertNotIn("auth_code", saved_content)
 
+    def test_save_config_strips_legacy_ai_enabled_flag(self):
+        from scripts.invoice_fetch.config import save_config
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            save_config({
+                "email": {"address": "test@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993},
+                "search": {"months_back": 3},
+                "ai": {"provider": "deepseek", "model": "deepseek-chat", "enabled": True},
+            }, path=path)
+
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("enabled", saved["ai"])
+
     def test_ai_provider_none_does_not_affect_validation(self):
         validate_config_gui({
             "email": {
@@ -323,7 +339,7 @@ class GenericImapConfigTests(unittest.TestCase):
 
     def test_settings_dialog_saves_sparse_config_without_keyerror(self):
         try:
-            from PySide6.QtWidgets import QApplication, QWidget
+            from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
             import sys
             from unittest.mock import MagicMock, patch
 
@@ -345,7 +361,17 @@ class GenericImapConfigTests(unittest.TestCase):
             dialog.txt_ai_model.setCurrentText("")
             dialog.test_success = True
 
-            with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
+            persisted_cfg = copy.deepcopy(dialog.cfg)
+
+            def fake_save(cfg, path=None):
+                nonlocal persisted_cfg
+                persisted_cfg = copy.deepcopy(cfg)
+
+            def fake_load(path=None):
+                return copy.deepcopy(persisted_cfg)
+
+            with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+                 patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load), \
                  patch("scripts.invoice_fetch.gui.app.QMessageBox.warning") as mock_warn, \
                  patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as mock_info, \
                  patch("scripts.invoice_fetch.gui.app.QMessageBox.question") as mock_quest, \
@@ -379,7 +405,7 @@ class GenericImapConfigTests(unittest.TestCase):
 
     def test_settings_dialog_updates_matching_disabled_account_without_removing_others(self):
         try:
-            from PySide6.QtWidgets import QApplication, QWidget
+            from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
             import sys
             from unittest.mock import MagicMock, patch
 
@@ -418,8 +444,17 @@ class GenericImapConfigTests(unittest.TestCase):
             dialog.combo_ai_provider.setCurrentText("none")
             dialog.test_success = True
 
-            with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
-                    patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value={"loaded": True}), \
+            persisted_cfg = copy.deepcopy(dialog.cfg)
+
+            def fake_save(cfg, path=None):
+                nonlocal persisted_cfg
+                persisted_cfg = copy.deepcopy(cfg)
+
+            def fake_load(path=None):
+                return copy.deepcopy(persisted_cfg)
+
+            with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+                    patch("scripts.invoice_fetch.gui.app.load_config_safe", side_effect=fake_load), \
                     patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
                     patch("scripts.invoice_fetch.gui.app.QMessageBox.warning"), \
                     patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
@@ -438,7 +473,210 @@ class GenericImapConfigTests(unittest.TestCase):
                 account["address"] == "other@qq.com"
                 for account in dialog.cfg["email_accounts"]
             ))
-            self.assertEqual(parent.config, {"loaded": True})
+            self.assertEqual(len(parent.config["email_accounts"]), 2)
+
+            dialog.close()
+            dialog.deleteLater()
+            app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping SettingsDialog GUI test: {e}")
+            raise
+
+    def test_settings_dialog_blocks_email_change_without_new_auth_code_or_test(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
+            import sys
+            from unittest.mock import MagicMock, patch
+
+            app = QApplication.instance() or QApplication(sys.argv)
+            from scripts.invoice_fetch.gui.app import SettingsDialog
+
+            parent = QWidget()
+            parent.write_log = MagicMock()
+            parent.config = {}
+            dialog = SettingsDialog(parent)
+            dialog.cfg = {
+                "email": {"provider": "qq", "address": "old@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+                "email_accounts": [
+                    {
+                        "name": "Research Inbox",
+                        "enabled": True,
+                        "provider": "qq",
+                        "address": "old@qq.com",
+                        "username": "old@qq.com",
+                        "mailbox_key": "stable-key",
+                        "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                        "search": {"folder": "INBOX", "months_back": 3},
+                    }
+                ],
+            }
+            dialog._build_saved_account_maps()
+            dialog._open_mailbox_editor("stable-key")
+            dialog.txt_email.setText("new@qq.com")
+            dialog.txt_auth_code.setText("")
+            dialog.test_success = False
+
+            with patch("scripts.invoice_fetch.gui.app.QMessageBox.question", return_value=QMessageBox.Yes), \
+             patch("scripts.invoice_fetch.gui.app.QMessageBox.warning") as mock_warn, \
+             patch("scripts.invoice_fetch.config.save_config") as mock_save, \
+                 patch("scripts.invoice_fetch.credentials.set_auth_code") as mock_set_auth, \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
+                dialog._save_mailbox_settings()
+
+            mock_warn.assert_called_once()
+            mock_save.assert_not_called()
+            mock_set_auth.assert_not_called()
+            self.assertEqual(len(dialog.cfg["email_accounts"]), 1)
+            self.assertEqual(dialog.cfg["email_accounts"][0]["address"], "old@qq.com")
+
+            dialog.close()
+            dialog.deleteLater()
+            app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping SettingsDialog GUI test: {e}")
+            raise
+
+    def test_settings_dialog_updates_loaded_account_by_stable_mailbox_key(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
+            import sys
+            from unittest.mock import MagicMock, patch
+
+            app = QApplication.instance() or QApplication(sys.argv)
+            from scripts.invoice_fetch.gui.app import SettingsDialog
+
+            parent = QWidget()
+            parent.write_log = MagicMock()
+            parent.config = {}
+            dialog = SettingsDialog(parent)
+            dialog.cfg = {
+                "email": {"provider": "qq", "address": "old@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+                "email_accounts": [
+                    {
+                        "name": "Research Inbox",
+                        "enabled": True,
+                        "provider": "qq",
+                        "address": "old@qq.com",
+                        "username": "old@qq.com",
+                        "mailbox_key": "stable-key",
+                        "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                        "search": {"folder": "INBOX", "months_back": 3},
+                    }
+                ],
+            }
+            dialog._build_saved_account_maps()
+            dialog._open_mailbox_editor("stable-key")
+            self.assertEqual(dialog.txt_mailbox_name.text(), "Research Inbox")
+            dialog.txt_email.setText("new@qq.com")
+            dialog.txt_auth_code.setText("new-auth-code")
+            dialog.test_success = False
+
+            persisted_cfg = copy.deepcopy(dialog.cfg)
+
+            def fake_save(cfg, path=None):
+                nonlocal persisted_cfg
+                persisted_cfg = copy.deepcopy(cfg)
+
+            def fake_load(path=None):
+                return copy.deepcopy(persisted_cfg)
+
+            with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+                 patch("scripts.invoice_fetch.gui.app.load_config_safe", side_effect=fake_load), \
+                 patch("scripts.invoice_fetch.credentials.set_auth_code") as mock_set_auth, \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.question", return_value=QMessageBox.Yes), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.warning"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
+                dialog._save_mailbox_settings()
+
+            mock_save.assert_called_once()
+            mock_set_auth.assert_called_once_with("new@qq.com", "new-auth-code")
+            self.assertEqual(len(dialog.cfg["email_accounts"]), 1)
+            saved = dialog.cfg["email_accounts"][0]
+            self.assertEqual(saved["address"], "new@qq.com")
+            self.assertEqual(saved["mailbox_key"], "stable-key")
+            self.assertEqual(saved["name"], "Research Inbox")
+
+            dialog.close()
+            dialog.deleteLater()
+            app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping SettingsDialog GUI test: {e}")
+            raise
+
+    def test_settings_dialog_preserves_stable_mailbox_key_when_provider_changes(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QWidget, QMessageBox
+            import sys
+            from unittest.mock import MagicMock, patch
+
+            app = QApplication.instance() or QApplication(sys.argv)
+            from scripts.invoice_fetch.gui.app import SettingsDialog
+
+            parent = QWidget()
+            parent.write_log = MagicMock()
+            parent.config = {}
+            dialog = SettingsDialog(parent)
+            dialog.cfg = {
+                "email": {"provider": "qq", "address": "old@qq.com"},
+                "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                "search": {"folder": "INBOX", "months_back": 3},
+                "email_accounts": [
+                    {
+                        "name": "Research Inbox",
+                        "enabled": True,
+                        "provider": "qq",
+                        "address": "old@qq.com",
+                        "username": "old@qq.com",
+                        "mailbox_key": "stable-1",
+                        "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                        "search": {"folder": "INBOX", "months_back": 3},
+                    }
+                ],
+            }
+            dialog._build_saved_account_maps()
+            dialog._open_mailbox_editor("stable-1")
+            dialog.cards["gmail"].click()
+            self.assertEqual(dialog._loaded_account_mailbox_key, "stable-1")
+            self.assertEqual(dialog.txt_mailbox_name.text(), "Research Inbox")
+            dialog.txt_email.setText("new@gmail.com")
+            dialog.txt_auth_code.setText("new-auth-code")
+            dialog.test_success = False
+
+            persisted_cfg = copy.deepcopy(dialog.cfg)
+
+            def fake_save(cfg, path=None):
+                nonlocal persisted_cfg
+                persisted_cfg = copy.deepcopy(cfg)
+
+            def fake_load(path=None):
+                return copy.deepcopy(persisted_cfg)
+
+            with patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
+                 patch("scripts.invoice_fetch.gui.app.load_config_safe", side_effect=fake_load), \
+                 patch("scripts.invoice_fetch.credentials.set_auth_code") as mock_set_auth, \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.question", return_value=QMessageBox.Yes), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.warning"), \
+                 patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
+                dialog._save_mailbox_settings()
+
+            mock_save.assert_called_once()
+            mock_set_auth.assert_called_once_with("new@gmail.com", "new-auth-code")
+            self.assertEqual(len(dialog.cfg["email_accounts"]), 1)
+            saved = dialog.cfg["email_accounts"][0]
+            self.assertEqual(saved["address"], "new@gmail.com")
+            self.assertEqual(saved["provider"], "gmail")
+            self.assertEqual(saved["mailbox_key"], "stable-1")
+            self.assertEqual(saved["name"], "Research Inbox")
 
             dialog.close()
             dialog.deleteLater()
@@ -468,29 +706,28 @@ class GenericImapConfigTests(unittest.TestCase):
                 "search": {"months_back": 3},
             }
 
-            # 1. Switch to deepseek and verify default model
-            dialog.combo_ai_provider.setCurrentText("deepseek")
-            self.assertEqual(dialog.txt_ai_model.currentText(), "deepseek-v4-flash")
+            # 1. Open new AI editor
+            dialog._open_new_ai_editor()
 
-            # 2. Switch to gemini and verify default model
+            # 2. Switch to deepseek and verify default model is deepseek-chat
+            dialog.combo_ai_provider.setCurrentText("deepseek")
+            self.assertEqual(dialog.txt_ai_model.currentText(), "deepseek-chat")
+
+            # 3. Switch to gemini and verify default model is gemini-2.5-flash
             dialog.combo_ai_provider.setCurrentText("gemini")
             self.assertEqual(dialog.txt_ai_model.currentText(), "gemini-2.5-flash")
 
-            # 3. Switch to none and verify model/API inputs are inactive
-            dialog.combo_ai_provider.setCurrentText("none")
-            self.assertEqual(dialog.txt_ai_model.currentText(), "")
-            self.assertFalse(dialog.txt_ai_model.isEnabled())
-            self.assertFalse(dialog.txt_ai_key.isVisible())
-
-            # 4. Enter a custom model name and save
+            # 4. Fill name, select custom model and save
+            dialog.txt_ai_name.setText("My Custom DeepSeek")
             dialog.combo_ai_provider.setCurrentText("deepseek")
             dialog.txt_ai_model.setCurrentText("deepseek-custom-model")
 
             with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
-                 patch("scripts.invoice_fetch.gui.app.QMessageBox.information"), \
-                 patch("scripts.invoice_fetch.gui.app.QMessageBox.warning") as mock_warning, \
-                 patch("scripts.invoice_fetch.gui.app.QMessageBox.critical") as mock_critical:
-                dialog._save_ai_settings()
+                 patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information"), \
+                 patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning") as mock_warning, \
+                 patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.critical") as mock_critical, \
+                 patch("scripts.invoice_fetch.gui.settings_dialog.SettingsDialog._persist_settings_and_refresh"):
+                dialog._save_ai_profile_settings(activate=True)
                 mock_save.assert_called_once()
                 mock_warning.assert_not_called()
                 mock_critical.assert_not_called()

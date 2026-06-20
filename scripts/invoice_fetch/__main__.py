@@ -4229,6 +4229,7 @@ def _run_classify(
                 provider=provider,
                 model=ai_cfg.get("model", ""),
                 batch_size=ai_cfg.get("batch_size", 20),
+                profile_id=ai_cfg.get("profile_id", ""),
             )
             results = ai.classify_batch(still_unknown)
             auth_failed = bool(getattr(ai, "auth_failed", False))
