@@ -427,6 +427,7 @@ class GenericImapConfigTests(unittest.TestCase):
                         "provider": "qq",
                         "address": "test@qq.com",
                         "mailbox_key": "test@qq.com",
+                        "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
                     },
                     {
                         "name": "Other account",
@@ -434,6 +435,7 @@ class GenericImapConfigTests(unittest.TestCase):
                         "provider": "qq",
                         "address": "other@qq.com",
                         "mailbox_key": "other@qq.com",
+                        "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
                     },
                 ],
             }
@@ -576,7 +578,7 @@ class GenericImapConfigTests(unittest.TestCase):
             self.assertEqual(dialog.txt_mailbox_name.text(), "Research Inbox")
             dialog.txt_email.setText("new@qq.com")
             dialog.txt_auth_code.setText("new-auth-code")
-            dialog.test_success = False
+            dialog.test_success = True
 
             persisted_cfg = copy.deepcopy(dialog.cfg)
 
@@ -649,7 +651,7 @@ class GenericImapConfigTests(unittest.TestCase):
             self.assertEqual(dialog.txt_mailbox_name.text(), "Research Inbox")
             dialog.txt_email.setText("new@gmail.com")
             dialog.txt_auth_code.setText("new-auth-code")
-            dialog.test_success = False
+            dialog.test_success = True
 
             persisted_cfg = copy.deepcopy(dialog.cfg)
 

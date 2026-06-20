@@ -538,7 +538,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.right_detail_content = QWidget()
         right_content_layout = QVBoxLayout(self.right_detail_content)
-        right_content_layout.setContentsMargins(8, 0, 8, 8)
+        right_content_layout.setContentsMargins(8, 0, 8, 0)
         right_content_layout.setSpacing(8)
         right_content_layout.setSizeConstraint(QLayout.SetMinimumSize)
         self.right_layout = right_content_layout

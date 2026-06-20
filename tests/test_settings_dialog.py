@@ -26,7 +26,19 @@ class SettingsDialogTestMixin:
         for p in self._keyring_patches:
             p.start()
 
+        # Globally mock QMessageBox calls to prevent blocking GUI popups during test execution
+        self._qmessagebox_patches = [
+            patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.warning", return_value=QMessageBox.Ok),
+            patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.information", return_value=QMessageBox.Ok),
+            patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.critical", return_value=QMessageBox.Ok),
+            patch("scripts.invoice_fetch.gui.settings_dialog.QMessageBox.question", return_value=QMessageBox.Yes),
+        ]
+        for p in self._qmessagebox_patches:
+            p.start()
+
     def tearDown(self):
+        for p in self._qmessagebox_patches:
+            p.stop()
         for p in self._keyring_patches:
             p.stop()
         super().tearDown() if hasattr(super(), "tearDown") else None
@@ -281,9 +293,16 @@ class SettingsDialogProviderTests(SettingsDialogTestMixin, unittest.TestCase):
 
     def test_existing_qq_163_126_gmail_custom_imap_flows_remain_unchanged(self):
         dialog = self._make_dialog()
+        suffixes = {
+            "qq": "qq.com",
+            "netease_163": "163.com",
+            "netease_126": "126.com",
+            "gmail": "gmail.com",
+            "custom": "example.com"
+        }
         for provider in ("qq", "netease_163", "netease_126", "gmail", "custom"):
             self._select(dialog, provider)
-            dialog.txt_email.setText("test@example.com")
+            dialog.txt_email.setText(f"test@{suffixes[provider]}")
             self.app.processEvents()
             self.assertTrue(dialog.btn_next.isEnabled())
             self.assertTrue(dialog.lbl_outlook_step1_warning.isHidden())

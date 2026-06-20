@@ -57,14 +57,6 @@ PROVIDER_ALLOWED_DOMAINS = {
     "outlook": {"outlook.com", "hotmail.com", "live.com"},
     # "custom" intentionally omitted — no domain restriction
 }
-PROVIDER_ALLOWED_DOMAINS = {
-    "qq": {"qq.com", "foxmail.com"},
-    "netease_163": {"163.com"},
-    "netease_126": {"126.com"},
-    "gmail": {"gmail.com", "googlemail.com"},
-    "outlook": {"outlook.com", "hotmail.com", "live.com"},
-    # "custom" intentionally omitted — no domain restriction
-}
 AI_KEY_SOURCE_LABELS = {
     "profile": "配置 Key",
     "provider": "旧 Key",
@@ -1463,8 +1455,6 @@ class SettingsDialog(QDialog):
         if provider in ("custom", "outlook"):
             return True
         domain = email.rsplit("@", 1)[1].lower()
-        if domain not in KNOWN_PROVIDER_DOMAINS:
-            return True
         allowed = PROVIDER_ALLOWED_DOMAINS.get(provider)
         if allowed is None:
             return True
@@ -1934,6 +1924,14 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, "校验提示", "请先填写邮箱地址。")
                 return
             provider = self._get_selected_provider()
+            if not self._is_provider_domain_consistent(provider, email):
+                self.lbl_provider_hint.setText("邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或选择自定义 IMAP")
+                QMessageBox.warning(
+                    self,
+                    "校验提示",
+                    "邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或选择自定义 IMAP"
+                )
+                return
             if provider == "outlook":
                 QMessageBox.warning(
                     self,
@@ -2023,6 +2021,18 @@ class SettingsDialog(QDialog):
 
         if not email:
             QMessageBox.warning(self, "校验提示", "请先填写邮箱地址。")
+            return
+
+        provider = self._get_selected_provider()
+        if not self._is_provider_domain_consistent(provider, email):
+            self.lbl_provider_hint.setText("邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或选择自定义 IMAP")
+            self.current_step = 1
+            self._update_wizard_ui()
+            QMessageBox.warning(
+                self,
+                "校验提示",
+                "邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或选择自定义 IMAP"
+            )
             return
 
         if not auth_code:
@@ -2144,6 +2154,16 @@ class SettingsDialog(QDialog):
     def _save_mailbox_settings(self):
         email = self.txt_email.text().strip()
         provider = self._get_selected_provider()
+        if not self._is_provider_domain_consistent(provider, email):
+            self.lbl_provider_hint.setText("邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或选择自定义 IMAP")
+            self.current_step = 1
+            self._update_wizard_ui()
+            QMessageBox.warning(
+                self,
+                "校验提示",
+                "邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或选择自定义 IMAP"
+            )
+            return
         months_str = self.txt_months.text().strip()
         updated_cfg = deepcopy(self.cfg)
         raw_accounts = updated_cfg.get("email_accounts")
@@ -2225,16 +2245,33 @@ class SettingsDialog(QDialog):
             existing_identifiers.insert(0, self._loaded_account_mailbox_key or self._loaded_account_address)
         existing_index = self._find_account_index(email_accounts, *existing_identifiers)
         existing_account = email_accounts[existing_index] if existing_index is not None else None
-        address_changed = bool(existing_account) and self._normalize_address(existing_account.get("address")) != self._normalize_address(email)
 
-        from ..credentials import has_auth_code
-        if address_changed and not self.test_success and not auth_code and not has_auth_code(email):
-            QMessageBox.warning(
-                self,
-                "设置验证失败",
-                "邮箱地址已变更，请先输入新的授权码并测试连接，或确认新地址已有可用授权码。"
-            )
-            return
+        # Check for sensitive changes: address, provider, or IMAP server settings
+        address_changed = False
+        provider_changed = False
+        imap_server_changed = False
+
+        if existing_account:
+            address_changed = self._normalize_address(existing_account.get("address")) != self._normalize_address(email)
+            provider_changed = str(existing_account.get("provider") or "").strip().lower() != str(provider or "").strip().lower()
+
+            old_imap = existing_account.get("imap") if isinstance(existing_account.get("imap"), dict) else {}
+            old_server = str(old_imap.get("server") or "").strip().lower()
+            old_port = str(old_imap.get("port") or "").strip()
+
+            imap_server_changed = (old_server != str(imap_server or "").strip().lower() or
+                                   old_port != str(imap_port_str or "").strip())
+
+        sensitive_changed = address_changed or provider_changed or imap_server_changed
+
+        if sensitive_changed:
+            if not self.test_success or not auth_code:
+                QMessageBox.warning(
+                    self,
+                    "设置验证失败",
+                    "检测到敏感配置变更（邮箱地址、提供商或 IMAP 服务器已修改），必须重新输入授权码并测试连接成功后方可保存。"
+                )
+                return
 
         # Save credentials to system Keyring
         credential_available = False

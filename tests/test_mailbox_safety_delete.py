@@ -414,11 +414,19 @@ class MailboxSafetyDeleteTests(SettingsDialogTestMixin, unittest.TestCase):
     def test_saving_existing_email_updates_that_account_only(self):
         config = {
             "email_accounts": [
-                {"address": "qq1@qq.com", "provider": "qq", "enabled": True, "mailbox_key": "qq1", "search": {"months_back": 3}}
+                {
+                    "address": "qq1@qq.com",
+                    "provider": "qq",
+                    "enabled": True,
+                    "mailbox_key": "qq1",
+                    "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                    "search": {"months_back": 3}
+                }
             ]
         }
         dialog = self._make_dialog(config, saved_addresses=("qq1@qq.com",))
         dialog.txt_email.setText("qq1@qq.com")
+        dialog.txt_auth_code.setText("dummy_auth_code")
         self.app.processEvents()
 
         dialog.txt_months.setText("12")
