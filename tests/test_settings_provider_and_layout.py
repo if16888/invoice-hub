@@ -331,14 +331,14 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                     "total_amount": "66.00",
                     "seller_name": "Geometry Seller 2",
                     "invoice_date": "2026-05-25",
-                    "category": "椁愰ギ",
+                    "category": "餐饮",
                     "review_status": "to_review",
                 })
 
             from scripts.invoice_fetch.gui.app import InvoiceReviewApp
             cfg = {
                 "reimbursement": {
-                    "buyer_name": "绀轰緥鍏徃",
+                    "buyer_name": "示例公司",
                     "strict_buyer_check": False,
                 }
             }
@@ -355,7 +355,8 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 self.app.processEvents()
 
                 panel = window._detail_panel
-                panel.set_note("绀烘暍澶囨敞")
+                self.assertFalse(hasattr(panel, "lbl_evidence_dot"))
+                panel.set_note("示例备注")
                 panel.update_evidence_row([])
                 self.app.processEvents()
 
@@ -383,6 +384,8 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 claim_actions_x = panel.claim_actions_widget.mapToGlobal(QPoint(0, 0)).x()
                 claim_combo_right = claim_x + panel.combo_claims.width()
                 self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
+                self.assertGreaterEqual(panel.claim_actions_widget.layout().indexOf(panel.btn_delete_claim), 0)
+                self.assertEqual(panel.claim_summary_row.indexOf(panel.btn_delete_claim), -1)
                 self.assertGreater(panel.detail_workbench.height(), 0)
 
             finally:

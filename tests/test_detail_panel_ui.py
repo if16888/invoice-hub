@@ -145,7 +145,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
     def test_evidence_row_widgets_exist(self):
         """New evidence row widgets must all be present."""
         from PySide6.QtWidgets import QLabel, QPushButton
-        self.assertIsInstance(self.panel.lbl_evidence_dot, QLabel)
+        self.assertFalse(hasattr(self.panel, "lbl_evidence_dot"))
         self.assertIsInstance(self.panel.lbl_evidence_name, QLabel)
         self.assertIsInstance(self.panel.lbl_evidence_missing, QLabel)
         self.assertIsInstance(self.panel.btn_open_extra_files, QPushButton)
@@ -244,7 +244,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
     def test_claim_group_controls_share_one_compact_row(self):
         """Claim selection, material, and note inputs should share the same left edge."""
-        self.panel.set_note("报销说明")
+        self.panel.set_note("示例备注")
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
@@ -260,6 +260,8 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
         self.assertTrue(self.panel.btn_refresh_claims.isHidden())
         self.assertFalse(self.panel.lbl_claim_total.isHidden())
+        self.assertGreaterEqual(self.panel.claim_actions_widget.layout().indexOf(self.panel.btn_delete_claim), 0)
+        self.assertEqual(self.panel.claim_summary_row.indexOf(self.panel.btn_delete_claim), -1)
 
     def test_claim_combo_aligns_with_first_column_fields(self):
         """Claim, material and core first-column fields share the same x coordinate."""
@@ -273,13 +275,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertLessEqual(abs(claim_x - core_x), 2)
 
     def test_empty_claim_delete_button_exists_in_summary_row(self):
-        """Deleting an empty group is available beside the summary, not in the main action half."""
+        """Deleting an empty group lives in the claim action cluster, not the summary row."""
         from PySide6.QtWidgets import QPushButton
         self.assertIsInstance(self.panel.btn_delete_claim, QPushButton)
-        self.assertIs(
-            self.panel.claim_summary_row.itemAt(self.panel.claim_summary_row.count() - 1).widget(),
-            self.panel.btn_delete_claim,
-        )
+        self.assertGreaterEqual(self.panel.claim_actions_widget.layout().indexOf(self.panel.btn_delete_claim), 0)
+        self.assertEqual(self.panel.claim_summary_row.indexOf(self.panel.btn_delete_claim), -1)
 
     # ── 9. get_form_values includes all editable fields ─────────────────────
 
