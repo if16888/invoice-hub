@@ -206,8 +206,8 @@ def _normalize_email_account(
 def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """Return normalized enabled mailbox accounts from config."""
     raw_accounts = cfg.get("email_accounts")
+    accounts = []
     if isinstance(raw_accounts, list) and raw_accounts:
-        accounts = []
         for raw in raw_accounts:
             if not isinstance(raw, dict):
                 raise SystemExit("email_accounts 中的每个账号都必须是对象")
@@ -216,26 +216,30 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             if str(raw.get("address") or "").strip().lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
                 continue
             accounts.append(_normalize_email_account(raw, source_cfg=cfg))
-        if accounts:
-            return accounts
 
     email_cfg = cfg.get("email", {}) if isinstance(cfg.get("email", {}), dict) else {}
     legacy_email = str(email_cfg.get("address") or "").strip()
-    if not legacy_email or legacy_email.lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
-        return []
-    imap_cfg = cfg.get("imap", {}) if isinstance(cfg.get("imap", {}), dict) else {}
-    search_cfg = cfg.get("search", {}) if isinstance(cfg.get("search", {}), dict) else {}
-    legacy_account = {
-        "name": str(email_cfg.get("name") or "").strip() or legacy_email or str(email_cfg.get("provider") or "legacy"),
-        "enabled": True,
-        "provider": email_cfg.get("provider") or "qq",
-        "address": legacy_email,
-        "username": email_cfg.get("username") or "",
-        "imap": imap_cfg,
-        "search": search_cfg,
-    }
-    return [_normalize_email_account(legacy_account, source_cfg=cfg, legacy=True)]
 
+    if legacy_email and legacy_email.lower() not in _PLACEHOLDER_EMAIL_ADDRESSES:
+        already_exists = any(
+            str(acc.get("address") or "").strip().lower() == legacy_email.lower()
+            for acc in accounts
+        )
+        if not already_exists:
+            imap_cfg = cfg.get("imap", {}) if isinstance(cfg.get("imap", {}), dict) else {}
+            search_cfg = cfg.get("search", {}) if isinstance(cfg.get("search", {}), dict) else {}
+            legacy_account = {
+                "name": str(email_cfg.get("name") or "").strip() or legacy_email or str(email_cfg.get("provider") or "legacy"),
+                "enabled": True,
+                "provider": email_cfg.get("provider") or "qq",
+                "address": legacy_email,
+                "username": email_cfg.get("username") or "",
+                "imap": imap_cfg,
+                "search": search_cfg,
+            }
+            accounts.append(_normalize_email_account(legacy_account, source_cfg=cfg, legacy=True))
+
+    return accounts
 
 def _apply_primary_email_account(cfg: dict[str, Any], accounts: list[dict[str, Any]]) -> dict[str, Any]:
     if not accounts:

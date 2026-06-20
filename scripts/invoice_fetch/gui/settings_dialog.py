@@ -157,13 +157,11 @@ class MailboxConfigRow(QFrame):
         # Actions: Edit and Delete
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.clicked.connect(self._on_edit)
-        self.btn_edit.setFixedSize(50, 24)
         self.btn_edit.setProperty("class", "SecondaryBtn")
         layout.addWidget(self.btn_edit)
 
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self._on_delete)
-        self.btn_delete.setFixedSize(50, 24)
         self.btn_delete.setProperty("class", "SettingsDangerBtn")
         layout.addWidget(self.btn_delete)
 
@@ -235,20 +233,17 @@ class AIProfileRow(QFrame):
         else:
             self.btn_activate = QPushButton("设为当前")
             self.btn_activate.clicked.connect(self._on_activate)
-            self.btn_activate.setFixedSize(70, 24)
             self.btn_activate.setProperty("class", "PrimaryBtn")
             layout.addWidget(self.btn_activate)
 
         # Actions: Edit and Delete
         self.btn_edit = QPushButton("编辑")
         self.btn_edit.clicked.connect(self._on_edit)
-        self.btn_edit.setFixedSize(50, 24)
         self.btn_edit.setProperty("class", "SecondaryBtn")
         layout.addWidget(self.btn_edit)
 
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self._on_delete)
-        self.btn_delete.setFixedSize(50, 24)
         self.btn_delete.setProperty("class", "SettingsDangerBtn")
         layout.addWidget(self.btn_delete)
 
@@ -311,6 +306,8 @@ class SettingsDialog(QDialog):
 
         # Load initial values
         self._load_initial_values()
+        self._refresh_mailbox_list()
+        self._refresh_ai_profile_list()
         self._loading_initial_values = False
         self._advanced_settings_dirty = False
         self._update_provider_hint()
@@ -722,33 +719,9 @@ class SettingsDialog(QDialog):
             row.deleteLater()
         self.mailbox_rows.clear()
 
-        raw_accounts = self.cfg.get("email_accounts")
-        email_accounts = [
-            dict(existing)
-            for existing in raw_accounts
-            if isinstance(existing, dict)
-        ] if isinstance(raw_accounts, list) else []
+        from ..config import get_email_accounts
+        email_accounts = get_email_accounts(self.cfg)
 
-        if not email_accounts:
-            legacy_email = self.cfg.get("email", {})
-            legacy_address = str(legacy_email.get("address") or "").strip()
-            if legacy_address:
-                email_accounts.append({
-                    "name": legacy_email.get("name") or "默认邮箱",
-                    "enabled": True,
-                    "provider": legacy_email.get("provider", "qq"),
-                    "address": legacy_address,
-                    "username": legacy_email.get("username") or legacy_address,
-                    "imap": dict(self.cfg.get("imap", {})),
-                    "search": dict(self.cfg.get("search", {})),
-                    "mailbox_key": legacy_email.get("mailbox_key") or legacy_address.lower(),
-                })
-                self.cfg["email_accounts"] = email_accounts
-                from ..config import save_config
-                try:
-                    save_config(self.cfg)
-                except Exception:
-                    pass
 
         if not email_accounts:
             lbl_empty = QLabel("尚未配置任何邮箱账号，请点击上方“新增邮箱账号”。")

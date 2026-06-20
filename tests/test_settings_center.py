@@ -145,6 +145,51 @@ class SettingsCenterMailboxTests(SettingsDialogTestMixin, unittest.TestCase):
         mock_save.assert_called_once()
         self.assertTrue(dialog.cfg["email_accounts"][1]["enabled"])
 
+    def test_mailbox_rows_rendered_immediately_on_init(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "email_accounts": [
+                {
+                    "mailbox_key": "work@qq.com",
+                    "name": "工作邮箱",
+                    "enabled": True,
+                    "provider": "qq",
+                    "address": "work@qq.com",
+                    "username": "work@qq.com",
+                    "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 3},
+                },
+                {
+                    "mailbox_key": "history@163.com",
+                    "name": "历史邮箱",
+                    "enabled": True,
+                    "provider": "netease_163",
+                    "address": "history@163.com",
+                    "username": "history@163.com",
+                    "imap": {"server": "imap.163.com", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 12},
+                },
+            ],
+            "ai": {"provider": "none", "model": "", "enabled": False},
+        }
+        dialog = self._make_dialog(config=config)
+        from scripts.invoice_fetch.gui.settings_dialog import MailboxConfigRow
+        self.assertEqual(len(dialog.mailbox_rows), 2)
+        self.assertIsInstance(dialog.mailbox_rows[0], MailboxConfigRow)
+        self.assertIsInstance(dialog.mailbox_rows[1], MailboxConfigRow)
+
+    def test_mailbox_tab_shows_empty_state_immediately_on_init(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "email_accounts": [],
+            "ai": {"provider": "none", "model": "", "enabled": False},
+        }
+        dialog = self._make_dialog(config=config)
+        from PySide6.QtWidgets import QLabel
+        self.assertEqual(len(dialog.mailbox_rows), 1)
+        self.assertIsInstance(dialog.mailbox_rows[0], QLabel)
+        self.assertEqual(dialog.mailbox_rows[0].text(), "尚未配置任何邮箱账号，请点击上方“新增邮箱账号”。")
+
 
 class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
 
@@ -232,6 +277,26 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         dialog._open_new_ai_editor()
         providers = [dialog.combo_ai_provider.itemText(i) for i in range(dialog.combo_ai_provider.count())]
         self.assertEqual(providers, ["deepseek", "gemini"])
+
+    def test_ai_rows_rendered_immediately_on_init(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "none", "model": "", "enabled": False},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": True,
+                }
+            ],
+        }
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="env"):
+            dialog = self._make_dialog(config=config)
+        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
+        self.assertEqual(len(dialog.ai_rows), 1)
+        self.assertIsInstance(dialog.ai_rows[0], AIProfileRow)
 
 
 if __name__ == "__main__":
