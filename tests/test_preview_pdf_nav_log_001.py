@@ -1488,19 +1488,17 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             # Select row
             self._select_row(window, 0)
 
-            # 1. Test confirmed_note loaded to txt_note
+            # 1. confirmed_note text is loaded into txt_note
             self.assertEqual(window.txt_note.toPlainText(), "这是一条测试个人备注")
 
-            # 2. When note is loaded, editor is expanded (txt_note visible, lbl_note_summary hidden).
-            #    Collapse first to verify the summary label shows correctly.
-            window._toggle_note_visibility()
-            self.app.processEvents()
+            # 2. By default the note is collapsed — summary is immediately visible.
+            self.assertTrue(window.txt_note.isHidden(),
+                            "editor should be hidden by default (collapsed state)")
             self.assertIn("这是一条测试个人备注", window.lbl_note_summary.text())
-            # Expand again so we can edit below
+
+            # 3. Expand to edit, then modify and save
             window._toggle_note_visibility()
             self.app.processEvents()
-
-            # 3. Modify note and save
             window.txt_note.setPlainText("这是修改后的个人备注")
             self.app.processEvents()
 

@@ -1525,16 +1525,18 @@ class InvoiceDetailPanel(QWidget):
 
 
     def set_note(self, text: str):
-        """Set the personal note content and apply appropriate display state.
+        """Set the personal note content and apply collapsed display state.
 
-        - Empty text: collapse to header-only (no summary, no editor row)
-        - Non-empty text: expand editor so user can see and edit the content
+        Default behaviour (regardless of whether text is empty):
+        - Empty text:     collapsed, no summary row, no editor row.
+        - Non-empty text: collapsed, lbl_note_summary shows a one-line preview.
+
+        The user must click "备注 + 展开" to open the editor.
         """
         self.txt_note.setPlainText(text)
-        has_note = bool(text.strip())
-        # Always expand when there is real content so the user can read/edit it.
-        # Collapse cleanly when no note exists (no phantom 'summary' row shown).
-        self._apply_note_state(expanded=has_note)
+        # Always start collapsed so the note area never takes up unnecessary space.
+        # _apply_note_state reads txt_note content to decide whether to show the summary.
+        self._apply_note_state(expanded=False)
 
 
 

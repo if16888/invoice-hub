@@ -367,6 +367,7 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 panel = window._detail_panel
                 self.assertFalse(hasattr(panel, "lbl_evidence_dot"))
                 panel.set_note("示例备注")
+                panel._apply_note_state(expanded=True)
                 panel.update_evidence_row([])
                 self.app.processEvents()
 
