@@ -2093,7 +2093,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        right_content_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        # Allow the content widget to expand beyond minimum size to fill QScrollArea viewport
+        # right_content_layout.setSizeConstraint(QLayout.SetMinimumSize)
 
 
 
