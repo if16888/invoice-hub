@@ -448,8 +448,8 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         # Summary must be visible and contain the note text
         self.assertFalse(self.panel.lbl_note_summary.isHidden(),
                          "lbl_note_summary should be visible after set_note with text")
-        self.assertIn("客户项目说明", self.panel.lbl_note_summary.text(),
-                      "lbl_note_summary should contain the note text")
+        self.assertIn("备注：客户项目说明", self.panel.lbl_note_summary.text(),
+                      "lbl_note_summary should contain the note text with full-width colon")
         # Button text stays in expand mode
         self.assertEqual(self.panel.btn_toggle_note.text(), "备注 + 展开")
 

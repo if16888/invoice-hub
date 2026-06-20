@@ -1494,7 +1494,7 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
             # 2. By default the note is collapsed — summary is immediately visible.
             self.assertTrue(window.txt_note.isHidden(),
                             "editor should be hidden by default (collapsed state)")
-            self.assertIn("这是一条测试个人备注", window.lbl_note_summary.text())
+            self.assertIn("备注：这是一条测试个人备注", window.lbl_note_summary.text())
 
             # 3. Expand to edit, then modify and save
             window._toggle_note_visibility()

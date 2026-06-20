@@ -718,7 +718,7 @@ class InvoiceDetailPanel(QWidget):
                 self.note_content_row.setVisible(False)
             if note_text:
                 summary = note_text[:60] + ("…" if len(note_text) > 60 else "")
-                self.lbl_note_summary.setText(f"备注: {summary}")
+                self.lbl_note_summary.setText(f"备注：{summary}")
                 self.lbl_note_summary.setVisible(True)
             else:
                 self.lbl_note_summary.setText("")
