@@ -538,7 +538,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.right_detail_content = QWidget()
         right_content_layout = QVBoxLayout(self.right_detail_content)
-        right_content_layout.setContentsMargins(8, 4, 8, 8)
+        right_content_layout.setContentsMargins(8, 0, 8, 8)
         right_content_layout.setSpacing(8)
         right_content_layout.setSizeConstraint(QLayout.SetMinimumSize)
         self.right_layout = right_content_layout
@@ -546,7 +546,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.detail_workbench = QFrame()
         self.detail_workbench.setProperty("class", "DetailWorkbench")
-        self.detail_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.detail_workbench.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         workbench_layout = QVBoxLayout(self.detail_workbench)
         workbench_layout.setContentsMargins(0, 0, 0, 0)
         workbench_layout.setSpacing(0)
@@ -1150,7 +1150,6 @@ class InvoiceDetailPanel(QWidget):
 
         workbench_layout.addWidget(self.closing_card)
         workbench_layout.addStretch(1)
-        right_content_layout.addStretch(1)
 
         # initial states
         self.btn_save_draft.setEnabled(False)

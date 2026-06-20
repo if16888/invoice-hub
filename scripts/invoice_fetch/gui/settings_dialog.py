@@ -49,6 +49,22 @@ PROVIDER_EMAIL_NAMES = {
     "outlook": "Outlook",
     "custom": "自定义 IMAP",
 }
+PROVIDER_ALLOWED_DOMAINS = {
+    "qq": {"qq.com", "foxmail.com"},
+    "netease_163": {"163.com"},
+    "netease_126": {"126.com"},
+    "gmail": {"gmail.com", "googlemail.com"},
+    "outlook": {"outlook.com", "hotmail.com", "live.com"},
+    # "custom" intentionally omitted — no domain restriction
+}
+PROVIDER_ALLOWED_DOMAINS = {
+    "qq": {"qq.com", "foxmail.com"},
+    "netease_163": {"163.com"},
+    "netease_126": {"126.com"},
+    "gmail": {"gmail.com", "googlemail.com"},
+    "outlook": {"outlook.com", "hotmail.com", "live.com"},
+    # "custom" intentionally omitted — no domain restriction
+}
 AI_KEY_SOURCE_LABELS = {
     "profile": "配置 Key",
     "provider": "旧 Key",
@@ -1433,6 +1449,27 @@ class SettingsDialog(QDialog):
     def _provider_display_name(provider: str) -> str:
         return PROVIDER_EMAIL_NAMES.get(str(provider or "").lower(), "邮箱")
 
+    @staticmethod
+    def _is_provider_domain_consistent(provider: str, email: str) -> bool:
+        """Return True when the email domain is compatible with the selected provider.
+
+        Custom provider accepts any domain. For known providers, the domain
+        must belong to the provider's allowed set.  If the email has no
+        domain (empty or no '@'), we return True so the "invalid email"
+        validation handles it instead.
+        """
+        if not email or "@" not in email:
+            return True
+        if provider in ("custom", "outlook"):
+            return True
+        domain = email.rsplit("@", 1)[1].lower()
+        if domain not in KNOWN_PROVIDER_DOMAINS:
+            return True
+        allowed = PROVIDER_ALLOWED_DOMAINS.get(provider)
+        if allowed is None:
+            return True
+        return domain in allowed
+
     def _find_account_index(self, email_accounts, *identifiers):
         normalized_ids = {
             self._normalize_address(identifier)
@@ -1597,6 +1634,10 @@ class SettingsDialog(QDialog):
 
         self._active_provider = provider
         self.test_success = False
+        # Clear auth code on provider switch
+        if hasattr(self, "txt_auth_code"):
+            self.txt_auth_code.clear()
+
         saved_account = self._first_saved_account(provider)
         if saved_account is not None and not self._editing_existing_mailbox:
             self._load_saved_account(saved_account)
@@ -1605,20 +1646,33 @@ class SettingsDialog(QDialog):
         current_email = self.txt_email.text().strip()
         can_rewrite_draft = self._email_is_user_draft and not self._is_saved_address(current_email)
         self._missing_saved_provider = provider
-        if not self._editing_existing_mailbox:
-            self._loaded_account_address = ""
-            self._loaded_account_mailbox_key = ""
-            self._loaded_account_provider = ""
+
         self._loading_account_values = True
         try:
-            if can_rewrite_draft and not self._editing_existing_mailbox:
+            if self._editing_existing_mailbox:
+                # Edit mode: rewrite email domain to match new provider
                 self._adjust_email_for_provider(provider)
-            elif not self._editing_existing_mailbox:
-                self.txt_email.clear()
-                self._adjust_email_for_provider(provider)
+                # Update mailbox name if it matches the old provider default
+                old_name = self.txt_mailbox_name.text().strip()
+                old_default = self._provider_display_name(previous_provider)
+                new_default = self._provider_display_name(provider)
+                if not old_name or old_name == old_default:
+                    self.txt_mailbox_name.setText(new_default)
+                # Keep _loaded_account_mailbox_key for save-in-place
+                self._loaded_account_provider = provider
+            else:
+                self._loaded_account_address = ""
+                self._loaded_account_mailbox_key = ""
+                self._loaded_account_provider = ""
+                if can_rewrite_draft:
+                    self._adjust_email_for_provider(provider)
+                else:
+                    self.txt_email.clear()
+                    self._adjust_email_for_provider(provider)
         finally:
             self._loading_account_values = False
-        self._email_is_user_draft = can_rewrite_draft
+        self._email_is_user_draft = can_rewrite_draft or self._editing_existing_mailbox
+
         if provider == "custom":
             self.advanced_group.setVisible(True)
             self.btn_toggle_advanced.setText("隐藏高级 IMAP 设置 ▲")
@@ -1707,10 +1761,18 @@ class SettingsDialog(QDialog):
 
         if hasattr(self, "btn_next") and self.current_step == 1:
             is_valid = self._is_valid_email(email)
-            self.btn_next.setEnabled(provider != "outlook" and not is_outlook_like and is_valid)
+            domain_ok = self._is_provider_domain_consistent(provider, email)
+            self.btn_next.setEnabled(
+                provider != "outlook" and not is_outlook_like and is_valid and domain_ok
+            )
 
         domain = email.rsplit("@", 1)[1].lower() if "@" in email else ""
-        if provider == "outlook" and not email:
+        # Provider/email domain mismatch hint
+        if is_valid and domain and not self._is_provider_domain_consistent(provider, email):
+            self.lbl_provider_hint.setText(
+                "邮箱地址后缀与所选邮箱类型不一致，请修改邮箱地址或重新选择邮箱类型。"
+            )
+        elif provider == "outlook" and not email:
             self.lbl_provider_hint.setText(
                 "未找到已保存的 Outlook 邮箱。Outlook 当前版本暂不支持配置/测试。"
             )
@@ -1914,7 +1976,8 @@ class SettingsDialog(QDialog):
                 preset = _EMAIL_PROVIDER_PRESETS.get(provider, {})
                 server = preset.get("server", "")
             is_outlook_like = is_outlook_like_account(provider, self.txt_email.text().strip(), server)
-            self.btn_next.setEnabled(provider != "outlook" and not is_outlook_like and is_valid)
+            domain_ok = self._is_provider_domain_consistent(provider, self.txt_email.text().strip())
+            self.btn_next.setEnabled(provider != "outlook" and not is_outlook_like and is_valid and domain_ok)
             self.btn_save_wizard.setVisible(False)
         elif self.current_step == 2:
             self.lbl_step_indicator.setText('① 选择邮箱  ➜  <font color="#2563EB"><b>② 填写授权码</b></font>  ➜  ③ 测试并保存')
