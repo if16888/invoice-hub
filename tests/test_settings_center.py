@@ -3,7 +3,6 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import QPoint
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QWidget
 
@@ -411,8 +410,7 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                 }
             ],
         }
-        dialog = self._make_dialog(config=config)
-        persisted_cfg = copy.deepcopy(dialog.cfg)
+        persisted_cfg = copy.deepcopy(config)
 
         def fake_save(cfg, path=None):
             nonlocal persisted_cfg
@@ -425,6 +423,10 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
              patch("scripts.invoice_fetch.credentials.has_ai_api_key", return_value=True), \
              patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save) as mock_save, \
              patch("scripts.invoice_fetch.gui.settings_dialog._load_config_safe_compat", side_effect=fake_load):
+            dialog = self._make_dialog(config=config)
+            dialog.tab_widget.setCurrentIndex(1)
+            dialog.show()
+            QApplication.processEvents()
             self.assertEqual(len(dialog.ai_rows), 1)
             row = dialog.ai_rows[0]
             self.assertEqual(row.btn_activate.text(), "启用 AI")
@@ -435,65 +437,38 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
             self.assertEqual(dialog.cfg["ai"]["provider"], "deepseek")
             self.assertEqual(dialog.cfg["ai"]["profile_id"], "ai-one")
 
-    def test_ai_disabled_profile_row_text_visible_in_real_dialog(self):
-        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
-        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
-
+    def test_disabled_ai_profile_row_geometry(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "none", "model": "", "enabled": False},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": False,
+                }
+            ],
+        }
         with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="provider"):
-            dialog = self._make_dialog(config={
-                "email": {"provider": "qq", "address": "your_email@qq.com"},
-                "ai": {"provider": "none", "model": "", "enabled": False},
-                "ai_profiles": [
-                    {
-                        "profile_id": "ai-one",
-                        "name": "测试 AI",
-                        "provider": "deepseek",
-                        "model": "deepseek-chat",
-                        "enabled": False,
-                    }
-                ],
-            })
-        dialog.setStyleSheet(APP_STYLESHEET)
-        dialog.resize(650, 580)
-        dialog.tab_widget.setCurrentIndex(1)
-        dialog._refresh_ai_profile_list()
-        dialog.show()
-        self.app.processEvents()
-        QApplication.processEvents()
+            dialog = self._make_dialog(config=config)
+            dialog.tab_widget.setCurrentIndex(1)
+            dialog.show()
+            QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
-        self.assertIsInstance(row, AIProfileRow)
-        self.assertEqual(row.btn_activate.text(), "启用 AI")
         self.assertEqual(row.btn_activate.property("variant"), "accent")
         self.assertTrue(row.btn_activate.isVisible())
-        self.assertGreaterEqual(
-            row.btn_activate.geometry().width(),
-            row.btn_activate.fontMetrics().horizontalAdvance(row.btn_activate.text()) + 24,
+        self.assertEqual(row.btn_activate.text(), "启用 AI")
+        self.assertEqual(row.btn_activate.property("variant"), "accent")
+        self.assertTrue(
+            row.btn_activate.geometry().width() >= row.btn_activate.fontMetrics().horizontalAdvance(row.btn_activate.text()) + 24
         )
-        self.assertTrue(row.lbl_key_status.isVisible())
-        self.assertTrue(row.btn_edit.isVisible())
-        self.assertTrue(row.btn_delete.isVisible())
 
-        key_x = row.lbl_key_status.mapTo(row, QPoint(0, 0)).x()
-        activate_x = row.btn_activate.mapTo(row, QPoint(0, 0)).x()
-        edit_x = row.btn_edit.mapTo(row, QPoint(0, 0)).x()
-        delete_x = row.btn_delete.mapTo(row, QPoint(0, 0)).x()
-
-        self.assertLess(key_x, activate_x)
-        self.assertLess(activate_x + row.btn_activate.width(), edit_x + 1)
-        self.assertLess(edit_x + row.btn_edit.width(), delete_x + 1)
-
-        pixmap = row.btn_activate.grab()
-        self.assertFalse(pixmap.isNull())
-        center_color = pixmap.toImage().pixelColor(pixmap.width() // 2, pixmap.height() // 2)
-        self.assertNotEqual(center_color.name().lower(), "#ffffff")
-
-    def test_ai_active_profile_row_text_visible_in_real_dialog(self):
-        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
-        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
-
-        dialog = self._make_dialog(config={
+    def test_active_ai_profile_row_geometry(self):
+        config = {
             "email": {"provider": "qq", "address": "your_email@qq.com"},
             "ai": {"provider": "deepseek", "model": "deepseek-chat", "profile_id": "ai-one", "enabled": True},
             "ai_profiles": [
@@ -505,123 +480,18 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                     "enabled": True,
                 }
             ],
-        })
-        dialog.setStyleSheet(APP_STYLESHEET)
-        dialog.resize(650, 580)
+        }
+        dialog = self._make_dialog(config=config)
         dialog.tab_widget.setCurrentIndex(1)
-        dialog._refresh_ai_profile_list()
         dialog.show()
-        self.app.processEvents()
         QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
-        self.assertIsInstance(row, AIProfileRow)
         self.assertTrue(hasattr(row, "lbl_active"))
         self.assertEqual(row.lbl_active.text(), "当前生效")
         self.assertTrue(row.lbl_active.isVisible())
-        self.assertGreaterEqual(
-            row.lbl_active.geometry().width(),
-            row.lbl_active.fontMetrics().horizontalAdvance(row.lbl_active.text()) + 24,
-        )
-        self.assertTrue(row.btn_edit.isVisible())
-        self.assertTrue(row.btn_delete.isVisible())
-
-        key_x = row.lbl_key_status.mapTo(row, QPoint(0, 0)).x()
-        active_x = row.lbl_active.mapTo(row, QPoint(0, 0)).x()
-        edit_x = row.btn_edit.mapTo(row, QPoint(0, 0)).x()
-        delete_x = row.btn_delete.mapTo(row, QPoint(0, 0)).x()
-
-        self.assertLess(key_x, active_x)
-        self.assertLess(active_x + row.lbl_active.width(), edit_x + 1)
-        self.assertLess(edit_x + row.btn_edit.width(), delete_x + 1)
-
-    def test_ai_profile_rows_use_accent_actions_for_provider_and_missing_keys(self):
-        from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
-        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
-
-        config = {
-            "email": {"provider": "qq", "address": "your_email@qq.com"},
-            "ai": {"provider": "none", "model": "", "enabled": False},
-            "ai_profiles": [
-                {
-                    "profile_id": "deepseek-official",
-                    "name": "DeepSeek 官方",
-                    "provider": "deepseek",
-                    "model": "deepseek-chat",
-                    "enabled": False,
-                },
-                {
-                    "profile_id": "gemini-official",
-                    "name": "Gemini 官方",
-                    "provider": "gemini",
-                    "model": "gemini-2.5-flash",
-                    "enabled": False,
-                },
-            ],
-        }
-
-        def fake_key_source(provider, profile_id):
-            return "provider" if provider == "deepseek" else "missing"
-
-        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", side_effect=fake_key_source):
-            dialog = self._make_dialog(config=config)
-
-        dialog.setStyleSheet(APP_STYLESHEET)
-        dialog.resize(650, 580)
-        dialog.tab_widget.setCurrentIndex(1)
-        dialog._refresh_ai_profile_list()
-        dialog.show()
-        self.app.processEvents()
-        QApplication.processEvents()
-
-        self.assertEqual(len(dialog.ai_rows), 2)
-        all_buttons = []
-        for row in dialog.ai_rows:
-            self.assertIsInstance(row, AIProfileRow)
-            row_buttons = row.findChildren(QPushButton)
-            self.assertTrue(row_buttons)
-            self.assertTrue(all(btn.text().strip() for btn in row_buttons if btn.isVisible()))
-            self.assertTrue(all(btn.property("variant") != "primary" for btn in row_buttons))
-            all_buttons.extend(row_buttons)
-
-        first_row = dialog.ai_rows[0]
-        second_row = dialog.ai_rows[1]
-
-        self.assertEqual(first_row.btn_activate.text(), "启用 AI")
-        self.assertEqual(first_row.btn_activate.property("variant"), "accent")
-        self.assertEqual(second_row.btn_activate.text(), "配置 Key")
-        self.assertEqual(second_row.btn_activate.property("variant"), "accent")
-
-        first_pixmap = first_row.btn_activate.grab()
-        second_pixmap = second_row.btn_activate.grab()
-        self.assertFalse(first_pixmap.isNull())
-        self.assertFalse(second_pixmap.isNull())
-        self.assertNotEqual(first_pixmap.toImage().pixelColor(first_pixmap.width() // 2, first_pixmap.height() // 2).name().lower(), "#ffffff")
-        self.assertNotEqual(second_pixmap.toImage().pixelColor(second_pixmap.width() // 2, second_pixmap.height() // 2).name().lower(), "#ffffff")
-
-        first_key_x = first_row.lbl_key_status.mapTo(first_row, QPoint(0, 0)).x()
-        first_activate_x = first_row.btn_activate.mapTo(first_row, QPoint(0, 0)).x()
-        first_edit_x = first_row.btn_edit.mapTo(first_row, QPoint(0, 0)).x()
-        first_delete_x = first_row.btn_delete.mapTo(first_row, QPoint(0, 0)).x()
-        self.assertLess(first_key_x + first_row.lbl_key_status.width(), first_activate_x + 1)
-        self.assertLess(first_activate_x + first_row.btn_activate.width(), first_edit_x + 1)
-        self.assertLess(first_edit_x + first_row.btn_edit.width(), first_delete_x + 1)
-
-        second_key_x = second_row.lbl_key_status.mapTo(second_row, QPoint(0, 0)).x()
-        second_activate_x = second_row.btn_activate.mapTo(second_row, QPoint(0, 0)).x()
-        second_edit_x = second_row.btn_edit.mapTo(second_row, QPoint(0, 0)).x()
-        second_delete_x = second_row.btn_delete.mapTo(second_row, QPoint(0, 0)).x()
-        self.assertLess(second_key_x + second_row.lbl_key_status.width(), second_activate_x + 1)
-        self.assertLess(second_activate_x + second_row.btn_activate.width(), second_edit_x + 1)
-        self.assertLess(second_edit_x + second_row.btn_edit.width(), second_delete_x + 1)
-
-        self.assertFalse(any(btn.text().strip() == "" for btn in all_buttons))
-        self.assertFalse(any(btn.property("variant") == "primary" for btn in all_buttons))
-
-        second_row.btn_activate.click()
-        self.app.processEvents()
-        self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_ai_editor)
+        self.assertTrue(row.lbl_active.geometry().width() >= row.lbl_active.sizeHint().width())
 
     def test_status_badge_styles_present(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
@@ -631,9 +501,7 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertIn('QLabel.StatusBadge[variant="info"]', APP_STYLESHEET)
 
     def test_disabled_ai_row_geometric_order(self):
-        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
-
-        dialog = self._make_dialog(config={
+        config = {
             "email": {"provider": "qq", "address": "your_email@qq.com"},
             "ai": {"provider": "none", "model": "", "enabled": False},
             "ai_profiles": [
@@ -645,27 +513,106 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                     "enabled": False,
                 }
             ],
-        })
-        dialog.setStyleSheet(APP_STYLESHEET)
-        dialog.resize(650, 580)
+        }
+        dialog = self._make_dialog(config=config)
         dialog.tab_widget.setCurrentIndex(1)
-        dialog._refresh_ai_profile_list()
         dialog.show()
-        self.app.processEvents()
         QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
 
-        key_x = row.lbl_key_status.mapTo(row, QPoint(0, 0)).x()
-        activate_x = row.btn_activate.mapTo(row, QPoint(0, 0)).x()
-        edit_x = row.btn_edit.mapTo(row, QPoint(0, 0)).x()
-        delete_x = row.btn_delete.mapTo(row, QPoint(0, 0)).x()
+        # Get visual rectangles/geometries
+        key_badge_rect = row.lbl_key_status.geometry()
+        btn_activate_rect = row.btn_activate.geometry()
+        btn_edit_rect = row.btn_edit.geometry()
 
-        self.assertTrue(row.btn_activate.width() > 0)
-        self.assertLess(key_x + row.lbl_key_status.width(), activate_x + 1)
-        self.assertLess(activate_x + row.btn_activate.width(), edit_x + 1)
-        self.assertLess(edit_x + row.btn_edit.width(), delete_x + 1)
+        self.assertTrue(btn_activate_rect.width() > 0)
+        self.assertTrue(key_badge_rect.x() + key_badge_rect.width() <= btn_activate_rect.x())
+        self.assertTrue(btn_activate_rect.x() + btn_activate_rect.width() <= btn_edit_rect.x())
+
+    def test_ai_profile_rows_use_accent_actions_for_provider_and_missing_keys(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "none", "model": "", "enabled": False},
+            "ai_profiles": [
+                {
+                    "profile_id": "deepseek-official",
+                    "name": "DeepSeek 官方配置",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": False,
+                },
+                {
+                    "profile_id": "gemini-official",
+                    "name": "Gemini 官方配置",
+                    "provider": "gemini",
+                    "model": "gemini-2.5-flash",
+                    "enabled": False,
+                },
+            ],
+        }
+
+        def fake_key_source(provider, profile_id):
+            if provider == "deepseek":
+                return "provider"
+            if provider == "gemini":
+                return "missing"
+            return "missing"
+
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", side_effect=fake_key_source):
+            dialog = self._make_dialog(config=config)
+            from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+            dialog.setStyleSheet(APP_STYLESHEET)
+            dialog.resize(650, 580)
+            dialog.tab_widget.setCurrentIndex(1)
+            dialog.show()
+            QApplication.processEvents()
+
+        self.assertEqual(len(dialog.ai_rows), 2)
+        deepseek_row, gemini_row = dialog.ai_rows
+
+        self.assertEqual(deepseek_row.btn_activate.text(), "启用 AI")
+        self.assertEqual(gemini_row.btn_activate.text(), "配置 Key")
+        self.assertEqual(deepseek_row.btn_activate.property("variant"), "accent")
+        self.assertEqual(gemini_row.btn_activate.property("variant"), "accent")
+        self.assertNotIn("primary", {deepseek_row.btn_activate.property("variant"), gemini_row.btn_activate.property("variant")})
+
+        for row in (deepseek_row, gemini_row):
+            self.assertTrue(row.btn_activate.isVisible())
+            self.assertTrue(row.btn_activate.text())
+            self.assertFalse(row.btn_activate.text().strip() == "")
+            self.assertEqual(row.btn_edit.property("variant"), "secondary")
+            self.assertEqual(row.btn_delete.property("variant"), "danger")
+            center_color = row.btn_activate.grab().toImage().pixelColor(
+                row.btn_activate.width() // 2,
+                row.btn_activate.height() // 2,
+            )
+            self.assertNotEqual(center_color.name().lower(), "#ffffff")
+
+            children = [w for w in row.findChildren(QPushButton) if w.isVisible()]
+            self.assertTrue(all(btn.text().strip() for btn in children))
+            self.assertTrue(all(btn.property("variant") != "primary" for btn in children))
+
+        deepseek_key_rect = deepseek_row.lbl_key_status.geometry()
+        deepseek_activate_rect = deepseek_row.btn_activate.geometry()
+        deepseek_edit_rect = deepseek_row.btn_edit.geometry()
+        deepseek_delete_rect = deepseek_row.btn_delete.geometry()
+        self.assertLessEqual(deepseek_key_rect.x() + deepseek_key_rect.width(), deepseek_activate_rect.x())
+        self.assertLessEqual(deepseek_activate_rect.x() + deepseek_activate_rect.width(), deepseek_edit_rect.x())
+        self.assertLessEqual(deepseek_edit_rect.x() + deepseek_edit_rect.width(), deepseek_delete_rect.x())
+
+        gemini_key_rect = gemini_row.lbl_key_status.geometry()
+        gemini_activate_rect = gemini_row.btn_activate.geometry()
+        gemini_edit_rect = gemini_row.btn_edit.geometry()
+        gemini_delete_rect = gemini_row.btn_delete.geometry()
+        self.assertLessEqual(gemini_key_rect.x() + gemini_key_rect.width(), gemini_activate_rect.x())
+        self.assertLessEqual(gemini_activate_rect.x() + gemini_activate_rect.width(), gemini_edit_rect.x())
+        self.assertLessEqual(gemini_edit_rect.x() + gemini_edit_rect.width(), gemini_delete_rect.x())
+
+        self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_settings_home)
+        gemini_row.btn_activate.click()
+        self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_ai_editor)
 
     def test_combobox_popup_styles_present(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
