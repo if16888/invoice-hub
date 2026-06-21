@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
-from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint
+from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings
 from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction
 
@@ -38,6 +38,7 @@ from .mobile_upload_dialog import MobileUploadDialog
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .settings_dialog import SettingsDialog
 from .workers import EmailScanWorker, LocalImportWorker
+from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .column_filters import (
     COLUMN_DEFINITIONS,
     COLUMN_KEYS,
@@ -194,6 +195,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if self.splash:
             self.splash.show_message("正在初始化界面布局...", 70)
         self._init_ui()
+        self._restore_splitter_prefs()
         init_time = _time_mod.time()
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
@@ -247,12 +249,79 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage(status_msg, 4000)
 
     def closeEvent(self, event):
+        self._save_splitter_prefs()
         self.db.close()
         event.accept()
 
     def _init_ui_probe(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+
+    # ---- Workbench metrics & splitter preferences --------------------
+
+    def _apply_workbench_metrics(self):
+        """Apply responsive WorkbenchMetrics to the current window size.
+
+        Sets the detail panel minimum width and adjusts splitter stretch
+        factors so the layout respects the active breakpoint.
+        Called once at the end of _init_ui.
+        """
+        w = self.width() or 1150
+        h = self.height() or 850
+        metrics = metrics_for_size(w, h)
+        self._detail_panel.setMinimumWidth(metrics.detail_width)
+        # Stretch: left pane expands, right (detail) pane stays fixed-ish
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        # Default vertical sizes from metrics
+        self.left_splitter.setSizes([metrics.record_height, max(h - metrics.record_height, 180)])
+
+    def _save_splitter_prefs(self):
+        """Persist current splitter sizes to QSettings."""
+        settings = QSettings("InvoiceHub", "workbench")
+        if hasattr(self, "main_splitter"):
+            settings.setValue("splitter/main", self.main_splitter.sizes())
+        if hasattr(self, "left_splitter"):
+            settings.setValue("splitter/left", self.left_splitter.sizes())
+
+    def _restore_splitter_prefs(self):
+        """Restore splitter sizes from QSettings, clamping invalid values."""
+        settings = QSettings("InvoiceHub", "workbench")
+
+        # Restore main (horizontal) splitter
+        main_sizes = settings.value("splitter/main", None)
+        if main_sizes is not None:
+            try:
+                sizes = [int(x) for x in main_sizes]
+                if len(sizes) == 2 and all(s >= 0 for s in sizes) and sum(sizes) > 0:
+                    self.main_splitter.setSizes(sizes)
+            except (TypeError, ValueError):
+                pass
+
+        # Restore left (vertical) splitter with clamping
+        left_sizes = settings.value("splitter/left", None)
+        if left_sizes is not None:
+            try:
+                sizes = [int(x) for x in left_sizes]
+                self._restore_left_splitter_sizes(sizes)
+            except (TypeError, ValueError):
+                pass
+
+    def _restore_left_splitter_sizes(self, sizes):
+        """Apply sizes to left_splitter after clamping.
+
+        Guarantees record_height >= 280 px and preview_height >= 180 px
+        regardless of what was stored in QSettings.
+        """
+        if len(sizes) != 2:
+            return
+        total = sum(sizes)
+        if total <= 0:
+            return
+        record, preview = clamp_vertical_split(
+            total, sizes[0], record_min=280, preview_min=180
+        )
+        self.left_splitter.setSizes([record, preview])
 
     def _make_menu_action(self, text: str, icon_id, handler, tooltip: str = "") -> QAction:
         action = QAction(self.style().standardIcon(icon_id), text, self)
@@ -571,6 +640,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Set default proportions: Table takes 60%, Form takes 40%
         splitter.setSizes([650, 450])
+
+        # Apply responsive metrics: detail panel width and splitter behaviour
+        self._apply_workbench_metrics()
+
+        # Connect debounced splitter-moved handlers for preference persistence
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(500)
+        self._splitter_save_timer.timeout.connect(self._save_splitter_prefs)
+        self.left_splitter.splitterMoved.connect(
+            lambda _pos, _idx: self._splitter_save_timer.start()
+        )
+        self.main_splitter.splitterMoved.connect(
+            lambda _pos, _idx: self._splitter_save_timer.start()
+        )
 
         # 3. Bottom Status Bar & Collapsible Log Panel
         status_bar = QWidget()
