@@ -44,6 +44,7 @@ from .column_filters import (
     COLUMN_KEYS,
     COLUMN_LABELS,
     ColumnFilterPopup,
+    VISIBLE_COLUMN_DEFINITIONS,
     apply_column_filters,
     has_active_filters,
     is_filter_active,
@@ -275,6 +276,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.main_splitter.setStretchFactor(1, 0)
         # Default vertical sizes from metrics
         self.left_splitter.setSizes([metrics.record_height, max(h - metrics.record_height, 180)])
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_workbench_metrics()
 
     def _save_splitter_prefs(self):
         """Persist current splitter sizes to QSettings."""
@@ -516,8 +521,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_stack = QStackedWidget()
 
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
-        self.table.setHorizontalHeaderLabels([f"{label} ▾" for _key, label, _kind in COLUMN_DEFINITIONS])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels([f"{label} ▾" for _key, label in VISIBLE_COLUMN_DEFINITIONS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -531,15 +536,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_column_filter_headers()
 
         # Set explicit column widths for readability and set up minimum limits
-        self._min_column_widths = {0: 76, 1: 100, 2: 80, 3: 160, 4: 260, 5: 96, 6: 86, 7: 96}
-        self.table.setColumnWidth(0, 76)   # 完整性
+        self._min_column_widths = {0: 76, 1: 100, 2: 80, 3: 260, 4: 160}
+        self.table.setColumnWidth(0, 76)   # 状态
         self.table.setColumnWidth(1, 100)  # 费用日期
         self.table.setColumnWidth(2, 80)   # 金额
-        self.table.setColumnWidth(3, 160)  # 发票号码
-        self.table.setColumnWidth(4, 260)  # 销售方
-        self.table.setColumnWidth(5, 96)   # 消费类型
-        self.table.setColumnWidth(6, 86)   # 来源
-        self.table.setColumnWidth(7, 96)   # 报销组
+        self.table.setColumnWidth(3, 260)  # 销售方
+        self.table.setColumnWidth(4, 160)  # 发票号
 
         # Enforce minimum column widths on interactive resize
         self.table.horizontalHeader().sectionResized.connect(self._on_header_section_resized)
@@ -664,20 +666,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status_layout = QHBoxLayout(status_bar)
         status_layout.setContentsMargins(6, 3, 6, 3)
 
-        self.lbl_status_left = QLabel("当前筛选 0 张")
-        self.lbl_status_left.setFont(QFont("Segoe UI", 9))
-        self.lbl_status_left.setStyleSheet("color: #4B5563;")
-        self.lbl_status_left.setToolTip("当前发票筛选状态")
-        self.lbl_status_left.setMinimumWidth(120)
-        status_layout.addWidget(self.lbl_status_left, 1)
+        self.lbl_record_summary = QLabel("当前筛选 0 张")
+        self.lbl_record_summary.setFont(QFont("Segoe UI", 9))
+        self.lbl_record_summary.setStyleSheet("color: #4B5563;")
+        self.lbl_record_summary.setToolTip("发票数据统计与选中合计")
+        self.lbl_record_summary.setMinimumWidth(300)
+        status_layout.addWidget(self.lbl_record_summary, 1)
 
-        self.lbl_status_middle = QLabel("未选择发票")
-        self.lbl_status_middle.setFont(QFont("Segoe UI", 9))
-        self.lbl_status_middle.setStyleSheet("color: #4B5563;")
-        self.lbl_status_middle.setToolTip("选中发票及金额合计")
-        self.lbl_status_middle.setAlignment(Qt.AlignCenter)
-        self.lbl_status_middle.setMinimumWidth(180)
-        status_layout.addWidget(self.lbl_status_middle, 1)
+        # Compatibility aliases
+        self.lbl_status_left = self.lbl_record_summary
+        self.lbl_status_middle = self.lbl_record_summary
 
         # Right container
         right_container = QWidget()
@@ -951,16 +949,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             btn.setChecked(s == "all")
         self._load_invoices()
 
+    def _get_invoice_review_status_chinese(self, inv: dict) -> str:
+        status_mapping = {
+            "to_review": "待审核",
+            "approved": "已通过",
+            "ignored": "已忽略",
+            "error": "异常",
+        }
+        return status_mapping.get(inv.get("review_status") or TO_REVIEW, "待审核")
+
     def _column_filter_value_getters(self) -> dict:
         return {
             "status": self._get_invoice_data_status,
             "source": self._get_invoice_source,
+            "review_status": self._get_invoice_review_status_chinese,
         }
 
     def _refresh_column_filter_headers(self):
         if not hasattr(self, "table"):
             return
-        for index, (key, label, _kind) in enumerate(COLUMN_DEFINITIONS):
+        for index, (key, label) in enumerate(VISIBLE_COLUMN_DEFINITIONS):
             active = is_filter_active(self.column_filters.get(key))
             marker = "●" if active else "▾"
             item = self.table.horizontalHeaderItem(index)
@@ -976,7 +984,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return f"{label}：点击列标题右侧筛选"
 
     def _set_column_filter(self, key: str, spec: dict):
-        if key not in COLUMN_KEYS:
+        if key not in COLUMN_KEYS and key != "review_status":
             return
         if is_filter_active(spec):
             self.column_filters[key] = dict(spec)
@@ -1023,12 +1031,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return visible_marker_left <= local_x <= visible_marker_right
 
     def _show_column_filter_popup(self, section: int):
-        if section < 0 or section >= len(COLUMN_DEFINITIONS):
+        if section < 0 or section >= len(VISIBLE_COLUMN_DEFINITIONS):
             return
         if not self._should_open_column_filter_popup(section):
             self._column_filter_header_press_pos = None
             return
-        key, _label, _kind = COLUMN_DEFINITIONS[section]
+        key, _label = VISIBLE_COLUMN_DEFINITIONS[section]
         try:
             include_deleted = self.chk_show_deleted.isChecked()
             rows = self.db.list_invoices(status=None, limit=None, include_deleted=include_deleted)
@@ -1061,9 +1069,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             header.blockSignals(True)
             self.table.setColumnWidth(index, min_w)
             header.blockSignals(False)
-        self._adjust_column_4_width()
+        self._adjust_column_3_width()
 
-    def _adjust_column_4_width(self):
+    def _adjust_column_3_width(self):
         if getattr(self, "_ignore_min_widths", False):
             return
         if not hasattr(self, "table") or self.table is None:
@@ -1072,13 +1080,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if viewport_w <= 0:
             return
         other_w = 0
-        for i in range(8):
-            if i != 4:
+        for i in range(5):
+            if i != 3:
                 other_w += self.table.columnWidth(i)
         target_w = max(260, viewport_w - other_w)
         header = self.table.horizontalHeader()
         header.blockSignals(True)
-        self.table.setColumnWidth(4, target_w)
+        self.table.setColumnWidth(3, target_w)
         header.blockSignals(False)
 
     def eventFilter(self, obj, event):
@@ -1088,7 +1096,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._column_filter_header_press_pos = event.position().toPoint()
         elif hasattr(self, "table") and obj is self.table:
             if event.type() == QEvent.Resize:
-                self._adjust_column_4_width()
+                self._adjust_column_3_width()
         return super().eventFilter(obj, event)
 
 
@@ -1594,34 +1602,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 elif date_warn:
                     combined_warning = date_warn
 
+                status_mapping = {
+                    "to_review": "待审核",
+                    "approved": "已通过",
+                    "ignored": "已忽略",
+                    "error": "异常",
+                }
+                rev_chinese = status_mapping.get(review_status, str(review_status))
+
                 row_items = [
-                    display_status,
+                    rev_chinese,
                     display_date or "—",
                     total_amt or "—",
-                    inv_num or "—",
                     seller or "—",
-                    category or "未分类",
-                    source_text,
-                    claim_name or "—",
+                    inv_num or "—",
                 ]
 
                 for col, text in enumerate(row_items):
                     item = QTableWidgetItem(text)
 
-                    if col == 2:
-                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    elif col == 0:
-                        if display_status == "正常":
+                    if col == 0:
+                        if review_status == "approved":
                             item.setForeground(QColor("#059669"))
-                        else:
+                        elif review_status == "to_review":
                             item.setForeground(QColor("#D97706"))
-                        status_mapping = {
-                            "to_review": "待审核",
-                            "approved": "已通过",
-                            "ignored": "已忽略",
-                            "error": "异常",
-                        }
-                        rev_chinese = status_mapping.get(review_status, str(review_status))
+                        elif review_status == "ignored":
+                            item.setForeground(QColor("#6B7280"))
+                        elif review_status == "error":
+                            item.setForeground(QColor("#DC2626"))
                         item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
                     elif col == 1:
                         date_source_disp = {
@@ -1637,14 +1645,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             f"开票日期: {inv_date or '—'}"
                         ]
                         item.setToolTip("\n".join(tooltip_lines))
-                    elif col == 3 and inv_num:
-                        item.setToolTip(inv_num)
-                    elif col == 4 and seller:
+                    elif col == 2:
+                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    elif col == 3 and seller:
                         item.setToolTip(seller)
-                    elif col == 6 and attachment_path:
-                        item.setToolTip(attachment_path)
-                    elif col == 7 and claim_name:
-                        item.setToolTip(claim_name)
+                    elif col == 4 and inv_num:
+                        item.setToolTip(inv_num)
 
                     if combined_warning:
                         item.setBackground(QColor("#FEF3C7"))
@@ -1702,7 +1708,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._preview_empty_message = "没有符合条件的发票" if total_in_db > 0 else "请选择一张发票查看原件"
             self._update_document_preview()
             self._clear_detail_form()
-            self._set_selection_total_status([])
+            self._update_record_summary()
             self._set_right_panel_state(total_in_db > 0)
         else:
             self.left_stack.setCurrentWidget(self.table)
@@ -1738,7 +1744,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # because _on_table_selection_changed uses QTimer.singleShot(0) which may not
         # fire until the next event loop iteration.
         selected = self.table.selectionModel().selectedRows() if hasattr(self, "table") else []
-        self._set_selection_total_status(selected)
+        self._update_record_summary()
 
         self.write_log(
             f"[性能] 发票列表刷新: db={db_elapsed_ms}ms "
@@ -1874,41 +1880,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return f"当前显示 {shown} / {self._limited_first_load_total} 张｜首屏限量加载"
         return f"当前筛选 {shown} 张"
 
-    def _set_selection_total_status(self, selected_indexes):
-        if not selected_indexes:
-            prefix = self._format_status_count_prefix()
-            self.lbl_status_left.setText(prefix)
-            self.lbl_status_left.setToolTip(prefix)
-            
-            mid_text = "未选择发票"
-            self.lbl_status_middle.setText(mid_text)
-            self.lbl_status_middle.setToolTip(mid_text)
-            return
-
-        def calculate_async():
-            if not hasattr(self, "invoices_list") or not self.invoices_list:
-                return
+    def _update_record_summary(self) -> None:
+        """Update the combined footer status label with matching count and selection totals."""
+        prefix = self._format_status_count_prefix()
+        
+        # Get selected rows
+        selected_indexes = self.table.selectedIndexes()
+        # Find unique rows from indexes (since selecting a row selects multiple cells)
+        selected_rows = sorted(list(set(idx.row() for idx in selected_indexes)))
+        
+        if not selected_rows:
+            text = prefix
+        else:
             rows = []
-            for idx in selected_indexes:
-                try:
-                    if 0 <= idx.row() < len(self.invoices_list):
-                        rows.append(self.invoices_list[idx.row()])
-                except Exception:
-                    pass
+            for r in selected_rows:
+                if 0 <= r < len(self.invoices_list):
+                    rows.append(self.invoices_list[r])
             if not rows:
-                return
-            prefix = self._format_status_count_prefix()
-            count, total, has_missing = amount_total(rows)
-            suffix = " (部分金额缺失)" if has_missing else ""
-            
-            self.lbl_status_left.setText(prefix)
-            self.lbl_status_left.setToolTip(prefix)
-            
-            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
-            self.lbl_status_middle.setText(mid_text)
-            self.lbl_status_middle.setToolTip(mid_text)
-
-        QTimer.singleShot(0, calculate_async)
+                text = prefix
+            else:
+                count, total, has_missing = amount_total(rows)
+                suffix = " (部分金额缺失)" if has_missing else ""
+                text = f"{prefix}｜已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
+        
+        self.lbl_record_summary.setText(text)
+        self.lbl_record_summary.setToolTip(text)
 
     def _update_closing_card(self, inv):
         if not inv:
@@ -1932,14 +1928,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if num_selected == 0:
             self._preview_empty_message = "请选择一张发票查看原件"
             self._clear_detail_form()
-            self._set_selection_total_status([])
+            self._update_record_summary()
             self.current_preview_docs = []
             self.current_preview_index = 0
             self._update_document_preview()
             self._update_claim_total()
             return
 
-        self._set_selection_total_status(selected_indexes)
+        self._update_record_summary()
 
         self.btn_app.setEnabled(True)
         self.btn_ign.setEnabled(True)

@@ -3,10 +3,14 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QWidget
+try:
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QDialog, QWidget
+except ImportError:
+    Qt, QKeySequence, QTest = None, None, None
+    QApplication, QDialog, QWidget = None, None, None
 
 
 AUTH_CODE = "mail-auth-code-should-never-leak"

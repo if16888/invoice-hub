@@ -9,8 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtWidgets import QApplication, QWidget, QSizePolicy
-from PySide6.QtCore import Qt, QPoint
+try:
+    from PySide6.QtWidgets import QApplication, QWidget, QSizePolicy
+    from PySide6.QtCore import Qt, QPoint
+except ImportError:
+    QApplication, QWidget, QSizePolicy = None, None, None
+    Qt, QPoint = None, None
 
 from tests.test_settings_dialog import SettingsDialogTestMixin
 from scripts.invoice_fetch.db import InvoiceDB

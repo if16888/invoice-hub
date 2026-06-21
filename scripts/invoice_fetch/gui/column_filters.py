@@ -35,9 +35,19 @@ COLUMN_DEFINITIONS = (
     ("claim_name", "报销组", "values"),
 )
 
+VISIBLE_COLUMN_DEFINITIONS = (
+    ("review_status", "状态"),
+    ("expense_date", "费用日期"),
+    ("total_amount", "金额"),
+    ("seller_name", "销售方"),
+    ("invoice_number", "发票号"),
+)
+
 COLUMN_KEYS = tuple(item[0] for item in COLUMN_DEFINITIONS)
 COLUMN_LABELS = {key: label for key, label, _kind in COLUMN_DEFINITIONS}
+COLUMN_LABELS["review_status"] = "状态"
 COLUMN_KINDS = {key: kind for key, _label, kind in COLUMN_DEFINITIONS}
+COLUMN_KINDS["review_status"] = "values"
 CLAIM_GROUP_FIELD_KEYS = ("claim_name", "claim_group_name", "claim_group")
 
 

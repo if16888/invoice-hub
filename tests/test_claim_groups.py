@@ -1368,7 +1368,6 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertTrue(window.table.item(0, 0).toolTip())
                 self.assertTrue(window.table.item(0, 3).toolTip())
                 self.assertTrue(window.table.item(0, 4).toolTip())
-                self.assertTrue(window.table.item(0, 6).toolTip())
             finally:
                 if hasattr(window, "db") and window.db is not None:
                     window.db.close()
@@ -3033,10 +3032,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Assert load succeeded
                     self.assertEqual(len(window.invoices_list), 1)
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 0).text(), "缺原件")
+                    self.assertEqual(window.table.item(0, 0).text(), "待审核")
                     self.assertEqual(window.table.item(0, 1).text(), "2026-05-24")
                     self.assertEqual(window.table.item(0, 2).text(), "123.45")
-                    self.assertEqual(window.table.item(0, 3).text(), "NUM999")
+                    self.assertEqual(window.table.item(0, 3).text(), "Test Seller")
+                    self.assertEqual(window.table.item(0, 4).text(), "NUM999")
                     self.assertGreaterEqual(window.btn_clear_log.minimumWidth(), 64)
                     self.assertGreaterEqual(window.btn_copy_log.minimumWidth(), 64)
                 finally:
@@ -5800,13 +5800,13 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.txt_search.setText("滴滴")
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 3).text(), "SEARCH001")
+                    self.assertEqual(window.table.item(0, 4).text(), "SEARCH001")
 
                     window.txt_search.setText("")
                     window.chk_unlinked.setChecked(True)
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 3).text(), "SEARCH002")
+                    self.assertEqual(window.table.item(0, 4).text(), "SEARCH002")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -6016,7 +6016,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 window.table.selectRow(0)
                 app.processEvents()
 
-                self.assertEqual(window.table.item(0, 7).text(), "—")
+                self.assertEqual(window._get_invoice_claim_group(window.invoices_list[0]), "")
                 new_idx = window.combo_claims.findData(window._NEW_CLAIM_VALUE)
                 self.assertGreaterEqual(new_idx, 0)
                 window.combo_claims.setCurrentIndex(new_idx)
@@ -6033,7 +6033,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 app.processEvents()
 
                 self.assertEqual(window.combo_claims.currentData(), claim_b)
-                self.assertEqual(window.table.item(0, 7).text(), "Claim B")
+                self.assertEqual(window._get_invoice_claim_group(window.invoices_list[0]), "Claim B")
                 self.assertEqual(window.btn_add_to_claim.text(), "已在 Claim B")
                 self.assertFalse(window.btn_add_to_claim.isEnabled())
                 self.assertFalse(window.btn_delete_claim.isEnabled())
