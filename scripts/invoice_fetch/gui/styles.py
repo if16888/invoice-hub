@@ -1114,5 +1114,79 @@ QPushButton[variant="toolbar"][busy="true"]:disabled {
     color: #FFFFFF;
     border-color: #1D4ED8;
 }
+
+/* CompactStatCard — workbench filter bar status cards */
+QFrame#CompactStatCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    min-width: 72px;
+    max-width: 120px;
+}
+QFrame#CompactStatCard:hover {
+    border-color: #93C5FD;
+    background-color: #F8FAFC;
+}
+QFrame#CompactStatCard[selected="true"] {
+    background-color: #EFF6FF;
+    border: 2px solid #2563EB;
+}
+QFrame#CompactStatCard[state="warning"] {
+    border-color: #FCD34D;
+}
+QFrame#CompactStatCard[state="warning"][selected="true"] {
+    background-color: #FFFBEB;
+    border-color: #D97706;
+}
+QFrame#CompactStatCard[state="success"] {
+    border-color: #A7F3D0;
+}
+QFrame#CompactStatCard[state="success"][selected="true"] {
+    background-color: #F0FDF4;
+    border-color: #059669;
+}
+QFrame#CompactStatCard[state="danger"] {
+    border-color: #FCA5A5;
+}
+QFrame#CompactStatCard[state="danger"][selected="true"] {
+    background-color: #FEF2F2;
+    border-color: #DC2626;
+}
+QFrame#CompactStatCard[state="muted"] {
+    border-color: #E5E7EB;
+}
+QFrame#CompactStatCard[state="info"] {
+    border-color: #BFDBFE;
+}
+QLabel.CompactStatCardTitle {
+    color: #6B7280;
+    font-size: 10px;
+    font-weight: 500;
+    background: transparent;
+}
+QLabel.CompactStatCardValue {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+}
+QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle {
+    color: #1D4ED8;
+}
+QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {
+    color: #1D4ED8;
+}
+
+/* ShortcutDisclosure — collapsible keyboard shortcut help */
+QFrame#ShortcutDisclosure {
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 4px 6px;
+}
+QFrame#ShortcutDisclosure[expanded="true"] {
+    background-color: #F1F5F9;
+    border-color: #CBD5E1;
+}
 """ + MENU_STYLE + """
 """
