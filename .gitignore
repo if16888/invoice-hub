@@ -80,6 +80,7 @@ htmlcov/
 .gemini/
 .claude/
 .superpowers/
+docs/superpowers/
 CLAUDE.md
 
 # Logs
