@@ -9,6 +9,66 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QWidget
 from tests.test_settings_dialog import SettingsDialogTestMixin
 
 
+class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
+
+    def test_settings_home_exposes_left_navigation_sections(self):
+        dialog = self._make_dialog()
+        self.assertEqual(
+            list(dialog.settings_nav_buttons.keys()),
+            ["mailboxes", "ai", "rules", "runtime", "privacy", "system", "data", "about"],
+        )
+
+    def test_settings_home_defaults_to_mailbox_content_page(self):
+        dialog = self._make_dialog()
+        self.assertIs(dialog.settings_stack.currentWidget(), dialog.page_settings_home)
+        self.assertIs(dialog.settings_content_stack.currentWidget(), dialog.page_mailbox_center)
+
+    def test_switching_home_section_updates_content_stack_and_compat_tab(self):
+        dialog = self._make_dialog()
+        dialog._show_settings_home("ai")
+        self.assertIs(dialog.settings_content_stack.currentWidget(), dialog.page_ai_center)
+        self.assertEqual(dialog.tab_widget.currentIndex(), 1)
+
+    def test_settings_home_has_runtime_and_privacy_pages(self):
+        dialog = self._make_dialog()
+        self.assertIsNotNone(dialog.page_rules_center)
+        self.assertIsNotNone(dialog.page_runtime_center)
+        self.assertIsNotNone(dialog.page_privacy_center)
+
+    def test_settings_shell_geometry_and_section_switching(self):
+        dialog = self._make_dialog()
+        try:
+            dialog.resize(1440, 900)
+            dialog.show()
+            QApplication.processEvents()
+
+            self.assertEqual(len(dialog.settings_nav_buttons), 8)
+            self.assertTrue(all(btn.isVisible() for btn in dialog.settings_nav_buttons.values()))
+            self.assertIs(dialog.settings_content_stack.currentWidget(), dialog.page_mailbox_center)
+
+            footer_rect = dialog.lbl_settings_footer_hint.geometry()
+            content_rect = dialog.settings_content_stack.geometry()
+            nav_rect = next(iter(dialog.settings_nav_buttons.values())).parentWidget().geometry()
+            self.assertGreater(footer_rect.y(), content_rect.bottom() - 120)
+            self.assertGreater(content_rect.height(), 0)
+            self.assertGreater(nav_rect.height(), 0)
+
+            for section, page in dialog.settings_pages.items():
+                dialog._show_settings_home(section)
+                QApplication.processEvents()
+                self.assertIs(dialog.settings_content_stack.currentWidget(), page)
+                self.assertTrue(page.isVisible())
+        finally:
+            dialog.close()
+            QApplication.processEvents()
+
+    def test_settings_nav_buttons_use_shared_class_without_inline_stylesheet(self):
+        dialog = self._make_dialog()
+        for button in dialog.settings_nav_buttons.values():
+            self.assertEqual(button.property("class"), "SettingsNavButton")
+            self.assertEqual(button.styleSheet().strip(), "")
+
+
 class SettingsCenterMailboxTests(SettingsDialogTestMixin, unittest.TestCase):
 
     def test_dialog_opens_on_settings_home(self):
