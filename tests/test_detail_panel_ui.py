@@ -235,8 +235,33 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsInstance(self.panel.btn_err, QPushButton)
         self.assertIsInstance(self.panel.btn_inline_more, QPushButton)
         # Text checks
-        self.assertEqual(self.panel.btn_app.text(), "通过并下一张")
-        self.assertEqual(self.panel.btn_ign.text(), "忽略")
+        self.assertIn("通过并下一张", self.panel.btn_app.text())
+        self.assertIn("Enter", self.panel.btn_app.text())
+        self.assertIn("忽略", self.panel.btn_ign.text())
+        self.assertIn("Del", self.panel.btn_ign.text())
+        self.assertIn("Ctrl+E", self.panel.btn_err.text())
+
+    def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
+        fixed = self.panel.fixed_header_container
+        for widget in (
+            self.panel.lbl_sum_amount,
+            self.panel.lbl_sum_status,
+            self.panel.lbl_sum_category,
+            self.panel.lbl_sum_date,
+            self.panel.lbl_sum_number,
+            self.panel.lbl_sum_seller,
+            self.panel.lbl_date_warning,
+            self.panel.lbl_buyer_warning,
+            self.panel.btn_app,
+            self.panel.btn_ign,
+            self.panel.btn_err,
+        ):
+            self.assertTrue(fixed.isAncestorOf(widget), widget.objectName())
+            self.assertFalse(self.panel.right_content_widget.viewport().isAncestorOf(widget))
+
+        self.assertEqual(self.panel.detail_tabs.tabText(0), "基本信息")
+        self.assertEqual(self.panel.detail_tabs.tabText(1), "报销信息")
+        self.assertEqual(self.panel.detail_tabs.count(), 2)
 
     # ── 8. Claim group buttons ──────────────────────────────────────────────
 
@@ -247,22 +272,14 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsInstance(self.panel.btn_export, QPushButton)
 
     def test_claim_group_controls_share_one_compact_row(self):
-        """Claim selection, material, and note inputs should share the same left edge."""
-        self.panel.set_note("示例备注")
+        """Claim selection and its actions remain compact in the reimbursement tab."""
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        # set_note defaults to collapsed; expand the editor so txt_note is visible
-        # and its mapTo coordinates are meaningful.
-        self.panel._apply_note_state(expanded=True)
+        self.panel.detail_tabs.setCurrentWidget(self.panel.reimbursement_scroll)
         self.app.processEvents()
 
         claim_x = self.panel.combo_claims.mapTo(self.panel, self.panel.combo_claims.rect().topLeft()).x()
-        material_x = self.panel.txt_path.mapTo(self.panel, self.panel.txt_path.rect().topLeft()).x()
-        note_x = self.panel.txt_note.mapTo(self.panel, self.panel.txt_note.rect().topLeft()).x()
-        self.assertLessEqual(abs(claim_x - material_x), 4)
-        self.assertLessEqual(abs(claim_x - note_x), 4)
-
         claim_actions_x = self.panel.claim_actions_widget.mapTo(self.panel, self.panel.claim_actions_widget.rect().topLeft()).x()
         claim_combo_right = claim_x + self.panel.combo_claims.width()
         self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
@@ -272,15 +289,13 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertEqual(self.panel.claim_summary_row.indexOf(self.panel.btn_delete_claim), -1)
 
     def test_claim_combo_aligns_with_first_column_fields(self):
-        """Claim, material and core first-column fields share the same x coordinate."""
+        """Material and core fields align inside the basic-information tab."""
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        claim_x = self.panel.combo_claims.mapTo(self.panel, self.panel.combo_claims.rect().topLeft()).x()
         material_x = self.panel.txt_path.mapTo(self.panel, self.panel.txt_path.rect().topLeft()).x()
         core_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
-        self.assertLessEqual(abs(claim_x - material_x), 2)
-        self.assertLessEqual(abs(claim_x - core_x), 2)
+        self.assertLessEqual(abs(material_x - core_x), 2)
 
     def test_empty_claim_delete_button_exists_in_summary_row(self):
         """Deleting an empty group lives in the claim action cluster, not the summary row."""
