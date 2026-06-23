@@ -948,7 +948,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._limited_first_load_total = 0
         self._refresh_column_filter_headers()
         self._update_filter_summary_chips()
-        
+
         self.current_filter_status = None
         for s, btn in self.filter_buttons.items():
             if hasattr(btn, "set_selected"):
