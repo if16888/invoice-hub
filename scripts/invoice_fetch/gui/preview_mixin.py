@@ -8,9 +8,9 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QPixmap, QShortcut
+from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut, QTransform
 from PySide6.QtWidgets import (
-    QAbstractSpinBox, QApplication, QComboBox, QDoubleSpinBox, QFrame,
+    QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
     QTextEdit, QVBoxLayout, QWidget,
@@ -50,12 +50,137 @@ def get_qt_pdf_classes():
 
 
 class PreviewMixin:
+    def _make_toolbar_button(self, text: str, handler, *, width: int | None = None, tooltip: str = "") -> QPushButton:
+        button = QPushButton(text)
+        button.clicked.connect(handler)
+        if width is not None:
+            button.setFixedWidth(width)
+        if tooltip:
+            button.setToolTip(tooltip)
+        return button
+
+    def _init_overlay_toolbar(self):
+        self.overlay_toolbar = QWidget(self.preview_workbench)
+        self.overlay_toolbar.setObjectName("OverlayToolbar")
+        self.overlay_toolbar.setFixedHeight(36)
+        self.overlay_toolbar.setStyleSheet("""
+            QWidget#OverlayToolbar {
+                background-color: rgba(255, 255, 255, 195);
+                border: 1px solid #D1D5DB;
+                border-radius: 8px;
+            }
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                padding: 1px 4px;
+                font-size: 11px;
+                color: #374151;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: rgba(243, 244, 246, 200);
+                border-radius: 4px;
+                color: #111827;
+            }
+            QPushButton:disabled {
+                color: #9CA3AF;
+                background-color: transparent;
+            }
+        """)
+        self.overlay_toolbar.installEventFilter(self)
+
+        tb_layout = QHBoxLayout(self.overlay_toolbar)
+        tb_layout.setContentsMargins(4, 0, 4, 0)
+        tb_layout.setSpacing(3)
+
+        self.btn_zoom_out = self._make_toolbar_button("-", self._zoom_out, width=14)
+        self.btn_zoom_100 = self._make_toolbar_button("100%", self._zoom_100)
+        self.btn_zoom_in = self._make_toolbar_button("+", self._zoom_in, width=14)
+        self.btn_fit_width = self._make_toolbar_button("适宽", self._zoom_fit_width)
+        self.btn_fit_page = self._make_toolbar_button("整页", self._zoom_fit_page)
+        self.btn_rotate_left = self._make_toolbar_button("左旋", lambda: self._rotate_preview(-90))
+        self.btn_rotate_right = self._make_toolbar_button("右旋", lambda: self._rotate_preview(90))
+        self.btn_download_preview = self._make_toolbar_button("下载", self._download_current_preview)
+        self.btn_print_preview = self._make_toolbar_button("打印", self._print_current_preview)
+        self.btn_preview_focus = self._make_toolbar_button("全屏", self._toggle_preview_focus_mode)
+
+        self.preview_actions = {
+            "zoom_out": self.btn_zoom_out,
+            "zoom_100": self.btn_zoom_100,
+            "zoom_in": self.btn_zoom_in,
+            "fit_width": self.btn_fit_width,
+            "fit_page": self.btn_fit_page,
+            "rotate_left": self.btn_rotate_left,
+            "rotate_right": self.btn_rotate_right,
+            "download": self.btn_download_preview,
+            "print": self.btn_print_preview,
+            "focus_mode": self.btn_preview_focus,
+        }
+        for key, button in self.preview_actions.items():
+            button.setObjectName(f"PreviewAction_{key}")
+            tb_layout.addWidget(button)
+
+        self._init_legacy_preview_controls()
+
+    def _init_legacy_preview_controls(self):
+        """Keep old preview control attributes available without visible orphan widgets."""
+        self._legacy_preview_controls = QWidget(self.overlay_toolbar)
+        self._legacy_preview_controls.hide()
+
+        self.btn_prev = self._make_toolbar_button("←", self._prev_preview_doc, width=18, tooltip="上一文件")
+        self.lbl_file_info = QLabel("0 / 0 无文件")
+        self.lbl_file_info.setAlignment(Qt.AlignCenter)
+        self.btn_next = self._make_toolbar_button("→", self._next_preview_doc, width=18, tooltip="下一文件")
+        self.btn_prev_page = self._make_toolbar_button("◀ 上一页", self._prev_pdf_page, tooltip="PDF 上一页")
+        self.btn_next_page = self._make_toolbar_button("下一页 ▶", self._next_pdf_page, tooltip="PDF 下一页")
+        self.btn_open_ext = self._make_toolbar_button("外部打开", self._open_current_preview_ext)
+        self.btn_link_evidence = self._make_toolbar_button("关联到当前发票", self._link_current_evidence_to_invoice)
+
+        for widget in (
+            self.btn_prev,
+            self.lbl_file_info,
+            self.btn_next,
+            self.btn_prev_page,
+            self.btn_next_page,
+            self.btn_open_ext,
+            self.btn_link_evidence,
+        ):
+            widget.setParent(self._legacy_preview_controls)
+            widget.setGeometry(0, 0, 0, 0)
+            widget.hide()
+
     def _init_preview_panel(self):
         self.preview_panel = QGroupBox("原件预览")
         self.preview_panel.setFocusPolicy(Qt.StrongFocus)
         preview_layout = QVBoxLayout(self.preview_panel)
         preview_layout.setContentsMargins(8, 8, 8, 8)
         preview_layout.setSpacing(0)
+
+        self.preview_workbench = QWidget(self.preview_panel)
+        self.preview_workbench.setObjectName("PreviewWorkbench")
+        self.preview_workbench_layout = QVBoxLayout(self.preview_workbench)
+        self.preview_workbench_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_workbench_layout.setSpacing(6)
+        preview_layout.addWidget(self.preview_workbench, 1)
+
+        self.preview_body = QWidget(self.preview_workbench)
+        self.preview_body_layout = QHBoxLayout(self.preview_body)
+        self.preview_body_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_body_layout.setSpacing(8)
+
+        self.thumbnail_rail = QScrollArea(self.preview_body)
+        self.thumbnail_rail.setObjectName("PreviewThumbnailRail")
+        self.thumbnail_rail.setFixedWidth(104)
+        self.thumbnail_rail.setWidgetResizable(True)
+        self.thumbnail_rail.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.thumbnail_content = QWidget()
+        self.thumbnail_layout = QVBoxLayout(self.thumbnail_content)
+        self.thumbnail_layout.setContentsMargins(6, 6, 6, 6)
+        self.thumbnail_layout.setSpacing(6)
+        self.thumbnail_layout.setAlignment(Qt.AlignTop)
+        self.thumbnail_rail.setWidget(self.thumbnail_content)
+        self.thumbnail_buttons = []
+        self.preview_body_layout.addWidget(self.thumbnail_rail)
 
         # Initialize Zoom State Variables
         self.image_zoom_mode = "fit_width"
@@ -72,8 +197,9 @@ class PreviewMixin:
         self.overlay_hide_timer.timeout.connect(self._hide_overlay_toolbar)
 
         # Container widget to hold preview stack and floating overlay toolbar
-        self.preview_container = QWidget()
-        preview_layout.addWidget(self.preview_container, 1)
+        self.preview_container = QWidget(self.preview_body)
+        self.preview_body_layout.addWidget(self.preview_container, 1)
+        self.preview_workbench_layout.addWidget(self.preview_body, 1)
 
         # Install event filter to track mouse entry and exit on preview container
         self.preview_container.installEventFilter(self)
@@ -105,6 +231,7 @@ class PreviewMixin:
         self.image_scroll_area.setWidgetResizable(True)
         self.image_scroll_area.setAlignment(Qt.AlignCenter)
         self.image_scroll_area.installEventFilter(self)
+        self.image_scroll_area.viewport().installEventFilter(self)
         # Dynamic Resizing scaling for image in FitToWidth / FitInView modes
         self.image_scroll_area.resizeEvent = lambda event: (
             QScrollArea.resizeEvent(self.image_scroll_area, event),
@@ -114,140 +241,14 @@ class PreviewMixin:
         self.lbl_image_preview = QLabel()
         self.lbl_image_preview.setAlignment(Qt.AlignCenter)
         self.lbl_image_preview.setStyleSheet("background-color: #FFFFFF;")
+        self.lbl_image_preview.installEventFilter(self)
         self.image_scroll_area.setWidget(self.lbl_image_preview)
 
         self.preview_stack.addWidget(self.image_scroll_area)
         container_layout.addWidget(self.preview_stack)
 
-        # Create Floating Overlay Toolbar (weaker visual, smaller height, semi-transparent)
-        self.overlay_toolbar = QWidget(self.preview_container)
-        self.overlay_toolbar.setObjectName("OverlayToolbar")
-        self.overlay_toolbar.setFixedHeight(28)
-        self.overlay_toolbar.setStyleSheet("""
-            QWidget#OverlayToolbar {
-                background-color: rgba(255, 255, 255, 195);
-                border: 1px solid #D1D5DB;
-                border-radius: 8px;
-            }
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                padding: 1px 4px;
-                font-size: 11px;
-                color: #374151;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: rgba(243, 244, 246, 200);
-                border-radius: 4px;
-                color: #111827;
-            }
-            QPushButton:disabled {
-                color: #9CA3AF;
-                background-color: transparent;
-            }
-        """)
-
-        # Install event filter to prevent hide when inside toolbar itself
-        self.overlay_toolbar.installEventFilter(self)
-
-        tb_layout = QHBoxLayout(self.overlay_toolbar)
-        tb_layout.setContentsMargins(4, 0, 4, 0)
-        tb_layout.setSpacing(3)
-
-        # Left / Prev Doc button (file-level)
-        self.btn_prev = QPushButton("←")
-        self.btn_prev.clicked.connect(self._prev_preview_doc)
-        self.btn_prev.setFixedWidth(18)
-        self.btn_prev.setStyleSheet("font-weight: bold; font-size: 11px;")
-        self.btn_prev.setToolTip("上一文件")
-        tb_layout.addWidget(self.btn_prev)
-
-        # File index/name display (minimal format e.g. 文件 1/2｜主发票｜PDF 1/7)
-        self.lbl_file_info = QLabel("0 / 0 无文件")
-        self.lbl_file_info.setAlignment(Qt.AlignCenter)
-        self.lbl_file_info.setStyleSheet("font-weight: bold; color: #374151; font-size: 11px; padding: 0 2px; background: transparent; border: none;")
-        tb_layout.addWidget(self.lbl_file_info)
-
-        # Right / Next Doc button (file-level)
-        self.btn_next = QPushButton("→")
-        self.btn_next.clicked.connect(self._next_preview_doc)
-        self.btn_next.setFixedWidth(18)
-        self.btn_next.setStyleSheet("font-weight: bold; font-size: 11px;")
-        self.btn_next.setToolTip("下一文件")
-        tb_layout.addWidget(self.btn_next)
-
-        # Divider Frame helper
-        def add_divider():
-            sep = QFrame()
-            sep.setFrameShape(QFrame.VLine)
-            sep.setFrameShadow(QFrame.Plain)
-            sep.setStyleSheet("color: #E5E7EB; max-height: 14px; background: transparent; border: none; border-left: 1px solid #E5E7EB;")
-            tb_layout.addWidget(sep)
-
-        add_divider()
-
-        # ── PDF page-level navigation ──
-        self.btn_prev_page = QPushButton("◀ 上一页")
-        self.btn_prev_page.clicked.connect(self._prev_pdf_page)
-        self.btn_prev_page.setToolTip("PDF 上一页")
-        self.btn_prev_page.setStyleSheet("font-weight: bold; font-size: 11px;")
-        self.btn_prev_page.setEnabled(False)
-        tb_layout.addWidget(self.btn_prev_page)
-
-        self.btn_next_page = QPushButton("下一页 ▶")
-        self.btn_next_page.clicked.connect(self._next_pdf_page)
-        self.btn_next_page.setToolTip("PDF 下一页")
-        self.btn_next_page.setStyleSheet("font-weight: bold; font-size: 11px;")
-        self.btn_next_page.setEnabled(False)
-        tb_layout.addWidget(self.btn_next_page)
-
-        add_divider()
-
-        # Fit Width Button
-        self.btn_fit_width = QPushButton("适宽")
-        self.btn_fit_width.clicked.connect(self._zoom_fit_width)
-        tb_layout.addWidget(self.btn_fit_width)
-
-        # Fit Page Button
-        self.btn_fit_page = QPushButton("整页")
-        self.btn_fit_page.clicked.connect(self._zoom_fit_page)
-        tb_layout.addWidget(self.btn_fit_page)
-
-        # Zoom 100% Button
-        self.btn_zoom_100 = QPushButton("100%")
-        self.btn_zoom_100.clicked.connect(self._zoom_100)
-        tb_layout.addWidget(self.btn_zoom_100)
-
-        # Zoom Out Button
-        self.btn_zoom_out = QPushButton("-")
-        self.btn_zoom_out.clicked.connect(self._zoom_out)
-        self.btn_zoom_out.setFixedWidth(14)
-        self.btn_zoom_out.setStyleSheet("font-weight: bold; font-size: 11px;")
-        tb_layout.addWidget(self.btn_zoom_out)
-
-        # Zoom In Button
-        self.btn_zoom_in = QPushButton("+")
-        self.btn_zoom_in.clicked.connect(self._zoom_in)
-        self.btn_zoom_in.setFixedWidth(14)
-        self.btn_zoom_in.setStyleSheet("font-weight: bold; font-size: 11px;")
-        tb_layout.addWidget(self.btn_zoom_in)
-
-        add_divider()
-
-        # Open External Button
-        self.btn_open_ext = QPushButton("外部打开")
-        self.btn_open_ext.clicked.connect(self._open_current_preview_ext)
-        tb_layout.addWidget(self.btn_open_ext)
-
-        # Divider and Link Evidence Button
-        add_divider()
-        self.btn_link_evidence = QPushButton("关联到当前发票")
-        self.btn_link_evidence.clicked.connect(self._link_current_evidence_to_invoice)
-        self.btn_link_evidence.setStyleSheet("font-weight: bold; color: #059669; padding: 0 4px;")
-        self.btn_link_evidence.setVisible(False)
-        self.btn_link_evidence.setEnabled(False)
-        tb_layout.addWidget(self.btn_link_evidence)
+        self._init_overlay_toolbar()
+        self.preview_workbench_layout.insertWidget(0, self.overlay_toolbar)
 
         # Bind container resizing to overlay position alignment (Y-offset smaller = 4px)
         def resize_container(event):
@@ -256,38 +257,25 @@ class PreviewMixin:
 
         self.preview_container.resizeEvent = resize_container
 
-        # Hide overlay initially
-        self.overlay_toolbar.setVisible(False)
+        self.preview_rotation = 0
+        self.preview_focus_dialog = None
+        self.overlay_toolbar.setVisible(True)
+        self.thumbnail_rail.setVisible(False)
         self._set_zoom_buttons_enabled(False)
 
-        # Register Ctrl+Left/Ctrl+Right shortcuts for file-level navigation
-        self._register_navigation_shortcuts()
 
     def _reposition_overlay_toolbar(self):
-        if self.overlay_toolbar.isVisible() and hasattr(self, "preview_container") and self.preview_container.width() > 0:
-            tb_size = self.overlay_toolbar.sizeHint()
-            w = min(tb_size.width(), self.preview_container.width() - 20)
-            h = 28
-            x = (self.preview_container.width() - w) // 2
-            y = 4  # Minimal Y offset to not block document content
-            self.overlay_toolbar.setGeometry(x, y, w, h)
+        return
 
     def _show_overlay_toolbar(self):
         self.overlay_hide_timer.stop()
-        if hasattr(self, "current_preview_docs") and self.current_preview_docs:
-            idx = self.current_preview_index
-            if 0 <= idx < len(self.current_preview_docs):
-                doc = self.current_preview_docs[idx]
-                if doc["path"].exists():
-                    self.overlay_toolbar.setVisible(True)
-                    self.overlay_toolbar.adjustSize()
-                    self._reposition_overlay_toolbar()
+        self.overlay_toolbar.setVisible(True)
 
     def _hide_overlay_toolbar(self):
-        self.overlay_toolbar.setVisible(False)
+        self.overlay_toolbar.setVisible(True)
 
     def _start_hide_overlay_timer(self):
-        self.overlay_hide_timer.start(1500)  # Hide after 1.5 seconds
+        return
 
     def _show_preview_context_menu(self, pos):
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
@@ -350,6 +338,16 @@ class PreviewMixin:
         return False
 
     def eventFilter(self, watched, event) -> bool:
+        double_click_targets = (
+            getattr(self, "preview_container", None),
+            getattr(self, "lbl_image_preview", None),
+            getattr(getattr(self, "image_scroll_area", None), "viewport", lambda: None)(),
+        )
+        if watched in double_click_targets and watched is not None:
+            if event.type() == QEvent.Type.MouseButtonDblClick:
+                self._toggle_preview_focus_mode()
+                return True
+
         if watched is getattr(self, "preview_container", None):
             if event.type() == QEvent.Type.Enter:
                 self._show_overlay_toolbar()
@@ -367,9 +365,20 @@ class PreviewMixin:
             getattr(self, "preview_stack", None),
             getattr(self, "pdf_view", None),
             getattr(self, "image_scroll_area", None),
+            getattr(getattr(self, "image_scroll_area", None), "viewport", lambda: None)(),
+            getattr(self, "lbl_image_preview", None),
             getattr(self, "overlay_toolbar", None),
         }
         if watched in preview_widgets and watched is not None:
+            if (
+                event.type() == QEvent.Type.Wheel
+                and event.modifiers() & Qt.ControlModifier
+            ):
+                if event.angleDelta().y() > 0:
+                    self._zoom_in()
+                elif event.angleDelta().y() < 0:
+                    self._zoom_out()
+                return True
             if event.type() == QEvent.Type.KeyPress:
                 if event.key() in (Qt.Key_Left, Qt.Key_Right):
                     # Only grab focus when active focus is inside preview related area (or no focus)
@@ -414,6 +423,36 @@ class PreviewMixin:
         self.btn_zoom_100.setEnabled(enabled)
         self.btn_zoom_in.setEnabled(enabled)
         self.btn_zoom_out.setEnabled(enabled)
+        for name in ("rotate_left", "rotate_right", "download", "print", "focus_mode"):
+            action = getattr(self, "preview_actions", {}).get(name)
+            if action is not None:
+                action.setEnabled(enabled)
+
+    def _set_preview_action_availability(self, file_path):
+        """Apply capability-specific states and explain every disabled action."""
+        exists = bool(file_path and file_path.exists())
+        suffix = file_path.suffix.lower() if file_path else ""
+        image_suffixes = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic")
+        previewable = suffix == ".pdf" or suffix in image_suffixes
+        missing_reason = "原文件不存在，无法执行此操作"
+        unsupported_reason = "当前文件格式不支持内嵌预览"
+
+        for name in ("zoom_out", "zoom_100", "zoom_in", "fit_width", "fit_page"):
+            action = self.preview_actions[name]
+            action.setEnabled(exists and previewable)
+            action.setToolTip("" if action.isEnabled() else (missing_reason if not exists else unsupported_reason))
+
+        rotate_enabled = exists and suffix in image_suffixes
+        rotate_reason = missing_reason if not exists else "PDF 及当前文件格式请使用外部查看器旋转"
+        for name in ("rotate_left", "rotate_right"):
+            action = self.preview_actions[name]
+            action.setEnabled(rotate_enabled)
+            action.setToolTip("" if rotate_enabled else rotate_reason)
+
+        for name in ("download", "print", "focus_mode"):
+            action = self.preview_actions[name]
+            action.setEnabled(exists)
+            action.setToolTip("" if exists else missing_reason)
 
     def _show_preview_status(self, text):
         if text == "当前发票没有可预览的原件":
@@ -426,7 +465,7 @@ class PreviewMixin:
             text = "图片加载失败\n请点击外部打开，或重新导入该材料"
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
-        self.overlay_toolbar.setVisible(False)
+        self.overlay_toolbar.setVisible(True)
         self._set_zoom_buttons_enabled(False)
 
     def _zoom_fit_width(self):
@@ -485,11 +524,18 @@ class PreviewMixin:
         if self.current_image_pixmap is None or self.current_image_pixmap.isNull():
             return
 
+        pixmap = self.current_image_pixmap
+        if self.preview_rotation:
+            pixmap = pixmap.transformed(
+                QTransform().rotate(self.preview_rotation),
+                Qt.SmoothTransformation,
+            )
+
         if self.image_zoom_mode == "fit_width":
             width = self.image_scroll_area.width() - 24
             if width <= 0:
                 width = 400
-            scaled = self.current_image_pixmap.scaledToWidth(width, Qt.SmoothTransformation)
+            scaled = pixmap.scaledToWidth(width, Qt.SmoothTransformation)
             self.lbl_image_preview.setPixmap(scaled)
         elif self.image_zoom_mode == "fit_page":
             width = self.image_scroll_area.width() - 24
@@ -498,16 +544,18 @@ class PreviewMixin:
                 width = 400
             if height <= 0:
                 height = 300
-            scaled = self.current_image_pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.lbl_image_preview.setPixmap(scaled)
         elif self.image_zoom_mode == "custom":
-            width = int(self.current_image_pixmap.width() * self.image_zoom_factor)
+            width = int(pixmap.width() * self.image_zoom_factor)
             if width <= 0:
                 width = 100
-            scaled = self.current_image_pixmap.scaledToWidth(width, Qt.SmoothTransformation)
+            scaled = pixmap.scaledToWidth(width, Qt.SmoothTransformation)
             self.lbl_image_preview.setPixmap(scaled)
 
     def _update_document_preview(self):
+        self._refresh_preview_thumbnails()
+        self.thumbnail_rail.setVisible(bool(getattr(self, "current_invoice", None)))
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
             self._show_preview_status(getattr(self, "_preview_empty_message", "请选择一张发票查看原件"))
             self.lbl_file_info.setText("0 / 0 无文件")
@@ -517,7 +565,7 @@ class PreviewMixin:
             if hasattr(self, "btn_link_evidence"):
                 self.btn_link_evidence.setVisible(False)
                 self.btn_link_evidence.setEnabled(False)
-            self.overlay_toolbar.setVisible(False)
+            self.overlay_toolbar.setVisible(True)
             self._set_zoom_buttons_enabled(False)
             return
 
@@ -542,8 +590,8 @@ class PreviewMixin:
 
         doc = self.current_preview_docs[idx]
         file_path = doc["path"]
-        title = doc["title"]
-        basename = doc["basename"]
+        title = doc.get("title") or doc.get("label") or "附件"
+        basename = doc.get("basename") or file_path.name
 
         # ── Format file info with PDF page distinction ──
         pdf_page, pdf_page_count = self._get_pdf_page_info()
@@ -567,12 +615,12 @@ class PreviewMixin:
 
         if not file_path.exists():
             self._show_preview_status("文件不存在")
-            self.overlay_toolbar.setVisible(False)
-            self._set_zoom_buttons_enabled(False)
+            self.overlay_toolbar.setVisible(True)
+            self._set_preview_action_availability(file_path)
             return
 
         # Keep default state as hidden, show toolbar when mouse enters
-        self.overlay_toolbar.setVisible(False)
+        self.overlay_toolbar.setVisible(True)
         self._set_zoom_buttons_enabled(True)
 
         suffix = file_path.suffix.lower()
@@ -626,7 +674,7 @@ class PreviewMixin:
                     self.lbl_pdf_fallback.setStyleSheet("color: #D97706; background-color: #FEF3C7; font-weight: bold; padding: 20px;")
                     self.preview_stack.addWidget(self.lbl_pdf_fallback)
                 self.preview_stack.setCurrentWidget(self.lbl_pdf_fallback)
-                self.overlay_toolbar.setVisible(False)
+                self.overlay_toolbar.setVisible(True)
                 self._set_zoom_buttons_enabled(False)
         elif suffix in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic"):
             pixmap = QPixmap(str(file_path))
@@ -636,7 +684,7 @@ class PreviewMixin:
                     self._show_preview_status("该图片格式暂不支持内嵌预览，请点击外部打开")
                 else:
                     self._show_preview_status("图片加载失败，暂不支持预览")
-                self.overlay_toolbar.setVisible(False)
+                self.overlay_toolbar.setVisible(True)
                 self._set_zoom_buttons_enabled(False)
             else:
                 self.current_image_pixmap = pixmap
@@ -647,7 +695,7 @@ class PreviewMixin:
         else:
             used_fallback = True
             self._show_preview_status("暂不支持内嵌预览，请点击打开外部文件")
-            self.overlay_toolbar.setVisible(False)
+            self.overlay_toolbar.setVisible(True)
             self._set_zoom_buttons_enabled(False)
 
         load_elapsed_ms = int((time.perf_counter() - preview_start) * 1000)
@@ -656,6 +704,7 @@ class PreviewMixin:
             f"[性能] 原件预览: type={suffix or '<none>'} "
             f"size={file_size_mb:.1f}MB load={load_elapsed_ms}ms{fallback_text}"
         )
+        self._set_preview_action_availability(file_path)
 
     def _prev_preview_doc(self):
         if hasattr(self, "current_preview_docs") and self.current_preview_docs:
@@ -1054,6 +1103,185 @@ class PreviewMixin:
                 self.statusBar().showMessage("已成功将证明材料关联到当前发票", 3000)
             else:
                 QMessageBox.warning(self, "关联失败", "无法将证明材料关联到当前发票，请重试。")
+
+    def _refresh_preview_thumbnails(self):
+        while self.thumbnail_layout.count():
+            item = self.thumbnail_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.thumbnail_buttons = []
+
+        for index, doc in enumerate(getattr(self, "current_preview_docs", []) or []):
+            path = doc.get("path")
+            label = doc.get("title") or doc.get("label") or (path.name if path else f"附件 {index + 1}")
+            button = QPushButton(label)
+            button.setObjectName("PreviewThumbnail")
+            button.setProperty("selected", index == self.current_preview_index)
+            button.setCheckable(True)
+            button.setChecked(index == self.current_preview_index)
+            button.setToolTip(str(path) if path else label)
+            button.clicked.connect(lambda _checked=False, value=index: self._select_preview_doc(value))
+            self.thumbnail_layout.addWidget(button)
+            self.thumbnail_buttons.append(button)
+
+        add_button = QPushButton("＋\n添加附件")
+        add_button.setObjectName("PreviewAddAttachment")
+        add_button.clicked.connect(self._add_attachment_manually)
+        self.thumbnail_layout.addWidget(add_button)
+        self.thumbnail_layout.addStretch(1)
+
+    def _select_preview_doc(self, index: int):
+        docs = getattr(self, "current_preview_docs", []) or []
+        if index < 0 or index >= len(docs):
+            return False
+        self.current_preview_index = index
+        self.preview_rotation = 0
+        self._refresh_preview_thumbnails()
+        self._update_document_preview()
+        return True
+
+    def _rotate_preview(self, degrees: int):
+        if degrees not in (-90, 90):
+            raise ValueError("Preview rotation must be -90 or 90 degrees")
+        docs = getattr(self, "current_preview_docs", []) or []
+        if not docs:
+            return False
+        path = docs[self.current_preview_index].get("path")
+        if path is None or path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic"):
+            self.statusBar().showMessage("PDF 旋转请使用外部查看器", 3000)
+            return False
+        self.preview_rotation = (self.preview_rotation + degrees) % 360
+        self._update_image_display()
+        return True
+
+    def _download_current_preview(self):
+        docs = getattr(self, "current_preview_docs", []) or []
+        if not docs:
+            return False
+        source = docs[self.current_preview_index].get("path")
+        if source is None or not source.exists():
+            return False
+        destination, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "下载原件",
+            source.name,
+            f"文件 (*{source.suffix})",
+        )
+        if not destination:
+            return False
+        import shutil
+
+        shutil.copy2(source, destination)
+        self.statusBar().showMessage("原件已下载", 3000)
+        return True
+
+    def _print_current_preview(self):
+        docs = getattr(self, "current_preview_docs", []) or []
+        if not docs:
+            return False
+        self.statusBar().showMessage("已在外部查看器打开，请使用系统打印功能", 4000)
+        self._open_current_preview_ext()
+        return True
+
+    def _toggle_preview_focus_mode(self):
+        if self.preview_focus_dialog is None:
+            self._enter_preview_focus_mode()
+        else:
+            self._exit_preview_focus_mode()
+
+    def _enter_preview_focus_mode(self):
+        if self.preview_focus_dialog is not None:
+            return
+        self._preview_original_parent = self.preview_workbench.parentWidget()
+        self._preview_original_layout = self._preview_original_parent.layout()
+        self._preview_original_index = self._preview_original_layout.indexOf(self.preview_workbench)
+
+        owner = self
+
+        class PreviewFocusDialog(QDialog):
+            def keyPressEvent(dialog_self, event):
+                if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    if hasattr(owner, "_invoke_workbench_action"):
+                        owner._invoke_workbench_action(lambda: owner._set_selected_status("approved"))
+                    event.accept()
+                    return
+                if event.key() == Qt.Key_Delete:
+                    if hasattr(owner, "_invoke_workbench_action"):
+                        owner._invoke_workbench_action(lambda: owner._set_selected_status("ignored"))
+                    event.accept()
+                    return
+                if event.key() == Qt.Key_E and event.modifiers() & Qt.ControlModifier:
+                    if hasattr(owner, "_invoke_workbench_action"):
+                        owner._invoke_workbench_action(lambda: owner._set_selected_status("error"))
+                    event.accept()
+                    return
+                if event.key() == Qt.Key_Escape:
+                    owner._exit_preview_focus_mode()
+                    event.accept()
+                    return
+                super().keyPressEvent(event)
+
+        dialog = PreviewFocusDialog(self)
+        dialog.setWindowTitle("发票预览")
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(8, 8, 8, 8)
+        self.preview_workbench.setParent(dialog)
+        dialog_layout.addWidget(self.preview_workbench)
+        self.preview_focus_dialog = dialog
+        if hasattr(self, "_bind_review_shortcuts"):
+            self.preview_focus_shortcuts = self._bind_review_shortcuts(dialog)
+            self.preview_focus_workbench_shortcuts = self._bind_review_shortcuts(self.preview_workbench)
+        self._preview_escape_shortcut = QShortcut(QKeySequence("Esc"), dialog)
+        self._preview_escape_shortcut.activated.connect(self._exit_preview_focus_mode)
+        dialog.finished.connect(self._preview_focus_finished)
+        self.btn_preview_focus.setText("退出全屏")
+        dialog.showMaximized()
+        dialog.setFocusPolicy(Qt.StrongFocus)
+        dialog.activateWindow()
+        dialog.raise_()
+        dialog.setFocus(Qt.ActiveWindowFocusReason)
+
+    def _preview_focus_finished(self, _result):
+        if self.preview_focus_dialog is not None:
+            self._exit_preview_focus_mode(close_dialog=False)
+
+    def _handle_preview_focus_keypress(self, event) -> bool:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._set_selected_status("approved")
+            event.accept()
+            return True
+        if event.key() == Qt.Key_Delete:
+            self._set_selected_status("ignored")
+            event.accept()
+            return True
+        if event.key() == Qt.Key_E and event.modifiers() & Qt.ControlModifier:
+            self._set_selected_status("error")
+            event.accept()
+            return True
+        if event.key() == Qt.Key_Escape:
+            self._exit_preview_focus_mode()
+            event.accept()
+            return True
+        return False
+
+    def _exit_preview_focus_mode(self, close_dialog=True):
+        dialog = self.preview_focus_dialog
+        if dialog is None:
+            return
+        self.preview_focus_dialog = None
+        self.preview_focus_shortcuts = {}
+        self.preview_focus_workbench_shortcuts = {}
+        self.preview_workbench.setParent(self._preview_original_parent)
+        self._preview_original_layout.insertWidget(
+            max(0, self._preview_original_index),
+            self.preview_workbench,
+            1,
+        )
+        self.btn_preview_focus.setText("全屏")
+        if close_dialog:
+            dialog.close()
+        dialog.deleteLater()
 
     def keyPressEvent(self, event):
         # Toggle overlay toolbar visible state temporarily on Alt or Ctrl keypress
