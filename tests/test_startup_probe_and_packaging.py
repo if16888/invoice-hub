@@ -13,8 +13,10 @@ from __future__ import annotations
 import ast
 import os
 import re
+import subprocess
 import sys
 import textwrap
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -181,7 +183,79 @@ class TestVersionSource(unittest.TestCase):
         workflow = PROJECT_ROOT / ".github" / "workflows" / "windows-release.yml"
         src = workflow.read_text(encoding="utf-8")
         self.assertIn("scripts.invoice_fetch.version", src)
-        self.assertIn("APP_VERSION", src)
+        self.assertIn("VERSION", src)
+        self.assertNotIn("APP_VERSION", src)
+
+
+class TestWindowsVersionInfo(unittest.TestCase):
+    """Windows version metadata should be generated from a stable source."""
+
+    def test_generator_uses_stable_product_metadata(self):
+        from scripts.generate_windows_version_info import build_version_info_text
+
+        text = build_version_info_text("0.1.3")
+        self.assertIn("filevers=(0, 1, 3, 0)", text)
+        self.assertIn("prodvers=(0, 1, 3, 0)", text)
+        for value in (
+            "CompanyName', 'Invoice Hub",
+            "ProductName', 'Invoice Hub",
+            "FileDescription', 'Invoice Hub",
+            "InternalName', 'InvoiceHub",
+            "OriginalFilename', 'InvoiceHub.exe",
+            "ProductVersion', '0.1.3",
+        ):
+            self.assertIn(value, text)
+
+    def test_generator_cli_writes_requested_output_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = Path(td) / "windows-version-info.txt"
+            result = subprocess.run(
+                [sys.executable, "-m", "scripts.generate_windows_version_info", "--output", str(output)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(output.exists(), "generator did not write the requested output file")
+            text = output.read_text(encoding="utf-8")
+            self.assertIn("VSVersionInfo(", text)
+            self.assertIn("filevers=(0, 1, 3, 0)", text)
+            self.assertIn("ProductVersion', '0.1.3", text)
+            self.assertIn(str(output), result.stdout + result.stderr)
+
+    def test_spec_attaches_generated_version_resource(self):
+        src = (PROJECT_ROOT / "packaging" / "invoice_hub_windows.spec").read_text(encoding="utf-8")
+        self.assertIn('build" / "windows-version-info.txt', src)
+        self.assertIn("version=str(_version_file)", src)
+
+
+class TestOptionalWindowsSigning(unittest.TestCase):
+    """Optional signing should be warning-only when no certificate is configured."""
+
+    def test_missing_certificate_configuration_warns_without_modifying_file(self):
+        script = PROJECT_ROOT / "scripts" / "sign_windows.ps1"
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "unsigned.exe"
+            target.write_bytes(b"unsigned")
+            env = os.environ.copy()
+            for name in ("SIGNTOOL_PATH", "CERT_SUBJECT", "TIMESTAMP_URL"):
+                env.pop(name, None)
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), str(target)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            combined = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, combined)
+            self.assertIn("WARNING", combined.upper())
+            self.assertEqual(target.read_bytes(), b"unsigned")
+
+    def test_script_mentions_sign_tool_and_timestamp_contract(self):
+        src = (PROJECT_ROOT / "scripts" / "sign_windows.ps1").read_text(encoding="utf-8")
+        for token in ("SIGNTOOL_PATH", "CERT_SUBJECT", "TIMESTAMP_URL", "/fd", "/tr", "/td", "SHA256"):
+            self.assertIn(token, src)
 
 
 class TestPyInstallerSpecIntegrity(unittest.TestCase):
@@ -350,6 +424,13 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertIn(r"{autodesktop}\Invoice Hub", src)
         self.assertIn(r"{autoprograms}\Invoice Hub", src)
 
+    def test_inno_uses_canonical_setup_name_and_optional_signing(self):
+        src = self._installer_path().read_text(encoding="utf-8")
+        self.assertIn("OutputBaseFilename=InvoiceHub-{#AppVersion}-win64-setup", src)
+        self.assertIn("#ifdef SignToolName", src)
+        self.assertIn("SignTool={#SignToolName}", src)
+        self.assertIn("SignedUninstaller=yes", src)
+
     def test_inno_does_not_delete_user_appdata_on_uninstall(self):
         src = self._installer_path().read_text(encoding="utf-8")
         self.assertNotIn("[UninstallDelete]", src)
@@ -359,17 +440,39 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
     def test_workflow_builds_setup_zip_and_checksums(self):
         src = self._workflow_path().read_text(encoding="utf-8")
         self.assertIn("iscc", src.lower())
-        self.assertIn("InvoiceHub-Setup-${version}.exe", src)
-        self.assertIn("InvoiceHub-windows-x64-${version}.zip", src)
-        self.assertIn("checksums.txt", src)
+        self.assertIn("python -m scripts.generate_windows_version_info --output build/windows-version-info.txt", src)
+        self.assertIn("InvoiceHub-${version}-win64-setup.exe", src)
+        self.assertIn("InvoiceHub-${version}-win64-portable.zip", src)
+        self.assertIn("SHA256SUMS.txt", src)
+        self.assertIn("scripts\\sign_windows.ps1", src)
 
     def test_workflow_uploads_setup_zip_and_checksums(self):
         src = self._workflow_path().read_text(encoding="utf-8")
-        self.assertIn("InvoiceHub-portable", src)
-        self.assertIn("InvoiceHub-setup", src)
-        self.assertIn("dist/InvoiceHub-windows-x64-*.zip", src)
-        self.assertIn("dist/InvoiceHub-Setup-*.exe", src)
-        self.assertIn("dist/checksums.txt", src)
+        self.assertIn("InvoiceHub-windows-release", src)
+        self.assertIn("dist/${{ env.ZIP_NAME }}", src)
+        self.assertIn("dist/${{ env.SETUP_NAME }}", src)
+        self.assertIn("dist/SHA256SUMS.txt", src)
+        self.assertIn("actions/download-artifact@v4", src)
+
+    def test_workflow_signs_before_portable_zip_and_installer(self):
+        src = self._workflow_path().read_text(encoding="utf-8")
+        self.assertEqual(src.count("scripts\\sign_windows.ps1"), 2)
+        self.assertLess(
+            src.index("scripts\\sign_windows.ps1 \"dist\\InvoiceHub\\InvoiceHub.exe\""),
+            src.index("Compress-Archive"),
+        )
+        self.assertLess(
+            src.index("Compress-Archive"),
+            src.index("scripts\\sign_windows.ps1 \"dist\\${env:SETUP_NAME}\""),
+        )
+
+    def test_workflow_release_job_downloads_single_bundle(self):
+        src = self._workflow_path().read_text(encoding="utf-8")
+        self.assertIn("InvoiceHub-windows-release", src)
+        self.assertIn("dist/${{ env.ZIP_NAME }}", src)
+        self.assertIn("dist/${{ env.SETUP_NAME }}", src)
+        self.assertIn("dist/SHA256SUMS.txt", src)
+        self.assertIn("Create GitHub Release", src)
 
     def test_workflow_installs_python_deps_once_with_build_requirements(self):
         src = self._workflow_path().read_text(encoding="utf-8")
@@ -446,6 +549,37 @@ class TestReleaseReadinessFiles(unittest.TestCase):
         src = (PROJECT_ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
         for token in ("/.github/workflows/", "/packaging/", "/SECURITY.md", "/scripts/check_public_export.py"):
             self.assertIn(token, src)
+
+
+class TestWindowsInstallDocumentation(unittest.TestCase):
+    """Windows install guidance should explain download safety and canonical assets."""
+
+    def test_windows_install_guide_covers_download_safety_and_hash_verification(self):
+        src = (PROJECT_ROOT / "docs" / "windows-install.md").read_text(encoding="utf-8")
+        for token in (
+            "SmartScreen",
+            "Unknown Publisher",
+            "不常见下载",
+            "https://github.com/if16888/invoice-hub/releases",
+            "Get-FileHash",
+            "SHA256SUMS.txt",
+            "MSI",
+            "Authenticode",
+        ):
+            self.assertIn(token, src)
+
+    def test_readme_links_windows_install_guide_and_canonical_assets(self):
+        src = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("docs/windows-install.md", src)
+        self.assertIn("InvoiceHub-*-win64-setup.exe", src)
+        self.assertIn("InvoiceHub-*-win64-portable.zip", src)
+        self.assertIn("SHA256SUMS.txt", src)
+
+    def test_release_checklist_uses_canonical_windows_artifacts(self):
+        src = (PROJECT_ROOT / "docs" / "release-checklist.md").read_text(encoding="utf-8")
+        self.assertIn("InvoiceHub-*-win64-setup.exe", src)
+        self.assertIn("InvoiceHub-*-win64-portable.zip", src)
+        self.assertIn("SHA256SUMS.txt", src)
 
 
 if __name__ == "__main__":

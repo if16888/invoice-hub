@@ -18,11 +18,11 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 ### 普通用户优先
 
-请先打开 [Latest Release](https://github.com/if16888/invoice-hub/releases/latest)，在 Assets 中选择适合的文件：
+请先打开 [GitHub Releases 官方页面](https://github.com/if16888/invoice-hub/releases)，并先阅读 [Windows 下载与安装安全说明](docs/windows-install.md)，再在 Assets 中选择适合的文件：
 
-- 推荐普通用户下载 `InvoiceHub-Setup-*.exe`，按提示安装后启动 `Invoice Hub`。
-- 想免安装试用时，下载 `InvoiceHub-windows-x64-*.zip`，解压后运行其中的程序。
-- `checksums.txt` 是 SHA256 校验文件，用于确认下载文件没有损坏。
+- 推荐普通用户下载 `InvoiceHub-*-win64-setup.exe`，按提示安装后启动 `Invoice Hub`。
+- 想免安装试用时，下载 `InvoiceHub-*-win64-portable.zip`，解压后运行其中的程序。
+- `SHA256SUMS.txt` 是 SHA256 校验文件，用于确认下载文件没有损坏。
 
 安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑；确认流程符合预期后，再在本机导入自己的报销材料，并避免把运行数据上传到公开 Issue。
 

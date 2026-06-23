@@ -39,7 +39,7 @@ python scripts/check_public_export.py <public-export-dir>
 
 - 检查 README、Issue templates、user quickstart 中的当前版本号是否已更新。
 - 历史 release notes 不回改。
-- 安装包示例优先使用 wildcard，例如 `InvoiceHub-Setup-*.exe` 和 `InvoiceHub-windows-x64-*.zip`，避免文档与实际 asset 名称不一致。
+- 安装包示例优先使用 wildcard，例如 `InvoiceHub-*-win64-setup.exe`、`InvoiceHub-*-win64-portable.zip` 和 `SHA256SUMS.txt`，避免文档与实际 asset 名称不一致。
 
 公开仓库必须包含：
 
@@ -95,7 +95,7 @@ Windows 发布包必须包含：
 
 - 生成 portable zip。
 - 生成 Inno Setup 安装包。
-- 生成 `checksums.txt`，覆盖 portable zip 和 setup exe。
+- 生成 `SHA256SUMS.txt`，覆盖 portable zip 和 setup exe。
 - 安装包默认 per-user 安装，不要求管理员权限。
 - 用户数据写入 AppData，不写入安装目录。
 - 卸载默认不删除用户 runtime 数据。
@@ -105,7 +105,7 @@ Windows 发布包必须包含：
 ## Windows package / winget readiness
 
 - Confirm installer and portable zip asset names.
-- Confirm `checksums.txt` includes all release assets.
+- Confirm `SHA256SUMS.txt` includes all release assets.
 - Confirm README and release notes reference the same asset names.
 - Confirm Inno Setup silent install switches before winget submission.
 - Do not submit winget manifest until a later release is validated specifically for winget.

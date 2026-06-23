@@ -18,6 +18,13 @@ from pathlib import Path
 # spec file lives under packaging/, so project root is one level up.
 _here = Path(SPECPATH)          # noqa: F821  (SPECPATH is PyInstaller built-in)
 _root = _here.parent
+_version_file = _root / "build" / "windows-version-info.txt"
+
+if not _version_file.exists():
+    raise FileNotFoundError(
+        f"Missing Windows version metadata file: {_version_file}. "
+        "Run scripts/generate_windows_version_info.py before building."
+    )
 
 # ── Locate Playwright package ─────────────────────────────────────────
 import playwright as _pw_mod
@@ -112,6 +119,7 @@ exe = EXE(                      # noqa: F821  (EXE is PyInstaller built-in)
     a.scripts,
     [],
     exclude_binaries=True,       # onedir: binaries go into COLLECT
+    version=str(_version_file),
     name="InvoiceHub",
     debug=False,
     bootloader_ignore_signals=False,

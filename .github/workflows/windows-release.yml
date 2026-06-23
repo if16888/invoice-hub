@@ -65,6 +65,9 @@ jobs:
       - name: Compile-check Python sources
         run: python -m compileall -q scripts/invoice_fetch
 
+      - name: Generate Windows version metadata
+        run: python -m scripts.generate_windows_version_info --output build/windows-version-info.txt
+
       - name: Build with PyInstaller
         run: pyinstaller packaging/invoice_hub_windows.spec --distpath dist --workpath build/pyinstaller --clean --noconfirm
         env:
@@ -87,17 +90,20 @@ jobs:
           python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $thresh
         timeout-minutes: 2
 
+      - name: Sign portable executable
+        run: '& scripts\sign_windows.ps1 "dist\InvoiceHub\InvoiceHub.exe"'
+
       - name: Prepare release version
         run: |
-          $version = (python -c "from scripts.invoice_fetch.version import APP_VERSION; print(APP_VERSION)").Trim()
+          $version = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
           $tagVersion = "${{ github.ref_name }}" -replace '/', '-'
-          if ($tagVersion -and $tagVersion -ne $version) {
-            Write-Error "Tag version $tagVersion does not match app version $version from scripts.invoice_fetch.version.APP_VERSION"
+          if ($tagVersion -and $tagVersion -ne "v$version") {
+            Write-Error "Tag version $tagVersion does not match version $version from scripts.invoice_fetch.version.VERSION"
             exit 1
           }
           echo "VERSION=${version}" >> $env:GITHUB_ENV
-          echo "ZIP_NAME=InvoiceHub-windows-x64-${version}.zip" >> $env:GITHUB_ENV
-          echo "SETUP_NAME=InvoiceHub-Setup-${version}.exe" >> $env:GITHUB_ENV
+          echo "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
+          echo "SETUP_NAME=InvoiceHub-${version}-win64-setup.exe" >> $env:GITHUB_ENV
 
       - name: Verify bundled payload hygiene
         run: |
@@ -129,7 +135,7 @@ jobs:
       - name: Create portable zip
         run: |
           $version = "${env:VERSION}"
-          $zipName = "InvoiceHub-windows-x64-${version}.zip"
+          $zipName = "InvoiceHub-${version}-win64-portable.zip"
           Compress-Archive -Path "dist\InvoiceHub\*" -DestinationPath "dist\${zipName}" -Force
           Write-Host "Created: dist\${zipName}"
 
@@ -140,12 +146,15 @@ jobs:
           $outputDir = (Resolve-Path "dist").Path
           iscc packaging\invoice_hub_windows.iss /DAppVersion="${version}" /DSourceDir="${sourceDir}" /DOutputDir="${outputDir}"
 
+      - name: Sign installer
+        run: '& scripts\sign_windows.ps1 "dist\${env:SETUP_NAME}"'
+
       - name: Create checksums
         run: |
           $version = "${env:VERSION}"
           $artifacts = @(
-            "dist\InvoiceHub-windows-x64-${version}.zip",
-            "dist\InvoiceHub-Setup-${version}.exe"
+            "dist\InvoiceHub-${version}-win64-portable.zip",
+            "dist\InvoiceHub-${version}-win64-setup.exe"
           )
           $lines = foreach ($artifact in $artifacts) {
             if (-not (Test-Path $artifact)) {
@@ -155,16 +164,16 @@ jobs:
             $hash = Get-FileHash $artifact -Algorithm SHA256
             "$($hash.Hash.ToLower())  $(Split-Path $artifact -Leaf)"
           }
-          $lines | Set-Content -Path "dist\checksums.txt" -Encoding ascii
-          Get-Content "dist\checksums.txt"
+          $lines | Set-Content -Path "dist\SHA256SUMS.txt" -Encoding ascii
+          Get-Content "dist\SHA256SUMS.txt"
 
       - name: Verify release artifacts
         run: |
           $version = "${env:VERSION}"
           $expected = @(
-            "dist\InvoiceHub-windows-x64-${version}.zip",
-            "dist\InvoiceHub-Setup-${version}.exe",
-            "dist\checksums.txt"
+            "dist\InvoiceHub-${version}-win64-portable.zip",
+            "dist\InvoiceHub-${version}-win64-setup.exe",
+            "dist\SHA256SUMS.txt"
           )
           foreach ($path in $expected) {
             if (-not (Test-Path $path)) {
@@ -176,17 +185,11 @@ jobs:
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InvoiceHub-portable
+          name: InvoiceHub-windows-release
           path: |
-            dist/InvoiceHub-windows-x64-*.zip
-            dist/checksums.txt
-          retention-days: 30
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: InvoiceHub-setup
-          path: dist/InvoiceHub-Setup-*.exe
+            dist/${{ env.ZIP_NAME }}
+            dist/${{ env.SETUP_NAME }}
+            dist/SHA256SUMS.txt
           retention-days: 30
 
   release:
@@ -198,31 +201,23 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download portable artifact
+      - name: Download release bundle
         uses: actions/download-artifact@v4
         with:
-          name: InvoiceHub-portable
-          path: dist
-
-      - name: Download installer artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: InvoiceHub-setup
+          name: InvoiceHub-windows-release
           path: dist
 
       - name: Prepare release version
         run: |
           $version = "${{ github.ref_name }}"
-          $version = $version -replace '/', '-'
+          $version = $version.Substring(1)
           echo "VERSION=${version}" >> $env:GITHUB_ENV
-          $zip = Get-ChildItem dist\InvoiceHub-windows-x64-*.zip | Select-Object -First 1
-          $setup = Get-ChildItem dist\InvoiceHub-Setup-*.exe | Select-Object -First 1
-          if (-not $zip -or -not $setup -or -not (Test-Path "dist\checksums.txt")) {
+          echo "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
+          echo "SETUP_NAME=InvoiceHub-${version}-win64-setup.exe" >> $env:GITHUB_ENV
+          if (-not (Test-Path "dist\InvoiceHub-${version}-win64-portable.zip") -or -not (Test-Path "dist\InvoiceHub-${version}-win64-setup.exe") -or -not (Test-Path "dist\SHA256SUMS.txt")) {
             Write-Error "Downloaded release artifacts are incomplete."
             exit 1
           }
-          echo "ZIP_NAME=$($zip.Name)" >> $env:GITHUB_ENV
-          echo "SETUP_NAME=$($setup.Name)" >> $env:GITHUB_ENV
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -234,16 +229,15 @@ jobs:
             Release artifacts:
             - `${{ env.SETUP_NAME }}`: per-user installer, no administrator permission required.
             - `${{ env.ZIP_NAME }}`: portable onedir package.
-            - `checksums.txt`: SHA256 checksums for both artifacts.
+            - `SHA256SUMS.txt`: SHA256 checksums for both artifacts.
 
-            User data is stored under `%APPDATA%\InvoiceHub\`, not in the install directory. The uninstaller does not remove user runtime data by default.
-
-            This release does not bundle Playwright Chromium browser binaries; it uses an installed Microsoft Edge or Google Chrome when browser download automation is needed.
+            Download only from the official GitHub Releases page and verify SHA256 before installing.
+            SmartScreen or Unknown Publisher prompts can appear for unsigned builds with little download reputation; that is expected until trusted Authenticode signing is in place.
           draft: false
           prerelease: false
           files: |
-            dist/InvoiceHub-windows-x64-*.zip
-            dist/InvoiceHub-Setup-*.exe
-            dist/checksums.txt
+            dist/${{ env.ZIP_NAME }}
+            dist/${{ env.SETUP_NAME }}
+            dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
