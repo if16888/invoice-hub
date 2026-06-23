@@ -68,6 +68,38 @@ class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
             self.assertEqual(button.property("class"), "SettingsNavButton")
             self.assertEqual(button.styleSheet().strip(), "")
 
+    def test_about_page_does_not_hardcode_016_version(self):
+        dialog = self._make_dialog()
+        dialog._show_settings_home("about")
+        self.assertNotIn("v0.1.6", dialog.lbl_about_settings.text())
+
+    def test_data_page_exposes_privacy_hint_for_local_paths(self):
+        dialog = self._make_dialog()
+        dialog._refresh_settings_center_pages()
+        self.assertTrue(dialog.lbl_data_settings.text().strip())
+        self.assertTrue(dialog.lbl_data_settings.toolTip().strip())
+
+    def test_rules_page_lists_config_and_database_category_names(self):
+        dialog = self._make_dialog(
+            config={
+                "email": {"provider": "qq", "address": "your_email@qq.com"},
+                "ai": {"provider": "none", "model": "", "enabled": False},
+                "categories": {
+                    "taxi": {"name": "Taxi"},
+                    "hotel": {"name": "Hotel"},
+                },
+            }
+        )
+        dialog.parent.db = MagicMock()
+        dialog.parent.db.list_categories.return_value = ["Meals", "Transit"]
+        dialog._refresh_settings_center_pages()
+
+        text = dialog.lbl_category_dictionary.text()
+        self.assertIn("Taxi", text)
+        self.assertIn("Hotel", text)
+        self.assertIn("Meals", text)
+        self.assertIn("Transit", text)
+
 
 class SettingsCenterMailboxTests(SettingsDialogTestMixin, unittest.TestCase):
 
