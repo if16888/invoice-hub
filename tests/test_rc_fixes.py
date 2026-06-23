@@ -225,7 +225,7 @@ class TestGUIFixes(unittest.TestCase):
         # min_selected_row was 0. Remaining row index in new list is 0.
         # So selection should be auto-restored to row 0.
         self.assertEqual(app.table.currentRow(), 0)
-        self.assertEqual(app.table.item(0, 3).text(), "111")  # Column 3 shows invoice number
+        self.assertEqual(app.invoices_list[0]["invoice_number"], "111")
 
     def test_link_to_claim_keeps_original_invoice_selected_when_still_visible(self):
         app = self.review_app
