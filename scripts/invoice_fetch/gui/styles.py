@@ -607,6 +607,57 @@ QLabel.SelectionCardDescription {
     font-size: 10px;
     font-weight: 400;
 }
+QFrame#CompactStatCard, QFrame.CompactStatCard {
+    background-color: #FFFFFF;
+    color: #111827;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+    text-align: left;
+    padding: 0px;
+}
+QFrame#CompactStatCard:hover, QFrame.CompactStatCard:hover {
+    background-color: #F8FAFC;
+    border-color: #BFDBFE;
+}
+QFrame#CompactStatCard[selected="true"], QFrame.CompactStatCard[selected="true"] {
+    border: 2px solid #2563EB;
+    background-color: #EFF6FF;
+}
+QFrame#CompactStatCard[state="success"], QFrame.CompactStatCard[state="success"] { color: #065F46; }
+QFrame#CompactStatCard[state="warning"], QFrame.CompactStatCard[state="warning"] { color: #92400E; }
+QFrame#CompactStatCard[state="danger"], QFrame.CompactStatCard[state="danger"] { color: #B91C1C; }
+QFrame#CompactStatCard[state="muted"], QFrame.CompactStatCard[state="muted"] { color: #374151; }
+QLabel.CompactStatCardTitle {
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel.CompactStatCardValue {
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    font-weight: 700;
+}
+QToolButton#ShortcutDisclosure, QToolButton.ShortcutDisclosure {
+    color: #4B5563;
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
+    font-weight: 600;
+}
+QToolButton#ShortcutDisclosure:hover, QToolButton.ShortcutDisclosure:hover { color: #111827; }
+QToolButton#ShortcutDisclosure[expanded="true"], QToolButton.ShortcutDisclosure[expanded="true"] { color: #111827; }
+QWidget#ShortcutDisclosureContent, QWidget.ShortcutDisclosureContent { background: transparent; }
+QLabel.ShortcutBadge {
+    color: #374151;
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 500;
+}
 
 QPushButton.TextBtn {
     background-color: transparent;
@@ -617,6 +668,31 @@ QPushButton.TextBtn {
 QPushButton.TextBtn:hover {
     background-color: #EFF6FF;
     color: #1D4ED8;
+}
+QPushButton[class="SettingsNavButton"] {
+    background-color: transparent;
+    color: #334155;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+}
+QPushButton[class="SettingsNavButton"]:hover {
+    background-color: #F8FAFC;
+    color: #0F172A;
+    border-color: #E2E8F0;
+}
+QPushButton[class="SettingsNavButton"]:checked {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border-color: #BFDBFE;
+}
+QPushButton[class="SettingsNavButton"]:checked:hover {
+    background-color: #DBEAFE;
+    color: #1D4ED8;
+    border-color: #93C5FD;
 }
 
 QLabel.DialogTitle {
@@ -1113,6 +1189,117 @@ QPushButton[variant="toolbar"][busy="true"]:disabled {
     background-color: #2563EB;
     color: #FFFFFF;
     border-color: #1D4ED8;
+}
+
+/* CompactStatCard — workbench filter bar status cards */
+QFrame#CompactStatCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    min-width: 86px;
+    max-width: 120px;
+}
+QFrame#CompactStatCard:hover {
+    border-color: #93C5FD;
+    background-color: #F8FAFC;
+}
+QFrame#CompactStatCard[selected="true"] {
+    background-color: #EFF6FF;
+    border: 2px solid #2563EB;
+}
+QFrame#CompactStatCard[state="warning"] {
+    border-color: #FCD34D;
+}
+QFrame#CompactStatCard[state="warning"][selected="true"] {
+    background-color: #FFFBEB;
+    border-color: #D97706;
+}
+QFrame#CompactStatCard[state="success"] {
+    border-color: #A7F3D0;
+}
+QFrame#CompactStatCard[state="success"][selected="true"] {
+    background-color: #F0FDF4;
+    border-color: #059669;
+}
+QFrame#CompactStatCard[state="danger"] {
+    border-color: #FCA5A5;
+}
+QFrame#CompactStatCard[state="danger"][selected="true"] {
+    background-color: #FEF2F2;
+    border-color: #DC2626;
+}
+QFrame#CompactStatCard[state="muted"] {
+    border-color: #E5E7EB;
+}
+QFrame#CompactStatCard[state="info"] {
+    border-color: #BFDBFE;
+}
+QLabel.CompactStatCardTitle {
+    color: #6B7280;
+    font-size: 10px;
+    font-weight: 500;
+    background: transparent;
+}
+QLabel.CompactStatCardValue {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+}
+QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle {
+    color: #1D4ED8;
+}
+QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {
+    color: #1D4ED8;
+}
+
+/* ShortcutDisclosure — collapsible keyboard shortcut help */
+QFrame#ShortcutDisclosure {
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 4px 6px;
+}
+QFrame#ShortcutDisclosure[expanded="true"] {
+    background-color: #F1F5F9;
+    border-color: #CBD5E1;
+}
+QLabel.ShortcutKey {
+    color: #1D4ED8;
+    font-weight: 600;
+}
+QLabel.ShortcutAction {
+    color: #475569;
+}
+QScrollArea#PreviewThumbnailRail {
+    background-color: #F8FAFC;
+    border: 0;
+    border-right: 1px solid #E5E7EB;
+}
+QPushButton#PreviewThumbnail {
+    min-height: 56px;
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    color: #475569;
+    padding: 4px;
+}
+QPushButton#PreviewThumbnail[selected="true"] {
+    border: 2px solid #2563EB;
+    color: #1D4ED8;
+}
+QPushButton#PreviewAddAttachment {
+    min-height: 44px;
+    border: 1px dashed #CBD5E1;
+    background-color: #FFFFFF;
+    color: #475569;
+}
+QFrame#DetailFixedHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E5E7EB;
+}
+QTabWidget#DetailTabs::pane {
+    border: 0;
 }
 """ + MENU_STYLE + """
 """
