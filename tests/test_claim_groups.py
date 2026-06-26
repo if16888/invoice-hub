@@ -4813,10 +4813,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     )
                     detail_content = window.right_content_widget.widget()
                     self.assertIsNotNone(detail_content)
-                    # detail_core_section is now directly in the scroll area (no QTabWidget wrapper)
                     self.assertTrue(detail_content.isAncestorOf(window.detail_core_section))
                     self.assertTrue(detail_content.isAncestorOf(window.btn_save_draft))
-                    self.assertTrue(detail_content.isAncestorOf(window.btn_app))
+                    self.assertFalse(detail_content.isAncestorOf(window.btn_app))
+                    self.assertTrue(window._detail_panel.fixed_header_container.isAncestorOf(window.btn_app))
+                    self.assertIs(window._detail_panel.detail_tabs.widget(0), window.right_content_widget)
                     self.assertGreater(
                         window.right_content_widget.verticalScrollBar().maximum(),
                         0,

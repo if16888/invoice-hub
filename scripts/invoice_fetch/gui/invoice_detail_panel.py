@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 
 
 
-    QMenu, QLayout,
+    QTabWidget, QMenu, QLayout,
 
 
 
@@ -1084,6 +1084,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+
+
     def set_no_selection_state(self):
 
 
@@ -1649,42 +1651,7 @@ class InvoiceDetailPanel(QWidget):
 
 
             if was_dirty:
-
-
-
-                self.lbl_dirty_hint.setText("已保存")
-
-
-
-                self.lbl_dirty_hint.setProperty("class", "StatusHint")
-
-
-
-                self.lbl_dirty_hint.setProperty("variant", "success")
-
-
-
-                from PySide6.QtCore import QTimer
-
-
-
-                if not hasattr(self, "_saved_timer"):
-
-
-
-                    self._saved_timer = QTimer(self)
-
-
-
-                    self._saved_timer.setSingleShot(True)
-
-
-
-                    self._saved_timer.timeout.connect(self._clear_saved_text)
-
-
-
-                self._saved_timer.start(2000)
+                self.show_saved_state()
 
 
 
@@ -1705,6 +1672,30 @@ class InvoiceDetailPanel(QWidget):
 
 
         self._refresh_widget_style(self.btn_save_draft)
+
+    def show_saved_state(self):
+
+        """Show a saved acknowledgement after a refresh rebuilds the form."""
+
+        self.lbl_dirty_hint.setText("已保存")
+
+        self.lbl_dirty_hint.setProperty("class", "StatusHint")
+
+        self.lbl_dirty_hint.setProperty("variant", "success")
+
+        from PySide6.QtCore import QTimer
+
+        if not hasattr(self, "_saved_timer"):
+
+            self._saved_timer = QTimer(self)
+
+            self._saved_timer.setSingleShot(True)
+
+            self._saved_timer.timeout.connect(self._clear_saved_text)
+
+        self._saved_timer.start(5000)
+
+        self._refresh_widget_style(self.lbl_dirty_hint)
 
 
 
@@ -1930,6 +1921,46 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+
+    def _finalize_fixed_header_and_tabs(self):
+        """Move the review summary outside the scrolling detail tab content."""
+        self.right_stack.removeWidget(self.right_content_widget)
+
+        self.detail_page = QWidget()
+        page_layout = QVBoxLayout(self.detail_page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+
+        self.fixed_header_container = QFrame()
+        self.fixed_header_container.setObjectName("DetailFixedHeader")
+        fixed_layout = QVBoxLayout(self.fixed_header_container)
+        fixed_layout.setContentsMargins(8, 0, 8, 0)
+        fixed_layout.setSpacing(0)
+        fixed_layout.addWidget(self.summary_card)
+        self.fixed_summary = self.summary_card
+        self.fixed_risk_notice = self.summary_card
+        self.fixed_review_actions = self.summary_card
+        page_layout.addWidget(self.fixed_header_container, 0)
+
+        self.detail_tabs = QTabWidget()
+        self.detail_tabs.setObjectName("DetailTabs")
+        self.detail_tabs.addTab(self.right_content_widget, "基本信息")
+
+        self.reimbursement_scroll = QScrollArea()
+        self.reimbursement_scroll.setWidgetResizable(True)
+        self.reimbursement_scroll.setFrameShape(QFrame.NoFrame)
+        self.reimbursement_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        reimbursement_content = QWidget()
+        reimbursement_layout = QVBoxLayout(reimbursement_content)
+        reimbursement_layout.setContentsMargins(8, 8, 8, 8)
+        reimbursement_layout.addWidget(self.claim_setup_section)
+        reimbursement_layout.addStretch(1)
+        self.reimbursement_scroll.setWidget(reimbursement_content)
+        self.detail_tabs.addTab(self.reimbursement_scroll, "报销信息")
+        page_layout.addWidget(self.detail_tabs, 1)
+
+        self.right_stack.insertWidget(0, self.detail_page)
+        self.right_stack.setCurrentWidget(self.detail_page)
 
     def _setup_ui(self):
 
@@ -2552,7 +2583,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_app = make_button("通过并下一张", variant="primary")
+        self.btn_app = make_button("通过并下一张\nEnter", variant="primary")
 
 
 
@@ -2568,7 +2599,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_ign = make_button("忽略", variant="secondary")
+        self.btn_ign = make_button("忽略\nDel", variant="secondary")
 
 
 
@@ -2584,7 +2615,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_err = make_button("异常", variant="danger")
+        self.btn_err = make_button("标记异常\nCtrl+E", variant="danger")
 
 
 
@@ -4493,3 +4524,4 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_note.setEnabled(False)
+        self._finalize_fixed_header_and_tabs()

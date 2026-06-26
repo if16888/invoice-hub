@@ -313,17 +313,17 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 detail_panel_bottom = detail_panel_top + window._detail_panel.height()
 
                 table_top = window.table.mapTo(window, QPoint(0, 0)).y()
-                workbench_top = window._detail_panel.detail_workbench.mapTo(window, QPoint(0, 0)).y()
+                fixed_header_top = window._detail_panel.fixed_header_container.mapTo(window, QPoint(0, 0)).y()
 
-                # Top alignment: table and detail_workbench should start at the same vertical position
-                self.assertLessEqual(abs(table_top - workbench_top), 6, "detail_workbench top is offset from table top by > 6px")
+                # Top alignment: the fixed review header starts beside the record table.
+                self.assertLessEqual(abs(table_top - fixed_header_top), 6, "fixed detail header is offset from table top by > 6px")
 
                 # Bottom alignment: right_content_widget (scroll area) should fill the detail_panel height.
                 # We check inner scroll area bottom vs outer _detail_panel bottom - a purely internal measurement
                 # that is not affected by window size or headless display constraints.
-                scroll_area = window._detail_panel.right_content_widget
-                scroll_area_bottom = scroll_area.mapTo(window, QPoint(0, 0)).y() + scroll_area.height()
-                self.assertLessEqual(abs(detail_panel_bottom - scroll_area_bottom), 6, "right_content_widget bottom is offset from _detail_panel bottom by > 6px")
+                tabs = window._detail_panel.detail_tabs
+                tabs_bottom = tabs.mapTo(window, QPoint(0, 0)).y() + tabs.height()
+                self.assertLessEqual(abs(detail_panel_bottom - tabs_bottom), 6, "detail tabs bottom is offset from _detail_panel bottom by > 6px")
 
             finally:
                 if hasattr(window, "db") and window.db is not None:
@@ -375,13 +375,11 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 amount_x = panel.txt_amount.mapTo(panel, QPoint(0, 0)).x()
                 buyer_x = panel.txt_buyer.mapTo(panel, QPoint(0, 0)).x()
                 path_x = panel.txt_path.mapTo(panel, QPoint(0, 0)).x()
-                claim_x = panel.combo_claims.mapTo(panel, QPoint(0, 0)).x()
                 note_x = panel.txt_note.mapTo(panel, QPoint(0, 0)).x()
                 missing_x = panel.lbl_evidence_missing.mapTo(panel, QPoint(0, 0)).x()
 
                 self.assertLessEqual(abs(core_x - amount_x), 4)
                 self.assertLessEqual(abs(core_x - buyer_x), 4)
-                self.assertLessEqual(abs(path_x - claim_x), 4)
                 self.assertLessEqual(abs(path_x - note_x), 4)
                 self.assertLessEqual(abs(path_x - missing_x), 6)
 
@@ -392,6 +390,9 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 filename_x = panel.lbl_evidence_name.mapTo(panel, QPoint(0, 0)).x()
                 self.assertLessEqual(abs(path_x - filename_x), 6)
 
+                panel.detail_tabs.setCurrentWidget(panel.reimbursement_scroll)
+                self.app.processEvents()
+                claim_x = panel.combo_claims.mapTo(panel, QPoint(0, 0)).x()
                 claim_actions_x = panel.claim_actions_widget.mapTo(panel, QPoint(0, 0)).x()
                 claim_combo_right = claim_x + panel.combo_claims.width()
                 self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
