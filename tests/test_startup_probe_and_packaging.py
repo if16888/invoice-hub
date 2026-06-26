@@ -11,6 +11,8 @@ PySide6 display — safe for CI.
 from __future__ import annotations
 
 import ast
+from contextlib import redirect_stdout
+import io
 import os
 import re
 import subprocess
@@ -258,6 +260,83 @@ class TestOptionalWindowsSigning(unittest.TestCase):
             self.assertIn(token, src)
 
 
+class TestWindowsVersionInfoGenerator(unittest.TestCase):
+    """Windows version resource text should be stable and generated from VERSION."""
+
+    def _module_path(self) -> Path:
+        p = PROJECT_ROOT / "scripts" / "generate_windows_version_info.py"
+        self.assertTrue(p.exists(), f"version resource generator not found at {p}")
+        return p
+
+    def test_generator_module_exists(self):
+        self._module_path()
+
+    def test_generator_source_imports_version_constant(self):
+        src = self._module_path().read_text(encoding="utf-8")
+        self.assertIn("from scripts.invoice_fetch.version import VERSION", src)
+
+    def test_build_version_info_text_formats_version_tuple_and_metadata(self):
+        from scripts.generate_windows_version_info import build_version_info_text
+
+        text = build_version_info_text("0.1.3")
+
+        self.assertIn("filevers=(0, 1, 3, 0)", text)
+        self.assertIn("prodvers=(0, 1, 3, 0)", text)
+        for field, value in {
+            "CompanyName": "Invoice Hub",
+            "ProductName": "Invoice Hub",
+            "FileDescription": "Invoice Hub",
+            "InternalName": "InvoiceHub",
+            "OriginalFilename": "InvoiceHub.exe",
+            "ProductVersion": "0.1.3",
+        }.items():
+            self.assertIn(f"StringStruct('{field}', '{value}')", text)
+
+    def test_build_version_info_text_truncates_extra_numeric_components(self):
+        from scripts.generate_windows_version_info import build_version_info_text
+
+        text = build_version_info_text("1.2.3.4.5")
+        self.assertIn("filevers=(1, 2, 3, 4)", text)
+        self.assertIn("prodvers=(1, 2, 3, 4)", text)
+
+    def test_cli_defaults_to_build_output_and_writes_utf8_text(self):
+        from scripts import generate_windows_version_info as mod
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(root)
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    exit_code = mod.main([])
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertEqual(exit_code, 0)
+            output_path = root / "build" / "windows-version-info.txt"
+            self.assertTrue(output_path.exists(), f"expected output file at {output_path}")
+            self.assertIn(str(Path("build") / "windows-version-info.txt"), buf.getvalue())
+            text = output_path.read_text(encoding="utf-8")
+            self.assertIn("VSVersionInfo(", text)
+            self.assertIn("StringStruct('ProductVersion', '0.1.3')", text)
+
+    def test_cli_uses_explicit_output_directory(self):
+        from scripts import generate_windows_version_info as mod
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            output_path = root / "nested" / "windows-version-info.txt"
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                exit_code = mod.main(["--output", str(output_path)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(output_path.exists(), f"expected output file at {output_path}")
+            self.assertIn(str(output_path), buf.getvalue())
+            self.assertIn("VSVersionInfo(", output_path.read_text(encoding="utf-8"))
+
+
 class TestPyInstallerSpecIntegrity(unittest.TestCase):
     """packaging/invoice_hub_windows.spec must exist and match expectations."""
 
@@ -281,6 +360,11 @@ class TestPyInstallerSpecIntegrity(unittest.TestCase):
         # upx=False must appear (and upx=True must not appear)
         self.assertIn("upx=False", src, "Spec must have upx=False")
         self.assertNotIn("upx=True", src, "Spec must NOT have upx=True")
+
+    def test_spec_references_generated_version_file(self):
+        src = self._spec_path().read_text(encoding="utf-8")
+        self.assertIn('_version_file = _root / "build" / "windows-version-info.txt"', src)
+        self.assertIn('version=str(_version_file)', src)
 
     def test_spec_includes_playwright(self):
         """playwright must appear in _hiddenimports (bundled, not excluded)."""
