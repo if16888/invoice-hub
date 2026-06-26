@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from .ui_components import make_button, make_badge, build_action_cluster
 
+from .. import APP_VERSION
 from ..config import load_config_safe, is_outlook_like_account
 
 
@@ -291,12 +292,13 @@ class AIProfileRow(QFrame):
 
 class SettingsDialog(QDialog):
     _last_active_tab_index = 0
+    _last_active_section = "mailboxes"
 
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
         self.setWindowTitle("系统设置")
-        self.resize(650, 580)
+        self.resize(1120, 720)
         self.test_success = False
         self.current_step = 1
         self.ai_current_step = 1
@@ -313,6 +315,7 @@ class SettingsDialog(QDialog):
         self._missing_saved_provider = ""
         self._editing_ai_profile_id = ""
         self._editing_existing_mailbox = False
+        self._syncing_settings_section = False
 
         from ..config import _EMAIL_PROVIDER_PRESETS
         self.cfg = _load_config_safe_compat()
@@ -342,9 +345,11 @@ class SettingsDialog(QDialog):
         self._load_initial_values()
         self._refresh_mailbox_list()
         self._refresh_ai_profile_list()
+        self._refresh_settings_center_pages()
         self._loading_initial_values = False
         self._advanced_settings_dirty = False
         self._update_provider_hint()
+        self._show_settings_home("mailboxes")
 
     def _init_mailbox_editor_page(self):
         layout = QVBoxLayout(self.page_mailbox_editor)
@@ -625,36 +630,260 @@ class SettingsDialog(QDialog):
 
     def _init_settings_home_page(self):
         layout = QVBoxLayout(self.page_settings_home)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
-        lbl_title = QLabel("系统配置中心")
+        lbl_title = QLabel("系统设置中心")
         lbl_title.setProperty("class", "SettingsSectionTitle")
         layout.addWidget(lbl_title)
 
         self.tab_widget = QTabWidget()
-        layout.addWidget(self.tab_widget)
+        self.tab_widget.hide()
+        self.tab_widget.currentChanged.connect(self._on_compat_tab_changed)
 
-        self.tab_mailbox_list = QWidget()
+        shell_layout = QHBoxLayout()
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(16)
+        layout.addLayout(shell_layout, stretch=1)
+
+        nav_card = QFrame()
+        nav_card.setFrameShape(QFrame.StyledPanel)
+        nav_card.setFixedWidth(184)
+        nav_card.setProperty("class", "SectionCard")
+        nav_layout = QVBoxLayout(nav_card)
+        nav_layout.setContentsMargins(12, 12, 12, 12)
+        nav_layout.setSpacing(8)
+        self.settings_nav_buttons = {}
+        for key, title in [
+            ("mailboxes", "邮箱账号"),
+            ("ai", "AI 配置"),
+            ("rules", "分类与规则"),
+            ("runtime", "运行状态"),
+            ("privacy", "安全与隐私"),
+            ("system", "系统设置"),
+            ("data", "数据与备份"),
+            ("about", "关于"),
+        ]:
+            btn = QPushButton(title)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setMinimumHeight(36)
+            btn.setProperty("class", "SettingsNavButton")
+            btn.clicked.connect(lambda checked=False, section=key: self._select_settings_section(section))
+            nav_layout.addWidget(btn)
+            self.settings_nav_buttons[key] = btn
+        nav_layout.addStretch()
+        shell_layout.addWidget(nav_card, stretch=0)
+
+        self.settings_content_stack = QStackedWidget()
+        shell_layout.addWidget(self.settings_content_stack, stretch=1)
+
+        self.page_mailbox_center = QWidget()
+        self.tab_mailbox_list = self.page_mailbox_center
         self._init_mailbox_list_tab()
-        self.tab_widget.addTab(self.tab_mailbox_list, "邮箱账号")
+        self.settings_content_stack.addWidget(self.page_mailbox_center)
+        self._compat_mailbox_tab = QWidget()
+        self.tab_widget.addTab(self._compat_mailbox_tab, "邮箱账号")
 
-        self.tab_ai_list = QWidget()
+        self.page_ai_center = QWidget()
+        self.tab_ai_list = self.page_ai_center
         self._init_ai_list_tab()
-        self.tab_widget.addTab(self.tab_ai_list, "AI 模型")
+        self.settings_content_stack.addWidget(self.page_ai_center)
+        self._compat_ai_tab = QWidget()
+        self.tab_widget.addTab(self._compat_ai_tab, "AI 模型")
+
+        self.page_rules_center = self._build_rules_center_page()
+        self.settings_content_stack.addWidget(self.page_rules_center)
+        self.page_runtime_center = self._build_runtime_center_page()
+        self.settings_content_stack.addWidget(self.page_runtime_center)
+        self.page_privacy_center = self._build_privacy_center_page()
+        self.settings_content_stack.addWidget(self.page_privacy_center)
+        self.page_system_center = self._build_system_center_page()
+        self.settings_content_stack.addWidget(self.page_system_center)
+        self.page_data_center = self._build_data_center_page()
+        self.settings_content_stack.addWidget(self.page_data_center)
+        self.page_about_center = self._build_about_center_page()
+        self.settings_content_stack.addWidget(self.page_about_center)
+
+        self.settings_pages = {
+            "mailboxes": self.page_mailbox_center,
+            "ai": self.page_ai_center,
+            "rules": self.page_rules_center,
+            "runtime": self.page_runtime_center,
+            "privacy": self.page_privacy_center,
+            "system": self.page_system_center,
+            "data": self.page_data_center,
+            "about": self.page_about_center,
+        }
 
         home_footer = QHBoxLayout()
-        btn_close_home = make_button("关闭", variant="secondary", min_width=56)
+        self.lbl_settings_footer_hint = QLabel("配置数据保存在本地，授权码和 API Key 不会写入 config.json。")
+        self.lbl_settings_footer_hint.setWordWrap(True)
+        self.lbl_settings_footer_hint.setProperty("class", "SectionHint")
+        btn_close_home = make_button("关闭", variant="secondary", min_width=72)
         btn_close_home.clicked.connect(self.accept)
+        home_footer.addWidget(self.lbl_settings_footer_hint, 1)
         home_footer.addStretch()
         home_footer.addWidget(btn_close_home)
         layout.addLayout(home_footer)
 
-        self.tab_widget.setCurrentIndex(SettingsDialog._last_active_tab_index)
-        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+        self.tab_widget.setCurrentIndex(0)
+        SettingsDialog._last_active_tab_index = 0
+        SettingsDialog._last_active_section = "mailboxes"
+        self._select_settings_section("mailboxes", sync_compat=False)
 
     def _on_tab_changed(self, index):
         SettingsDialog._last_active_tab_index = index
+
+    def _on_compat_tab_changed(self, index):
+        if self._syncing_settings_section or not hasattr(self, "settings_pages"):
+            return
+        self._on_tab_changed(index)
+        if index == 0:
+            self._select_settings_section("mailboxes", sync_compat=False)
+        elif index == 1:
+            self._select_settings_section("ai", sync_compat=False)
+
+    def _select_settings_section(self, section: str, *, sync_compat: bool = True):
+        if not hasattr(self, "settings_pages"):
+            return
+        if section not in getattr(self, "settings_pages", {}):
+            section = "mailboxes"
+        self._syncing_settings_section = True
+        try:
+            for key, btn in self.settings_nav_buttons.items():
+                btn.setChecked(key == section)
+            self.settings_content_stack.setCurrentWidget(self.settings_pages[section])
+            SettingsDialog._last_active_section = section
+            if sync_compat and section in {"mailboxes", "ai"}:
+                self.tab_widget.setCurrentIndex(0 if section == "mailboxes" else 1)
+                SettingsDialog._last_active_tab_index = self.tab_widget.currentIndex()
+        finally:
+            self._syncing_settings_section = False
+
+    def _build_scroll_page(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background-color: transparent;")
+        content = QWidget()
+        content.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        scroll.setWidget(content)
+        return scroll, layout
+
+    def _build_section_block(self, title: str, body: str) -> QGroupBox:
+        group = QGroupBox(title)
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(12, 12, 12, 12)
+        group_layout.setSpacing(8)
+        label = QLabel(body)
+        label.setWordWrap(True)
+        label.setProperty("class", "SectionHint")
+        group_layout.addWidget(label)
+        return group
+
+    def _build_rules_center_page(self):
+        scroll, layout = self._build_scroll_page()
+        title = QLabel("分类与规则")
+        title.setProperty("class", "SettingsSectionTitle")
+        desc = QLabel("展示当前本地关键词规则、技术通知排除和分类字典信息。AI 只在本地规则无法确定时作为兜底。")
+        desc.setWordWrap(True)
+        desc.setProperty("class", "SectionHint")
+        self.lbl_rules_flow = QLabel()
+        self.lbl_rules_flow.setWordWrap(True)
+        self.lbl_rules_flow.setProperty("class", "SectionHint")
+        self.lbl_rules_overview = QLabel()
+        self.lbl_rules_overview.setWordWrap(True)
+        self.lbl_rules_overview.setProperty("class", "SectionHint")
+        self.lbl_category_dictionary = QLabel()
+        self.lbl_category_dictionary.setWordWrap(True)
+        self.lbl_category_dictionary.setProperty("class", "SectionHint")
+        layout.addWidget(title)
+        layout.addWidget(desc)
+        layout.addWidget(self._build_section_block("本地分类流程", "本地关键词 → 技术通知排除 → 仍然无法确定时使用 AI 兜底。"))
+        layout.addWidget(self._build_section_block("固定规则", "系统内置的发票关键词、排除通知和技术类邮件排除规则只读展示，不在这里编辑。"))
+        layout.addWidget(self.lbl_rules_flow)
+        layout.addWidget(self.lbl_rules_overview)
+        layout.addWidget(self.lbl_category_dictionary)
+        layout.addStretch()
+        return scroll
+
+    def _build_runtime_center_page(self):
+        scroll, layout = self._build_scroll_page()
+        title = QLabel("运行状态")
+        title.setProperty("class", "SettingsSectionTitle")
+        desc = QLabel("只展示当前可用的 AI 运行状态、暂停信息和本地摘要，不虚构准确率、成本或趋势。")
+        desc.setWordWrap(True)
+        desc.setProperty("class", "SectionHint")
+        self.lbl_runtime_status = QLabel()
+        self.lbl_runtime_status.setWordWrap(True)
+        self.lbl_runtime_status.setProperty("class", "SectionHint")
+        layout.addWidget(title)
+        layout.addWidget(desc)
+        layout.addWidget(self.lbl_runtime_status)
+        layout.addStretch()
+        return scroll
+
+    def _build_privacy_center_page(self):
+        scroll, layout = self._build_scroll_page()
+        title = QLabel("安全与隐私")
+        title.setProperty("class", "SettingsSectionTitle")
+        desc = QLabel("明确说明哪些数据会发送给 AI，哪些数据不会发送。授权码和 API Key 不会显示在界面、日志或配置文件中。")
+        desc.setWordWrap(True)
+        desc.setProperty("class", "SectionHint")
+        self.lbl_privacy_boundary = QLabel(
+            "会发送给 AI：掩码后的主题、发件人和最小分类请求元数据。\n"
+            "不会发送给 AI：邮件正文、附件、PDF/OFD 文件、本地路径、邮箱授权码和 API Key。"
+        )
+        self.lbl_privacy_boundary.setWordWrap(True)
+        self.lbl_privacy_boundary.setProperty("class", "SectionHint")
+        layout.addWidget(title)
+        layout.addWidget(desc)
+        layout.addWidget(self.lbl_privacy_boundary)
+        layout.addStretch()
+        return scroll
+
+    def _build_system_center_page(self):
+        scroll, layout = self._build_scroll_page()
+        title = QLabel("系统设置")
+        title.setProperty("class", "SettingsSectionTitle")
+        self.lbl_system_settings = QLabel()
+        self.lbl_system_settings.setWordWrap(True)
+        self.lbl_system_settings.setProperty("class", "SectionHint")
+        layout.addWidget(title)
+        layout.addWidget(self.lbl_system_settings)
+        layout.addStretch()
+        return scroll
+
+    def _build_data_center_page(self):
+        scroll, layout = self._build_scroll_page()
+        title = QLabel("数据与备份")
+        title.setProperty("class", "SettingsSectionTitle")
+        self.lbl_data_settings = QLabel()
+        self.lbl_data_settings.setWordWrap(True)
+        self.lbl_data_settings.setProperty("class", "SectionHint")
+        layout.addWidget(title)
+        layout.addWidget(self.lbl_data_settings)
+        layout.addStretch()
+        return scroll
+
+    def _build_about_center_page(self):
+        scroll, layout = self._build_scroll_page()
+        title = QLabel("关于")
+        title.setProperty("class", "SettingsSectionTitle")
+        self.lbl_about_settings = QLabel(
+            f"Invoice Hub 设置中心 {APP_VERSION}\n"
+            "用于管理邮箱接入、AI 配置、本地规则、运行状态以及安全与隐私边界。"
+        )
+        self.lbl_about_settings.setWordWrap(True)
+        self.lbl_about_settings.setProperty("class", "SectionHint")
+        layout.addWidget(title)
+        layout.addWidget(self.lbl_about_settings)
+        layout.addStretch()
+        return scroll
 
     def _init_mailbox_list_tab(self):
         layout = QVBoxLayout(self.tab_mailbox_list)
@@ -672,6 +901,11 @@ class SettingsDialog(QDialog):
         header_layout.addStretch()
         header_layout.addWidget(self.btn_add_mailbox)
         layout.addLayout(header_layout)
+
+        self.lbl_mailbox_summary = QLabel()
+        self.lbl_mailbox_summary.setWordWrap(True)
+        self.lbl_mailbox_summary.setProperty("class", "SectionHint")
+        layout.addWidget(self.lbl_mailbox_summary)
 
         self.mailbox_scroll = QScrollArea()
         self.mailbox_scroll.setWidgetResizable(True)
@@ -710,6 +944,11 @@ class SettingsDialog(QDialog):
         header_layout.addWidget(self.btn_disable_ai_action)
         header_layout.addWidget(self.btn_add_ai)
         layout.addLayout(header_layout)
+
+        self.lbl_ai_summary = QLabel()
+        self.lbl_ai_summary.setWordWrap(True)
+        self.lbl_ai_summary.setProperty("class", "SectionHint")
+        layout.addWidget(self.lbl_ai_summary)
 
         self.ai_scroll = QScrollArea()
         self.ai_scroll.setWidgetResizable(True)
@@ -788,6 +1027,127 @@ class SettingsDialog(QDialog):
                 row.activate_requested.connect(self._set_active_ai_profile)
                 self.ai_list_layout.insertWidget(idx, row)
                 self.ai_rows.append(row)
+
+        self._refresh_settings_center_pages()
+
+    def _refresh_settings_center_pages(self):
+        self._refresh_mailbox_center_summary()
+        self._refresh_ai_center_summary()
+        self._refresh_rules_center_summary()
+        self._refresh_runtime_center_summary()
+        self._refresh_system_center_summary()
+        self._refresh_data_center_summary()
+
+    def _refresh_mailbox_center_summary(self):
+        if not hasattr(self, "lbl_mailbox_summary"):
+            return
+        from ..config import get_email_accounts
+        from ..credentials import has_auth_code
+        accounts = get_email_accounts(self.cfg)
+        enabled_count = sum(1 for acc in accounts if acc.get("enabled", True))
+        missing_cred = sum(1 for acc in accounts if not has_auth_code(acc.get("address", "")))
+        self.lbl_mailbox_summary.setText(
+            f"已启用 {enabled_count} / 已配置 {len(accounts)} / 需要处理 {missing_cred}"
+        )
+
+    def _refresh_ai_center_summary(self):
+        if not hasattr(self, "lbl_ai_summary"):
+            return
+        from ..ai_profiles import get_ai_profiles
+        from ..credentials import get_ai_api_key_source
+        profiles = get_ai_profiles(self.cfg)
+        active = next((profile for profile in profiles if profile.get("enabled")), None)
+        missing_keys = sum(
+            1 for profile in profiles
+            if get_ai_api_key_source(profile["provider"], profile["profile_id"]) == "missing"
+        )
+        if active:
+            status = f"当前启用：{active['name']}"
+        else:
+            status = "AI 当前关闭，本地规则仍然可用"
+        self.lbl_ai_summary.setText(f"{status} / 已保存 {len(profiles)} / 缺少密钥 {missing_keys}")
+
+    def _refresh_rules_center_summary(self):
+        if not hasattr(self, "lbl_rules_flow"):
+            return
+        from ..__main__ import DEFAULT_CATEGORY_RULES, TRANSPORT_DETAIL_RULES
+        from ..rule_classifier import INVOICE_KEYWORDS, EXCLUDE_KEYWORDS, TECHNICAL_EXCLUDE_KEYWORDS
+        cfg_categories = self.cfg.get("categories", {}) if isinstance(self.cfg.get("categories"), dict) else {}
+        db_categories = []
+        if hasattr(self.parent, "db") and self.parent.db:
+            try:
+                db_categories = [item for item in self.parent.db.list_categories() if str(item or "").strip()]
+            except Exception:
+                db_categories = []
+        self.lbl_rules_flow.setText(
+            f"发票关键词 {len(INVOICE_KEYWORDS)} 条 / 排除关键词 {len(EXCLUDE_KEYWORDS)} 条 / 技术通知排除 {len(TECHNICAL_EXCLUDE_KEYWORDS)} 条"
+        )
+        self.lbl_rules_overview.setText(
+            f"内置交通细分 {len(TRANSPORT_DETAIL_RULES)} 组 / 默认分类规则 {len(DEFAULT_CATEGORY_RULES)} 组 / 固定规则为只读展示"
+        )
+        config_names = []
+        for key, value in cfg_categories.items():
+            if isinstance(value, dict):
+                label = str(value.get("name") or value.get("label") or key).strip()
+            else:
+                label = str(key).strip()
+            if label and label not in config_names:
+                config_names.append(label)
+        db_names = []
+        for value in db_categories:
+            label = str(value or "").strip()
+            if label and label not in db_names:
+                db_names.append(label)
+        config_summary = "、".join(config_names) if config_names else "无"
+        db_summary = "、".join(db_names) if db_names else "无"
+        self.lbl_category_dictionary.setText(
+            f"配置分类 {len(config_names)} 项：{config_summary} / 数据库已有分类 {len(db_names)} 项：{db_summary}。分类名称用于归档展示，不等于识别规则。"
+        )
+
+    def _refresh_runtime_center_summary(self):
+        if not hasattr(self, "lbl_runtime_status"):
+            return
+        from ..ai_profiles import get_ai_profiles
+        from ..ai_classifier import is_provider_session_paused
+        profiles = get_ai_profiles(self.cfg)
+        active = next((profile for profile in profiles if profile.get("enabled")), None)
+        if active is None:
+            status = "AI 未启用；当前仍按本地规则和人工审核工作。"
+        else:
+            paused = is_provider_session_paused(active.get("provider", ""))
+            status = f"当前配置：{active['name']} ({active['provider']} / {active['model']})"
+            status += " / 会话已暂停" if paused else " / 会话可用"
+        last_error = ""
+        if hasattr(self.parent, "db") and self.parent.db:
+            last_error = str(getattr(self.parent.db, "last_error", "") or "").strip()
+        if last_error:
+            status += f" / 最近错误：{last_error}"
+        self.lbl_runtime_status.setText(status)
+
+    def _refresh_system_center_summary(self):
+        if not hasattr(self, "lbl_system_settings"):
+            return
+        email_cfg = self.cfg.get("email", {}) if isinstance(self.cfg.get("email"), dict) else {}
+        search_cfg = self.cfg.get("search", {}) if isinstance(self.cfg.get("search"), dict) else {}
+        imap_cfg = self.cfg.get("imap", {}) if isinstance(self.cfg.get("imap"), dict) else {}
+        self.lbl_system_settings.setText(
+            f"当前主邮箱投影：{email_cfg.get('address', '未配置')} / 文件夹：{search_cfg.get('folder', 'INBOX')} / 最近 {search_cfg.get('months_back', 3)} 个月 / IMAP：{imap_cfg.get('server', '未配置')}"
+        )
+
+    def _refresh_data_center_summary(self):
+        if not hasattr(self, "lbl_data_settings"):
+            return
+        from ..config import RUNTIME_DIR
+        db_path = "未连接数据库"
+        if hasattr(self.parent, "db") and self.parent.db:
+            db_path = str(getattr(self.parent.db, "_path", "未连接数据库"))
+        privacy_hint = "截图反馈前请遮挡本地用户名和完整路径。"
+        self.lbl_data_settings.setText(
+            f"运行数据目录：{RUNTIME_DIR}\n当前数据库：{db_path}\n{privacy_hint}\n本页只展示真实本地路径与数据位置，不在这里删除业务数据。"
+        )
+        self.lbl_data_settings.setToolTip(
+            f"Runtime: {RUNTIME_DIR}\nDatabase: {db_path}\n{privacy_hint}"
+        )
 
     def _set_mailbox_enabled(self, mailbox_key: str, enabled: bool):
         raw_accounts = self.cfg.get("email_accounts")
@@ -927,10 +1287,7 @@ class SettingsDialog(QDialog):
         QMessageBox.information(self, "成功", "邮箱配置已删除，已导入发票不会被删除。")
     def _show_settings_home(self, tab_name="mailboxes"):
         self.settings_stack.setCurrentWidget(self.page_settings_home)
-        if tab_name == "mailboxes":
-            self.tab_widget.setCurrentIndex(0)
-        elif tab_name == "ai":
-            self.tab_widget.setCurrentIndex(1)
+        self._select_settings_section(tab_name)
 
     def _open_new_mailbox_editor(self):
         self._editing_existing_mailbox = False

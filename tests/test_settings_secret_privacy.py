@@ -33,6 +33,13 @@ class SettingsSecretPrivacyTests(unittest.TestCase):
         widget.deleteLater()
         self.app.processEvents()
 
+    def _set_clipboard_or_skip(self, text):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        self.app.processEvents()
+        if clipboard.text() != text:
+            self.skipTest("Windows clipboard is unavailable in this test session")
+
     def _make_dialog(self, *, saved=False):
         from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
@@ -67,7 +74,7 @@ class SettingsSecretPrivacyTests(unittest.TestCase):
         self.addCleanup(self._cleanup_widget, field)
         field.setText(AUTH_CODE)
         field.selectAll()
-        QApplication.clipboard().setText("clipboard-sentinel")
+        self._set_clipboard_or_skip("clipboard-sentinel")
 
         field.copy()
         self.assertEqual(QApplication.clipboard().text(), "clipboard-sentinel")
@@ -84,7 +91,7 @@ class SettingsSecretPrivacyTests(unittest.TestCase):
         field.setFocus()
         field.setText(AUTH_CODE)
         field.selectAll()
-        QApplication.clipboard().setText("clipboard-sentinel")
+        self._set_clipboard_or_skip("clipboard-sentinel")
 
         QTest.keyClick(field, Qt.Key_C, Qt.ControlModifier)
         self.assertEqual(QApplication.clipboard().text(), "clipboard-sentinel")
@@ -97,7 +104,7 @@ class SettingsSecretPrivacyTests(unittest.TestCase):
 
         field = SecurePasswordLineEdit()
         self.addCleanup(self._cleanup_widget, field)
-        QApplication.clipboard().setText(AUTH_CODE)
+        self._set_clipboard_or_skip(AUTH_CODE)
 
         field.paste()
         self.assertEqual(field.text(), AUTH_CODE)
