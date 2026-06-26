@@ -41,6 +41,7 @@ class GuiColumnFilterTests(unittest.TestCase):
                     "mail_sender": row.get("mail_sender", ""),
                     "attachment_path": row.get("attachment_path", "file.pdf"),
                     "download_url": row.get("download_url", ""),
+                    "missing_extra": row.get("missing_extra", 0),
                 }
                 inv_id = db.insert_invoice(payload)
                 claim_name = row.get("claim_name")
@@ -319,18 +320,27 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.table.rowCount(), 105)
         self.assertTrue(all(row["category"] == "目标" for row in window.invoices_list))
 
-    def test_first_column_naming_and_material_only(self):
-        # 表格第一列如果显示“待补全”，列名应为“完整性”。
-        # 第一列改为“完整性”，只显示完整性状态；审核状态仅由顶部和右侧表达。
+    def test_review_and_material_status_are_visible_in_table(self):
+        # 审核状态和资料状态都必须在表格中可见，不能只放 tooltip。
         window = self._make_window([
-            {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"}, # 待补全
+            {"invoice_number": "OK-1", "review_status": "approved", "attachment_path": "file.pdf"},
+            {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"},
+            {"invoice_number": "MISS-FILE", "attachment_path": "", "review_status": "to_review"},
+            {"invoice_number": "MISS-PROOF", "attachment_path": "file.pdf", "missing_extra": 1, "review_status": "to_review"},
+            {"invoice_number": "", "total_amount": "", "seller_name": "", "attachment_path": "", "review_status": "to_review"},
         ])
-        header_text = window.table.horizontalHeaderItem(0).text()
-        self.assertTrue("完整性" in header_text)
-        
-        # Check first column text
-        item_text = window.table.item(0, 0).text()
-        self.assertEqual(item_text, "待补全")
+        self.assertIn("状态", window.table.horizontalHeaderItem(0).text())
+        self.assertIn("资料", window.table.horizontalHeaderItem(1).text())
+
+        visible_pairs = [
+            (window.table.item(row, 0).text(), window.table.item(row, 1).text())
+            for row in range(window.table.rowCount())
+        ]
+        self.assertIn(("已通过", "正常"), visible_pairs)
+        self.assertIn(("已通过", "待补全"), visible_pairs)
+        self.assertIn(("待审核", "缺原件"), visible_pairs)
+        self.assertIn(("待审核", "缺证明"), visible_pairs)
+        self.assertIn(("待审核", "未识别"), visible_pairs)
 
     def test_top_checkbox_bidirectional_sync_needs_fix(self):
         # 勾选“待补全”等价于资料状态列过滤。
@@ -609,8 +619,8 @@ class GuiColumnFilterTests(unittest.TestCase):
         expected_min_widths = {
             0: 76,   # 完整性
             1: 100,  # 费用日期
-            2: 80,   # 金额
-            3: 160,  # 发票号码
+            2: 100,  # 费用日期
+            3: 80,   # 金额
             4: 260,  # 销售方
             5: 96,   # 消费类型
             6: 86,   # 来源

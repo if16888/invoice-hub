@@ -3033,10 +3033,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Assert load succeeded
                     self.assertEqual(len(window.invoices_list), 1)
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 0).text(), "缺原件")
-                    self.assertEqual(window.table.item(0, 1).text(), "2026-05-24")
-                    self.assertEqual(window.table.item(0, 2).text(), "123.45")
-                    self.assertEqual(window.table.item(0, 3).text(), "NUM999")
+                    self.assertEqual(window.table.item(0, 0).text(), "待审核")
+                    self.assertEqual(window.table.item(0, 1).text(), "缺原件")
+                    self.assertEqual(window.table.item(0, 2).text(), "2026-05-24")
+                    self.assertEqual(window.table.item(0, 3).text(), "123.45")
                     self.assertGreaterEqual(window.btn_clear_log.minimumWidth(), 64)
                     self.assertGreaterEqual(window.btn_copy_log.minimumWidth(), 64)
                 finally:
@@ -5804,13 +5804,13 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.txt_search.setText("滴滴")
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 3).text(), "SEARCH001")
+                    self.assertEqual(window.invoices_list[0]["invoice_number"], "SEARCH001")
 
                     window.txt_search.setText("")
                     window.chk_unlinked.setChecked(True)
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 1)
-                    self.assertEqual(window.table.item(0, 3).text(), "SEARCH002")
+                    self.assertEqual(window.invoices_list[0]["invoice_number"], "SEARCH002")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()

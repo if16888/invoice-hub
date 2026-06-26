@@ -326,7 +326,7 @@ class ExpenseDateTests(unittest.TestCase):
 
             try:
                 self.assertEqual(window.table.rowCount(), 1)
-                date_item = window.table.item(0, 1)
+                date_item = window.table.item(0, 2)
                 self.assertIsNotNone(date_item)
                 self.assertEqual(date_item.text(), "2026-05-07")
             finally:
