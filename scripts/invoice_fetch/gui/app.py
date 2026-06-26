@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings
-from PySide6.QtGui import QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction
 
 from ..db import InvoiceDB, is_pending_evidence_invoice
@@ -39,6 +39,7 @@ from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .settings_dialog import SettingsDialog
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
+from .workbench_state import is_keyboard_input_target
 from .column_filters import (
     COLUMN_DEFINITIONS,
     COLUMN_KEYS,
@@ -647,6 +648,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         splitter.setSizes([650, 450])
 
         self._apply_workbench_metrics()
+        self._setup_workbench_shortcuts()
 
         self._splitter_save_timer = QTimer(self)
         self._splitter_save_timer.setSingleShot(True)
@@ -1089,6 +1091,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def eventFilter(self, obj, event):
         header = self.table.horizontalHeader() if hasattr(self, "table") else None
+        preview_focus_dialog = getattr(self, "preview_focus_dialog", None)
+        preview_workbench = getattr(self, "preview_workbench", None)
+        if event.type() == QEvent.KeyPress and preview_focus_dialog is not None and hasattr(self, "_handle_preview_focus_keypress"):
+            in_preview_focus = obj is preview_focus_dialog
+            if not in_preview_focus and preview_workbench is not None and isinstance(obj, QWidget):
+                in_preview_focus = obj is preview_workbench or preview_workbench.isAncestorOf(obj)
+            if in_preview_focus and self._handle_preview_focus_keypress(event):
+                return True
         if header is not None and obj is header.viewport():
             if event.type() == QEvent.MouseButtonPress:
                 self._column_filter_header_press_pos = event.position().toPoint()
@@ -1096,6 +1106,98 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if event.type() == QEvent.Resize:
                 self._adjust_column_4_width()
         return super().eventFilter(obj, event)
+
+    def _invoke_workbench_action(self, action) -> bool:
+        if QApplication.activeModalWidget() is not None:
+            return False
+        if is_keyboard_input_target(QApplication.focusWidget()):
+            return False
+        action()
+        return True
+
+    def _invoice_by_id(self, invoice_id):
+        for invoice in getattr(self, "invoices_list", []):
+            if invoice.get("id") == invoice_id:
+                return invoice
+        return None
+
+    def _row_for_invoice_id(self, invoice_id) -> int:
+        for row, invoice in enumerate(getattr(self, "invoices_list", [])):
+            if invoice.get("id") == invoice_id:
+                return row
+        return -1
+
+    def _select_invoice_by_id(self, invoice_id, *, fallback_first=True):
+        invoice = self._invoice_by_id(invoice_id)
+        if invoice is None and fallback_first and self.invoices_list:
+            invoice = self.invoices_list[0]
+        target_id = invoice.get("id") if invoice is not None else None
+        target_row = self._row_for_invoice_id(target_id) if target_id is not None else -1
+        self.table.blockSignals(True)
+        try:
+            self.table.clearSelection()
+            self.table.setCurrentItem(None)
+            if self.table.selectionModel() is not None:
+                self.table.selectionModel().clearCurrentIndex()
+            if target_row >= 0:
+                self.table.selectRow(target_row)
+                self.table.setCurrentCell(target_row, 0)
+        finally:
+            self.table.blockSignals(False)
+        self._on_table_selection_changed()
+        return target_row >= 0
+
+    def _move_invoice_selection(self, delta: int) -> None:
+        if not self.invoices_list:
+            return
+        row = self.table.currentRow()
+        if row < 0:
+            row = 0 if delta >= 0 else len(self.invoices_list) - 1
+        else:
+            row = max(0, min(len(self.invoices_list) - 1, row + delta))
+        invoice_id = self.invoices_list[row].get("id")
+        self._select_invoice_by_id(invoice_id)
+
+    def _handle_workbench_escape(self) -> None:
+        modal = QApplication.activeModalWidget()
+        if modal is not None:
+            modal.close()
+            return
+        if getattr(self, "preview_focus_dialog", None) is not None:
+            self._exit_preview_focus_mode()
+            return
+        if getattr(self, "_column_filter_popup", None) is not None:
+            self._column_filter_popup.close()
+
+    def _register_shortcut(self, target_widget, store: dict[str, QShortcut], sequence: str, action, *, guarded: bool = True) -> None:
+        shortcut = QShortcut(QKeySequence(sequence), target_widget)
+        shortcut.setContext(Qt.WindowShortcut)
+        if guarded:
+            shortcut.activated.connect(lambda callback=action: self._invoke_workbench_action(callback))
+        else:
+            shortcut.activated.connect(action)
+        store[sequence] = shortcut
+
+    def _bind_review_shortcuts(self, target_widget, store: dict[str, QShortcut] | None = None) -> dict[str, QShortcut]:
+        shortcuts = {} if store is None else store
+        self._register_shortcut(target_widget, shortcuts, "Return", lambda: self._set_selected_status(APPROVED))
+        self._register_shortcut(target_widget, shortcuts, "Enter", lambda: self._set_selected_status(APPROVED))
+        self._register_shortcut(target_widget, shortcuts, "Delete", lambda: self._set_selected_status(IGNORED))
+        self._register_shortcut(target_widget, shortcuts, "Ctrl+E", lambda: self._set_selected_status(ERROR))
+        self._register_shortcut(target_widget, shortcuts, "Esc", self._handle_workbench_escape, guarded=False)
+        return shortcuts
+
+    def _setup_workbench_shortcuts(self) -> None:
+        self.workbench_shortcuts = {}
+        self._register_shortcut(self, self.workbench_shortcuts, "Up", lambda: self._move_invoice_selection(-1))
+        self._register_shortcut(self, self.workbench_shortcuts, "Down", lambda: self._move_invoice_selection(1))
+        self._bind_review_shortcuts(self, self.workbench_shortcuts)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+F", self.txt_search.setFocus, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "F11", self._toggle_preview_focus_mode, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+I", self._import_local_clicked, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+U", self._mobile_upload_clicked, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+M", self._scan_email_clicked, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+R", self._load_invoices, guarded=False)
 
 
     def _base_filter_label(self, status) -> str:
