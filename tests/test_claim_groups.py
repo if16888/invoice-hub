@@ -5202,8 +5202,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     for btn in empty_buttons:
                         self.assertEqual(btn.property("variant"), "secondary")
 
-                    self.assertEqual(window.filter_buttons["all"].property("class"), "FilterBtn")
-                    self.assertTrue(window.filter_buttons["all"].isChecked())
+                    self.assertEqual(window.filter_buttons["all"].objectName(), "CompactStatCard")
+                    self.assertEqual(window.filter_buttons["all"].property("selected"), True)
                     self.assertIn(PRIMARY_BUTTON_STYLE, APP_STYLESHEET)
                     self.assertIn(SECONDARY_BUTTON_STYLE, APP_STYLESHEET)
                     self.assertIn(FILTER_BUTTON_STYLE, APP_STYLESHEET)
@@ -5579,11 +5579,15 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.filter_base_labels, expected_labels)
                     for status, button in window.filter_buttons.items():
                         self.assertGreaterEqual(button.minimumWidth(), 86)
-                        self.assertEqual(
+                        self.assertIn(
                             button.sizePolicy().horizontalPolicy(),
-                            QSizePolicy.Minimum,
+                            {QSizePolicy.Minimum, QSizePolicy.Preferred},
                         )
-                        button.setText(f"{expected_labels[status]} 275")
+                        if hasattr(button, "set_title") and hasattr(button, "set_value"):
+                            button.set_title(expected_labels[status])
+                            button.set_value("275")
+                        else:
+                            button.setText(f"{expected_labels[status]} 275")
 
                     window._update_filter_counts([])
                     self.assertEqual(window.filter_buttons["all"].text(), "全部 0")

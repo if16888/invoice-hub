@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
-from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint
+from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings
 from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction
 
@@ -30,7 +30,7 @@ from ..reimbursement import amount_total, buyer_warning, format_amount_total, ge
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
-from .ui_components import make_button, make_badge, make_filter_chip
+from .ui_components import CompactStatCard, ShortcutDisclosure, make_button, make_badge, make_filter_chip
 from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
@@ -38,6 +38,7 @@ from .mobile_upload_dialog import MobileUploadDialog
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .settings_dialog import SettingsDialog
 from .workers import EmailScanWorker, LocalImportWorker
+from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .column_filters import (
     COLUMN_DEFINITIONS,
     COLUMN_KEYS,
@@ -173,6 +174,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
+        self._left_splitter_sizes_initialized = False
 
         self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
@@ -194,6 +196,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if self.splash:
             self.splash.show_message("正在初始化界面布局...", 70)
         self._init_ui()
+        self._restore_splitter_prefs()
         init_time = _time_mod.time()
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
@@ -247,12 +250,70 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage(status_msg, 4000)
 
     def closeEvent(self, event):
+        self._save_splitter_prefs()
         self.db.close()
         event.accept()
 
     def _init_ui_probe(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+
+    def _apply_workbench_metrics(self):
+        w = self.width() or 1150
+        h = self.height() or 850
+        metrics = metrics_for_size(w, h)
+        self._detail_panel.setMinimumWidth(metrics.detail_width)
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        if not self._left_splitter_sizes_initialized:
+            self.left_splitter.setSizes([metrics.record_height, max(h - metrics.record_height, 180)])
+            self._left_splitter_sizes_initialized = True
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "main_splitter") and hasattr(self, "left_splitter") and hasattr(self, "_detail_panel"):
+            self._apply_workbench_metrics()
+
+    def _save_splitter_prefs(self):
+        settings = QSettings("InvoiceHub", "workbench")
+        if hasattr(self, "main_splitter"):
+            settings.setValue("splitter/main", self.main_splitter.sizes())
+        if hasattr(self, "left_splitter"):
+            settings.setValue("splitter/left", self.left_splitter.sizes())
+        if hasattr(self, "shortcut_disclosure"):
+            settings.setValue("shortcut_help_expanded", self.shortcut_disclosure.is_expanded())
+
+    def _restore_splitter_prefs(self):
+        settings = QSettings("InvoiceHub", "workbench")
+        main_sizes = settings.value("splitter/main", None)
+        if main_sizes is not None:
+            try:
+                sizes = [int(x) for x in main_sizes]
+                if len(sizes) == 2 and all(s >= 0 for s in sizes) and sum(sizes) > 0:
+                    self.main_splitter.setSizes(sizes)
+            except (TypeError, ValueError):
+                pass
+
+        left_sizes = settings.value("splitter/left", None)
+        if left_sizes is not None:
+            try:
+                self._restore_left_splitter_sizes([int(x) for x in left_sizes])
+            except (TypeError, ValueError):
+                pass
+
+        if hasattr(self, "shortcut_disclosure"):
+            expanded = settings.value("shortcut_help_expanded", False, type=bool) if settings.contains("shortcut_help_expanded") else False
+            self.shortcut_disclosure.set_expanded(bool(expanded))
+
+    def _restore_left_splitter_sizes(self, sizes):
+        if len(sizes) != 2:
+            return
+        total = sum(sizes)
+        if total <= 0:
+            return
+        record, preview = clamp_vertical_split(total, sizes[0], record_min=280, preview_min=180)
+        self.left_splitter.setSizes([record, preview])
+        self._left_splitter_sizes_initialized = True
 
     def _make_menu_action(self, text: str, icon_id, handler, tooltip: str = "") -> QAction:
         action = QAction(self.style().standardIcon(icon_id), text, self)
@@ -349,7 +410,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         main_layout.addLayout(action_layout)
 
         # 1. Top Filter Bar
-        filter_layout = QHBoxLayout()
+        self.filter_bar_widget = QWidget()
+        self.filter_bar_widget.setMaximumHeight(88)
+        filter_layout = QHBoxLayout(self.filter_bar_widget)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(8)
 
         lbl_filter = QLabel("审核视图:")
@@ -365,21 +429,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ERROR: "异常",
         }
 
+        state_by_status = {
+            "all": "info",
+            TO_REVIEW: "warning",
+            APPROVED: "success",
+            IGNORED: "muted",
+            ERROR: "danger",
+        }
         for status, text in self.filter_base_labels.items():
-            btn = QPushButton(text)
-            btn.setProperty("class", "FilterBtn")
-            btn.setCheckable(True)
-            btn.setAutoExclusive(True)
-            btn.setMinimumWidth(86)
-            btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            if status == "all":
-                btn.setChecked(True)
-            btn.clicked.connect(lambda checked, s=status: self._change_filter(s))
-            filter_layout.addWidget(btn)
-            self.filter_buttons[status] = btn
+            card = CompactStatCard(text, "0", state=state_by_status[status])
+            card.setFocusPolicy(Qt.StrongFocus)
+            card.setMinimumWidth(96)
+            card.set_selected(status == "all")
+            card.clicked.connect(lambda s=status: self._change_filter(s))
+            filter_layout.addWidget(card, 1)
+            self.filter_buttons[status] = card
 
         filter_layout.addStretch()
-        main_layout.addLayout(filter_layout)
+        main_layout.addWidget(self.filter_bar_widget)
 
         # 1b. Search & Secondary Filters
         search_layout = QHBoxLayout()
@@ -556,9 +623,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_splitter.setSizes([380, 620])
         self.preview_panel.setMinimumHeight(180)
 
-
-
         left_layout.addWidget(self.left_splitter)
+
+        self.btn_shortcut_help = QToolButton(left_panel)
+        self.btn_shortcut_help.setText("快捷键  Enter 通过 · Del 忽略")
+        self.btn_shortcut_help.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
+        left_layout.addWidget(self.btn_shortcut_help, 0, Qt.AlignLeft)
+        self.shortcut_disclosure = ShortcutDisclosure(self)
+        self.shortcut_disclosure.setWindowFlags(Qt.Popup)
+        self.shortcut_disclosure.hide()
 
         splitter.addWidget(left_panel)
 
@@ -571,6 +645,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Set default proportions: Table takes 60%, Form takes 40%
         splitter.setSizes([650, 450])
+
+        self._apply_workbench_metrics()
+
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(500)
+        self._splitter_save_timer.timeout.connect(self._save_splitter_prefs)
+        self.left_splitter.splitterMoved.connect(
+            lambda _pos, _idx: self._splitter_save_timer.start()
+        )
+        self.main_splitter.splitterMoved.connect(
+            lambda _pos, _idx: self._splitter_save_timer.start()
+        )
 
         # 3. Bottom Status Bar & Collapsible Log Panel
         status_bar = QWidget()
@@ -861,10 +948,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._limited_first_load_total = 0
         self._refresh_column_filter_headers()
         self._update_filter_summary_chips()
-        
+
         self.current_filter_status = None
         for s, btn in self.filter_buttons.items():
-            btn.setChecked(s == "all")
+            if hasattr(btn, "set_selected"):
+                btn.set_selected(s == "all")
+            else:
+                btn.setChecked(s == "all")
         self._load_invoices()
 
     def _column_filter_value_getters(self) -> dict:
@@ -1035,7 +1125,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if status in counts:
                     counts[status] += 1
         for status, btn in self.filter_buttons.items():
-            btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
+            if hasattr(btn, "set_title") and hasattr(btn, "set_value"):
+                btn.set_title(self._base_filter_label(status))
+                btn.set_value(str(counts.get(status, 0)))
+            else:
+                btn.setText(f"{self._base_filter_label(status)} {counts.get(status, 0)}")
+
+    def _toggle_shortcut_disclosure(self) -> None:
+        panel = self.shortcut_disclosure
+        panel.set_expanded(not panel.is_expanded())
+        panel.adjustSize()
+        pos = self.btn_shortcut_help.mapToGlobal(self.btn_shortcut_help.rect().topLeft())
+        panel.move(pos.x(), max(0, pos.y() - panel.height() - 4))
+        panel.show()
+        self._save_splitter_prefs()
 
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
@@ -1303,7 +1406,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._column_filters_load_all = False
         self.current_filter_status = None if status == "all" else status
         for s, btn in self.filter_buttons.items():
-            btn.setChecked(s == status)
+            if hasattr(btn, "set_selected"):
+                btn.set_selected(s == status)
+            else:
+                btn.setChecked(s == status)
         self._load_invoices()
         self.statusBar().showMessage(f"已切换筛选条件: {self.filter_buttons[status].text()}", 2000)
 
