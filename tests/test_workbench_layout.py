@@ -127,6 +127,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
         settings.remove("shortcut_help_expanded")
+        settings.sync()
 
     def tearDown(self):
         if _HAS_PYSIDE6:
@@ -134,6 +135,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             settings = QSettings("InvoiceHub", "workbench")
             settings.remove("nav_collapsed_manual")
             settings.remove("shortcut_help_expanded")
+            settings.sync()
 
     def _make_window(self, td: str):
         """Create a minimal InvoiceReviewApp against a temp database."""
@@ -516,6 +518,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def test_default_nav_is_collapsed_at_1920(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
+        settings.sync()
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
@@ -535,6 +538,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def test_manual_nav_expand_toggle_persists_at_large_size(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
+        settings.sync()
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
@@ -570,6 +574,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def test_manual_nav_expand_persists_on_restart(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
+        settings.sync()
         with tempfile.TemporaryDirectory() as td:
             first = self._make_window(td)
             try:
@@ -602,6 +607,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def test_default_collapsed_nav_does_not_persist_false_manual_state(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
+        settings.sync()
         with tempfile.TemporaryDirectory() as td:
             first = self._make_window(td)
             try:

@@ -265,7 +265,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        force_compact_nav = w <= 1366 or h <= 768
+        force_compact_nav = w <= 1366
         if force_compact_nav:
             nav_collapsed = True
         elif self._nav_collapsed_manual is None:
@@ -318,7 +318,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _toggle_workbench_nav_collapsed(self):
         metrics = metrics_for_size(self.width() or 1150, self.height() or 850)
-        force_compact_nav = (self.width() or 1150) <= 1366 or (self.height() or 850) <= 768
+        force_compact_nav = (self.width() or 1150) <= 1366
         if force_compact_nav:
             nav_collapsed = True
         elif self._nav_collapsed_manual is None:
@@ -713,8 +713,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(21)
-        self.table.verticalHeader().setMinimumSectionSize(21)
+        self.table.verticalHeader().setDefaultSectionSize(20)
+        self.table.verticalHeader().setMinimumSectionSize(20)
+        self.table.verticalHeader().setMaximumSectionSize(23)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
