@@ -5630,7 +5630,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 try:
                     window._deferred_init()
                     app.processEvents()
-                    self.assertEqual(window.table.rowCount(), 100)
+                    self.assertEqual(window.table.rowCount(), 50)
                     self.assertEqual(window.filter_buttons["all"].text(), "全部 105")
                     self.assertEqual(window.filter_buttons["to_review"].text(), "待审核 105")
                 finally:
@@ -5914,7 +5914,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._deferred_init()
                     app.processEvents()
 
-                    self.assertEqual(window.table.rowCount(), 100)
+                    self.assertEqual(window.table.rowCount(), 50)
 
                     for status, limit in list_calls:
                         if status is None and limit is None:

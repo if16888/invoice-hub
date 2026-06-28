@@ -121,6 +121,7 @@ class PreviewMixin:
             button.setObjectName(f"PreviewAction_{key}")
             tb_layout.addWidget(button)
 
+        self.overlay_toolbar.hide()
         self._init_legacy_preview_controls()
 
     def _init_legacy_preview_controls(self):
@@ -262,7 +263,7 @@ class PreviewMixin:
 
         self.preview_rotation = 0
         self.preview_focus_dialog = None
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.hide()
         self.thumbnail_rail.setVisible(False)
         self._set_zoom_buttons_enabled(False)
 
@@ -275,7 +276,7 @@ class PreviewMixin:
         self.overlay_toolbar.setVisible(True)
 
     def _hide_overlay_toolbar(self):
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.hide()
 
     def _start_hide_overlay_timer(self):
         return
@@ -472,7 +473,7 @@ class PreviewMixin:
             text = "\u56fe\u7247\u52a0\u8f7d\u5931\u8d25\n\u8bf7\u70b9\u51fb\u5916\u90e8\u6253\u5f00\uff0c\u6216\u91cd\u65b0\u5bfc\u5165\u8be5\u6750\u6599"
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.hide()
         self._set_zoom_buttons_enabled(False)
 
     def _zoom_fit_width(self):
@@ -572,7 +573,7 @@ class PreviewMixin:
             if hasattr(self, "btn_link_evidence"):
                 self.btn_link_evidence.setVisible(False)
                 self.btn_link_evidence.setEnabled(False)
-            self.overlay_toolbar.setVisible(True)
+            self.overlay_toolbar.hide()
             self._set_zoom_buttons_enabled(False)
             return
 
@@ -622,12 +623,12 @@ class PreviewMixin:
 
         if not file_path.exists():
             self._show_preview_status("文件不存在")
-            self.overlay_toolbar.setVisible(True)
+            self.overlay_toolbar.hide()
             self._set_preview_action_availability(file_path)
             return
 
         # Keep default state as hidden, show toolbar when mouse enters
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.hide()
         self._set_zoom_buttons_enabled(True)
 
         suffix = file_path.suffix.lower()
@@ -681,7 +682,7 @@ class PreviewMixin:
                     self.lbl_pdf_fallback.setStyleSheet("color: #D97706; background-color: #FEF3C7; font-weight: bold; padding: 20px;")
                     self.preview_stack.addWidget(self.lbl_pdf_fallback)
                 self.preview_stack.setCurrentWidget(self.lbl_pdf_fallback)
-                self.overlay_toolbar.setVisible(True)
+                self.overlay_toolbar.hide()
                 self._set_zoom_buttons_enabled(False)
         elif suffix in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".heic"):
             pixmap = QPixmap(str(file_path))
@@ -691,7 +692,7 @@ class PreviewMixin:
                     self._show_preview_status("该图片格式暂不支持内嵌预览，请点击外部打开")
                 else:
                     self._show_preview_status("图片加载失败，暂不支持预览")
-                self.overlay_toolbar.setVisible(True)
+                self.overlay_toolbar.hide()
                 self._set_zoom_buttons_enabled(False)
             else:
                 self.current_image_pixmap = pixmap
@@ -702,7 +703,7 @@ class PreviewMixin:
         else:
             used_fallback = True
             self._show_preview_status("暂不支持内嵌预览，请点击打开外部文件")
-            self.overlay_toolbar.setVisible(True)
+            self.overlay_toolbar.hide()
             self._set_zoom_buttons_enabled(False)
 
         load_elapsed_ms = int((time.perf_counter() - preview_start) * 1000)

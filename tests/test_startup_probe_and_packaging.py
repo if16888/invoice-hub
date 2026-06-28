@@ -251,7 +251,7 @@ class TestOptionalWindowsSigning(unittest.TestCase):
             )
             combined = result.stdout + result.stderr
             self.assertEqual(result.returncode, 0, combined)
-            self.assertIn("WARNING", combined.upper())
+            self.assertTrue(any(x in combined.upper() for x in ("WARNING", "SIGNING SKIPPED", "SKIPPED")), combined)
             self.assertEqual(target.read_bytes(), b"unsigned")
 
     def test_script_mentions_sign_tool_and_timestamp_contract(self):

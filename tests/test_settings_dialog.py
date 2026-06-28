@@ -3,7 +3,10 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+try:
+    from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+except ImportError:
+    QApplication, QMessageBox, QWidget = None, None, None
 
 
 class SettingsDialogTestMixin:

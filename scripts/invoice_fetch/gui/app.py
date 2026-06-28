@@ -1136,6 +1136,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._column_filters_load_all = False
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
+        self._is_first_load = True
         self._refresh_column_filter_headers()
         self._update_filter_summary_chips()
 
@@ -1750,7 +1751,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         limit_val = None
         if self._is_first_load and is_default_view and self.current_filter_status is None:
-            limit_val = 100
+            limit_val = 50
 
         counts = None
         try:
@@ -1840,16 +1841,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
             ]
 
-        # 5. Apply first-load limit of 100 rows
+        # 5. Apply first-load limit of 50 rows
         total_matching = len(displayed_invoices)
         if is_default_view:
             total_matching = counts.get("all") if self.current_filter_status is None else counts.get(self.current_filter_status, 0)
 
         first_load_limited = False
-        if self._limited_first_load_active and total_matching > 100:
-            displayed_invoices = displayed_invoices[:100]
+        if self._limited_first_load_active and total_matching > 50:
+            displayed_invoices = displayed_invoices[:50]
             first_load_limited = True
-        elif limit_val is not None and total_matching > 100:
+        elif limit_val is not None and total_matching > 50:
             first_load_limited = True
 
         filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
@@ -1874,7 +1875,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Show/hide the load-all button
         if hasattr(self, "btn_load_all"):
             if self._limited_first_load_active:
-                shown = len(self.invoices_list) if self.invoices_list else 100
+                shown = len(self.invoices_list) if self.invoices_list else 50
                 self.btn_load_all.setText("加载全部")
                 self.btn_load_all.setToolTip(
                     f"首屏仅加载 {shown} / {self._limited_first_load_total} 张，点击加载完整列表"

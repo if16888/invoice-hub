@@ -1,67 +1,50 @@
+"""Workbench state engine: incremental loading and keyboard routing classifier."""
+
 from __future__ import annotations
+from typing import Any
+from PySide6.QtWidgets import QWidget, QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox
 
-from dataclasses import dataclass
+class IncrementalWindow:
+    """Tracks state and offset pagination for incremental database loading."""
+
+    def __init__(self, limit: int = 50):
+        self.limit = limit
+        self.offset = 0
+        self.has_more = True
+        self.invoices: list[dict[str, Any]] = []
+        self.status_filter: str | None = None
+        self.search_text: str = ""
+        self.column_filters: dict[str, Any] = {}
+
+    def reset(self, status_filter: str | None = None, search_text: str = "", column_filters: dict[str, Any] | None = None) -> None:
+        """Reset pagination state to first page."""
+        self.offset = 0
+        self.has_more = True
+        self.invoices = []
+        self.status_filter = status_filter
+        self.search_text = search_text
+        self.column_filters = dict(column_filters) if column_filters is not None else {}
+
+    def advance(self, count_loaded: int) -> None:
+        """Advance offset and determine if there are more records to load."""
+        if count_loaded < self.limit:
+            self.has_more = False
+        self.offset += count_loaded
+
+    def append_invoices(self, new_invoices: list[dict[str, Any]]) -> None:
+        """Append newly loaded invoices to the cache."""
+        self.invoices.extend(new_invoices)
 
 
-def is_keyboard_input_target(widget) -> bool:
-    """Return whether focused widget ancestry owns editing/navigation keys."""
+def is_keyboard_input_target(widget: QWidget | None) -> bool:
+    """Return True if the focused widget is a text/number editor or combo box that should consume keyboard inputs."""
     if widget is None:
         return False
-    from PySide6.QtWidgets import (
-        QAbstractSpinBox,
-        QComboBox,
-        QLineEdit,
-        QPlainTextEdit,
-        QTextEdit,
-    )
-
-    current = widget
-    while current is not None:
-        if isinstance(current, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
-            return True
-        if isinstance(current, QComboBox) and current.isEditable():
-            return True
-        current = current.parentWidget()
+    # Check common input widgets
+    if isinstance(widget, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox)):
+        return True
+    # Also check if class name contains common editor identifiers to be robust
+    class_name = widget.metaObject().className() if hasattr(widget, "metaObject") else ""
+    if any(term in class_name for term in ["LineEdit", "TextEdit", "SpinBox", "ComboBox"]):
+        return True
     return False
-
-
-@dataclass
-class IncrementalWindow:
-    batch_size: int = 100
-    offset: int = 0
-    total: int = 0
-    loading: bool = False
-    has_more: bool = True
-    generation: int = 0
-
-    def __post_init__(self) -> None:
-        if self.batch_size <= 0:
-            raise ValueError("batch_size must be a positive integer")
-
-    def reset(self) -> None:
-        self.offset = 0
-        self.total = 0
-        self.loading = False
-        self.has_more = True
-        self.generation += 1
-
-    def next_query(self) -> tuple[int, int]:
-        if self.loading:
-            raise RuntimeError("batch query already in progress")
-        if not self.has_more and self.offset > 0:
-            raise RuntimeError("no more batches available")
-        self.loading = True
-        return self.batch_size, self.offset
-
-    def accept_batch(self, count: int, total: int, generation: int) -> None:
-        if generation != self.generation:
-            return
-        self.loading = False
-        self.total = max(0, int(total))
-        self.offset = max(0, self.offset + max(0, int(count)))
-        self.has_more = self.offset < self.total
-
-    def fail_batch(self, generation: int) -> None:
-        if generation != self.generation:
-            return
-        self.loading = False
