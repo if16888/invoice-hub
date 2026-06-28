@@ -344,6 +344,49 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertTrue(window.table.item(0, 0).font().bold())
         self.assertTrue(window.table.item(0, 1).font().bold())
 
+    def test_invoice_row_tooltips_are_readable_and_user_button_is_neutral(self):
+        window = self._make_window([
+            {
+                "invoice_number": "COMPLETE-1",
+                "expense_date": "2026-06-01",
+                "invoice_date": "2026-06-01",
+                "total_amount": "88.00",
+                "seller_name": "完整商户",
+                "attachment_path": "file.pdf",
+                "review_status": "approved",
+            },
+            {
+                "invoice_number": "",
+                "expense_date": "2026-06-02",
+                "invoice_date": "2026-06-02",
+                "total_amount": "66.00",
+                "seller_name": "待补全商户",
+                "attachment_path": "file.pdf",
+                "review_status": "to_review",
+            },
+        ])
+        window.show()
+        self.app.processEvents()
+        window._load_invoices()
+        self.app.processEvents()
+
+        self.assertEqual(window.table.rowCount(), 2)
+        for row in range(window.table.rowCount()):
+            review_item = window.table.item(row, 0)
+            material_item = window.table.item(row, 1)
+            self.assertIsNotNone(review_item)
+            self.assertIsNotNone(material_item)
+            self.assertNotIn("????", review_item.toolTip())
+            self.assertNotIn("????", material_item.toolTip())
+            self.assertIn("资料状态", review_item.toolTip())
+            self.assertIn("审核状态", review_item.toolTip())
+            self.assertIn("资料状态", material_item.toolTip())
+            self.assertNotEqual(review_item.text(), "??")
+            self.assertNotEqual(material_item.text(), "??")
+
+        self.assertNotIn("张伟", window.btn_toolbar_user.text())
+        self.assertEqual(window.btn_toolbar_user.text(), "本地模式 ▾")
+
     def test_top_checkbox_bidirectional_sync_needs_fix(self):
         # 勾选“待补全”等价于资料状态列过滤。
         # 清除资料状态列过滤会同步取消顶部“待补全”。

@@ -177,6 +177,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
         self._left_splitter_sizes_initialized = False
+        self._nav_collapsed_manual: bool | None = None
 
         self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
@@ -264,15 +265,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        self._nav_compact = metrics.nav_collapsed
+        nav_collapsed = metrics.nav_collapsed or bool(self._nav_collapsed_manual)
+        self._nav_compact = nav_collapsed
         search_placeholder = (
             "搜索发票号 / 销售方 / 购买方 / 金额    Ctrl + F"
             if metrics.compact
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        self.workbench_nav.setMinimumWidth(metrics.nav_width)
-        self.workbench_nav.setMaximumWidth(metrics.nav_width)
+        nav_width = 56 if nav_collapsed else metrics.nav_width
+        self.workbench_nav.setMinimumWidth(nav_width)
+        self.workbench_nav.setMaximumWidth(nav_width)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
         self.btn_more.setText("更多  ▼" if not metrics.compact else "更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
@@ -282,20 +285,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             card.setMinimumWidth(min(104, card_width))
             card.setMinimumSize(min(104, card_width), 0)
             card.updateGeometry()
-        self.workbench_nav_title.setVisible(not metrics.nav_collapsed)
-        self.workbench_nav_subtitle.setVisible(not metrics.nav_collapsed)
-        self.workbench_nav_spacer.setVisible(not metrics.nav_collapsed)
+        self.workbench_nav_title.setVisible(not nav_collapsed)
+        self.workbench_nav_subtitle.setVisible(not nav_collapsed)
+        self.workbench_nav_spacer.setVisible(not nav_collapsed)
         for key, button in self.workbench_nav_buttons.items():
             full_text = self._workbench_nav_button_texts.get(key, "")
-            button.setText("" if metrics.nav_collapsed else full_text)
-            button.setToolTip(full_text if metrics.nav_collapsed else "")
-            button.setProperty("collapsed", metrics.nav_collapsed)
-            button.setMinimumHeight(36 if not metrics.nav_collapsed else 44)
+            button.setText("" if nav_collapsed else full_text)
+            button.setToolTip(full_text if nav_collapsed else "")
+            button.setProperty("collapsed", nav_collapsed)
+            button.setMinimumHeight(36 if not nav_collapsed else 44)
             button.style().unpolish(button)
             button.style().polish(button)
-        self.btn_collapse_nav.setText("" if metrics.nav_collapsed else "收起侧边栏")
-        self.btn_collapse_nav.setToolTip("展开侧边栏" if metrics.nav_collapsed else "收起侧边栏")
-        self.btn_collapse_nav.setProperty("collapsed", metrics.nav_collapsed)
+        self.btn_collapse_nav.setText("" if nav_collapsed else "收起侧边栏")
+        self.btn_collapse_nav.setToolTip("展开侧边栏" if nav_collapsed else "收起侧边栏")
+        self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
         self.main_splitter.setStretchFactor(0, 1)
@@ -303,6 +306,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not self._left_splitter_sizes_initialized:
             self.left_splitter.setSizes([metrics.record_height, max(h - metrics.record_height, 180)])
             self._left_splitter_sizes_initialized = True
+
+    def _toggle_workbench_nav_collapsed(self):
+        metrics = metrics_for_size(self.width() or 1150, self.height() or 850)
+        nav_collapsed = metrics.nav_collapsed or bool(self._nav_collapsed_manual)
+        self._nav_collapsed_manual = not nav_collapsed
+        settings = QSettings("InvoiceHub", "workbench")
+        settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
+        self._apply_workbench_metrics()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -317,6 +328,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             settings.setValue("splitter/left", self.left_splitter.sizes())
         if hasattr(self, "shortcut_disclosure"):
             settings.setValue("shortcut_help_expanded", self.shortcut_disclosure.is_expanded())
+        settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
 
     def _restore_splitter_prefs(self):
         settings = QSettings("InvoiceHub", "workbench")
@@ -339,6 +351,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "shortcut_disclosure"):
             expanded = settings.value("shortcut_help_expanded", False, type=bool) if settings.contains("shortcut_help_expanded") else False
             self.shortcut_disclosure.set_expanded(bool(expanded))
+        if settings.contains("nav_collapsed_manual"):
+            self._nav_collapsed_manual = settings.value("nav_collapsed_manual", False, type=bool)
+        else:
+            self._nav_collapsed_manual = None
 
     def _restore_left_splitter_sizes(self, sizes):
         if len(sizes) != 2:
@@ -443,6 +459,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
         self.btn_collapse_nav.setToolTip("收起或展开侧边栏")
         self.btn_collapse_nav.setMinimumHeight(32)
+        self.btn_collapse_nav.clicked.connect(self._toggle_workbench_nav_collapsed)
         nav_layout.addWidget(self.btn_collapse_nav)
 
         root_layout.addWidget(self.workbench_nav)
@@ -506,7 +523,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_toolbar_notify.clicked.connect(self._toggle_log)
         self.btn_toolbar_notify.hide()
 
-        self.btn_toolbar_user = QPushButton("张伟 ▾")
+        self.btn_toolbar_user = QPushButton("本地模式 ▾")
         self.btn_toolbar_user.setObjectName("WorkbenchUserButton")
         self.btn_toolbar_user.setProperty("variant", "toolbar")
         self.btn_toolbar_user.setMinimumHeight(30)
@@ -1909,18 +1926,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         elif review_status == "error":
                             item.setForeground(QColor("#DC2626"))
                             item.setBackground(QColor("#FEF2F2"))
-                        item.setToolTip(f"????: {display_status}\n????: {rev_chinese}")
+                        item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
                     elif col == 1:
                         font = item.font()
                         font.setBold(True)
                         item.setFont(font)
-                        if display_status == "??":
+                        if display_status == "正常":
                             item.setForeground(QColor("#059669"))
                             item.setBackground(QColor("#ECFDF5"))
                         else:
                             item.setForeground(QColor("#D97706"))
                             item.setBackground(QColor("#FFFBEB"))
-                        item.setToolTip(f"????: {display_status}")
+                        item.setToolTip(f"资料状态: {display_status}")
                     elif col == 2:
                         date_source_disp = {
                             "travel_date": "乘车日期",
