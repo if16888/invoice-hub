@@ -1312,7 +1312,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 try:
                     window._deferred_init()
                     app.processEvents()
-                    self.assertEqual(window.centralWidget().layout().spacing(), 8)
+                    self.assertEqual(window.centralWidget().layout().spacing(), 0)
+                    self.assertEqual(window.workbench_content.layout().spacing(), 8)
                     self.assertEqual(window.summary_card.layout().spacing(), 6)  # readable spacing
                     self.assertGreaterEqual(window.btn_toggle_log.minimumWidth(), 76)
                     self.assertEqual(window.status_bar.maximumHeight(), 36)
@@ -1368,7 +1369,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertTrue(window.table.item(0, 0).toolTip())
                 self.assertTrue(window.table.item(0, 3).toolTip())
                 self.assertTrue(window.table.item(0, 4).toolTip())
-                self.assertTrue(window.table.item(0, 6).toolTip())
+                self.assertTrue(window.table.item(0, 5).toolTip())
             finally:
                 if hasattr(window, "db") and window.db is not None:
                     window.db.close()
@@ -6021,7 +6022,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 window.table.selectRow(0)
                 app.processEvents()
 
-                self.assertEqual(window.table.item(0, 7).text(), "—")
+                self.assertEqual(window._get_invoice_claim_group(window.current_invoice), "")
                 new_idx = window.combo_claims.findData(window._NEW_CLAIM_VALUE)
                 self.assertGreaterEqual(new_idx, 0)
                 window.combo_claims.setCurrentIndex(new_idx)
@@ -6038,7 +6039,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 app.processEvents()
 
                 self.assertEqual(window.combo_claims.currentData(), claim_b)
-                self.assertEqual(window.table.item(0, 7).text(), "Claim B")
+                self.assertEqual(window._get_invoice_claim_group(window.current_invoice), "Claim B")
                 self.assertEqual(window.btn_add_to_claim.text(), "已在 Claim B")
                 self.assertFalse(window.btn_add_to_claim.isEnabled())
                 self.assertFalse(window.btn_delete_claim.isEnabled())

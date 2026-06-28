@@ -277,6 +277,112 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertLessEqual(window.filter_bar_widget.maximumHeight(), 88)
                 self.assertEqual(len(window.filter_buttons), 5)
                 self.assertTrue(all(isinstance(card, CompactStatCard) for card in window.filter_buttons.values()))
+                self.assertTrue(all(card.maximumWidth() <= 108 for card in window.filter_buttons.values()))
+                self.assertTrue(all(card.sizeHint().height() <= 70 for card in window.filter_buttons.values()))
+            finally:
+                window.db.close()
+                window.close()
+
+    def test_final_workbench_shell_has_left_nav_and_top_toolbar(self):
+        """0.1.4 visual shell must expose the design-aligned nav and toolbar."""
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+
+                self.assertTrue(window.workbench_nav.isVisible())
+                self.assertEqual(window.workbench_nav.objectName(), "WorkbenchNav")
+                self.assertGreaterEqual(window.workbench_nav.minimumWidth(), 200)
+
+                self.assertTrue(window.workbench_top_toolbar.isVisible())
+                self.assertEqual(window.workbench_top_toolbar.objectName(), "WorkbenchTopToolbar")
+                self.assertEqual(window.txt_search.parentWidget(), window.workbench_top_toolbar)
+                self.assertIn("Ctrl + F", window.txt_search.placeholderText())
+                self.assertEqual(window.btn_import_local.property("emphasis"), "primary")
+
+                visible_nav_buttons = [
+                    button for button in window.workbench_nav_buttons.values()
+                    if button.isVisible()
+                ]
+                self.assertGreaterEqual(len(visible_nav_buttons), 8)
+                self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
+                self.assertEqual(window.workbench_nav_buttons["imports"].text(), "导入记录")
+                self.assertEqual(window.workbench_nav_buttons["mail"].text(), "邮箱导入")
+                self.assertFalse(window.workbench_nav_buttons["review"].icon().isNull())
+                self.assertEqual(window.btn_scan_email.text(), "邮箱同步")
+                self.assertEqual(window.btn_toolbar_export.text(), "批量导出")
+                self.assertFalse(window.btn_toolbar_help.isVisible())
+                self.assertFalse(window.btn_toolbar_notify.isVisible())
+                self.assertTrue(window.btn_toolbar_user.isVisible())
+                self.assertTrue(window.btn_more.menu() is not None)
+                self.assertFalse(window.btn_collapse_nav.icon().isNull())
+                self.assertTrue(window.btn_collapse_nav.toolTip())
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_preview_empty_state_uses_shared_styled_label(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertEqual(window.lbl_preview_status.property("class"), "PreviewEmptyState")
+                self.assertEqual(window.lbl_preview_status.styleSheet(), "")
+                self.assertLessEqual(window.lbl_preview_status.maximumWidth(), 560)
+                self.assertEqual(window.preview_stack.objectName(), "PreviewSurface")
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_invoice_table_default_columns_match_review_workbench_design(self):
+        """The list is for fast switching, so default columns stay compact."""
+        from scripts.invoice_fetch.gui.column_filters import VISIBLE_COLUMN_DEFINITIONS
+
+        expected = (
+            "review_status",
+            "status",
+            "expense_date",
+            "total_amount",
+            "seller_name",
+            "invoice_number",
+        )
+        self.assertEqual(tuple(key for key, _label in VISIBLE_COLUMN_DEFINITIONS), expected)
+
+    def test_invoice_table_uses_dense_row_height(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertLessEqual(window.table.verticalHeader().defaultSectionSize(), 23)
+                self.assertLessEqual(window.table.font().pointSize(), 12)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_workbench_version_is_014(self):
+        from scripts.invoice_fetch.version import APP_VERSION, VERSION
+
+        self.assertEqual(VERSION, "0.1.4")
+        self.assertEqual(APP_VERSION, "v0.1.4")
+
+    def test_status_bar_shortcut_copy_uses_chinese_punctuation(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                self.assertIn("快捷键：", window.btn_shortcut_help.text())
+                self.assertIn("·", window.btn_shortcut_help.text())
             finally:
                 window.db.close()
                 window.close()
@@ -289,7 +395,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
+                window.resize(1920, 1080)
                 window.show()
+                QApplication.processEvents()
                 QApplication.processEvents()
                 self.assertFalse(window.shortcut_disclosure.is_expanded())
                 before = window.main_splitter.sizes()
@@ -351,6 +459,40 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 resized_ratio = resized_sizes[0] / sum(resized_sizes)
 
                 self.assertAlmostEqual(resized_ratio, moved_ratio, delta=0.03)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_compact_density_shortens_search_placeholder(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1366, 768)
+                QApplication.processEvents()
+                self.assertIn("Ctrl + F", window.txt_search.placeholderText())
+                self.assertNotIn("邮件主题", window.txt_search.placeholderText())
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_compact_nav_collapses_to_icons_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1366, 768)
+                QApplication.processEvents()
+                self.assertFalse(window.workbench_nav_title.isVisible())
+                self.assertFalse(window.workbench_nav_subtitle.isVisible())
+                self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
+                self.assertEqual(window.btn_collapse_nav.text(), "")
+                self.assertGreater(window.workbench_nav.maximumWidth(), 40)
+                self.assertLessEqual(window.workbench_nav.maximumWidth(), 72)
             finally:
                 window.db.close()
                 window.close()

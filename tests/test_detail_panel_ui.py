@@ -261,9 +261,20 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
         self.assertEqual(self.panel.detail_tabs.tabText(0), "基本信息")
         self.assertEqual(self.panel.detail_tabs.tabText(1), "报销信息")
-        self.assertEqual(self.panel.detail_tabs.count(), 2)
+        self.assertEqual(self.panel.detail_tabs.tabText(2), "关联合同")
+        self.assertEqual(self.panel.detail_tabs.tabText(3), "操作记录")
+        self.assertEqual(self.panel.detail_tabs.count(), 4)
 
     # ── 8. Claim group buttons ──────────────────────────────────────────────
+
+    def test_fixed_header_container_stays_compact(self):
+        self.panel.resize(760, 850)
+        self.panel.show()
+        self.app.processEvents()
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 126)
+        self.assertLessEqual(self.panel.btn_app.height(), 50)
+        self.assertLessEqual(self.panel.btn_err.height(), 50)
+        self.assertEqual(self.panel.summary_card.objectName(), "DetailSummaryCard")
 
     def test_claim_group_buttons_exist(self):
         """Claim group add/export buttons must be present."""
@@ -296,6 +307,12 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         material_x = self.panel.txt_path.mapTo(self.panel, self.panel.txt_path.rect().topLeft()).x()
         core_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
         self.assertLessEqual(abs(material_x - core_x), 2)
+
+    def test_basic_info_section_stays_compact(self):
+        self.panel.resize(760, 850)
+        self.panel.show()
+        self.app.processEvents()
+        self.assertLessEqual(self.panel.detail_core_section.height(), 156)
 
     def test_empty_claim_delete_button_exists_in_summary_row(self):
         """Deleting an empty group lives in the claim action cluster, not the summary row."""

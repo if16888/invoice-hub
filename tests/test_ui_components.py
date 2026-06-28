@@ -88,6 +88,12 @@ class TestCompactStatCard(unittest.TestCase):
         card.set_value("99")
         self.assertEqual(card.value(), "99")
 
+    def test_icon_text_is_exposed_when_provided(self):
+        from scripts.invoice_fetch.gui.ui_components import CompactStatCard
+
+        card = CompactStatCard("全部", "303", state="info", icon_text="◎")
+        self.assertEqual(card.icon_text(), "◎")
+
     # --- clicked signal ---------------------------------------------------------
 
     def test_clicked_signal_exists(self):

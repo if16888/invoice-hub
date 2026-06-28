@@ -162,6 +162,7 @@ if _HAS_QT:
             value: str,
             *,
             state: str = "muted",
+            icon_text: str = "",
             parent: QWidget | None = None,
         ) -> None:
             super().__init__(parent)
@@ -172,8 +173,13 @@ if _HAS_QT:
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(8, 6, 8, 6)
-            layout.setSpacing(2)
+            layout.setContentsMargins(6, 4, 6, 4)
+            layout.setSpacing(1)
+
+            self._lbl_icon = QLabel(icon_text)
+            self._lbl_icon.setProperty("class", "CompactStatCardIcon")
+            self._lbl_icon.setAlignment(Qt.AlignCenter)
+            self._lbl_icon.setVisible(bool(icon_text))
 
             self._lbl_title = QLabel(title)
             self._lbl_title.setProperty("class", "CompactStatCardTitle")
@@ -183,11 +189,13 @@ if _HAS_QT:
             self._lbl_value.setProperty("class", "CompactStatCardValue")
             self._lbl_value.setAlignment(Qt.AlignCenter)
 
+            layout.addWidget(self._lbl_icon)
             layout.addWidget(self._lbl_title)
             layout.addWidget(self._lbl_value)
 
             # Store raw value for programmatic access
             self._value = value
+            self._icon_text = icon_text
 
         # ------------------------------------------------------------------
         # Public API
@@ -201,6 +209,10 @@ if _HAS_QT:
         def value(self) -> str:
             """Return the current displayed value string."""
             return self._value
+
+        def icon_text(self) -> str:
+            """Return the current decorative icon string."""
+            return self._icon_text
 
         def set_title(self, title: str) -> None:
             self._lbl_title.setText(title)

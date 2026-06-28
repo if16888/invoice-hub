@@ -979,6 +979,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self._set_summary_placeholder()
+        self._update_fixed_header_height_cap()
 
 
 
@@ -1201,6 +1202,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+
+    def _update_fixed_header_height_cap(self):
+        compact_header = not self.lbl_date_warning.isVisible() and not self.lbl_buyer_warning.isVisible()
+        self.fixed_header_container.setMaximumHeight(126 if compact_header else 16777215)
 
     def set_multi_selection_state(self, count: int):
 
@@ -1933,6 +1938,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.fixed_header_container = QFrame()
         self.fixed_header_container.setObjectName("DetailFixedHeader")
+        self.fixed_header_container.setMaximumHeight(126)
         fixed_layout = QVBoxLayout(self.fixed_header_container)
         fixed_layout.setContentsMargins(8, 0, 8, 0)
         fixed_layout.setSpacing(0)
@@ -1957,6 +1963,47 @@ class InvoiceDetailPanel(QWidget):
         reimbursement_layout.addStretch(1)
         self.reimbursement_scroll.setWidget(reimbursement_content)
         self.detail_tabs.addTab(self.reimbursement_scroll, "报销信息")
+
+        self.contract_scroll = QScrollArea()
+        self.contract_scroll.setWidgetResizable(True)
+        self.contract_scroll.setFrameShape(QFrame.NoFrame)
+        self.contract_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        contract_content = QWidget()
+        contract_layout = QVBoxLayout(contract_content)
+        contract_layout.setContentsMargins(12, 12, 12, 12)
+        contract_layout.setSpacing(10)
+        self.contract_placeholder = QFrame()
+        self.contract_placeholder.setProperty("class", "DetailSection")
+        self.contract_placeholder.setProperty("variant", "flat")
+        contract_placeholder_layout = QVBoxLayout(self.contract_placeholder)
+        contract_placeholder_layout.setContentsMargins(12, 12, 12, 12)
+        contract_placeholder_layout.setSpacing(6)
+        contract_title = QLabel("关联合同")
+        contract_title.setProperty("class", "SectionTitle")
+        contract_hint = QLabel("当前版本暂未接入合同数据，后续将在这里显示匹配结果与关联操作。")
+        contract_hint.setWordWrap(True)
+        contract_hint.setProperty("class", "SectionHint")
+        contract_placeholder_layout.addWidget(contract_title)
+        contract_placeholder_layout.addWidget(contract_hint)
+        contract_layout.addWidget(self.contract_placeholder)
+        contract_layout.addStretch(1)
+        self.contract_scroll.setWidget(contract_content)
+        self.detail_tabs.addTab(self.contract_scroll, "关联合同")
+
+        self.operation_scroll = QScrollArea()
+        self.operation_scroll.setWidgetResizable(True)
+        self.operation_scroll.setFrameShape(QFrame.NoFrame)
+        self.operation_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        operation_content = QWidget()
+        operation_layout = QVBoxLayout(operation_content)
+        operation_layout.setContentsMargins(0, 0, 0, 0)
+        operation_layout.setSpacing(0)
+        self.operation_placeholder = QWidget()
+        self.operation_placeholder.setVisible(False)
+        operation_layout.addWidget(self.operation_placeholder)
+        operation_layout.addStretch(1)
+        self.operation_scroll.setWidget(operation_content)
+        self.detail_tabs.addTab(self.operation_scroll, "操作记录")
         page_layout.addWidget(self.detail_tabs, 1)
 
         self.right_stack.insertWidget(0, self.detail_page)
@@ -2272,6 +2319,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.summary_card = QFrame()
+        self.summary_card.setObjectName("DetailSummaryCard")
 
 
 
@@ -2291,7 +2339,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        summary_layout.setContentsMargins(12, 12, 12, 10)
+        summary_layout.setContentsMargins(4, 4, 4, 4)
 
 
 
@@ -2315,7 +2363,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        amount_row.setSpacing(10)
+        amount_row.setSpacing(6)
 
 
 
@@ -2379,7 +2427,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        meta_row.setSpacing(10)
+        meta_row.setSpacing(6)
 
 
 
@@ -2571,11 +2619,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.inline_review_layout.setSpacing(8)
+        self.inline_review_layout.setSpacing(4)
 
 
 
-        self.inline_review_layout.setContentsMargins(0, 4, 0, 0)
+        self.inline_review_layout.setContentsMargins(0, 0, 0, 0)
 
 
 
@@ -2584,6 +2632,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_app = make_button("通过并下一张\nEnter", variant="primary")
+        self.btn_app.setFixedHeight(36)
 
 
 
@@ -2600,6 +2649,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_ign = make_button("忽略\nDel", variant="secondary")
+        self.btn_ign.setFixedHeight(36)
 
 
 
@@ -2616,6 +2666,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_err = make_button("标记异常\nCtrl+E", variant="danger")
+        self.btn_err.setFixedHeight(36)
 
 
 
@@ -2688,6 +2739,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_inline_more = make_button("⋯", variant="ghost")
+        self.btn_inline_more.setFixedHeight(36)
 
 
 
@@ -2827,11 +2879,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_core_layout.setContentsMargins(12, 10, 12, 12)
+        detail_core_layout.setContentsMargins(10, 8, 10, 8)
 
 
 
-        detail_core_layout.setSpacing(10)
+        detail_core_layout.setSpacing(8)
 
 
 
@@ -2931,11 +2983,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.setHorizontalSpacing(10)
+        self.invoice_core_grid.setHorizontalSpacing(8)
 
 
 
-        self.invoice_core_grid.setVerticalSpacing(8)
+        self.invoice_core_grid.setVerticalSpacing(6)
 
 
 
@@ -3187,7 +3239,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_files_layout.setContentsMargins(12, 8, 12, 9)
+        detail_files_layout.setContentsMargins(10, 8, 10, 9)
 
 
 

@@ -264,7 +264,40 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
+        self._nav_compact = metrics.nav_collapsed
+        search_placeholder = (
+            "搜索发票号 / 销售方 / 购买方 / 金额    Ctrl + F"
+            if metrics.compact
+            else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
+        )
+        self.txt_search.setPlaceholderText(search_placeholder)
+        self.workbench_nav.setMinimumWidth(metrics.nav_width)
+        self.workbench_nav.setMaximumWidth(metrics.nav_width)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
+        self.btn_more.setText("更多  ▼" if not metrics.compact else "更多")
+        self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
+        card_width = 120 if not metrics.compact else 104
+        for card in self.filter_buttons.values():
+            card.setMaximumWidth(card_width)
+            card.setMinimumWidth(min(104, card_width))
+            card.setMinimumSize(min(104, card_width), 0)
+            card.updateGeometry()
+        self.workbench_nav_title.setVisible(not metrics.nav_collapsed)
+        self.workbench_nav_subtitle.setVisible(not metrics.nav_collapsed)
+        self.workbench_nav_spacer.setVisible(not metrics.nav_collapsed)
+        for key, button in self.workbench_nav_buttons.items():
+            full_text = self._workbench_nav_button_texts.get(key, "")
+            button.setText("" if metrics.nav_collapsed else full_text)
+            button.setToolTip(full_text if metrics.nav_collapsed else "")
+            button.setProperty("collapsed", metrics.nav_collapsed)
+            button.setMinimumHeight(36 if not metrics.nav_collapsed else 44)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self.btn_collapse_nav.setText("" if metrics.nav_collapsed else "收起侧边栏")
+        self.btn_collapse_nav.setToolTip("展开侧边栏" if metrics.nav_collapsed else "收起侧边栏")
+        self.btn_collapse_nav.setProperty("collapsed", metrics.nav_collapsed)
+        self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
+        self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
         if not self._left_splitter_sizes_initialized:
@@ -328,7 +361,95 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Main Layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        self.main_layout = QVBoxLayout(central_widget)
+        root_layout = QHBoxLayout(central_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        self.workbench_nav = QFrame()
+        self.workbench_nav.setObjectName("WorkbenchNav")
+        self.workbench_nav.setMinimumWidth(208)
+        self.workbench_nav.setMaximumWidth(208)
+        nav_layout = QVBoxLayout(self.workbench_nav)
+        nav_layout.setContentsMargins(14, 16, 14, 14)
+        nav_layout.setSpacing(8)
+
+        nav_title = QLabel("Invoice Hub")
+        nav_title.setObjectName("WorkbenchNavTitle")
+        nav_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        nav_layout.addWidget(nav_title)
+        self.workbench_nav_title = nav_title
+
+        nav_subtitle = QLabel("发票审核中心")
+        nav_subtitle.setObjectName("WorkbenchNavSubtitle")
+        nav_layout.addWidget(nav_subtitle)
+        self.workbench_nav_subtitle = nav_subtitle
+        self.workbench_nav_spacer = QWidget()
+        self.workbench_nav_spacer.setFixedHeight(12)
+        nav_layout.addWidget(self.workbench_nav_spacer)
+
+        self.workbench_nav_buttons = {}
+        self._workbench_nav_button_texts = {}
+        self.workbench_nav_group = QButtonGroup(self)
+        self.workbench_nav_group.setExclusive(True)
+        nav_icons = {
+            "overview": QStyle.SP_DesktopIcon,
+            "review": QStyle.SP_FileDialogDetailedView,
+            "imports": QStyle.SP_DialogOpenButton,
+            "mobile_upload": QStyle.SP_ArrowUp,
+            "export": QStyle.SP_DialogSaveButton,
+            "mail": QStyle.SP_MessageBoxInformation,
+            "rules": QStyle.SP_FileDialogContentsView,
+            "settings": QStyle.SP_ComputerIcon,
+            "data": QStyle.SP_DriveHDIcon,
+            "about": QStyle.SP_MessageBoxQuestion,
+        }
+        self._toolbar_icon_tooltips = {
+            "help": "帮助",
+            "notify": "通知",
+        }
+
+        def add_nav_button(key: str, text: str, handler=None, checked: bool = False):
+            button = QPushButton(text)
+            button.setObjectName(f"workbench_nav_{key}")
+            button.setProperty("class", "WorkbenchNavButton")
+            button.setCheckable(True)
+            button.setChecked(checked)
+            button.setMinimumHeight(36)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setIcon(self.style().standardIcon(nav_icons[key]))
+            if handler is not None:
+                button.clicked.connect(handler)
+            self.workbench_nav_group.addButton(button)
+            nav_layout.addWidget(button)
+            self._workbench_nav_button_texts[key] = text
+            self.workbench_nav_buttons[key] = button
+            return button
+
+        add_nav_button("overview", "总览")
+        add_nav_button("review", "发票审核", checked=True)
+        add_nav_button("imports", "导入记录")
+        add_nav_button("mobile_upload", "扫码上传", self._mobile_upload_clicked)
+        add_nav_button("export", "批量导出", self._export_claim_package)
+        add_nav_button("mail", "邮箱导入", self._scan_email_clicked)
+        add_nav_button("rules", "规则管理", self._open_settings_dialog)
+        add_nav_button("settings", "系统设置", self._open_settings_dialog)
+        add_nav_button("data", "数据与备份", self._open_settings_dialog)
+        add_nav_button("about", "关于我们", self._show_about_dialog)
+
+        nav_layout.addStretch(1)
+        self.btn_collapse_nav = QPushButton("收起侧边栏")
+        self.btn_collapse_nav.setObjectName("workbench_nav_collapse")
+        self.btn_collapse_nav.setProperty("class", "WorkbenchNavButton")
+        self.btn_collapse_nav.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
+        self.btn_collapse_nav.setToolTip("收起或展开侧边栏")
+        self.btn_collapse_nav.setMinimumHeight(32)
+        nav_layout.addWidget(self.btn_collapse_nav)
+
+        root_layout.addWidget(self.workbench_nav)
+
+        self.workbench_content = QWidget()
+        root_layout.addWidget(self.workbench_content, 1)
+        self.main_layout = QVBoxLayout(self.workbench_content)
         main_layout = self.main_layout
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(8)
@@ -339,10 +460,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.search_reload_timer.timeout.connect(self._load_invoices)
 
         # 0. Top Action Bar
-        action_layout = QHBoxLayout()
+        self.workbench_top_toolbar = QFrame()
+        self.workbench_top_toolbar.setObjectName("WorkbenchTopToolbar")
+        action_layout = QHBoxLayout(self.workbench_top_toolbar)
+        action_layout.setContentsMargins(0, 0, 0, 0)
         action_layout.setSpacing(8)
 
+        self.txt_search = QLineEdit(self.workbench_top_toolbar)
+        self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F")
+        self.txt_search.setClearButtonEnabled(True)
+        self.txt_search.textChanged.connect(self._schedule_invoice_reload)
+        action_layout.addWidget(self.txt_search, 2)
+
         self.btn_import_local = make_button("导入发票", variant="toolbar")
+        self.btn_import_local.setProperty("emphasis", "primary")
         self.btn_import_local.clicked.connect(self._import_local_clicked)
         action_layout.addWidget(self.btn_import_local)
 
@@ -350,18 +481,35 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         action_layout.addWidget(self.btn_mobile_upload)
 
-        self.btn_scan_email = make_button("扫描邮箱", variant="toolbar")
+        self.btn_scan_email = make_button("邮箱同步", variant="toolbar")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
         action_layout.addWidget(self.btn_scan_email)
 
         action_layout.addStretch()
 
-        self.btn_toolbar_export = make_button("一键导出", variant="toolbar")
+        self.btn_toolbar_export = make_button("批量导出", variant="toolbar")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
         action_layout.addWidget(self.btn_toolbar_export)
 
-        # "更多  ▼" consolidated drop-down menu
         self.btn_more = make_button("更多  ▼", variant="toolbar")
+        self.btn_toolbar_help = QToolButton(self.workbench_top_toolbar)
+        self.btn_toolbar_help.setObjectName("WorkbenchTopIconButton")
+        self.btn_toolbar_help.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxQuestion))
+        self.btn_toolbar_help.setToolTip(self._toolbar_icon_tooltips["help"])
+        self.btn_toolbar_help.clicked.connect(self._show_about_dialog)
+        self.btn_toolbar_help.hide()
+
+        self.btn_toolbar_notify = QToolButton(self.workbench_top_toolbar)
+        self.btn_toolbar_notify.setObjectName("WorkbenchTopIconButton")
+        self.btn_toolbar_notify.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxInformation))
+        self.btn_toolbar_notify.setToolTip(self._toolbar_icon_tooltips["notify"])
+        self.btn_toolbar_notify.clicked.connect(self._toggle_log)
+        self.btn_toolbar_notify.hide()
+
+        self.btn_toolbar_user = QPushButton("张伟 ▾")
+        self.btn_toolbar_user.setObjectName("WorkbenchUserButton")
+        self.btn_toolbar_user.setProperty("variant", "toolbar")
+        self.btn_toolbar_user.setMinimumHeight(30)
 
         self.more_menu = QMenu(self)
         self.more_menu.setToolTipsVisible(True)
@@ -408,8 +556,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_more.setMenu(self.more_menu)
         action_layout.addWidget(self.btn_more)
+        action_layout.addWidget(self.btn_toolbar_user)
 
-        main_layout.addLayout(action_layout)
+        main_layout.addWidget(self.workbench_top_toolbar)
 
         # 1. Top Filter Bar
         self.filter_bar_widget = QWidget()
@@ -438,10 +587,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             IGNORED: "muted",
             ERROR: "danger",
         }
+        icon_by_status = {
+            "all": "◎",
+            TO_REVIEW: "◔",
+            APPROVED: "●",
+            IGNORED: "◌",
+            ERROR: "▲",
+        }
         for status, text in self.filter_base_labels.items():
-            card = CompactStatCard(text, "0", state=state_by_status[status])
+            card = CompactStatCard(
+                text,
+                "0",
+                state=state_by_status[status],
+                icon_text=icon_by_status[status],
+            )
             card.setFocusPolicy(Qt.StrongFocus)
-            card.setMinimumWidth(96)
+            card.setMinimumWidth(104)
+            card.setMinimumSize(104, 0)
             card.set_selected(status == "all")
             card.clicked.connect(lambda s=status: self._change_filter(s))
             filter_layout.addWidget(card, 1)
@@ -450,15 +612,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         filter_layout.addStretch()
         main_layout.addWidget(self.filter_bar_widget)
 
-        # 1b. Search & Secondary Filters
+        # 1b. Secondary Filters
         search_layout = QHBoxLayout()
         search_layout.setSpacing(8)
-
-        self.txt_search = QLineEdit()
-        self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题")
-        self.txt_search.setClearButtonEnabled(True)
-        self.txt_search.textChanged.connect(self._schedule_invoice_reload)
-        search_layout.addWidget(self.txt_search, 2)
 
         self.chk_unlinked = QCheckBox("未关联报销组")
         self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
@@ -522,24 +678,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(24)
-        self.table.verticalHeader().setMinimumSectionSize(24)
+        self.table.verticalHeader().setDefaultSectionSize(21)
+        self.table.verticalHeader().setMinimumSectionSize(21)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
         self.table.installEventFilter(self)
         self._refresh_column_filter_headers()
 
-        # Set explicit column widths for readability and set up minimum limits
-        self._min_column_widths = {0: 76, 1: 100, 2: 100, 3: 80, 4: 260, 5: 96, 6: 86, 7: 96}
-        self.table.setColumnWidth(0, 76)   # 完整性
-        self.table.setColumnWidth(1, 100)  # 资料
-        self.table.setColumnWidth(2, 100)  # 费用日期
-        self.table.setColumnWidth(3, 80)   # 金额
-        self.table.setColumnWidth(4, 260)  # 销售方
-        self.table.setColumnWidth(5, 96)   # 消费类型
-        self.table.setColumnWidth(6, 86)   # 来源
-        self.table.setColumnWidth(7, 96)   # 报销组
+        # Final 0.1.4 review workbench default columns:
+        # review status, material status, expense date, amount, seller, invoice number.
+        self._min_column_widths = {0: 76, 1: 92, 2: 100, 3: 90, 4: 300, 5: 180}
+        for _column, _width in self._min_column_widths.items():
+            self.table.setColumnWidth(_column, _width)
 
         # Enforce minimum column widths on interactive resize
         self.table.horizontalHeader().sectionResized.connect(self._on_header_section_resized)
@@ -628,7 +779,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         left_layout.addWidget(self.left_splitter)
 
         self.btn_shortcut_help = QToolButton(left_panel)
-        self.btn_shortcut_help.setText("快捷键  Enter 通过 · Del 忽略")
+        self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
+        self.btn_shortcut_help.setText("\u5feb\u6377\u952e\uff1aEnter \u901a\u8fc7 \u00b7 Del \u5ffd\u7565")
         self.btn_shortcut_help.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
         left_layout.addWidget(self.btn_shortcut_help, 0, Qt.AlignLeft)
@@ -1714,10 +1866,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 total_amt = str(inv.get("total_amount") or "")
                 category = str(inv.get("category") or "未分类")
                 seller = str(inv.get("seller_name") or "")
-                claim_name = self._get_invoice_claim_group(inv)
-                attachment_path = str(inv.get("attachment_path") or "")
                 display_status = self._get_invoice_data_status(inv)
-                source_text = self._get_invoice_source(inv)
                 review_status = inv.get("review_status") or TO_REVIEW
                 buyer_check_warning = self._buyer_warning(inv)
                 date_warn = get_date_warning(inv)
@@ -1736,9 +1885,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     display_date or "—",
                     total_amt or "—",
                     seller or "—",
-                    category or "未分类",
-                    source_text,
-                    claim_name or "—",
+                    inv_num or "—",
                 ]
 
                 for col, text in enumerate(row_items):
@@ -1747,21 +1894,33 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     if col == 3:
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     elif col == 0:
+                        font = item.font()
+                        font.setBold(True)
+                        item.setFont(font)
                         if review_status == "approved":
                             item.setForeground(QColor("#059669"))
+                            item.setBackground(QColor("#ECFDF5"))
                         elif review_status == "to_review":
                             item.setForeground(QColor("#D97706"))
+                            item.setBackground(QColor("#FFFBEB"))
                         elif review_status == "ignored":
                             item.setForeground(QColor("#6B7280"))
+                            item.setBackground(QColor("#F3F4F6"))
                         elif review_status == "error":
                             item.setForeground(QColor("#DC2626"))
-                        item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
+                            item.setBackground(QColor("#FEF2F2"))
+                        item.setToolTip(f"????: {display_status}\n????: {rev_chinese}")
                     elif col == 1:
-                        if display_status == "正常":
+                        font = item.font()
+                        font.setBold(True)
+                        item.setFont(font)
+                        if display_status == "??":
                             item.setForeground(QColor("#059669"))
+                            item.setBackground(QColor("#ECFDF5"))
                         else:
                             item.setForeground(QColor("#D97706"))
-                        item.setToolTip(f"资料状态: {display_status}")
+                            item.setBackground(QColor("#FFFBEB"))
+                        item.setToolTip(f"????: {display_status}")
                     elif col == 2:
                         date_source_disp = {
                             "travel_date": "乘车日期",
@@ -1778,10 +1937,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         item.setToolTip("\n".join(tooltip_lines))
                     elif col == 4 and seller:
                         item.setToolTip(seller)
-                    elif col == 6 and attachment_path:
-                        item.setToolTip(attachment_path)
-                    elif col == 7 and claim_name:
-                        item.setToolTip(claim_name)
+                    elif col == 5 and inv_num:
+                        item.setToolTip(inv_num)
 
                     if combined_warning:
                         item.setBackground(QColor("#FEF3C7"))

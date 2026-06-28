@@ -2246,7 +2246,7 @@ class SettingsDialog(QDialog):
             QMessageBox.information(
                 self,
                 "Outlook 邮箱设置说明",
-                "Outlook/Hotmail/Live 和 Microsoft 365 邮箱目前需要 OAuth2/XOAUTH2 认证。Invoice Hub v0.1.3 暂不支持 Outlook 邮箱扫描。后续版本可通过 Microsoft OAuth2/MSAL 支持。",
+                "Outlook/Hotmail/Live 和 Microsoft 365 邮箱目前需要 OAuth2/XOAUTH2 认证。当前版本暂不支持 Outlook 邮箱扫描。后续版本可通过 Microsoft OAuth2/MSAL 支持。",
             )
             return
         QMessageBox.information(

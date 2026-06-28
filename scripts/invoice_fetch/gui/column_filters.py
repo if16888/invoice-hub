@@ -41,9 +41,7 @@ VISIBLE_COLUMN_DEFINITIONS = (
     ("expense_date", "费用日期"),
     ("total_amount", "金额"),
     ("seller_name", "销售方"),
-    ("category", "消费类型"),
-    ("source", "来源"),
-    ("claim_name", "报销组"),
+    ("invoice_number", "发票号"),
 )
 
 COLUMN_KEYS = tuple(item[0] for item in COLUMN_DEFINITIONS)

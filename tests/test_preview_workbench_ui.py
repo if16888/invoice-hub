@@ -120,6 +120,15 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
             self.assertFalse(action.isEnabled())
             self.assertTrue(action.toolTip())
 
+    def test_missing_preview_status_uses_explicit_multiline_guidance(self):
+        window, _ = self._make_window()
+        window._show_preview_status("文件不存在")
+        text = window.lbl_preview_status.text()
+        self.assertIn("原件文件不存在", text)
+        self.assertIn("路径可能已移动、删除，或下载未完成。", text)
+        self.assertIn("定位", text)
+        self.assertIn("替换", text)
+
     def test_double_clicking_preview_toggles_focus_mode(self):
         from PySide6.QtCore import QEvent
 

@@ -213,13 +213,15 @@ class PreviewMixin:
         container_layout.setSpacing(0)
 
         self.preview_stack = QStackedWidget()
+        self.preview_stack.setObjectName("PreviewSurface")
         self.preview_stack.setFrameShape(QFrame.StyledPanel)
         self.preview_stack.installEventFilter(self)
 
         self.lbl_preview_status = QLabel("请选择一张发票查看原件")
         self.lbl_preview_status.setAlignment(Qt.AlignCenter)
         self.lbl_preview_status.setWordWrap(True)
-        self.lbl_preview_status.setStyleSheet("color: #6B7280; font-size: 13px; background-color: #F9FAFB;")
+        self.lbl_preview_status.setProperty("class", "PreviewEmptyState")
+        self.lbl_preview_status.setMaximumWidth(520)
         self.preview_stack.addWidget(self.lbl_preview_status)
         self._preview_empty_message = "请选择一张发票查看原件"
 
@@ -455,14 +457,18 @@ class PreviewMixin:
             action.setToolTip("" if exists else missing_reason)
 
     def _show_preview_status(self, text):
-        if text == "当前发票没有可预览的原件":
-            text = "当前发票没有可预览的原件\n可点击“查看文件”或“定位文件”确认原件位置"
-        elif text == "文件不存在":
-            text = "原件文件不存在\n可点击“定位文件”确认路径，或重新导入/重新下载"
-        elif text == "暂不支持内嵌预览，请点击打开外部文件":
-            text = "当前格式暂不支持内嵌预览\n请点击外部打开查看原件"
-        elif text == "图片加载失败，暂不支持预览":
-            text = "图片加载失败\n请点击外部打开，或重新导入该材料"
+        if text == "\u5f53\u524d\u53d1\u7968\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u539f\u4ef6":
+            text = "\u5f53\u524d\u53d1\u7968\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u539f\u4ef6\n\u53ef\u70b9\u51fb“\u67e5\u770b\u6587\u4ef6”\u6216“\u5b9a\u4f4d\u6587\u4ef6”\u786e\u8ba4\u539f\u4ef6\u4f4d\u7f6e"
+        elif text == "\u6587\u4ef6\u4e0d\u5b58\u5728":
+            text = (
+                "\u539f\u4ef6\u6587\u4ef6\u4e0d\u5b58\u5728\n"
+                "\u8def\u5f84\u53ef\u80fd\u5df2\u79fb\u52a8\u3001\u5220\u9664\uff0c\u6216\u4e0b\u8f7d\u672a\u5b8c\u6210\u3002\n"
+                "\u53ef\u70b9\u51fb\u53f3\u4fa7\u6750\u6599\u533a\u7684 \u5b9a\u4f4d / \u66ff\u6362\uff0c\u6216\u91cd\u65b0\u5bfc\u5165/\u91cd\u65b0\u4e0b\u8f7d\u3002"
+            )
+        elif text == "\u6682\u4e0d\u652f\u6301\u5185\u5d4c\u9884\u89c8\uff0c\u8bf7\u70b9\u51fb\u6253\u5f00\u5916\u90e8\u6587\u4ef6":
+            text = "\u5f53\u524d\u683c\u5f0f\u6682\u4e0d\u652f\u6301\u5185\u5d4c\u9884\u89c8\n\u8bf7\u70b9\u51fb\u5916\u90e8\u6253\u5f00\u67e5\u770b\u539f\u4ef6"
+        elif text == "\u56fe\u7247\u52a0\u8f7d\u5931\u8d25\uff0c\u6682\u4e0d\u652f\u6301\u9884\u89c8":
+            text = "\u56fe\u7247\u52a0\u8f7d\u5931\u8d25\n\u8bf7\u70b9\u51fb\u5916\u90e8\u6253\u5f00\uff0c\u6216\u91cd\u65b0\u5bfc\u5165\u8be5\u6750\u6599"
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
         self.overlay_toolbar.setVisible(True)
