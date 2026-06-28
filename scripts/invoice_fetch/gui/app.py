@@ -33,6 +33,7 @@ from .styles import APP_STYLESHEET
 from .ui_components import make_button, make_badge, make_filter_chip
 from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
+from .workbench_state import IncrementalWindow, is_keyboard_input_target
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
 from .mobile_upload_dialog import MobileUploadDialog
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
@@ -166,6 +167,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._suspend_dirty_tracking = False
         self._is_first_load = True
         self.column_filters: dict[str, dict] = {}
+        self.incremental_window = IncrementalWindow(limit=50)
         self._column_filters_load_all = False
         self._column_filter_popup = None
         self._column_filter_header_press_pos: QPoint | None = None
@@ -550,6 +552,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.customContextMenuRequested.connect(self._show_table_context_menu)
 
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        self.table.verticalScrollBar().valueChanged.connect(self._on_table_scroll)
 
         self.left_stack.addWidget(self.table)
 
@@ -1414,7 +1417,182 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._limited_first_load_total = 0
         self._load_invoices()
 
-    def _load_invoices(self):
+    def _populate_row(self, idx: int, inv: dict):
+        inv_num = str(inv.get("invoice_number") or "")
+        inv_date = str(inv.get("invoice_date") or "")
+        expense_date = str(inv.get("expense_date") or "")
+        date_source = str(inv.get("date_source") or "")
+        display_date = expense_date or inv_date
+        total_amt = str(inv.get("total_amount") or "")
+        category = str(inv.get("category") or "未分类")
+        seller = str(inv.get("seller_name") or "")
+        display_status = self._get_invoice_data_status(inv)
+        review_status = inv.get("review_status") or TO_REVIEW
+        buyer_check_warning = self._buyer_warning(inv)
+        date_warn = get_date_warning(inv)
+        combined_warning = ""
+        if buyer_check_warning and date_warn:
+            combined_warning = f"{buyer_check_warning}\n{date_warn}"
+        elif buyer_check_warning:
+            combined_warning = buyer_check_warning
+        elif date_warn:
+            combined_warning = date_warn
+
+        status_mapping = {
+            "to_review": "待审核",
+            "approved": "已通过",
+            "ignored": "已忽略",
+            "error": "异常",
+        }
+        rev_chinese = status_mapping.get(review_status, str(review_status))
+
+        row_items = [
+            rev_chinese,
+            display_date or "—",
+            total_amt or "—",
+            seller or "—",
+            inv_num or "—",
+        ]
+
+        for col, text in enumerate(row_items):
+            item = QTableWidgetItem(text)
+
+            if col == 0:
+                if review_status == "approved":
+                    item.setForeground(QColor("#059669"))
+                elif review_status == "to_review":
+                    item.setForeground(QColor("#D97706"))
+                elif review_status == "ignored":
+                    item.setForeground(QColor("#6B7280"))
+                elif review_status == "error":
+                    item.setForeground(QColor("#DC2626"))
+                item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
+            elif col == 1:
+                date_source_disp = {
+                    "travel_date": "乘车日期",
+                    "invoice_date": "开票日期",
+                    "legacy": "历史数据",
+                    "service_date": "服务日期",
+                    "payment_date": "付款日期",
+                }.get(date_source, "未知")
+                tooltip_lines = [
+                    f"费用日期: {display_date or '—'}",
+                    f"日期来源: {date_source_disp}",
+                    f"开票日期: {inv_date or '—'}"
+                ]
+                item.setToolTip("\n".join(tooltip_lines))
+            elif col == 2:
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            elif col == 3 and seller:
+                item.setToolTip(seller)
+            elif col == 4 and inv_num:
+                item.setToolTip(inv_num)
+
+            if combined_warning:
+                item.setBackground(QColor("#FEF3C7"))
+                existing_tip = item.toolTip()
+                item.setToolTip(f"{existing_tip}\n{combined_warning}" if existing_tip else combined_warning)
+
+            self.table.setItem(idx, col, item)
+
+    def _select_invoice_by_id(self, invoice_id: int | None):
+        """Centralized selection dispatcher to synchronize list row focus, preview, and detail panel."""
+        if not hasattr(self, "table") or not self.table:
+            return
+
+        if invoice_id is None:
+            self.table.clearSelection()
+            self.table.setCurrentItem(None)
+            if self.table.selectionModel() is not None:
+                self.table.selectionModel().clearCurrentIndex()
+            self._on_table_selection_changed()
+            return
+
+        target_row = -1
+        for idx, inv in enumerate(getattr(self, "invoices_list", [])):
+            if inv.get("id") == invoice_id:
+                target_row = idx
+                break
+
+        if target_row != -1:
+            self.table.selectRow(target_row)
+            model_index = self.table.model().index(target_row, 0)
+            self.table.setCurrentIndex(model_index)
+        else:
+            self.table.clearSelection()
+            self.table.setCurrentItem(None)
+            if self.table.selectionModel() is not None:
+                self.table.selectionModel().clearCurrentIndex()
+            self._on_table_selection_changed()
+
+    def _on_table_scroll(self, value):
+        scrollbar = self.table.verticalScrollBar()
+        if not scrollbar or not getattr(self, "incremental_window", None):
+            return
+        if not self.incremental_window.has_more:
+            return
+        max_val = scrollbar.maximum()
+        if max_val > 0 and value >= max_val - 2:
+            self._load_next_batch()
+
+    def _load_next_batch(self):
+        if not self.incremental_window.has_more:
+            return
+
+        include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
+        is_default_view = not self.incremental_window.search_text and not has_active_filters(self.incremental_window.column_filters)
+
+        if is_default_view:
+            try:
+                batch = self.db.list_invoices(
+                    status=self.incremental_window.status_filter,
+                    limit=self.incremental_window.limit,
+                    offset=self.incremental_window.offset,
+                    include_deleted=include_deleted
+                )
+            except Exception as e:
+                _log.error("Failed to load next batch from DB: %s", e)
+                batch = []
+        else:
+            offset = self.incremental_window.offset
+            limit = self.incremental_window.limit
+            batch = self.filtered_pool[offset : offset + limit]
+
+        if not batch:
+            self.incremental_window.has_more = False
+            if hasattr(self, "btn_load_all"):
+                self.btn_load_all.setVisible(False)
+            return
+
+        self.incremental_window.append_invoices(batch)
+        self.incremental_window.advance(len(batch))
+        self.invoices_list = self.incremental_window.invoices
+        self.incremental_window.has_more = (self.incremental_window_total > len(self.invoices_list))
+        self._limited_first_load_active = self.incremental_window.has_more
+        self._append_rows_to_table(batch)
+
+        if hasattr(self, "btn_load_all"):
+            self.btn_load_all.setVisible(self.incremental_window.has_more)
+
+    def _append_rows_to_table(self, new_invoices: list[dict]):
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        try:
+            start_row = self.table.rowCount()
+            self.table.setRowCount(start_row + len(new_invoices))
+            for idx, inv in enumerate(new_invoices):
+                self._populate_row(start_row + idx, inv)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+            self._update_record_summary()
+
+    def _load_all_invoices_clicked(self):
+        """Load all remaining batches for test compatibility and user convenience."""
+        while self.incremental_window.has_more:
+            self._load_next_batch()
+
+    def _load_invoices(self, reset: bool = True):
         # Fetch invoices from DB with filter, then apply search/quality filters.
         db_elapsed_ms = 0
         filter_elapsed_ms = 0
@@ -1429,24 +1607,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         prev_id = self.current_invoice.get("id") if getattr(self, "current_invoice", None) else None
         prev_row = self.table.currentRow() if hasattr(self, "table") else -1
 
-        # Determine query limit for first load: if _is_first_load is True and no search text/quick filter is active
         needle = self.txt_search.text().strip().lower() if hasattr(self, "txt_search") else ""
         column_filters_active = has_active_filters(self.column_filters)
         is_default_view = not needle and not column_filters_active
+        include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
 
-        limit_val = None
-        if self._is_first_load and is_default_view and self.current_filter_status is None:
-            limit_val = 100
-
-        counts = None
-        try:
-            include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
+        if reset:
+            self.incremental_window.reset(
+                status_filter=self.current_filter_status,
+                search_text=needle,
+                column_filters=self.column_filters
+            )
+            
             db_start = time.perf_counter()
             if is_default_view:
-                # Optimized path: avoid loading all records
-                display_source = self.db.list_invoices(
+                batch = self.db.list_invoices(
                     status=self.current_filter_status,
-                    limit=limit_val,
+                    limit=self.incremental_window.limit,
+                    offset=0,
+                    include_deleted=include_deleted
+                )
+                self.incremental_window_total = self.db.count_invoices_for_status(
+                    status=self.current_filter_status,
                     include_deleted=include_deleted
                 )
                 counts = {
@@ -1456,301 +1638,181 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     IGNORED: self.db.count_invoices_for_status(status=IGNORED, include_deleted=include_deleted),
                     ERROR: self.db.count_invoices_for_status(status=ERROR, include_deleted=include_deleted),
                 }
+                self.incremental_window.append_invoices(batch)
+                self.incremental_window.advance(len(batch))
             else:
                 display_source = self.db.list_invoices(
                     status=None,
                     limit=None,
                     include_deleted=include_deleted,
                 )
-            db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
-            if self._is_first_load:
-                self._is_first_load = False
-        except Exception as e:
-            _log.error("Failed to load invoices from DB: %s", e)
-            QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
-            display_source = []
+                
+                filtered_invoices = display_source
+                if needle:
+                    temp = []
+                    for inv in filtered_invoices:
+                        claim_name = self._get_invoice_claim_group(inv)
+                        haystack = " ".join([
+                            str(inv.get("invoice_number") or ""),
+                            str(inv.get("seller_name") or ""),
+                            str(inv.get("buyer_name") or ""),
+                            str(inv.get("total_amount") or ""),
+                            str(inv.get("mail_subject") or ""),
+                            str(inv.get("category") or ""),
+                            str(inv.get("attachment_path") or ""),
+                            claim_name,
+                        ]).lower()
+                        if needle in haystack:
+                            temp.append(inv)
+                    filtered_invoices = temp
 
-        filter_start = time.perf_counter()
-        
-        # 1. Apply global search
-        if is_default_view:
-            filtered_invoices = display_source
-        else:
-            filtered_invoices = display_source
-            if needle:
-                temp = []
-                for inv in filtered_invoices:
-                    claim_name = self._get_invoice_claim_group(inv)
-                    haystack = " ".join([
-                        str(inv.get("invoice_number") or ""),
-                        str(inv.get("seller_name") or ""),
-                        str(inv.get("buyer_name") or ""),
-                        str(inv.get("total_amount") or ""),
-                        str(inv.get("mail_subject") or ""),
-                        str(inv.get("category") or ""),
-                        str(inv.get("attachment_path") or ""),
-                        claim_name,
-                    ]).lower()
-                    if needle in haystack:
-                        temp.append(inv)
-                filtered_invoices = temp
-
-            # 2. Apply column filters
-            filtered_invoices = apply_column_filters(
-                filtered_invoices,
-                self.column_filters,
-                self._column_filter_value_getters(),
-            )
-
-        # 3. Dynamic count calculation for review status buttons
-        if counts is None:
-            counts = {
-                "all": len(filtered_invoices),
-                TO_REVIEW: 0,
-                APPROVED: 0,
-                IGNORED: 0,
-                ERROR: 0,
-            }
-            for inv in filtered_invoices:
-                rev_status = inv.get("review_status") or TO_REVIEW
-                if rev_status in counts:
-                    counts[rev_status] += 1
-
-        self._update_filter_counts(counts)
-
-        # 4. Filter by review status
-        displayed_invoices = filtered_invoices
-        if not is_default_view and self.current_filter_status is not None:
-            displayed_invoices = [
-                inv for inv in displayed_invoices
-                if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
-            ]
-
-        # 5. Apply first-load limit of 100 rows
-        total_matching = len(displayed_invoices)
-        if is_default_view:
-            total_matching = counts.get("all") if self.current_filter_status is None else counts.get(self.current_filter_status, 0)
-
-        first_load_limited = False
-        if self._limited_first_load_active and total_matching > 100:
-            displayed_invoices = displayed_invoices[:100]
-            first_load_limited = True
-        elif limit_val is not None and total_matching > 100:
-            first_load_limited = True
-
-        filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
-        self.invoices_list = displayed_invoices
-
-        # Track limited first-load state for UI hints
-        if first_load_limited:
-            self._limited_first_load_active = True
-            self._limited_first_load_total = total_matching
-            shown = len(displayed_invoices)
-            notice = (
-                f"当前范围全部 {total_matching} 张 (首屏已加载最近 {shown} 张)。"
-                f"点击\"加载全部\"查看完整列表，或使用搜索/筛选缩小范围。"
-            )
-            self._first_load_notice = notice
-            self.write_log(f"ℹ️ [首屏提示] {notice}")
-        else:
-            self._limited_first_load_active = False
-            self._limited_first_load_total = 0
-            self._first_load_notice = None
-
-        # Show/hide the load-all button
-        if hasattr(self, "btn_load_all"):
-            if self._limited_first_load_active:
-                shown = len(self.invoices_list) if self.invoices_list else 100
-                self.btn_load_all.setText("加载全部")
-                self.btn_load_all.setToolTip(
-                    f"首屏仅加载 {shown} / {self._limited_first_load_total} 张，点击加载完整列表"
+                filtered_invoices = apply_column_filters(
+                    filtered_invoices,
+                    self.column_filters,
+                    self._column_filter_value_getters(),
                 )
-                self.btn_load_all.setVisible(True)
-            else:
-                self.btn_load_all.setVisible(False)
 
-        render_start = time.perf_counter()
-        self.table.setUpdatesEnabled(False)
-        self.table.blockSignals(True)
-        try:
-            self.table.clearSelection()
-            self.table.setCurrentItem(None)
-            if self.table.selectionModel() is not None:
-                self.table.selectionModel().clearCurrentIndex()
-            self.table.setRowCount(len(self.invoices_list))
-            for idx, inv in enumerate(self.invoices_list):
-                inv_num = str(inv.get("invoice_number") or "")
-                inv_date = str(inv.get("invoice_date") or "")
-                expense_date = str(inv.get("expense_date") or "")
-                date_source = str(inv.get("date_source") or "")
-                display_date = expense_date or inv_date
-                total_amt = str(inv.get("total_amount") or "")
-                category = str(inv.get("category") or "未分类")
-                seller = str(inv.get("seller_name") or "")
-                claim_name = self._get_invoice_claim_group(inv)
-                attachment_path = str(inv.get("attachment_path") or "")
-                display_status = self._get_invoice_data_status(inv)
-                source_text = self._get_invoice_source(inv)
-                review_status = inv.get("review_status") or TO_REVIEW
-                buyer_check_warning = self._buyer_warning(inv)
-                date_warn = get_date_warning(inv)
-                combined_warning = ""
-                if buyer_check_warning and date_warn:
-                    combined_warning = f"{buyer_check_warning}\n{date_warn}"
-                elif buyer_check_warning:
-                    combined_warning = buyer_check_warning
-                elif date_warn:
-                    combined_warning = date_warn
-
-                status_mapping = {
-                    "to_review": "待审核",
-                    "approved": "已通过",
-                    "ignored": "已忽略",
-                    "error": "异常",
+                counts = {
+                    "all": len(filtered_invoices),
+                    TO_REVIEW: 0,
+                    APPROVED: 0,
+                    IGNORED: 0,
+                    ERROR: 0,
                 }
-                rev_chinese = status_mapping.get(review_status, str(review_status))
+                for inv in filtered_invoices:
+                    rev_status = inv.get("review_status") or TO_REVIEW
+                    if rev_status in counts:
+                        counts[rev_status] += 1
 
-                row_items = [
-                    rev_chinese,
-                    display_date or "—",
-                    total_amt or "—",
-                    seller or "—",
-                    inv_num or "—",
-                ]
+                if self.current_filter_status is not None:
+                    filtered_invoices = [
+                        inv for inv in filtered_invoices
+                        if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
+                    ]
+                
+                self.filtered_pool = filtered_invoices
+                self.incremental_window_total = len(filtered_invoices)
+                
+                batch = self.filtered_pool[0 : self.incremental_window.limit]
+                self.incremental_window.append_invoices(batch)
+                self.incremental_window.advance(len(batch))
+                
+            self._update_filter_counts(counts)
+            db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
+            self._is_first_load = False
 
-                for col, text in enumerate(row_items):
-                    item = QTableWidgetItem(text)
+            self.invoices_list = self.incremental_window.invoices
+            self.incremental_window.has_more = (self.incremental_window_total > len(self.invoices_list))
+            self._limited_first_load_active = self.incremental_window.has_more
+            self._limited_first_load_total = self.incremental_window_total
 
-                    if col == 0:
-                        if review_status == "approved":
-                            item.setForeground(QColor("#059669"))
-                        elif review_status == "to_review":
-                            item.setForeground(QColor("#D97706"))
-                        elif review_status == "ignored":
-                            item.setForeground(QColor("#6B7280"))
-                        elif review_status == "error":
-                            item.setForeground(QColor("#DC2626"))
-                        item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
-                    elif col == 1:
-                        date_source_disp = {
-                            "travel_date": "乘车日期",
-                            "invoice_date": "开票日期",
-                            "legacy": "历史数据",
-                            "service_date": "服务日期",
-                            "payment_date": "付款日期",
-                        }.get(date_source, "未知")
-                        tooltip_lines = [
-                            f"费用日期: {display_date or '—'}",
-                            f"日期来源: {date_source_disp}",
-                            f"开票日期: {inv_date or '—'}"
-                        ]
-                        item.setToolTip("\n".join(tooltip_lines))
-                    elif col == 2:
-                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    elif col == 3 and seller:
-                        item.setToolTip(seller)
-                    elif col == 4 and inv_num:
-                        item.setToolTip(inv_num)
+            # Show/hide load-all button
+            if hasattr(self, "btn_load_all"):
+                self.btn_load_all.setVisible(self.incremental_window.has_more)
+                if self.incremental_window.has_more:
+                    self.btn_load_all.setText("加载全部")
+                    self.btn_load_all.setToolTip(
+                        f"首屏仅加载 {len(self.invoices_list)} / {self.incremental_window_total} 张，点击加载完整列表"
+                    )
 
-                    if combined_warning:
-                        item.setBackground(QColor("#FEF3C7"))
-                        existing_tip = item.toolTip()
-                        item.setToolTip(f"{existing_tip}\n{combined_warning}" if existing_tip else combined_warning)
-
-                    self.table.setItem(idx, col, item)
-        finally:
-            self.table.blockSignals(False)
-            self.table.setUpdatesEnabled(True)
-            render_elapsed_ms = int((time.perf_counter() - render_start) * 1000)
-
-        if len(self.invoices_list) == 0:
-            # Check if total records in DB is 0
-            total_in_db = 0
+            render_start = time.perf_counter()
+            self.table.setUpdatesEnabled(False)
+            self.table.blockSignals(True)
             try:
-                total_in_db = self.db.count_invoices(include_deleted=True)
-            except Exception:
-                pass
-
-            if total_in_db == 0:
-                self.lbl_empty_title.setText("当前没有发票记录")
-                self.lbl_guide.setText(
-                    "您可以执行以下操作以加载发票数据：\n\n"
-                    "  1. 点击“导入发票”选择本地文件夹导入 PDF/ZIP 发票；\n"
-                    "  2. 点击“配置邮箱”配置您的邮箱，然后点击“扫描邮箱”开始增量同步；\n"
-                    "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
-                )
-                self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
-                self.lbl_guide.setVisible(True)
-
-                self.empty_btn_import.setVisible(True)
-                self.empty_btn_mobile_upload.setVisible(True)
-                self.empty_btn_settings.setVisible(True)
-                self.empty_btn_scan.setVisible(True)
-                self.empty_btn_clear_search.setVisible(False)
-                self.empty_btn_reset_filters.setVisible(False)
-            else:
-                self.lbl_empty_title.setText("没有符合条件的发票")
-                self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
-                self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
-                self.lbl_guide.setVisible(True)
-
-                self.empty_btn_import.setVisible(False)
-                self.empty_btn_mobile_upload.setVisible(False)
-                self.empty_btn_settings.setVisible(False)
-                self.empty_btn_scan.setVisible(False)
-                self.empty_btn_clear_search.setVisible(True)
-                self.empty_btn_reset_filters.setVisible(True)
-
-            self.left_stack.setCurrentWidget(self.empty_widget)
-            self.current_invoice = None
-            self.current_preview_docs = []
-            self.current_preview_index = 0
-            self._preview_empty_message = "没有符合条件的发票" if total_in_db > 0 else "请选择一张发票查看原件"
-            self._update_document_preview()
-            self._clear_detail_form()
-            self._update_record_summary()
-            self._set_right_panel_state(total_in_db > 0)
-        else:
-            self.left_stack.setCurrentWidget(self.table)
-            target_row = -1
-            if prev_id is not None:
+                self.table.clearSelection()
+                self.table.setCurrentItem(None)
+                if self.table.selectionModel() is not None:
+                    self.table.selectionModel().clearCurrentIndex()
+                self.table.setRowCount(len(self.invoices_list))
                 for idx, inv in enumerate(self.invoices_list):
-                    if inv.get("id") == prev_id:
-                        target_row = idx
-                        break
+                    self._populate_row(idx, inv)
+            finally:
+                self.table.blockSignals(False)
+                self.table.setUpdatesEnabled(True)
+                render_elapsed_ms = int((time.perf_counter() - render_start) * 1000)
 
-            # Clear selection and focus to prevent carryover of multi-selection
-            self.table.clearSelection()
-            self.table.setCurrentItem(None)
-            if self.table.selectionModel() is not None:
-                self.table.selectionModel().clearCurrentIndex()
+            if len(self.invoices_list) == 0:
+                total_in_db = 0
+                try:
+                    total_in_db = self.db.count_invoices(include_deleted=True)
+                except Exception:
+                    pass
 
-            if target_row == -1 and len(self.invoices_list) > 0:
-                # Use row hint from delete operation if available, else fall back to row 0
-                hint = getattr(self, "_select_row_hint", -1)
-                if hint < 0:
-                    hint = prev_row
-                if hint >= 0:
-                    target_row = min(hint, len(self.invoices_list) - 1)
+                if total_in_db == 0:
+                    self.lbl_empty_title.setText("当前没有发票记录")
+                    self.lbl_guide.setText(
+                        "您可以执行以下操作以加载发票数据：\n\n"
+                        "  1. 点击“导入发票”选择本地文件夹导入 PDF/ZIP 发票；\n"
+                        "  2. 点击“配置邮箱”配置您的邮箱，然后点击“扫描邮箱”开始增量同步；\n"
+                        "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
+                    )
+                    self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
+                    self.lbl_guide.setVisible(True)
+
+                    self.empty_btn_import.setVisible(True)
+                    self.empty_btn_mobile_upload.setVisible(True)
+                    self.empty_btn_settings.setVisible(True)
+                    self.empty_btn_scan.setVisible(True)
+                    self.empty_btn_clear_search.setVisible(False)
+                    self.empty_btn_reset_filters.setVisible(False)
                 else:
-                    target_row = 0
-            # Consume the hint after use so it doesn't affect unrelated reloads
-            self._select_row_hint = -1
-            if target_row != -1:
-                self.table.selectRow(target_row)
-            self._set_right_panel_state(True)
+                    self.lbl_empty_title.setText("没有符合条件的发票")
+                    self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
+                    self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
+                    self.lbl_guide.setVisible(True)
 
-        # Synchronously refresh the status bar to reflect the current limited-load state,
-        # because _on_table_selection_changed uses QTimer.singleShot(0) which may not
-        # fire until the next event loop iteration.
-        selected = self.table.selectionModel().selectedRows() if hasattr(self, "table") else []
-        self._update_record_summary()
+                    self.empty_btn_import.setVisible(False)
+                    self.empty_btn_mobile_upload.setVisible(False)
+                    self.empty_btn_settings.setVisible(False)
+                    self.empty_btn_scan.setVisible(False)
+                    self.empty_btn_clear_search.setVisible(True)
+                    self.empty_btn_reset_filters.setVisible(True)
 
-        self.write_log(
-            f"[性能] 发票列表刷新: db={db_elapsed_ms}ms "
-            f"filter={filter_elapsed_ms}ms render={render_elapsed_ms}ms "
-            f"rows={len(self.invoices_list)}"
-        )
+                self.left_stack.setCurrentWidget(self.empty_widget)
+                self.current_invoice = None
+                self.current_preview_docs = []
+                self.current_preview_index = 0
+                self._preview_empty_message = "没有符合条件的发票" if total_in_db > 0 else "请选择一张发票查看原件"
+                self._update_document_preview()
+                self._clear_detail_form()
+                self._update_record_summary()
+                self._set_right_panel_state(total_in_db > 0)
+            else:
+                self.left_stack.setCurrentWidget(self.table)
+                target_row = -1
+                if prev_id is not None:
+                    for idx, inv in enumerate(self.invoices_list):
+                        if inv.get("id") == prev_id:
+                            target_row = idx
+                            break
+
+                self.table.clearSelection()
+                self.table.setCurrentItem(None)
+                if self.table.selectionModel() is not None:
+                    self.table.selectionModel().clearCurrentIndex()
+
+                if target_row == -1 and len(self.invoices_list) > 0:
+                    hint = getattr(self, "_select_row_hint", -1)
+                    if hint < 0:
+                        hint = prev_row
+                    if hint >= 0:
+                        target_row = min(hint, len(self.invoices_list) - 1)
+                    else:
+                        target_row = 0
+                self._select_row_hint = -1
+                if target_row != -1:
+                    target_id = self.invoices_list[target_row].get("id")
+                    self._select_invoice_by_id(target_id)
+                else:
+                    self._select_invoice_by_id(None)
+                self._set_right_panel_state(True)
+
+            self._update_record_summary()
+            self.write_log(
+                f"[性能] 发票列表刷新: db={db_elapsed_ms}ms "
+                f"filter={filter_elapsed_ms}ms render={render_elapsed_ms}ms "
+                f"rows={len(self.invoices_list)}"
+            )
 
     def _load_claims(self, selected_claim_id=None):
         """Populate the claim groups dropdown from DB."""
@@ -1876,8 +1938,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _format_status_count_prefix(self) -> str:
         """Return the leading count segment for the status bar, reflecting limited-load state."""
         shown = len(self.invoices_list)
-        if self._limited_first_load_active and self._limited_first_load_total > shown:
-            return f"当前显示 {shown} / {self._limited_first_load_total} 张｜首屏限量加载"
+        total = getattr(self, "incremental_window_total", shown)
+        if total > shown:
+            return f"当前显示 {shown} / {total} 张｜首屏限量加载"
         return f"当前筛选 {shown} 张"
 
     def _update_record_summary(self) -> None:
@@ -3175,9 +3238,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._invoice_snapshot = self._get_invoice_form_snapshot()
             self._refresh_category_options(category)
             self._load_invoices()
-            if current_row >= 0 and current_row < self.table.rowCount():
-                self.table.selectRow(current_row)
-                self._on_table_selection_changed()
+            if refreshed:
+                self._select_invoice_by_id(refreshed.get("id"))
             self._detail_panel.set_dirty_state(False)
             self.btn_save_draft.setEnabled(False)
         except Exception as e:
@@ -3334,26 +3396,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     for candidate_row in range(max(0, next_select_row), num_rows):
                         candidate = self.invoices_list[candidate_row]
                         if (candidate.get("review_status") or TO_REVIEW) == TO_REVIEW:
-                            self.table.selectRow(candidate_row)
-                            self.current_invoice = candidate
-                            self._invoice_snapshot = self._get_invoice_snapshot(candidate)
+                            self._select_invoice_by_id(candidate.get("id"))
                             break
                     else:
                         if next_select_row < 0:
                             next_select_row = 0
                         elif next_select_row >= num_rows:
                             next_select_row = num_rows - 1
-                        self.table.selectRow(next_select_row)
-                        self.current_invoice = self.invoices_list[next_select_row]
-                        self._invoice_snapshot = self._get_invoice_snapshot(self.current_invoice)
+                        self._select_invoice_by_id(self.invoices_list[next_select_row].get("id"))
                 else:
                     if next_select_row < 0:
                         next_select_row = 0
                     elif next_select_row >= num_rows:
                         next_select_row = num_rows - 1
-                    self.table.selectRow(next_select_row)
-                    self.current_invoice = self.invoices_list[next_select_row]
-                    self._invoice_snapshot = self._get_invoice_snapshot(self.current_invoice)
+                    self._select_invoice_by_id(self.invoices_list[next_select_row].get("id"))
             else:
                 self._clear_detail_form()
             return result

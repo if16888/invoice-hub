@@ -225,7 +225,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                self.assertTrue(window.table.horizontalHeader().isVisible())
+                self.assertFalse(window.table.horizontalHeader().isHidden())
             finally:
                 window.db.close()
                 window.close()

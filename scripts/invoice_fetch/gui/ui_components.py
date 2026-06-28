@@ -211,6 +211,23 @@ if _HAS_QT:
             self.style().polish(self)
             self.update()
 
+        def setText(self, text: str) -> None:
+            parts = text.rsplit(" ", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                self.set_value(parts[1])
+                self._lbl_title.setText(parts[0])
+            else:
+                self.set_value(text)
+
+        def text(self) -> str:
+            return f"{self._lbl_title.text()} {self._lbl_value.text()}"
+
+        def setChecked(self, checked: bool) -> None:
+            self.set_selected(checked)
+
+        def isChecked(self) -> bool:
+            return self.property("selected") is True
+
         # ------------------------------------------------------------------
         # Mouse events
         # ------------------------------------------------------------------
@@ -243,6 +260,75 @@ if _HAS_QT:
             self._expanded: bool = False
             self.setProperty("expanded", False)
 
+            # Setup Layout
+            self.main_layout = QVBoxLayout(self)
+            self.main_layout.setContentsMargins(6, 4, 6, 4)
+            self.main_layout.setSpacing(4)
+
+            # Header row: Clickable label + chevron
+            self.header_widget = QWidget()
+            self.header_layout = QHBoxLayout(self.header_widget)
+            self.header_layout.setContentsMargins(0, 0, 0, 0)
+            self.header_layout.setSpacing(4)
+
+            self.lbl_title = QLabel("快捷键说明")
+            self.lbl_title.setObjectName("ShortcutDisclosureTitle")
+            self.lbl_chevron = QLabel("▶")
+            self.lbl_chevron.setObjectName("ShortcutDisclosureChevron")
+            self.header_layout.addWidget(self.lbl_title, 1)
+            self.header_layout.addWidget(self.lbl_chevron)
+
+            self.main_layout.addWidget(self.header_widget)
+
+            # Sub-container for list of shortcuts
+            self.list_widget = QWidget()
+            self.list_layout = QVBoxLayout(self.list_widget)
+            self.list_layout.setContentsMargins(0, 2, 0, 2)
+            self.list_layout.setSpacing(3)
+            self.main_layout.addWidget(self.list_widget)
+
+            # Mouse click on header toggles expansion
+            self.header_widget.setCursor(Qt.PointingHandCursor)
+            self.header_widget.mousePressEvent = lambda event: self.set_expanded(not self._expanded)
+
+            self._rebuild_layout()
+
+        def _rebuild_layout(self) -> None:
+            # Clear existing items in list layout
+            while self.list_layout.count():
+                item = self.list_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+
+            # Update chevron
+            self.lbl_chevron.setText("▼" if self._expanded else "▶")
+
+            # Fetch shortcuts
+            shortcuts = CORE_SHORTCUTS
+            if self._expanded:
+                shortcuts = CORE_SHORTCUTS + SECONDARY_SHORTCUTS
+
+            # Add rows
+            for key, label in shortcuts:
+                row = QWidget()
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(6)
+
+                # styled key badge
+                lbl_key = QLabel(key)
+                lbl_key.setObjectName("ShortcutDisclosureKey")
+                lbl_key.setAlignment(Qt.AlignCenter)
+                lbl_key.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+                lbl_lbl = QLabel(label)
+                lbl_lbl.setObjectName("ShortcutDisclosureLabel")
+
+                row_layout.addWidget(lbl_key)
+                row_layout.addWidget(lbl_lbl, 1)
+                self.list_layout.addWidget(row)
+
         # ------------------------------------------------------------------
         # Public API
         # ------------------------------------------------------------------
@@ -257,6 +343,7 @@ if _HAS_QT:
             self.setProperty("expanded", expanded)
             self.style().unpolish(self)
             self.style().polish(self)
+            self._rebuild_layout()
             self.update()
 
         def visible_shortcuts(self) -> tuple[str, ...]:

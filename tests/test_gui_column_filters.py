@@ -310,13 +310,13 @@ class GuiColumnFilterTests(unittest.TestCase):
                 "expense_date": f"2026-06-{(index % 28) + 1:02d}",
             })
         window = self._make_window(rows)
-        self.assertEqual(window.table.rowCount(), 100)
+        self.assertEqual(window.table.rowCount(), 50)
 
         window._set_column_filter("category", {"values": {"目标"}})
 
-        self.assertEqual(window.table.rowCount(), 100)
+        self.assertEqual(window.table.rowCount(), 50)
         self.assertEqual(window._limited_first_load_total, 105)
-        self.assertIn("100 / 105", window._format_status_count_prefix())
+        self.assertIn("50 / 105", window._format_status_count_prefix())
         self.assertFalse(window.btn_load_all.isHidden())
         window._load_all_invoices_clicked()
         self.assertEqual(window.table.rowCount(), 105)

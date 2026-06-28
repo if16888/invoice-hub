@@ -984,12 +984,16 @@ class InvoiceDB:
         self._conn.commit()
         return updated
 
-    def list_invoices(self, status: str | None = None, limit: int | None = None, include_deleted: bool = False) -> list[dict]:
-        """List invoices, optionally filtered by review status and limited to N records."""
+    def list_invoices(self, status: str | None = None, limit: int | None = None, include_deleted: bool = False, offset: int = 0) -> list[dict]:
+        """List invoices, optionally filtered by review status, limited to N records, with offset."""
         if status is not None and status not in review_status.ALL_STATUSES:
             raise ValueError(f"Invalid review status: '{status}'. Must be one of {review_status.ALL_STATUSES}")
         if limit is not None and limit <= 0:
             raise ValueError(f"Limit must be a positive integer. Got: {limit}")
+        if offset < 0:
+            raise ValueError(f"Offset must be a non-negative integer. Got: {offset}")
+        if offset > 0 and limit is None:
+            raise ValueError("Cannot specify offset without limit")
 
         query = """
             SELECT i.*, cg.name AS claim_name
@@ -1014,8 +1018,9 @@ class InvoiceDB:
 
         query += " ORDER BY i.expense_date DESC, i.id DESC"
         if limit is not None:
-            query += " LIMIT ?"
+            query += " LIMIT ? OFFSET ?"
             params.append(limit)
+            params.append(offset)
 
         rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]

@@ -1894,7 +1894,9 @@ class InvoiceWorkflowTests(unittest.TestCase):
     def test_overseas_receipt_pdf_is_preserved_without_invoice_number(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            src = base / "changi_receipt.pdf"
+            runtime = base / "runtime"
+            runtime.mkdir(parents=True, exist_ok=True)
+            src = runtime / "changi_receipt.pdf"
             src.write_bytes(b"%PDF- receipt")
             msg = email.message.EmailMessage()
             msg["Subject"] = "e-receipt"
@@ -1908,23 +1910,24 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 is_invoice=True,
                 is_extra=False,
             )
-            db = InvoiceDB(base / "invoices.db")
+            db = InvoiceDB(runtime / "invoices.db")
 
-            recorded = cli._process_email(
-                cli.MailMessage(uid=3842, raw_msg=msg),
-                StaticAttachmentHandler(base, [attachment]),
-                StaticParser(InvoiceInfo(parse_success=False, parse_note="内容不像发票")),
-                NoopLinkDownloader(),
-                db,
-                {},
-            )
-            rows = db.get_all_invoices()
-            db.close()
+            with patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    cli.MailMessage(uid=3842, raw_msg=msg),
+                    StaticAttachmentHandler(runtime, [attachment]),
+                    StaticParser(InvoiceInfo(parse_success=False, parse_note="内容不像发票")),
+                    NoopLinkDownloader(),
+                    db,
+                    {},
+                )
+                rows = db.get_all_invoices()
+                db.close()
 
-            self.assertEqual(recorded, 1)
-            self.assertEqual(rows[0]["invoice_type"], "海外凭证/收据")
-            self.assertEqual(rows[0]["parse_success"], 1)
-            self.assertTrue((base.parent / rows[0]["attachment_path"]).exists())
+                self.assertEqual(recorded, 1)
+                self.assertEqual(rows[0]["invoice_type"], "海外凭证/收据")
+                self.assertEqual(rows[0]["parse_success"], 1)
+                self.assertTrue((runtime / rows[0]["attachment_path"]).exists())
 
     def test_non_receipt_bad_pdf_is_not_recorded_as_downloaded(self):
         with tempfile.TemporaryDirectory() as td:

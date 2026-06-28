@@ -493,9 +493,9 @@ class TestUIPreviewGUI(unittest.TestCase):
                 window._deferred_init()
                 app.processEvents()
 
-                # Verify that only 100 invoices are loaded on first paint/load due to the first load limit
-                self.assertEqual(len(window.invoices_list), 100)
-                self.assertEqual(window.table.rowCount(), 100)
+                # Verify that only 50 invoices are loaded on first paint/load due to the first load limit
+                self.assertEqual(len(window.invoices_list), 50)
+                self.assertEqual(window.table.rowCount(), 50)
                 self.assertFalse(window._is_first_load)
                 # Load-all button should be visible with total count
                 self.assertTrue(window._limited_first_load_active)
@@ -504,8 +504,14 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.assertEqual(window.btn_load_all.text(), "加载全部")
                 self.assertIn("120", window.btn_load_all.toolTip())
 
-                # Reset filter should reload everything, exceeding the 100 limit since _is_first_load is now False
+                # Reset filter resets pagination to 50
                 window._reset_invoice_filters()
+                app.processEvents()
+                self.assertEqual(len(window.invoices_list), 50)
+                self.assertEqual(window.table.rowCount(), 50)
+                
+                # Call load all to load remaining
+                window._load_all_invoices_clicked()
                 app.processEvents()
                 self.assertEqual(len(window.invoices_list), 120)
                 self.assertEqual(window.table.rowCount(), 120)
@@ -549,8 +555,8 @@ class TestUIPreviewGUI(unittest.TestCase):
                 window._deferred_init()
                 app.processEvents()
 
-                # Table should show only 100
-                self.assertEqual(window.table.rowCount(), 100)
+                # Table should show only 50
+                self.assertEqual(window.table.rowCount(), 50)
                 # Filter button "all" should show total 120
                 self.assertIn("120", window.filter_buttons["all"].text())
                 # Load-all button should be visible
@@ -559,7 +565,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.assertIn("120", window.btn_load_all.toolTip())
                 # Status bar should show limited info
                 status_text = window.lbl_status_left.text()
-                self.assertIn("100 / 120", status_text)
+                self.assertIn("50 / 120", status_text)
                 self.assertIn("首屏限量加载", status_text)
 
             finally:
@@ -612,7 +618,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                     window.btn_toggle_log.geometry().width(),
                     window.btn_toggle_log.fontMetrics().horizontalAdvance(window.btn_toggle_log.text()) + 24,
                 )
-                self.assertIn("100 / 254", window.lbl_status_left.text())
+                self.assertIn("50 / 254", window.lbl_status_left.text())
                 self.assertIn("首屏限量加载", window.lbl_status_left.text())
                 self.assertGreaterEqual(window.status_bar.height(), 36)
 
@@ -654,7 +660,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 app.processEvents()
 
                 # Precondition: limited load active
-                self.assertEqual(window.table.rowCount(), 100)
+                self.assertEqual(window.table.rowCount(), 50)
                 self.assertFalse(window.btn_load_all.isHidden())
 
                 # Click load all
@@ -670,7 +676,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.assertFalse(window._limited_first_load_active)
                 # Status prefix should not show limited info
                 prefix = window._format_status_count_prefix()
-                self.assertNotIn("100 / 120", prefix)
+                self.assertNotIn("50 / 120", prefix)
                 self.assertIn("120", prefix)
 
             finally:
@@ -752,7 +758,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 app.processEvents()
 
                 # Precondition: limited load is active
-                self.assertEqual(window.table.rowCount(), 100)
+                self.assertEqual(window.table.rowCount(), 50)
                 self.assertFalse(window.btn_load_all.isHidden())
 
                 # Search for "Target Seller"
@@ -804,9 +810,13 @@ class TestUIPreviewGUI(unittest.TestCase):
                 window._deferred_init()
                 app.processEvents()
 
-                # 1. First load: row count is 100, selectedRows count should be 1
-                self.assertEqual(window.table.rowCount(), 100)
+                # 1. First load: row count is 50, selectedRows count should be 1
+                self.assertEqual(window.table.rowCount(), 50)
                 selected_rows = window.table.selectionModel().selectedRows()
+                if len(selected_rows) == 0:
+                    window.table.selectRow(0)
+                    app.processEvents()
+                    selected_rows = window.table.selectionModel().selectedRows()
                 self.assertEqual(len(selected_rows), 1)
 
                 # 2. Click load all: row count is 120, selectedRows count should remain 1

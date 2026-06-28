@@ -1188,5 +1188,34 @@ QFrame#ShortcutDisclosure[expanded="true"] {
     background-color: #F1F5F9;
     border-color: #CBD5E1;
 }
+QFrame#ShortcutDisclosure QLabel#ShortcutDisclosureTitle {
+    font-size: 11px;
+    font-weight: bold;
+    color: #475569;
+    background: transparent;
+    border: none;
+}
+QFrame#ShortcutDisclosure QLabel#ShortcutDisclosureChevron {
+    font-size: 10px;
+    color: #64748B;
+    background: transparent;
+    border: none;
+}
+QFrame#ShortcutDisclosure QLabel#ShortcutDisclosureKey {
+    background-color: #E2E8F0;
+    border: 1px solid #CBD5E1;
+    border-radius: 3px;
+    padding: 1px 3px;
+    font-size: 10px;
+    font-weight: bold;
+    color: #334155;
+    font-family: "Consolas", "Monaco", monospace;
+}
+QFrame#ShortcutDisclosure QLabel#ShortcutDisclosureLabel {
+    font-size: 10px;
+    color: #475569;
+    background: transparent;
+    border: none;
+}
 """ + MENU_STYLE + """
 """
