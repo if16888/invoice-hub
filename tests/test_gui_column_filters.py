@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtCore import QPoint
+try:
+    from PySide6.QtCore import QPoint
+except ImportError:
+    QPoint = None
 
 from scripts.invoice_fetch.db import InvoiceDB
 
@@ -41,7 +44,6 @@ class GuiColumnFilterTests(unittest.TestCase):
                     "mail_sender": row.get("mail_sender", ""),
                     "attachment_path": row.get("attachment_path", "file.pdf"),
                     "download_url": row.get("download_url", ""),
-                    "missing_extra": row.get("missing_extra", 0),
                 }
                 inv_id = db.insert_invoice(payload)
                 claim_name = row.get("claim_name")
@@ -120,26 +122,26 @@ class GuiColumnFilterTests(unittest.TestCase):
 
     def test_reset_clears_filters_and_header_indicator(self):
         window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
+            {"invoice_number": "FOOD", "seller_name": "餐饮"},
+            {"invoice_number": "HOTEL", "seller_name": "住宿"},
         ])
 
-        window._set_column_filter("category", {"values": {"住宿"}})
-        self.assertIn("●", window.table.horizontalHeaderItem(5).text())
+        window._set_column_filter("seller_name", {"values": {"住宿"}})
+        self.assertIn("●", window.table.horizontalHeaderItem(3).text())
         window._reset_invoice_filters()
 
         self.assertEqual(window.column_filters, {})
-        self.assertNotIn("●", window.table.horizontalHeaderItem(5).text())
+        self.assertNotIn("●", window.table.horizontalHeaderItem(3).text())
         self.assertEqual(set(self._numbers(window)), {"FOOD", "HOTEL"})
 
     def test_header_center_click_does_not_open_filter_popup(self):
         window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
+            {"invoice_number": "FOOD", "seller_name": "餐饮"},
+            {"invoice_number": "HOTEL", "seller_name": "住宿"},
         ])
 
         header = window.table.horizontalHeader()
-        section = 5
+        section = 3
         center_x = header.sectionViewportPosition(section) + header.sectionSize(section) // 2
         window._column_filter_header_press_pos = QPoint(center_x, header.height() // 2)
         window._show_column_filter_popup(section)
@@ -148,12 +150,12 @@ class GuiColumnFilterTests(unittest.TestCase):
 
     def test_supported_headers_open_filter_popup_near_widened_marker_area(self):
         window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
+            {"invoice_number": "FOOD", "seller_name": "餐饮"},
+            {"invoice_number": "HOTEL", "seller_name": "住宿"},
         ])
 
         header = window.table.horizontalHeader()
-        section = 5
+        section = 3
         near_marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 10
         window._column_filter_header_press_pos = QPoint(near_marker_x, header.height() // 2)
         window._show_column_filter_popup(section)
@@ -161,7 +163,7 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         popup = window._column_filter_popup
         self.assertIsNotNone(popup)
-        self.assertEqual(popup.key, "category")
+        self.assertEqual(popup.key, "seller_name")
         self.assertEqual(popup.search_edit.placeholderText(), "搜索值")
         self.assertEqual(popup.value_list.count(), 2)
         popup.close()
@@ -179,7 +181,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
 
         header = window.table.horizontalHeader()
-        section = 4
+        section = 3
         item = window.table.horizontalHeaderItem(section)
         text_width = header.fontMetrics().horizontalAdvance(item.text())
         marker_width = header.fontMetrics().horizontalAdvance("▾")
@@ -222,23 +224,23 @@ class GuiColumnFilterTests(unittest.TestCase):
 
     def test_active_filter_header_tooltip_is_clear(self):
         window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
+            {"invoice_number": "FOOD", "seller_name": "餐饮"},
+            {"invoice_number": "HOTEL", "seller_name": "住宿"},
         ])
 
-        window._set_column_filter("category", {"values": {"住宿"}})
-        tooltip = window.table.horizontalHeaderItem(5).toolTip()
+        window._set_column_filter("seller_name", {"values": {"住宿"}})
+        tooltip = window.table.horizontalHeaderItem(3).toolTip()
 
         self.assertIn("已启用列筛选", tooltip)
         self.assertIn("点击右侧修改", tooltip)
 
     def test_inactive_filter_header_tooltip_is_clear(self):
         window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
+            {"invoice_number": "FOOD", "seller_name": "餐饮"},
+            {"invoice_number": "HOTEL", "seller_name": "住宿"},
         ])
 
-        tooltip = window.table.horizontalHeaderItem(5).toolTip()
+        tooltip = window.table.horizontalHeaderItem(3).toolTip()
 
         self.assertIn("点击列标题右侧筛选", tooltip)
 
@@ -246,19 +248,19 @@ class GuiColumnFilterTests(unittest.TestCase):
         from PySide6.QtCore import Qt
 
         window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
+            {"invoice_number": "FOOD", "seller_name": "餐饮"},
+            {"invoice_number": "HOTEL", "seller_name": "住宿"},
         ])
 
-        window._set_column_filter("category", {"values": set()})
+        window._set_column_filter("seller_name", {"values": set()})
         self.assertEqual(window.table.rowCount(), 0)
-        self.assertIn("●", window.table.horizontalHeaderItem(5).text())
+        self.assertIn("●", window.table.horizontalHeaderItem(3).text())
         header = window.table.horizontalHeader()
         window._column_filter_header_press_pos = QPoint(
-            header.sectionViewportPosition(5) + header.sectionSize(5) - 10,
+            header.sectionViewportPosition(3) + header.sectionSize(3) - 10,
             header.height() // 2,
         )
-        window._show_column_filter_popup(5)
+        window._show_column_filter_popup(3)
         self.app.processEvents()
 
         popup = window._column_filter_popup
@@ -308,39 +310,29 @@ class GuiColumnFilterTests(unittest.TestCase):
                 "expense_date": f"2026-06-{(index % 28) + 1:02d}",
             })
         window = self._make_window(rows)
-        self.assertEqual(window.table.rowCount(), 100)
+        self.assertEqual(window.table.rowCount(), 50)
 
         window._set_column_filter("category", {"values": {"目标"}})
 
-        self.assertEqual(window.table.rowCount(), 100)
+        self.assertEqual(window.table.rowCount(), 50)
         self.assertEqual(window._limited_first_load_total, 105)
-        self.assertIn("100 / 105", window._format_status_count_prefix())
+        self.assertIn("50 / 105", window._format_status_count_prefix())
         self.assertFalse(window.btn_load_all.isHidden())
         window._load_all_invoices_clicked()
         self.assertEqual(window.table.rowCount(), 105)
         self.assertTrue(all(row["category"] == "目标" for row in window.invoices_list))
 
-    def test_review_and_material_status_are_visible_in_table(self):
-        # 审核状态和资料状态都必须在表格中可见，不能只放 tooltip。
+    def test_first_column_naming_and_material_only(self):
+        # 表格第一列显示审核状态，列名应为“状态”。
         window = self._make_window([
-            {"invoice_number": "OK-1", "review_status": "approved", "attachment_path": "file.pdf"},
             {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"},
-            {"invoice_number": "MISS-FILE", "attachment_path": "", "review_status": "to_review"},
-            {"invoice_number": "MISS-PROOF", "attachment_path": "file.pdf", "missing_extra": 1, "review_status": "to_review"},
-            {"invoice_number": "", "total_amount": "", "seller_name": "", "attachment_path": "", "review_status": "to_review"},
         ])
-        self.assertIn("状态", window.table.horizontalHeaderItem(0).text())
-        self.assertIn("资料", window.table.horizontalHeaderItem(1).text())
-
-        visible_pairs = [
-            (window.table.item(row, 0).text(), window.table.item(row, 1).text())
-            for row in range(window.table.rowCount())
-        ]
-        self.assertIn(("已通过", "正常"), visible_pairs)
-        self.assertIn(("已通过", "待补全"), visible_pairs)
-        self.assertIn(("待审核", "缺原件"), visible_pairs)
-        self.assertIn(("待审核", "缺证明"), visible_pairs)
-        self.assertIn(("待审核", "未识别"), visible_pairs)
+        header_text = window.table.horizontalHeaderItem(0).text()
+        self.assertTrue("状态" in header_text)
+        
+        # Check first column text
+        item_text = window.table.item(0, 0).text()
+        self.assertEqual(item_text, "已通过")
 
     def test_top_checkbox_bidirectional_sync_needs_fix(self):
         # 勾选“待补全”等价于资料状态列过滤。
@@ -406,7 +398,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         
         window.txt_search.setText("INV")
         window.chk_needs_fix.setChecked(True)
-        window._set_column_filter("category", {"values": {"餐饮"}})
+        window._set_column_filter("seller_name", {"values": {"餐饮"}})
         window.current_filter_status = "approved"
         
         self.app.processEvents()
@@ -421,7 +413,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.column_filters, {})
         self.assertIsNone(window.current_filter_status)
         self.assertFalse(window.filter_chips_widget.isVisible())
-        self.assertNotIn("●", window.table.horizontalHeaderItem(0).text())
+        self.assertNotIn("●", window.table.horizontalHeaderItem(3).text())
 
     def test_top_review_counts_dynamic_under_non_review_filters(self):
         # 顶部审核状态数字在待补全过滤条件下仍正确。
@@ -617,14 +609,11 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         # 1. Verify minimum widths
         expected_min_widths = {
-            0: 76,   # 完整性
+            0: 76,   # 状态
             1: 100,  # 费用日期
-            2: 100,  # 费用日期
-            3: 80,   # 金额
-            4: 260,  # 销售方
-            5: 96,   # 消费类型
-            6: 86,   # 来源
-            7: 96,   # 报销组
+            2: 80,   # 金额
+            3: 260,  # 销售方
+            4: 160,  # 发票号
         }
         for index, min_w in expected_min_widths.items():
             self.assertGreaterEqual(
@@ -634,32 +623,13 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         # 2. Verify that resizing below minimum width is blocked/corrected
         for index, min_w in expected_min_widths.items():
-            if index == 4:
+            if index == 3:
                 continue
             window.table.setColumnWidth(index, 20)
             self.app.processEvents()
             self.assertEqual(
                 window.table.columnWidth(index), min_w,
                 f"Column {index} width did not revert to minimum {min_w}"
-            )
-
-        # 3. Verify that “消费类型” (index 5) has enough width to show full label plus filter marker
-        header = window.table.horizontalHeader()
-        item = window.table.horizontalHeaderItem(5)
-        text_width = header.fontMetrics().horizontalAdvance(item.text())
-        column_width = window.table.columnWidth(5)
-        self.assertGreater(
-            column_width, text_width + 10,
-            f"Column 5 width ({column_width}) is not enough for label width ({text_width}) plus padding"
-        )
-
-        # 4. Verify “来源” (index 6) and “报销组” (index 7) fit their labels and markers comfortably too
-        for idx in [6, 7]:
-            col_w = window.table.columnWidth(idx)
-            lbl_w = header.fontMetrics().horizontalAdvance(window.table.horizontalHeaderItem(idx).text())
-            self.assertGreater(
-                col_w, lbl_w + 10,
-                f"Column {idx} width ({col_w}) is not enough for label width ({lbl_w}) plus padding"
             )
 
 

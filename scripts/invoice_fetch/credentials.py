@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-import keyring
+try:
+    import keyring
+except ImportError:
+    keyring = None
 
 from .log_privacy import mask_email
 
