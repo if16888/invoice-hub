@@ -53,6 +53,7 @@ class PreviewMixin:
     def _make_toolbar_button(self, text: str, handler, *, width: int | None = None, tooltip: str = "") -> QPushButton:
         button = QPushButton(text)
         button.clicked.connect(handler)
+        button.setFixedHeight(26)
         if width is not None:
             button.setFixedWidth(width)
         if tooltip:
@@ -62,7 +63,7 @@ class PreviewMixin:
     def _init_overlay_toolbar(self):
         self.overlay_toolbar = QWidget(self.preview_workbench)
         self.overlay_toolbar.setObjectName("OverlayToolbar")
-        self.overlay_toolbar.setFixedHeight(36)
+        self.overlay_toolbar.setFixedHeight(32)
         self.overlay_toolbar.setStyleSheet("""
             QWidget#OverlayToolbar {
                 background-color: rgba(255, 255, 255, 195);
@@ -170,7 +171,7 @@ class PreviewMixin:
 
         self.thumbnail_rail = QScrollArea(self.preview_body)
         self.thumbnail_rail.setObjectName("PreviewThumbnailRail")
-        self.thumbnail_rail.setFixedWidth(104)
+        self.thumbnail_rail.setFixedWidth(88)
         self.thumbnail_rail.setWidgetResizable(True)
         self.thumbnail_rail.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.thumbnail_content = QWidget()

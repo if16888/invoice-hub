@@ -236,10 +236,18 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsInstance(self.panel.btn_inline_more, QPushButton)
         # Text checks
         self.assertIn("通过并下一张", self.panel.btn_app.text())
-        self.assertIn("Enter", self.panel.btn_app.text())
+        self.assertNotIn("\n", self.panel.btn_app.text())
         self.assertIn("忽略", self.panel.btn_ign.text())
-        self.assertIn("Del", self.panel.btn_ign.text())
-        self.assertIn("Ctrl+E", self.panel.btn_err.text())
+        self.assertNotIn("\n", self.panel.btn_ign.text())
+        self.assertEqual(self.panel.btn_err.text(), "异常")
+        self.assertNotIn("\n", self.panel.btn_err.text())
+        self.assertIn("Enter", self.panel.btn_app.toolTip())
+        self.assertIn("Del", self.panel.btn_ign.toolTip())
+        self.assertIn("Ctrl+E", self.panel.btn_err.toolTip())
+
+    def test_review_action_buttons_stay_compact_in_narrow_panel(self):
+        for btn in (self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err):
+            self.assertLessEqual(btn.height(), 32)
 
     def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
         fixed = self.panel.fixed_header_container

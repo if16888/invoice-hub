@@ -2631,8 +2631,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_app = make_button("通过并下一张\nEnter", variant="primary")
-        self.btn_app.setFixedHeight(36)
+        self.btn_app = make_button("通过并下一张", variant="primary", tooltip="快捷键：Enter")
+        self.btn_app.setFixedHeight(32)
 
 
 
@@ -2648,8 +2648,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_ign = make_button("忽略\nDel", variant="secondary")
-        self.btn_ign.setFixedHeight(36)
+        self.btn_ign = make_button("忽略", variant="secondary", tooltip="快捷键：Del")
+        self.btn_ign.setFixedHeight(32)
 
 
 
@@ -2665,8 +2665,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_err = make_button("标记异常\nCtrl+E", variant="danger")
-        self.btn_err.setFixedHeight(36)
+        self.btn_err = make_button("异常", variant="danger", tooltip="快捷键：Ctrl+E")
+        self.btn_err.setFixedHeight(32)
 
 
 

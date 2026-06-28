@@ -1329,9 +1329,9 @@ QPushButton[variant="toolbar"][busy="true"]:disabled {
 QFrame#CompactStatCard {
     background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
-    border-radius: 12px;
+    border-radius: 8px;
     min-width: 86px;
-    max-width: 108px;
+    max-width: 160px;
 }
 QFrame#CompactStatCard:hover {
     border-color: #93C5FD;
@@ -1370,21 +1370,21 @@ QFrame#CompactStatCard[state="info"] {
 }
 QLabel.CompactStatCardTitle {
     color: #6B7280;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     background: transparent;
     letter-spacing: 0.2px;
 }
 QLabel.CompactStatCardIcon {
     color: #94A3B8;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
     background: transparent;
-    margin-bottom: 1px;
+    margin-right: 1px;
 }
 QLabel.CompactStatCardValue {
     color: #111827;
-    font-size: 15px;
+    font-size: 11px;
     font-weight: 800;
     background: transparent;
 }

@@ -265,7 +265,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        nav_collapsed = metrics.nav_collapsed or bool(self._nav_collapsed_manual)
+        force_compact_nav = w <= 1366 or h <= 768
+        if force_compact_nav:
+            nav_collapsed = True
+        elif self._nav_collapsed_manual is None:
+            nav_collapsed = True
+        else:
+            nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_compact = nav_collapsed
         search_placeholder = (
             "搜索发票号 / 销售方 / 购买方 / 金额    Ctrl + F"
@@ -273,17 +279,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        nav_width = 56 if nav_collapsed else metrics.nav_width
+        nav_width = 56 if nav_collapsed else 208
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
+        self._detail_panel.setMaximumWidth(420)
+        if hasattr(self, "thumbnail_rail"):
+            self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
         self.btn_more.setText("更多  ▼" if not metrics.compact else "更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
-        card_width = 120 if not metrics.compact else 104
+        card_width = 136 if not metrics.compact else 124
         for card in self.filter_buttons.values():
             card.setMaximumWidth(card_width)
-            card.setMinimumWidth(min(104, card_width))
-            card.setMinimumSize(min(104, card_width), 0)
+            card.setMinimumWidth(min(96, card_width))
+            card.setMinimumSize(min(96, card_width), 0)
             card.updateGeometry()
         self.workbench_nav_title.setVisible(not nav_collapsed)
         self.workbench_nav_subtitle.setVisible(not nav_collapsed)
@@ -309,7 +318,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _toggle_workbench_nav_collapsed(self):
         metrics = metrics_for_size(self.width() or 1150, self.height() or 850)
-        nav_collapsed = metrics.nav_collapsed or bool(self._nav_collapsed_manual)
+        force_compact_nav = (self.width() or 1150) <= 1366 or (self.height() or 850) <= 768
+        if force_compact_nav:
+            nav_collapsed = True
+        elif self._nav_collapsed_manual is None:
+            nav_collapsed = True
+        else:
+            nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_collapsed_manual = not nav_collapsed
         settings = QSettings("InvoiceHub", "workbench")
         settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
@@ -355,6 +370,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._nav_collapsed_manual = settings.value("nav_collapsed_manual", False, type=bool)
         else:
             self._nav_collapsed_manual = None
+        if (
+            hasattr(self, "workbench_nav")
+            and hasattr(self, "_detail_panel")
+            and hasattr(self, "filter_buttons")
+        ):
+            self._apply_workbench_metrics()
 
     def _restore_left_splitter_sizes(self, sizes):
         if len(sizes) != 2:
@@ -579,10 +600,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # 1. Top Filter Bar
         self.filter_bar_widget = QWidget()
-        self.filter_bar_widget.setMaximumHeight(88)
+        self.filter_bar_widget.setMaximumHeight(36)
         filter_layout = QHBoxLayout(self.filter_bar_widget)
         filter_layout.setContentsMargins(0, 0, 0, 0)
-        filter_layout.setSpacing(8)
+        filter_layout.setSpacing(6)
 
         lbl_filter = QLabel("审核视图:")
         lbl_filter.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -619,38 +640,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 icon_text=icon_by_status[status],
             )
             card.setFocusPolicy(Qt.StrongFocus)
-            card.setMinimumWidth(104)
-            card.setMinimumSize(104, 0)
+            card.setMinimumWidth(96)
+            card.setMinimumSize(96, 0)
             card.set_selected(status == "all")
             card.clicked.connect(lambda s=status: self._change_filter(s))
-            filter_layout.addWidget(card, 1)
+            filter_layout.addWidget(card, 0)
             self.filter_buttons[status] = card
 
         filter_layout.addStretch()
-        main_layout.addWidget(self.filter_bar_widget)
-
-        # 1b. Secondary Filters
-        search_layout = QHBoxLayout()
-        search_layout.setSpacing(8)
 
         self.chk_unlinked = QCheckBox("未关联报销组")
         self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
-        search_layout.addWidget(self.chk_unlinked)
+        filter_layout.addWidget(self.chk_unlinked)
 
         self.chk_needs_fix = QCheckBox("待补全")
         self.chk_needs_fix.stateChanged.connect(self._on_chk_needs_fix_changed)
-        search_layout.addWidget(self.chk_needs_fix)
+        filter_layout.addWidget(self.chk_needs_fix)
 
         self.chk_show_deleted = QCheckBox("显示已删除")
         self.chk_show_deleted.stateChanged.connect(self._schedule_invoice_reload)
-        search_layout.addWidget(self.chk_show_deleted)
+        filter_layout.addWidget(self.chk_show_deleted)
 
         self.btn_reset_filters = make_button("重置", variant="secondary", min_width=56)
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
-        search_layout.addWidget(self.btn_reset_filters)
-
-        search_layout.addStretch()
-        main_layout.addLayout(search_layout)
+        self.btn_reset_filters.setFixedHeight(28)
+        filter_layout.addWidget(self.btn_reset_filters)
+        main_layout.addWidget(self.filter_bar_widget)
 
         # 1c. Active Filter Chips Summary
         self.filter_chips_widget = QWidget()
