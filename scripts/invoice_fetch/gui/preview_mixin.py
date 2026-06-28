@@ -259,7 +259,7 @@ class PreviewMixin:
 
         self.preview_rotation = 0
         self.preview_focus_dialog = None
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.setVisible(False)
         self.thumbnail_rail.setVisible(False)
         self._set_zoom_buttons_enabled(False)
 
@@ -272,7 +272,7 @@ class PreviewMixin:
         self.overlay_toolbar.setVisible(True)
 
     def _hide_overlay_toolbar(self):
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.setVisible(False)
 
     def _start_hide_overlay_timer(self):
         return
@@ -465,7 +465,7 @@ class PreviewMixin:
             text = "图片加载失败\n请点击外部打开，或重新导入该材料"
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.setVisible(False)
         self._set_zoom_buttons_enabled(False)
 
     def _zoom_fit_width(self):
@@ -565,7 +565,7 @@ class PreviewMixin:
             if hasattr(self, "btn_link_evidence"):
                 self.btn_link_evidence.setVisible(False)
                 self.btn_link_evidence.setEnabled(False)
-            self.overlay_toolbar.setVisible(True)
+            self.overlay_toolbar.setVisible(False)
             self._set_zoom_buttons_enabled(False)
             return
 
@@ -615,12 +615,12 @@ class PreviewMixin:
 
         if not file_path.exists():
             self._show_preview_status("文件不存在")
-            self.overlay_toolbar.setVisible(True)
+            self.overlay_toolbar.setVisible(False)
             self._set_preview_action_availability(file_path)
             return
 
         # Keep default state as hidden, show toolbar when mouse enters
-        self.overlay_toolbar.setVisible(True)
+        self.overlay_toolbar.setVisible(False)
         self._set_zoom_buttons_enabled(True)
 
         suffix = file_path.suffix.lower()

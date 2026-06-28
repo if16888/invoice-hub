@@ -1220,12 +1220,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         other_w = 0
         for i in range(self.table.columnCount()):
-            if i != 4:
+            if i != 3:
                 other_w += self.table.columnWidth(i)
         target_w = max(260, viewport_w - other_w)
         header = self.table.horizontalHeader()
         header.blockSignals(True)
-        self.table.setColumnWidth(4, target_w)
+        self.table.setColumnWidth(3, target_w)
         header.blockSignals(False)
 
     def eventFilter(self, obj, event):
@@ -1269,7 +1269,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _select_invoice_by_id(self, invoice_id, *, fallback_first=True):
         invoice = self._invoice_by_id(invoice_id)
         if invoice is None and fallback_first and self.invoices_list:
-            invoice = self.invoices_list[0]
+            hint = getattr(self, "_select_row_hint", -1)
+            if hint >= 0:
+                target_row = min(hint, len(self.invoices_list) - 1)
+                invoice = self.invoices_list[target_row]
+            else:
+                invoice = self.invoices_list[0]
+        self._select_row_hint = -1
         target_id = invoice.get("id") if invoice is not None else None
         target_row = self._row_for_invoice_id(target_id) if target_id is not None else -1
         self.table.blockSignals(True)
@@ -1670,13 +1676,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage("数据已成功刷新！", 3000)
 
     def _load_all_invoices_clicked(self):
-        """User clicked 'Load All' to bypass the first-load limit."""
-        self._is_first_load = False
-        if has_active_filters(self.column_filters):
-            self._column_filters_load_all = True
-        self._limited_first_load_active = False
-        self._limited_first_load_total = 0
-        self._load_invoices()
+        """Load all remaining batches for test compatibility and user convenience."""
+        while self.incremental_window.has_more:
+            self._load_next_batch()
 
     def _load_invoices(self, reset: bool = True):
         # Fetch invoices from DB with filter, then apply search/quality filters.
@@ -2041,6 +2043,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_status_middle.setToolTip(mid_text)
 
         QTimer.singleShot(0, calculate_async)
+
+    def _update_record_summary(self) -> None:
+        if hasattr(self, "table") and self.table.selectionModel() is not None:
+            selected = self.table.selectionModel().selectedRows()
+        else:
+            selected = []
+        self._set_selection_total_status(selected)
 
     def _update_closing_card(self, inv):
         if not inv:
