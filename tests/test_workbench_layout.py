@@ -599,6 +599,42 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 if getattr(first, "db", None) is not None and first.db.is_open:
                     first.db.close()
 
+    def test_default_collapsed_nav_does_not_persist_false_manual_state(self):
+        settings = QSettings("InvoiceHub", "workbench")
+        settings.remove("nav_collapsed_manual")
+        with tempfile.TemporaryDirectory() as td:
+            first = self._make_window(td)
+            try:
+                first.show()
+                first.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertLessEqual(first.workbench_nav.maximumWidth(), 56)
+                self.assertIsNone(first._nav_collapsed_manual)
+
+                first.close()
+                first.deleteLater()
+                QApplication.processEvents()
+
+                self.assertFalse(settings.contains("nav_collapsed_manual"))
+
+                second = self._make_window(td)
+                try:
+                    second.show()
+                    second.resize(1920, 1080)
+                    QApplication.processEvents()
+                    self.assertLessEqual(second.workbench_nav.maximumWidth(), 56)
+                    self.assertEqual(second.workbench_nav_buttons["review"].text(), "")
+                    self.assertFalse(settings.contains("nav_collapsed_manual"))
+                    self.assertIsNone(second._nav_collapsed_manual)
+                finally:
+                    second.db.close()
+                    second.close()
+                    second.deleteLater()
+                    QApplication.processEvents()
+            finally:
+                if getattr(first, "db", None) is not None and first.db.is_open:
+                    first.db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

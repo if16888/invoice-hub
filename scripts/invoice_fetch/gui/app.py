@@ -343,7 +343,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             settings.setValue("splitter/left", self.left_splitter.sizes())
         if hasattr(self, "shortcut_disclosure"):
             settings.setValue("shortcut_help_expanded", self.shortcut_disclosure.is_expanded())
-        settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
+        if self._nav_collapsed_manual is None:
+            settings.remove("nav_collapsed_manual")
+        else:
+            settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
 
     def _restore_splitter_prefs(self):
         settings = QSettings("InvoiceHub", "workbench")

@@ -25,9 +25,9 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
     """Return the appropriate WorkbenchMetrics for the given window size.
 
     Breakpoints (width × height, inclusive upper bound):
-      ≤ 1366 × 768  → compact, collapsed navigation (laptop / small monitor)
-      ≤ 1440 × 900  → compact, full navigation (medium monitor)
-      > 1440 × 900  → full density (1920×1080 target)
+      <= 1366 × 768  -> compact, collapsed navigation (laptop / small monitor)
+      <= 1440 × 900  -> compact, collapsed navigation (medium monitor)
+      > 1440 × 900   -> full density with collapsed navigation by default (1920×1080 target)
     """
     if width <= 1366 or height <= 768:
         return WorkbenchMetrics(
