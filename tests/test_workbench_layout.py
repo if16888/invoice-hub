@@ -548,6 +548,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
+                settings.sync()
 
                 self.assertEqual(window.workbench_nav.maximumWidth(), 208)
                 self.assertTrue(window.workbench_nav_title.isVisible())
@@ -562,6 +563,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
+                settings.sync()
                 self.assertLessEqual(window.workbench_nav.maximumWidth(), 56)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
                 self.assertTrue(settings.value("nav_collapsed_manual", False, type=bool))

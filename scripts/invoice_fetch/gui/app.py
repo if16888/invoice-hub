@@ -265,10 +265,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        force_compact_nav = w <= 1366
-        if force_compact_nav:
-            nav_collapsed = True
-        elif self._nav_collapsed_manual is None:
+        if self._nav_collapsed_manual is None:
+            nav_collapsed = metrics.nav_collapsed
+        elif w <= 1024:
             nav_collapsed = True
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
@@ -320,11 +319,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
-        metrics = metrics_for_size(self.width() or 1150, self.height() or 850)
-        force_compact_nav = (self.width() or 1150) <= 1366
-        if force_compact_nav:
-            nav_collapsed = True
-        elif self._nav_collapsed_manual is None:
+        w = self.width() or 1150
+        metrics = metrics_for_size(w, self.height() or 850)
+        if self._nav_collapsed_manual is None:
+            nav_collapsed = metrics.nav_collapsed
+        elif w <= 1024:
             nav_collapsed = True
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
