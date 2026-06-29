@@ -584,6 +584,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 first.btn_collapse_nav.click()
                 QApplication.processEvents()
                 self.assertEqual(first.workbench_nav.maximumWidth(), 208)
+                first._save_splitter_prefs()
+                persisted = QSettings("InvoiceHub", "workbench")
+                persisted.sync()
+                self.assertFalse(
+                    persisted.value("nav_collapsed_manual", True, type=bool)
+                )
                 first.close()
                 first.deleteLater()
                 QApplication.processEvents()

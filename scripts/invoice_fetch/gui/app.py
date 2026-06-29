@@ -282,6 +282,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         nav_width = 56 if nav_collapsed else 208
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
+        self.table.verticalHeader().setDefaultSectionSize(20)
+        self.table.verticalHeader().setMinimumSectionSize(20)
+        self.table.verticalHeader().setMaximumSectionSize(23)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
         self._detail_panel.setMaximumWidth(420)
         if hasattr(self, "thumbnail_rail"):
@@ -328,6 +331,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._nav_collapsed_manual = not nav_collapsed
         settings = QSettings("InvoiceHub", "workbench")
         settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
+        settings.sync()
         self._apply_workbench_metrics()
 
     def resizeEvent(self, event):
@@ -347,6 +351,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             settings.remove("nav_collapsed_manual")
         else:
             settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
+        settings.sync()
 
     def _restore_splitter_prefs(self):
         settings = QSettings("InvoiceHub", "workbench")
