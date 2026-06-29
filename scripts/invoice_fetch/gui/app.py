@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
 )
-from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings
+from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction
 
@@ -1322,6 +1322,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 return row
         return -1
 
+    def _apply_single_row_selection(self, row: int) -> bool:
+        if row < 0 or row >= self.table.rowCount():
+            return False
+        model = self.table.selectionModel()
+        if model is None:
+            return False
+        index = self.table.model().index(row, 0)
+        model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+        model.setCurrentIndex(index, QItemSelectionModel.Current | QItemSelectionModel.Rows)
+        self.table.setCurrentCell(row, 0)
+        return len(model.selectedRows()) == 1
+
+    def _ensure_single_row_selection(self, row: int) -> None:
+        if row < 0:
+            return
+        if not self._apply_single_row_selection(row):
+            QTimer.singleShot(0, lambda checked_row=row: self._apply_single_row_selection(checked_row))
+
     def _select_invoice_by_id(self, invoice_id, *, fallback_first=True):
         invoice = self._invoice_by_id(invoice_id)
         if invoice is None and fallback_first and self.invoices_list:
@@ -1335,10 +1353,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if self.table.selectionModel() is not None:
                 self.table.selectionModel().clearCurrentIndex()
             if target_row >= 0:
-                self.table.selectRow(target_row)
-                self.table.setCurrentCell(target_row, 0)
+                self._apply_single_row_selection(target_row)
         finally:
             self.table.blockSignals(False)
+        if target_row >= 0:
+            self._ensure_single_row_selection(target_row)
         self._on_table_selection_changed()
         return target_row >= 0
 
@@ -2068,10 +2087,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if target_row != -1:
                 self.table.blockSignals(True)
                 try:
-                    self.table.selectRow(target_row)
-                    self.table.setCurrentCell(target_row, 0)
+                    self._apply_single_row_selection(target_row)
                 finally:
                     self.table.blockSignals(False)
+                self._ensure_single_row_selection(target_row)
                 self._on_table_selection_changed()
             self._set_right_panel_state(True)
 
