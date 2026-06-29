@@ -452,18 +452,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "notify": "通知",
         }
 
-        def add_nav_button(key: str, text: str, handler=None, checked: bool = False):
+        def add_nav_button(
+            key: str,
+            text: str,
+            handler=None,
+            checked: bool = False,
+            *,
+            selectable: bool = False,
+            enabled: bool = True,
+        ):
             button = QPushButton(text)
             button.setObjectName(f"workbench_nav_{key}")
             button.setProperty("class", "WorkbenchNavButton")
-            button.setCheckable(True)
-            button.setChecked(checked)
+            button.setCheckable(selectable)
+            button.setChecked(checked if selectable else False)
             button.setMinimumHeight(36)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setIcon(self.style().standardIcon(nav_icons[key]))
+            button.setEnabled(enabled)
             if handler is not None:
                 button.clicked.connect(handler)
-            self.workbench_nav_group.addButton(button)
+            if selectable:
+                self.workbench_nav_group.addButton(button)
             nav_layout.addWidget(button)
             self._workbench_nav_button_texts[key] = text
             self.workbench_nav_buttons[key] = button
@@ -479,6 +489,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         add_nav_button("settings", "系统设置", self._open_settings_dialog)
         add_nav_button("data", "数据与备份", self._open_settings_dialog)
         add_nav_button("about", "关于我们", self._show_about_dialog)
+
+        review_button = self.workbench_nav_buttons["review"]
+        review_button.setCheckable(True)
+        review_button.setChecked(True)
+        self.workbench_nav_group.addButton(review_button)
+        for key in ("overview", "imports"):
+            button = self.workbench_nav_buttons[key]
+            self.workbench_nav_group.removeButton(button)
+            button.setChecked(False)
+            button.setCheckable(False)
+            button.setEnabled(False)
+        for key in ("mobile_upload", "export", "mail", "rules", "settings", "data", "about"):
+            button = self.workbench_nav_buttons[key]
+            self.workbench_nav_group.removeButton(button)
+            button.setChecked(False)
+            button.setCheckable(False)
 
         nav_layout.addStretch(1)
         self.btn_collapse_nav = QPushButton("收起侧边栏")
@@ -1332,6 +1358,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
         model.setCurrentIndex(index, QItemSelectionModel.Current | QItemSelectionModel.Rows)
         self.table.setCurrentCell(row, 0)
+        self.table.selectRow(row)
         return len(model.selectedRows()) == 1
 
     def _ensure_single_row_selection(self, row: int) -> None:
@@ -2092,6 +2119,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self.table.blockSignals(False)
                 self._ensure_single_row_selection(target_row)
                 self._on_table_selection_changed()
+                selection_model = self.table.selectionModel()
+                if selection_model is not None and not selection_model.selectedRows():
+                    self._apply_single_row_selection(target_row)
+                    self._on_table_selection_changed()
             self._set_right_panel_state(True)
 
         # Synchronously refresh the status bar to reflect the current limited-load state,

@@ -341,6 +341,56 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
+    def test_inactive_nav_items_do_not_allow_false_page_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+
+                for key in ("overview", "imports"):
+                    button = window.workbench_nav_buttons[key]
+                    self.assertFalse(button.isChecked())
+                    self.assertTrue(
+                        (not button.isVisible()) or (not button.isEnabled()),
+                        f"{key} should be hidden or disabled until implemented",
+                    )
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_nav_action_entries_do_not_steal_review_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                window._load_invoices()
+                QApplication.processEvents()
+
+                review_button = window.workbench_nav_buttons["review"]
+                original_widget = window.left_stack.currentWidget()
+                self.assertTrue(review_button.isChecked())
+
+                for key in ("mobile_upload", "mail", "export"):
+                    button = window.workbench_nav_buttons[key]
+                    button.clicked.disconnect()
+                    button.clicked.connect(lambda checked=False: None)
+                    button.click()
+                    QApplication.processEvents()
+                    self.assertTrue(review_button.isChecked(), f"review should stay selected after {key}")
+                    self.assertFalse(button.isChecked(), f"{key} should not become selected")
+                    self.assertIs(window.left_stack.currentWidget(), original_widget)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
     def test_preview_empty_state_uses_shared_styled_label(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
