@@ -2066,7 +2066,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # Consume the hint after use so it doesn't affect unrelated reloads
             self._select_row_hint = -1
             if target_row != -1:
-                self.table.selectRow(target_row)
+                self.table.blockSignals(True)
+                try:
+                    self.table.selectRow(target_row)
+                    self.table.setCurrentCell(target_row, 0)
+                finally:
+                    self.table.blockSignals(False)
+                self._on_table_selection_changed()
             self._set_right_panel_state(True)
 
         # Synchronously refresh the status bar to reflect the current limited-load state,

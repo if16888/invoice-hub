@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..config import RUNTIME_DIR
@@ -53,7 +53,7 @@ class PreviewMixin:
     def _make_toolbar_button(self, text: str, handler, *, width: int | None = None, tooltip: str = "") -> QPushButton:
         button = QPushButton(text)
         button.clicked.connect(handler)
-        button.setFixedHeight(26)
+        button.setFixedHeight(24)
         if width is not None:
             button.setFixedWidth(width)
         if tooltip:
@@ -63,14 +63,14 @@ class PreviewMixin:
     def _init_overlay_toolbar(self):
         self.overlay_toolbar = QWidget(self.preview_workbench)
         self.overlay_toolbar.setObjectName("OverlayToolbar")
-        self.overlay_toolbar.setFixedHeight(32)
+        self.overlay_toolbar.setFixedHeight(30)
         self.overlay_toolbar.setStyleSheet("""
             QWidget#OverlayToolbar {
                 background-color: rgba(255, 255, 255, 195);
                 border: 1px solid #D1D5DB;
                 border-radius: 8px;
             }
-            QPushButton {
+            QPushButton, QToolButton {
                 background-color: transparent;
                 border: none;
                 padding: 1px 4px;
@@ -78,12 +78,12 @@ class PreviewMixin:
                 color: #374151;
                 font-weight: 500;
             }
-            QPushButton:hover {
+            QPushButton:hover, QToolButton:hover {
                 background-color: rgba(243, 244, 246, 200);
                 border-radius: 4px;
                 color: #111827;
             }
-            QPushButton:disabled {
+            QPushButton:disabled, QToolButton:disabled {
                 color: #9CA3AF;
                 background-color: transparent;
             }
@@ -92,11 +92,11 @@ class PreviewMixin:
 
         tb_layout = QHBoxLayout(self.overlay_toolbar)
         tb_layout.setContentsMargins(4, 0, 4, 0)
-        tb_layout.setSpacing(3)
+        tb_layout.setSpacing(2)
 
-        self.btn_zoom_out = self._make_toolbar_button("-", self._zoom_out, width=14)
-        self.btn_zoom_100 = self._make_toolbar_button("100%", self._zoom_100)
-        self.btn_zoom_in = self._make_toolbar_button("+", self._zoom_in, width=14)
+        self.btn_zoom_out = self._make_toolbar_button("-", self._zoom_out, width=18)
+        self.btn_zoom_100 = self._make_toolbar_button("100%", self._zoom_100, width=44)
+        self.btn_zoom_in = self._make_toolbar_button("+", self._zoom_in, width=18)
         self.btn_fit_width = self._make_toolbar_button("适宽", self._zoom_fit_width)
         self.btn_fit_page = self._make_toolbar_button("整页", self._zoom_fit_page)
         self.btn_rotate_left = self._make_toolbar_button("左旋", lambda: self._rotate_preview(-90))
@@ -104,6 +104,22 @@ class PreviewMixin:
         self.btn_download_preview = self._make_toolbar_button("下载", self._download_current_preview)
         self.btn_print_preview = self._make_toolbar_button("打印", self._print_current_preview)
         self.btn_preview_focus = self._make_toolbar_button("全屏", self._toggle_preview_focus_mode)
+        self.btn_preview_more = QToolButton(self.overlay_toolbar)
+        self.btn_preview_more.setText("更多")
+        self.btn_preview_more.setFixedHeight(24)
+        self.btn_preview_more.setPopupMode(QToolButton.InstantPopup)
+
+        preview_more_menu = QMenu(self.btn_preview_more)
+        for label, button in (
+            ("整页", self.btn_fit_page),
+            ("左旋", self.btn_rotate_left),
+            ("右旋", self.btn_rotate_right),
+            ("下载", self.btn_download_preview),
+            ("打印", self.btn_print_preview),
+        ):
+            action = preview_more_menu.addAction(label)
+            action.triggered.connect(button.click)
+        self.btn_preview_more.setMenu(preview_more_menu)
 
         self.preview_actions = {
             "zoom_out": self.btn_zoom_out,
@@ -119,7 +135,24 @@ class PreviewMixin:
         }
         for key, button in self.preview_actions.items():
             button.setObjectName(f"PreviewAction_{key}")
+        for button in (
+            self.btn_zoom_out,
+            self.btn_zoom_100,
+            self.btn_zoom_in,
+            self.btn_fit_width,
+            self.btn_preview_more,
+            self.btn_preview_focus,
+        ):
             tb_layout.addWidget(button)
+        for button in (
+            self.btn_fit_page,
+            self.btn_rotate_left,
+            self.btn_rotate_right,
+            self.btn_download_preview,
+            self.btn_print_preview,
+        ):
+            button.setParent(self.overlay_toolbar)
+            button.hide()
 
         self.overlay_toolbar.hide()
         self._init_legacy_preview_controls()
@@ -172,7 +205,7 @@ class PreviewMixin:
 
         self.thumbnail_rail = QScrollArea(self.preview_body)
         self.thumbnail_rail.setObjectName("PreviewThumbnailRail")
-        self.thumbnail_rail.setFixedWidth(88)
+        self.thumbnail_rail.setFixedWidth(68)
         self.thumbnail_rail.setWidgetResizable(True)
         self.thumbnail_rail.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.thumbnail_content = QWidget()
@@ -460,7 +493,10 @@ class PreviewMixin:
 
     def _show_preview_status(self, text):
         if text == "\u5f53\u524d\u53d1\u7968\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u539f\u4ef6":
-            text = "\u5f53\u524d\u53d1\u7968\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u539f\u4ef6\n\u53ef\u70b9\u51fb“\u67e5\u770b\u6587\u4ef6”\u6216“\u5b9a\u4f4d\u6587\u4ef6”\u786e\u8ba4\u539f\u4ef6\u4f4d\u7f6e"
+            text = (
+                "\u5f53\u524d\u53d1\u7968\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u539f\u4ef6\n"
+                "\u53ef\u70b9\u51fb\u53f3\u4fa7\u6750\u6599\u533a\u7684 \u5b9a\u4f4d / \u8865\u5145\uff0c\u6216\u91cd\u65b0\u4e0b\u8f7d\u3002"
+            )
         elif text == "\u6587\u4ef6\u4e0d\u5b58\u5728":
             text = (
                 "\u539f\u4ef6\u6587\u4ef6\u4e0d\u5b58\u5728\n"
@@ -647,9 +683,7 @@ class PreviewMixin:
             QPdfDocument, QPdfView = get_qt_pdf_classes()
             if QPdfDocument is not None and QPdfView is not None:
                 if self.pdf_view is None:
-                    self.pdf_document = QPdfDocument(self)
                     self.pdf_view = QPdfView(self)
-                    self.pdf_view.setDocument(self.pdf_document)
                     # ── PDF MultiPage: prefer MultiPage, fallback to SinglePage ──
                     if hasattr(QPdfView.PageMode, "MultiPage"):
                         self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
@@ -661,6 +695,23 @@ class PreviewMixin:
                     # Install event filter to capture key events that QPdfView may consume
                     self.pdf_view.installEventFilter(self)
 
+                old_document = getattr(self, "pdf_document", None)
+                if old_document is not None:
+                    try:
+                        self.pdf_view.setDocument(None)
+                    except Exception:
+                        pass
+                    try:
+                        old_document.close()
+                    except Exception:
+                        pass
+                    try:
+                        old_document.deleteLater()
+                    except Exception:
+                        pass
+
+                self.pdf_document = QPdfDocument(self)
+                self.pdf_view.setDocument(self.pdf_document)
                 self.pdf_document.load(str(file_path))
                 # Re-apply MultiPage preference on every load
                 if hasattr(QPdfView.PageMode, "MultiPage"):
@@ -669,6 +720,7 @@ class PreviewMixin:
                     self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
                 self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
                 self.preview_stack.setCurrentWidget(self.pdf_view)
+                self.pdf_view.update()
                 # ── Refresh PDF-page-aware file info after loading ──
                 self._refresh_preview_file_info()
                 self._update_pdf_page_buttons()
@@ -1117,6 +1169,8 @@ class PreviewMixin:
             item = self.thumbnail_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()
+                widget.setParent(None)
                 widget.deleteLater()
         self.thumbnail_buttons = []
 

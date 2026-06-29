@@ -249,6 +249,20 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         for btn in (self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err):
             self.assertLessEqual(btn.height(), 32)
 
+    def test_review_actions_clear_detail_tabs_in_narrow_panel(self):
+        self.panel.resize(390, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        buttons_bottom = max(
+            btn.mapTo(self.panel, btn.rect().bottomLeft()).y()
+            for btn in (self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err, self.panel.btn_inline_more)
+        )
+        tabs_top = self.panel.detail_tabs.tabBar().mapTo(
+            self.panel, self.panel.detail_tabs.tabBar().rect().topLeft()
+        ).y()
+        self.assertLess(buttons_bottom + 4, tabs_top)
+
     def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
         fixed = self.panel.fixed_header_container
         for widget in (

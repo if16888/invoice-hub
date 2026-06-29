@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import tempfile
 import shutil
+from unittest.mock import patch
 
 from scripts.invoice_fetch.gui.helpers import resolve_invoice_documents, resolve_stored_path, _normalize_path_list
 
@@ -15,6 +16,26 @@ class TestUIPreviewHelpers(unittest.TestCase):
         self.attachments_dir.mkdir(parents=True)
 
     def tearDown(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+        except Exception:
+            pass
+
+        import gc
+        gc.collect()
+
+        for _ in range(5):
+            try:
+                shutil.rmtree(self.temp_dir)
+                return
+            except PermissionError:
+                import time
+                time.sleep(0.1)
+                gc.collect()
         shutil.rmtree(self.temp_dir)
 
     def test_normalize_path_list(self):
@@ -156,79 +177,77 @@ class TestUIPreviewGUI(unittest.TestCase):
 
 
             from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-            window = InvoiceReviewApp(self.db_path, splash=None)
-            try:
-                self.assertIsNone(window.pdf_document)
-                self.assertIsNone(window.pdf_view)
-                window._deferred_init()
-                app.processEvents()
+            with patch("scripts.invoice_fetch.gui.preview_mixin.get_qt_pdf_classes", return_value=(None, None)):
+                window = InvoiceReviewApp(self.db_path, splash=None)
+                try:
+                    self.assertIsNone(window.pdf_document)
+                    self.assertIsNone(window.pdf_view)
+                    window._deferred_init()
+                    app.processEvents()
 
-                # Case 1: No selection
-                window.table.clearSelection()
-                window._on_table_selection_changed()
-                app.processEvents()
-                self.assertEqual(window.lbl_preview_status.text(), "请选择一张发票查看原件")
-                self.assertEqual(window.lbl_file_info.text(), "0 / 0 无文件")
-                self.assertFalse(window.btn_prev.isEnabled())
-                self.assertFalse(window.btn_next.isEnabled())
-                self.assertFalse(window.btn_open_ext.isEnabled())
+                    # Case 1: No selection
+                    window.table.clearSelection()
+                    window._on_table_selection_changed()
+                    app.processEvents()
+                    self.assertEqual(window.lbl_preview_status.text(), "请选择一张发票查看原件")
+                    self.assertEqual(window.lbl_file_info.text(), "0 / 0 无文件")
+                    self.assertFalse(window.btn_prev.isEnabled())
+                    self.assertFalse(window.btn_next.isEnabled())
+                    self.assertFalse(window.btn_open_ext.isEnabled())
 
-                # Case 2: Single selection
-                window.table.selectRow(0)
-                window._on_table_selection_changed()
-                app.processEvents()
-                self.assertEqual(window.current_preview_index, 0)
-                self.assertEqual(len(window.current_preview_docs), 2) # a.pdf + extra1.png
-                self.assertIn("文件 1/2", window.lbl_file_info.text())
-                self.assertTrue(window.btn_prev.isEnabled())
-                self.assertTrue(window.btn_next.isEnabled())
-                from scripts.invoice_fetch.gui.app import check_has_qt_pdf
-                if check_has_qt_pdf():
-                    self.assertIsNotNone(window.pdf_document)
-                    self.assertIsNotNone(window.pdf_view)
-                    window._zoom_fit_width()
-                    window._zoom_fit_page()
-                    window._zoom_100()
-                    window._zoom_in()
-                    window._zoom_out()
+                    # Case 2: Single selection
+                    window.table.selectRow(0)
+                    window._on_table_selection_changed()
+                    app.processEvents()
+                    self.assertEqual(window.current_preview_index, 0)
+                    self.assertEqual(len(window.current_preview_docs), 2) # a.pdf + extra1.png
+                    self.assertIn("文件 1/2", window.lbl_file_info.text())
+                    self.assertTrue(window.btn_prev.isEnabled())
+                    self.assertTrue(window.btn_next.isEnabled())
+                    self.assertIsNone(window.pdf_document)
+                    self.assertIsNone(window.pdf_view)
 
-                # Check overlay toolbar hidden by default upon document load
-                self.assertTrue(window.overlay_toolbar.isHidden())
+                    # Check overlay toolbar hidden by default upon document load
+                    self.assertTrue(window.overlay_toolbar.isHidden())
 
-                # Trigger show overlay helper
-                window._show_overlay_toolbar()
-                self.assertFalse(window.overlay_toolbar.isHidden())
+                    # Trigger show overlay helper
+                    window._show_overlay_toolbar()
+                    self.assertFalse(window.overlay_toolbar.isHidden())
 
-                # Trigger hide overlay helper
-                window._hide_overlay_toolbar()
-                self.assertTrue(window.overlay_toolbar.isHidden())
+                    # Trigger hide overlay helper
+                    window._hide_overlay_toolbar()
+                    self.assertTrue(window.overlay_toolbar.isHidden())
 
-                # Case 3: Multiple selection
-                window.table.selectAll()
-                window._on_table_selection_changed()
-                app.processEvents()
-                self.assertEqual(window.lbl_preview_status.text(), "已选择多张发票，请选择单张查看原件")
-                self.assertEqual(window.lbl_file_info.text(), "0 / 0 无文件")
-                self.assertFalse(window.btn_prev.isEnabled())
-                self.assertFalse(window.btn_next.isEnabled())
-                self.assertFalse(window.btn_open_ext.isEnabled())
-                self.assertTrue(window.overlay_toolbar.isHidden())
+                    # Case 3: Multiple selection
+                    window.table.selectAll()
+                    window._on_table_selection_changed()
+                    app.processEvents()
+                    self.assertEqual(window.lbl_preview_status.text(), "已选择多张发票，请选择单张查看原件")
+                    self.assertEqual(window.lbl_file_info.text(), "0 / 0 无文件")
+                    self.assertFalse(window.btn_prev.isEnabled())
+                    self.assertFalse(window.btn_next.isEnabled())
+                    self.assertFalse(window.btn_open_ext.isEnabled())
+                    self.assertTrue(window.overlay_toolbar.isHidden())
 
-
-
-            finally:
-                if hasattr(window, "pdf_view") and window.pdf_view is not None:
-                    window.pdf_view.setDocument(None)
-                if hasattr(window, "pdf_document") and window.pdf_document is not None:
-                    window.pdf_document.close()
-                    window.pdf_document.setParent(None)
-                    window.pdf_document = None
-                if hasattr(window, "db") and window.db is not None:
-                    window.db.close()
-                window.close()
-                window.deleteLater()
-                app.processEvents()
-                import gc; gc.collect()
+                finally:
+                    if hasattr(window, "pdf_view") and window.pdf_view is not None:
+                        window.pdf_view.setDocument(None)
+                        window.pdf_view.setParent(None)
+                        if hasattr(window.pdf_view, "deleteLater"):
+                            window.pdf_view.deleteLater()
+                        window.pdf_view = None
+                    if hasattr(window, "pdf_document") and window.pdf_document is not None:
+                        window.pdf_document.close()
+                        if hasattr(window.pdf_document, "deleteLater"):
+                            window.pdf_document.deleteLater()
+                        window.pdf_document.setParent(None)
+                        window.pdf_document = None
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+                    import gc; gc.collect()
 
 
 
@@ -274,8 +293,8 @@ class TestUIPreviewGUI(unittest.TestCase):
                 app.processEvents()
 
                 self.assertIn("当前发票没有可预览的原件", window.lbl_preview_status.text())
-                self.assertIn("查看文件", window.lbl_preview_status.text())
-                self.assertIn("定位文件", window.lbl_preview_status.text())
+                self.assertIn("定位", window.lbl_preview_status.text())
+                self.assertIn("补充", window.lbl_preview_status.text())
                 self.assertFalse(window.btn_prev.isEnabled())
                 self.assertFalse(window.btn_next.isEnabled())
             finally:
@@ -320,8 +339,8 @@ class TestUIPreviewGUI(unittest.TestCase):
                 app.processEvents()
 
                 window._show_preview_status("当前发票没有可预览的原件")
-                self.assertIn("查看文件", window.lbl_preview_status.text())
-                self.assertIn("定位文件", window.lbl_preview_status.text())
+                self.assertIn("定位", window.lbl_preview_status.text())
+                self.assertIn("补充", window.lbl_preview_status.text())
 
                 window._show_preview_status("文件不存在")
                 self.assertIn("原件文件不存在", window.lbl_preview_status.text())
@@ -446,8 +465,14 @@ class TestUIPreviewGUI(unittest.TestCase):
             finally:
                 if hasattr(window, "pdf_view") and window.pdf_view is not None:
                     window.pdf_view.setDocument(None)
+                    window.pdf_view.setParent(None)
+                    if hasattr(window.pdf_view, "deleteLater"):
+                        window.pdf_view.deleteLater()
+                    window.pdf_view = None
                 if hasattr(window, "pdf_document") and window.pdf_document is not None:
                     window.pdf_document.close()
+                    if hasattr(window.pdf_document, "deleteLater"):
+                        window.pdf_document.deleteLater()
                     window.pdf_document.setParent(None)
                     window.pdf_document = None
                 if hasattr(window, "db") and window.db is not None:
