@@ -1269,10 +1269,6 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertNotIn("font-size: 9px;", APP_STYLESHEET)
 
     def test_public_candidate_docs_do_not_keep_internal_planning_docs(self):
-        # Skip this test if running in the private development repository
-        if (Path(__file__).resolve().parent.parent / ".git").exists():
-            self.skipTest("Skipping public doc check in private development workspace")
-
         # 1. Verify that the internal planning files do not exist in the public candidate paths
         forbidden_paths = [
             "docs/minimum-mvp-gap.md",
@@ -1316,7 +1312,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 try:
                     window._deferred_init()
                     app.processEvents()
-                    self.assertEqual(window.centralWidget().layout().spacing(), 8)
+                    self.assertEqual(window.centralWidget().layout().spacing(), 0)
+                    self.assertEqual(window.workbench_content.layout().spacing(), 8)
                     self.assertEqual(window.summary_card.layout().spacing(), 6)  # readable spacing
                     self.assertGreaterEqual(window.btn_toggle_log.minimumWidth(), 76)
                     self.assertEqual(window.status_bar.maximumHeight(), 36)
@@ -1370,9 +1367,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 window._deferred_init()
                 self.assertLessEqual(window.table.verticalHeader().defaultSectionSize(), 24)
                 self.assertTrue(window.table.item(0, 0).toolTip())
-                self.assertTrue(window.table.item(0, 1).toolTip())
                 self.assertTrue(window.table.item(0, 3).toolTip())
                 self.assertTrue(window.table.item(0, 4).toolTip())
+                self.assertTrue(window.table.item(0, 5).toolTip())
             finally:
                 if hasattr(window, "db") and window.db is not None:
                     window.db.close()
@@ -3038,9 +3035,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(len(window.invoices_list), 1)
                     self.assertEqual(window.table.rowCount(), 1)
                     self.assertEqual(window.table.item(0, 0).text(), "待审核")
-                    self.assertIn("缺原件", window.table.item(0, 0).toolTip())
-                    self.assertEqual(window.table.item(0, 1).text(), "2026-05-24")
-                    self.assertEqual(window.table.item(0, 2).text(), "123.45")
+                    self.assertEqual(window.table.item(0, 1).text(), "缺原件")
+                    self.assertEqual(window.table.item(0, 2).text(), "2026-05-24")
+                    self.assertEqual(window.table.item(0, 3).text(), "123.45")
                     self.assertGreaterEqual(window.btn_clear_log.minimumWidth(), 64)
                     self.assertGreaterEqual(window.btn_copy_log.minimumWidth(), 64)
                 finally:
@@ -5633,7 +5630,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 try:
                     window._deferred_init()
                     app.processEvents()
-                    self.assertEqual(window.table.rowCount(), window.incremental_window.limit)
+                    self.assertEqual(window.table.rowCount(), 50)
                     self.assertEqual(window.filter_buttons["all"].text(), "全部 105")
                     self.assertEqual(window.filter_buttons["to_review"].text(), "待审核 105")
                 finally:
@@ -5917,7 +5914,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._deferred_init()
                     app.processEvents()
 
-                    self.assertEqual(window.table.rowCount(), window.incremental_window.limit)
+                    self.assertEqual(window.table.rowCount(), 50)
 
                     for status, limit in list_calls:
                         if status is None and limit is None:
@@ -6025,8 +6022,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 window.table.selectRow(0)
                 app.processEvents()
 
-                if window.table.columnCount() > 7:
-                    self.assertEqual(window.table.item(0, 7).text(), "—")
+                self.assertEqual(window._get_invoice_claim_group(window.current_invoice), "")
                 new_idx = window.combo_claims.findData(window._NEW_CLAIM_VALUE)
                 self.assertGreaterEqual(new_idx, 0)
                 window.combo_claims.setCurrentIndex(new_idx)
@@ -6043,8 +6039,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 app.processEvents()
 
                 self.assertEqual(window.combo_claims.currentData(), claim_b)
-                if window.table.columnCount() > 7:
-                    self.assertEqual(window.table.item(0, 7).text(), "Claim B")
+                self.assertEqual(window._get_invoice_claim_group(window.current_invoice), "Claim B")
                 self.assertEqual(window.btn_add_to_claim.text(), "已在 Claim B")
                 self.assertFalse(window.btn_add_to_claim.isEnabled())
                 self.assertFalse(window.btn_delete_claim.isEnabled())

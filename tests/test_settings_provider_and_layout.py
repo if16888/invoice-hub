@@ -379,7 +379,11 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 amount_x = panel.txt_amount.mapTo(panel, QPoint(0, 0)).x()
                 buyer_x = panel.txt_buyer.mapTo(panel, QPoint(0, 0)).x()
                 path_x = panel.txt_path.mapTo(panel, QPoint(0, 0)).x()
+                panel.detail_tabs.setCurrentWidget(panel.operation_scroll)
+                self.app.processEvents()
                 note_x = panel.txt_note.mapTo(panel, QPoint(0, 0)).x()
+                panel.detail_tabs.setCurrentWidget(panel.right_content_widget)
+                self.app.processEvents()
                 missing_x = panel.lbl_evidence_missing.mapTo(panel, QPoint(0, 0)).x()
 
                 self.assertLessEqual(abs(core_x - amount_x), 4)

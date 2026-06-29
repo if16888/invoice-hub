@@ -21,6 +21,7 @@ except ImportError:
 from scripts.invoice_fetch.attachment_handler import build_managed_attachment_name
 from scripts.invoice_fetch.excel_export import export_excel
 from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch.gui.column_filters import VISIBLE_COLUMN_DEFINITIONS
 
 _QAPP = None
 
@@ -225,7 +226,9 @@ class TestGUIFixes(unittest.TestCase):
         # min_selected_row was 0. Remaining row index in new list is 0.
         # So selection should be auto-restored to row 0.
         self.assertEqual(app.table.currentRow(), 0)
-        self.assertEqual(app.table.item(0, 4).text(), "111")  # Column 4 shows invoice number
+        visible_keys = [key for key, _label in VISIBLE_COLUMN_DEFINITIONS]
+        invoice_col = visible_keys.index("invoice_number")
+        self.assertEqual(app.table.item(0, invoice_col).text(), "111")
 
     def test_link_to_claim_keeps_original_invoice_selected_when_still_visible(self):
         app = self.review_app

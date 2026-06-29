@@ -221,8 +221,8 @@ class TestWindowsVersionInfo(unittest.TestCase):
             self.assertTrue(output.exists(), "generator did not write the requested output file")
             text = output.read_text(encoding="utf-8")
             self.assertIn("VSVersionInfo(", text)
-            self.assertIn("filevers=(0, 1, 3, 0)", text)
-            self.assertIn("ProductVersion', '0.1.3", text)
+            self.assertIn("filevers=(0, 1, 4, 0)", text)
+            self.assertIn("ProductVersion', '0.1.4", text)
             self.assertIn(str(output), result.stdout + result.stderr)
 
     def test_spec_attaches_generated_version_resource(self):
@@ -319,7 +319,7 @@ class TestWindowsVersionInfoGenerator(unittest.TestCase):
             self.assertIn(str(Path("build") / "windows-version-info.txt"), buf.getvalue())
             text = output_path.read_text(encoding="utf-8")
             self.assertIn("VSVersionInfo(", text)
-            self.assertIn("StringStruct('ProductVersion', '0.1.3')", text)
+            self.assertIn("StringStruct('ProductVersion', '0.1.4')", text)
 
     def test_cli_uses_explicit_output_directory(self):
         from scripts import generate_windows_version_info as mod

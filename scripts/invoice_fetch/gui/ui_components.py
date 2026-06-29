@@ -162,6 +162,7 @@ if _HAS_QT:
             value: str,
             *,
             state: str = "muted",
+            icon_text: str = "",
             parent: QWidget | None = None,
         ) -> None:
             super().__init__(parent)
@@ -171,23 +172,32 @@ if _HAS_QT:
             self.setCursor(Qt.PointingHandCursor)
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(8, 6, 8, 6)
-            layout.setSpacing(2)
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(8, 3, 8, 3)
+            layout.setSpacing(4)
+
+            self._lbl_icon = QLabel(icon_text)
+            self._lbl_icon.setProperty("class", "CompactStatCardIcon")
+            self._lbl_icon.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            self._lbl_icon.setVisible(bool(icon_text))
 
             self._lbl_title = QLabel(title)
             self._lbl_title.setProperty("class", "CompactStatCardTitle")
-            self._lbl_title.setAlignment(Qt.AlignCenter)
+            self._lbl_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
             self._lbl_value = QLabel(value)
             self._lbl_value.setProperty("class", "CompactStatCardValue")
-            self._lbl_value.setAlignment(Qt.AlignCenter)
+            self._lbl_value.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
+            layout.addWidget(self._lbl_icon)
             layout.addWidget(self._lbl_title)
             layout.addWidget(self._lbl_value)
+            layout.addStretch(1)
+            self.setFixedHeight(32)
 
             # Store raw value for programmatic access
             self._value = value
+            self._icon_text = icon_text
 
         # ------------------------------------------------------------------
         # Public API
@@ -201,6 +211,10 @@ if _HAS_QT:
         def value(self) -> str:
             """Return the current displayed value string."""
             return self._value
+
+        def icon_text(self) -> str:
+            """Return the current decorative icon string."""
+            return self._icon_text
 
         def set_title(self, title: str) -> None:
             self._lbl_title.setText(title)
