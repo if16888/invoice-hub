@@ -31,27 +31,27 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
     """
     if width <= 1366 or height <= 768:
         return WorkbenchMetrics(
-            nav_width=56,
+            nav_width=52,
             nav_collapsed=True,
-            detail_width=370,
-            record_height=300,
+            detail_width=400,
+            record_height=330,
             thumbnail_width=68,
             compact=True,
         )
     if width <= 1440 or height <= 900:
         return WorkbenchMetrics(
-            nav_width=56,
+            nav_width=52,
             nav_collapsed=True,
-            detail_width=380,
-            record_height=320,
+            detail_width=420,
+            record_height=350,
             thumbnail_width=68,
             compact=True,
         )
     return WorkbenchMetrics(
-        nav_width=56,
+        nav_width=52,
         nav_collapsed=True,
-        detail_width=390,
-        record_height=340,
+        detail_width=440,
+        record_height=390,
         thumbnail_width=68,
         compact=False,
     )

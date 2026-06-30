@@ -1938,9 +1938,9 @@ class InvoiceDetailPanel(QWidget):
 
         self.fixed_header_container = QFrame()
         self.fixed_header_container.setObjectName("DetailFixedHeader")
-        self.fixed_header_container.setMaximumHeight(142)
+        self.fixed_header_container.setMaximumHeight(132)
         fixed_layout = QVBoxLayout(self.fixed_header_container)
-        fixed_layout.setContentsMargins(8, 4, 8, 2)
+        fixed_layout.setContentsMargins(6, 2, 6, 2)
         fixed_layout.setSpacing(2)
         fixed_layout.addWidget(self.summary_card)
         self.fixed_summary = self.summary_card
@@ -1950,6 +1950,8 @@ class InvoiceDetailPanel(QWidget):
 
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setObjectName("DetailTabs")
+        self.detail_tabs.setDocumentMode(True)
+        self.detail_tabs.tabBar().setExpanding(True)
         self.detail_tabs.addTab(self.right_content_widget, "基本信息")
 
         self.reimbursement_scroll = QScrollArea()
@@ -2342,11 +2344,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        summary_layout.setContentsMargins(4, 4, 4, 2)
+        summary_layout.setContentsMargins(6, 6, 6, 4)
 
 
 
-        summary_layout.setSpacing(4)
+        summary_layout.setSpacing(3)
 
 
 

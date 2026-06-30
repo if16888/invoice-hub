@@ -278,17 +278,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        nav_width = 56 if nav_collapsed else 208
+        nav_width = metrics.nav_width if nav_collapsed else 152
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.verticalHeader().setMinimumSectionSize(20)
         self.table.verticalHeader().setMaximumSectionSize(23)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
-        self._detail_panel.setMaximumWidth(420)
+        self._detail_panel.setMaximumWidth(472)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
-        self.btn_more.setText("更多  ▼" if not metrics.compact else "更多")
+        self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
         card_width = 136 if not metrics.compact else 124
         for card in self.filter_buttons.values():
@@ -297,7 +297,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             card.setMinimumSize(min(96, card_width), 0)
             card.updateGeometry()
         self.workbench_nav_title.setVisible(not nav_collapsed)
-        self.workbench_nav_subtitle.setVisible(not nav_collapsed)
+        self.workbench_nav_subtitle.setVisible(False)
         self.workbench_nav_spacer.setVisible(not nav_collapsed)
         for key, button in self.workbench_nav_buttons.items():
             full_text = self._workbench_nav_button_texts.get(key, "")
@@ -411,15 +411,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.workbench_nav = QFrame()
         self.workbench_nav.setObjectName("WorkbenchNav")
-        self.workbench_nav.setMinimumWidth(208)
-        self.workbench_nav.setMaximumWidth(208)
+        self.workbench_nav.setMinimumWidth(152)
+        self.workbench_nav.setMaximumWidth(152)
         nav_layout = QVBoxLayout(self.workbench_nav)
-        nav_layout.setContentsMargins(14, 16, 14, 14)
-        nav_layout.setSpacing(8)
+        nav_layout.setContentsMargins(10, 12, 10, 12)
+        nav_layout.setSpacing(6)
 
-        nav_title = QLabel("Invoice Hub")
+        nav_title = QLabel("审核工作台")
         nav_title.setObjectName("WorkbenchNavTitle")
-        nav_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        nav_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         nav_layout.addWidget(nav_title)
         self.workbench_nav_title = nav_title
 
@@ -428,7 +428,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         nav_layout.addWidget(nav_subtitle)
         self.workbench_nav_subtitle = nav_subtitle
         self.workbench_nav_spacer = QWidget()
-        self.workbench_nav_spacer.setFixedHeight(12)
+        self.workbench_nav_spacer.setFixedHeight(6)
         nav_layout.addWidget(self.workbench_nav_spacer)
 
         self.workbench_nav_buttons = {}
@@ -552,17 +552,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_mobile_upload = make_button("扫码上传", variant="toolbar")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
-        action_layout.addWidget(self.btn_mobile_upload)
+        self.btn_mobile_upload.hide()
 
         self.btn_scan_email = make_button("邮箱同步", variant="toolbar")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
-        action_layout.addWidget(self.btn_scan_email)
+        self.btn_scan_email.hide()
 
         action_layout.addStretch()
-
         self.btn_toolbar_export = make_button("批量导出", variant="toolbar")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
-        action_layout.addWidget(self.btn_toolbar_export)
+        self.btn_toolbar_export.hide()
 
         self.btn_more = make_button("更多  ▼", variant="toolbar")
         self.btn_toolbar_help = QToolButton(self.workbench_top_toolbar)
@@ -590,6 +589,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.action_refresh = self._make_menu_action(
             "刷新数据", QStyle.SP_BrowserReload, self._manual_refresh, "刷新当前发票列表"
         )
+        self.action_mobile_upload = self._make_menu_action(
+            "扫码上传", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "打开扫码上传入口"
+        )
+        self.action_scan_email = self._make_menu_action(
+            "邮箱同步", QStyle.SP_MessageBoxInformation, self._scan_email_clicked, "同步配置邮箱中的发票"
+        )
+        self.action_toolbar_export = self._make_menu_action(
+            "批量导出", QStyle.SP_DialogSaveButton, self._export_claim_package, "导出当前报销组或选中结果"
+        )
         self.action_runtime = self._make_menu_action(
             "打开数据目录", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "打开本地运行数据目录"
         )
@@ -616,6 +624,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
         self.more_menu.addAction(self.action_refresh)
+        self.more_menu.addAction(self.action_mobile_upload)
+        self.more_menu.addAction(self.action_scan_email)
+        self.more_menu.addAction(self.action_toolbar_export)
+        self.more_menu.addSeparator()
         self.more_menu.addAction(self.action_runtime)
         self.more_menu.addAction(self.action_exports)
         self.more_menu.addAction(self.action_logs)

@@ -49,13 +49,13 @@ QFrame#WorkbenchNav {
 QLabel#WorkbenchNavTitle {
     color: #111827;
     background: transparent;
-    font-size: 24px;
+    font-size: 20px;
     font-weight: 700;
 }
 QLabel#WorkbenchNavSubtitle {
     color: #64748B;
     background: transparent;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
 }
 QPushButton.WorkbenchNavButton {
@@ -63,7 +63,7 @@ QPushButton.WorkbenchNavButton {
     color: #334155;
     border: 1px solid transparent;
     border-radius: 10px;
-    padding: 10px 14px;
+    padding: 8px 12px;
     text-align: left;
     font-weight: 600;
 }
@@ -84,8 +84,8 @@ QPushButton.WorkbenchNavButton:checked {
 QFrame#WorkbenchTopToolbar {
     background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
-    border-radius: 14px;
-    padding: 8px 10px;
+    border-radius: 12px;
+    padding: 6px 8px;
 }
 QToolButton#WorkbenchTopIconButton {
     background-color: #FFFFFF;
@@ -108,7 +108,7 @@ QPushButton#WorkbenchUserButton {
     color: #111827;
     border: 1px solid #D1D5DB;
     border-radius: 999px;
-    padding: 6px 14px;
+    padding: 5px 12px;
     font-weight: 700;
 }
 QPushButton#WorkbenchUserButton:hover {
@@ -156,7 +156,7 @@ QLabel.StatusBadge[variant="error"] {
 }
 QLabel.SummaryAmount {
     color: #111827;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     margin-top: 1px;
     margin-bottom: 1px;
@@ -255,7 +255,7 @@ QFrame.SummaryCard[variant="embedded"] {
 QFrame#DetailSummaryCard {
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0;
-    border-radius: 12px;
+    border-radius: 10px;
 }
 QFrame.DetailSection[variant="flat"] {
     background-color: #FFFFFF;
@@ -1472,10 +1472,11 @@ QTabWidget#DetailTabs::pane {
 QTabBar::tab {
     background-color: transparent;
     color: #64748B;
-    padding: 8px 10px 7px 10px;
+    padding: 8px 8px 7px 8px;
     margin-right: 4px;
     border-bottom: 2px solid transparent;
     font-weight: 600;
+    min-width: 0;
 }
 QTabBar::tab:selected {
     color: #2563EB;
