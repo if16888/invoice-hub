@@ -22,7 +22,7 @@ class TestMetricsForSize(unittest.TestCase):
         self.assertEqual(metrics.nav_width, 56)
         self.assertEqual(metrics.detail_width, 390)
         self.assertEqual(metrics.record_height, 340)
-        self.assertEqual(metrics.thumbnail_width, 88)
+        self.assertEqual(metrics.thumbnail_width, 68)
         self.assertFalse(metrics.compact)
 
     def test_1366_layout_collapses_navigation(self):
@@ -341,6 +341,56 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
+    def test_inactive_nav_items_do_not_allow_false_page_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+
+                for key in ("overview", "imports"):
+                    button = window.workbench_nav_buttons[key]
+                    self.assertFalse(button.isChecked())
+                    self.assertTrue(
+                        (not button.isVisible()) or (not button.isEnabled()),
+                        f"{key} should be hidden or disabled until implemented",
+                    )
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_nav_action_entries_do_not_steal_review_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                window._load_invoices()
+                QApplication.processEvents()
+
+                review_button = window.workbench_nav_buttons["review"]
+                original_widget = window.left_stack.currentWidget()
+                self.assertTrue(review_button.isChecked())
+
+                for key in ("mobile_upload", "mail", "export"):
+                    button = window.workbench_nav_buttons[key]
+                    button.clicked.disconnect()
+                    button.clicked.connect(lambda checked=False: None)
+                    button.click()
+                    QApplication.processEvents()
+                    self.assertTrue(review_button.isChecked(), f"review should stay selected after {key}")
+                    self.assertFalse(button.isChecked(), f"{key} should not become selected")
+                    self.assertIs(window.left_stack.currentWidget(), original_widget)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
     def test_preview_empty_state_uses_shared_styled_label(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
@@ -352,6 +402,21 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertEqual(window.lbl_preview_status.styleSheet(), "")
                 self.assertLessEqual(window.lbl_preview_status.maximumWidth(), 560)
                 self.assertEqual(window.preview_stack.objectName(), "PreviewSurface")
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_preview_toolbar_and_thumbnail_rail_stay_compact(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertLessEqual(window.overlay_toolbar.height(), 32)
+                self.assertLessEqual(window.thumbnail_rail.width(), 72)
             finally:
                 window.db.close()
                 window.close()

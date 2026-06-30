@@ -1934,14 +1934,14 @@ class InvoiceDetailPanel(QWidget):
         self.detail_page = QWidget()
         page_layout = QVBoxLayout(self.detail_page)
         page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(0)
+        page_layout.setSpacing(4)
 
         self.fixed_header_container = QFrame()
         self.fixed_header_container.setObjectName("DetailFixedHeader")
-        self.fixed_header_container.setMaximumHeight(126)
+        self.fixed_header_container.setMaximumHeight(142)
         fixed_layout = QVBoxLayout(self.fixed_header_container)
-        fixed_layout.setContentsMargins(8, 0, 8, 0)
-        fixed_layout.setSpacing(0)
+        fixed_layout.setContentsMargins(8, 4, 8, 2)
+        fixed_layout.setSpacing(2)
         fixed_layout.addWidget(self.summary_card)
         self.fixed_summary = self.summary_card
         self.fixed_risk_notice = self.summary_card
@@ -2339,11 +2339,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        summary_layout.setContentsMargins(4, 4, 4, 4)
+        summary_layout.setContentsMargins(4, 4, 4, 2)
 
 
 
-        summary_layout.setSpacing(6)
+        summary_layout.setSpacing(4)
 
 
 
@@ -2632,7 +2632,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_app = make_button("通过并下一张", variant="primary", tooltip="快捷键：Enter")
-        self.btn_app.setFixedHeight(32)
+        self.btn_app.setFixedHeight(30)
 
 
 
@@ -2649,7 +2649,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_ign = make_button("忽略", variant="secondary", tooltip="快捷键：Del")
-        self.btn_ign.setFixedHeight(32)
+        self.btn_ign.setFixedHeight(30)
 
 
 
@@ -2666,7 +2666,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_err = make_button("异常", variant="danger", tooltip="快捷键：Ctrl+E")
-        self.btn_err.setFixedHeight(32)
+        self.btn_err.setFixedHeight(30)
 
 
 
@@ -2739,7 +2739,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_inline_more = make_button("⋯", variant="ghost")
-        self.btn_inline_more.setFixedHeight(36)
+        self.btn_inline_more.setFixedHeight(30)
 
 
 

@@ -129,6 +129,201 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
         self.assertIn("定位", text)
         self.assertIn("替换", text)
 
+    def test_selection_change_updates_preview_document_binding(self):
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import Qt
+
+        window, root = self._make_window()
+        first = root / "first.png"
+        second = root / "second.png"
+
+        image = QImage(8, 8, QImage.Format_RGB32)
+        image.fill(Qt.red)
+        self.assertTrue(image.save(str(first)))
+        image.fill(Qt.blue)
+        self.assertTrue(image.save(str(second)))
+
+        first_id = window.db.insert_invoice(
+            {
+                "invoice_number": "SYNC-001",
+                "expense_date": "2026-06-01",
+                "invoice_date": "2026-06-01",
+                "total_amount": "18.00",
+                "seller_name": "Seller A",
+                "review_status": "to_review",
+                "attachment_path": str(first),
+            }
+        )
+        second_id = window.db.insert_invoice(
+            {
+                "invoice_number": "SYNC-002",
+                "expense_date": "2026-06-02",
+                "invoice_date": "2026-06-02",
+                "total_amount": "28.00",
+                "seller_name": "Seller B",
+                "review_status": "to_review",
+                "attachment_path": str(second),
+            }
+        )
+
+        window.show()
+        self.app.processEvents()
+        window._load_invoices()
+        self.app.processEvents()
+
+        self.assertTrue(window._select_invoice_by_id(first_id))
+        self.app.processEvents()
+        self.assertEqual(window.current_invoice["id"], first_id)
+        self.assertEqual(window.current_preview_docs[0]["path"].resolve(), first.resolve())
+
+        self.assertTrue(window._select_invoice_by_id(second_id))
+        self.app.processEvents()
+        self.assertEqual(window.current_invoice["id"], second_id)
+        self.assertEqual(window.current_preview_docs[0]["path"].resolve(), second.resolve())
+        self.assertIn("second.png", window.lbl_file_info.toolTip())
+
+    def test_first_selected_invoice_populates_preview_surface(self):
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import Qt
+
+        window, root = self._make_window()
+        preview_file = root / "initial.png"
+        image = QImage(8, 8, QImage.Format_RGB32)
+        image.fill(Qt.green)
+        self.assertTrue(image.save(str(preview_file)))
+
+        invoice_id = window.db.insert_invoice(
+            {
+                "invoice_number": "FIRST-001",
+                "expense_date": "2026-06-01",
+                "invoice_date": "2026-06-01",
+                "total_amount": "18.00",
+                "seller_name": "Seller A",
+                "review_status": "to_review",
+                "attachment_path": str(preview_file),
+            }
+        )
+
+        window.show()
+        self.app.processEvents()
+        window._load_invoices()
+        self.app.processEvents()
+
+        self.assertEqual(window.current_invoice["id"], invoice_id)
+        self.assertTrue(window.current_preview_docs)
+        self.assertEqual(window.current_preview_docs[0]["path"].resolve(), preview_file.resolve())
+        self.assertNotEqual(window.preview_stack.currentWidget(), window.lbl_preview_status)
+
+    def test_empty_preview_thumbnail_rail_keeps_single_add_attachment_entry(self):
+        window, _ = self._make_window()
+        window.current_invoice = {"id": 1}
+        window.current_preview_docs = []
+        window.current_preview_index = 0
+
+        window._update_document_preview()
+        self.app.processEvents()
+        window._enter_preview_focus_mode()
+        self.app.processEvents()
+
+        add_buttons = [
+            button for button in window.thumbnail_content.findChildren(type(window.btn_add_attachment))
+            if button.objectName() == "PreviewAddAttachment"
+        ]
+        self.assertEqual(len(add_buttons), 1)
+
+    def test_switching_between_pdf_invoices_rebinds_pdf_document(self):
+        from PySide6.QtWidgets import QWidget
+
+        class FakePdfDocument:
+            def __init__(self, _parent=None):
+                self.loaded_path = None
+                self.closed = False
+                self.deleted = False
+
+            def load(self, path):
+                self.loaded_path = path
+
+            def close(self):
+                self.closed = True
+
+            def deleteLater(self):
+                self.deleted = True
+
+        class FakePdfView(QWidget):
+            class PageMode:
+                MultiPage = "multi"
+                SinglePage = "single"
+
+            class ZoomMode:
+                FitToWidth = "fit-width"
+
+            def __init__(self, _parent=None):
+                super().__init__(_parent)
+                self.document_ref = None
+
+            def setDocument(self, document):
+                self.document_ref = document
+
+            def setPageMode(self, _mode):
+                pass
+
+            def setZoomMode(self, _mode):
+                pass
+
+            def pageNavigator(self):
+                return None
+
+        window, root = self._make_window()
+        first = root / "first.pdf"
+        second = root / "second.pdf"
+        first.write_bytes(b"%PDF-1.4 first")
+        second.write_bytes(b"%PDF-1.4 second")
+
+        first_id = window.db.insert_invoice(
+            {
+                "invoice_number": "PDF-001",
+                "expense_date": "2026-06-01",
+                "invoice_date": "2026-06-01",
+                "total_amount": "18.00",
+                "seller_name": "Seller A",
+                "review_status": "to_review",
+                "attachment_path": str(first),
+            }
+        )
+        second_id = window.db.insert_invoice(
+            {
+                "invoice_number": "PDF-002",
+                "expense_date": "2026-06-02",
+                "invoice_date": "2026-06-02",
+                "total_amount": "28.00",
+                "seller_name": "Seller B",
+                "review_status": "to_review",
+                "attachment_path": str(second),
+            }
+        )
+
+        with patch(
+            "scripts.invoice_fetch.gui.preview_mixin.get_qt_pdf_classes",
+            return_value=(FakePdfDocument, FakePdfView),
+        ):
+            window.show()
+            self.app.processEvents()
+            window._load_invoices()
+            self.app.processEvents()
+
+            self.assertTrue(window._select_invoice_by_id(first_id))
+            self.app.processEvents()
+            first_document = window.pdf_document
+            self.assertIsNotNone(first_document)
+            self.assertEqual(Path(first_document.loaded_path).resolve(), first.resolve())
+
+            self.assertTrue(window._select_invoice_by_id(second_id))
+            self.app.processEvents()
+            self.assertIsNot(window.pdf_document, first_document)
+            self.assertTrue(first_document.closed)
+            self.assertEqual(Path(window.pdf_document.loaded_path).resolve(), second.resolve())
+            self.assertIs(window.pdf_view.document_ref, window.pdf_document)
+
     def test_double_clicking_preview_toggles_focus_mode(self):
         from PySide6.QtCore import QEvent
 

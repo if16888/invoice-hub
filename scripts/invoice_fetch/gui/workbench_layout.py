@@ -35,7 +35,7 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
             nav_collapsed=True,
             detail_width=370,
             record_height=300,
-            thumbnail_width=88,
+            thumbnail_width=68,
             compact=True,
         )
     if width <= 1440 or height <= 900:
@@ -44,7 +44,7 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
             nav_collapsed=True,
             detail_width=380,
             record_height=320,
-            thumbnail_width=88,
+            thumbnail_width=68,
             compact=True,
         )
     return WorkbenchMetrics(
@@ -52,7 +52,7 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
         nav_collapsed=True,
         detail_width=390,
         record_height=340,
-        thumbnail_width=88,
+        thumbnail_width=68,
         compact=False,
     )
 

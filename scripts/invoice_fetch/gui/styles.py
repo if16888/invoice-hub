@@ -1443,22 +1443,24 @@ QScrollArea#PreviewThumbnailRail {
     border-right: 1px solid #E5E7EB;
 }
 QPushButton#PreviewThumbnail {
-    min-height: 56px;
+    min-height: 52px;
     background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
     border-radius: 6px;
     color: #475569;
-    padding: 4px;
+    padding: 3px;
+    font-size: 11px;
 }
 QPushButton#PreviewThumbnail[selected="true"] {
     border: 2px solid #2563EB;
     color: #1D4ED8;
 }
 QPushButton#PreviewAddAttachment {
-    min-height: 44px;
+    min-height: 40px;
     border: 1px dashed #CBD5E1;
     background-color: #FFFFFF;
     color: #475569;
+    font-size: 11px;
 }
 QFrame#DetailFixedHeader {
     background-color: #FFFFFF;
@@ -1470,8 +1472,8 @@ QTabWidget#DetailTabs::pane {
 QTabBar::tab {
     background-color: transparent;
     color: #64748B;
-    padding: 10px 14px 9px 14px;
-    margin-right: 8px;
+    padding: 8px 10px 7px 10px;
+    margin-right: 4px;
     border-bottom: 2px solid transparent;
     font-weight: 600;
 }
