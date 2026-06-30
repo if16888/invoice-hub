@@ -280,12 +280,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         ):
             self.assertTrue(fixed.isAncestorOf(widget), widget.objectName())
             self.assertFalse(self.panel.right_content_widget.viewport().isAncestorOf(widget))
-
         self.assertEqual(self.panel.detail_tabs.tabText(0), "基本信息")
         self.assertEqual(self.panel.detail_tabs.tabText(1), "报销信息")
-        self.assertEqual(self.panel.detail_tabs.tabText(2), "关联合同")
-        self.assertEqual(self.panel.detail_tabs.tabText(3), "操作记录")
-        self.assertEqual(self.panel.detail_tabs.count(), 4)
+        self.assertEqual(self.panel.detail_tabs.count(), 2)
+        self.assertEqual(self.panel.detail_tabs.indexOf(self.panel.contract_scroll), -1)
+        self.assertEqual(self.panel.detail_tabs.indexOf(self.panel.operation_scroll), -1)
 
     # ── 8. Claim group buttons ──────────────────────────────────────────────
 
@@ -320,6 +319,15 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertFalse(self.panel.lbl_claim_total.isHidden())
         self.assertGreaterEqual(self.panel.claim_actions_widget.layout().indexOf(self.panel.btn_delete_claim), 0)
         self.assertEqual(self.panel.claim_summary_row.indexOf(self.panel.btn_delete_claim), -1)
+
+    def test_reimbursement_tab_shows_empty_hint_without_claim_groups(self):
+        self.panel.show()
+        self.app.processEvents()
+        self.panel.detail_tabs.setCurrentWidget(self.panel.reimbursement_scroll)
+        self.app.processEvents()
+
+        self.assertTrue(self.panel.claim_empty_hint.isVisible())
+        self.assertIn("新建报销组", self.panel.claim_empty_hint.text())
 
     def test_claim_combo_aligns_with_first_column_fields(self):
         """Material and core fields align inside the basic-information tab."""

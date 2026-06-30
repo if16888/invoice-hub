@@ -319,11 +319,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     button for button in window.workbench_nav_buttons.values()
                     if button.isVisible()
                 ]
-                self.assertGreaterEqual(len(visible_nav_buttons), 8)
+                self.assertEqual(len(visible_nav_buttons), 1)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
                 self.assertEqual(window.workbench_nav_buttons["review"].toolTip(), "发票审核")
-                self.assertEqual(window.workbench_nav_buttons["imports"].toolTip(), "导入记录")
-                self.assertEqual(window.workbench_nav_buttons["mail"].toolTip(), "邮箱导入")
                 self.assertFalse(window.workbench_nav_buttons["review"].icon().isNull())
                 self.assertEqual(window.btn_scan_email.text(), "邮箱同步")
                 self.assertEqual(window.btn_toolbar_export.text(), "批量导出")
@@ -352,10 +350,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 for key in ("overview", "imports"):
                     button = window.workbench_nav_buttons[key]
                     self.assertFalse(button.isChecked())
-                    self.assertTrue(
-                        (not button.isVisible()) or (not button.isEnabled()),
-                        f"{key} should be hidden or disabled until implemented",
-                    )
+                    self.assertFalse(button.isVisible(), f"{key} should stay hidden until implemented")
             finally:
                 window.db.close()
                 window.close()
@@ -376,13 +371,10 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 original_widget = window.left_stack.currentWidget()
                 self.assertTrue(review_button.isChecked())
 
-                for key in ("mobile_upload", "mail", "export"):
+                for key in ("mobile_upload", "mail", "export", "rules", "settings", "data", "about"):
                     button = window.workbench_nav_buttons[key]
-                    button.clicked.disconnect()
-                    button.clicked.connect(lambda checked=False: None)
-                    button.click()
-                    QApplication.processEvents()
-                    self.assertTrue(review_button.isChecked(), f"review should stay selected after {key}")
+                    self.assertFalse(button.isVisible(), f"{key} should not appear in module navigation")
+                    self.assertTrue(review_button.isChecked(), f"review should stay selected while {key} is hidden")
                     self.assertFalse(button.isChecked(), f"{key} should not become selected")
                     self.assertIs(window.left_stack.currentWidget(), original_widget)
             finally:

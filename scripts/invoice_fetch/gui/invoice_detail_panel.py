@@ -1959,6 +1959,11 @@ class InvoiceDetailPanel(QWidget):
         reimbursement_content = QWidget()
         reimbursement_layout = QVBoxLayout(reimbursement_content)
         reimbursement_layout.setContentsMargins(8, 8, 8, 8)
+        self.claim_empty_hint = QLabel("暂无报销组。可先新建报销组，再将当前发票加入报销。")
+        self.claim_empty_hint.setWordWrap(True)
+        self.claim_empty_hint.setProperty("class", "SectionHint")
+        self.claim_empty_hint.setProperty("variant", "compact")
+        reimbursement_layout.addWidget(self.claim_empty_hint)
         reimbursement_layout.addWidget(self.claim_setup_section)
         reimbursement_layout.addStretch(1)
         self.reimbursement_scroll.setWidget(reimbursement_content)
@@ -1988,7 +1993,6 @@ class InvoiceDetailPanel(QWidget):
         contract_layout.addWidget(self.contract_placeholder)
         contract_layout.addStretch(1)
         self.contract_scroll.setWidget(contract_content)
-        self.detail_tabs.addTab(self.contract_scroll, "关联合同")
 
         self.operation_scroll = QScrollArea()
         self.operation_scroll.setWidgetResizable(True)
@@ -2003,7 +2007,6 @@ class InvoiceDetailPanel(QWidget):
         operation_layout.addWidget(self.operation_placeholder)
         operation_layout.addStretch(1)
         self.operation_scroll.setWidget(operation_content)
-        self.detail_tabs.addTab(self.operation_scroll, "操作记录")
         page_layout.addWidget(self.detail_tabs, 1)
 
         self.right_stack.insertWidget(0, self.detail_page)
