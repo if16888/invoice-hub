@@ -500,11 +500,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button.setChecked(False)
             button.setCheckable(False)
             button.setEnabled(False)
+            button.hide()
         for key in ("mobile_upload", "export", "mail", "rules", "settings", "data", "about"):
             button = self.workbench_nav_buttons[key]
             self.workbench_nav_group.removeButton(button)
             button.setChecked(False)
             button.setCheckable(False)
+            button.hide()
 
         nav_layout.addStretch(1)
         self.btn_collapse_nav = QPushButton("收起侧边栏")
@@ -2164,6 +2166,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if idx >= 0:
                 self.combo_claims.setCurrentIndex(idx)
         self.combo_claims.blockSignals(False)
+        if hasattr(self._detail_panel, "claim_empty_hint"):
+            self._detail_panel.claim_empty_hint.setVisible(not claims)
         self._update_claim_total()
 
     def _update_claim_total(self):
