@@ -316,11 +316,21 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 detail_panel_top = window._detail_panel.mapTo(window, QPoint(0, 0)).y()
                 detail_panel_bottom = detail_panel_top + window._detail_panel.height()
 
+                record_header_top = window.record_header.mapTo(window, QPoint(0, 0)).y()
                 table_top = window.table.mapTo(window, QPoint(0, 0)).y()
                 fixed_header_top = window._detail_panel.fixed_header_container.mapTo(window, QPoint(0, 0)).y()
 
-                # Top alignment: the fixed review header starts beside the record table.
-                self.assertLessEqual(abs(table_top - fixed_header_top), 6, "fixed detail header is offset from table top by > 6px")
+                # Top alignment: the fixed review header starts beside the compact record header.
+                self.assertLessEqual(
+                    abs(record_header_top - fixed_header_top),
+                    6,
+                    "fixed detail header is offset from record header top by > 6px",
+                )
+                self.assertGreaterEqual(
+                    table_top - record_header_top,
+                    24,
+                    "record table should remain below the compact record header",
+                )
 
                 # Bottom alignment: right_content_widget (scroll area) should fill the detail_panel height.
                 # We check inner scroll area bottom vs outer _detail_panel bottom - a purely internal measurement

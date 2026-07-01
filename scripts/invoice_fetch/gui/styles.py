@@ -170,8 +170,25 @@ QLabel.SummarySeller {
     font-size: 11px;
     font-weight: 700;
 }
+QFrame#InvoiceRecordHeader {
+    background-color: transparent;
+    border: none;
+}
+QLabel#InvoiceRecordTitle {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#InvoiceRecordMeta,
+QLabel#InvoiceRecordSort,
+QLabel#InvoiceRecordSelection {
+    color: #64748B;
+    font-size: 11px;
+    font-weight: 600;
+}
 QTableWidget {
     background-color: #FFFFFF;
+    alternate-background-color: #F8FAFC;
     border: 1px solid #E5E7EB;
     border-radius: 10px;
     gridline-color: #F1F5F9;
@@ -193,8 +210,8 @@ QHeaderView::section {
     background-color: #F8FAFC;
     border: none;
     border-bottom: 1.5px solid #E5E7EB;
-    padding: 8px 8px;
-    font-weight: bold;
+    padding: 6px 8px;
+    font-weight: 600;
     color: #4B5563;
     font-size: 12px;
 }

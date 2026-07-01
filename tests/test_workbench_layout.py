@@ -453,6 +453,22 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
+    def test_invoice_record_header_exists_and_stays_compact(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertEqual(window.lbl_record_section_title.text(), "发票记录")
+                self.assertLessEqual(window.record_header.height(), 28)
+                self.assertGreaterEqual(window.record_header.height(), 24)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
     def test_workbench_version_is_014(self):
         from scripts.invoice_fetch.version import APP_VERSION, VERSION
 

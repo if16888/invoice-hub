@@ -38,7 +38,7 @@ COLUMN_DEFINITIONS = (
 VISIBLE_COLUMN_DEFINITIONS = (
     ("review_status", "状态"),
     ("status", "资料"),
-    ("expense_date", "费用日期"),
+    ("expense_date", "日期"),
     ("total_amount", "金额"),
     ("seller_name", "销售方"),
     ("invoice_number", "发票号"),

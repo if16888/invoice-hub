@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, Qt
 
 from scripts.invoice_fetch.db import InvoiceDB
 
@@ -125,11 +125,11 @@ class GuiColumnFilterTests(unittest.TestCase):
         ])
 
         window._set_column_filter("invoice_number", {"values": {"HOTEL"}})
-        self.assertIn("●", window.table.horizontalHeaderItem(5).text())
+        self.assertIn("已筛选", window.table.horizontalHeaderItem(5).text())
         window._reset_invoice_filters()
 
         self.assertEqual(window.column_filters, {})
-        self.assertNotIn("●", window.table.horizontalHeaderItem(5).text())
+        self.assertEqual(window.table.horizontalHeaderItem(5).text(), "发票号")
         self.assertEqual(set(self._numbers(window)), {"FOOD", "HOTEL"})
 
     def test_header_center_click_does_not_open_filter_popup(self):
@@ -146,7 +146,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
         self.assertIsNone(window._column_filter_popup)
 
-    def test_supported_headers_open_filter_popup_near_widened_marker_area(self):
+    def test_supported_headers_open_filter_popup_near_right_edge(self):
         window = self._make_window([
             {"invoice_number": "FOOD", "category": "餐饮"},
             {"invoice_number": "HOTEL", "category": "住宿"},
@@ -166,7 +166,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(popup.value_list.count(), 2)
         popup.close()
 
-    def test_seller_header_visible_marker_opens_filter_popup(self):
+    def test_seller_header_right_edge_opens_filter_popup(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
 
@@ -180,15 +180,7 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         header = window.table.horizontalHeader()
         section = 4
-        item = window.table.horizontalHeaderItem(section)
-        text_width = header.fontMetrics().horizontalAdvance(item.text())
-        marker_width = header.fontMetrics().horizontalAdvance("▾")
-        marker_x = (
-            header.sectionViewportPosition(section)
-            + (header.sectionSize(section) - text_width) // 2
-            + text_width
-            - marker_width // 2
-        )
+        marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 8
         QTest.mouseClick(
             header.viewport(),
             Qt.LeftButton,
@@ -252,7 +244,7 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         window._set_column_filter("invoice_number", {"values": set()})
         self.assertEqual(window.table.rowCount(), 0)
-        self.assertIn("●", window.table.horizontalHeaderItem(5).text())
+        self.assertIn("已筛选", window.table.horizontalHeaderItem(5).text())
         header = window.table.horizontalHeader()
         window._column_filter_header_press_pos = QPoint(
             header.sectionViewportPosition(5) + header.sectionSize(5) - 10,
@@ -343,6 +335,49 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertIn(("待审核", "未识别"), visible_pairs)
         self.assertTrue(window.table.item(0, 0).font().bold())
         self.assertTrue(window.table.item(0, 1).font().bold())
+
+    def test_review_rows_no_longer_apply_full_row_background(self):
+        window = self._make_window([
+            {"invoice_number": "PENDING-1", "review_status": "to_review", "attachment_path": "file.pdf"},
+        ])
+        for column in range(window.table.columnCount()):
+            self.assertIsNone(window.table.item(0, column).data(Qt.BackgroundRole))
+
+    def test_table_columns_use_queue_alignment_and_muted_invoice_number(self):
+        window = self._make_window([
+            {
+                "invoice_number": "INV-0001-0002-0003",
+                "expense_date": "2026-06-02",
+                "total_amount": "28.9",
+                "seller_name": "示例商户名称",
+                "attachment_path": "file.pdf",
+                "review_status": "to_review",
+            },
+        ])
+
+        self.assertEqual(window.table.item(0, 0).textAlignment(), int(Qt.AlignCenter | Qt.AlignVCenter))
+        self.assertEqual(window.table.item(0, 1).textAlignment(), int(Qt.AlignCenter | Qt.AlignVCenter))
+        self.assertEqual(window.table.item(0, 2).textAlignment(), int(Qt.AlignCenter | Qt.AlignVCenter))
+        self.assertEqual(window.table.item(0, 3).textAlignment(), int(Qt.AlignRight | Qt.AlignVCenter))
+        self.assertEqual(window.table.item(0, 3).text(), "28.90")
+        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#94a3b8")
+
+    def test_default_headers_are_clean_without_dropdown_arrows(self):
+        window = self._make_window([
+            {"invoice_number": "A", "seller_name": "Alpha"},
+        ])
+        labels = [window.table.horizontalHeaderItem(i).text() for i in range(window.table.columnCount())]
+        self.assertEqual(labels, ["状态", "资料", "日期", "金额", "销售方", "发票号"])
+
+    def test_invoice_record_header_row_exists(self):
+        window = self._make_window([
+            {"invoice_number": "A", "seller_name": "Alpha"},
+        ])
+        window.show()
+        self.app.processEvents()
+        self.assertEqual(window.lbl_record_section_title.text(), "发票记录")
+        self.assertLessEqual(window.record_header.height(), 28)
+        self.assertIn("当前", window.lbl_record_count.text())
 
     def test_invoice_row_tooltips_are_readable_and_user_button_is_neutral(self):
         window = self._make_window([
@@ -466,7 +501,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.column_filters, {})
         self.assertIsNone(window.current_filter_status)
         self.assertFalse(window.filter_chips_widget.isVisible())
-        self.assertNotIn("●", window.table.horizontalHeaderItem(0).text())
+        self.assertEqual(window.table.horizontalHeaderItem(0).text(), "状态")
 
     def test_top_review_counts_dynamic_under_non_review_filters(self):
         # 顶部审核状态数字在待补全过滤条件下仍正确。
@@ -661,10 +696,10 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
 
         expected_min_widths = {
-            0: 76,
-            1: 92,
-            2: 100,
-            3: 90,
+            0: 68,
+            1: 62,
+            2: 86,
+            3: 84,
             4: 260,
             5: 180,
         }
