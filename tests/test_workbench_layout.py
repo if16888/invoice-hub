@@ -207,7 +207,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 440)
+                active_metrics = metrics_for_size(window.width(), window.height())
+                self.assertGreaterEqual(
+                    window._detail_panel.minimumWidth(),
+                    active_metrics.detail_width,
+                )
             finally:
                 window.db.close()
                 window.close()
