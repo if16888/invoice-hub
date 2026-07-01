@@ -265,7 +265,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        if self._nav_collapsed_manual is None:
+        single_module_nav = self._is_single_module_nav()
+        if single_module_nav:
+            nav_collapsed = True
+        elif self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
         elif w <= 1024:
             nav_collapsed = True
@@ -312,6 +315,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
+        self.btn_collapse_nav.setVisible(not single_module_nav)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
         if not self._left_splitter_sizes_initialized:
@@ -319,6 +323,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
+        if self._is_single_module_nav():
+            return
         w = self.width() or 1150
         metrics = metrics_for_size(w, self.height() or 850)
         if self._nav_collapsed_manual is None:
@@ -400,6 +406,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action.setToolTip(tooltip or text)
         action.triggered.connect(handler)
         return action
+
+    def _is_single_module_nav(self) -> bool:
+        visible_selectable = [
+            button for button in self.workbench_nav_buttons.values()
+            if not button.isHidden() and button.isEnabled() and button.isCheckable()
+        ]
+        return len(visible_selectable) <= 1
 
     def _init_ui(self):
         # Main Layout

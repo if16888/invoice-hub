@@ -263,6 +263,30 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         ).y()
         self.assertLess(buttons_bottom + 4, tabs_top)
 
+    def test_basic_info_fields_stack_to_single_column(self):
+        self.panel.resize(390, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        number_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
+        date_x = self.panel.txt_date.mapTo(self.panel, self.panel.txt_date.rect().topLeft()).x()
+        amount_x = self.panel.txt_amount.mapTo(self.panel, self.panel.txt_amount.rect().topLeft()).x()
+        buyer_x = self.panel.txt_buyer.mapTo(self.panel, self.panel.txt_buyer.rect().topLeft()).x()
+        seller_x = self.panel.txt_seller.mapTo(self.panel, self.panel.txt_seller.rect().topLeft()).x()
+
+        self.assertLessEqual(abs(number_x - date_x), 4)
+        self.assertLessEqual(abs(number_x - amount_x), 4)
+        self.assertLessEqual(abs(number_x - buyer_x), 4)
+        self.assertLessEqual(abs(number_x - seller_x), 4)
+        self.assertLess(
+            self.panel.txt_date.mapTo(self.panel, self.panel.txt_date.rect().topLeft()).y(),
+            self.panel.txt_amount.mapTo(self.panel, self.panel.txt_amount.rect().topLeft()).y(),
+        )
+        self.assertLess(
+            self.panel.txt_buyer.mapTo(self.panel, self.panel.txt_buyer.rect().topLeft()).y(),
+            self.panel.txt_seller.mapTo(self.panel, self.panel.txt_seller.rect().topLeft()).y(),
+        )
+
     def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
         fixed = self.panel.fixed_header_container
         for widget in (
@@ -342,7 +366,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.detail_core_section.height(), 156)
+        self.assertLessEqual(self.panel.detail_core_section.height(), 260)
 
     def test_empty_claim_delete_button_exists_in_summary_row(self):
         """Deleting an empty group lives in the claim action cluster, not the summary row."""

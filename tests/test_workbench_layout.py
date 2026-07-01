@@ -572,7 +572,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertFalse(window.workbench_nav_title.isVisible())
                 self.assertFalse(window.workbench_nav_subtitle.isVisible())
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
-                self.assertEqual(window.btn_collapse_nav.text(), "")
+                self.assertFalse(window.btn_collapse_nav.isVisible())
                 self.assertGreater(window.workbench_nav.maximumWidth(), 40)
                 self.assertLessEqual(window.workbench_nav.maximumWidth(), 72)
             finally:
@@ -594,6 +594,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 self.assertEqual(window.workbench_nav.maximumWidth(), 52)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
+                self.assertFalse(window.btn_collapse_nav.isVisible())
                 self.assertEqual(window.workbench_nav_buttons["review"].toolTip(), "发票审核")
             finally:
                 window.db.close()
@@ -601,7 +602,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
-    def test_manual_nav_expand_toggle_persists_at_large_size(self):
+    def test_single_module_nav_does_not_expand_at_large_size(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
         settings.sync()
@@ -615,6 +616,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
                 settings.sync()
+                self.assertEqual(window.workbench_nav.maximumWidth(), 52)
+                self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
+                self.assertFalse(window.btn_collapse_nav.isVisible())
+                self.assertFalse(settings.contains("nav_collapsed_manual"))
+                return
 
                 self.assertEqual(window.workbench_nav.maximumWidth(), 152)
                 self.assertTrue(window.workbench_nav_title.isVisible())
@@ -639,13 +645,41 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
-    def test_manual_nav_expand_persists_on_restart(self):
+    def test_single_module_nav_stays_collapsed_on_restart(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
             first = self._make_window(td)
             try:
+                first.show()
+                first.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertEqual(first.workbench_nav.maximumWidth(), 52)
+                self.assertFalse(first.btn_collapse_nav.isVisible())
+                first._save_splitter_prefs()
+                persisted = QSettings("InvoiceHub", "workbench")
+                persisted.sync()
+                self.assertFalse(persisted.contains("nav_collapsed_manual"))
+                first.close()
+                first.deleteLater()
+                QApplication.processEvents()
+
+                second = self._make_window(td)
+                try:
+                    second.show()
+                    second.resize(1920, 1080)
+                    QApplication.processEvents()
+                    self.assertEqual(second.workbench_nav.maximumWidth(), 52)
+                    self.assertEqual(second.workbench_nav_buttons["review"].text(), "")
+                    self.assertFalse(second.btn_collapse_nav.isVisible())
+                    return
+                finally:
+                    second.db.close()
+                    second.close()
+                    second.deleteLater()
+                    QApplication.processEvents()
+
                 first.show()
                 first.resize(1920, 1080)
                 QApplication.processEvents()

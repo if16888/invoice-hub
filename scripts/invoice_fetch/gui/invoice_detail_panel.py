@@ -3198,6 +3198,24 @@ class InvoiceDetailPanel(QWidget):
 
         self.invoice_core_grid.setColumnStretch(3, 1)
 
+        date_label = self.invoice_core_grid.itemAtPosition(0, 2).widget()
+        amount_label = self.invoice_core_grid.itemAtPosition(1, 0).widget()
+        category_label = self.invoice_core_grid.itemAtPosition(1, 2).widget()
+        buyer_label = self.invoice_core_grid.itemAtPosition(2, 0).widget()
+        seller_label = self.invoice_core_grid.itemAtPosition(2, 2).widget()
+        stacked_rows = (
+            (0, self.invoice_core_grid.itemAtPosition(0, 0).widget(), self.txt_number),
+            (1, date_label, self.txt_date),
+            (2, amount_label, self.txt_amount),
+            (3, category_label, self.combo_category),
+            (4, buyer_label, self.txt_buyer),
+            (5, seller_label, self.txt_seller),
+        )
+        for row_index, label_widget, field_widget in stacked_rows:
+            self.invoice_core_grid.addWidget(label_widget, row_index, 0)
+            self.invoice_core_grid.addWidget(field_widget, row_index, 1)
+        self.invoice_core_grid.setColumnStretch(3, 0)
+
 
 
         detail_core_layout.addWidget(core_fields)
