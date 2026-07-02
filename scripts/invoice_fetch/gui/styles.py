@@ -49,13 +49,13 @@ QFrame#WorkbenchNav {
 QLabel#WorkbenchNavTitle {
     color: #111827;
     background: transparent;
-    font-size: 24px;
+    font-size: 20px;
     font-weight: 700;
 }
 QLabel#WorkbenchNavSubtitle {
     color: #64748B;
     background: transparent;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
 }
 QPushButton.WorkbenchNavButton {
@@ -63,7 +63,7 @@ QPushButton.WorkbenchNavButton {
     color: #334155;
     border: 1px solid transparent;
     border-radius: 10px;
-    padding: 10px 14px;
+    padding: 8px 12px;
     text-align: left;
     font-weight: 600;
 }
@@ -84,8 +84,8 @@ QPushButton.WorkbenchNavButton:checked {
 QFrame#WorkbenchTopToolbar {
     background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
-    border-radius: 14px;
-    padding: 8px 10px;
+    border-radius: 12px;
+    padding: 6px 8px;
 }
 QToolButton#WorkbenchTopIconButton {
     background-color: #FFFFFF;
@@ -108,7 +108,7 @@ QPushButton#WorkbenchUserButton {
     color: #111827;
     border: 1px solid #D1D5DB;
     border-radius: 999px;
-    padding: 6px 14px;
+    padding: 5px 12px;
     font-weight: 700;
 }
 QPushButton#WorkbenchUserButton:hover {
@@ -156,7 +156,7 @@ QLabel.StatusBadge[variant="error"] {
 }
 QLabel.SummaryAmount {
     color: #111827;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     margin-top: 1px;
     margin-bottom: 1px;
@@ -170,8 +170,25 @@ QLabel.SummarySeller {
     font-size: 11px;
     font-weight: 700;
 }
+QFrame#InvoiceRecordHeader {
+    background-color: transparent;
+    border: none;
+}
+QLabel#InvoiceRecordTitle {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#InvoiceRecordMeta,
+QLabel#InvoiceRecordSort,
+QLabel#InvoiceRecordSelection {
+    color: #64748B;
+    font-size: 11px;
+    font-weight: 600;
+}
 QTableWidget {
     background-color: #FFFFFF;
+    alternate-background-color: #F8FAFC;
     border: 1px solid #E5E7EB;
     border-radius: 10px;
     gridline-color: #F1F5F9;
@@ -193,8 +210,8 @@ QHeaderView::section {
     background-color: #F8FAFC;
     border: none;
     border-bottom: 1.5px solid #E5E7EB;
-    padding: 8px 8px;
-    font-weight: bold;
+    padding: 6px 8px;
+    font-weight: 600;
     color: #4B5563;
     font-size: 12px;
 }
@@ -237,6 +254,11 @@ QFrame.DetailSection {
     border: none;
     border-radius: 0;
 }
+QFrame.DetailRowCard {
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+}
 QFrame.DetailSection QLineEdit,
 QFrame.DetailSection QComboBox,
 QFrame.DetailSection QTextEdit {
@@ -244,17 +266,17 @@ QFrame.DetailSection QTextEdit {
 }
 QFrame.DetailWorkbench {
     background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 8px;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
 }
 QFrame.SummaryCard[variant="embedded"] {
     background-color: #FFFFFF;
-    border: 1px solid #EEF2F7;
+    border: 1px solid #E5E7EB;
     border-radius: 12px;
 }
 QFrame#DetailSummaryCard {
     background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    border: none;
     border-radius: 12px;
 }
 QFrame.DetailSection[variant="flat"] {
@@ -301,32 +323,38 @@ QLabel.FieldLabel {
     font-size: 12px;
     font-weight: 500;
 }
+QLabel.DetailFieldKey {
+    color: #64748B;
+    font-size: 12px;
+    font-weight: 500;
+}
 QLabel.DetailAmount {
-    color: #0F172A;
+    color: #1D4ED8;
     font-size: 22px;
     font-weight: 800;
 }
 QLabel.DetailMeta {
     color: #64748B;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
 }
 QLabel.DetailSeller {
     color: #111827;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
 }
 QLabel.DetailCaption {
-    color: #64748B;
-    font-size: 12px;
+    color: #94A3B8;
+    font-size: 11px;
     font-weight: 400;
 }
 QLabel.InlineWarning {
     color: #92400E;
     background-color: #FFFBEB;
     border: 1px solid #FDE68A;
-    border-radius: 6px;
-    padding: 6px 8px;
+    border-radius: 8px;
+    padding: 5px 8px;
+    font-size: 11px;
     font-weight: 500;
 }
 QLabel.EvidenceMissing {
@@ -344,6 +372,7 @@ QLabel.EvidenceFileName {
     background: transparent;
     border: none;
     padding: 0;
+    font-weight: 600;
 }
 QLabel.EvidenceDotMissing {
     color: #D97706;
@@ -1247,11 +1276,11 @@ QFrame.ActionCluster {
 QLabel.InlineWarning {
     color: #B45309;
     font-size: 11px;
-    background-color: #FEF3C7;
-    border: 1px solid #FCD34D;
-    padding: 8px;
-    border-radius: 4px;
-    margin-top: 4px;
+    background-color: #FFFBEB;
+    border: 1px solid #FDE68A;
+    padding: 5px 8px;
+    border-radius: 8px;
+    margin-top: 2px;
 }
 QLabel.InlineHint {
     color: #D97706;
@@ -1302,13 +1331,15 @@ QLabel.Separator {
     color: #D1D5DB;
 }
 QLabel.ClaimTotal {
-    color: #374151;
+    color: #64748B;
+    font-size: 12px;
 }
 QLabel.ExportSummary {
     color: #9CA3AF;
 }
 QLabel.NoteSummary {
-    color: #374151;
+    color: #475569;
+    font-size: 12px;
 }
 QLabel.ClosingDesc {
     color: #4B5563;
@@ -1464,7 +1495,8 @@ QPushButton#PreviewAddAttachment {
 }
 QFrame#DetailFixedHeader {
     background-color: #FFFFFF;
-    border-bottom: 1px solid #E5E7EB;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
 }
 QTabWidget#DetailTabs::pane {
     border: 0;
@@ -1472,10 +1504,11 @@ QTabWidget#DetailTabs::pane {
 QTabBar::tab {
     background-color: transparent;
     color: #64748B;
-    padding: 8px 10px 7px 10px;
+    padding: 10px 8px 8px 8px;
     margin-right: 4px;
     border-bottom: 2px solid transparent;
     font-weight: 600;
+    min-width: 0;
 }
 QTabBar::tab:selected {
     color: #2563EB;
@@ -1484,6 +1517,46 @@ QTabBar::tab:selected {
 QTabBar::tab:hover:!selected {
     color: #334155;
     border-bottom-color: #CBD5E1;
+}
+QFrame#DetailFieldStack {
+    background: transparent;
+}
+QFrame.DetailValueRow {
+    background: transparent;
+    border: none;
+}
+QLineEdit.DetailFieldInput,
+QComboBox.DetailFieldInput {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 7px 10px;
+    color: #0F172A;
+    font-size: 13px;
+}
+QLineEdit.DetailFieldInput:focus,
+QComboBox.DetailFieldInput:focus {
+    background-color: #FFFFFF;
+    border: 1.5px solid #93C5FD;
+}
+QLineEdit.DetailValueField {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    color: #111827;
+    font-size: 13px;
+}
+QFrame#DetailOriginalRowCard QLabel.FieldLabel,
+QFrame#DetailEvidenceRowCard QLabel.FieldLabel {
+    color: #64748B;
+    font-size: 12px;
+    font-weight: 500;
+}
+QFrame#DetailOriginalRowCard,
+QFrame#DetailEvidenceRowCard {
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
 }
 """ + MENU_STYLE + """
 """

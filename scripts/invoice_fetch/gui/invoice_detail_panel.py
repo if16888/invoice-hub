@@ -289,6 +289,18 @@ def create_labeled_action_row(
     return row_layout, label_widget, action_cluster
 
 
+def wrap_layout_in_card(row_layout: QHBoxLayout, object_name: str) -> QFrame:
+    """Wrap an existing compact row layout in a lightweight card container."""
+    card = QFrame()
+    card.setObjectName(object_name)
+    card.setProperty("class", "DetailRowCard")
+    card_layout = QVBoxLayout(card)
+    card_layout.setContentsMargins(10, 8, 10, 8)
+    card_layout.setSpacing(0)
+    card_layout.addLayout(row_layout)
+    return card
+
+
 
 
 
@@ -1205,7 +1217,7 @@ class InvoiceDetailPanel(QWidget):
 
     def _update_fixed_header_height_cap(self):
         compact_header = not self.lbl_date_warning.isVisible() and not self.lbl_buyer_warning.isVisible()
-        self.fixed_header_container.setMaximumHeight(126 if compact_header else 16777215)
+        self.fixed_header_container.setMaximumHeight(126 if compact_header else 156)
 
     def set_multi_selection_state(self, count: int):
 
@@ -1934,14 +1946,14 @@ class InvoiceDetailPanel(QWidget):
         self.detail_page = QWidget()
         page_layout = QVBoxLayout(self.detail_page)
         page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(4)
+        page_layout.setSpacing(6)
 
         self.fixed_header_container = QFrame()
         self.fixed_header_container.setObjectName("DetailFixedHeader")
-        self.fixed_header_container.setMaximumHeight(142)
+        self.fixed_header_container.setMaximumHeight(156)
         fixed_layout = QVBoxLayout(self.fixed_header_container)
-        fixed_layout.setContentsMargins(8, 4, 8, 2)
-        fixed_layout.setSpacing(2)
+        fixed_layout.setContentsMargins(0, 0, 0, 0)
+        fixed_layout.setSpacing(0)
         fixed_layout.addWidget(self.summary_card)
         self.fixed_summary = self.summary_card
         self.fixed_risk_notice = self.summary_card
@@ -1950,6 +1962,8 @@ class InvoiceDetailPanel(QWidget):
 
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setObjectName("DetailTabs")
+        self.detail_tabs.setDocumentMode(True)
+        self.detail_tabs.tabBar().setExpanding(True)
         self.detail_tabs.addTab(self.right_content_widget, "基本信息")
 
         self.reimbursement_scroll = QScrollArea()
@@ -2084,11 +2098,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        right_content_layout.setContentsMargins(8, 0, 8, 0)
+        right_content_layout.setContentsMargins(0, 0, 0, 0)
 
 
 
-        right_content_layout.setSpacing(8)
+        right_content_layout.setSpacing(0)
 
 
 
@@ -2342,11 +2356,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        summary_layout.setContentsMargins(4, 4, 4, 2)
+        summary_layout.setContentsMargins(12, 12, 12, 10)
 
 
 
-        summary_layout.setSpacing(4)
+        summary_layout.setSpacing(6)
 
 
 
@@ -2399,6 +2413,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_sum_status.setProperty("class", "StatusBadge")
+        self.lbl_sum_status.setProperty("surface", "detail")
 
 
 
@@ -2503,6 +2518,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_sum_seller.setProperty("class", "DetailSeller")
+        self.lbl_sum_seller.setWordWrap(True)
 
 
 
@@ -2539,6 +2555,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_sum_number.setProperty("class", "DetailCaption")
+        self.lbl_sum_number.setWordWrap(True)
 
 
 
@@ -2571,6 +2588,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_date_warning.setProperty("class", "InlineWarning")
+        self.lbl_date_warning.setProperty("surface", "detail")
 
 
 
@@ -2599,6 +2617,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_buyer_warning.setProperty("class", "InlineWarning")
+        self.lbl_buyer_warning.setProperty("surface", "detail")
 
 
 
@@ -2635,7 +2654,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_app = make_button("通过并下一张", variant="primary", tooltip="快捷键：Enter")
-        self.btn_app.setFixedHeight(30)
+        self.btn_app.setFixedHeight(34)
 
 
 
@@ -2652,7 +2671,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_ign = make_button("忽略", variant="secondary", tooltip="快捷键：Del")
-        self.btn_ign.setFixedHeight(30)
+        self.btn_ign.setFixedHeight(34)
 
 
 
@@ -2669,7 +2688,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_err = make_button("异常", variant="danger", tooltip="快捷键：Ctrl+E")
-        self.btn_err.setFixedHeight(30)
+        self.btn_err.setFixedHeight(34)
 
 
 
@@ -2742,7 +2761,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_inline_more = make_button("⋯", variant="ghost")
-        self.btn_inline_more.setFixedHeight(30)
+        self.btn_inline_more.setFixedSize(34, 34)
 
 
 
@@ -2882,11 +2901,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_core_layout.setContentsMargins(10, 8, 10, 8)
+        detail_core_layout.setContentsMargins(12, 10, 12, 10)
 
 
 
-        detail_core_layout.setSpacing(8)
+        detail_core_layout.setSpacing(10)
 
 
 
@@ -2978,6 +2997,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        core_fields.setObjectName("DetailFieldStack")
         self.invoice_core_grid = QGridLayout(core_fields)
 
 
@@ -2986,11 +3006,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.setHorizontalSpacing(8)
+        self.invoice_core_grid.setHorizontalSpacing(10)
 
 
 
-        self.invoice_core_grid.setVerticalSpacing(6)
+        self.invoice_core_grid.setVerticalSpacing(10)
 
 
 
@@ -3006,15 +3026,15 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
 
 
-            lbl.setProperty("class", "FieldLabel")
+            lbl.setProperty("class", "DetailFieldKey")
 
 
 
-            lbl.setFixedWidth(64)
+            lbl.setFixedWidth(74)
 
 
 
@@ -3027,10 +3047,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_number = QLineEdit()
+        self.txt_number.setProperty("class", "DetailFieldInput")
 
 
 
-        self.txt_number.setMinimumHeight(28)
+        self.txt_number.setMinimumHeight(34)
 
 
 
@@ -3039,10 +3060,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_date = QLineEdit()
+        self.txt_date.setProperty("class", "DetailFieldInput")
 
 
 
-        self.txt_date.setMinimumHeight(28)
+        self.txt_date.setMinimumHeight(34)
 
 
 
@@ -3055,10 +3077,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_amount = QLineEdit()
+        self.txt_amount.setProperty("class", "DetailFieldInput")
 
 
 
-        self.txt_amount.setMinimumHeight(28)
+        self.txt_amount.setMinimumHeight(34)
 
 
 
@@ -3067,6 +3090,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.combo_category = QComboBox()
+        self.combo_category.setProperty("class", "DetailFieldInput")
 
 
 
@@ -3074,7 +3098,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.combo_category.setMinimumHeight(28)
+        self.combo_category.setMinimumHeight(34)
 
 
 
@@ -3083,10 +3107,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_seller = QLineEdit()
+        self.txt_seller.setProperty("class", "DetailFieldInput")
 
 
 
-        self.txt_seller.setMinimumHeight(28)
+        self.txt_seller.setMinimumHeight(34)
 
 
 
@@ -3095,10 +3120,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_buyer = QLineEdit()
+        self.txt_buyer.setProperty("class", "DetailFieldInput")
 
 
 
-        self.txt_buyer.setMinimumHeight(28)
+        self.txt_buyer.setMinimumHeight(34)
 
 
 
@@ -3196,6 +3222,24 @@ class InvoiceDetailPanel(QWidget):
 
         self.invoice_core_grid.setColumnStretch(3, 1)
 
+        date_label = self.invoice_core_grid.itemAtPosition(0, 2).widget()
+        amount_label = self.invoice_core_grid.itemAtPosition(1, 0).widget()
+        category_label = self.invoice_core_grid.itemAtPosition(1, 2).widget()
+        buyer_label = self.invoice_core_grid.itemAtPosition(2, 0).widget()
+        seller_label = self.invoice_core_grid.itemAtPosition(2, 2).widget()
+        stacked_rows = (
+            (0, self.invoice_core_grid.itemAtPosition(0, 0).widget(), self.txt_number),
+            (1, date_label, self.txt_date),
+            (2, amount_label, self.txt_amount),
+            (3, category_label, self.combo_category),
+            (4, buyer_label, self.txt_buyer),
+            (5, seller_label, self.txt_seller),
+        )
+        for row_index, label_widget, field_widget in stacked_rows:
+            self.invoice_core_grid.addWidget(label_widget, row_index, 0)
+            self.invoice_core_grid.addWidget(field_widget, row_index, 1)
+        self.invoice_core_grid.setColumnStretch(3, 0)
+
 
 
         detail_core_layout.addWidget(core_fields)
@@ -3242,11 +3286,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_files_layout.setContentsMargins(10, 8, 10, 9)
+        detail_files_layout.setContentsMargins(12, 10, 12, 10)
 
 
 
-        detail_files_layout.setSpacing(6)
+        detail_files_layout.setSpacing(8)
 
 
 
@@ -3282,6 +3326,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        self.txt_path.setProperty("class", "DetailValueField")
         self.txt_path.doubleClicked.connect(self._cb.on_open_dir)
 
 
@@ -3390,7 +3435,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_files_layout.addLayout(self.original_row)
+        self.original_card = wrap_layout_in_card(self.original_row, "DetailOriginalRowCard")
+        detail_files_layout.addWidget(self.original_card)
 
 
 
@@ -3451,6 +3497,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_evidence_missing.setProperty("variant", "warning")
+        self.lbl_evidence_missing.setProperty("surface", "detail")
 
 
 
@@ -3622,7 +3669,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_files_layout.addLayout(self.evidence_row)
+        self.evidence_card = wrap_layout_in_card(self.evidence_row, "DetailEvidenceRowCard")
+        detail_files_layout.addWidget(self.evidence_card)
 
 
 
@@ -3678,11 +3726,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        claim_setup_layout.setContentsMargins(12, 8, 12, 9)
+        claim_setup_layout.setContentsMargins(12, 10, 12, 10)
 
 
 
-        claim_setup_layout.setSpacing(6)
+        claim_setup_layout.setSpacing(8)
 
 
 
@@ -4082,7 +4130,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        review_note_layout.setContentsMargins(12, 8, 12, 10)
+        review_note_layout.setContentsMargins(12, 10, 12, 10)
 
 
 
@@ -4185,7 +4233,7 @@ class InvoiceDetailPanel(QWidget):
         # Add note_editor_row as a sub-layout to preserve its exact stretch factors.
         self.note_content_row = QWidget()
         note_content_row_layout = QVBoxLayout(self.note_content_row)
-        note_content_row_layout.setContentsMargins(0, 0, 0, 0)
+        note_content_row_layout.setContentsMargins(10, 8, 10, 8)
         note_content_row_layout.setSpacing(0)
         note_content_row_layout.addLayout(self.note_editor_row)
         self.note_content_row.setVisible(False)
@@ -4226,7 +4274,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        source_info_layout.setContentsMargins(12, 6, 12, 8)
+        source_info_layout.setContentsMargins(12, 10, 12, 10)
 
 
 

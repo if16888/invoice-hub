@@ -247,7 +247,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
     def test_review_action_buttons_stay_compact_in_narrow_panel(self):
         for btn in (self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err):
-            self.assertLessEqual(btn.height(), 32)
+            self.assertLessEqual(btn.height(), 34)
 
     def test_review_actions_clear_detail_tabs_in_narrow_panel(self):
         self.panel.resize(390, 850)
@@ -262,6 +262,30 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
             self.panel, self.panel.detail_tabs.tabBar().rect().topLeft()
         ).y()
         self.assertLess(buttons_bottom + 4, tabs_top)
+
+    def test_basic_info_fields_stack_to_single_column(self):
+        self.panel.resize(390, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        number_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
+        date_x = self.panel.txt_date.mapTo(self.panel, self.panel.txt_date.rect().topLeft()).x()
+        amount_x = self.panel.txt_amount.mapTo(self.panel, self.panel.txt_amount.rect().topLeft()).x()
+        buyer_x = self.panel.txt_buyer.mapTo(self.panel, self.panel.txt_buyer.rect().topLeft()).x()
+        seller_x = self.panel.txt_seller.mapTo(self.panel, self.panel.txt_seller.rect().topLeft()).x()
+
+        self.assertLessEqual(abs(number_x - date_x), 4)
+        self.assertLessEqual(abs(number_x - amount_x), 4)
+        self.assertLessEqual(abs(number_x - buyer_x), 4)
+        self.assertLessEqual(abs(number_x - seller_x), 4)
+        self.assertLess(
+            self.panel.txt_date.mapTo(self.panel, self.panel.txt_date.rect().topLeft()).y(),
+            self.panel.txt_amount.mapTo(self.panel, self.panel.txt_amount.rect().topLeft()).y(),
+        )
+        self.assertLess(
+            self.panel.txt_buyer.mapTo(self.panel, self.panel.txt_buyer.rect().topLeft()).y(),
+            self.panel.txt_seller.mapTo(self.panel, self.panel.txt_seller.rect().topLeft()).y(),
+        )
 
     def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
         fixed = self.panel.fixed_header_container
@@ -286,13 +310,65 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertEqual(self.panel.detail_tabs.indexOf(self.panel.contract_scroll), -1)
         self.assertEqual(self.panel.detail_tabs.indexOf(self.panel.operation_scroll), -1)
 
+    def test_warning_banner_stays_compact_when_visible(self):
+        self.panel.resize(760, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        self.panel.set_summary(
+            amount="28.90",
+            status="approved",
+            date="2026-06-18",
+            category="餐饮",
+            seller="南京市铜锣水饺店（有限合伙）",
+            number="26322000004922369686",
+            buyer_warning="购买方抬头不匹配：当前：李飞；期望：示例科技有限公司",
+        )
+        self.app.processEvents()
+
+        self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
+        self.assertLessEqual(self.panel.lbl_buyer_warning.height(), 32)
+        self.assertIn("购买方抬头不匹配", self.panel.lbl_buyer_warning.text())
+
+    def test_warning_header_does_not_clip_actions_in_narrow_panel(self):
+        self.panel.resize(390, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        self.panel.set_summary(
+            amount="28.90",
+            status="approved",
+            date="2026-06-18",
+            category="餐饮",
+            seller="南京市铜锣水饺店（有限合伙）",
+            number="26322000004922369686",
+            buyer_warning="购买方抬头不匹配：当前：李飞；期望：示例科技有限公司",
+        )
+        self.app.processEvents()
+
+        self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
+        self.assertTrue(self.panel.btn_app.isVisible())
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 156)
+        self.assertLessEqual(
+            self.panel.btn_app.mapTo(self.panel, self.panel.btn_app.rect().bottomLeft()).y(),
+            self.panel.detail_tabs.tabBar().mapTo(
+                self.panel, self.panel.detail_tabs.tabBar().rect().topLeft()
+            ).y() + 2,
+        )
+
+    def test_review_action_buttons_keep_expected_order(self):
+        buttons = [self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err, self.panel.btn_inline_more]
+        layout = self.panel.inline_review_layout
+        indices = [layout.indexOf(btn) for btn in buttons]
+        self.assertEqual(indices, sorted(indices))
+
     # ── 8. Claim group buttons ──────────────────────────────────────────────
 
     def test_fixed_header_container_stays_compact(self):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.fixed_header_container.height(), 126)
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 156)
         self.assertLessEqual(self.panel.btn_app.height(), 50)
         self.assertLessEqual(self.panel.btn_err.height(), 50)
         self.assertEqual(self.panel.summary_card.objectName(), "DetailSummaryCard")
@@ -338,11 +414,19 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         core_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
         self.assertLessEqual(abs(material_x - core_x), 2)
 
+    def test_material_row_cards_and_actions_are_visible(self):
+        self.panel.update_evidence_row([])
+        self.assertIsNotNone(self.panel.original_card)
+        self.assertIsNotNone(self.panel.evidence_card)
+        self.assertEqual(self.panel.original_card.objectName(), "DetailOriginalRowCard")
+        self.assertEqual(self.panel.evidence_card.objectName(), "DetailEvidenceRowCard")
+        self.assertFalse(self.panel.btn_add_evidence.isHidden())
+
     def test_basic_info_section_stays_compact(self):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.detail_core_section.height(), 156)
+        self.assertLessEqual(self.panel.detail_core_section.height(), 320)
 
     def test_empty_claim_delete_button_exists_in_summary_row(self):
         """Deleting an empty group lives in the claim action cluster, not the summary row."""

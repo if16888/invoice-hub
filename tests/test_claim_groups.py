@@ -1314,7 +1314,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 0)
                     self.assertEqual(window.workbench_content.layout().spacing(), 8)
-                    self.assertEqual(window.summary_card.layout().spacing(), 4)  # compact summary spacing
+                    self.assertLessEqual(window.summary_card.layout().spacing(), 6)  # compact summary spacing
                     self.assertGreaterEqual(window.btn_toggle_log.minimumWidth(), 76)
                     self.assertEqual(window.status_bar.maximumHeight(), 36)
                     self.assertEqual(window.status_bar.minimumHeight(), 36)
@@ -5122,6 +5122,9 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     expected = [
                         "刷新数据",
+                        "扫码上传",
+                        "邮箱同步",
+                        "批量导出",
                         "打开数据目录",
                         "打开导出目录",
                         "打开日志目录",

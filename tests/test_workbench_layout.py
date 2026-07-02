@@ -19,24 +19,23 @@ class TestMetricsForSize(unittest.TestCase):
 
     def test_1920_layout_uses_full_density(self):
         metrics = metrics_for_size(1920, 1080)
-        self.assertEqual(metrics.nav_width, 56)
-        self.assertEqual(metrics.detail_width, 390)
-        self.assertEqual(metrics.record_height, 340)
+        self.assertEqual(metrics.nav_width, 52)
+        self.assertEqual(metrics.detail_width, 440)
+        self.assertEqual(metrics.record_height, 390)
         self.assertEqual(metrics.thumbnail_width, 68)
         self.assertFalse(metrics.compact)
 
     def test_1366_layout_collapses_navigation(self):
         metrics = metrics_for_size(1366, 768)
         self.assertTrue(metrics.nav_collapsed)
-        self.assertGreaterEqual(metrics.detail_width, 360)
-        self.assertLessEqual(metrics.detail_width, 380)
-        self.assertEqual(metrics.record_height, 300)
+        self.assertEqual(metrics.detail_width, 400)
+        self.assertEqual(metrics.record_height, 330)
 
     def test_1440_900_is_compact_but_not_collapsed(self):
         metrics = metrics_for_size(1440, 900)
         self.assertTrue(metrics.nav_collapsed)
         self.assertTrue(metrics.compact)
-        self.assertEqual(metrics.detail_width, 380)
+        self.assertEqual(metrics.detail_width, 420)
 
     def test_1280_720_collapses_navigation(self):
         """Sub-1366 width also triggers the collapsed tier."""
@@ -201,14 +200,18 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_detail_panel_minimum_width_at_1920(self):
-        """At 1920×1080 the detail panel minimum width must be >= 420."""
+        """At 1920×1080 the detail panel minimum width must be >= 440."""
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                self.assertLessEqual(window._detail_panel.minimumWidth(), 400)
+                active_metrics = metrics_for_size(window.width(), window.height())
+                self.assertGreaterEqual(
+                    window._detail_panel.minimumWidth(),
+                    active_metrics.detail_width,
+                )
             finally:
                 window.db.close()
                 window.close()
@@ -216,14 +219,14 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_detail_panel_minimum_width_at_1366(self):
-        """At 1366×768 the compact detail panel minimum width must be >= 360."""
+        """At 1366×768 the compact detail panel minimum width must be >= 400."""
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
                 window.show()
                 window.resize(1366, 768)
                 QApplication.processEvents()
-                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 360)
+                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 400)
             finally:
                 window.db.close()
                 window.close()
@@ -307,13 +310,16 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 self.assertTrue(window.workbench_nav.isVisible())
                 self.assertEqual(window.workbench_nav.objectName(), "WorkbenchNav")
-                self.assertLessEqual(window.workbench_nav.minimumWidth(), 56)
+                self.assertEqual(window.workbench_nav.minimumWidth(), 52)
 
                 self.assertTrue(window.workbench_top_toolbar.isVisible())
                 self.assertEqual(window.workbench_top_toolbar.objectName(), "WorkbenchTopToolbar")
                 self.assertEqual(window.txt_search.parentWidget(), window.workbench_top_toolbar)
                 self.assertIn("Ctrl + F", window.txt_search.placeholderText())
                 self.assertEqual(window.btn_import_local.property("emphasis"), "primary")
+                self.assertFalse(window.btn_mobile_upload.isVisible())
+                self.assertFalse(window.btn_scan_email.isVisible())
+                self.assertFalse(window.btn_toolbar_export.isVisible())
 
                 visible_nav_buttons = [
                     button for button in window.workbench_nav_buttons.values()
@@ -331,6 +337,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertEqual(window.btn_toolbar_user.text(), "本地模式 ▾")
                 self.assertNotIn("张伟", window.btn_toolbar_user.text())
                 self.assertTrue(window.btn_more.menu() is not None)
+                self.assertIn(window.action_mobile_upload, window.btn_more.menu().actions())
+                self.assertIn(window.action_scan_email, window.btn_more.menu().actions())
+                self.assertIn(window.action_toolbar_export, window.btn_more.menu().actions())
                 self.assertFalse(window.btn_collapse_nav.icon().isNull())
                 self.assertTrue(window.btn_collapse_nav.toolTip())
             finally:
@@ -438,6 +447,22 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
                 self.assertLessEqual(window.table.verticalHeader().defaultSectionSize(), 23)
                 self.assertLessEqual(window.table.font().pointSize(), 12)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_invoice_record_header_exists_and_stays_compact(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+                self.assertEqual(window.lbl_record_section_title.text(), "发票记录")
+                self.assertLessEqual(window.record_header.height(), 28)
+                self.assertGreaterEqual(window.record_header.height(), 24)
             finally:
                 window.db.close()
                 window.close()
@@ -563,7 +588,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertFalse(window.workbench_nav_title.isVisible())
                 self.assertFalse(window.workbench_nav_subtitle.isVisible())
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
-                self.assertEqual(window.btn_collapse_nav.text(), "")
+                self.assertFalse(window.btn_collapse_nav.isVisible())
                 self.assertGreater(window.workbench_nav.maximumWidth(), 40)
                 self.assertLessEqual(window.workbench_nav.maximumWidth(), 72)
             finally:
@@ -583,8 +608,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.resize(1920, 1080)
                 QApplication.processEvents()
 
-                self.assertLessEqual(window.workbench_nav.maximumWidth(), 56)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 52)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
+                self.assertFalse(window.btn_collapse_nav.isVisible())
                 self.assertEqual(window.workbench_nav_buttons["review"].toolTip(), "发票审核")
             finally:
                 window.db.close()
@@ -592,7 +618,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
-    def test_manual_nav_expand_toggle_persists_at_large_size(self):
+    def test_single_module_nav_does_not_expand_at_large_size(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
         settings.sync()
@@ -606,8 +632,13 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
                 settings.sync()
+                self.assertEqual(window.workbench_nav.maximumWidth(), 52)
+                self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
+                self.assertFalse(window.btn_collapse_nav.isVisible())
+                self.assertFalse(settings.contains("nav_collapsed_manual"))
+                return
 
-                self.assertEqual(window.workbench_nav.maximumWidth(), 208)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 152)
                 self.assertTrue(window.workbench_nav_title.isVisible())
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertEqual(window.btn_collapse_nav.text(), "收起侧边栏")
@@ -616,12 +647,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 window.resize(1880, 1040)
                 QApplication.processEvents()
-                self.assertEqual(window.workbench_nav.maximumWidth(), 208)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 152)
 
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
                 settings.sync()
-                self.assertLessEqual(window.workbench_nav.maximumWidth(), 56)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 52)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
                 self.assertTrue(settings.value("nav_collapsed_manual", False, type=bool))
             finally:
@@ -630,7 +661,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
-    def test_manual_nav_expand_persists_on_restart(self):
+    def test_single_module_nav_stays_collapsed_on_restart(self):
         settings = QSettings("InvoiceHub", "workbench")
         settings.remove("nav_collapsed_manual")
         settings.sync()
@@ -640,9 +671,37 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 first.show()
                 first.resize(1920, 1080)
                 QApplication.processEvents()
+                self.assertEqual(first.workbench_nav.maximumWidth(), 52)
+                self.assertFalse(first.btn_collapse_nav.isVisible())
+                first._save_splitter_prefs()
+                persisted = QSettings("InvoiceHub", "workbench")
+                persisted.sync()
+                self.assertFalse(persisted.contains("nav_collapsed_manual"))
+                first.close()
+                first.deleteLater()
+                QApplication.processEvents()
+
+                second = self._make_window(td)
+                try:
+                    second.show()
+                    second.resize(1920, 1080)
+                    QApplication.processEvents()
+                    self.assertEqual(second.workbench_nav.maximumWidth(), 52)
+                    self.assertEqual(second.workbench_nav_buttons["review"].text(), "")
+                    self.assertFalse(second.btn_collapse_nav.isVisible())
+                    return
+                finally:
+                    second.db.close()
+                    second.close()
+                    second.deleteLater()
+                    QApplication.processEvents()
+
+                first.show()
+                first.resize(1920, 1080)
+                QApplication.processEvents()
                 first.btn_collapse_nav.click()
                 QApplication.processEvents()
-                self.assertEqual(first.workbench_nav.maximumWidth(), 208)
+                self.assertEqual(first.workbench_nav.maximumWidth(), 152)
                 first._save_splitter_prefs()
                 persisted = QSettings("InvoiceHub", "workbench")
                 persisted.sync()
@@ -658,7 +717,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     second.show()
                     second.resize(1920, 1080)
                     QApplication.processEvents()
-                    self.assertEqual(second.workbench_nav.maximumWidth(), 208)
+                    self.assertEqual(second.workbench_nav.maximumWidth(), 152)
                     self.assertEqual(second.workbench_nav_buttons["review"].text(), "发票审核")
                 finally:
                     second.db.close()
@@ -679,7 +738,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 first.show()
                 first.resize(1920, 1080)
                 QApplication.processEvents()
-                self.assertLessEqual(first.workbench_nav.maximumWidth(), 56)
+                self.assertEqual(first.workbench_nav.maximumWidth(), 52)
                 self.assertIsNone(first._nav_collapsed_manual)
 
                 first.close()
@@ -693,7 +752,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     second.show()
                     second.resize(1920, 1080)
                     QApplication.processEvents()
-                    self.assertLessEqual(second.workbench_nav.maximumWidth(), 56)
+                    self.assertEqual(second.workbench_nav.maximumWidth(), 52)
                     self.assertEqual(second.workbench_nav_buttons["review"].text(), "")
                     self.assertFalse(settings.contains("nav_collapsed_manual"))
                     self.assertIsNone(second._nav_collapsed_manual)

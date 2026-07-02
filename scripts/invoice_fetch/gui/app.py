@@ -8,6 +8,7 @@ import os
 import sys
 import logging
 import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -16,11 +17,12 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QLabel, QMessageBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
-    QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton
+    QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton,
+    QStyledItemDelegate, QStyleOptionViewItem
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction
+from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPainter, QPen
 
 from ..db import InvoiceDB, is_pending_evidence_invoice
 from .. import APP_VERSION
@@ -78,6 +80,61 @@ REDOWNLOAD_BUCKETS = (
     "download_failed",
     "no_candidate_link",
 )
+
+TABLE_BADGE_ROLE = int(Qt.UserRole) + 101
+
+REVIEW_STATUS_BADGES = {
+    "to_review": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+    "approved": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
+    "ignored": {"fill": "#F1F5F9", "stroke": "#CBD5E1", "text": "#64748B"},
+    "error": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+}
+
+DATA_STATUS_BADGES = {
+    "正常": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
+    "待补全": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+    "缺原件": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+    "缺证明": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+    "未识别": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+}
+
+
+class QueueBadgeDelegate(QStyledItemDelegate):
+    """Paint compact centered badges for queue-status cells."""
+
+    def paint(self, painter, option, index):
+        style = option.widget.style() if option.widget is not None else QApplication.style()
+        base_option = QStyleOptionViewItem(option)
+        self.initStyleOption(base_option, index)
+        badge = index.data(TABLE_BADGE_ROLE)
+        text = base_option.text
+        base_option.text = ""
+        style.drawControl(QStyle.CE_ItemViewItem, base_option, painter, option.widget)
+        if not badge:
+            text_option = QStyleOptionViewItem(option)
+            self.initStyleOption(text_option, index)
+            style.drawControl(QStyle.CE_ItemViewItem, text_option, painter, option.widget)
+            return
+
+        fill = QColor(badge["fill"])
+        stroke = QColor(badge["stroke"])
+        text_color = QColor(badge["text"])
+        badge_rect = option.rect.adjusted(7, 4, -7, -4)
+        if badge_rect.width() <= 8 or badge_rect.height() <= 4:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(stroke, 1))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(badge_rect, 8, 8)
+        painter.setPen(text_color)
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(max(8, font.pointSize() - 1))
+        painter.setFont(font)
+        painter.drawText(badge_rect.adjusted(6, 0, -6, 0), Qt.AlignCenter, text)
+        painter.restore()
 
 
 def _bucket_redownload_status(status: str) -> str:
@@ -265,7 +322,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        if self._nav_collapsed_manual is None:
+        single_module_nav = self._is_single_module_nav()
+        if single_module_nav:
+            nav_collapsed = True
+        elif self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
         elif w <= 1024:
             nav_collapsed = True
@@ -278,17 +338,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        nav_width = 56 if nav_collapsed else 208
+        nav_width = metrics.nav_width if nav_collapsed else 152
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.verticalHeader().setMinimumSectionSize(20)
         self.table.verticalHeader().setMaximumSectionSize(23)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
-        self._detail_panel.setMaximumWidth(420)
+        self._detail_panel.setMaximumWidth(472)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
-        self.btn_more.setText("更多  ▼" if not metrics.compact else "更多")
+        self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
         card_width = 136 if not metrics.compact else 124
         for card in self.filter_buttons.values():
@@ -297,7 +357,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             card.setMinimumSize(min(96, card_width), 0)
             card.updateGeometry()
         self.workbench_nav_title.setVisible(not nav_collapsed)
-        self.workbench_nav_subtitle.setVisible(not nav_collapsed)
+        self.workbench_nav_subtitle.setVisible(False)
         self.workbench_nav_spacer.setVisible(not nav_collapsed)
         for key, button in self.workbench_nav_buttons.items():
             full_text = self._workbench_nav_button_texts.get(key, "")
@@ -312,6 +372,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
+        self.btn_collapse_nav.setVisible(not single_module_nav)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
         if not self._left_splitter_sizes_initialized:
@@ -319,6 +380,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
+        if self._is_single_module_nav():
+            return
         w = self.width() or 1150
         metrics = metrics_for_size(w, self.height() or 850)
         if self._nav_collapsed_manual is None:
@@ -401,6 +464,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action.triggered.connect(handler)
         return action
 
+    def _is_single_module_nav(self) -> bool:
+        visible_selectable = [
+            button for button in self.workbench_nav_buttons.values()
+            if not button.isHidden() and button.isEnabled() and button.isCheckable()
+        ]
+        return len(visible_selectable) <= 1
+
     def _init_ui(self):
         # Main Layout
         central_widget = QWidget()
@@ -411,15 +481,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.workbench_nav = QFrame()
         self.workbench_nav.setObjectName("WorkbenchNav")
-        self.workbench_nav.setMinimumWidth(208)
-        self.workbench_nav.setMaximumWidth(208)
+        self.workbench_nav.setMinimumWidth(152)
+        self.workbench_nav.setMaximumWidth(152)
         nav_layout = QVBoxLayout(self.workbench_nav)
-        nav_layout.setContentsMargins(14, 16, 14, 14)
-        nav_layout.setSpacing(8)
+        nav_layout.setContentsMargins(10, 12, 10, 12)
+        nav_layout.setSpacing(6)
 
-        nav_title = QLabel("Invoice Hub")
+        nav_title = QLabel("审核工作台")
         nav_title.setObjectName("WorkbenchNavTitle")
-        nav_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        nav_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         nav_layout.addWidget(nav_title)
         self.workbench_nav_title = nav_title
 
@@ -428,7 +498,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         nav_layout.addWidget(nav_subtitle)
         self.workbench_nav_subtitle = nav_subtitle
         self.workbench_nav_spacer = QWidget()
-        self.workbench_nav_spacer.setFixedHeight(12)
+        self.workbench_nav_spacer.setFixedHeight(6)
         nav_layout.addWidget(self.workbench_nav_spacer)
 
         self.workbench_nav_buttons = {}
@@ -552,17 +622,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_mobile_upload = make_button("扫码上传", variant="toolbar")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
-        action_layout.addWidget(self.btn_mobile_upload)
+        self.btn_mobile_upload.hide()
 
         self.btn_scan_email = make_button("邮箱同步", variant="toolbar")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
-        action_layout.addWidget(self.btn_scan_email)
+        self.btn_scan_email.hide()
 
         action_layout.addStretch()
-
         self.btn_toolbar_export = make_button("批量导出", variant="toolbar")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
-        action_layout.addWidget(self.btn_toolbar_export)
+        self.btn_toolbar_export.hide()
 
         self.btn_more = make_button("更多  ▼", variant="toolbar")
         self.btn_toolbar_help = QToolButton(self.workbench_top_toolbar)
@@ -590,6 +659,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.action_refresh = self._make_menu_action(
             "刷新数据", QStyle.SP_BrowserReload, self._manual_refresh, "刷新当前发票列表"
         )
+        self.action_mobile_upload = self._make_menu_action(
+            "扫码上传", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "打开扫码上传入口"
+        )
+        self.action_scan_email = self._make_menu_action(
+            "邮箱同步", QStyle.SP_MessageBoxInformation, self._scan_email_clicked, "同步配置邮箱中的发票"
+        )
+        self.action_toolbar_export = self._make_menu_action(
+            "批量导出", QStyle.SP_DialogSaveButton, self._export_claim_package, "导出当前报销组或选中结果"
+        )
         self.action_runtime = self._make_menu_action(
             "打开数据目录", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "打开本地运行数据目录"
         )
@@ -616,6 +694,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
         self.more_menu.addAction(self.action_refresh)
+        self.more_menu.addAction(self.action_mobile_upload)
+        self.more_menu.addAction(self.action_scan_email)
+        self.more_menu.addAction(self.action_toolbar_export)
+        self.more_menu.addSeparator()
         self.more_menu.addAction(self.action_runtime)
         self.more_menu.addAction(self.action_exports)
         self.more_menu.addAction(self.action_logs)
@@ -737,26 +819,51 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Use QStackedWidget for Table vs Empty State
         self.left_stack = QStackedWidget()
+        self.record_header = QFrame()
+        self.record_header.setObjectName("InvoiceRecordHeader")
+        self.record_header.setFixedHeight(26)
+        record_header_layout = QHBoxLayout(self.record_header)
+        record_header_layout.setContentsMargins(2, 0, 2, 0)
+        record_header_layout.setSpacing(8)
+        self.lbl_record_section_title = QLabel("发票记录")
+        self.lbl_record_section_title.setObjectName("InvoiceRecordTitle")
+        record_header_layout.addWidget(self.lbl_record_section_title)
+        self.lbl_record_count = QLabel("当前 0 / 0")
+        self.lbl_record_count.setObjectName("InvoiceRecordMeta")
+        record_header_layout.addWidget(self.lbl_record_count)
+        record_header_layout.addStretch(1)
+        self.lbl_record_sort = QLabel("按费用日期倒序")
+        self.lbl_record_sort.setObjectName("InvoiceRecordSort")
+        record_header_layout.addWidget(self.lbl_record_sort)
+        self.lbl_record_selection = QLabel("未选")
+        self.lbl_record_selection.setObjectName("InvoiceRecordSelection")
+        record_header_layout.addWidget(self.lbl_record_selection)
 
         self.table = QTableWidget()
         self.table.setColumnCount(len(VISIBLE_COLUMN_DEFINITIONS))
-        self.table.setHorizontalHeaderLabels([f"{label} ▾" for _key, label in VISIBLE_COLUMN_DEFINITIONS])
+        self.table.setHorizontalHeaderLabels([label for _key, label in VISIBLE_COLUMN_DEFINITIONS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.verticalHeader().setMinimumSectionSize(20)
         self.table.verticalHeader().setMaximumSectionSize(23)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
         self.table.installEventFilter(self)
+        self._badge_delegate = QueueBadgeDelegate(self.table)
+        self.table.setItemDelegateForColumn(0, self._badge_delegate)
+        self.table.setItemDelegateForColumn(1, self._badge_delegate)
         self._refresh_column_filter_headers()
 
         # Final 0.1.4 review workbench default columns:
         # review status, material status, expense date, amount, seller, invoice number.
-        self._min_column_widths = {0: 76, 1: 92, 2: 100, 3: 90, 4: 300, 5: 180}
+        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 84, 4: 260, 5: 180}
         for _column, _width in self._min_column_widths.items():
             self.table.setColumnWidth(_column, _width)
 
@@ -831,7 +938,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_upper_widget = QWidget()
         left_upper_layout = QVBoxLayout(self.left_upper_widget)
         left_upper_layout.setContentsMargins(0, 0, 0, 0)
-        left_upper_layout.setSpacing(6)
+        left_upper_layout.setSpacing(4)
+        left_upper_layout.addWidget(self.record_header)
         left_upper_layout.addWidget(self.left_stack)
 
         # Initialize the New Preview Panel
@@ -1193,12 +1301,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         for index, (key, label) in enumerate(VISIBLE_COLUMN_DEFINITIONS):
             active = is_filter_active(self.column_filters.get(key))
-            marker = "●" if active else "▾"
             item = self.table.horizontalHeaderItem(index)
             if item is None:
                 item = QTableWidgetItem()
                 self.table.setHorizontalHeaderItem(index, item)
-            item.setText(f"{label} {marker}")
+            item.setText(f"{label} · 已筛选" if active else label)
             item.setToolTip(self._column_filter_header_tooltip(label, active))
 
     def _column_filter_header_tooltip(self, label: str, active: bool) -> str:
@@ -1231,27 +1338,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         local_x = press_pos.x() - left
         if local_x < 0 or local_x > width:
             return False
-        marker_left = max(0, width - 30)
-        marker_right = width
-        if marker_left <= local_x <= marker_right:
-            return True
-
-        item = self.table.horizontalHeaderItem(section)
-        if item is None:
-            return False
-        metrics = header.fontMetrics()
-        text_width = metrics.horizontalAdvance(item.text())
-        marker_width = metrics.horizontalAdvance("▾")
-        alignment = item.textAlignment() or header.defaultAlignment()
-        if alignment & Qt.AlignRight:
-            text_left = max(0, width - text_width)
-        elif alignment & Qt.AlignHCenter:
-            text_left = max(0, (width - text_width) // 2)
-        else:
-            text_left = 0
-        visible_marker_left = max(0, text_left + text_width - marker_width - 8)
-        visible_marker_right = min(width, text_left + text_width + 8)
-        return visible_marker_left <= local_x <= visible_marker_right
+        return local_x >= max(0, width - 20)
 
     def _show_column_filter_popup(self, section: int):
         if section < 0 or section >= len(VISIBLE_COLUMN_DEFINITIONS):
@@ -1548,6 +1635,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if missing_extra:
             return "缺证明"
         return "正常"
+
+    def _badge_spec_for_review_status(self, status: str) -> dict | None:
+        return REVIEW_STATUS_BADGES.get(status or TO_REVIEW)
+
+    def _badge_spec_for_data_status(self, status: str) -> dict | None:
+        return DATA_STATUS_BADGES.get(status)
+
+    def _format_table_amount(self, amount_text: str) -> str:
+        text = str(amount_text or "").strip()
+        if not text:
+            return "—"
+        try:
+            return f"{Decimal(text):.2f}"
+        except (InvalidOperation, ValueError, TypeError):
+            return text
+
+    def _update_record_header_summary(self, total_matching: int | None = None, selected_count: int | None = None):
+        if total_matching is not None:
+            self._record_total_matching = max(0, int(total_matching))
+        shown = len(getattr(self, "invoices_list", []) or [])
+        total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
+        if hasattr(self, "lbl_record_count"):
+            self.lbl_record_count.setText(f"当前 {shown} / {total}")
+        if selected_count is not None and hasattr(self, "lbl_record_selection"):
+            self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
 
     def _on_chk_needs_fix_changed(self, state):
         if state == Qt.Checked or state == 2:
@@ -1925,6 +2037,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._limited_first_load_total = 0
             self._first_load_notice = None
 
+        self._update_record_header_summary(total_matching=total_matching)
+
         # Show/hide the load-all button
         if hasattr(self, "btn_load_all"):
             if self._limited_first_load_active:
@@ -1953,6 +2067,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 date_source = str(inv.get("date_source") or "")
                 display_date = expense_date or inv_date
                 total_amt = str(inv.get("total_amount") or "")
+                display_amount = self._format_table_amount(total_amt)
                 category = str(inv.get("category") or "未分类")
                 seller = str(inv.get("seller_name") or "")
                 display_status = self._get_invoice_data_status(inv)
@@ -1972,7 +2087,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     rev_chinese,
                     display_status,
                     display_date or "—",
-                    total_amt or "—",
+                    display_amount,
                     seller or "—",
                     inv_num or "—",
                 ]
@@ -1982,33 +2097,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
                     if col == 3:
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    elif col == 0:
+                        item.setToolTip(total_amt or display_amount)
+                    if col == 2:
+                        item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                    if col in (0, 1):
+                        item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                    if col == 0:
                         font = item.font()
                         font.setBold(True)
                         item.setFont(font)
-                        if review_status == "approved":
-                            item.setForeground(QColor("#059669"))
-                            item.setBackground(QColor("#ECFDF5"))
-                        elif review_status == "to_review":
-                            item.setForeground(QColor("#D97706"))
-                            item.setBackground(QColor("#FFFBEB"))
-                        elif review_status == "ignored":
-                            item.setForeground(QColor("#6B7280"))
-                            item.setBackground(QColor("#F3F4F6"))
-                        elif review_status == "error":
-                            item.setForeground(QColor("#DC2626"))
-                            item.setBackground(QColor("#FEF2F2"))
+                        badge = self._badge_spec_for_review_status(review_status)
+                        if badge:
+                            item.setData(TABLE_BADGE_ROLE, badge)
                         item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
                     elif col == 1:
                         font = item.font()
                         font.setBold(True)
                         item.setFont(font)
-                        if display_status == "正常":
-                            item.setForeground(QColor("#059669"))
-                            item.setBackground(QColor("#ECFDF5"))
-                        else:
-                            item.setForeground(QColor("#D97706"))
-                            item.setBackground(QColor("#FFFBEB"))
+                        badge = self._badge_spec_for_data_status(display_status)
+                        if badge:
+                            item.setData(TABLE_BADGE_ROLE, badge)
                         item.setToolTip(f"资料状态: {display_status}")
                     elif col == 2:
                         date_source_disp = {
@@ -2027,10 +2135,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     elif col == 4 and seller:
                         item.setToolTip(seller)
                     elif col == 5 and inv_num:
+                        item.setForeground(QColor("#94A3B8"))
                         item.setToolTip(inv_num)
 
                     if combined_warning:
-                        item.setBackground(QColor("#FEF3C7"))
                         existing_tip = item.toolTip()
                         item.setToolTip(f"{existing_tip}\n{combined_warning}" if existing_tip else combined_warning)
 
@@ -2272,8 +2380,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _set_selection_total_status(self, selected_indexes):
         if not selected_indexes:
             prefix = self._format_status_count_prefix()
+            self._update_record_header_summary(selected_count=count)
             self.lbl_status_left.setText(prefix)
             self.lbl_status_left.setToolTip(prefix)
+            self._update_record_header_summary(selected_count=0)
             
             mid_text = "未选择发票"
             self.lbl_status_middle.setText(mid_text)
@@ -2299,6 +2409,44 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_status_left.setText(prefix)
             self.lbl_status_left.setToolTip(prefix)
             
+            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
+            self.lbl_status_middle.setText(mid_text)
+            self.lbl_status_middle.setToolTip(mid_text)
+
+        QTimer.singleShot(0, calculate_async)
+
+    def _set_selection_total_status(self, selected_indexes):
+        if not selected_indexes:
+            prefix = self._format_status_count_prefix()
+            self.lbl_status_left.setText(prefix)
+            self.lbl_status_left.setToolTip(prefix)
+            self._update_record_header_summary(selected_count=0)
+
+            mid_text = "未选择发票"
+            self.lbl_status_middle.setText(mid_text)
+            self.lbl_status_middle.setToolTip(mid_text)
+            return
+
+        def calculate_async():
+            if not hasattr(self, "invoices_list") or not self.invoices_list:
+                return
+            rows = []
+            for idx in selected_indexes:
+                try:
+                    if 0 <= idx.row() < len(self.invoices_list):
+                        rows.append(self.invoices_list[idx.row()])
+                except Exception:
+                    pass
+            if not rows:
+                return
+            prefix = self._format_status_count_prefix()
+            count, total, has_missing = amount_total(rows)
+            suffix = " (部分金额缺失)" if has_missing else ""
+
+            self.lbl_status_left.setText(prefix)
+            self.lbl_status_left.setToolTip(prefix)
+            self._update_record_header_summary(selected_count=count)
+
             mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
             self.lbl_status_middle.setText(mid_text)
             self.lbl_status_middle.setToolTip(mid_text)
