@@ -247,7 +247,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
     def test_review_action_buttons_stay_compact_in_narrow_panel(self):
         for btn in (self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err):
-            self.assertLessEqual(btn.height(), 32)
+            self.assertLessEqual(btn.height(), 34)
 
     def test_review_actions_clear_detail_tabs_in_narrow_panel(self):
         self.panel.resize(390, 850)
@@ -310,13 +310,39 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertEqual(self.panel.detail_tabs.indexOf(self.panel.contract_scroll), -1)
         self.assertEqual(self.panel.detail_tabs.indexOf(self.panel.operation_scroll), -1)
 
+    def test_warning_banner_stays_compact_when_visible(self):
+        self.panel.resize(760, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        self.panel.set_summary(
+            amount="28.90",
+            status="approved",
+            date="2026-06-18",
+            category="餐饮",
+            seller="南京市铜锣水饺店（有限合伙）",
+            number="26322000004922369686",
+            buyer_warning="购买方抬头不匹配：当前：李飞；期望：示例科技有限公司",
+        )
+        self.app.processEvents()
+
+        self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
+        self.assertLessEqual(self.panel.lbl_buyer_warning.height(), 32)
+        self.assertIn("购买方抬头不匹配", self.panel.lbl_buyer_warning.text())
+
+    def test_review_action_buttons_keep_expected_order(self):
+        buttons = [self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err, self.panel.btn_inline_more]
+        layout = self.panel.inline_review_layout
+        indices = [layout.indexOf(btn) for btn in buttons]
+        self.assertEqual(indices, sorted(indices))
+
     # ── 8. Claim group buttons ──────────────────────────────────────────────
 
     def test_fixed_header_container_stays_compact(self):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.fixed_header_container.height(), 126)
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 132)
         self.assertLessEqual(self.panel.btn_app.height(), 50)
         self.assertLessEqual(self.panel.btn_err.height(), 50)
         self.assertEqual(self.panel.summary_card.objectName(), "DetailSummaryCard")
@@ -362,11 +388,19 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         core_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
         self.assertLessEqual(abs(material_x - core_x), 2)
 
+    def test_material_row_cards_and_actions_are_visible(self):
+        self.panel.update_evidence_row([])
+        self.assertIsNotNone(self.panel.original_card)
+        self.assertIsNotNone(self.panel.evidence_card)
+        self.assertEqual(self.panel.original_card.objectName(), "DetailOriginalRowCard")
+        self.assertEqual(self.panel.evidence_card.objectName(), "DetailEvidenceRowCard")
+        self.assertFalse(self.panel.btn_add_evidence.isHidden())
+
     def test_basic_info_section_stays_compact(self):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.detail_core_section.height(), 260)
+        self.assertLessEqual(self.panel.detail_core_section.height(), 320)
 
     def test_empty_claim_delete_button_exists_in_summary_row(self):
         """Deleting an empty group lives in the claim action cluster, not the summary row."""

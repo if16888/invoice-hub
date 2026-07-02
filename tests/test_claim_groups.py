@@ -1314,7 +1314,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
                     self.assertEqual(window.centralWidget().layout().spacing(), 0)
                     self.assertEqual(window.workbench_content.layout().spacing(), 8)
-                    self.assertLessEqual(window.summary_card.layout().spacing(), 3)  # compact summary spacing
+                    self.assertLessEqual(window.summary_card.layout().spacing(), 6)  # compact summary spacing
                     self.assertGreaterEqual(window.btn_toggle_log.minimumWidth(), 76)
                     self.assertEqual(window.status_bar.maximumHeight(), 36)
                     self.assertEqual(window.status_bar.minimumHeight(), 36)
