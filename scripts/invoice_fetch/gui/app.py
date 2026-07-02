@@ -1818,6 +1818,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if isinstance(cfg_categories, dict):
             for key, value in cfg_categories.items():
                 if isinstance(value, dict):
+                    if value.get("disabled"):
+                        continue
                     add_option(value.get("name") or value.get("label") or CONFIG_CATEGORY_LABELS.get(str(key), key))
                 else:
                     add_option(CONFIG_CATEGORY_LABELS.get(str(key), key))

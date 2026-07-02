@@ -100,6 +100,88 @@ class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertIn("Meals", text)
         self.assertIn("Transit", text)
 
+    def test_rules_page_exposes_dictionary_controls_and_rule_boundary_copy(self):
+        dialog = self._make_dialog()
+        dialog._refresh_settings_center_pages()
+
+        self.assertTrue(dialog.lbl_rules_flow.text().strip())
+        self.assertTrue(dialog.lbl_rules_overview.text().strip())
+        self.assertIn("固定规则为只读", dialog.lbl_rules_overview.text())
+        self.assertIn("分类名称不是识别规则", dialog.lbl_category_dictionary_hint.text())
+        self.assertTrue(dialog.combo_config_categories.isEnabled())
+        self.assertTrue(dialog.txt_category_name.placeholderText().strip())
+
+    def test_runtime_page_reports_real_pending_and_last_scan_summary(self):
+        dialog = self._make_dialog(
+            config={
+                "email": {"provider": "qq", "address": "your_email@qq.com"},
+                "ai": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "profile_id": "ai-one",
+                },
+                "ai_profiles": [
+                    {
+                        "profile_id": "ai-one",
+                        "name": "报销分类",
+                        "provider": "deepseek",
+                        "model": "deepseek-chat",
+                        "enabled": True,
+                    }
+                ],
+            }
+        )
+        dialog.parent.db = MagicMock()
+        dialog.parent.db.last_error = "invalid_auth"
+        dialog.parent.db.get_email_stats.return_value = {"pending": 3, "unclassified": 2}
+        dialog.parent.db.count_pending_manual_invoices.return_value = 1
+        dialog.parent._last_scan_summary = {"ai_pending_classification": 2}
+
+        with patch("scripts.invoice_fetch.ai_classifier.is_provider_session_paused", return_value=True):
+            dialog._refresh_settings_center_pages()
+
+        text = dialog.lbl_runtime_status.text()
+        self.assertIn("报销分类", text)
+        self.assertIn("会话已暂停", text)
+        self.assertIn("待下载 3", text)
+        self.assertIn("待人工补全 1", text)
+        self.assertIn("AI 待分类 2", text)
+        self.assertIn("最近错误：invalid_auth", text)
+
+    def test_privacy_page_explicitly_separates_sent_and_local_only_data(self):
+        dialog = self._make_dialog()
+        self.assertIn("掩码后的主题", dialog.lbl_privacy_sent_items.text())
+        self.assertIn("附件、PDF、图片", dialog.lbl_privacy_local_items.text())
+        self.assertIn("系统凭据管理器", dialog.lbl_privacy_storage_note.text())
+        self.assertIn("保持待分类", dialog.lbl_privacy_storage_note.text())
+
+    def test_category_dictionary_add_rename_and_disable_used_entry(self):
+        dialog = self._make_dialog(
+            config={
+                "email": {"provider": "qq", "address": "your_email@qq.com"},
+                "ai": {"provider": "none", "model": "", "enabled": False},
+                "categories": {
+                    "hotel": {"name": "住宿"},
+                },
+            }
+        )
+        dialog.parent.db = MagicMock()
+        dialog.parent.db.list_categories.return_value = ["住宿"]
+        dialog.parent.db.get_email_stats.return_value = {"pending": 0, "unclassified": 0}
+        dialog.parent.db.count_pending_manual_invoices.return_value = 0
+
+        with patch("scripts.invoice_fetch.config.save_config") as mock_save:
+            new_key = dialog._add_category_dictionary_entry("差旅")
+            renamed = dialog._rename_category_dictionary_entry(new_key, "商务差旅")
+            outcome = dialog._delete_category_dictionary_entry("hotel")
+
+        self.assertTrue(new_key)
+        self.assertTrue(renamed)
+        self.assertEqual(outcome, "disabled")
+        self.assertEqual(dialog.cfg["categories"]["hotel"]["disabled"], True)
+        self.assertIn("商务差旅", [item.get("name") for item in dialog.cfg["categories"].values()])
+        self.assertGreaterEqual(mock_save.call_count, 3)
+
 
 class SettingsCenterMailboxTests(SettingsDialogTestMixin, unittest.TestCase):
 

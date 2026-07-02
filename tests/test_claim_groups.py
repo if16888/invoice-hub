@@ -3209,6 +3209,41 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_category_dropdown_skips_disabled_config_categories(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            cfg = {
+                "categories": {
+                    "travel_disabled": {"name": "商务差旅", "disabled": True},
+                    "meal_custom": {"name": "客户餐叙"},
+                },
+                "reimbursement": {
+                    "buyer_name": "\u793a\u4f8b\u79d1\u6280\u6709\u9650\u516c\u53f8",
+                    "strict_buyer_check": True,
+                },
+            }
+            with tempfile.TemporaryDirectory() as td:
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg):
+                    window = InvoiceReviewApp(Path(td) / "test_gui_disabled_categories.db", splash=None)
+                try:
+                    options = [window.combo_category.itemText(i) for i in range(window.combo_category.count())]
+                    self.assertIn("客户餐叙", options)
+                    self.assertNotIn("商务差旅", options)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_shows_buyer_title_warning_in_table_and_summary(self):
         try:
             from PySide6.QtWidgets import QApplication

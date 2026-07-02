@@ -2,6 +2,7 @@
 """Invoice Hub mailbox and AI settings dialog."""
 
 import sys
+import re
 from copy import deepcopy
 from uuid import uuid4
 
@@ -64,6 +65,7 @@ AI_KEY_SOURCE_LABELS = {
     "env": "环境变量",
     "missing": "未设置",
 }
+BUILTIN_CATEGORY_NAMES = ("餐饮", "交通", "住宿", "办公", "通讯", "其他")
 
 
 class SecurePasswordLineEdit(QLineEdit):
@@ -798,17 +800,80 @@ class SettingsDialog(QDialog):
         self.lbl_rules_overview = QLabel()
         self.lbl_rules_overview.setWordWrap(True)
         self.lbl_rules_overview.setProperty("class", "SectionHint")
+        self.lbl_rules_ai_fallback = QLabel()
+        self.lbl_rules_ai_fallback.setWordWrap(True)
+        self.lbl_rules_ai_fallback.setProperty("class", "SectionHint")
         self.lbl_category_dictionary = QLabel()
         self.lbl_category_dictionary.setWordWrap(True)
         self.lbl_category_dictionary.setProperty("class", "SectionHint")
+        self.lbl_category_dictionary_hint = QLabel(
+            "分类名称不是识别规则；这里只管理可选分类名称，不会重跑历史发票，也不会创建邮件识别条件。"
+        )
+        self.lbl_category_dictionary_hint.setWordWrap(True)
+        self.lbl_category_dictionary_hint.setProperty("class", "SectionHint")
+        self.combo_config_categories = QComboBox()
+        self.combo_config_categories.currentIndexChanged.connect(self._on_category_dictionary_selection_changed)
+        self.txt_category_name = QLineEdit()
+        self.txt_category_name.setPlaceholderText("输入新增或重命名后的分类名称")
+        self.btn_add_category = make_button("新增分类", variant="secondary", min_width=88)
+        self.btn_add_category.clicked.connect(lambda: self._add_category_dictionary_entry())
+        self.btn_rename_category = make_button("保存名称", variant="secondary", min_width=88)
+        self.btn_rename_category.clicked.connect(lambda: self._rename_category_dictionary_entry())
+        self.btn_disable_category = make_button("停止推荐", variant="secondary", min_width=88)
+        self.btn_disable_category.clicked.connect(self._toggle_selected_category_recommendation)
+        self.btn_delete_category = make_button("删除", variant="danger", min_width=72)
+        self.btn_delete_category.clicked.connect(lambda: self._delete_category_dictionary_entry())
+
+        editor_box = QGroupBox("分类字典")
+        editor_layout = QVBoxLayout(editor_box)
+        editor_layout.setContentsMargins(12, 12, 12, 12)
+        editor_layout.setSpacing(8)
+        editor_layout.addWidget(self.lbl_category_dictionary_hint)
+
+        picker_layout = QHBoxLayout()
+        picker_layout.setContentsMargins(0, 0, 0, 0)
+        picker_layout.setSpacing(8)
+        picker_layout.addWidget(QLabel("配置分类"))
+        picker_layout.addWidget(self.combo_config_categories, 1)
+        editor_layout.addLayout(picker_layout)
+
+        form_layout = QHBoxLayout()
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(8)
+        form_layout.addWidget(self.txt_category_name, 1)
+        form_layout.addWidget(self.btn_add_category)
+        form_layout.addWidget(self.btn_rename_category)
+        form_layout.addWidget(self.btn_disable_category)
+        form_layout.addWidget(self.btn_delete_category)
+        editor_layout.addLayout(form_layout)
+        editor_layout.addWidget(self.lbl_category_dictionary)
+
+        self.category_dictionary_rows_host = QWidget()
+        self.category_dictionary_rows_host.setStyleSheet("background-color: transparent;")
+        self.category_dictionary_rows_layout = QVBoxLayout(self.category_dictionary_rows_host)
+        self.category_dictionary_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.category_dictionary_rows_layout.setSpacing(6)
+        editor_layout.addWidget(self.category_dictionary_rows_host)
+
         layout.addWidget(title)
         layout.addWidget(desc)
-        layout.addWidget(self._build_section_block("本地分类流程", "本地关键词 → 技术通知排除 → 仍然无法确定时使用 AI 兜底。"))
+        layout.addWidget(self._build_section_block(
+            "本地分类流程",
+            "本地关键词与技术通知排除\n"
+            "        ↓ 不确定\n"
+            "可信发件人 / 既有业务判断\n"
+            "        ↓ 仍不确定且 AI 已启用\n"
+            "AI 仅判断掩码后的邮件头\n"
+            "        ↓ 失败\n"
+            "保持待分类，交由人工处理"
+        ))
         layout.addWidget(self._build_section_block("固定规则", "系统内置的发票关键词、排除通知和技术类邮件排除规则只读展示，不在这里编辑。"))
         layout.addWidget(self.lbl_rules_flow)
         layout.addWidget(self.lbl_rules_overview)
-        layout.addWidget(self.lbl_category_dictionary)
+        layout.addWidget(self.lbl_rules_ai_fallback)
+        layout.addWidget(editor_box)
         layout.addStretch()
+        self._refresh_category_dictionary_controls()
         return scroll
 
     def _build_runtime_center_page(self):
@@ -821,9 +886,13 @@ class SettingsDialog(QDialog):
         self.lbl_runtime_status = QLabel()
         self.lbl_runtime_status.setWordWrap(True)
         self.lbl_runtime_status.setProperty("class", "SectionHint")
+        self.lbl_runtime_scope = QLabel("只显示当前会话和最近一次真实扫描结果；没有数据时不虚构历史趋势。")
+        self.lbl_runtime_scope.setWordWrap(True)
+        self.lbl_runtime_scope.setProperty("class", "SectionHint")
         layout.addWidget(title)
         layout.addWidget(desc)
         layout.addWidget(self.lbl_runtime_status)
+        layout.addWidget(self.lbl_runtime_scope)
         layout.addStretch()
         return scroll
 
@@ -834,16 +903,28 @@ class SettingsDialog(QDialog):
         desc = QLabel("明确说明哪些数据会发送给 AI，哪些数据不会发送。授权码和 API Key 不会显示在界面、日志或配置文件中。")
         desc.setWordWrap(True)
         desc.setProperty("class", "SectionHint")
-        self.lbl_privacy_boundary = QLabel(
-            "会发送给 AI：掩码后的主题、发件人和最小分类请求元数据。\n"
-            "不会发送给 AI：邮件正文、附件、PDF/OFD 文件、本地路径、邮箱授权码和 API Key。"
-        )
+        self.lbl_privacy_sent_items = QLabel()
+        self.lbl_privacy_sent_items.setWordWrap(True)
+        self.lbl_privacy_sent_items.setProperty("class", "SectionHint")
+        self.lbl_privacy_local_items = QLabel()
+        self.lbl_privacy_local_items.setWordWrap(True)
+        self.lbl_privacy_local_items.setProperty("class", "SectionHint")
+        self.lbl_privacy_storage_note = QLabel()
+        self.lbl_privacy_storage_note.setWordWrap(True)
+        self.lbl_privacy_storage_note.setProperty("class", "SectionHint")
+        self.lbl_privacy_boundary = QLabel()
         self.lbl_privacy_boundary.setWordWrap(True)
         self.lbl_privacy_boundary.setProperty("class", "SectionHint")
         layout.addWidget(title)
         layout.addWidget(desc)
+        layout.addWidget(self._build_section_block("会发送给 AI", "掩码后的主题\n掩码后的发件人\n最小分类请求元数据"))
+        layout.addWidget(self._build_section_block("不会发送给 AI", "邮件正文\n附件、PDF、图片\n本地文件路径\n邮箱授权码、API Key"))
+        layout.addWidget(self.lbl_privacy_sent_items)
+        layout.addWidget(self.lbl_privacy_local_items)
+        layout.addWidget(self.lbl_privacy_storage_note)
         layout.addWidget(self.lbl_privacy_boundary)
         layout.addStretch()
+        self._refresh_privacy_center_summary()
         return scroll
 
     def _build_system_center_page(self):
@@ -1035,6 +1116,7 @@ class SettingsDialog(QDialog):
         self._refresh_ai_center_summary()
         self._refresh_rules_center_summary()
         self._refresh_runtime_center_summary()
+        self._refresh_privacy_center_summary()
         self._refresh_system_center_summary()
         self._refresh_data_center_summary()
 
@@ -1055,6 +1137,7 @@ class SettingsDialog(QDialog):
             return
         from ..ai_profiles import get_ai_profiles
         from ..credentials import get_ai_api_key_source
+        from ..ai_classifier import is_provider_session_paused
         profiles = get_ai_profiles(self.cfg)
         active = next((profile for profile in profiles if profile.get("enabled")), None)
         missing_keys = sum(
@@ -1062,7 +1145,13 @@ class SettingsDialog(QDialog):
             if get_ai_api_key_source(profile["provider"], profile["profile_id"]) == "missing"
         )
         if active:
-            status = f"当前启用：{active['name']}"
+            key_source = AI_KEY_SOURCE_LABELS.get(
+                get_ai_api_key_source(active["provider"], active["profile_id"]),
+                "未设置",
+            )
+            paused = is_provider_session_paused(active.get("provider", ""))
+            session_state = "本次会话已暂停" if paused else "本次会话可用"
+            status = f"当前启用：{active['name']} / Key 来源：{key_source} / {session_state}"
         else:
             status = "AI 当前关闭，本地规则仍然可用"
         self.lbl_ai_summary.setText(f"{status} / 已保存 {len(profiles)} / 缺少密钥 {missing_keys}")
@@ -1072,23 +1161,23 @@ class SettingsDialog(QDialog):
             return
         from ..__main__ import DEFAULT_CATEGORY_RULES, TRANSPORT_DETAIL_RULES
         from ..rule_classifier import INVOICE_KEYWORDS, EXCLUDE_KEYWORDS, TECHNICAL_EXCLUDE_KEYWORDS
-        cfg_categories = self.cfg.get("categories", {}) if isinstance(self.cfg.get("categories"), dict) else {}
-        db_categories = []
-        if hasattr(self.parent, "db") and self.parent.db:
-            try:
-                db_categories = [item for item in self.parent.db.list_categories() if str(item or "").strip()]
-            except Exception:
-                db_categories = []
+        cfg_categories = self._config_category_map()
+        db_categories = self._db_category_names()
         self.lbl_rules_flow.setText(
             f"发票关键词 {len(INVOICE_KEYWORDS)} 条 / 排除关键词 {len(EXCLUDE_KEYWORDS)} 条 / 技术通知排除 {len(TECHNICAL_EXCLUDE_KEYWORDS)} 条"
         )
         self.lbl_rules_overview.setText(
             f"内置交通细分 {len(TRANSPORT_DETAIL_RULES)} 组 / 默认分类规则 {len(DEFAULT_CATEGORY_RULES)} 组 / 固定规则为只读展示"
         )
+        self.lbl_rules_ai_fallback.setText(
+            "AI 兜底只在本地规则仍无法确定时启用；认证或调用失败后保持待分类，不覆盖已有本地规则结果。"
+        )
         config_names = []
+        disabled_count = 0
         for key, value in cfg_categories.items():
             if isinstance(value, dict):
                 label = str(value.get("name") or value.get("label") or key).strip()
+                disabled_count += int(bool(value.get("disabled")))
             else:
                 label = str(key).strip()
             if label and label not in config_names:
@@ -1101,8 +1190,11 @@ class SettingsDialog(QDialog):
         config_summary = "、".join(config_names) if config_names else "无"
         db_summary = "、".join(db_names) if db_names else "无"
         self.lbl_category_dictionary.setText(
-            f"配置分类 {len(config_names)} 项：{config_summary} / 数据库已有分类 {len(db_names)} 项：{db_summary}。分类名称用于归档展示，不等于识别规则。"
+            f"配置分类 {len(config_names)} 项（停用推荐 {disabled_count}）：{config_summary} / "
+            f"数据库已有分类 {len(db_names)} 项：{db_summary}。分类名称用于归档展示，不等于识别规则。"
         )
+        self._refresh_category_dictionary_controls()
+        self._refresh_category_dictionary_rows()
 
     def _refresh_runtime_center_summary(self):
         if not hasattr(self, "lbl_runtime_status"):
@@ -1111,18 +1203,271 @@ class SettingsDialog(QDialog):
         from ..ai_classifier import is_provider_session_paused
         profiles = get_ai_profiles(self.cfg)
         active = next((profile for profile in profiles if profile.get("enabled")), None)
+        status_parts = []
         if active is None:
-            status = "AI 未启用；当前仍按本地规则和人工审核工作。"
+            status_parts.append("AI 未启用；当前仍按本地规则和人工审核工作。")
         else:
             paused = is_provider_session_paused(active.get("provider", ""))
-            status = f"当前配置：{active['name']} ({active['provider']} / {active['model']})"
-            status += " / 会话已暂停" if paused else " / 会话可用"
+            status_parts.append(f"当前配置：{active['name']} ({active['provider']} / {active['model']})")
+            status_parts.append("会话已暂停" if paused else "会话可用")
+        pending_count = 0
+        unclassified_count = 0
+        manual_count = 0
         last_error = ""
         if hasattr(self.parent, "db") and self.parent.db:
             last_error = str(getattr(self.parent.db, "last_error", "") or "").strip()
+            try:
+                stats = self.parent.db.get_email_stats()
+                pending_count = int(stats.get("pending", 0) or 0)
+                unclassified_count = int(stats.get("unclassified", 0) or 0)
+            except Exception:
+                pending_count = 0
+                unclassified_count = 0
+            try:
+                manual_count = int(self.parent.db.count_pending_manual_invoices() or 0)
+            except Exception:
+                manual_count = 0
+        status_parts.append(f"待下载 {pending_count} / 待人工补全 {manual_count} / 待分类 {unclassified_count}")
+        last_scan_summary = getattr(self.parent, "_last_scan_summary", {}) if hasattr(self, "parent") else {}
+        if isinstance(last_scan_summary, dict):
+            ai_pending = int(last_scan_summary.get("ai_pending_classification", 0) or 0)
+            if ai_pending:
+                status_parts.append(f"AI 待分类 {ai_pending}")
         if last_error:
-            status += f" / 最近错误：{last_error}"
-        self.lbl_runtime_status.setText(status)
+            status_parts.append(f"最近错误：{last_error}")
+        self.lbl_runtime_status.setText(" / ".join(status_parts))
+
+    def _refresh_privacy_center_summary(self):
+        if not hasattr(self, "lbl_privacy_boundary"):
+            return
+        self.lbl_privacy_sent_items.setText("会发送给 AI：掩码后的主题、掩码后的发件人、最小分类请求元数据。")
+        self.lbl_privacy_local_items.setText("不会发送给 AI：邮件正文、附件、PDF、图片、本地文件路径、邮箱授权码和 API Key。")
+        self.lbl_privacy_storage_note.setText(
+            "API Key 和邮箱授权码仅保存在系统凭据管理器；配置文件和日志会剥离 secret。"
+            "如果 provider 认证或请求失败，数据保持待分类，不污染本地规则结果。"
+        )
+        self.lbl_privacy_boundary.setText(
+            "删除 AI profile 时不会静默清除系统凭据；需要独立确认。截图反馈前请继续遮挡本地路径和真实票据信息。"
+        )
+
+    def _config_category_map(self) -> dict:
+        categories = self.cfg.get("categories", {})
+        if not isinstance(categories, dict):
+            categories = {}
+            self.cfg["categories"] = categories
+        return categories
+
+    def _db_category_names(self) -> list[str]:
+        db_categories = []
+        if hasattr(self.parent, "db") and self.parent.db:
+            try:
+                db_categories = [item for item in self.parent.db.list_categories() if str(item or "").strip()]
+            except Exception:
+                db_categories = []
+        return db_categories
+
+    def _category_entry_label(self, key: str, value) -> str:
+        if isinstance(value, dict):
+            return str(value.get("name") or value.get("label") or key).strip()
+        return str(key or "").strip()
+
+    def _generate_category_key(self, name: str) -> str:
+        categories = self._config_category_map()
+        base = re.sub(r"[^0-9a-zA-Z]+", "_", str(name or "").strip().lower()).strip("_")
+        if not base:
+            base = "category"
+        candidate = base
+        index = 2
+        while candidate in categories:
+            candidate = f"{base}_{index}"
+            index += 1
+        return candidate
+
+    def _category_label_exists(self, label: str, *, exclude_key: str | None = None) -> bool:
+        normalized = str(label or "").strip().casefold()
+        if not normalized:
+            return False
+        for key, value in self._config_category_map().items():
+            if exclude_key and key == exclude_key:
+                continue
+            current = self._category_entry_label(key, value)
+            if current.casefold() == normalized:
+                return True
+        return False
+
+    def _category_label_used(self, label: str) -> bool:
+        normalized = str(label or "").strip().casefold()
+        if not normalized:
+            return False
+        return any(str(item or "").strip().casefold() == normalized for item in self._db_category_names())
+
+    def _refresh_category_dictionary_controls(self, selected_key: str | None = None):
+        if not hasattr(self, "combo_config_categories"):
+            return
+        categories = self._config_category_map()
+        entries = []
+        for key, value in categories.items():
+            label = self._category_entry_label(key, value)
+            disabled = isinstance(value, dict) and bool(value.get("disabled"))
+            if label:
+                entries.append((label.casefold(), key, label, disabled))
+        entries.sort(key=lambda item: item[0])
+
+        previous_key = selected_key
+        if previous_key is None:
+            previous_key = self.combo_config_categories.currentData()
+
+        self.combo_config_categories.blockSignals(True)
+        self.combo_config_categories.clear()
+        self.combo_config_categories.addItem("选择配置分类…", "")
+        for _, key, label, disabled in entries:
+            suffix = "（已停用推荐）" if disabled else ""
+            self.combo_config_categories.addItem(f"{label}{suffix}", key)
+        target_index = self.combo_config_categories.findData(previous_key) if previous_key else -1
+        self.combo_config_categories.setCurrentIndex(target_index if target_index >= 0 else 0)
+        self.combo_config_categories.blockSignals(False)
+        self._on_category_dictionary_selection_changed(self.combo_config_categories.currentIndex())
+
+    def _refresh_category_dictionary_rows(self):
+        if not hasattr(self, "category_dictionary_rows_layout"):
+            return
+        while self.category_dictionary_rows_layout.count():
+            item = self.category_dictionary_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        combined = {}
+        for name in BUILTIN_CATEGORY_NAMES:
+            combined.setdefault(name, {"sources": [], "disabled": False})
+            combined[name]["sources"].append("内置")
+        for key, value in self._config_category_map().items():
+            label = self._category_entry_label(key, value)
+            if not label:
+                continue
+            combined.setdefault(label, {"sources": [], "disabled": False})
+            combined[label]["sources"].append("配置")
+            combined[label]["disabled"] = combined[label]["disabled"] or bool(isinstance(value, dict) and value.get("disabled"))
+        for name in self._db_category_names():
+            combined.setdefault(name, {"sources": [], "disabled": False})
+            if "历史" not in combined[name]["sources"]:
+                combined[name]["sources"].append("历史")
+
+        for name in sorted(combined.keys(), key=lambda item: item.casefold()):
+            meta = combined[name]
+            row = QFrame()
+            row.setProperty("class", "SectionCard")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(8)
+            lbl_name = QLabel(name)
+            lbl_name.setProperty("class", "SettingsListHeader")
+            lbl_meta = QLabel(" / ".join(meta["sources"]))
+            lbl_meta.setProperty("class", "SectionHint")
+            row_layout.addWidget(lbl_name)
+            row_layout.addStretch()
+            row_layout.addWidget(lbl_meta)
+            if meta["disabled"]:
+                row_layout.addWidget(make_badge("已停用推荐", variant="warning"))
+            self.category_dictionary_rows_layout.addWidget(row)
+
+        self.category_dictionary_rows_layout.addStretch()
+
+    def _on_category_dictionary_selection_changed(self, index: int):
+        if not hasattr(self, "combo_config_categories"):
+            return
+        key = self.combo_config_categories.currentData()
+        categories = self._config_category_map()
+        entry = categories.get(key) if key else None
+        label = self._category_entry_label(key, entry) if key and entry is not None else ""
+        is_disabled = bool(isinstance(entry, dict) and entry.get("disabled"))
+        is_used = bool(label and self._category_label_used(label))
+        if key:
+            self.txt_category_name.setText(label)
+        else:
+            self.txt_category_name.clear()
+        self.btn_rename_category.setEnabled(bool(key))
+        self.btn_disable_category.setEnabled(bool(key))
+        self.btn_disable_category.setText("恢复推荐" if is_disabled else "停止推荐")
+        self.btn_delete_category.setEnabled(bool(key) and not is_used)
+
+    def _persist_category_dictionary_changes(self, selected_key: str | None = None):
+        from ..config import save_config
+        save_config(self.cfg)
+        if hasattr(self.parent, "config"):
+            self.parent.config = self.cfg
+        self._refresh_settings_center_pages()
+        self._refresh_category_dictionary_controls(selected_key=selected_key)
+        self._show_settings_home("rules")
+
+    def _add_category_dictionary_entry(self, name: str | None = None):
+        label = str(name if name is not None else self.txt_category_name.text()).strip()
+        if not label:
+            QMessageBox.warning(self, "分类名称为空", "请输入分类名称。")
+            return None
+        if self._category_label_exists(label):
+            QMessageBox.warning(self, "分类已存在", "该分类名称已存在，请直接重命名或选择其他名称。")
+            return None
+        key = self._generate_category_key(label)
+        self._config_category_map()[key] = {"name": label}
+        self._persist_category_dictionary_changes(selected_key=key)
+        return key
+
+    def _rename_category_dictionary_entry(self, category_key: str | None = None, new_name: str | None = None):
+        key = category_key if category_key is not None else self.combo_config_categories.currentData()
+        categories = self._config_category_map()
+        if not key or key not in categories:
+            QMessageBox.warning(self, "未选择分类", "请先选择要重命名的配置分类。")
+            return False
+        label = str(new_name if new_name is not None else self.txt_category_name.text()).strip()
+        if not label:
+            QMessageBox.warning(self, "分类名称为空", "请输入分类名称。")
+            return False
+        if self._category_label_exists(label, exclude_key=key):
+            QMessageBox.warning(self, "分类已存在", "该分类名称已存在，请直接使用已有分类。")
+            return False
+        value = categories.get(key)
+        updated = dict(value) if isinstance(value, dict) else {}
+        updated["name"] = label
+        categories[key] = updated
+        self._persist_category_dictionary_changes(selected_key=key)
+        return True
+
+    def _toggle_selected_category_recommendation(self):
+        key = self.combo_config_categories.currentData() if hasattr(self, "combo_config_categories") else ""
+        if not key:
+            QMessageBox.warning(self, "未选择分类", "请先选择配置分类。")
+            return False
+        categories = self._config_category_map()
+        value = categories.get(key)
+        updated = dict(value) if isinstance(value, dict) else {"name": self._category_entry_label(key, value)}
+        is_disabled = bool(updated.get("disabled"))
+        if is_disabled:
+            updated.pop("disabled", None)
+        else:
+            updated["disabled"] = True
+        categories[key] = updated
+        self._persist_category_dictionary_changes(selected_key=key)
+        return True
+
+    def _delete_category_dictionary_entry(self, category_key: str | None = None):
+        key = category_key if category_key is not None else (
+            self.combo_config_categories.currentData() if hasattr(self, "combo_config_categories") else ""
+        )
+        categories = self._config_category_map()
+        if not key or key not in categories:
+            QMessageBox.warning(self, "未选择分类", "请先选择配置分类。")
+            return None
+        label = self._category_entry_label(key, categories[key])
+        if self._category_label_used(label):
+            updated = dict(categories[key]) if isinstance(categories[key], dict) else {"name": label}
+            updated["disabled"] = True
+            categories[key] = updated
+            self._persist_category_dictionary_changes(selected_key=key)
+            return "disabled"
+        categories.pop(key, None)
+        self._persist_category_dictionary_changes()
+        return "deleted"
 
     def _refresh_system_center_summary(self):
         if not hasattr(self, "lbl_system_settings"):
