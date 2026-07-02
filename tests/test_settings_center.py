@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QWidget
 
 from tests.test_settings_dialog import SettingsDialogTestMixin
 
@@ -111,6 +111,46 @@ class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertTrue(dialog.combo_config_categories.isEnabled())
         self.assertTrue(dialog.txt_category_name.placeholderText().strip())
 
+    def test_rules_page_uses_chinese_category_labels_and_manage_action(self):
+        dialog = self._make_dialog(
+            config={
+                "email": {"provider": "qq", "address": "your_email@qq.com"},
+                "ai": {"provider": "none", "model": "", "enabled": False},
+                "categories": {
+                    "hotel": {},
+                    "meal": {"name": ""},
+                    "telecom": "telecom",
+                },
+            }
+        )
+        dialog.parent.db = MagicMock()
+        dialog.parent.db.list_categories.return_value = []
+        dialog._refresh_settings_center_pages()
+        dialog._show_settings_home("rules")
+        dialog.show()
+        QApplication.processEvents()
+
+        text = dialog.lbl_category_dictionary.text()
+        self.assertIn("住宿", text)
+        self.assertIn("餐饮", text)
+        self.assertIn("通讯", text)
+        self.assertNotIn("hotel", text)
+        self.assertNotIn("meal", text)
+        self.assertNotIn("telecom", text)
+        row_actions = [
+            button.text()
+            for button in dialog.category_dictionary_rows_host.findChildren(QPushButton)
+            if button.isVisible()
+        ]
+        self.assertIn("编辑名称", row_actions)
+        row_meta = [
+            label.text()
+            for label in dialog.category_dictionary_rows_host.findChildren(QLabel)
+            if "配置分类" in label.text()
+        ]
+        self.assertTrue(row_meta)
+        self.assertTrue(all("配置分类 / 配置分类" not in text for text in row_meta))
+
     def test_runtime_page_reports_real_pending_and_last_scan_summary(self):
         dialog = self._make_dialog(
             config={
@@ -137,7 +177,8 @@ class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
         dialog.parent.db.count_pending_manual_invoices.return_value = 1
         dialog.parent._last_scan_summary = {"ai_pending_classification": 2}
 
-        with patch("scripts.invoice_fetch.ai_classifier.is_provider_session_paused", return_value=True):
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="provider"), \
+             patch("scripts.invoice_fetch.ai_classifier.is_provider_session_paused", return_value=True):
             dialog._refresh_settings_center_pages()
 
         text = dialog.lbl_runtime_status.text()
@@ -147,6 +188,82 @@ class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertIn("待人工补全 1", text)
         self.assertIn("AI 待分类 2", text)
         self.assertIn("最近错误：invalid_auth", text)
+
+    def test_ai_and_runtime_status_do_not_claim_session_usable_when_key_missing(self):
+        dialog = self._make_dialog(
+            config={
+                "email": {"provider": "qq", "address": "your_email@qq.com"},
+                "ai": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "profile_id": "ai-one",
+                    "enabled": True,
+                },
+                "ai_profiles": [
+                    {
+                        "profile_id": "ai-one",
+                        "name": "报销分类",
+                        "provider": "deepseek",
+                        "model": "deepseek-chat",
+                        "enabled": True,
+                    }
+                ],
+            }
+        )
+        dialog.parent.db = MagicMock()
+        dialog.parent.db.get_email_stats.return_value = {"pending": 0, "unclassified": 0}
+        dialog.parent.db.count_pending_manual_invoices.return_value = 0
+
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="missing"), \
+             patch("scripts.invoice_fetch.ai_classifier.is_provider_session_paused", return_value=False):
+            dialog._refresh_settings_center_pages()
+
+        self.assertIn("缺少 Key", dialog.lbl_ai_summary.text())
+        self.assertNotIn("本次会话可用", dialog.lbl_ai_summary.text())
+        self.assertIn("待补全 Key", dialog.lbl_runtime_status.text())
+        self.assertNotIn("会话可用", dialog.lbl_runtime_status.text())
+
+    def test_ai_page_header_marks_missing_key_profile_as_pending_setup(self):
+        dialog = self._make_dialog(
+            config={
+                "email": {"provider": "qq", "address": "your_email@qq.com"},
+                "ai": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "profile_id": "ai-one",
+                    "enabled": True,
+                },
+                "ai_profiles": [
+                    {
+                        "profile_id": "ai-one",
+                        "name": "报销分类",
+                        "provider": "deepseek",
+                        "model": "deepseek-chat",
+                        "enabled": True,
+                    }
+                ],
+            }
+        )
+
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="missing"):
+            dialog._refresh_ai_profile_list()
+
+        self.assertIn("待补全 Key", dialog.lbl_ai_global_status.text())
+
+    def test_runtime_page_exposes_structured_status_cards(self):
+        dialog = self._make_dialog()
+        dialog.parent.db = MagicMock()
+        dialog.parent.db.get_email_stats.return_value = {"pending": 4, "unclassified": 2}
+        dialog.parent.db.count_pending_manual_invoices.return_value = 1
+        dialog.parent._last_scan_summary = {"ai_pending_classification": 3}
+
+        dialog._refresh_settings_center_pages()
+
+        self.assertTrue(dialog.lbl_runtime_ai_status.text().strip())
+        self.assertTrue(dialog.lbl_runtime_queue_status.text().strip())
+        self.assertTrue(dialog.lbl_runtime_scan_status.text().strip())
+        self.assertIn("待下载 4", dialog.lbl_runtime_queue_status.text())
+        self.assertIn("AI 待分类 3", dialog.lbl_runtime_scan_status.text())
 
     def test_privacy_page_explicitly_separates_sent_and_local_only_data(self):
         dialog = self._make_dialog()
@@ -655,10 +772,11 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
                 }
             ],
         }
-        dialog = self._make_dialog(config=config)
-        dialog.tab_widget.setCurrentIndex(1)
-        dialog.show()
-        QApplication.processEvents()
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="provider"):
+            dialog = self._make_dialog(config=config)
+            dialog.tab_widget.setCurrentIndex(1)
+            dialog.show()
+            QApplication.processEvents()
 
         self.assertEqual(len(dialog.ai_rows), 1)
         row = dialog.ai_rows[0]
@@ -666,6 +784,30 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         self.assertEqual(row.lbl_active.text(), "当前生效")
         self.assertTrue(row.lbl_active.isVisible())
         self.assertTrue(row.lbl_active.geometry().width() >= row.lbl_active.sizeHint().width())
+
+    def test_active_ai_profile_row_marks_missing_key_as_pending(self):
+        config = {
+            "email": {"provider": "qq", "address": "your_email@qq.com"},
+            "ai": {"provider": "deepseek", "model": "deepseek-chat", "profile_id": "ai-one", "enabled": True},
+            "ai_profiles": [
+                {
+                    "profile_id": "ai-one",
+                    "name": "测试 AI",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "enabled": True,
+                }
+            ],
+        }
+        with patch("scripts.invoice_fetch.credentials.get_ai_api_key_source", return_value="missing"):
+            dialog = self._make_dialog(config=config)
+            dialog.tab_widget.setCurrentIndex(1)
+            dialog.show()
+            QApplication.processEvents()
+
+        row = dialog.ai_rows[0]
+        self.assertEqual(row.lbl_active.text(), "待补全 Key")
+        self.assertEqual(row.lbl_active.property("variant"), "warning")
 
     def test_status_badge_styles_present(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET

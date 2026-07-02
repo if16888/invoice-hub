@@ -66,6 +66,15 @@ AI_KEY_SOURCE_LABELS = {
     "missing": "未设置",
 }
 BUILTIN_CATEGORY_NAMES = ("餐饮", "交通", "住宿", "办公", "通讯", "其他")
+CONFIG_CATEGORY_LABELS = {
+    "hotel": "住宿",
+    "taxi": "交通",
+    "transport": "交通",
+    "meal": "餐饮",
+    "telecom": "通讯",
+    "office": "办公",
+    "other": "其他",
+}
 
 
 class SecurePasswordLineEdit(QLineEdit):
@@ -256,7 +265,12 @@ class AIProfileRow(QFrame):
 
         # Activation state / Set as current button
         if self.is_enabled:
-            self.lbl_active = make_badge("当前生效", variant="active", min_width=72)
+            active_label = "当前生效"
+            active_variant = "active"
+            if key_source == "missing":
+                active_label = "待补全 Key"
+                active_variant = "warning"
+            self.lbl_active = make_badge(active_label, variant=active_variant, min_width=72)
             action_widgets.append(self.lbl_active)
         else:
             if key_source == "missing":
@@ -787,6 +801,34 @@ class SettingsDialog(QDialog):
         group_layout.addWidget(label)
         return group
 
+    def _build_settings_info_card(self, title: str, body_attr: str, *, badge_attr: str | None = None) -> QFrame:
+        card = QFrame()
+        card.setProperty("class", "SettingsListRow")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
+        lbl_title = QLabel(title)
+        lbl_title.setProperty("class", "SettingsListHeader")
+        header.addWidget(lbl_title)
+        header.addStretch()
+        if badge_attr:
+            badge = make_badge("", variant="muted")
+            badge.setVisible(False)
+            setattr(self, badge_attr, badge)
+            header.addWidget(badge)
+        layout.addLayout(header)
+
+        body = QLabel()
+        body.setWordWrap(True)
+        body.setProperty("class", "SectionHint")
+        setattr(self, body_attr, body)
+        layout.addWidget(body)
+        return card
+
     def _build_rules_center_page(self):
         scroll, layout = self._build_scroll_page()
         title = QLabel("分类与规则")
@@ -883,6 +925,13 @@ class SettingsDialog(QDialog):
         desc = QLabel("只展示当前可用的 AI 运行状态、暂停信息和本地摘要，不虚构准确率、成本或趋势。")
         desc.setWordWrap(True)
         desc.setProperty("class", "SectionHint")
+        runtime_grid = QGridLayout()
+        runtime_grid.setContentsMargins(0, 0, 0, 0)
+        runtime_grid.setHorizontalSpacing(10)
+        runtime_grid.setVerticalSpacing(10)
+        runtime_grid.addWidget(self._build_settings_info_card("AI 状态", "lbl_runtime_ai_status", badge_attr="badge_runtime_ai"), 0, 0, 1, 2)
+        runtime_grid.addWidget(self._build_settings_info_card("审核队列", "lbl_runtime_queue_status"), 1, 0)
+        runtime_grid.addWidget(self._build_settings_info_card("最近扫描", "lbl_runtime_scan_status"), 1, 1)
         self.lbl_runtime_status = QLabel()
         self.lbl_runtime_status.setWordWrap(True)
         self.lbl_runtime_status.setProperty("class", "SectionHint")
@@ -891,6 +940,7 @@ class SettingsDialog(QDialog):
         self.lbl_runtime_scope.setProperty("class", "SectionHint")
         layout.addWidget(title)
         layout.addWidget(desc)
+        layout.addLayout(runtime_grid)
         layout.addWidget(self.lbl_runtime_status)
         layout.addWidget(self.lbl_runtime_scope)
         layout.addStretch()
@@ -983,6 +1033,14 @@ class SettingsDialog(QDialog):
         header_layout.addWidget(self.btn_add_mailbox)
         layout.addLayout(header_layout)
 
+        mailbox_metrics = QHBoxLayout()
+        mailbox_metrics.setContentsMargins(0, 0, 0, 0)
+        mailbox_metrics.setSpacing(8)
+        mailbox_metrics.addWidget(self._build_settings_info_card("已启用邮箱", "lbl_mailbox_enabled_metric"))
+        mailbox_metrics.addWidget(self._build_settings_info_card("已配置邮箱", "lbl_mailbox_configured_metric"))
+        mailbox_metrics.addWidget(self._build_settings_info_card("缺少凭据", "lbl_mailbox_credential_metric"))
+        layout.addLayout(mailbox_metrics)
+
         self.lbl_mailbox_summary = QLabel()
         self.lbl_mailbox_summary.setWordWrap(True)
         self.lbl_mailbox_summary.setProperty("class", "SectionHint")
@@ -1025,6 +1083,14 @@ class SettingsDialog(QDialog):
         header_layout.addWidget(self.btn_disable_ai_action)
         header_layout.addWidget(self.btn_add_ai)
         layout.addLayout(header_layout)
+
+        ai_metrics = QHBoxLayout()
+        ai_metrics.setContentsMargins(0, 0, 0, 0)
+        ai_metrics.setSpacing(8)
+        ai_metrics.addWidget(self._build_settings_info_card("当前状态", "lbl_ai_status_metric"))
+        ai_metrics.addWidget(self._build_settings_info_card("Key 健康", "lbl_ai_key_metric"))
+        ai_metrics.addWidget(self._build_settings_info_card("已保存配置", "lbl_ai_profile_metric"))
+        layout.addLayout(ai_metrics)
 
         self.lbl_ai_summary = QLabel()
         self.lbl_ai_summary.setWordWrap(True)
@@ -1080,11 +1146,16 @@ class SettingsDialog(QDialog):
         self.ai_rows.clear()
 
         from ..ai_profiles import get_ai_profiles
+        from ..credentials import get_ai_api_key_source
         profiles = get_ai_profiles(self.cfg)
 
         active = next((profile for profile in profiles if profile["enabled"]), None)
         if active:
-            self.lbl_ai_global_status.setText(f"AI 功能已启用：{active['name']}")
+            active_key_source = get_ai_api_key_source(active["provider"], active["profile_id"])
+            if active_key_source == "missing":
+                self.lbl_ai_global_status.setText(f"AI 已选择：{active['name']}（待补全 Key）")
+            else:
+                self.lbl_ai_global_status.setText(f"AI 功能已启用：{active['name']}")
             self.btn_disable_ai_action.setVisible(True)
             self.btn_disable_ai_action.setEnabled(True)
         else:
@@ -1099,7 +1170,6 @@ class SettingsDialog(QDialog):
             self.ai_list_layout.insertWidget(0, lbl_empty)
             self.ai_rows.append(lbl_empty)
         else:
-            from ..credentials import get_ai_api_key_source
             for idx, p in enumerate(profiles):
                 key_source = get_ai_api_key_source(p["provider"], p["profile_id"])
                 row = AIProfileRow(p, key_source, self)
@@ -1128,6 +1198,9 @@ class SettingsDialog(QDialog):
         accounts = get_email_accounts(self.cfg)
         enabled_count = sum(1 for acc in accounts if acc.get("enabled", True))
         missing_cred = sum(1 for acc in accounts if not has_auth_code(acc.get("address", "")))
+        self.lbl_mailbox_enabled_metric.setText(f"{enabled_count} 个正在参与扫描")
+        self.lbl_mailbox_configured_metric.setText(f"共 {len(accounts)} 个邮箱配置保存在本地")
+        self.lbl_mailbox_credential_metric.setText(f"{missing_cred} 个邮箱仍需补充授权码")
         self.lbl_mailbox_summary.setText(
             f"已启用 {enabled_count} / 已配置 {len(accounts)} / 需要处理 {missing_cred}"
         )
@@ -1145,15 +1218,24 @@ class SettingsDialog(QDialog):
             if get_ai_api_key_source(profile["provider"], profile["profile_id"]) == "missing"
         )
         if active:
-            key_source = AI_KEY_SOURCE_LABELS.get(
-                get_ai_api_key_source(active["provider"], active["profile_id"]),
-                "未设置",
-            )
-            paused = is_provider_session_paused(active.get("provider", ""))
-            session_state = "本次会话已暂停" if paused else "本次会话可用"
-            status = f"当前启用：{active['name']} / Key 来源：{key_source} / {session_state}"
+            active_key_source = get_ai_api_key_source(active["provider"], active["profile_id"])
+            key_source = AI_KEY_SOURCE_LABELS.get(active_key_source, "未设置")
+            if active_key_source == "missing":
+                status = f"当前启用：{active['name']} / 缺少 Key，待补全后才能发起 AI 分类"
+                self.lbl_ai_status_metric.setText(f"{active['name']} 已选中，但还不能调用")
+            else:
+                paused = is_provider_session_paused(active.get("provider", ""))
+                session_state = "本次会话已暂停" if paused else "本次会话可用"
+                status = f"当前启用：{active['name']} / Key 来源：{key_source} / {session_state}"
+                self.lbl_ai_status_metric.setText(f"{active['name']} · {session_state}")
         else:
             status = "AI 当前关闭，本地规则仍然可用"
+            self.lbl_ai_status_metric.setText("未启用 AI，当前只使用本地规则")
+        if missing_keys:
+            self.lbl_ai_key_metric.setText(f"{missing_keys} 个配置缺少 Key，需要补全")
+        else:
+            self.lbl_ai_key_metric.setText("所有已保存配置都具备可用 Key 来源")
+        self.lbl_ai_profile_metric.setText(f"共 {len(profiles)} 个 AI 配置保存在本地")
         self.lbl_ai_summary.setText(f"{status} / 已保存 {len(profiles)} / 缺少密钥 {missing_keys}")
 
     def _refresh_rules_center_summary(self):
@@ -1175,11 +1257,9 @@ class SettingsDialog(QDialog):
         config_names = []
         disabled_count = 0
         for key, value in cfg_categories.items():
+            label = self._category_entry_label(key, value)
             if isinstance(value, dict):
-                label = str(value.get("name") or value.get("label") or key).strip()
                 disabled_count += int(bool(value.get("disabled")))
-            else:
-                label = str(key).strip()
             if label and label not in config_names:
                 config_names.append(label)
         db_names = []
@@ -1200,16 +1280,34 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "lbl_runtime_status"):
             return
         from ..ai_profiles import get_ai_profiles
+        from ..credentials import get_ai_api_key_source
         from ..ai_classifier import is_provider_session_paused
         profiles = get_ai_profiles(self.cfg)
         active = next((profile for profile in profiles if profile.get("enabled")), None)
         status_parts = []
         if active is None:
-            status_parts.append("AI 未启用；当前仍按本地规则和人工审核工作。")
+            ai_status = "AI 未启用；当前仍按本地规则和人工审核工作。"
+            self.badge_runtime_ai.setVisible(True)
+            self.badge_runtime_ai.setText("未启用")
+            self.badge_runtime_ai.setProperty("variant", "muted")
         else:
-            paused = is_provider_session_paused(active.get("provider", ""))
-            status_parts.append(f"当前配置：{active['name']} ({active['provider']} / {active['model']})")
-            status_parts.append("会话已暂停" if paused else "会话可用")
+            active_key_source = get_ai_api_key_source(active["provider"], active["profile_id"])
+            if active_key_source == "missing":
+                ai_status = f"当前配置：{active['name']} ({active['provider']} / {active['model']}) / 待补全 Key"
+                self.badge_runtime_ai.setVisible(True)
+                self.badge_runtime_ai.setText("待补全")
+                self.badge_runtime_ai.setProperty("variant", "warning")
+            else:
+                paused = is_provider_session_paused(active.get("provider", ""))
+                session_state = "会话已暂停" if paused else "会话可用"
+                ai_status = f"当前配置：{active['name']} ({active['provider']} / {active['model']}) / {session_state}"
+                self.badge_runtime_ai.setVisible(True)
+                self.badge_runtime_ai.setText("已暂停" if paused else "可用")
+                self.badge_runtime_ai.setProperty("variant", "warning" if paused else "success")
+        self.badge_runtime_ai.style().unpolish(self.badge_runtime_ai)
+        self.badge_runtime_ai.style().polish(self.badge_runtime_ai)
+        self.lbl_runtime_ai_status.setText(ai_status)
+        status_parts.append(ai_status)
         pending_count = 0
         unclassified_count = 0
         manual_count = 0
@@ -1227,14 +1325,22 @@ class SettingsDialog(QDialog):
                 manual_count = int(self.parent.db.count_pending_manual_invoices() or 0)
             except Exception:
                 manual_count = 0
-        status_parts.append(f"待下载 {pending_count} / 待人工补全 {manual_count} / 待分类 {unclassified_count}")
+        queue_status = f"待下载 {pending_count} / 待人工补全 {manual_count} / 待分类 {unclassified_count}"
+        self.lbl_runtime_queue_status.setText(queue_status)
+        status_parts.append(queue_status)
         last_scan_summary = getattr(self.parent, "_last_scan_summary", {}) if hasattr(self, "parent") else {}
+        scan_parts = []
         if isinstance(last_scan_summary, dict):
             ai_pending = int(last_scan_summary.get("ai_pending_classification", 0) or 0)
             if ai_pending:
-                status_parts.append(f"AI 待分类 {ai_pending}")
+                scan_parts.append(f"AI 待分类 {ai_pending}")
         if last_error:
-            status_parts.append(f"最近错误：{last_error}")
+            scan_parts.append(f"最近错误：{last_error}")
+        if not scan_parts:
+            scan_parts.append("最近一次扫描没有额外待处理或错误记录")
+        scan_status = " / ".join(scan_parts)
+        self.lbl_runtime_scan_status.setText(scan_status)
+        status_parts.append(scan_status)
         self.lbl_runtime_status.setText(" / ".join(status_parts))
 
     def _refresh_privacy_center_summary(self):
@@ -1268,8 +1374,12 @@ class SettingsDialog(QDialog):
 
     def _category_entry_label(self, key: str, value) -> str:
         if isinstance(value, dict):
-            return str(value.get("name") or value.get("label") or key).strip()
-        return str(key or "").strip()
+            label = str(value.get("name") or value.get("label") or CONFIG_CATEGORY_LABELS.get(str(key), key)).strip()
+            return label
+        if isinstance(value, str) and str(value).strip():
+            raw_value = str(value).strip()
+            return CONFIG_CATEGORY_LABELS.get(raw_value, raw_value)
+        return str(CONFIG_CATEGORY_LABELS.get(str(key), key)).strip()
 
     def _generate_category_key(self, name: str) -> str:
         categories = self._config_category_map()
@@ -1339,24 +1449,27 @@ class SettingsDialog(QDialog):
 
         combined = {}
         for name in BUILTIN_CATEGORY_NAMES:
-            combined.setdefault(name, {"sources": [], "disabled": False})
-            combined[name]["sources"].append("内置")
+            combined.setdefault(name, {"sources": [], "disabled": False, "config_key": ""})
+            if "内置" not in combined[name]["sources"]:
+                combined[name]["sources"].append("内置")
         for key, value in self._config_category_map().items():
             label = self._category_entry_label(key, value)
             if not label:
                 continue
-            combined.setdefault(label, {"sources": [], "disabled": False})
-            combined[label]["sources"].append("配置")
+            combined.setdefault(label, {"sources": [], "disabled": False, "config_key": ""})
+            if "配置分类" not in combined[label]["sources"]:
+                combined[label]["sources"].append("配置分类")
             combined[label]["disabled"] = combined[label]["disabled"] or bool(isinstance(value, dict) and value.get("disabled"))
+            combined[label]["config_key"] = key
         for name in self._db_category_names():
-            combined.setdefault(name, {"sources": [], "disabled": False})
+            combined.setdefault(name, {"sources": [], "disabled": False, "config_key": ""})
             if "历史" not in combined[name]["sources"]:
                 combined[name]["sources"].append("历史")
 
         for name in sorted(combined.keys(), key=lambda item: item.casefold()):
             meta = combined[name]
             row = QFrame()
-            row.setProperty("class", "SectionCard")
+            row.setProperty("class", "SettingsListRow")
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(10, 8, 10, 8)
             row_layout.setSpacing(8)
@@ -1369,9 +1482,23 @@ class SettingsDialog(QDialog):
             row_layout.addWidget(lbl_meta)
             if meta["disabled"]:
                 row_layout.addWidget(make_badge("已停用推荐", variant="warning"))
+            if meta.get("config_key"):
+                btn_manage = make_button("编辑名称", variant="secondary", min_width=76)
+                btn_manage.clicked.connect(
+                    lambda _checked=False, category_key=meta["config_key"]: self._focus_category_dictionary_entry(category_key)
+                )
+                row_layout.addWidget(btn_manage)
             self.category_dictionary_rows_layout.addWidget(row)
 
         self.category_dictionary_rows_layout.addStretch()
+
+    def _focus_category_dictionary_entry(self, category_key: str):
+        if not category_key or not hasattr(self, "combo_config_categories"):
+            return
+        index = self.combo_config_categories.findData(category_key)
+        if index >= 0:
+            self.combo_config_categories.setCurrentIndex(index)
+        self.txt_category_name.setFocus()
 
     def _on_category_dictionary_selection_changed(self, index: int):
         if not hasattr(self, "combo_config_categories"):
