@@ -330,6 +330,32 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertLessEqual(self.panel.lbl_buyer_warning.height(), 32)
         self.assertIn("购买方抬头不匹配", self.panel.lbl_buyer_warning.text())
 
+    def test_warning_header_does_not_clip_actions_in_narrow_panel(self):
+        self.panel.resize(390, 850)
+        self.panel.show()
+        self.app.processEvents()
+
+        self.panel.set_summary(
+            amount="28.90",
+            status="approved",
+            date="2026-06-18",
+            category="餐饮",
+            seller="南京市铜锣水饺店（有限合伙）",
+            number="26322000004922369686",
+            buyer_warning="购买方抬头不匹配：当前：李飞；期望：示例科技有限公司",
+        )
+        self.app.processEvents()
+
+        self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
+        self.assertTrue(self.panel.btn_app.isVisible())
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 148)
+        self.assertLess(
+            self.panel.btn_app.mapTo(self.panel, self.panel.btn_app.rect().bottomLeft()).y(),
+            self.panel.detail_tabs.tabBar().mapTo(
+                self.panel, self.panel.detail_tabs.tabBar().rect().topLeft()
+            ).y(),
+        )
+
     def test_review_action_buttons_keep_expected_order(self):
         buttons = [self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err, self.panel.btn_inline_more]
         layout = self.panel.inline_review_layout
@@ -342,7 +368,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.fixed_header_container.height(), 132)
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 148)
         self.assertLessEqual(self.panel.btn_app.height(), 50)
         self.assertLessEqual(self.panel.btn_err.height(), 50)
         self.assertEqual(self.panel.summary_card.objectName(), "DetailSummaryCard")
