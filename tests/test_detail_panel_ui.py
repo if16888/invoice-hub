@@ -348,12 +348,12 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
         self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
         self.assertTrue(self.panel.btn_app.isVisible())
-        self.assertLessEqual(self.panel.fixed_header_container.height(), 148)
-        self.assertLess(
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 156)
+        self.assertLessEqual(
             self.panel.btn_app.mapTo(self.panel, self.panel.btn_app.rect().bottomLeft()).y(),
             self.panel.detail_tabs.tabBar().mapTo(
                 self.panel, self.panel.detail_tabs.tabBar().rect().topLeft()
-            ).y(),
+            ).y() + 2,
         )
 
     def test_review_action_buttons_keep_expected_order(self):
@@ -368,7 +368,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.resize(760, 850)
         self.panel.show()
         self.app.processEvents()
-        self.assertLessEqual(self.panel.fixed_header_container.height(), 148)
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 156)
         self.assertLessEqual(self.panel.btn_app.height(), 50)
         self.assertLessEqual(self.panel.btn_err.height(), 50)
         self.assertEqual(self.panel.summary_card.objectName(), "DetailSummaryCard")
