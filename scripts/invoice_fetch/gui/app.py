@@ -338,7 +338,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         nav_width = 56 if nav_collapsed else metrics.nav_width
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
-        row_h = 36 if metrics.compact else 40
+        row_h = 34
         self.table.verticalHeader().setDefaultSectionSize(row_h)
         self.table.verticalHeader().setMinimumSectionSize(row_h)
         self.table.verticalHeader().setMaximumSectionSize(row_h + 4)
@@ -371,8 +371,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setVisible(True)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
+        self.left_splitter.setStretchFactor(0, 0)
+        self.left_splitter.setStretchFactor(1, 1)
         if not self._left_splitter_sizes_initialized:
-            self.left_splitter.setSizes([metrics.record_height, max(h - metrics.record_height, 180)])
+            self.left_splitter.setSizes([230, max(h - 350, 450)])
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
@@ -708,7 +710,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.filter_bar_widget = QFrame()
         self.filter_bar_widget.setObjectName("StatusFilterCardGroup")
         self.filter_bar_widget.setProperty("class", "WorkbenchCard")
-        self.filter_bar_widget.setMaximumHeight(56)
+        self.filter_bar_widget.setMaximumHeight(48)
         filter_layout = QHBoxLayout(self.filter_bar_widget)
         filter_layout.setContentsMargins(10, 4, 10, 4)
         filter_layout.setSpacing(8)
@@ -942,11 +944,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.preview_panel.setProperty("class", "WorkbenchCard")
 
         # Vertical QSplitter for Left Column
+        self.left_upper_widget.setMaximumHeight(240)
         self.left_splitter = QSplitter(Qt.Vertical)
         self.left_splitter.addWidget(self.left_upper_widget)
         self.left_splitter.addWidget(self.preview_panel)
-        self.left_splitter.setSizes([270, 430])
-        self.preview_panel.setMinimumHeight(420)
+        self.left_splitter.setStretchFactor(0, 0)
+        self.left_splitter.setStretchFactor(1, 1)
+        self.left_splitter.setSizes([230, 520])
+        self.preview_panel.setMinimumHeight(380)
 
         left_layout.addWidget(self.left_splitter)
 

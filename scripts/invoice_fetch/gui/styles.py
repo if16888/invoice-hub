@@ -88,8 +88,8 @@ QFrame#WorkbenchTopToolbar {
     border: 1px solid #E5EAF2;
     border-radius: 12px;
     padding: 6px 12px;
-    min-height: 64px;
-    max-height: 64px;
+    min-height: 56px;
+    max-height: 56px;
 }
 QFrame.WorkbenchCard, QFrame#WorkbenchCard {
     background-color: #FFFFFF;
