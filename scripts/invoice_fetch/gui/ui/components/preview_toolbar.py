@@ -54,10 +54,15 @@ class PreviewToolbar(QWidget):
                 background-color: {Theme.BG_SUBTLE};
                 border-color: {Theme.BORDER_STRONG};
             }}
+            QPushButton.PreviewToolBtn:disabled {{
+                background-color: {Theme.BG_SUBTLE};
+                border-color: {Theme.BORDER};
+                color: {Theme.TEXT_MUTED};
+            }}
             QLabel.ToolbarSep {{
                 color: {Theme.BORDER_STRONG};
                 font-size: 12px;
-                margin: 0 2px;
+                margin: 0 4px;
             }}
         """)
 
@@ -70,25 +75,25 @@ class PreviewToolbar(QWidget):
             sep.setProperty("class", "ToolbarSep")
             return sep
 
-        def make_btn(text: str, handler, width: int | None = None):
+        def make_btn(text: str, handler, min_width: int = 64):
             btn = QPushButton(text)
             btn.setProperty("class", "PreviewToolBtn")
-            if width:
-                btn.setFixedWidth(width)
+            btn.setMinimumWidth(min_width)
+            btn.setFixedHeight(32)
             if handler:
                 btn.clicked.connect(handler)
             return btn
 
-        self.btn_zoom_out = make_btn("-", on_zoom_out, width=28)
-        self.btn_zoom_100 = make_btn("100%", on_zoom_100, width=54)
-        self.btn_zoom_in = make_btn("+", on_zoom_in, width=28)
-        self.btn_fit_width = make_btn("适应宽度", on_fit_width)
-        self.btn_fit_page = make_btn("适应页面", on_fit_page)
-        self.btn_rotate_left = make_btn("左旋", on_rotate_left)
-        self.btn_rotate_right = make_btn("右旋", on_rotate_right)
-        self.btn_download = make_btn("下载", on_download)
-        self.btn_print = make_btn("打印", on_print)
-        self.btn_fullscreen = make_btn("全屏", on_fullscreen)
+        self.btn_zoom_out = make_btn("-", on_zoom_out, min_width=28)
+        self.btn_zoom_100 = make_btn("100%", on_zoom_100, min_width=52)
+        self.btn_zoom_in = make_btn("+", on_zoom_in, min_width=28)
+        self.btn_fit_width = make_btn("适应宽度", on_fit_width, min_width=72)
+        self.btn_fit_page = make_btn("适应页面", on_fit_page, min_width=72)
+        self.btn_rotate_left = make_btn("左旋", on_rotate_left, min_width=56)
+        self.btn_rotate_right = make_btn("右旋", on_rotate_right, min_width=56)
+        self.btn_download = make_btn("下载", on_download, min_width=56)
+        self.btn_print = make_btn("打印", on_print, min_width=56)
+        self.btn_fullscreen = make_btn("全屏", on_fullscreen, min_width=56)
 
         layout.addWidget(self.btn_zoom_out)
         layout.addWidget(self.btn_zoom_100)

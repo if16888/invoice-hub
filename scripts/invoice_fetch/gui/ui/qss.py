@@ -49,9 +49,6 @@ def build_qss() -> str:
         background-color: {Theme.BG_SUBTLE};
         border-color: {Theme.BLUE};
     }}
-    QPushButton:focus {{
-        border-color: {Theme.BLUE_FOCUS if hasattr(Theme, 'BLUE_FOCUS') else Theme.BLUE};
-    }}
     QPushButton:disabled {{
         background-color: {Theme.BG_SUBTLE};
         border-color: {Theme.BORDER};
@@ -171,41 +168,67 @@ def build_qss() -> str:
     }}
 
     /* --------------------------------------------------------------------- */
-    /* StatCard Component                                                    */
+    /* StatCard Component (Status Filter Chips)                              */
     /* --------------------------------------------------------------------- */
     QFrame#CompactStatCard {{
         background-color: {Theme.BG_CARD};
         border: 1px solid {Theme.BORDER};
-        border-radius: {Theme.RADIUS_CONTROL}px;
+        border-radius: 10px;
+        min-height: 44px;
+        max-height: 48px;
     }}
     QFrame#CompactStatCard:hover {{
         border-color: {Theme.BORDER_STRONG};
+        background-color: {Theme.BG_SUBTLE};
     }}
     QFrame#CompactStatCard[selected="true"] {{
         background-color: {Theme.BLUE_BG};
-        border: 1px solid {Theme.BLUE};
+        border: 1.5px solid {Theme.BLUE};
+    }}
+    QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle,
+    QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {{
+        color: {Theme.BLUE_HOVER};
+        font-weight: 700;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Form Inputs (FormField component)                                     */
+    /* Form Inputs (FormField & DetailFieldInput)                            */
     /* --------------------------------------------------------------------- */
-    QLineEdit, QComboBox, QTextEdit {{
-        min-height: {Theme.CONTROL_HEIGHT}px;
+    QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
+        min-height: 34px;
+        max-height: 34px;
         border: 1px solid {Theme.BORDER};
         border-radius: {Theme.RADIUS_CONTROL}px;
         background-color: {Theme.BG_CARD};
         padding: 0 10px;
         color: {Theme.TEXT_MAIN};
+        font-size: 13px;
         selection-background-color: {Theme.BLUE_BG};
         selection-color: {Theme.BLUE};
     }}
-    QLineEdit:focus, QComboBox:focus, QTextEdit:focus {{
-        border: 1px solid {Theme.BLUE};
+    QTextEdit {{
+        border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CONTROL}px;
+        background-color: {Theme.BG_CARD};
+        padding: 6px 10px;
+        color: {Theme.TEXT_MAIN};
+        font-size: 13px;
     }}
-    QLineEdit:disabled, QComboBox:disabled, QTextEdit:disabled {{
+    QLineEdit:focus, QComboBox:focus, QTextEdit:focus,
+    QLineEdit.DetailFieldInput:focus, QComboBox.DetailFieldInput:focus {{
+        border: 1.5px solid {Theme.BLUE};
+        background-color: #FFFFFF;
+    }}
+    QLineEdit:read-only, QLineEdit:disabled, QComboBox:disabled, QTextEdit:read-only, QTextEdit:disabled,
+    QLineEdit.DetailFieldInput:read-only, QLineEdit.DetailFieldInput:disabled, QComboBox.DetailFieldInput:disabled {{
         background-color: {Theme.BG_SUBTLE};
-        color: {Theme.TEXT_MUTED};
+        color: {Theme.TEXT_SUB};
         border-color: {Theme.BORDER};
+    }}
+    QLabel.FormFieldLabel {{
+        color: {Theme.TEXT_SUB};
+        font-size: 12px;
+        font-weight: 500;
     }}
 
     /* --------------------------------------------------------------------- */
