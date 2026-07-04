@@ -67,7 +67,7 @@ class PreviewToolbar(QWidget):
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setContentsMargins(16, 4, 16, 4)
         layout.setSpacing(8)
 
         def make_sep():
@@ -84,7 +84,7 @@ class PreviewToolbar(QWidget):
                 btn.clicked.connect(handler)
             return btn
 
-        self.btn_zoom_out = make_btn("-", on_zoom_out, min_width=28)
+        self.btn_zoom_out = make_btn("-", on_zoom_out, min_width=32)
         self.btn_zoom_100 = make_btn("100%", on_zoom_100, min_width=52)
         self.btn_zoom_in = make_btn("+", on_zoom_in, min_width=28)
         self.btn_fit_width = make_btn("适应宽度", on_fit_width, min_width=72)

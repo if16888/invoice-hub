@@ -837,7 +837,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_record_section_title = QLabel("发票记录")
         self.lbl_record_section_title.setObjectName("InvoiceRecordTitle")
         record_header_layout.addWidget(self.lbl_record_section_title)
-        self.lbl_record_count = QLabel("当前 0 / 0")
+        self.lbl_record_count = QLabel("已加载 0 / 0")
         self.lbl_record_count.setObjectName("InvoiceRecordMeta")
         record_header_layout.addWidget(self.lbl_record_count)
         record_header_layout.addStretch(1)
@@ -1688,7 +1688,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shown = len(getattr(self, "invoices_list", []) or [])
         total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
         if hasattr(self, "lbl_record_count"):
-            self.lbl_record_count.setText(f"当前 {shown} / {total}")
+            self.lbl_record_count.setText(f"已加载 {shown} / {total}")
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
 

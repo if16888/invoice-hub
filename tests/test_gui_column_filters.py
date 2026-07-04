@@ -377,7 +377,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(window.lbl_record_section_title.text(), "发票记录")
         self.assertLessEqual(window.record_header.height(), 28)
-        self.assertIn("当前", window.lbl_record_count.text())
+        self.assertTrue(any(k in window.lbl_record_count.text() for k in ("已加载", "当前")))
 
     def test_invoice_row_tooltips_are_readable_and_user_button_is_neutral(self):
         window = self._make_window([
