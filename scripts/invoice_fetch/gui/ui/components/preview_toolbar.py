@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""PreviewToolbar Component - Document Preview Controls Toolbar."""
+"""PreviewToolbar Component - Floating Document Preview Controls Toolbar."""
 
 from __future__ import annotations
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QWidget
 from ..theme import Theme
 
 
-class PreviewToolbar(QWidget):
-    """Standalone, non-stretching preview controls toolbar.
+class PreviewToolbar(QFrame):
+    """Floating, translucent preview controls toolbar.
 
-    Buttons: [-] 100% [+] | 适应宽度 | 适应页面 | 左旋 | 右旋 | 下载 | 打印 | 全屏
-    Height: 40px, Button height: 32px, Spacing: 8px.
+    Buttons: [−] [100%] [+] | 适宽 适页 | 左旋 右旋 | 下载 打印 全屏
+    Height: 36px, Button height: 28px, Translucent floating bar.
     """
 
     def __init__(
@@ -30,70 +30,102 @@ class PreviewToolbar(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("PreviewToolbar")
+        self.setObjectName("PreviewFloatingToolbar")
         self.setFixedHeight(40)
-        self.setStyleSheet(f"""
-            QWidget#PreviewToolbar {{
-                background-color: {Theme.BG_CARD};
-                border-bottom: 1px solid {Theme.BORDER};
-                border-top-left-radius: {Theme.RADIUS_CARD}px;
-                border-top-right-radius: {Theme.RADIUS_CARD}px;
-            }}
-            QPushButton.PreviewToolBtn {{
-                background-color: {Theme.BG_CARD};
-                border: 1px solid {Theme.BORDER};
-                border-radius: {Theme.RADIUS_SM}px;
-                color: {Theme.TEXT_MAIN};
+        self.setStyleSheet("""
+            QFrame#PreviewFloatingToolbar {
+                background: rgba(255, 255, 255, 235);
+                border: 1px solid #D9E2EF;
+                border-radius: 12px;
+            }
+            QToolButton.PreviewToolBtn {
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0 8px;
+                border-radius: 7px;
+                border: none;
+                color: #344054;
+                background: transparent;
                 font-size: 12px;
                 font-weight: 500;
-                padding: 0 10px;
-                min-height: 32px;
-                max-height: 32px;
-            }}
-            QPushButton.PreviewToolBtn:hover {{
-                background-color: {Theme.BG_SUBTLE};
-                border-color: {Theme.BORDER_STRONG};
-            }}
-            QPushButton.PreviewToolBtn:disabled {{
-                background-color: {Theme.BG_SUBTLE};
-                border-color: {Theme.BORDER};
-                color: {Theme.TEXT_MUTED};
-            }}
-            QLabel.ToolbarSep {{
-                color: {Theme.BORDER_STRONG};
+            }
+            QToolButton.PreviewToolBtn:hover {
+                background: #EEF4FF;
+                color: #2563EB;
+            }
+            QToolButton.PreviewToolBtn[iconOnly="true"] {
+                min-width: 30px;
+                max-width: 30px;
+                padding: 0;
+                font-size: 16px;
+                font-weight: 600;
+            }
+            QToolButton.PreviewToolBtn:disabled {
+                color: #98A2B3;
+                background: transparent;
+            }
+            QToolButton.PreviewToolBtn::menu-indicator {
+                image: none;
+                width: 0px;
+            }
+            QLabel.ToolbarSep {
+                color: #D0D5DD;
                 font-size: 12px;
                 margin: 0 4px;
-            }}
+            }
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 4, 16, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(4)
 
         def make_sep():
             sep = QLabel("|")
             sep.setProperty("class", "ToolbarSep")
             return sep
 
-        def make_btn(text: str, handler, min_width: int = 64):
-            btn = QPushButton(text)
+        def make_btn(
+            text: str,
+            handler,
+            *,
+            icon_only: bool = False,
+            tooltip: str = "",
+            min_w: int | None = None,
+            fixed_w: int | None = None,
+        ):
+            btn = QToolButton()
+            btn.setText(text)
             btn.setProperty("class", "PreviewToolBtn")
-            btn.setMinimumWidth(min_width)
-            btn.setFixedHeight(32)
+            if icon_only:
+                btn.setProperty("iconOnly", "true")
+                btn.setFixedSize(30, 28)
+            else:
+                btn.setFixedHeight(28)
+                if fixed_w:
+                    btn.setFixedWidth(fixed_w)
+                elif min_w:
+                    btn.setMinimumWidth(min_w)
+            btn.setAutoRaise(True)
+            if tooltip:
+                btn.setToolTip(tooltip)
             if handler:
                 btn.clicked.connect(handler)
             return btn
 
-        self.btn_zoom_out = make_btn("-", on_zoom_out, min_width=32)
-        self.btn_zoom_100 = make_btn("100%", on_zoom_100, min_width=52)
-        self.btn_zoom_in = make_btn("+", on_zoom_in, min_width=28)
-        self.btn_fit_width = make_btn("适应宽度", on_fit_width, min_width=72)
-        self.btn_fit_page = make_btn("适应页面", on_fit_page, min_width=72)
-        self.btn_rotate_left = make_btn("左旋", on_rotate_left, min_width=56)
-        self.btn_rotate_right = make_btn("右旋", on_rotate_right, min_width=56)
-        self.btn_download = make_btn("下载", on_download, min_width=56)
-        self.btn_print = make_btn("打印", on_print, min_width=56)
-        self.btn_fullscreen = make_btn("全屏", on_fullscreen, min_width=56)
+        # Math minus '−' (\u2212) & plus '+'
+        self.btn_zoom_out = make_btn("−", on_zoom_out, icon_only=True, tooltip="缩小 (Ctrl + -)")
+        self.btn_zoom_100 = make_btn("100%", on_zoom_100, min_w=48, tooltip="原始大小")
+        self.btn_zoom_in = make_btn("+", on_zoom_in, icon_only=True, tooltip="放大 (Ctrl + +)")
+
+        self.btn_fit_width = make_btn("适宽", on_fit_width, min_w=44, tooltip="适应宽度")
+        self.btn_fit_page = make_btn("适页", on_fit_page, min_w=44, tooltip="适应页面")
+
+        self.btn_rotate_left = make_btn("左旋", on_rotate_left, min_w=44, tooltip="向左旋转")
+        self.btn_rotate_right = make_btn("右旋", on_rotate_right, min_w=44, tooltip="向右旋转")
+
+        self.btn_download = make_btn("下载", on_download, min_w=44, tooltip="下载原件")
+        self.btn_print = make_btn("打印", on_print, min_w=44, tooltip="打印原件")
+        self.btn_fullscreen = make_btn("全屏", on_fullscreen, min_w=44, tooltip="全屏预览 (双击原件)")
 
         layout.addWidget(self.btn_zoom_out)
         layout.addWidget(self.btn_zoom_100)
@@ -108,4 +140,3 @@ class PreviewToolbar(QWidget):
         layout.addWidget(self.btn_download)
         layout.addWidget(self.btn_print)
         layout.addWidget(self.btn_fullscreen)
-        layout.addStretch(1)

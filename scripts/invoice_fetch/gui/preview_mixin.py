@@ -94,7 +94,49 @@ class PreviewMixin:
         return button
 
     def _init_overlay_toolbar(self):
-        self.overlay_toolbar = QWidget(self.preview_workbench)
+        from .ui.components.preview_toolbar import PreviewToolbar
+        self.overlay_toolbar = PreviewToolbar(
+            on_zoom_out=self._zoom_out,
+            on_zoom_100=self._zoom_100,
+            on_zoom_in=self._zoom_in,
+            on_fit_width=self._zoom_fit_width,
+            on_fit_page=self._zoom_fit_page,
+            on_rotate_left=lambda: self._rotate_preview(-90),
+            on_rotate_right=lambda: self._rotate_preview(90),
+            on_download=self._download_current_preview,
+            on_print=self._print_current_preview,
+            on_fullscreen=self._toggle_preview_focus_mode,
+            parent=getattr(self, "preview_container", None),
+        )
+        self.overlay_toolbar.installEventFilter(self)
+        self.btn_zoom_out = self.overlay_toolbar.btn_zoom_out
+        self.btn_zoom_100 = self.overlay_toolbar.btn_zoom_100
+        self.btn_zoom_in = self.overlay_toolbar.btn_zoom_in
+        self.btn_fit_width = self.overlay_toolbar.btn_fit_width
+        self.btn_fit_page = self.overlay_toolbar.btn_fit_page
+        self.btn_rotate_left = self.overlay_toolbar.btn_rotate_left
+        self.btn_rotate_right = self.overlay_toolbar.btn_rotate_right
+        self.btn_download_preview = self.overlay_toolbar.btn_download
+        self.btn_print_preview = self.overlay_toolbar.btn_print
+        self.btn_preview_focus = self.overlay_toolbar.btn_fullscreen
+        self.lbl_file_info = QLabel("0 / 0 无文件")
+        self.btn_prev = QToolButton()
+        self.btn_next = QToolButton()
+        self.btn_open_ext = QToolButton()
+        self.preview_actions = {
+            "zoom_out": self.overlay_toolbar.btn_zoom_out,
+            "zoom_100": self.overlay_toolbar.btn_zoom_100,
+            "zoom_in": self.overlay_toolbar.btn_zoom_in,
+            "fit_width": self.overlay_toolbar.btn_fit_width,
+            "fit_page": self.overlay_toolbar.btn_fit_page,
+            "rotate_left": self.overlay_toolbar.btn_rotate_left,
+            "rotate_right": self.overlay_toolbar.btn_rotate_right,
+            "download": self.overlay_toolbar.btn_download,
+            "print": self.overlay_toolbar.btn_print,
+            "focus_mode": self.overlay_toolbar.btn_fullscreen,
+        }
+        return
+        self.old_tb = QWidget(self.preview_workbench)
         self.overlay_toolbar.setObjectName("OverlayToolbar")
         self.overlay_toolbar.setFixedHeight(40)
         self.overlay_toolbar.setStyleSheet("""
@@ -338,7 +380,8 @@ class PreviewMixin:
         container_layout.addWidget(self.preview_stack)
 
         self._init_overlay_toolbar()
-        self.preview_workbench_layout.insertWidget(0, self.overlay_toolbar)
+        # overlay_toolbar floats on preview_container directly
+        self._reposition_overlay_toolbar()
 
         # Bind container resizing to overlay position alignment (Y-offset smaller = 4px)
         def resize_container(event):
@@ -355,7 +398,17 @@ class PreviewMixin:
 
 
     def _reposition_overlay_toolbar(self):
-        return
+        if not hasattr(self, "overlay_toolbar") or not hasattr(self, "preview_container"):
+            return
+        tb = self.overlay_toolbar
+        container = self.preview_container
+        tb.adjustSize()
+        w = tb.width()
+        c_w = container.width()
+        x = max(8, (c_w - w) // 2)
+        y = 8
+        tb.move(x, y)
+        tb.raise_()
 
     def _show_overlay_toolbar(self):
         self.overlay_hide_timer.stop()
