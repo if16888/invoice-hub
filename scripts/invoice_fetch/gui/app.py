@@ -318,14 +318,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-    def _apply_workbench_metrics(self):
-        w = self.width() or 1150
-        h = self.height() or 850
+    def _apply_workbench_metrics(self, width: int | None = None, height: int | None = None):
+        w = width if (width is not None and width > 0) else (self.width() if self.width() > 0 else 1440)
+        h = height if (height is not None and height > 0) else (self.height() if self.height() > 0 else 900)
         metrics = metrics_for_size(w, h)
-        if self._nav_collapsed_manual is None:
+        if w <= 1366 or self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
-        elif w <= 1024:
-            nav_collapsed = True
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_compact = nav_collapsed
@@ -336,12 +334,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self.txt_search.setPlaceholderText(search_placeholder)
         nav_width = 56 if nav_collapsed else metrics.nav_width
+        self.workbench_nav.setMaximumWidth(16777215)
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
         row_h = 34
         self.table.verticalHeader().setDefaultSectionSize(row_h)
         self.table.verticalHeader().setMinimumSectionSize(row_h)
         self.table.verticalHeader().setMaximumSectionSize(row_h + 4)
+        self._detail_panel.setMaximumWidth(16777215)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
         self._detail_panel.setMaximumWidth(metrics.detail_width)
         if hasattr(self, "thumbnail_rail"):
@@ -377,10 +377,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _toggle_workbench_nav_collapsed(self):
         w = self.width() or 1150
         metrics = metrics_for_size(w, self.height() or 850)
-        if self._nav_collapsed_manual is None:
+        if w <= 1366 or self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
-        elif w <= 1024:
-            nav_collapsed = True
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_collapsed_manual = not nav_collapsed
@@ -389,10 +387,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         settings.sync()
         self._apply_workbench_metrics()
 
+    def resize(self, *args):
+        super().resize(*args)
+        if hasattr(self, "main_splitter") and hasattr(self, "_detail_panel"):
+            if len(args) == 2:
+                self._apply_workbench_metrics(args[0], args[1])
+            elif len(args) == 1 and hasattr(args[0], "width"):
+                self._apply_workbench_metrics(args[0].width(), args[0].height())
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "main_splitter") and hasattr(self, "left_splitter") and hasattr(self, "_detail_panel"):
-            self._apply_workbench_metrics()
+        if hasattr(self, "main_splitter") and hasattr(self, "_detail_panel"):
+            self._apply_workbench_metrics(event.size().width(), event.size().height())
 
     def _save_splitter_prefs(self):
         settings = QSettings("InvoiceHub", "workbench")
@@ -587,6 +593,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setMinimumHeight(32)
         self.btn_collapse_nav.clicked.connect(self._toggle_workbench_nav_collapsed)
         nav_layout.addWidget(self.btn_collapse_nav)
+
+        # Shortcut help entry lives at nav bottom
+        self.btn_shortcut_help = QPushButton("快捷键：Enter 通过 · Del 忽略")
+        self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
+        self.btn_shortcut_help.setProperty("class", "WorkbenchNavButton")
+        self.btn_shortcut_help.setMinimumHeight(32)
+        self.btn_shortcut_help.setFlat(True)
+        self.btn_shortcut_help.setStyleSheet("text-align: left; padding-left: 6px; font-size: 11px; color: #667085;")
+        self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
+        nav_layout.addWidget(self.btn_shortcut_help)
+
+        self.shortcut_disclosure = ShortcutDisclosure(self)
+        self.shortcut_disclosure.setWindowFlags(Qt.Popup)
+        self.shortcut_disclosure.hide()
 
         self.search_reload_timer.timeout.connect(self._load_invoices)
 
@@ -837,9 +857,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(20)
-        self.table.verticalHeader().setMinimumSectionSize(20)
-        self.table.verticalHeader().setMaximumSectionSize(23)
+        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.verticalHeader().setMinimumSectionSize(28)
+        self.table.verticalHeader().setMaximumSectionSize(36)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().setStretchLastSection(False)
@@ -928,7 +948,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_upper_widget = QFrame()
         self.left_upper_widget.setObjectName("InvoiceTableCard")
         self.left_upper_widget.setProperty("class", "WorkbenchCard")
-        self.left_upper_widget.setFixedHeight(230)
+        self.left_upper_widget.setFixedHeight(240)
         left_upper_layout = QVBoxLayout(self.left_upper_widget)
         left_upper_layout.setContentsMargins(8, 8, 8, 8)
         left_upper_layout.setSpacing(6)
@@ -949,7 +969,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(8)
 
-        self.filter_bar_widget.setFixedHeight(48)
+        self.filter_bar_widget.setFixedHeight(54)
         workspace_layout.addWidget(self.filter_bar_widget, 0)
         workspace_layout.addWidget(self.left_upper_widget, 0)
         workspace_layout.addWidget(self.preview_panel, 1)
@@ -974,15 +994,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self._sizes = [int(list_of_sizes[0]), int(list_of_sizes[1])]
 
         self.left_splitter = DummyLeftSplitter(self.left_upper_widget, self.preview_panel, self)
-
-        self.btn_shortcut_help = QToolButton(self.middle_workspace)
-        self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
-        self.btn_shortcut_help.setText("\u5feb\u6377\u952e\uff1aEnter \u901a\u8fc7 \u00b7 Del \u5ffd\u7565")
-        self.btn_shortcut_help.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
-        self.shortcut_disclosure = ShortcutDisclosure(self)
-        self.shortcut_disclosure.setWindowFlags(Qt.Popup)
-        self.shortcut_disclosure.hide()
 
         splitter.addWidget(self.middle_workspace)
 

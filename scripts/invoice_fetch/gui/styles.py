@@ -1581,6 +1581,124 @@ QFrame#DetailEvidenceRowCard {
     border: 1px solid #E5E7EB;
     border-radius: 8px;
 }
+
+/* ─── StatCard (CompactStatCard) – Status Filter Chip Cards ─── */
+QFrame#CompactStatCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 10px;
+    min-height: 44px;
+    max-height: 48px;
+}
+QFrame#CompactStatCard:hover {
+    border-color: #D0D5DD;
+    background-color: #F8FAFC;
+}
+QFrame#CompactStatCard[selected="true"] {
+    background-color: #EFF6FF;
+    border: 1.5px solid #2563EB;
+}
+QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle,
+QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {
+    color: #1D4ED8;
+    font-weight: 700;
+}
+QLabel.CompactStatCardIcon {
+    font-size: 13px;
+}
+QLabel.CompactStatCardTitle {
+    font-size: 12px;
+    font-weight: 500;
+    color: #374151;
+}
+QLabel.CompactStatCardValue {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111827;
+}
+QFrame#CompactStatCard[state="warning"] QLabel.CompactStatCardIcon { color: #F59E0B; }
+QFrame#CompactStatCard[state="success"] QLabel.CompactStatCardIcon { color: #16A34A; }
+QFrame#CompactStatCard[state="danger"]  QLabel.CompactStatCardIcon { color: #EF4444; }
+QFrame#CompactStatCard[state="info"]    QLabel.CompactStatCardIcon { color: #2563EB; }
+QFrame#CompactStatCard[state="muted"]   QLabel.CompactStatCardIcon { color: #9CA3AF; }
+
+/* ─── PreviewToolbar ─── */
+QWidget#PreviewToolbar {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E5EAF2;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    min-height: 40px;
+    max-height: 40px;
+}
+QPushButton.PreviewToolBtn {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 6px;
+    color: #374151;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 0 10px;
+    min-height: 32px;
+    max-height: 32px;
+}
+QPushButton.PreviewToolBtn:hover {
+    background-color: #F8FAFC;
+    border-color: #D0D5DD;
+}
+
+/* ─── FormField label ─── */
+QLabel.FormFieldLabel {
+    color: #667085;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* ─── AttachmentRow ─── */
+QFrame.AttachmentRow {
+    border-bottom: 1px solid #F1F5F9;
+    background: transparent;
+    min-height: 34px;
+    max-height: 34px;
+}
+
+/* ─── ShortcutDisclosure popup ─── */
+QFrame#ShortcutDisclosure {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+QLabel.ShortcutKey {
+    color: #374151;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: "Segoe UI", monospace;
+}
+QLabel.ShortcutAction {
+    color: #6B7280;
+    font-size: 12px;
+}
+
+/* ─── StatusFilterCardGroup bar ─── */
+QFrame#StatusFilterCardGroup {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
+
+/* ─── InvoiceTableCard ─── */
+QFrame#InvoiceTableCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
+
+/* ─── Table bottom stats bar ─── */
+QLabel#InvoiceTableStatsLabel {
+    color: #667085;
+    font-size: 12px;
+}
 """ + MENU_STYLE + """
 """
 
