@@ -531,7 +531,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button.setProperty("class", "WorkbenchNavButton")
             button.setCheckable(selectable)
             button.setChecked(checked if selectable else False)
-            button.setMinimumHeight(36)
+            button.setMinimumHeight(40)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setIcon(self.style().standardIcon(nav_icons[key]))
             button.setEnabled(enabled)
@@ -945,8 +945,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_splitter = QSplitter(Qt.Vertical)
         self.left_splitter.addWidget(self.left_upper_widget)
         self.left_splitter.addWidget(self.preview_panel)
-        self.left_splitter.setSizes([380, 620])
-        self.preview_panel.setMinimumHeight(180)
+        self.left_splitter.setSizes([270, 430])
+        self.preview_panel.setMinimumHeight(420)
 
         left_layout.addWidget(self.left_splitter)
 

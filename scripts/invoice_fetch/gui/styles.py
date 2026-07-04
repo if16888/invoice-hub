@@ -60,14 +60,14 @@ QLabel#WorkbenchNavSubtitle {
 }
 QPushButton.WorkbenchNavButton {
     background-color: transparent;
-    color: #334155;
+    color: #344054;
     border: none;
     border-radius: 8px;
     padding: 8px 12px;
     text-align: left;
     font-size: 13px;
     font-weight: 500;
-    min-height: 38px;
+    min-height: 40px;
 }
 QPushButton.WorkbenchNavButton:hover {
     background-color: #F8FAFC;
@@ -362,10 +362,11 @@ QLabel.DetailCaption {
     font-weight: 400;
 }
 QLabel.InlineWarning {
-    min-height: 36px;
+    min-height: 44px;
     max-height: 56px;
-    padding: 8px 10px;
-    margin-top: 12px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    margin-bottom: 8px;
     border-radius: 8px;
     background-color: #FFF7ED;
     border: 1px solid #FED7AA;
@@ -1290,10 +1291,11 @@ QFrame.ActionCluster {
 
 /* Inline warnings and hints */
 QLabel.InlineWarning {
-    min-height: 36px;
+    min-height: 44px;
     max-height: 56px;
-    padding: 8px 10px;
-    margin-top: 12px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    margin-bottom: 8px;
     border-radius: 8px;
     background-color: #FFF7ED;
     border: 1px solid #FED7AA;
