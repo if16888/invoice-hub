@@ -371,10 +371,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setVisible(True)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
-        self.left_splitter.setStretchFactor(0, 0)
-        self.left_splitter.setStretchFactor(1, 1)
         if not self._left_splitter_sizes_initialized:
-            self.left_splitter.setSizes([230, max(h - 350, 450)])
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
@@ -775,7 +772,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
         self.btn_reset_filters.setFixedHeight(28)
         filter_layout.addWidget(self.btn_reset_filters)
-        main_layout.addWidget(self.filter_bar_widget)
 
         # 1c. Active Filter Chips Summary
         self.filter_chips_widget = QWidget()
@@ -932,6 +928,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_upper_widget = QFrame()
         self.left_upper_widget.setObjectName("InvoiceTableCard")
         self.left_upper_widget.setProperty("class", "WorkbenchCard")
+        self.left_upper_widget.setFixedHeight(230)
         left_upper_layout = QVBoxLayout(self.left_upper_widget)
         left_upper_layout.setContentsMargins(8, 8, 8, 8)
         left_upper_layout.setSpacing(6)
@@ -942,30 +939,52 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._init_preview_panel()
         if hasattr(self, "preview_panel") and self.preview_panel is not None:
             self.preview_panel.setProperty("class", "WorkbenchCard")
+            self.preview_panel.setMinimumHeight(380)
+            self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Vertical QSplitter for Left Column
-        self.left_upper_widget.setMaximumHeight(240)
-        self.left_splitter = QSplitter(Qt.Vertical)
-        self.left_splitter.addWidget(self.left_upper_widget)
-        self.left_splitter.addWidget(self.preview_panel)
-        self.left_splitter.setStretchFactor(0, 0)
-        self.left_splitter.setStretchFactor(1, 1)
-        self.left_splitter.setSizes([230, 520])
-        self.preview_panel.setMinimumHeight(380)
+        # Build Middle Workspace via pure QVBoxLayout (NO vertical QSplitter)
+        self.middle_workspace = QWidget()
+        self.middle_workspace.setObjectName("MiddleWorkspace")
+        workspace_layout = QVBoxLayout(self.middle_workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(8)
 
-        left_layout.addWidget(self.left_splitter)
+        self.filter_bar_widget.setFixedHeight(48)
+        workspace_layout.addWidget(self.filter_bar_widget, 0)
+        workspace_layout.addWidget(self.left_upper_widget, 0)
+        workspace_layout.addWidget(self.preview_panel, 1)
 
-        self.btn_shortcut_help = QToolButton(left_panel)
+        # Dummy left_splitter shim for backward compatibility with tests & QSettings
+        class DummyLeftSplitter(QSplitter):
+            def __init__(self, upper, lower, parent=None):
+                super().__init__(Qt.Vertical, parent)
+                self._upper = upper
+                self._lower = lower
+                self._sizes = [230, 520]
+            def widget(self, index: int):
+                if index == 0:
+                    return self._upper
+                if index == 1:
+                    return self._lower
+                return super().widget(index)
+            def sizes(self):
+                return list(self._sizes)
+            def setSizes(self, list_of_sizes):
+                if len(list_of_sizes) >= 2:
+                    self._sizes = [int(list_of_sizes[0]), int(list_of_sizes[1])]
+
+        self.left_splitter = DummyLeftSplitter(self.left_upper_widget, self.preview_panel, self)
+
+        self.btn_shortcut_help = QToolButton(self.middle_workspace)
         self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
         self.btn_shortcut_help.setText("\u5feb\u6377\u952e\uff1aEnter \u901a\u8fc7 \u00b7 Del \u5ffd\u7565")
         self.btn_shortcut_help.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
-        left_layout.addWidget(self.btn_shortcut_help, 0, Qt.AlignLeft)
         self.shortcut_disclosure = ShortcutDisclosure(self)
         self.shortcut_disclosure.setWindowFlags(Qt.Popup)
         self.shortcut_disclosure.hide()
 
-        splitter.addWidget(left_panel)
+        splitter.addWidget(self.middle_workspace)
 
         # Right Column - InvoiceDetailPanel
         self._setup_detail_panel()
