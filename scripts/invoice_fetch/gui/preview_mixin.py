@@ -123,6 +123,12 @@ class PreviewMixin:
         self.btn_prev = QToolButton()
         self.btn_next = QToolButton()
         self.btn_open_ext = QToolButton()
+
+        for w in (self.lbl_file_info, self.btn_prev, self.btn_next, self.btn_open_ext):
+            w.setParent(self.overlay_toolbar)
+            w.setGeometry(0, 0, 0, 0)
+            w.hide()
+
         self.preview_actions = {
             "zoom_out": self.overlay_toolbar.btn_zoom_out,
             "zoom_100": self.overlay_toolbar.btn_zoom_100,
