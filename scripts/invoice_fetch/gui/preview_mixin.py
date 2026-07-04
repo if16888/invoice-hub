@@ -724,7 +724,8 @@ class PreviewMixin:
 
     def _update_document_preview(self):
         self._refresh_preview_thumbnails()
-        self.thumbnail_rail.setVisible(bool(getattr(self, "current_invoice", None)))
+        # Thumbnail rail stays collapsed by default unless user toggles attachment list
+        # self.thumbnail_rail.setVisible(False)
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
             self._show_preview_status(getattr(self, "_preview_empty_message", "请选择一张发票查看原件"))
             self.lbl_file_info.setText("0 / 0 无文件")

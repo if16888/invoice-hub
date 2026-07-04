@@ -3056,7 +3056,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_number.setFixedHeight(30)
+        self.txt_number.setFixedHeight(28)
 
 
 
@@ -3070,7 +3070,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_date.setFixedHeight(30)
+        self.txt_date.setFixedHeight(28)
 
 
 
@@ -3088,7 +3088,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_amount.setFixedHeight(30)
+        self.txt_amount.setFixedHeight(28)
 
 
 
@@ -3105,7 +3105,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.combo_category.setFixedHeight(30)
+        self.combo_category.setFixedHeight(28)
 
 
 
@@ -3118,7 +3118,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_seller.setFixedHeight(30)
+        self.txt_seller.setFixedHeight(28)
 
 
 
@@ -3131,7 +3131,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_buyer.setFixedHeight(30)
+        self.txt_buyer.setFixedHeight(28)
 
 
 

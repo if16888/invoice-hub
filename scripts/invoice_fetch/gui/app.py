@@ -950,10 +950,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_upper_widget = QFrame()
         self.left_upper_widget.setObjectName("InvoiceTableCard")
         self.left_upper_widget.setProperty("class", "WorkbenchCard")
-        self.left_upper_widget.setFixedHeight(240)
+        self.left_upper_widget.setFixedHeight(276)
         left_upper_layout = QVBoxLayout(self.left_upper_widget)
-        left_upper_layout.setContentsMargins(8, 8, 8, 8)
-        left_upper_layout.setSpacing(6)
+        left_upper_layout.setContentsMargins(6, 6, 6, 6)
+        left_upper_layout.setSpacing(4)
         left_upper_layout.addWidget(self.record_header)
         left_upper_layout.addWidget(self.left_stack)
 
@@ -971,7 +971,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(8)
 
-        self.filter_bar_widget.setFixedHeight(54)
+        self.filter_bar_widget.setFixedHeight(48)
+        workspace_layout.setSpacing(6)
         workspace_layout.addWidget(self.filter_bar_widget, 0)
         workspace_layout.addWidget(self.left_upper_widget, 0)
         workspace_layout.addWidget(self.preview_panel, 1)
