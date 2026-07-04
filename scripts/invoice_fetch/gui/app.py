@@ -322,10 +322,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = self.width() or 1150
         h = self.height() or 850
         metrics = metrics_for_size(w, h)
-        single_module_nav = self._is_single_module_nav()
-        if single_module_nav:
-            nav_collapsed = True
-        elif self._nav_collapsed_manual is None:
+        if self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
         elif w <= 1024:
             nav_collapsed = True
@@ -338,26 +335,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        nav_width = metrics.nav_width if nav_collapsed else 152
+        nav_width = 56 if nav_collapsed else metrics.nav_width
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
-        self.table.verticalHeader().setDefaultSectionSize(20)
-        self.table.verticalHeader().setMinimumSectionSize(20)
-        self.table.verticalHeader().setMaximumSectionSize(23)
+        row_h = 36 if metrics.compact else 40
+        self.table.verticalHeader().setDefaultSectionSize(row_h)
+        self.table.verticalHeader().setMinimumSectionSize(row_h)
+        self.table.verticalHeader().setMaximumSectionSize(row_h + 4)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
-        self._detail_panel.setMaximumWidth(472)
+        self._detail_panel.setMaximumWidth(metrics.detail_width)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
         self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
-        card_width = 136 if not metrics.compact else 124
         for card in self.filter_buttons.values():
-            card.setMaximumWidth(card_width)
-            card.setMinimumWidth(min(96, card_width))
-            card.setMinimumSize(min(96, card_width), 0)
+            card.setMinimumWidth(140)
+            card.setMaximumWidth(160)
             card.updateGeometry()
         self.workbench_nav_title.setVisible(not nav_collapsed)
-        self.workbench_nav_subtitle.setVisible(False)
+        self.workbench_nav_subtitle.setVisible(not nav_collapsed)
         self.workbench_nav_spacer.setVisible(not nav_collapsed)
         for key, button in self.workbench_nav_buttons.items():
             full_text = self._workbench_nav_button_texts.get(key, "")
@@ -372,7 +368,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
-        self.btn_collapse_nav.setVisible(not single_module_nav)
+        self.btn_collapse_nav.setVisible(True)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
         if not self._left_splitter_sizes_initialized:
@@ -380,8 +376,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
-        if self._is_single_module_nav():
-            return
         w = self.width() or 1150
         metrics = metrics_for_size(w, self.height() or 850)
         if self._nav_collapsed_manual is None:
@@ -481,19 +475,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.workbench_nav = QFrame()
         self.workbench_nav.setObjectName("WorkbenchNav")
-        self.workbench_nav.setMinimumWidth(152)
-        self.workbench_nav.setMaximumWidth(152)
+        self.workbench_nav.setMinimumWidth(208)
+        self.workbench_nav.setMaximumWidth(208)
         nav_layout = QVBoxLayout(self.workbench_nav)
-        nav_layout.setContentsMargins(10, 12, 10, 12)
+        nav_layout.setContentsMargins(12, 14, 12, 14)
         nav_layout.setSpacing(6)
 
-        nav_title = QLabel("审核工作台")
+        nav_title = QLabel("Invoice Hub")
         nav_title.setObjectName("WorkbenchNavTitle")
-        nav_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        nav_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         nav_layout.addWidget(nav_title)
         self.workbench_nav_title = nav_title
 
-        nav_subtitle = QLabel("发票审核中心")
+        nav_subtitle = QLabel(f"发票审核中心 v{APP_VERSION}")
         nav_subtitle.setObjectName("WorkbenchNavSubtitle")
         nav_layout.addWidget(nav_subtitle)
         self.workbench_nav_subtitle = nav_subtitle
@@ -522,13 +516,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "notify": "通知",
         }
 
+
         def add_nav_button(
             key: str,
             text: str,
             handler=None,
             checked: bool = False,
             *,
-            selectable: bool = False,
+            selectable: bool = True,
             enabled: bool = True,
         ):
             button = QPushButton(text)
@@ -550,7 +545,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return button
 
         add_nav_button("overview", "总览")
-        add_nav_button("review", "发票审核", checked=True)
+        add_nav_button("review", "发票审核")
         add_nav_button("imports", "导入记录")
         add_nav_button("mobile_upload", "扫码上传", self._mobile_upload_clicked)
         add_nav_button("export", "批量导出", self._export_claim_package)
@@ -564,19 +559,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         review_button.setCheckable(True)
         review_button.setChecked(True)
         self.workbench_nav_group.addButton(review_button)
+
+        root_layout.addWidget(self.workbench_nav)
+
+        self.workbench_content = QWidget()
+        root_layout.addWidget(self.workbench_content, 1)
+        self.main_layout = QVBoxLayout(self.workbench_content)
+        main_layout = self.main_layout
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(8)
+
+        self.search_reload_timer = QTimer(self)
+        self.search_reload_timer.setSingleShot(True)
+        self.search_reload_timer.setInterval(250)
+
+        # Keep other nav items visible but disabled (pages not yet implemented)
         for key in ("overview", "imports"):
             button = self.workbench_nav_buttons[key]
-            self.workbench_nav_group.removeButton(button)
-            button.setChecked(False)
             button.setCheckable(False)
             button.setEnabled(False)
-            button.hide()
-        for key in ("mobile_upload", "export", "mail", "rules", "settings", "data", "about"):
-            button = self.workbench_nav_buttons[key]
-            self.workbench_nav_group.removeButton(button)
-            button.setChecked(False)
-            button.setCheckable(False)
-            button.hide()
 
         nav_layout.addStretch(1)
         self.btn_collapse_nav = QPushButton("收起侧边栏")
@@ -588,18 +589,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.clicked.connect(self._toggle_workbench_nav_collapsed)
         nav_layout.addWidget(self.btn_collapse_nav)
 
-        root_layout.addWidget(self.workbench_nav)
-
-        self.workbench_content = QWidget()
-        root_layout.addWidget(self.workbench_content, 1)
-        self.main_layout = QVBoxLayout(self.workbench_content)
-        main_layout = self.main_layout
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
-
-        self.search_reload_timer = QTimer(self)
-        self.search_reload_timer.setSingleShot(True)
-        self.search_reload_timer.setInterval(250)
         self.search_reload_timer.timeout.connect(self._load_invoices)
 
         # 0. Top Action Bar
@@ -717,7 +706,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # 1. Top Filter Bar
         self.filter_bar_widget = QWidget()
-        self.filter_bar_widget.setMaximumHeight(36)
+        self.filter_bar_widget.setMaximumHeight(56)
         filter_layout = QHBoxLayout(self.filter_bar_widget)
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(6)
@@ -852,6 +841,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.verticalHeader().setMinimumSectionSize(20)
         self.table.verticalHeader().setMaximumSectionSize(23)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
@@ -863,7 +853,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Final 0.1.4 review workbench default columns:
         # review status, material status, expense date, amount, seller, invoice number.
-        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 84, 4: 260, 5: 180}
+        self._min_column_widths = {0: 72, 1: 72, 2: 100, 3: 90, 4: 200, 5: 230}
         for _column, _width in self._min_column_widths.items():
             self.table.setColumnWidth(_column, _width)
 

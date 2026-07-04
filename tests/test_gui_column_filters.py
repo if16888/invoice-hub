@@ -696,12 +696,12 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
 
         expected_min_widths = {
-            0: 68,
-            1: 62,
-            2: 86,
-            3: 84,
-            4: 260,
-            5: 180,
+            0: 72,
+            1: 72,
+            2: 100,
+            3: 90,
+            4: 160,
+            5: 230,
         }
         for index, min_w in expected_min_widths.items():
             self.assertGreaterEqual(

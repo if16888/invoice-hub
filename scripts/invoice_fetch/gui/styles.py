@@ -217,11 +217,11 @@ QHeaderView::section {
 }
 QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {
     background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
-    padding: 6px;
+    border: 1px solid #E5EAF2;
+    border-radius: 8px;
+    padding: 6px 10px;
     font-size: 13px;
-    color: #111827;
+    color: #172033;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
     border: 1.5px solid #2563EB;
@@ -349,12 +349,15 @@ QLabel.DetailCaption {
     font-weight: 400;
 }
 QLabel.InlineWarning {
-    color: #92400E;
-    background-color: #FFFBEB;
-    border: 1px solid #FDE68A;
+    min-height: 36px;
+    max-height: 56px;
+    padding: 8px 10px;
+    margin-top: 12px;
     border-radius: 8px;
-    padding: 5px 8px;
-    font-size: 11px;
+    background-color: #FFF7ED;
+    border: 1px solid #FED7AA;
+    color: #C2410C;
+    font-size: 12px;
     font-weight: 500;
 }
 QLabel.EvidenceMissing {
@@ -1274,13 +1277,16 @@ QFrame.ActionCluster {
 
 /* Inline warnings and hints */
 QLabel.InlineWarning {
-    color: #B45309;
-    font-size: 11px;
-    background-color: #FFFBEB;
-    border: 1px solid #FDE68A;
-    padding: 5px 8px;
+    min-height: 36px;
+    max-height: 56px;
+    padding: 8px 10px;
+    margin-top: 12px;
     border-radius: 8px;
-    margin-top: 2px;
+    background-color: #FFF7ED;
+    border: 1px solid #FED7AA;
+    color: #C2410C;
+    font-size: 12px;
+    font-weight: 500;
 }
 QLabel.InlineHint {
     color: #D97706;
@@ -1359,13 +1365,15 @@ QPushButton[variant="toolbar"][busy="true"]:disabled {
 /* CompactStatCard — workbench filter bar status cards */
 QFrame#CompactStatCard {
     background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    min-width: 86px;
-    max-width: 160px;
+    border: 1px solid #E5EAF2;
+    border-radius: 10px;
+    min-width: 132px;
+    min-height: 48px;
+    max-height: 48px;
+    padding: 0px 4px;
 }
 QFrame#CompactStatCard:hover {
-    border-color: #93C5FD;
+    border-color: #BFDBFE;
     background-color: #F8FAFC;
 }
 QFrame#CompactStatCard[selected="true"] {
@@ -1394,28 +1402,28 @@ QFrame#CompactStatCard[state="danger"][selected="true"] {
     border-color: #DC2626;
 }
 QFrame#CompactStatCard[state="muted"] {
-    border-color: #E5E7EB;
+    border-color: #E5EAF2;
 }
 QFrame#CompactStatCard[state="info"] {
     border-color: #BFDBFE;
 }
 QLabel.CompactStatCardTitle {
-    color: #6B7280;
-    font-size: 11px;
+    color: #667085;
+    font-size: 12px;
     font-weight: 600;
     background: transparent;
     letter-spacing: 0.2px;
 }
 QLabel.CompactStatCardIcon {
     color: #94A3B8;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     background: transparent;
-    margin-right: 1px;
+    margin-right: 2px;
 }
 QLabel.CompactStatCardValue {
-    color: #111827;
-    font-size: 11px;
+    color: #172033;
+    font-size: 16px;
     font-weight: 800;
     background: transparent;
 }

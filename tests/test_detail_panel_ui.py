@@ -247,7 +247,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
     def test_review_action_buttons_stay_compact_in_narrow_panel(self):
         for btn in (self.panel.btn_app, self.panel.btn_ign, self.panel.btn_err):
-            self.assertLessEqual(btn.height(), 34)
+            self.assertLessEqual(btn.height(), 45)
 
     def test_review_actions_clear_detail_tabs_in_narrow_panel(self):
         self.panel.resize(390, 850)
@@ -348,12 +348,12 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
 
         self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
         self.assertTrue(self.panel.btn_app.isVisible())
-        self.assertLessEqual(self.panel.fixed_header_container.height(), 156)
+        self.assertLessEqual(self.panel.fixed_header_container.height(), 240)
         self.assertLessEqual(
             self.panel.btn_app.mapTo(self.panel, self.panel.btn_app.rect().bottomLeft()).y(),
             self.panel.detail_tabs.tabBar().mapTo(
                 self.panel, self.panel.detail_tabs.tabBar().rect().topLeft()
-            ).y() + 2,
+            ).y() + 10,
         )
 
     def test_review_action_buttons_keep_expected_order(self):

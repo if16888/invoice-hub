@@ -1217,7 +1217,7 @@ class InvoiceDetailPanel(QWidget):
 
     def _update_fixed_header_height_cap(self):
         compact_header = not self.lbl_date_warning.isVisible() and not self.lbl_buyer_warning.isVisible()
-        self.fixed_header_container.setMaximumHeight(126 if compact_header else 156)
+        self.fixed_header_container.setMaximumHeight(180 if compact_header else 240)
 
     def set_multi_selection_state(self, count: int):
 
@@ -1950,7 +1950,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.fixed_header_container = QFrame()
         self.fixed_header_container.setObjectName("DetailFixedHeader")
-        self.fixed_header_container.setMaximumHeight(156)
+        self.fixed_header_container.setMaximumHeight(240)
         fixed_layout = QVBoxLayout(self.fixed_header_container)
         fixed_layout.setContentsMargins(0, 0, 0, 0)
         fixed_layout.setSpacing(0)
@@ -2653,8 +2653,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        self.inline_review_layout.setSpacing(10)
         self.btn_app = make_button("通过并下一张", variant="primary", tooltip="快捷键：Enter")
-        self.btn_app.setFixedHeight(34)
+        self.btn_app.setFixedHeight(42)
+        self.btn_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
 
@@ -2671,7 +2673,8 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_ign = make_button("忽略", variant="secondary", tooltip="快捷键：Del")
-        self.btn_ign.setFixedHeight(34)
+        self.btn_ign.setFixedHeight(42)
+        self.btn_ign.setFixedWidth(88)
 
 
 
@@ -2688,7 +2691,8 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_err = make_button("异常", variant="danger", tooltip="快捷键：Ctrl+E")
-        self.btn_err.setFixedHeight(34)
+        self.btn_err.setFixedHeight(42)
+        self.btn_err.setFixedWidth(96)
 
 
 
@@ -2761,7 +2765,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_inline_more = make_button("⋯", variant="ghost")
-        self.btn_inline_more.setFixedSize(34, 34)
+        self.btn_inline_more.setFixedSize(40, 42)
 
 
 

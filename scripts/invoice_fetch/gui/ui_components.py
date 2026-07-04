@@ -173,8 +173,8 @@ if _HAS_QT:
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
             layout = QHBoxLayout(self)
-            layout.setContentsMargins(8, 3, 8, 3)
-            layout.setSpacing(4)
+            layout.setContentsMargins(12, 6, 12, 6)
+            layout.setSpacing(6)
 
             self._lbl_icon = QLabel(icon_text)
             self._lbl_icon.setProperty("class", "CompactStatCardIcon")
@@ -191,9 +191,10 @@ if _HAS_QT:
 
             layout.addWidget(self._lbl_icon)
             layout.addWidget(self._lbl_title)
-            layout.addWidget(self._lbl_value)
             layout.addStretch(1)
-            self.setFixedHeight(32)
+            layout.addWidget(self._lbl_value)
+            self.setFixedHeight(48)
+            self.setMinimumWidth(132)
 
             # Store raw value for programmatic access
             self._value = value

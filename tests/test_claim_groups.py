@@ -1365,7 +1365,7 @@ class ClaimGroupsTests(unittest.TestCase):
             window = InvoiceReviewApp(db_path)
             try:
                 window._deferred_init()
-                self.assertLessEqual(window.table.verticalHeader().defaultSectionSize(), 24)
+                self.assertLessEqual(window.table.verticalHeader().defaultSectionSize(), 40)
                 self.assertTrue(window.table.item(0, 0).toolTip())
                 self.assertTrue(window.table.item(0, 3).toolTip())
                 self.assertTrue(window.table.item(0, 4).toolTip())
