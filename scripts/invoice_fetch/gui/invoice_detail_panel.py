@@ -3052,10 +3052,11 @@ class InvoiceDetailPanel(QWidget):
 
         self.txt_number = QLineEdit()
         self.txt_number.setProperty("class", "DetailFieldInput")
+        self.txt_number.setProperty("readonly", "true")
 
 
 
-        self.txt_number.setMinimumHeight(34)
+        self.txt_number.setFixedHeight(30)
 
 
 
@@ -3065,10 +3066,11 @@ class InvoiceDetailPanel(QWidget):
 
         self.txt_date = QLineEdit()
         self.txt_date.setProperty("class", "DetailFieldInput")
+        self.txt_date.setProperty("readonly", "true")
 
 
 
-        self.txt_date.setMinimumHeight(34)
+        self.txt_date.setFixedHeight(30)
 
 
 
@@ -3082,10 +3084,11 @@ class InvoiceDetailPanel(QWidget):
 
         self.txt_amount = QLineEdit()
         self.txt_amount.setProperty("class", "DetailFieldInput")
+        self.txt_amount.setProperty("readonly", "true")
 
 
 
-        self.txt_amount.setMinimumHeight(34)
+        self.txt_amount.setFixedHeight(30)
 
 
 
@@ -3102,7 +3105,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.combo_category.setMinimumHeight(34)
+        self.combo_category.setFixedHeight(30)
 
 
 
@@ -3115,7 +3118,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_seller.setMinimumHeight(34)
+        self.txt_seller.setFixedHeight(30)
 
 
 
@@ -3128,7 +3131,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_buyer.setMinimumHeight(34)
+        self.txt_buyer.setFixedHeight(30)
 
 
 
