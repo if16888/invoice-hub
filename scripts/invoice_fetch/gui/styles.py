@@ -1583,3 +1583,9 @@ QFrame#DetailEvidenceRowCard {
 }
 """ + MENU_STYLE + """
 """
+
+try:
+    from .ui import build_qss
+    APP_STYLESHEET += "\n" + build_qss()
+except ImportError:
+    pass
