@@ -85,7 +85,7 @@ class PreviewMixin:
     def _make_toolbar_button(self, text: str, handler, *, width: int | None = None, tooltip: str = "") -> QPushButton:
         button = QPushButton(text)
         button.clicked.connect(handler)
-        button.setFixedHeight(30)
+        button.setFixedHeight(32)
         button.setProperty("class", "PreviewToolBtn")
         if width is not None:
             button.setFixedWidth(width)
@@ -133,7 +133,7 @@ class PreviewMixin:
 
         tb_layout = QHBoxLayout(self.overlay_toolbar)
         tb_layout.setContentsMargins(10, 4, 10, 4)
-        tb_layout.setSpacing(6)
+        tb_layout.setSpacing(8)
 
         def make_sep():
             sep = QLabel("|")
@@ -198,16 +198,15 @@ class PreviewMixin:
         tb_layout.addStretch(1)
 
         for button in (
-            self.btn_fit_page,
-            self.btn_rotate_left,
-            self.btn_rotate_right,
-            self.btn_download_preview,
-            self.btn_print_preview,
+            self.btn_zoom_out, self.btn_zoom_100, self.btn_zoom_in,
+            self.btn_fit_width, self.btn_fit_page,
+            self.btn_rotate_left, self.btn_rotate_right,
+            self.btn_download_preview, self.btn_print_preview, self.btn_preview_focus
         ):
             button.setParent(self.overlay_toolbar)
-            button.hide()
+            button.show()
 
-        self.overlay_toolbar.hide()
+        self.overlay_toolbar.show()
         self._init_legacy_preview_controls()
 
     def _init_legacy_preview_controls(self):
@@ -330,7 +329,8 @@ class PreviewMixin:
 
         self.lbl_image_preview = QLabel()
         self.lbl_image_preview.setAlignment(Qt.AlignCenter)
-        self.lbl_image_preview.setStyleSheet("background-color: #FFFFFF;")
+        self.lbl_image_preview.setStyleSheet("background-color: #F1F5F9;")
+        self.image_scroll_area.setStyleSheet("background-color: #F1F5F9; border: none;")
         self.lbl_image_preview.installEventFilter(self)
         self.image_scroll_area.setWidget(self.lbl_image_preview)
 

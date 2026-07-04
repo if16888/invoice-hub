@@ -705,11 +705,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         main_layout.addWidget(self.workbench_top_toolbar)
 
         # 1. Top Filter Bar
-        self.filter_bar_widget = QWidget()
+        self.filter_bar_widget = QFrame()
+        self.filter_bar_widget.setObjectName("StatusFilterCardGroup")
+        self.filter_bar_widget.setProperty("class", "WorkbenchCard")
         self.filter_bar_widget.setMaximumHeight(56)
         filter_layout = QHBoxLayout(self.filter_bar_widget)
-        filter_layout.setContentsMargins(0, 0, 0, 0)
-        filter_layout.setSpacing(6)
+        filter_layout.setContentsMargins(10, 4, 10, 4)
+        filter_layout.setSpacing(8)
 
         lbl_filter = QLabel("审核视图:")
         lbl_filter.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -925,15 +927,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_stack.addWidget(self.empty_widget)
 
         # Upper container to group left_stack and preview controls
-        self.left_upper_widget = QWidget()
+        self.left_upper_widget = QFrame()
+        self.left_upper_widget.setObjectName("InvoiceTableCard")
+        self.left_upper_widget.setProperty("class", "WorkbenchCard")
         left_upper_layout = QVBoxLayout(self.left_upper_widget)
-        left_upper_layout.setContentsMargins(0, 0, 0, 0)
-        left_upper_layout.setSpacing(4)
+        left_upper_layout.setContentsMargins(8, 8, 8, 8)
+        left_upper_layout.setSpacing(6)
         left_upper_layout.addWidget(self.record_header)
         left_upper_layout.addWidget(self.left_stack)
 
         # Initialize the New Preview Panel
         self._init_preview_panel()
+        if hasattr(self, "preview_panel") and self.preview_panel is not None:
+            self.preview_panel.setProperty("class", "WorkbenchCard")
 
         # Vertical QSplitter for Left Column
         self.left_splitter = QSplitter(Qt.Vertical)

@@ -40,76 +40,89 @@ QMenu::separator {
 
 APP_STYLESHEET = """
 QMainWindow {
-    background-color: #F8FAFC;
+    background-color: #F6F8FB;
 }
 QFrame#WorkbenchNav {
     background-color: #FFFFFF;
-    border-right: 1px solid #E5E7EB;
+    border-right: 1px solid #E5EAF2;
 }
 QLabel#WorkbenchNavTitle {
-    color: #111827;
+    color: #172033;
     background: transparent;
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 700;
 }
 QLabel#WorkbenchNavSubtitle {
-    color: #64748B;
+    color: #667085;
     background: transparent;
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
 }
 QPushButton.WorkbenchNavButton {
     background-color: transparent;
     color: #334155;
-    border: 1px solid transparent;
-    border-radius: 10px;
+    border: none;
+    border-radius: 8px;
     padding: 8px 12px;
     text-align: left;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
+    min-height: 38px;
 }
 QPushButton.WorkbenchNavButton:hover {
     background-color: #F8FAFC;
-    border-color: #E5E7EB;
+    color: #172033;
 }
 QPushButton.WorkbenchNavButton[collapsed="true"] {
     padding: 10px 0;
     text-align: center;
 }
 QPushButton.WorkbenchNavButton:checked {
-    background-color: #EAF2FF;
-    border-color: #BFDBFE;
-    color: #1D4ED8;
+    background-color: #EFF6FF;
+    border-left: 3px solid #2563EB;
+    color: #2563EB;
     font-weight: 700;
 }
 QFrame#WorkbenchTopToolbar {
     background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
+    border: 1px solid #E5EAF2;
     border-radius: 12px;
-    padding: 6px 8px;
+    padding: 6px 12px;
+    min-height: 64px;
+    max-height: 64px;
+}
+QFrame.WorkbenchCard, QFrame#WorkbenchCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
+QSplitter::handle {
+    background: transparent;
 }
 QToolButton#WorkbenchTopIconButton {
     background-color: #FFFFFF;
     color: #475569;
-    border: 1px solid #E5E7EB;
-    border-radius: 999px;
+    border: 1px solid #E5EAF2;
+    border-radius: 8px;
     padding: 0;
-    min-width: 30px;
-    max-width: 30px;
-    min-height: 30px;
-    max-height: 30px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
 }
 QToolButton#WorkbenchTopIconButton:hover {
     background-color: #F8FAFC;
     border-color: #CBD5E1;
-    color: #111827;
+    color: #172033;
 }
 QPushButton#WorkbenchUserButton {
     background-color: #FFFFFF;
-    color: #111827;
-    border: 1px solid #D1D5DB;
-    border-radius: 999px;
-    padding: 5px 12px;
-    font-weight: 700;
+    color: #172033;
+    border: 1px solid #E5EAF2;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
 }
 QPushButton#WorkbenchUserButton:hover {
     background-color: #F8FAFC;
