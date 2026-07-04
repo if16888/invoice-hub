@@ -315,6 +315,7 @@ class PreviewMixin:
         self.thumbnail_layout.setAlignment(Qt.AlignTop)
         self.thumbnail_rail.setWidget(self.thumbnail_content)
         self.thumbnail_buttons = []
+        self.thumbnail_rail.setVisible(False)
         self.preview_body_layout.addWidget(self.thumbnail_rail)
 
         # Initialize Zoom State Variables
@@ -411,20 +412,32 @@ class PreviewMixin:
         tb.adjustSize()
         w = tb.width()
         c_w = container.width()
-        x = max(8, (c_w - w) // 2)
-        y = 8
+        # Top-right alignment with 16px right padding and 10px top padding (never blocks center title)
+        x = max(8, c_w - w - 16)
+        y = 10
         tb.move(x, y)
         tb.raise_()
 
     def _show_overlay_toolbar(self):
-        self.overlay_hide_timer.stop()
-        self.overlay_toolbar.setVisible(True)
+        if hasattr(self, "overlay_hide_timer"):
+            self.overlay_hide_timer.stop()
+        if hasattr(self, "overlay_toolbar"):
+            self._reposition_overlay_toolbar()
+            self.overlay_toolbar.show()
+            self.overlay_toolbar.raise_()
+        self._start_hide_overlay_timer(1200)
 
     def _hide_overlay_toolbar(self):
+        if not hasattr(self, "overlay_toolbar"):
+            return
+        # Do not hide if mouse is hovered over toolbar or focus is inside toolbar
+        if self.overlay_toolbar.underMouse() or self.overlay_toolbar.hasFocus():
+            return
         self.overlay_toolbar.hide()
 
-    def _start_hide_overlay_timer(self):
-        return
+    def _start_hide_overlay_timer(self, delay_ms: int = 1200):
+        if hasattr(self, "overlay_hide_timer"):
+            self.overlay_hide_timer.start(delay_ms)
 
     def _show_preview_context_menu(self, pos):
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:

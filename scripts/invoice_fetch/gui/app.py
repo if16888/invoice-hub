@@ -1078,9 +1078,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         right_layout.addWidget(self.btn_load_all)
 
         self.btn_toggle_log = make_button("展开日志", variant="secondary", min_width=76)
-        self.btn_toggle_log.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.btn_toggle_log.clicked.connect(self._toggle_log)
-        right_layout.addWidget(self.btn_toggle_log)
+        self.btn_toggle_log.setVisible(False)
 
         status_layout.addWidget(right_container, 0)
 
@@ -1705,8 +1703,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._record_total_matching = max(0, int(total_matching))
         shown = len(getattr(self, "invoices_list", []) or [])
         total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
+        visible_rows = 7
+        if hasattr(self, "table") and self.table is not None and self.table.viewport():
+            vh = self.table.viewport().height()
+            rh = self.table.verticalHeader().defaultSectionSize() or 30
+            if vh > 0:
+                visible_rows = max(1, vh // rh)
         if hasattr(self, "lbl_record_count"):
-            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 7 张")
+            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
 
