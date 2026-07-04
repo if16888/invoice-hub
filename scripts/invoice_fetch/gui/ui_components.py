@@ -194,7 +194,7 @@ if _HAS_QT:
             layout.addStretch(1)
             layout.addWidget(self._lbl_value)
             self.setFixedHeight(48)
-            self.setMinimumWidth(132)
+            self.setMinimumWidth(140)
 
             # Store raw value for programmatic access
             self._value = value
