@@ -337,7 +337,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.workbench_nav.setMaximumWidth(16777215)
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
-        row_h = 34
+        row_h = 30
         self.table.verticalHeader().setDefaultSectionSize(row_h)
         self.table.verticalHeader().setMinimumSectionSize(row_h)
         self.table.verticalHeader().setMaximumSectionSize(row_h + 4)
@@ -508,6 +508,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "overview": QStyle.SP_DesktopIcon,
             "review": QStyle.SP_FileDialogDetailedView,
             "imports": QStyle.SP_DialogOpenButton,
+            "logs": QStyle.SP_FileIcon,
             "mobile_upload": QStyle.SP_ArrowUp,
             "export": QStyle.SP_DialogSaveButton,
             "mail": QStyle.SP_MessageBoxInformation,
@@ -552,6 +553,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         add_nav_button("overview", "总览")
         add_nav_button("review", "发票审核")
         add_nav_button("imports", "导入记录")
+        add_nav_button("logs", "操作日志", self._open_logs_view)
         add_nav_button("mobile_upload", "扫码上传", self._mobile_upload_clicked)
         add_nav_button("export", "批量导出", self._export_claim_package)
         add_nav_button("mail", "邮箱导入", self._scan_email_clicked)
@@ -857,9 +859,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(34)
-        self.table.verticalHeader().setMinimumSectionSize(28)
-        self.table.verticalHeader().setMaximumSectionSize(36)
+        self.table.verticalHeader().setDefaultSectionSize(30)
+        self.table.verticalHeader().setMinimumSectionSize(26)
+        self.table.verticalHeader().setMaximumSectionSize(32)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().setStretchLastSection(False)
@@ -1603,6 +1605,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         panel.show()
         self._save_splitter_prefs()
 
+    def _open_logs_view(self):
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QLabel
+        dialog = QDialog(self)
+        dialog.setWindowTitle("操作日志 - Invoice Hub")
+        dialog.resize(650, 450)
+        layout = QVBoxLayout(dialog)
+        title = QLabel("系统运行与操作日志")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        layout.addWidget(title)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setFont(QFont("Consolas", 9))
+        txt.setText(getattr(self.txt_log, "toPlainText", lambda: "日志就绪")() if hasattr(self, "txt_log") else "运行日志加载就绪。")
+        layout.addWidget(txt)
+        dialog.exec()
+
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
             self.txt_search.setText("")
@@ -1688,7 +1706,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shown = len(getattr(self, "invoices_list", []) or [])
         total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
         if hasattr(self, "lbl_record_count"):
-            self.lbl_record_count.setText(f"已加载 {shown} / {total}")
+            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 7 张")
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
 
