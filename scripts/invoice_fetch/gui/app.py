@@ -857,6 +857,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.verticalScrollBar().valueChanged.connect(self._maybe_load_more_invoices)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(30)
@@ -1691,6 +1692,51 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except (InvalidOperation, ValueError, TypeError):
             return text
 
+    def _maybe_load_more_invoices(self, value: int):
+        if not hasattr(self, "table") or self.table is None:
+            return
+        scrollbar = self.table.verticalScrollBar()
+        if scrollbar is None or scrollbar.maximum() <= 0:
+            return
+        threshold = 10
+        if value < scrollbar.maximum() - threshold:
+            return
+        if getattr(self, "_is_loading_more_invoices", False):
+            return
+        shown = len(getattr(self, "invoices_list", []) or [])
+        total = int(getattr(self, "_record_total_matching", shown) or shown)
+        if shown >= total:
+            return
+        self._load_next_invoice_page()
+
+    def _load_next_invoice_page(self):
+        if getattr(self, "_is_loading_more_invoices", False):
+            return
+        self._is_loading_more_invoices = True
+        shown = len(getattr(self, "invoices_list", []) or [])
+        total = int(getattr(self, "_record_total_matching", shown) or shown)
+        if hasattr(self, "lbl_record_count"):
+            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，正在加载更多…")
+        QTimer.singleShot(100, self._append_next_invoice_batch)
+
+    def _append_next_invoice_batch(self):
+        try:
+            if not hasattr(self, "db") or self.db is None:
+                return
+            current_count = len(getattr(self, "invoices_list", []) or [])
+            batch = self.db.get_invoices(
+                limit=50,
+                offset=current_count,
+                filters=getattr(self, "column_filters", None),
+                show_deleted=getattr(self, "show_deleted", False),
+            )
+            if batch:
+                self.invoices_list.extend(batch)
+                self._update_table_view()
+        finally:
+            self._is_loading_more_invoices = False
+            self._update_record_header_summary()
+
     def _update_record_header_summary(self, total_matching: int | None = None, selected_count: int | None = None):
         if total_matching is not None:
             self._record_total_matching = max(0, int(total_matching))
@@ -1703,7 +1749,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if vh > 0:
                 visible_rows = max(1, vh // rh)
         if hasattr(self, "lbl_record_count"):
-            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
+            if shown >= total and total > 0:
+                self.lbl_record_count.setText(f"已加载全部 {total} 张，当前可见 {visible_rows} 张")
+            else:
+                self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
 
