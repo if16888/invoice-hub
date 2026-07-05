@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QLineEdit,
     QTextEdit, QPlainTextEdit, QPushButton, QLabel, QMessageBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog,
-    QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
+    QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QWidgetAction, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem
 )
@@ -580,11 +580,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.search_reload_timer.setSingleShot(True)
         self.search_reload_timer.setInterval(250)
 
-        # Keep other nav items visible but disabled (pages not yet implemented)
-        for key in ("overview", "imports"):
-            button = self.workbench_nav_buttons[key]
-            button.setCheckable(False)
-            button.setEnabled(False)
+        # All nav buttons are enabled and wired to dedicated page views
+        for key, button in self.workbench_nav_buttons.items():
+            button.setCheckable(True)
+            button.setEnabled(True)
 
         nav_layout.addStretch(1)
         self.btn_collapse_nav = QPushButton("收起侧边栏")
@@ -721,18 +720,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_more.setMenu(self.more_menu)
         action_layout.addWidget(self.btn_more)
-        action_layout.addWidget(self.btn_toolbar_user)
+        self.btn_toolbar_user.hide()
 
         main_layout.addWidget(self.workbench_top_toolbar)
 
-        # 1. Top Filter Bar
+        # 1. Top Filter Bar (36px Compact Segmented Filter Bar)
         self.filter_bar_widget = QFrame()
         self.filter_bar_widget.setObjectName("StatusFilterCardGroup")
         self.filter_bar_widget.setProperty("class", "WorkbenchCard")
-        self.filter_bar_widget.setMaximumHeight(48)
+        self.filter_bar_widget.setFixedHeight(36)
         filter_layout = QHBoxLayout(self.filter_bar_widget)
-        filter_layout.setContentsMargins(10, 4, 10, 4)
-        filter_layout.setSpacing(8)
+        filter_layout.setContentsMargins(8, 2, 8, 2)
+        filter_layout.setSpacing(6)
 
         lbl_filter = QLabel("审核视图:")
         lbl_filter.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -769,8 +768,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 icon_text=icon_by_status[status],
             )
             card.setFocusPolicy(Qt.StrongFocus)
-            card.setMinimumWidth(96)
-            card.setMinimumSize(96, 0)
+            card.setFixedHeight(28)
+            card.setMinimumWidth(80)
             card.set_selected(status == "all")
             card.clicked.connect(lambda s=status: self._change_filter(s))
             filter_layout.addWidget(card, 0)
@@ -778,17 +777,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         filter_layout.addStretch()
 
-        self.chk_unlinked = QCheckBox("未关联报销组")
+        # Advanced Filter Menu Popup for Secondary Filters
+        self.btn_advanced_filter = make_button("筛选 ▾", variant="secondary", min_width=60)
+        self.btn_advanced_filter.setFixedHeight(28)
+        self.advanced_filter_menu = QMenu(self)
+        
+        self.chk_unlinked = QCheckBox("未关联报销组", self)
         self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
-        filter_layout.addWidget(self.chk_unlinked)
+        action_unlinked = QWidgetAction(self)
+        action_unlinked.setDefaultWidget(self.chk_unlinked)
+        self.advanced_filter_menu.addAction(action_unlinked)
 
-        self.chk_needs_fix = QCheckBox("待补全")
+        self.chk_needs_fix = QCheckBox("待补全", self)
         self.chk_needs_fix.stateChanged.connect(self._on_chk_needs_fix_changed)
-        filter_layout.addWidget(self.chk_needs_fix)
+        action_needs_fix = QWidgetAction(self)
+        action_needs_fix.setDefaultWidget(self.chk_needs_fix)
+        self.advanced_filter_menu.addAction(action_needs_fix)
 
-        self.chk_show_deleted = QCheckBox("显示已删除")
+        self.chk_show_deleted = QCheckBox("显示已删除", self)
         self.chk_show_deleted.stateChanged.connect(self._schedule_invoice_reload)
-        filter_layout.addWidget(self.chk_show_deleted)
+        action_show_deleted = QWidgetAction(self)
+        action_show_deleted.setDefaultWidget(self.chk_show_deleted)
+        self.advanced_filter_menu.addAction(action_show_deleted)
+
+        self.btn_advanced_filter.setMenu(self.advanced_filter_menu)
+        filter_layout.addWidget(self.btn_advanced_filter)
 
         self.btn_reset_filters = make_button("重置", variant="secondary", min_width=56)
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
