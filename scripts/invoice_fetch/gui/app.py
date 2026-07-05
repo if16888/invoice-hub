@@ -1126,24 +1126,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Bottom dock area keeps the status bar pinned while the log drawer expands separately.
         self.bottom_panel = QWidget()
-        self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.bottom_panel.setMinimumHeight(36)
-        self.bottom_panel.setMaximumHeight(36)
         bottom_layout = QVBoxLayout(self.bottom_panel)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(4)
+        bottom_layout.setSpacing(0)
         bottom_layout.addWidget(status_bar)
-
-        main_layout.addWidget(self.bottom_panel)
+        self.bottom_panel.hide()
+        self.bottom_panel.setFixedHeight(0)
         self.log_drawer = QWidget()
-        self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        log_drawer_layout = QVBoxLayout(self.log_drawer)
-        log_drawer_layout.setContentsMargins(0, 0, 0, 0)
-        log_drawer_layout.setSpacing(0)
-        log_drawer_layout.addWidget(self.log_container)
-        main_layout.addWidget(self.log_drawer)
+        self.log_drawer.hide()
+        self.log_drawer.setFixedHeight(0)
         self._log_panel_visible = False
-        self._set_log_panel_visible(False)
 
     # ── Detail panel wiring ────────────────────────────────────
 
