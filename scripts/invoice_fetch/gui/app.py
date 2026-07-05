@@ -1279,7 +1279,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status_layout.addWidget(self.lbl_status_middle, 1)
 
         # Right container
-        right_container = QWidget()
+        self.status_actions_container = QWidget(status_bar)
+        right_container = self.status_actions_container
         right_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         right_layout = QHBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -1311,8 +1312,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_toggle_log = make_button("展开日志", variant="secondary", min_width=76)
         self.btn_toggle_log.setVisible(False)
+        self.btn_toggle_log.clicked.connect(self._toggle_log)
+        right_layout.addWidget(self.btn_toggle_log)
 
         status_layout.addWidget(right_container, 0)
+        right_container.show()
 
         # Collapsible log drawer (hidden by default)
         self.log_container = QWidget()
@@ -1357,15 +1361,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Bottom dock area keeps the status bar pinned while the log drawer expands separately.
         self.bottom_panel = QWidget()
+        self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         bottom_layout = QVBoxLayout(self.bottom_panel)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(0)
         bottom_layout.addWidget(status_bar)
-        self.bottom_panel.hide()
-        self.bottom_panel.setFixedHeight(0)
+        self.bottom_panel.setMaximumHeight(36)
+        main_layout.addWidget(self.bottom_panel)
+        self.bottom_panel.show()
         self.log_drawer = QWidget()
+        self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.log_drawer_layout = QVBoxLayout(self.log_drawer)
+        self.log_drawer_layout.setContentsMargins(0, 0, 0, 0)
+        self.log_drawer_layout.setSpacing(0)
+        self.log_container.hide()
+        self.log_drawer_layout.addWidget(self.log_container)
         self.log_drawer.hide()
         self.log_drawer.setFixedHeight(0)
+        main_layout.addWidget(self.log_drawer)
         self._log_panel_visible = False
 
     # ── Detail panel wiring ────────────────────────────────────

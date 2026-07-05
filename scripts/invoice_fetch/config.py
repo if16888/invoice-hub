@@ -335,6 +335,13 @@ def _select_primary_email_account(accounts: list[dict[str, Any]]) -> dict[str, A
 def _apply_primary_email_account(cfg: dict[str, Any], accounts: list[dict[str, Any]]) -> dict[str, Any]:
     if not accounts:
         return cfg
+    accounts = [
+        _normalize_email_account(acc, source_cfg=cfg)
+        for acc in accounts
+        if isinstance(acc, dict)
+    ]
+    if not accounts:
+        return cfg
     accounts = _normalize_default_email_account(accounts)
     primary = _select_primary_email_account(accounts)
     if not primary:
@@ -343,7 +350,7 @@ def _apply_primary_email_account(cfg: dict[str, Any], accounts: list[dict[str, A
     cfg["email"] = {
         "provider": primary["provider"],
         "address": primary["address"],
-        "username": primary["username"],
+        "username": primary.get("username") or primary["address"],
         "name": primary.get("name") or primary["address"],
     }
     cfg["imap"] = dict(primary.get("imap") or {})
