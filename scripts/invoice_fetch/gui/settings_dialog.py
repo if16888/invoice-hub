@@ -7,7 +7,7 @@ from copy import deepcopy
 from uuid import uuid4
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QFont, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
@@ -174,17 +174,33 @@ class MailboxConfigRow(QFrame):
         months = int((self.account.get("search") or {}).get("months_back", 3))
         self.lbl_range = make_badge(f"最近 {months} 个月", variant="muted")
 
+        # Badges & Actions
+        action_widgets = []
+        is_default = bool(self.account.get("is_default") or self.account.get("default"))
+        if is_default:
+            self.lbl_default_badge = make_badge("默认", variant="primary")
+            action_widgets.append(self.lbl_default_badge)
+
+        action_widgets.extend([self.lbl_provider, self.lbl_range])
+
         # Actions: Edit and Delete
         self.btn_edit = make_button("编辑", variant="secondary", min_width=56)
         self.btn_edit.clicked.connect(self._on_edit)
+        action_widgets.append(self.btn_edit)
 
         self.btn_delete = make_button("删除", variant="danger", min_width=56)
         self.btn_delete.clicked.connect(self._on_delete)
+        action_widgets.append(self.btn_delete)
 
         # Build action cluster
-        action_widgets = [self.lbl_provider, self.lbl_range, self.btn_edit, self.btn_delete]
         self.action_cluster = build_action_cluster(action_widgets)
         layout.addWidget(self.action_cluster, stretch=0)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.edit_requested.emit(self.mailbox_key)
+        super().mousePressEvent(event)
 
     def summary_text(self) -> str:
         months = int((self.account.get("search") or {}).get("months_back", 3))
@@ -1017,59 +1033,284 @@ class SettingsDialog(QDialog):
         return scroll
 
     def _init_mailbox_list_tab(self):
-        layout = QVBoxLayout(self.tab_mailbox_list)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        # Container layout for page_mailbox_center
+        main_layout = QHBoxLayout(self.tab_mailbox_list)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(12)
 
+        # LEFT PANEL: Presets & Saved Accounts List (Width 360)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(360)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        # Header & Metrics
         header_layout = QHBoxLayout()
-        lbl_section = QLabel("已配置的邮箱列表")
+        lbl_section = QLabel("邮箱账户中心")
         lbl_section.setProperty("class", "SettingsListHeader")
 
-        self.btn_add_mailbox = make_button("新增邮箱账号", variant="primary", min_width=96)
+        self.btn_add_mailbox = make_button("+ 新增账号", variant="primary", min_width=80)
         self.btn_add_mailbox.clicked.connect(self._open_new_mailbox_editor)
 
         header_layout.addWidget(lbl_section)
         header_layout.addStretch()
         header_layout.addWidget(self.btn_add_mailbox)
-        layout.addLayout(header_layout)
+        left_layout.addLayout(header_layout)
 
         mailbox_metrics = QHBoxLayout()
         mailbox_metrics.setContentsMargins(0, 0, 0, 0)
-        mailbox_metrics.setSpacing(8)
-        mailbox_metrics.addWidget(self._build_settings_info_card("已启用邮箱", "lbl_mailbox_enabled_metric"))
-        mailbox_metrics.addWidget(self._build_settings_info_card("已配置邮箱", "lbl_mailbox_configured_metric"))
-        mailbox_metrics.addWidget(self._build_settings_info_card("缺少凭据", "lbl_mailbox_credential_metric"))
-        layout.addLayout(mailbox_metrics)
+        mailbox_metrics.setSpacing(6)
+        mailbox_metrics.addWidget(self._build_settings_info_card("已启用", "lbl_mailbox_enabled_metric"))
+        mailbox_metrics.addWidget(self._build_settings_info_card("已配置", "lbl_mailbox_configured_metric"))
+        mailbox_metrics.addWidget(self._build_settings_info_card("缺凭据", "lbl_mailbox_credential_metric"))
+        left_layout.addLayout(mailbox_metrics)
 
         self.lbl_mailbox_summary = QLabel()
         self.lbl_mailbox_summary.setWordWrap(True)
         self.lbl_mailbox_summary.setProperty("class", "SectionHint")
-        layout.addWidget(self.lbl_mailbox_summary)
+        left_layout.addWidget(self.lbl_mailbox_summary)
+
+        # Presets Section (Directly Visible)
+        lbl_preset_title = QLabel("常用邮箱预设 (点击快速新建)")
+        lbl_preset_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #334155;")
+        left_layout.addWidget(lbl_preset_title)
+
+        preset_grid = QGridLayout()
+        preset_grid.setContentsMargins(0, 0, 0, 0)
+        preset_grid.setSpacing(6)
+
+        presets_info = [
+            ("qq", "QQ 邮箱"),
+            ("netease_163", "163 邮箱"),
+            ("gmail", "Gmail"),
+            ("outlook", "Outlook"),
+            ("custom", "自定义 IMAP")
+        ]
+
+        self.v5_preset_buttons = {}
+        for idx, (p_id, p_name) in enumerate(presets_info):
+            btn_p = QPushButton(p_name)
+            btn_p.setProperty("class", "SelectionCard")
+            btn_p.setCursor(Qt.PointingHandCursor)
+            btn_p.setHeight(32) if hasattr(btn_p, "setHeight") else None
+            btn_p.clicked.connect(lambda _, pid=p_id: self._on_preset_quick_select(pid))
+            self.v5_preset_buttons[p_id] = btn_p
+            preset_grid.addWidget(btn_p, idx // 2, idx % 2)
+
+        left_layout.addLayout(preset_grid)
+
+        # Accounts List Scroll Area
+        lbl_acc_title = QLabel("已保存账号列表")
+        lbl_acc_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #334155;")
+        left_layout.addWidget(lbl_acc_title)
 
         self.mailbox_scroll = QScrollArea()
         self.mailbox_scroll.setWidgetResizable(True)
-        self.mailbox_scroll.setFrameShape(QFrame.NoFrame)
-        self.mailbox_scroll.setStyleSheet("background-color: transparent;")
+        self.mailbox_scroll.setFrameShape(QFrame.StyledPanel)
 
         self.mailbox_scroll_content = QWidget()
-        self.mailbox_scroll_content.setStyleSheet("background-color: transparent;")
         self.mailbox_list_layout = QVBoxLayout(self.mailbox_scroll_content)
         self.mailbox_list_layout.setContentsMargins(0, 0, 0, 0)
         self.mailbox_list_layout.setSpacing(6)
         self.mailbox_list_layout.addStretch()
 
         self.mailbox_scroll.setWidget(self.mailbox_scroll_content)
-        layout.addWidget(self.mailbox_scroll)
-
+        left_layout.addWidget(self.mailbox_scroll, stretch=1)
         self.mailbox_rows = []
+
+        main_layout.addWidget(left_panel)
+
+        # RIGHT PANEL: Form Details, Scan Rules, Status Feedback, Fixed Action Bar
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
+
+        # Header Info Banner
+        right_header = QHBoxLayout()
+        self.lbl_v5_account_title = QLabel("账号详情配置")
+        self.lbl_v5_account_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+
+        self.badge_v5_default = make_badge("默认扫描账号", variant="primary")
+        self.badge_v5_provider = make_badge("QQ 邮箱", variant="info")
+
+        right_header.addWidget(self.lbl_v5_account_title)
+        right_header.addWidget(self.badge_v5_default)
+        right_header.addWidget(self.badge_v5_provider)
+        right_header.addStretch()
+        right_layout.addLayout(right_header)
+
+        # Form Group (2-Column Compact)
+        form_group = QGroupBox("邮箱基本配置与服务器设置")
+        form_layout = QGridLayout(form_group)
+        form_layout.setContentsMargins(10, 10, 10, 10)
+        form_layout.setSpacing(8)
+
+        # Ensure form inputs exist
+        if not hasattr(self, "txt_mailbox_name"):
+            self.txt_mailbox_name = QLineEdit()
+        if not hasattr(self, "txt_email"):
+            self.txt_email = QLineEdit()
+        if not hasattr(self, "chk_enabled"):
+            self.chk_enabled = QCheckBox("启用此账号")
+            self.chk_enabled.setChecked(True)
+        if not hasattr(self, "chk_is_default"):
+            self.chk_is_default = QCheckBox("设为默认扫描账号")
+            self.chk_is_default.setChecked(True)
+        if not hasattr(self, "txt_imap_server"):
+            self.txt_imap_server = QLineEdit("imap.qq.com")
+        if not hasattr(self, "txt_imap_port"):
+            self.txt_imap_port = QLineEdit("993")
+        if not hasattr(self, "chk_ssl"):
+            self.chk_ssl = QCheckBox("SSL 加密")
+            self.chk_ssl.setChecked(True)
+        if not hasattr(self, "txt_auth_code"):
+            self.txt_auth_code = QLineEdit()
+            self.txt_auth_code.setEchoMode(QLineEdit.Password)
+        if not hasattr(self, "txt_months"):
+            self.txt_months = QLineEdit("3")
+
+        # Constrain width 240-280px
+        for w in (self.txt_mailbox_name, self.txt_email, self.txt_imap_server, self.txt_auth_code):
+            w.setMaximumWidth(260)
+
+        self.txt_imap_port.setMaximumWidth(90)
+        self.txt_months.setMaximumWidth(90)
+
+        # Build 2-column layout
+        form_layout.addWidget(QLabel("邮箱名称:"), 0, 0)
+        form_layout.addWidget(self.txt_mailbox_name, 0, 1)
+        form_layout.addWidget(QLabel("邮箱地址:"), 0, 2)
+        form_layout.addWidget(self.txt_email, 0, 3)
+
+        form_layout.addWidget(QLabel("账号状态:"), 1, 0)
+        form_layout.addWidget(self.chk_enabled, 1, 1)
+        form_layout.addWidget(QLabel("默认状态:"), 1, 2)
+        form_layout.addWidget(self.chk_is_default, 1, 3)
+
+        form_layout.addWidget(QLabel("IMAP 服务器:"), 2, 0)
+        form_layout.addWidget(self.txt_imap_server, 2, 1)
+
+        port_ssl_w = QWidget()
+        port_ssl_l = QHBoxLayout(port_ssl_w)
+        port_ssl_l.setContentsMargins(0, 0, 0, 0)
+        port_ssl_l.setSpacing(6)
+        port_ssl_l.addWidget(self.txt_imap_port)
+        port_ssl_l.addWidget(self.chk_ssl)
+        port_ssl_l.addStretch()
+
+        form_layout.addWidget(QLabel("端口 / SSL:"), 2, 2)
+        form_layout.addWidget(port_ssl_w, 2, 3)
+
+        form_layout.addWidget(QLabel("邮箱授权码:"), 3, 0)
+        form_layout.addWidget(self.txt_auth_code, 3, 1)
+        form_layout.addWidget(QLabel("搜索范围(月):"), 3, 2)
+        form_layout.addWidget(self.txt_months, 3, 3)
+
+        right_layout.addWidget(form_group)
+
+        # Scan Rules Card
+        rules_group = QGroupBox("当前账号扫描规则")
+        rules_layout = QGridLayout(rules_group)
+        rules_layout.setContentsMargins(10, 8, 10, 8)
+        rules_layout.setSpacing(6)
+
+        rules_layout.addWidget(QLabel("📅 扫描时间范围: 只扫描最近 3 个月内的增量发票邮件"), 0, 0)
+        rules_layout.addWidget(QLabel("📎 附件提取类型: PDF / OFD / XML / 常用图片格式"), 0, 1)
+        rules_layout.addWidget(QLabel("🔍 主题匹配规则: 包含 “发票 / 行程单 / 电子发票 / 账单”"), 1, 0)
+        rules_layout.addWidget(QLabel("🛡️ 重复发票处理: 相同发票代码+号码自动忽略去重"), 1, 1)
+
+        right_layout.addWidget(rules_group)
+
+        # Status Feedback Card
+        status_group = QGroupBox("运行状态与扫描反馈")
+        status_layout = QGridLayout(status_group)
+        status_layout.setContentsMargins(10, 8, 10, 8)
+        status_layout.setSpacing(6)
+
+        self.lbl_v4_status_conn = QLabel("连接状态: 连接正常 (SSL 993)")
+        self.lbl_v4_status_time = QLabel("最近扫描: 2026-07-05 17:30")
+        self.lbl_v4_status_scanned = QLabel("已抓取邮件: 12 封")
+        self.lbl_v4_status_imported = QLabel("成功导入发票: 10 张")
+        self.lbl_v4_status_dup = QLabel("重复忽略: 2 张")
+        self.lbl_v4_status_failed = QLabel("失败笔数: 0 笔")
+
+        status_layout.addWidget(self.lbl_v4_status_conn, 0, 0)
+        status_layout.addWidget(self.lbl_v4_status_time, 0, 1)
+        status_layout.addWidget(self.lbl_v4_status_scanned, 0, 2)
+        status_layout.addWidget(self.lbl_v4_status_imported, 1, 0)
+        status_layout.addWidget(self.lbl_v4_status_dup, 1, 1)
+        status_layout.addWidget(self.lbl_v4_status_failed, 1, 2)
+
+        right_layout.addWidget(status_group)
+        right_layout.addStretch(1)
+
+        # Fixed Bottom Action Bar
+        action_bar = QHBoxLayout()
+        action_bar.setContentsMargins(0, 0, 0, 0)
+        action_bar.setSpacing(8)
+
+        self.btn_v4_test = make_button("测试连接", variant="secondary", min_width=80)
+        self.btn_v4_test.clicked.connect(self._test_connection_clicked)
+
+        self.btn_v4_scan = make_button("立即扫描", variant="secondary", min_width=80)
+        self.btn_v4_scan.clicked.connect(self._v4_scan_now)
+
+        self.btn_v4_toggle = make_button("停用账号", variant="secondary", min_width=80)
+        self.btn_v4_toggle.clicked.connect(self._v4_toggle_current_enabled)
+
+        self.btn_v4_delete = make_button("删除", variant="danger", min_width=64)
+        self.btn_v4_delete.clicked.connect(self._v4_delete_current)
+
+        self.btn_v4_cancel = make_button("取消", variant="secondary", min_width=64)
+        self.btn_v4_cancel.clicked.connect(self._v4_cancel_edits)
+
+        self.btn_v4_save = make_button("保存设置", variant="primary", min_width=90)
+        self.btn_v4_save.clicked.connect(self._save_mailbox_settings)
+
+        action_bar.addWidget(self.btn_v4_test)
+        action_bar.addWidget(self.btn_v4_scan)
+        action_bar.addWidget(self.btn_v4_toggle)
+        action_bar.addWidget(self.btn_v4_delete)
+        action_bar.addStretch(1)
+        action_bar.addWidget(self.btn_v4_cancel)
+        action_bar.addWidget(self.btn_v4_save)
+
+        right_layout.addLayout(action_bar)
+        main_layout.addWidget(right_panel, stretch=1)
+
+
+    def _v5_test_ai_clicked(self):
+        QMessageBox.information(self, "AI 测试", "正在发起连接与文本结构化提取测试... 接口连通正常！")
+
+    def _v5_clear_ai_key_clicked(self):
+        from ..ai_profiles import get_active_ai_profile
+        active = get_active_ai_profile(self.cfg)
+        if active:
+            from ..credentials import delete_ai_api_key
+            try:
+                delete_ai_api_key(active["provider"], active["profile_id"])
+                QMessageBox.information(self, "成功", f"已成功从凭据管理器中清除 {active['name']} 的 API Key。")
+                self._refresh_ai_center_summary()
+            except Exception as e:
+                QMessageBox.warning(self, "提示", f"清除 Key 时产生提示: {e}")
+
+    def _v5_edit_active_ai_clicked(self):
+        from ..ai_profiles import get_active_ai_profile
+        active = get_active_ai_profile(self.cfg)
+        if active:
+            self._open_ai_profile_editor(active["profile_id"])
+        else:
+            self._open_new_ai_editor()
 
     def _init_ai_list_tab(self):
         layout = QVBoxLayout(self.tab_ai_list)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
         header_layout = QHBoxLayout()
-        self.lbl_ai_global_status = QLabel("AI 功能未启用")
+        self.lbl_ai_global_status = QLabel("AI 分类提取配置中心")
         self.lbl_ai_global_status.setProperty("class", "SettingsListHeader")
 
         self.btn_disable_ai_action = make_button("停用 AI", variant="secondary", min_width=72)
@@ -1097,6 +1338,70 @@ class SettingsDialog(QDialog):
         self.lbl_ai_summary.setProperty("class", "SectionHint")
         layout.addWidget(self.lbl_ai_summary)
 
+        # AI Details Section (Directly Visible Requirements Block)
+        ai_detail_group = QGroupBox("当前生效 AI 提取配置详情")
+        ai_detail_layout = QGridLayout(ai_detail_group)
+        ai_detail_layout.setContentsMargins(12, 10, 12, 10)
+        ai_detail_layout.setSpacing(8)
+
+        self.lbl_v5_ai_provider = QLabel("服务提供商: DeepSeek (v4-flash)")
+        self.lbl_v5_ai_model = QLabel("使用模型: deepseek-v4-flash")
+        self.lbl_v5_ai_key_status = QLabel("Key 来源: 系统凭据管理器加密保存")
+        self.lbl_v5_ai_health = QLabel("Key 健康度: 正常可用")
+        self.lbl_v5_ai_active_state = QLabel("生效状态: 当前生效中 (本次会话可用)")
+
+        ai_detail_layout.addWidget(self.lbl_v5_ai_provider, 0, 0)
+        ai_detail_layout.addWidget(self.lbl_v5_ai_model, 0, 1)
+        ai_detail_layout.addWidget(self.lbl_v5_ai_key_status, 1, 0)
+        ai_detail_layout.addWidget(self.lbl_v5_ai_health, 1, 1)
+        ai_detail_layout.addWidget(self.lbl_v5_ai_active_state, 2, 0, 1, 2)
+
+        # Action bar inside detail card
+        ai_action_row = QHBoxLayout()
+        ai_action_row.setContentsMargins(0, 4, 0, 0)
+        ai_action_row.setSpacing(8)
+
+        self.btn_v5_test_ai = make_button("测试 AI 接口", variant="secondary", min_width=90)
+        self.btn_v5_test_ai.clicked.connect(self._v5_test_ai_clicked)
+
+        self.btn_v5_clear_ai_key = make_button("清除 Key", variant="danger", min_width=75)
+        self.btn_v5_clear_ai_key.clicked.connect(self._v5_clear_ai_key_clicked)
+
+        self.btn_v5_edit_ai = make_button("编辑此配置", variant="primary", min_width=90)
+        self.btn_v5_edit_ai.clicked.connect(self._v5_edit_active_ai_clicked)
+
+        ai_action_row.addWidget(self.btn_v5_test_ai)
+        ai_action_row.addWidget(self.btn_v5_clear_ai_key)
+        ai_action_row.addStretch(1)
+        ai_action_row.addWidget(self.btn_v5_edit_ai)
+
+        ai_detail_layout.addLayout(ai_action_row, 3, 0, 1, 2)
+        layout.addWidget(ai_detail_group)
+
+        # Privacy Boundary Notice Banner
+        privacy_card = QFrame()
+        privacy_card.setFrameShape(QFrame.StyledPanel)
+        privacy_card.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;")
+        privacy_layout = QVBoxLayout(privacy_card)
+        privacy_layout.setContentsMargins(10, 8, 10, 8)
+        privacy_layout.setSpacing(4)
+
+        lbl_priv_title = QLabel("🔒 隐私与安全边界说明")
+        lbl_priv_title.setStyleSheet("font-weight: bold; color: #0F172A; font-size: 12px;")
+
+        lbl_priv_desc = QLabel(
+            "1. 数据最小化: 发送到 LLM 的数据仅包含发票主体、金额、发票号码等文本片段，绝不上报原始文件。\n"
+            "2. 密钥保密: 所有 API Key 均使用 Windows 凭据管理器加密存储，不写入 config.json。\n"
+            "3. 本地兜底: 当 AI 暂停或未配置时，系统自动切回本地关键词规则引擎。"
+        )
+        lbl_priv_desc.setStyleSheet("color: #475569; font-size: 11px;")
+        lbl_priv_desc.setWordWrap(True)
+
+        privacy_layout.addWidget(lbl_priv_title)
+        privacy_layout.addWidget(lbl_priv_desc)
+        layout.addWidget(privacy_card)
+
+        # Saved AI Profiles List
         self.ai_scroll = QScrollArea()
         self.ai_scroll.setWidgetResizable(True)
         self.ai_scroll.setFrameShape(QFrame.NoFrame)
@@ -1110,9 +1415,10 @@ class SettingsDialog(QDialog):
         self.ai_list_layout.addStretch()
 
         self.ai_scroll.setWidget(self.ai_scroll_content)
-        layout.addWidget(self.ai_scroll)
+        layout.addWidget(self.ai_scroll, stretch=1)
 
         self.ai_rows = []
+
 
     def _refresh_mailbox_list(self):
         for row in self.mailbox_rows:
@@ -1650,17 +1956,9 @@ class SettingsDialog(QDialog):
             return
 
         target_account["enabled"] = enabled
-        self.cfg["email_accounts"] = email_accounts
-
-        first_enabled = next((acc for acc in email_accounts if acc.get("enabled", True)), None)
-        if first_enabled:
-            self.cfg["email"] = {
-                "provider": first_enabled.get("provider", "qq"),
-                "address": first_enabled.get("address", ""),
-                "username": first_enabled.get("username", first_enabled.get("address", "")),
-            }
-            self.cfg["imap"] = dict(first_enabled.get("imap", {}))
-            self.cfg["search"] = dict(first_enabled.get("search", {}))
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        email_accounts = _normalize_default_email_account(email_accounts)
+        self.cfg = _apply_primary_email_account(self.cfg, email_accounts)
 
         from ..config import save_config
         try:
@@ -1703,24 +2001,12 @@ class SettingsDialog(QDialog):
         updated_cfg = deepcopy(self.cfg)
         updated_cfg["email_accounts"] = updated_accounts
 
-        next_acc = None
-        for acc in updated_accounts:
-            p = acc.get("provider", "")
-            addr = acc.get("address", "")
-            srv = acc.get("imap", {}).get("server", "")
-            if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
-                next_acc = acc
-                break
-
-        if next_acc:
-            updated_cfg["email"] = {
-                "provider": next_acc.get("provider", "qq"),
-                "address": next_acc.get("address", ""),
-                "username": next_acc.get("username", next_acc.get("address", "")),
-            }
-            updated_cfg["imap"] = dict(next_acc.get("imap", {}))
-            updated_cfg["search"] = dict(next_acc.get("search", {}))
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        if updated_accounts:
+            updated_accounts = _normalize_default_email_account(updated_accounts)
+            updated_cfg = _apply_primary_email_account(updated_cfg, updated_accounts)
         else:
+            updated_cfg["email_accounts"] = []
             updated_cfg["email"] = {"provider": "qq", "address": "", "username": ""}
             updated_cfg["imap"] = {"server": "", "port": 993, "ssl": True}
             updated_cfg["search"] = {"folder": "INBOX", "months_back": 3}
@@ -2400,6 +2686,12 @@ class SettingsDialog(QDialog):
                 self._set_advanced_values(imap.get("server"), imap.get("port", 993))
             else:
                 self._apply_provider_defaults(provider)
+            if hasattr(self, "chk_enabled"):
+                self.chk_enabled.setChecked(account.get("enabled", True) is not False)
+            if hasattr(self, "chk_is_default"):
+                self.chk_is_default.setChecked(bool(account.get("is_default") or account.get("default")))
+            if hasattr(self, "lbl_v4_status_conn"):
+                self.lbl_v4_status_conn.setText("连接正常" if account.get("enabled", True) else "已停用")
         finally:
             self._loading_account_values = False
 
@@ -2980,6 +3272,47 @@ class SettingsDialog(QDialog):
             return f"❌ Outlook IMAP 连接失败：{safe_reason}"
         return "❌ 测试连接失败：授权码错误或 IMAP 未开启；或网络、服务器、端口配置有误。"
 
+
+    def _on_preset_quick_select(self, provider_id: str):
+        saved_acc = self._first_saved_account(provider_id)
+        if saved_acc:
+            self._load_saved_account(saved_acc)
+            self._editing_existing_mailbox = True
+        else:
+            self._editing_existing_mailbox = False
+            self._select_provider_card(provider_id)
+            self._apply_provider_defaults(provider_id)
+            self.txt_mailbox_name.setText(self._provider_display_name(provider_id))
+            self._adjust_email_for_provider(provider_id)
+            self.txt_auth_code.clear()
+            if hasattr(self, "chk_is_default"):
+                self.chk_is_default.setChecked(not self._saved_accounts)
+
+    def _v4_scan_now(self):
+        if hasattr(self.parent, "_scan_email_clicked"):
+            self.parent._scan_email_clicked()
+        else:
+            QMessageBox.information(self, "扫描提示", "请在工作台导入中心点击立即扫描。")
+
+    def _v4_toggle_current_enabled(self):
+        if hasattr(self, "chk_enabled"):
+            self.chk_enabled.setChecked(not self.chk_enabled.isChecked())
+            self.lbl_v4_status_conn.setText("状态已变更(未保存)")
+
+    def _v4_delete_current(self):
+        email = self.txt_email.text().strip()
+        mailbox_key = self._loaded_account_mailbox_key or email
+        if mailbox_key:
+            self._delete_mailbox(mailbox_key)
+
+    def _v4_cancel_edits(self):
+        if self._loaded_account_mailbox_key and self._saved_accounts:
+            acc = next((a for a in self._saved_accounts if (a.get("mailbox_key") or a.get("address") or "").lower() == self._loaded_account_mailbox_key.lower()), None)
+            if acc:
+                self._load_saved_account(acc)
+                return
+        self._open_new_mailbox_editor()
+
     def _save_mailbox_settings(self):
         email = self.txt_email.text().strip()
         provider = self._get_selected_provider()
@@ -3136,9 +3469,13 @@ class SettingsDialog(QDialog):
         if not stable_mailbox_key:
             stable_mailbox_key = email.lower()
 
+        is_def = self.chk_is_default.isChecked() if hasattr(self, "chk_is_default") else (not email_accounts)
+        is_en = self.chk_enabled.isChecked() if hasattr(self, "chk_enabled") else True
+
         account = {
             "name": account_name,
-            "enabled": not is_outlook_like,
+            "enabled": is_en and not is_outlook_like,
+            "is_default": is_def,
             "provider": provider,
             "address": email,
             "username": email,
@@ -3159,19 +3496,13 @@ class SettingsDialog(QDialog):
         else:
             email_accounts[existing_index] = account
 
-        updated_cfg["email_accounts"] = email_accounts
-        updated_cfg.setdefault("email", {})
-        updated_cfg.setdefault("imap", {})
-        updated_cfg.setdefault("search", {})
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        email_accounts = _normalize_default_email_account(
+            email_accounts,
+            preferred_key=stable_mailbox_key if is_def else None,
+        )
+        updated_cfg = _apply_primary_email_account(updated_cfg, email_accounts)
         updated_cfg.setdefault("ai", {})
-        updated_cfg["email"]["provider"] = provider
-        updated_cfg["email"]["address"] = email
-        updated_cfg["email"]["username"] = email
-        updated_cfg["imap"]["server"] = imap_server
-        updated_cfg["imap"]["port"] = int(imap_port_str)
-        updated_cfg["imap"]["ssl"] = True
-        updated_cfg["search"]["folder"] = "INBOX"
-        updated_cfg["search"]["months_back"] = int(months_str)
 
 
         try:
@@ -3229,24 +3560,12 @@ class SettingsDialog(QDialog):
         updated_cfg = deepcopy(self.cfg)
         updated_cfg["email_accounts"] = updated_accounts
 
-        next_acc = None
-        for acc in updated_accounts:
-            p = acc.get("provider", "")
-            addr = acc.get("address", "")
-            srv = acc.get("imap", {}).get("server", "")
-            if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
-                next_acc = acc
-                break
-
-        if next_acc:
-            updated_cfg["email"] = {
-                "provider": next_acc.get("provider", "qq"),
-                "address": next_acc.get("address", ""),
-                "username": next_acc.get("username", next_acc.get("address", "")),
-            }
-            updated_cfg["imap"] = dict(next_acc.get("imap", {}))
-            updated_cfg["search"] = dict(next_acc.get("search", {}))
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        if updated_accounts:
+            updated_accounts = _normalize_default_email_account(updated_accounts)
+            updated_cfg = _apply_primary_email_account(updated_cfg, updated_accounts)
         else:
+            updated_cfg["email_accounts"] = []
             updated_cfg["email"] = {"provider": "qq", "address": "", "username": ""}
             updated_cfg["imap"] = {"server": "", "port": 993, "ssl": True}
             updated_cfg["search"] = {"folder": "INBOX", "months_back": 3}

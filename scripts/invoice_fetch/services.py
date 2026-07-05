@@ -60,6 +60,7 @@ def scan_email_and_download(
     headed: bool = False,
     retry_failed: bool = False,
     log_callback=None,
+    selected_keys: list[str] | None = None,
 ) -> dict:
     """Public wrapper to scan emails and download invoices safely from GUI/CLI."""
     from .__main__ import _scan_mailboxes_with_db
@@ -84,6 +85,7 @@ def scan_email_and_download(
                 headed=headed,
                 retry_failed=retry_failed,
                 log_callback=log,
+                selected_keys=selected_keys,
             )
 
     except SystemExit as sys_err:

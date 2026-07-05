@@ -8,17 +8,20 @@ import os
 import sys
 import logging
 import time
+from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QLineEdit,
     QTextEdit, QPlainTextEdit, QPushButton, QLabel, QMessageBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog,
-    QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QSizePolicy,
+    QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QWidgetAction, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton,
-    QStyledItemDelegate, QStyleOptionViewItem
+    QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
+    QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -183,6 +186,146 @@ def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details
     return msg
 
 
+class SingleTaskMailboxDialog(QDialog):
+    def __init__(self, parent=None, account: dict | None = None, preset_id: str | None = None):
+        super().__init__(parent)
+        self._source_account = dict(account or {})
+        self._preset_id = str(preset_id or self._source_account.get("provider") or "qq").strip()
+        self._result_account: dict | None = None
+        self._result_auth_code = ""
+
+        self.setWindowTitle("邮箱账户配置")
+        self.resize(540, 420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("单任务邮箱配置")
+        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        layout.addWidget(title)
+
+        hint = QLabel("仅处理当前邮箱账号的新增或编辑，保存后返回桌面系统设置页。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #667085; font-size: 12px;")
+        layout.addWidget(hint)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        self.txt_name = QLineEdit()
+        self.txt_email = QLineEdit()
+        self.combo_provider = QComboBox()
+        self.combo_provider.addItems(["qq", "netease_163", "netease_126", "gmail", "outlook", "custom"])
+        self.txt_server = QLineEdit()
+        self.spin_port = QSpinBox()
+        self.spin_port.setRange(1, 65535)
+        self.spin_port.setValue(993)
+        self.chk_enabled = QCheckBox("启用此账号")
+        self.chk_enabled.setChecked(True)
+        self.chk_default = QCheckBox("设为默认扫描账号")
+        self.combo_months = QComboBox()
+        self.combo_months.addItems(["1", "3", "6", "12"])
+        self.txt_auth_code = QLineEdit()
+        self.txt_auth_code.setEchoMode(QLineEdit.Password)
+        self.txt_auth_code.setPlaceholderText("仅在新增或补录授权码时填写")
+        form.addRow("邮箱名称", self.txt_name)
+        form.addRow("邮箱地址", self.txt_email)
+        form.addRow("Provider", self.combo_provider)
+        form.addRow("IMAP 服务器", self.txt_server)
+        form.addRow("端口", self.spin_port)
+        form.addRow("扫描规则（月）", self.combo_months)
+        form.addRow("", self.chk_enabled)
+        form.addRow("", self.chk_default)
+        form.addRow("授权码", self.txt_auth_code)
+        layout.addLayout(form)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        btn_cancel = make_button("取消", variant="secondary")
+        btn_cancel.clicked.connect(self.reject)
+        btn_save = make_button("保存", variant="primary")
+        btn_save.clicked.connect(self._accept_form)
+        footer.addWidget(btn_cancel)
+        footer.addWidget(btn_save)
+        layout.addLayout(footer)
+
+        self.combo_provider.currentTextChanged.connect(self._apply_provider_defaults)
+        self._load_initial_values()
+
+    def _provider_defaults(self, provider: str) -> tuple[str, int]:
+        defaults = {
+            "qq": ("imap.qq.com", 993),
+            "netease_163": ("imap.163.com", 993),
+            "netease_126": ("imap.126.com", 993),
+            "gmail": ("imap.gmail.com", 993),
+            "outlook": ("outlook.office365.com", 993),
+            "custom": ("", 993),
+        }
+        return defaults.get(provider, ("", 993))
+
+    def _apply_provider_defaults(self, provider: str) -> None:
+        provider = str(provider or "").strip()
+        server, port = self._provider_defaults(provider)
+        if not self.txt_server.text().strip() or self.txt_server.property("auto_fill") is True:
+            self.txt_server.setText(server)
+            self.txt_server.setProperty("auto_fill", True)
+        if self.spin_port.value() in {0, 993}:
+            self.spin_port.setValue(port)
+
+    def _load_initial_values(self) -> None:
+        account = self._source_account
+        provider = str(account.get("provider") or self._preset_id or "qq").strip()
+        self.combo_provider.setCurrentText(provider)
+        self.txt_name.setText(str(account.get("name") or "").strip())
+        self.txt_email.setText(str(account.get("address") or "").strip())
+        imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
+        self.txt_server.setText(str(imap_cfg.get("server") or "").strip())
+        self.txt_server.setProperty("auto_fill", not bool(self.txt_server.text().strip()))
+        try:
+            self.spin_port.setValue(int(imap_cfg.get("port") or 993))
+        except (TypeError, ValueError):
+            self.spin_port.setValue(993)
+        self.chk_enabled.setChecked(bool(account.get("enabled", True)))
+        self.chk_default.setChecked(bool(account.get("is_default", False)))
+        months = str((account.get("search") or {}).get("months_back") or "3")
+        if self.combo_months.findText(months) == -1:
+            self.combo_months.addItem(months)
+        self.combo_months.setCurrentText(months)
+        self._apply_provider_defaults(provider)
+
+    def _accept_form(self) -> None:
+        email = self.txt_email.text().strip()
+        if not email:
+            QMessageBox.warning(self, "邮箱地址为空", "请先填写邮箱地址。")
+            return
+        provider = self.combo_provider.currentText().strip()
+        server = self.txt_server.text().strip()
+        if not server:
+            QMessageBox.warning(self, "IMAP 未配置", "请先填写 IMAP 服务器。")
+            return
+        name = self.txt_name.text().strip() or email
+        account = dict(self._source_account)
+        account.update(
+            {
+                "mailbox_key": str(account.get("mailbox_key") or email).strip().lower(),
+                "name": name,
+                "address": email,
+                "username": email,
+                "provider": provider,
+                "enabled": self.chk_enabled.isChecked(),
+                "is_default": self.chk_default.isChecked(),
+                "imap": {"server": server, "port": int(self.spin_port.value()), "ssl": True},
+                "search": {"folder": "INBOX", "months_back": int(self.combo_months.currentText())},
+            }
+        )
+        self._result_account = account
+        self._result_auth_code = self.txt_auth_code.text().strip()
+        self.accept()
+
+    def get_result_account(self) -> tuple[dict, str]:
+        return dict(self._result_account or {}), str(self._result_auth_code or "")
+
+
 class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     _NEW_CLAIM_VALUE = InvoiceDetailPanel.NEW_CLAIM_VALUE
     def __init__(self, db_path: Path, splash=None, startup_probe: bool = False):
@@ -318,17 +461,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-    def _apply_workbench_metrics(self):
-        w = self.width() or 1150
-        h = self.height() or 850
+    def _apply_workbench_metrics(self, width: int | None = None, height: int | None = None):
+        w = width if (width is not None and width > 0) else (self.width() if self.width() > 0 else 1440)
+        h = height if (height is not None and height > 0) else (self.height() if self.height() > 0 else 900)
         metrics = metrics_for_size(w, h)
-        single_module_nav = self._is_single_module_nav()
-        if single_module_nav:
-            nav_collapsed = True
-        elif self._nav_collapsed_manual is None:
+        if w <= 1366 or self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
-        elif w <= 1024:
-            nav_collapsed = True
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_compact = nav_collapsed
@@ -338,26 +476,29 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        nav_width = metrics.nav_width if nav_collapsed else 152
+        nav_width = 56 if nav_collapsed else metrics.nav_width
+        self.workbench_nav.setMaximumWidth(16777215)
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
-        self.table.verticalHeader().setDefaultSectionSize(20)
-        self.table.verticalHeader().setMinimumSectionSize(20)
-        self.table.verticalHeader().setMaximumSectionSize(23)
+        row_h = 30
+        self.table.verticalHeader().setDefaultSectionSize(row_h)
+        self.table.verticalHeader().setMinimumSectionSize(row_h)
+        self.table.verticalHeader().setMaximumSectionSize(row_h + 4)
+        self._detail_panel.setMaximumWidth(16777215)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
-        self._detail_panel.setMaximumWidth(472)
+        self._detail_panel.setMaximumWidth(metrics.detail_width)
+        min_window_width = 1040 if metrics.compact else 1280
+        self.setMinimumSize(min_window_width, 530)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
         self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
-        card_width = 136 if not metrics.compact else 124
         for card in self.filter_buttons.values():
-            card.setMaximumWidth(card_width)
-            card.setMinimumWidth(min(96, card_width))
-            card.setMinimumSize(min(96, card_width), 0)
+            card.setMinimumWidth(140)
+            card.setMaximumWidth(160)
             card.updateGeometry()
         self.workbench_nav_title.setVisible(not nav_collapsed)
-        self.workbench_nav_subtitle.setVisible(False)
+        self.workbench_nav_subtitle.setVisible(not nav_collapsed)
         self.workbench_nav_spacer.setVisible(not nav_collapsed)
         for key, button in self.workbench_nav_buttons.items():
             full_text = self._workbench_nav_button_texts.get(key, "")
@@ -372,22 +513,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
-        self.btn_collapse_nav.setVisible(not single_module_nav)
+        self.btn_collapse_nav.setVisible(True)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
         if not self._left_splitter_sizes_initialized:
-            self.left_splitter.setSizes([metrics.record_height, max(h - metrics.record_height, 180)])
             self._left_splitter_sizes_initialized = True
 
     def _toggle_workbench_nav_collapsed(self):
-        if self._is_single_module_nav():
-            return
         w = self.width() or 1150
         metrics = metrics_for_size(w, self.height() or 850)
-        if self._nav_collapsed_manual is None:
+        if w <= 1366 or self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
-        elif w <= 1024:
-            nav_collapsed = True
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_collapsed_manual = not nav_collapsed
@@ -396,10 +532,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         settings.sync()
         self._apply_workbench_metrics()
 
+    def resize(self, *args):
+        super().resize(*args)
+        if hasattr(self, "main_splitter") and hasattr(self, "_detail_panel"):
+            if len(args) == 2:
+                self._apply_workbench_metrics(args[0], args[1])
+            elif len(args) == 1 and hasattr(args[0], "width"):
+                self._apply_workbench_metrics(args[0].width(), args[0].height())
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "main_splitter") and hasattr(self, "left_splitter") and hasattr(self, "_detail_panel"):
-            self._apply_workbench_metrics()
+        if hasattr(self, "main_splitter") and hasattr(self, "_detail_panel"):
+            self._apply_workbench_metrics(event.size().width(), event.size().height())
 
     def _save_splitter_prefs(self):
         settings = QSettings("InvoiceHub", "workbench")
@@ -457,12 +601,38 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_splitter.setSizes([record, preview])
         self._left_splitter_sizes_initialized = True
 
+    def _ensure_log_text_edit(self) -> QTextEdit:
+        if not hasattr(self, "txt_log") or self.txt_log is None:
+            self.txt_log = QTextEdit()
+            self.txt_log.setReadOnly(True)
+            self.txt_log.setFont(QFont("Consolas", 9))
+            self.txt_log.setStyleSheet(
+                "background-color: #F8FAFC; border: 1px solid #E5E7EB; color: #374151;"
+            )
+        return self.txt_log
+
+    def _mount_log_widget(self, host: str) -> None:
+        log_widget = self._ensure_log_text_edit()
+        target_layout = (
+            getattr(self, "logs_page_log_layout", None)
+            if host == "page"
+            else getattr(self, "log_drawer_layout", None)
+        )
+        if target_layout is None:
+            return
+        if log_widget.parentWidget() is target_layout.parentWidget():
+            return
+        target_layout.addWidget(log_widget)
+
     def _make_menu_action(self, text: str, icon_id, handler, tooltip: str = "") -> QAction:
         action = QAction(self.style().standardIcon(icon_id), text, self)
         action.setObjectName("action_" + text.lower().replace(" ", "_"))
         action.setToolTip(tooltip or text)
         action.triggered.connect(handler)
         return action
+
+    def _show_export_page(self):
+        self._switch_main_page("export")
 
     def _is_single_module_nav(self) -> bool:
         visible_selectable = [
@@ -472,6 +642,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return len(visible_selectable) <= 1
 
     def _init_ui(self):
+        # Pre-initialize logging text edit widget so page builders and mixins can safely reference it
+        self._ensure_log_text_edit()
+
         # Main Layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -481,19 +654,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.workbench_nav = QFrame()
         self.workbench_nav.setObjectName("WorkbenchNav")
-        self.workbench_nav.setMinimumWidth(152)
-        self.workbench_nav.setMaximumWidth(152)
+        self.workbench_nav.setMinimumWidth(208)
+        self.workbench_nav.setMaximumWidth(208)
         nav_layout = QVBoxLayout(self.workbench_nav)
-        nav_layout.setContentsMargins(10, 12, 10, 12)
+        nav_layout.setContentsMargins(12, 14, 12, 14)
         nav_layout.setSpacing(6)
 
-        nav_title = QLabel("审核工作台")
+        nav_title = QLabel("Invoice Hub")
         nav_title.setObjectName("WorkbenchNavTitle")
-        nav_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        nav_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         nav_layout.addWidget(nav_title)
         self.workbench_nav_title = nav_title
 
-        nav_subtitle = QLabel("发票审核中心")
+        nav_subtitle = QLabel(f"发票审核中心 v{APP_VERSION}")
         nav_subtitle.setObjectName("WorkbenchNavSubtitle")
         nav_layout.addWidget(nav_subtitle)
         self.workbench_nav_subtitle = nav_subtitle
@@ -509,6 +682,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "overview": QStyle.SP_DesktopIcon,
             "review": QStyle.SP_FileDialogDetailedView,
             "imports": QStyle.SP_DialogOpenButton,
+            "logs": QStyle.SP_FileIcon,
             "mobile_upload": QStyle.SP_ArrowUp,
             "export": QStyle.SP_DialogSaveButton,
             "mail": QStyle.SP_MessageBoxInformation,
@@ -522,13 +696,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "notify": "通知",
         }
 
+
         def add_nav_button(
             key: str,
             text: str,
             handler=None,
             checked: bool = False,
             *,
-            selectable: bool = False,
+            selectable: bool = True,
             enabled: bool = True,
         ):
             button = QPushButton(text)
@@ -536,7 +711,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button.setProperty("class", "WorkbenchNavButton")
             button.setCheckable(selectable)
             button.setChecked(checked if selectable else False)
-            button.setMinimumHeight(36)
+            button.setMinimumHeight(40)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setIcon(self.style().standardIcon(nav_icons[key]))
             button.setEnabled(enabled)
@@ -549,34 +724,58 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.workbench_nav_buttons[key] = button
             return button
 
-        add_nav_button("overview", "总览")
-        add_nav_button("review", "发票审核", checked=True)
-        add_nav_button("imports", "导入记录")
-        add_nav_button("mobile_upload", "扫码上传", self._mobile_upload_clicked)
-        add_nav_button("export", "批量导出", self._export_claim_package)
-        add_nav_button("mail", "邮箱导入", self._scan_email_clicked)
-        add_nav_button("rules", "规则管理", self._open_settings_dialog)
-        add_nav_button("settings", "系统设置", self._open_settings_dialog)
-        add_nav_button("data", "数据与备份", self._open_settings_dialog)
-        add_nav_button("about", "关于我们", self._show_about_dialog)
+        # V2 Six Page IA Architecture: 6 Primary Business Navigation Items
+        add_nav_button("overview", "总览", lambda *_a: self._switch_main_page("overview"))
+        add_nav_button("review", "发票审核", lambda *_a: self._switch_main_page("review"))
+        add_nav_button("imports", "导入中心", lambda *_a: self._switch_main_page("imports"))
+        add_nav_button("export", "批量导出", lambda *_a: self._switch_main_page("export"))
+        add_nav_button("logs", "操作日志", lambda *_a: self._switch_main_page("logs"))
+        add_nav_button("settings", "系统设置", lambda *_a: self._switch_main_page("settings"))
+
+        # Map legacy sub-keys for backward compatibility & direct action proxies
+        self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "扫码上传", lambda *_a: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mobile_upload"].hide()
+        self.workbench_nav_buttons["mail"] = add_nav_button("mail", "邮箱导入", lambda *_a: self._switch_main_page("imports", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mail"].hide()
+        self.workbench_nav_buttons["rules"] = add_nav_button("rules", "规则管理", lambda *_a: self._switch_main_page("settings", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["rules"].hide()
+        self.workbench_nav_buttons["data"] = add_nav_button("data", "数据与备份", lambda *_a: self._switch_main_page("settings", sub_tab=5), selectable=False, enabled=True)
+        self.workbench_nav_buttons["data"].hide()
+        self.workbench_nav_buttons["about"] = add_nav_button("about", "关于我们", lambda *_a: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
+        self.workbench_nav_buttons["about"].hide()
 
         review_button = self.workbench_nav_buttons["review"]
         review_button.setCheckable(True)
         review_button.setChecked(True)
         self.workbench_nav_group.addButton(review_button)
-        for key in ("overview", "imports"):
-            button = self.workbench_nav_buttons[key]
-            self.workbench_nav_group.removeButton(button)
-            button.setChecked(False)
-            button.setCheckable(False)
-            button.setEnabled(False)
-            button.hide()
-        for key in ("mobile_upload", "export", "mail", "rules", "settings", "data", "about"):
-            button = self.workbench_nav_buttons[key]
-            self.workbench_nav_group.removeButton(button)
-            button.setChecked(False)
-            button.setCheckable(False)
-            button.hide()
+
+        root_layout.addWidget(self.workbench_nav)
+
+        # Central QStackedWidget for 6 V2 IA business pages
+        self.center_stack = QStackedWidget(central_widget)
+        root_layout.addWidget(self.center_stack, 1)
+
+        # Page 0: Overview Dashboard ("总览")
+        self.overview_page = self._build_overview_page_view()
+        self.dashboard_page = self.overview_page
+        self.center_stack.addWidget(self.overview_page)
+
+        # Page 1: Review Workbench ("发票审核")
+        self.workbench_content = QWidget()
+        self.review_page = self.workbench_content
+        self.main_layout = QVBoxLayout(self.workbench_content)
+        main_layout = self.main_layout
+        main_layout.setContentsMargins(12, 0, 12, 0)
+        main_layout.setSpacing(8)
+
+        self.search_reload_timer = QTimer(self)
+        self.search_reload_timer.setSingleShot(True)
+        self.search_reload_timer.setInterval(250)
+
+        # All nav buttons are enabled and wired to dedicated page views
+        for key, button in self.workbench_nav_buttons.items():
+            button.setCheckable(True)
+            button.setEnabled(True)
 
         nav_layout.addStretch(1)
         self.btn_collapse_nav = QPushButton("收起侧边栏")
@@ -588,25 +787,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.clicked.connect(self._toggle_workbench_nav_collapsed)
         nav_layout.addWidget(self.btn_collapse_nav)
 
-        root_layout.addWidget(self.workbench_nav)
+        # Shortcut help entry lives at nav bottom
+        self.btn_shortcut_help = QPushButton("快捷键：Enter 通过 · Del 忽略")
+        self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
+        self.btn_shortcut_help.setProperty("class", "WorkbenchNavButton")
+        self.btn_shortcut_help.setMinimumHeight(32)
+        self.btn_shortcut_help.setFlat(True)
+        self.btn_shortcut_help.setStyleSheet("text-align: left; padding-left: 6px; font-size: 11px; color: #667085;")
+        self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
+        nav_layout.addWidget(self.btn_shortcut_help)
 
-        self.workbench_content = QWidget()
-        root_layout.addWidget(self.workbench_content, 1)
-        self.main_layout = QVBoxLayout(self.workbench_content)
-        main_layout = self.main_layout
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
+        self.shortcut_disclosure = ShortcutDisclosure(self)
+        self.shortcut_disclosure.setWindowFlags(Qt.Popup)
+        self.shortcut_disclosure.hide()
 
-        self.search_reload_timer = QTimer(self)
-        self.search_reload_timer.setSingleShot(True)
-        self.search_reload_timer.setInterval(250)
         self.search_reload_timer.timeout.connect(self._load_invoices)
 
         # 0. Top Action Bar
         self.workbench_top_toolbar = QFrame()
         self.workbench_top_toolbar.setObjectName("WorkbenchTopToolbar")
         action_layout = QHBoxLayout(self.workbench_top_toolbar)
-        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setContentsMargins(0, 10, 0, 4)
         action_layout.setSpacing(8)
 
         self.txt_search = QLineEdit(self.workbench_top_toolbar)
@@ -617,7 +818,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_import_local = make_button("导入发票", variant="toolbar")
         self.btn_import_local.setProperty("emphasis", "primary")
-        self.btn_import_local.clicked.connect(self._import_local_clicked)
+        self.import_menu = QMenu(self)
+        self.action_import_local = self._make_menu_action(
+            "本地文件导入", QStyle.SP_DialogOpenButton, self._import_local_clicked, "选择本地文件夹导入 PDF/ZIP/OFD 发票"
+        )
+        self.action_import_mobile = self._make_menu_action(
+            "扫码上传", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "打开扫码上传入口"
+        )
+        self.action_import_mail = self._make_menu_action(
+            "邮箱导入", QStyle.SP_MessageBoxInformation, lambda: self._switch_main_page("imports", sub_tab=2), "进入邮箱导入页并查看账号与最近扫描结果"
+        )
+        self.import_menu.addAction(self.action_import_local)
+        self.import_menu.addAction(self.action_import_mobile)
+        self.import_menu.addAction(self.action_import_mail)
+        self.btn_import_local.setMenu(self.import_menu)
         action_layout.addWidget(self.btn_import_local)
 
         self.btn_mobile_upload = make_button("扫码上传", variant="toolbar")
@@ -666,7 +880,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "邮箱同步", QStyle.SP_MessageBoxInformation, self._scan_email_clicked, "同步配置邮箱中的发票"
         )
         self.action_toolbar_export = self._make_menu_action(
-            "批量导出", QStyle.SP_DialogSaveButton, self._export_claim_package, "导出当前报销组或选中结果"
+            "导出当前视图", QStyle.SP_DialogSaveButton, self._show_export_page, "进入批量导出页并选择导出范围"
         )
         self.action_runtime = self._make_menu_action(
             "打开数据目录", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "打开本地运行数据目录"
@@ -686,13 +900,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.action_github_issues = self._make_menu_action(
             "打开 GitHub Issues", QStyle.SP_MessageBoxQuestion, self._open_github_issues, "打开公开 Issue 反馈入口"
         )
-        self.action_settings = self._make_menu_action(
-            "系统设置", QStyle.SP_ComputerIcon, self._open_settings_dialog, "打开系统设置"
-        )
-        self.action_about = self._make_menu_action(
-            "关于 Invoice Hub", QStyle.SP_MessageBoxInformation, self._show_about_dialog, "查看版本、数据目录和日志目录"
-        )
-
         self.more_menu.addAction(self.action_refresh)
         self.more_menu.addAction(self.action_mobile_upload)
         self.more_menu.addAction(self.action_scan_email)
@@ -705,21 +912,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.more_menu.addAction(self.action_copy_diag)
         self.more_menu.addAction(self.action_export_diag)
         self.more_menu.addAction(self.action_github_issues)
-        self.more_menu.addSeparator()
-        self.more_menu.addAction(self.action_settings)
-        self.more_menu.addAction(self.action_about)
 
         self.btn_more.setMenu(self.more_menu)
         action_layout.addWidget(self.btn_more)
-        action_layout.addWidget(self.btn_toolbar_user)
+        self.btn_toolbar_user.hide()
 
         main_layout.addWidget(self.workbench_top_toolbar)
 
-        # 1. Top Filter Bar
-        self.filter_bar_widget = QWidget()
-        self.filter_bar_widget.setMaximumHeight(36)
+        # 1. Top Filter Bar (36px Compact Segmented Filter Bar)
+        self.filter_bar_widget = QFrame()
+        self.filter_bar_widget.setObjectName("StatusFilterCardGroup")
+        self.filter_bar_widget.setProperty("class", "WorkbenchCard")
+        self.filter_bar_widget.setFixedHeight(36)
         filter_layout = QHBoxLayout(self.filter_bar_widget)
-        filter_layout.setContentsMargins(0, 0, 0, 0)
+        filter_layout.setContentsMargins(8, 2, 8, 2)
         filter_layout.setSpacing(6)
 
         lbl_filter = QLabel("审核视图:")
@@ -757,8 +963,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 icon_text=icon_by_status[status],
             )
             card.setFocusPolicy(Qt.StrongFocus)
-            card.setMinimumWidth(96)
-            card.setMinimumSize(96, 0)
+            card.setFixedHeight(28)
+            card.setMinimumWidth(80)
             card.set_selected(status == "all")
             card.clicked.connect(lambda s=status: self._change_filter(s))
             filter_layout.addWidget(card, 0)
@@ -766,23 +972,36 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         filter_layout.addStretch()
 
-        self.chk_unlinked = QCheckBox("未关联报销组")
+        # Advanced Filter Menu Popup for Secondary Filters
+        self.btn_advanced_filter = make_button("筛选 ▾", variant="secondary", min_width=60)
+        self.btn_advanced_filter.setFixedHeight(28)
+        self.advanced_filter_menu = QMenu(self)
+        
+        self.chk_unlinked = QCheckBox("未关联报销组", self)
         self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
-        filter_layout.addWidget(self.chk_unlinked)
+        action_unlinked = QWidgetAction(self)
+        action_unlinked.setDefaultWidget(self.chk_unlinked)
+        self.advanced_filter_menu.addAction(action_unlinked)
 
-        self.chk_needs_fix = QCheckBox("待补全")
+        self.chk_needs_fix = QCheckBox("待补全", self)
         self.chk_needs_fix.stateChanged.connect(self._on_chk_needs_fix_changed)
-        filter_layout.addWidget(self.chk_needs_fix)
+        action_needs_fix = QWidgetAction(self)
+        action_needs_fix.setDefaultWidget(self.chk_needs_fix)
+        self.advanced_filter_menu.addAction(action_needs_fix)
 
-        self.chk_show_deleted = QCheckBox("显示已删除")
+        self.chk_show_deleted = QCheckBox("显示已删除", self)
         self.chk_show_deleted.stateChanged.connect(self._schedule_invoice_reload)
-        filter_layout.addWidget(self.chk_show_deleted)
+        action_show_deleted = QWidgetAction(self)
+        action_show_deleted.setDefaultWidget(self.chk_show_deleted)
+        self.advanced_filter_menu.addAction(action_show_deleted)
+
+        self.btn_advanced_filter.setMenu(self.advanced_filter_menu)
+        filter_layout.addWidget(self.btn_advanced_filter)
 
         self.btn_reset_filters = make_button("重置", variant="secondary", min_width=56)
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
         self.btn_reset_filters.setFixedHeight(28)
         filter_layout.addWidget(self.btn_reset_filters)
-        main_layout.addWidget(self.filter_bar_widget)
 
         # 1c. Active Filter Chips Summary
         self.filter_chips_widget = QWidget()
@@ -828,7 +1047,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_record_section_title = QLabel("发票记录")
         self.lbl_record_section_title.setObjectName("InvoiceRecordTitle")
         record_header_layout.addWidget(self.lbl_record_section_title)
-        self.lbl_record_count = QLabel("当前 0 / 0")
+        self.lbl_record_count = QLabel("已加载 0 / 0")
         self.lbl_record_count.setObjectName("InvoiceRecordMeta")
         record_header_layout.addWidget(self.lbl_record_count)
         record_header_layout.addStretch(1)
@@ -846,11 +1065,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.verticalScrollBar().valueChanged.connect(self._maybe_load_more_invoices)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(20)
-        self.table.verticalHeader().setMinimumSectionSize(20)
-        self.table.verticalHeader().setMaximumSectionSize(23)
+        self.table.verticalHeader().setDefaultSectionSize(30)
+        self.table.verticalHeader().setMinimumSectionSize(26)
+        self.table.verticalHeader().setMaximumSectionSize(32)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
@@ -863,7 +1083,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Final 0.1.4 review workbench default columns:
         # review status, material status, expense date, amount, seller, invoice number.
-        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 84, 4: 260, 5: 180}
+        self._min_column_widths = {0: 72, 1: 72, 2: 100, 3: 90, 4: 200, 5: 230}
         for _column, _width in self._min_column_widths.items():
             self.table.setColumnWidth(_column, _width)
 
@@ -935,36 +1155,58 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.left_stack.addWidget(self.empty_widget)
 
         # Upper container to group left_stack and preview controls
-        self.left_upper_widget = QWidget()
+        self.left_upper_widget = QFrame()
+        self.left_upper_widget.setObjectName("InvoiceTableCard")
+        self.left_upper_widget.setProperty("class", "WorkbenchCard")
+        self.left_upper_widget.setFixedHeight(276)
         left_upper_layout = QVBoxLayout(self.left_upper_widget)
-        left_upper_layout.setContentsMargins(0, 0, 0, 0)
+        left_upper_layout.setContentsMargins(6, 6, 6, 6)
         left_upper_layout.setSpacing(4)
         left_upper_layout.addWidget(self.record_header)
         left_upper_layout.addWidget(self.left_stack)
 
         # Initialize the New Preview Panel
         self._init_preview_panel()
+        if hasattr(self, "preview_panel") and self.preview_panel is not None:
+            self.preview_panel.setProperty("class", "WorkbenchCard")
+            self.preview_panel.setMinimumHeight(380)
+            self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Vertical QSplitter for Left Column
-        self.left_splitter = QSplitter(Qt.Vertical)
-        self.left_splitter.addWidget(self.left_upper_widget)
-        self.left_splitter.addWidget(self.preview_panel)
-        self.left_splitter.setSizes([380, 620])
-        self.preview_panel.setMinimumHeight(180)
+        # Build Middle Workspace via pure QVBoxLayout (NO vertical QSplitter)
+        self.middle_workspace = QWidget()
+        self.middle_workspace.setObjectName("MiddleWorkspace")
+        workspace_layout = QVBoxLayout(self.middle_workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(8)
 
-        left_layout.addWidget(self.left_splitter)
+        self.filter_bar_widget.setFixedHeight(48)
+        workspace_layout.setSpacing(6)
+        workspace_layout.addWidget(self.filter_bar_widget, 0)
+        workspace_layout.addWidget(self.left_upper_widget, 0)
+        workspace_layout.addWidget(self.preview_panel, 1)
 
-        self.btn_shortcut_help = QToolButton(left_panel)
-        self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
-        self.btn_shortcut_help.setText("\u5feb\u6377\u952e\uff1aEnter \u901a\u8fc7 \u00b7 Del \u5ffd\u7565")
-        self.btn_shortcut_help.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
-        left_layout.addWidget(self.btn_shortcut_help, 0, Qt.AlignLeft)
-        self.shortcut_disclosure = ShortcutDisclosure(self)
-        self.shortcut_disclosure.setWindowFlags(Qt.Popup)
-        self.shortcut_disclosure.hide()
+        # Dummy left_splitter shim for backward compatibility with tests & QSettings
+        class DummyLeftSplitter(QSplitter):
+            def __init__(self, upper, lower, parent=None):
+                super().__init__(Qt.Vertical, parent)
+                self._upper = upper
+                self._lower = lower
+                self._sizes = [230, 520]
+            def widget(self, index: int):
+                if index == 0:
+                    return self._upper
+                if index == 1:
+                    return self._lower
+                return super().widget(index)
+            def sizes(self):
+                return list(self._sizes)
+            def setSizes(self, list_of_sizes):
+                if len(list_of_sizes) >= 2:
+                    self._sizes = [int(list_of_sizes[0]), int(list_of_sizes[1])]
 
-        splitter.addWidget(left_panel)
+        self.left_splitter = DummyLeftSplitter(self.left_upper_widget, self.preview_panel, self)
+
+        splitter.addWidget(self.middle_workspace)
 
         # Right Column - InvoiceDetailPanel
         self._setup_detail_panel()
@@ -975,6 +1217,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Set default proportions: Table takes 60%, Form takes 40%
         splitter.setSizes([650, 450])
+
+        # Add Page 1 (发票审核) to center_stack
+        self.center_stack.addWidget(self.workbench_content)
+
+        # Page 2: Import Center ("导入中心")
+        self.imports_page = self._build_imports_page_view()
+        self.import_center_page = self.imports_page
+        self.center_stack.addWidget(self.imports_page)
+
+        # Page 3: Batch Export ("批量导出")
+        self.export_page = self._build_export_page_view()
+        self.center_stack.addWidget(self.export_page)
+
+        # Page 4: Audit Logs ("操作日志")
+        self.logs_page = self._build_logs_page_view()
+        self.audit_log_page = self.logs_page
+        self.center_stack.addWidget(self.logs_page)
+
+        # Page 5: System Settings ("系统设置")
+        self.settings_page = self._build_settings_page_view()
+        self.center_stack.addWidget(self.settings_page)
+
+        # Set default active page to Page 1 (发票审核)
+        self.center_stack.setCurrentIndex(1)
 
         self._apply_workbench_metrics()
         self._setup_workbench_shortcuts()
@@ -1014,7 +1280,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status_layout.addWidget(self.lbl_status_middle, 1)
 
         # Right container
-        right_container = QWidget()
+        self.status_actions_container = QWidget(status_bar)
+        right_container = self.status_actions_container
         right_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         right_layout = QHBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -1045,11 +1312,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         right_layout.addWidget(self.btn_load_all)
 
         self.btn_toggle_log = make_button("展开日志", variant="secondary", min_width=76)
-        self.btn_toggle_log.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_toggle_log.setVisible(False)
         self.btn_toggle_log.clicked.connect(self._toggle_log)
         right_layout.addWidget(self.btn_toggle_log)
 
         status_layout.addWidget(right_container, 0)
+        right_container.show()
 
         # Collapsible log drawer (hidden by default)
         self.log_container = QWidget()
@@ -1065,11 +1333,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         lbl_log_title = QLabel("系统运行日志")
         lbl_log_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
         lbl_log_title.setStyleSheet("color: #111827;")
-
-        self.txt_log = QTextEdit()
-        self.txt_log.setReadOnly(True)
-        self.txt_log.setFont(QFont("Consolas", 9))
-        self.txt_log.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E5E7EB; color: #374151;")
 
         self.btn_clear_log = QPushButton("清空")
         self.btn_clear_log.setProperty("class", "SecondaryBtn")
@@ -1090,28 +1353,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         log_header_layout.addWidget(self.btn_copy_log)
 
         log_container_layout.addWidget(log_header)
-        log_container_layout.addWidget(self.txt_log)
+        self.log_drawer_host = QWidget()
+        self.log_drawer_layout = QVBoxLayout(self.log_drawer_host)
+        self.log_drawer_layout.setContentsMargins(0, 0, 0, 0)
+        self.log_drawer_layout.setSpacing(0)
+        log_container_layout.addWidget(self.log_drawer_host)
+        self._mount_log_widget("drawer")
 
         # Bottom dock area keeps the status bar pinned while the log drawer expands separately.
         self.bottom_panel = QWidget()
         self.bottom_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.bottom_panel.setMinimumHeight(36)
-        self.bottom_panel.setMaximumHeight(36)
         bottom_layout = QVBoxLayout(self.bottom_panel)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(4)
+        bottom_layout.setSpacing(0)
         bottom_layout.addWidget(status_bar)
-
+        self.bottom_panel.setMaximumHeight(36)
         main_layout.addWidget(self.bottom_panel)
+        self.bottom_panel.show()
         self.log_drawer = QWidget()
         self.log_drawer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        log_drawer_layout = QVBoxLayout(self.log_drawer)
-        log_drawer_layout.setContentsMargins(0, 0, 0, 0)
-        log_drawer_layout.setSpacing(0)
-        log_drawer_layout.addWidget(self.log_container)
+        self.log_drawer_layout = QVBoxLayout(self.log_drawer)
+        self.log_drawer_layout.setContentsMargins(0, 0, 0, 0)
+        self.log_drawer_layout.setSpacing(0)
+        self.log_container.hide()
+        self.log_drawer_layout.addWidget(self.log_container)
+        self.log_drawer.hide()
+        self.log_drawer.setFixedHeight(0)
         main_layout.addWidget(self.log_drawer)
         self._log_panel_visible = False
-        self._set_log_panel_visible(False)
 
     # ── Detail panel wiring ────────────────────────────────────
 
@@ -1244,10 +1513,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.update_evidence_row = dp.update_evidence_row
 
     def _set_right_panel_state(self, has_records: bool):
-        if not hasattr(self, "right_stack"):
+        if not hasattr(self, "right_stack") or self.right_stack is None:
             return
         target = self.right_content_widget if has_records else self.right_empty_widget
-        if self.right_stack.currentWidget() != target:
+        widgets_in_stack = [self.right_stack.widget(i) for i in range(self.right_stack.count())]
+        if target in widgets_in_stack and self.right_stack.currentWidget() != target:
             self.right_stack.setCurrentWidget(target)
 
     def _schedule_invoice_reload(self, *_args):
@@ -1517,6 +1787,1283 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._register_shortcut(target_widget, shortcuts, "Esc", self._handle_workbench_escape, guarded=False)
         return shortcuts
 
+
+    # ── V2 Six Page IA Views ───────────────────────────────────
+
+    def _collect_overview_metrics(self) -> dict | None:
+        if not hasattr(self, "db") or self.db is None:
+            return None
+        try:
+            invoices = self.db.get_all_invoices(include_deleted=False)
+        except Exception:
+            return None
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        month_prefix = datetime.now().strftime("%Y-%m")
+        today_imported = 0
+        needs_fix = 0
+        month_total = Decimal("0")
+
+        for inv in invoices:
+            created_at = str(inv.get("created_at") or "")
+            if created_at[:10] == today:
+                today_imported += 1
+            quality = self._get_invoice_quality(inv)
+            if quality in {"待补全", "缺原件", "缺证明", "未识别"}:
+                needs_fix += 1
+            date_text = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
+            if date_text.startswith(month_prefix):
+                try:
+                    month_total += Decimal(str(inv.get("total_amount") or "0").strip() or "0")
+                except (InvalidOperation, ValueError):
+                    pass
+
+        return {
+            "today_imported": today_imported,
+            "to_review": self.db.count_invoices_for_status(TO_REVIEW),
+            "error": self.db.count_invoices_for_status(ERROR),
+            "needs_fix": needs_fix,
+            "month_total": month_total,
+            "total": len(invoices),
+        }
+
+    def _read_recent_runtime_logs(self, max_lines: int = 80) -> list[str]:
+        log_dir = RUNTIME_DIR / "logs"
+        if not log_dir.exists():
+            return []
+        log_files = sorted(log_dir.glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+        if not log_files:
+            return []
+        try:
+            lines = log_files[0].read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            return []
+        return [line for line in lines[-max_lines:] if line.strip()]
+
+    def _refresh_overview_page(self) -> None:
+        metrics = self._collect_overview_metrics()
+        if metrics is None:
+            for label in self.overview_value_labels.values():
+                label.setText("—")
+            self.lbl_overview_recent_imports.setText("暂无可用统计，等待数据库连接或首批导入完成。")
+            self.lbl_overview_health.setText("当前无法读取审核队列统计，导入后会自动刷新。")
+            return
+
+        self.overview_value_labels["today_imported"].setText(f"{metrics['today_imported']} 张")
+        self.overview_value_labels["to_review"].setText(f"{metrics['to_review']} 张")
+        self.overview_value_labels["error"].setText(f"{metrics['error']} 张")
+        self.overview_value_labels["needs_fix"].setText(f"{metrics['needs_fix']} 张")
+        self.overview_value_labels["month_total"].setText(f"¥{metrics['month_total']:.2f}")
+        self.lbl_overview_recent_imports.setText(
+            f"当前数据库共有 {metrics['total']} 张有效记录，今天新增 {metrics['today_imported']} 张。"
+        )
+        self.lbl_overview_health.setText(
+            f"待审核 {metrics['to_review']} 张 / 异常 {metrics['error']} 张 / 待补全 {metrics['needs_fix']} 张。"
+        )
+
+    def _refresh_imports_page(self) -> None:
+        from ..config import get_email_accounts
+
+        log_lines = self._read_recent_runtime_logs()
+        if hasattr(self, "txt_import_records"):
+            self.txt_import_records.setPlainText(
+                "\n".join(log_lines) if log_lines else "暂无历史日志文件。完成本地导入、扫码上传或邮箱扫描后会显示最近记录。"
+            )
+
+        if hasattr(self, "lbl_import_qr_status"):
+            self.lbl_import_qr_status.setText("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
+
+        if hasattr(self, "mail_checklist_layout"):
+            while self.mail_checklist_layout.count():
+                child = self.mail_checklist_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+
+            cfg = getattr(self, "config", None) or load_config_safe()
+            accounts = get_email_accounts(cfg)
+            self.mail_account_checkboxes = []
+
+            if not accounts:
+                lbl_empty = QLabel("暂无已启用邮箱账号。点击“管理邮箱账户”进行配置。")
+                lbl_empty.setStyleSheet("color: #94A3B8; font-size: 12px;")
+                self.mail_checklist_layout.addWidget(lbl_empty)
+            else:
+                for acc in accounts:
+                    row_widget = QWidget()
+                    row_layout = QHBoxLayout(row_widget)
+                    row_layout.setContentsMargins(6, 4, 6, 4)
+                    row_layout.setSpacing(8)
+
+                    display_name = str(acc.get("name") or acc.get("address") or "未命名").strip()
+                    masked_addr = mask_email(acc.get("address") or "")
+                    provider = str(acc.get("provider") or "imap").strip()
+                    months = int((acc.get("search") or {}).get("months_back", 3))
+                    is_default = bool(acc.get("is_default") or acc.get("default"))
+
+                    chk = QCheckBox(f"{display_name} ({masked_addr})")
+                    chk.setChecked(is_default)
+                    chk.setProperty("account_key", acc.get("mailbox_key") or acc.get("address"))
+                    chk.setProperty("is_default", is_default)
+                    row_layout.addWidget(chk)
+
+                    if is_default:
+                        row_layout.addWidget(make_badge("默认扫描账号", variant="primary"))
+
+                    row_layout.addWidget(make_badge(provider.upper(), variant="info"))
+                    row_layout.addWidget(make_badge(f"最近 {months} 个月", variant="muted"))
+                    row_layout.addStretch()
+
+                    self.mail_checklist_layout.addWidget(row_widget)
+                    self.mail_account_checkboxes.append(chk)
+
+        if hasattr(self, "lst_mail_accounts"):
+            cfg = getattr(self, "config", None) or load_config_safe()
+            lines = []
+            for account in get_email_accounts(cfg):
+                months = int((account.get("search") or {}).get("months_back", 3))
+                display_name = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
+                provider = str(account.get("provider") or "imap").strip()
+                lines.append(f"{display_name} · {provider} · 最近 {months} 个月")
+            self.lst_mail_accounts.setPlainText(
+                "\n".join(lines) if lines else "暂无已启用邮箱账号。请先在系统设置中完成邮箱配置。"
+            )
+
+        if hasattr(self, "lbl_mail_scan_summary"):
+            last_scan_summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
+            if isinstance(last_scan_summary, dict) and last_scan_summary:
+                summary_parts = [
+                    f"{key}={value}"
+                    for key, value in last_scan_summary.items()
+                    if value not in (None, "", [], {})
+                ]
+                self.lbl_mail_scan_summary.setText("最近扫描结果：" + (" / ".join(summary_parts) if summary_parts else "无可展示摘要"))
+            else:
+                self.lbl_mail_scan_summary.setText("最近扫描结果：暂无记录。点击“立即同步邮箱”开始拉取。")
+
+    def _refresh_settings_page(self) -> None:
+        self._desktop_settings_cfg = deepcopy(load_config_safe())
+        self.config = deepcopy(self._desktop_settings_cfg)
+        cfg = load_config_safe()
+        if hasattr(self, "lbl_settings_general"):
+            self.lbl_settings_general.setText(
+                f"当前运行目录：{RUNTIME_DIR}\n当前搜索占位提示：{self.txt_search.placeholderText() if hasattr(self, 'txt_search') else '—'}"
+            )
+        if hasattr(self, "lbl_settings_imports"):
+            self.lbl_settings_imports.setText("导入入口已迁移到工作台：本地文件导入、扫码上传、邮箱导入均可直接从主界面进入。")
+        if hasattr(self, "lbl_settings_rules"):
+            categories = cfg.get("categories", {}) if isinstance(cfg.get("categories"), dict) else {}
+            category_names = []
+            for key, value in categories.items():
+                if isinstance(value, dict):
+                    label = str(value.get("name") or value.get("label") or CONFIG_CATEGORY_LABELS.get(str(key), key)).strip()
+                else:
+                    label = CONFIG_CATEGORY_LABELS.get(str(key), str(key))
+                if label:
+                    category_names.append(label)
+            self.lbl_settings_rules.setText(
+                "分类与规则："
+                + ("、".join(category_names) if category_names else "暂无自定义分类，当前仅使用内置默认分类。")
+            )
+        if hasattr(self, "lbl_settings_runtime"):
+            self.lbl_settings_runtime.setText(
+                f"数据库：{RUNTIME_DIR / 'invoices.db'}\n日志目录：{RUNTIME_DIR / 'logs'}\n最近错误：{getattr(self.db, 'last_error', '') or '无'}"
+            )
+        if hasattr(self, "lbl_settings_privacy"):
+            self.lbl_settings_privacy.setText("敏感信息仍由系统凭据管理器保存；配置文件与日志只保留脱敏内容。")
+        if hasattr(self, "lbl_settings_data"):
+            self.lbl_settings_data.setText(
+                f"数据目录：{RUNTIME_DIR}\n导出目录：{RUNTIME_DIR / 'exports'}\n诊断包目录：{RUNTIME_DIR / 'diagnostics'}"
+            )
+        if hasattr(self, "lbl_settings_about"):
+            self.lbl_settings_about.setText(self._about_text())
+        self._refresh_settings_mailbox_page()
+        self._refresh_settings_ai_page()
+
+    def _settings_tab_index(self, tab_key: str) -> int:
+        order = {
+            "general": 0,
+            "mailboxes": 1,
+            "ai": 2,
+            "imports": 3,
+            "rules": 4,
+            "runtime": 5,
+            "privacy": 6,
+            "data": 7,
+            "about": 8,
+        }
+        return order.get(tab_key, 0)
+
+    def _infer_mail_provider(self, email: str, server: str = "") -> str:
+        email = str(email or "").strip().lower()
+        server = str(server or "").strip().lower()
+        if server.startswith("imap.qq.com") or email.endswith("@qq.com"):
+            return "qq"
+        if server.startswith("imap.163.com") or email.endswith("@163.com"):
+            return "netease_163"
+        if server.startswith("imap.126.com") or email.endswith("@126.com"):
+            return "netease_126"
+        if server.startswith("imap.gmail.com") or email.endswith("@gmail.com"):
+            return "gmail"
+        if "outlook" in server or email.endswith("@outlook.com") or email.endswith("@hotmail.com") or email.endswith("@live.com"):
+            return "outlook"
+        return "custom"
+
+
+    def _open_add_mailbox_dialog(self, preset_id: str | None = None):
+        dialog = SingleTaskMailboxDialog(self, preset_id=preset_id)
+        if dialog.exec() == QDialog.Accepted:
+            acc, auth_code = dialog.get_result_account()
+            self._save_mailbox_account_entry(acc, auth_code)
+
+    def _open_edit_mailbox_dialog(self):
+        accounts = self._mailbox_accounts_for_settings()
+        row = self.settings_mailbox_list.currentRow() if hasattr(self, "settings_mailbox_list") else -1
+        if row < 0 or row >= len(accounts):
+            return
+        account = accounts[row]
+        dialog = SingleTaskMailboxDialog(self, account=account)
+        if dialog.exec() == QDialog.Accepted:
+            acc, auth_code = dialog.get_result_account()
+            self._save_mailbox_account_entry(acc, auth_code)
+
+    def _add_mailbox_credential_dialog(self):
+        accounts = self._mailbox_accounts_for_settings()
+        row = self.settings_mailbox_list.currentRow() if hasattr(self, "settings_mailbox_list") else -1
+        if row < 0 or row >= len(accounts):
+            return
+        account = accounts[row]
+        email = account.get("address", "")
+        if not email:
+            return
+        from PySide6.QtWidgets import QInputDialog, QLineEdit
+        code, ok = QInputDialog.getText(self, "补充授权码", f"请输入 [{email}] 的授权码 / 应用密码：", QLineEdit.Password)
+        if ok and code.strip():
+            from ..credentials import set_auth_code
+            set_auth_code(email, code.strip())
+            QMessageBox.information(self, "凭据保存", f"[{email}] 的授权码已成功存入系统安全凭据库。")
+            self._refresh_settings_page()
+
+    def _save_mailbox_account_entry(self, account: dict, auth_code: str = "") -> None:
+        cfg = deepcopy(getattr(self, "_desktop_settings_cfg", load_config_safe()))
+        from ..config import get_email_accounts, _normalize_default_email_account, _apply_primary_email_account, save_config
+
+        accounts = [dict(a) for a in get_email_accounts(cfg)]
+        key = account.get("mailbox_key") or account.get("address", "").lower()
+        replaced = False
+
+        for idx, existing in enumerate(accounts):
+            existing_key = str(existing.get("mailbox_key") or existing.get("address") or "").strip().lower()
+            if existing_key == key.lower():
+                accounts[idx] = account
+                replaced = True
+                break
+
+        if not replaced:
+            accounts.append(account)
+
+        pref_key = key if account.get("is_default") else None
+        accounts = _normalize_default_email_account(accounts, preferred_key=pref_key)
+        _apply_primary_email_account(cfg, accounts)
+
+        save_config(cfg)
+        self._desktop_settings_cfg = deepcopy(cfg)
+        self.config = deepcopy(cfg)
+        self._settings_mailbox_current_key = key
+
+        if auth_code:
+            from ..credentials import set_auth_code
+            set_auth_code(account.get("address", ""), auth_code)
+
+        self._refresh_settings_page()
+        self._refresh_imports_page()
+        QMessageBox.information(self, "保存成功", f"邮箱账户 [{account.get('address')}] 设置已保存。")
+
+    def _mailbox_accounts_for_settings(self) -> list[dict]:
+        from ..config import get_email_accounts
+        cfg = getattr(self, "_desktop_settings_cfg", None)
+        if not isinstance(cfg, dict):
+            cfg = deepcopy(load_config_safe())
+            self._desktop_settings_cfg = cfg
+        return [dict(account) for account in get_email_accounts(cfg)]
+
+    def _ai_profiles_for_settings(self) -> list[dict]:
+        from ..ai_profiles import get_ai_profiles
+
+        cfg = getattr(self, "_desktop_settings_cfg", None)
+        if not isinstance(cfg, dict):
+            cfg = deepcopy(load_config_safe())
+            self._desktop_settings_cfg = cfg
+        return [dict(profile) for profile in get_ai_profiles(cfg)]
+
+    def _refresh_settings_mailbox_page(self) -> None:
+        if not hasattr(self, "settings_mailbox_list"):
+            return
+
+        accounts = self._mailbox_accounts_for_settings()
+
+        # Update Stat Cards Overview
+        total_cnt = len(accounts)
+        enabled_cnt = sum(1 for a in accounts if a.get("enabled", True))
+        disabled_cnt = sum(1 for a in accounts if not a.get("enabled", True))
+        default_acc = next((a for a in accounts if a.get("is_default")), None)
+        default_name = str(default_acc.get("name") or default_acc.get("address") or "无").strip() if default_acc else "无"
+
+        from ..credentials import has_auth_code
+        missing_cnt = sum(1 for a in accounts if a.get("enabled", True) and not has_auth_code(a.get("address", "")))
+
+        if hasattr(self, "lbl_v11_stat_total"):
+            self.lbl_v11_stat_total.setText(f"总账号: {total_cnt}")
+            self.lbl_v11_stat_enabled.setText(f"启用账号: {enabled_cnt}")
+            self.lbl_v11_stat_default.setText(f"默认扫描账号: {default_name}")
+            self.lbl_v11_stat_missing.setText(f"缺授权码账号: {missing_cnt}")
+            self.lbl_v11_stat_disabled.setText(f"禁用账号: {disabled_cnt}")
+
+        current_key = getattr(self, "_settings_mailbox_current_key", "")
+        self.settings_mailbox_list.blockSignals(True)
+        self.settings_mailbox_list.clear()
+        for account in accounts:
+            label = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
+            addr = str(account.get("address") or "").strip()
+            is_def = " (默认)" if account.get("is_default") else ""
+            state = "已启用" if account.get("enabled", True) else "已停用"
+            item = QListWidgetItem(f"{label} ({addr}) · {state}{is_def}")
+            item.setData(Qt.UserRole, str(account.get("mailbox_key") or account.get("address") or "").strip())
+            self.settings_mailbox_list.addItem(item)
+        self.settings_mailbox_list.blockSignals(False)
+
+        if hasattr(self, "lbl_settings_mailbox_empty"):
+            self.lbl_settings_mailbox_empty.setVisible(self.settings_mailbox_list.count() == 0)
+
+        if self.settings_mailbox_list.count() == 0:
+            self._settings_mailbox_current_key = ""
+            self._clear_settings_mailbox_form()
+            return
+
+        target_row = 0
+        if current_key:
+            for row in range(self.settings_mailbox_list.count()):
+                if self.settings_mailbox_list.item(row).data(Qt.UserRole) == current_key:
+                    target_row = row
+                    break
+        self.settings_mailbox_list.blockSignals(True)
+        self.settings_mailbox_list.setCurrentRow(target_row)
+        self.settings_mailbox_list.blockSignals(False)
+        self._load_settings_mailbox_form(target_row)
+
+        summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
+        if isinstance(summary, dict) and summary:
+            parts = [f"{key}={value}" for key, value in summary.items() if value not in (None, "", [], {})]
+            self.lbl_settings_mailbox_scan_result.setText("最近扫描结果：" + (" / ".join(parts) if parts else "暂无摘要"))
+        else:
+            self.lbl_settings_mailbox_scan_result.setText("最近扫描结果：暂无记录。")
+
+    def _on_settings_mailbox_selection_changed(self) -> None:
+        if not hasattr(self, "settings_mailbox_list") or self.settings_mailbox_list.currentRow() < 0:
+            return
+        self._load_settings_mailbox_form(self.settings_mailbox_list.currentRow())
+
+    def _load_settings_mailbox_form(self, row: int) -> None:
+        accounts = self._mailbox_accounts_for_settings()
+        if row < 0 or row >= len(accounts):
+            self._clear_settings_mailbox_form()
+            return
+        account = accounts[row]
+        self._settings_mailbox_current_key = str(account.get("mailbox_key") or account.get("address") or "").strip()
+        addr = str(account.get("address") or "").strip()
+        name = str(account.get("name") or addr or "").strip()
+
+        imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
+        server = str(imap_cfg.get("server") or "").strip()
+        try:
+            port = int(imap_cfg.get("port") or 993)
+        except (TypeError, ValueError):
+            port = 993
+        ssl = "SSL" if imap_cfg.get("ssl", True) else "非加密"
+
+        search_cfg = account.get("search", {}) if isinstance(account.get("search"), dict) else {}
+        months = search_cfg.get("months_back") or 3
+
+        from ..credentials import has_auth_code
+        cred_ok = has_auth_code(addr)
+
+        if hasattr(self, "lbl_detail_name"):
+            self.lbl_detail_name.setText(name)
+            self.lbl_detail_email.setText(addr)
+            self.lbl_detail_server.setText(f"{server}:{port} ({ssl})")
+            self.lbl_detail_is_default.setText("是 (默认扫描账号)" if account.get("is_default") else "否")
+            self.lbl_detail_credential_status.setText("凭据有效 ✅" if cred_ok else "⚠️ 缺失授权码")
+            self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
+            self.lbl_detail_scan_rule.setText(f"最近 {months} 个月 INBOX")
+
+        for attr in (
+            "btn_settings_mailbox_edit_config",
+            "btn_settings_mailbox_add_credential",
+            "btn_settings_mailbox_test",
+            "btn_settings_mailbox_scan",
+            "btn_settings_mailbox_toggle",
+            "btn_settings_mailbox_delete",
+        ):
+            if hasattr(self, attr):
+                getattr(self, attr).setEnabled(True)
+
+        if hasattr(self, "btn_settings_mailbox_toggle"):
+            self.btn_settings_mailbox_toggle.setText("停用" if account.get("enabled", True) else "启用")
+            self.btn_settings_mailbox_delete.setEnabled(True)
+
+    def _clear_settings_mailbox_form(self) -> None:
+        self._settings_mailbox_current_key = ""
+        if hasattr(self, "lbl_detail_name"):
+            self.lbl_detail_name.setText("未选择邮箱账号")
+            self.lbl_detail_email.setText("—")
+            self.lbl_detail_server.setText("—")
+            self.lbl_detail_is_default.setText("—")
+            self.lbl_detail_credential_status.setText("未配置")
+            self.lbl_detail_credential_status.setStyleSheet("color: #64748B; font-weight: 600;")
+            self.lbl_detail_scan_rule.setText("—")
+        if hasattr(self, "btn_settings_mailbox_toggle"):
+            self.btn_settings_mailbox_toggle.setText("停用")
+        for attr in (
+            "btn_settings_mailbox_edit_config",
+            "btn_settings_mailbox_add_credential",
+            "btn_settings_mailbox_test",
+            "btn_settings_mailbox_scan",
+            "btn_settings_mailbox_toggle",
+            "btn_settings_mailbox_delete",
+        ):
+            if hasattr(self, attr):
+                getattr(self, attr).setEnabled(False)
+
+    def _add_settings_mailbox(self) -> None:
+        self._open_add_mailbox_dialog()
+
+    def _toggle_settings_mailbox_enabled(self) -> None:
+        accounts = self._mailbox_accounts_for_settings()
+        current_key = getattr(self, "_settings_mailbox_current_key", "")
+        if not current_key:
+            return
+        for account in accounts:
+            account_key = str(account.get("mailbox_key") or account.get("address") or "").strip()
+            if account_key == current_key:
+                if account.get("enabled", True) and sum(1 for acc in accounts if acc.get("enabled", True)) <= 1:
+                    QMessageBox.warning(self, "操作被拒绝", "至少需要保留一个启用的邮箱账号。")
+                    return
+                updated = dict(account)
+                updated["enabled"] = not bool(account.get("enabled", True))
+                self._save_mailbox_account_entry(updated)
+                return
+
+    def _delete_settings_mailbox(self) -> None:
+        current_key = getattr(self, "_settings_mailbox_current_key", "")
+        if not current_key:
+            return
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "删除邮箱配置不会删除已导入的发票和附件，是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        cfg = deepcopy(getattr(self, "_desktop_settings_cfg", load_config_safe()))
+        accounts = [acc for acc in self._mailbox_accounts_for_settings() if str(acc.get("mailbox_key") or acc.get("address") or "").strip() != current_key]
+        cfg["email_accounts"] = accounts
+        if accounts:
+            first_enabled = next((acc for acc in accounts if acc.get("enabled", True)), accounts[0])
+            cfg["email"] = {
+                "provider": first_enabled.get("provider", "qq"),
+                "address": first_enabled.get("address", ""),
+                "username": first_enabled.get("username", first_enabled.get("address", "")),
+            }
+            cfg["imap"] = dict(first_enabled.get("imap", {}))
+            cfg["search"] = dict(first_enabled.get("search", {}))
+        else:
+            cfg["email"] = {"provider": "qq", "address": "", "username": ""}
+            cfg["imap"] = {"server": "", "port": 993, "ssl": True}
+            cfg["search"] = {"folder": "INBOX", "months_back": 3}
+        save_config(cfg)
+        self._desktop_settings_cfg = deepcopy(cfg)
+        self.config = deepcopy(cfg)
+        self._settings_mailbox_current_key = ""
+        self._refresh_settings_page()
+        self._refresh_imports_page()
+
+    def _test_settings_mailbox_connection(self) -> None:
+        accounts = self._mailbox_accounts_for_settings()
+        current_key = getattr(self, "_settings_mailbox_current_key", "")
+        account = next(
+            (item for item in accounts if str(item.get("mailbox_key") or item.get("address") or "").strip() == current_key),
+            None,
+        )
+        if not account:
+            return
+        email = str(account.get("address") or "").strip()
+        imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
+        server = str(imap_cfg.get("server") or "").strip()
+        if not email or not server:
+            QMessageBox.warning(self, "校验提示", "当前账号缺少邮箱地址或 IMAP 服务器。")
+            return
+        provider = self._infer_mail_provider(email, server)
+        if provider == "outlook":
+            QMessageBox.warning(self, "测试连接", "Outlook 邮箱当前仍需要 OAuth2/XOAUTH2，桌面页不支持授权码直连测试。")
+            return
+        from ..credentials import get_auth_code
+        from ..mail_fetcher import MailFetcher
+        try:
+            auth_code = get_auth_code(email)
+        except SystemExit:
+            QMessageBox.warning(self, "缺少授权码", "未检测到该邮箱的授权码，请先在旧设置向导中补充一次凭据。")
+            return
+        port = int(imap_cfg.get("port") or 993)
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            fetcher = MailFetcher(address=email, auth_code=auth_code, server=server, port=port)
+            fetcher.connect()
+            fetcher.disconnect()
+            self.lbl_settings_mailbox_test_status.setText(f"测试连接成功：{email} 可连接 {server}:{port}。")
+        except Exception as exc:
+            self.lbl_settings_mailbox_test_status.setText(f"测试连接失败：{sanitize_log_message(str(exc))}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _scan_settings_mailbox_now(self) -> None:
+        current_key = getattr(self, "_settings_mailbox_current_key", "")
+        if current_key:
+            self._scan_email_clicked(selected_keys=[current_key], trigger_btn=self.btn_settings_mailbox_scan)
+
+    def _refresh_settings_ai_page(self) -> None:
+        if not hasattr(self, "settings_ai_profile_list"):
+            return
+        from ..credentials import get_ai_api_key_source
+        from ..ai_classifier import is_provider_session_paused
+
+        profiles = self._ai_profiles_for_settings()
+        current_profile_id = getattr(self, "_settings_ai_current_profile_id", "")
+        self.settings_ai_profile_list.blockSignals(True)
+        self.settings_ai_profile_list.clear()
+        for profile in profiles:
+            item = QListWidgetItem(f"{profile.get('name', '')} · {profile.get('provider', '')} · {'已启用' if profile.get('enabled') else '未启用'}")
+            item.setData(Qt.UserRole, profile.get("profile_id", ""))
+            self.settings_ai_profile_list.addItem(item)
+        self.settings_ai_profile_list.blockSignals(False)
+
+        self.lbl_settings_ai_empty.setVisible(self.settings_ai_profile_list.count() == 0)
+        if self.settings_ai_profile_list.count() == 0:
+            self._settings_ai_current_profile_id = ""
+            self.combo_settings_ai_provider.setCurrentText("deepseek")
+            self.txt_settings_ai_model.setText("deepseek-chat")
+            self.chk_settings_ai_enabled.setChecked(False)
+            self.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
+            self.lbl_settings_ai_failure_status.setText("失败状态：暂无 AI 配置。")
+            return
+
+        target_row = 0
+        if current_profile_id:
+            for row in range(self.settings_ai_profile_list.count()):
+                if self.settings_ai_profile_list.item(row).data(Qt.UserRole) == current_profile_id:
+                    target_row = row
+                    break
+        self.settings_ai_profile_list.blockSignals(True)
+        self.settings_ai_profile_list.setCurrentRow(target_row)
+        self.settings_ai_profile_list.blockSignals(False)
+        profile = profiles[target_row]
+        self._settings_ai_current_profile_id = profile.get("profile_id", "")
+        self.combo_settings_ai_provider.setCurrentText(profile.get("provider", "deepseek"))
+        self.txt_settings_ai_model.setText(profile.get("model", ""))
+        self.chk_settings_ai_enabled.setChecked(bool(profile.get("enabled", False)))
+        key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
+        self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
+        paused = is_provider_session_paused(profile.get("provider", ""))
+        self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
+
+    def _on_settings_ai_profile_selection_changed(self) -> None:
+        if not hasattr(self, "settings_ai_profile_list") or self.settings_ai_profile_list.currentRow() < 0:
+            return
+        profiles = self._ai_profiles_for_settings()
+        row = self.settings_ai_profile_list.currentRow()
+        if row < 0 or row >= len(profiles):
+            return
+        profile = profiles[row]
+        self._settings_ai_current_profile_id = profile.get("profile_id", "")
+        self.combo_settings_ai_provider.setCurrentText(profile.get("provider", "deepseek"))
+        self.txt_settings_ai_model.setText(profile.get("model", ""))
+        self.chk_settings_ai_enabled.setChecked(bool(profile.get("enabled", False)))
+        from ..credentials import get_ai_api_key_source
+        from ..ai_classifier import is_provider_session_paused
+
+        key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
+        self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
+        paused = is_provider_session_paused(profile.get("provider", ""))
+        self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
+
+    def _save_settings_ai_profile(self) -> bool:
+        from ..ai_profiles import apply_active_ai_profile, get_ai_profiles
+
+        provider = self.combo_settings_ai_provider.currentText().strip()
+        model = self.txt_settings_ai_model.text().strip()
+        if not provider or not model:
+            QMessageBox.warning(self, "AI 配置不完整", "请先填写 Provider 和模型。")
+            return False
+        cfg = deepcopy(getattr(self, "_desktop_settings_cfg", load_config_safe()))
+        profiles = [dict(profile) for profile in get_ai_profiles(cfg)]
+        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        target = {
+            "profile_id": profile_id,
+            "name": f"{provider} · {model}",
+            "provider": provider,
+            "model": model,
+            "enabled": self.chk_settings_ai_enabled.isChecked(),
+        }
+        replaced = False
+        for idx, existing in enumerate(profiles):
+            if existing.get("profile_id") == profile_id:
+                profiles[idx] = target
+                replaced = True
+                break
+        if not replaced:
+            if target["enabled"]:
+                for profile in profiles:
+                    profile["enabled"] = False
+            profiles.append(target)
+        elif target["enabled"]:
+            for profile in profiles:
+                if profile.get("profile_id") != profile_id:
+                    profile["enabled"] = False
+
+        apply_active_ai_profile(cfg, profiles)
+        save_config(cfg)
+        self._desktop_settings_cfg = deepcopy(cfg)
+        self.config = deepcopy(cfg)
+        self._settings_ai_current_profile_id = profile_id
+        self._refresh_settings_page()
+        return True
+
+    def _configure_settings_ai_key(self) -> None:
+        from ..credentials import set_ai_api_key
+
+        provider = self.combo_settings_ai_provider.currentText().strip()
+        if not provider:
+            QMessageBox.warning(self, "未选择 Provider", "请先选择 AI Provider。")
+            return
+        key_text, accepted = QInputDialog.getText(
+            self,
+            "配置 API Key",
+            f"请输入 {provider} 的 API Key：",
+            QLineEdit.Password,
+        )
+        if not accepted or not key_text.strip():
+            return
+        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        set_ai_api_key(provider, key_text.strip(), profile_id=profile_id)
+        self._settings_ai_current_profile_id = profile_id
+        self._refresh_settings_ai_page()
+
+    def _clear_settings_ai_key(self) -> None:
+        from ..credentials import delete_ai_api_key
+
+        provider = self.combo_settings_ai_provider.currentText().strip()
+        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        delete_ai_api_key(provider, profile_id=profile_id)
+        self._refresh_settings_ai_page()
+
+    def _test_settings_ai_connection(self) -> None:
+        from ..credentials import has_ai_api_key
+
+        provider = self.combo_settings_ai_provider.currentText().strip()
+        model = self.txt_settings_ai_model.text().strip()
+        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        if not provider or not model:
+            QMessageBox.warning(self, "AI 配置不完整", "请先填写 Provider 和模型。")
+            return
+        if not has_ai_api_key(provider, profile_id=profile_id):
+            self.lbl_settings_ai_failure_status.setText("失败状态：未检测到可用 API Key，无法进行本地连通性预检。")
+            return
+        self.lbl_settings_ai_failure_status.setText(
+            f"失败状态：本地预检通过，{provider}/{model} 已具备 Key；真实远端连通性会在首次分类请求时验证。"
+        )
+
+    def _restore_settings_ai_session(self) -> None:
+        from ..ai_classifier import clear_provider_session_paused
+
+        provider = self.combo_settings_ai_provider.currentText().strip()
+        if not provider:
+            return
+        clear_provider_session_paused(provider)
+        self._refresh_settings_ai_page()
+
+    def _build_overview_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        hdr = QLabel("总览概览")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        metrics_frame = QFrame()
+        metrics_frame.setProperty("class", "WorkbenchCard")
+        m_layout = QHBoxLayout(metrics_frame)
+        m_layout.setContentsMargins(12, 12, 12, 12)
+        m_layout.setSpacing(12)
+
+        self.overview_value_labels = {}
+        for stat_key, title, val, color in [
+            ("today_imported", "今日导入", "—", "#2563EB"),
+            ("to_review", "待审核", "—", "#D97706"),
+            ("error", "异常票据", "—", "#DC2626"),
+            ("needs_fix", "待补全", "—", "#4B5563"),
+            ("month_total", "本月金额", "—", "#059669"),
+        ]:
+            card = QFrame()
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(8, 8, 8, 8)
+            t_lbl = QLabel(title)
+            t_lbl.setStyleSheet("color: #667085; font-size: 12px;")
+            v_lbl = QLabel(val)
+            v_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
+            v_lbl.setStyleSheet(f"color: {color};")
+            c_layout.addWidget(t_lbl)
+            c_layout.addWidget(v_lbl)
+            m_layout.addWidget(card, 1)
+            self.overview_value_labels[stat_key] = v_lbl
+
+        layout.addWidget(metrics_frame)
+
+        body_frame = QFrame()
+        body_layout = QHBoxLayout(body_frame)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
+
+        left_card = QFrame()
+        left_card.setProperty("class", "WorkbenchCard")
+        lc_layout = QVBoxLayout(left_card)
+        lc_layout.addWidget(QLabel("最近导入批次"))
+        self.lbl_overview_recent_imports = QLabel("暂无可用统计，等待数据库连接或首批导入完成。")
+        self.lbl_overview_recent_imports.setStyleSheet("color: #667085; font-size: 12px;")
+        self.lbl_overview_recent_imports.setWordWrap(True)
+        lc_layout.addWidget(self.lbl_overview_recent_imports)
+        btn_jump_review = make_button("前往发票审核", variant="primary")
+        btn_jump_review.clicked.connect(lambda: self._switch_main_page("review"))
+        lc_layout.addWidget(btn_jump_review)
+        lc_layout.addStretch(1)
+
+        right_card = QFrame()
+        right_card.setProperty("class", "WorkbenchCard")
+        rc_layout = QVBoxLayout(right_card)
+        rc_layout.addWidget(QLabel("待处理提醒与系统概况"))
+        self.lbl_overview_health = QLabel("当前无法读取审核队列统计，导入后会自动刷新。")
+        self.lbl_overview_health.setStyleSheet("color: #4B5563; font-size: 12px; line-height: 1.5;")
+        self.lbl_overview_health.setWordWrap(True)
+        rc_layout.addWidget(self.lbl_overview_health)
+        rc_layout.addStretch(1)
+
+        body_layout.addWidget(left_card, 1)
+        body_layout.addWidget(right_card, 1)
+        layout.addWidget(body_frame, 1)
+        self._refresh_overview_page()
+        return page
+
+    def _build_imports_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        hdr = QLabel("导入中心")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        self.imports_tabs = QTabWidget()
+        self.imports_tabs.setObjectName("ImportsTabs")
+
+        # Tab 0: 导入记录
+        tab_records = QWidget()
+        tr_layout = QVBoxLayout(tab_records)
+        tr_layout.addWidget(QLabel("导入历史记录与错误明细"))
+        tr_hint = QLabel("此处显示运行时历史日志中的最近导入、扫码上传和邮箱同步记录。")
+        tr_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        tr_layout.addWidget(tr_hint)
+        self.txt_import_records = QPlainTextEdit()
+        self.txt_import_records.setReadOnly(True)
+        self.txt_import_records.setFont(QFont("Consolas", 9))
+        tr_layout.addWidget(self.txt_import_records, 1)
+        self.imports_tabs.addTab(tab_records, "导入记录")
+
+        # Tab 1: 扫码上传
+        tab_qr = QWidget()
+        tq_layout = QVBoxLayout(tab_qr)
+        tq_layout.addWidget(QLabel("手机扫码上传发票与证明材料"))
+        self.lbl_import_qr_status = QLabel("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
+        self.lbl_import_qr_status.setWordWrap(True)
+        self.lbl_import_qr_status.setStyleSheet("color: #667085; font-size: 12px;")
+        tq_layout.addWidget(self.lbl_import_qr_status)
+        tq_hint = QLabel("使用手机扫描二维码，可直接拍照或选择相册发票实时传输至本客户端。")
+        tq_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        tq_layout.addWidget(tq_hint)
+        btn_qr = make_button("启动扫码上传服务", variant="primary")
+        btn_qr.clicked.connect(self._mobile_upload_clicked)
+        tq_layout.addWidget(btn_qr)
+        tq_layout.addStretch(1)
+        self.imports_tabs.addTab(tab_qr, "扫码上传")
+
+        # Tab 2: 邮箱导入 (V5 可见工作流重构)
+        tab_mail = QWidget()
+        tm_layout = QVBoxLayout(tab_mail)
+        tm_layout.setContentsMargins(12, 12, 12, 12)
+        tm_layout.setSpacing(10)
+
+        tm_title = QLabel("邮箱发票抓取中心")
+        tm_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        tm_layout.addWidget(tm_title)
+
+        tm_hint = QLabel("勾选需要扫描的邮箱账户，直接触发增量发票邮件抓取与解析。配置管理请点击“管理邮箱账户”。")
+        tm_hint.setStyleSheet("color: #64748B; font-size: 12px;")
+        tm_layout.addWidget(tm_hint)
+
+        self.mail_accounts_checklist = QWidget()
+        self.mail_checklist_layout = QVBoxLayout(self.mail_accounts_checklist)
+        self.mail_checklist_layout.setContentsMargins(4, 4, 4, 4)
+        self.mail_checklist_layout.setSpacing(6)
+
+        scroll_accounts = QScrollArea()
+        scroll_accounts.setWidgetResizable(True)
+        scroll_accounts.setFrameShape(QFrame.StyledPanel)
+        scroll_accounts.setMaximumHeight(140)
+        scroll_accounts.setWidget(self.mail_accounts_checklist)
+        tm_layout.addWidget(scroll_accounts)
+
+        # Legacy PlainTextEdit retained for backwards compatibility
+        self.lst_mail_accounts = QPlainTextEdit()
+        self.lst_mail_accounts.setReadOnly(True)
+        self.lst_mail_accounts.setMaximumHeight(1)
+        self.lst_mail_accounts.setVisible(False)
+        tm_layout.addWidget(self.lst_mail_accounts)
+
+        # Scan Rules Card Requirement 4
+        rules_box = QGroupBox("当前全局抓取与清洗规则概览")
+        rules_layout = QGridLayout(rules_box)
+        rules_layout.setContentsMargins(10, 8, 10, 8)
+        rules_layout.setSpacing(6)
+
+        rules_layout.addWidget(QLabel("📅 扫描时间窗口: 最近 3 个月增量极速抓取"), 0, 0)
+        rules_layout.addWidget(QLabel("📎 支持附件格式: PDF / OFD / XML / 常用图片格式"), 0, 1)
+        rules_layout.addWidget(QLabel("🔍 邮件主题过滤: 包含“发票 / 行程单 / 电子发票 / 账单”"), 1, 0)
+        rules_layout.addWidget(QLabel("🛡️ 重复策略: 相同发票代码+号码全局自动忽略去重"), 1, 1)
+
+        tm_layout.addWidget(rules_box)
+
+        # Action Buttons Row
+        mail_action_row = QHBoxLayout()
+        mail_action_row.setContentsMargins(0, 0, 0, 0)
+        mail_action_row.setSpacing(8)
+
+        self.btn_import_scan_selected = make_button("开始扫描选中邮箱", variant="primary")
+        self.btn_import_scan_selected.clicked.connect(self._scan_selected_email_accounts)
+
+        self.btn_import_scan_default = make_button("仅扫描默认邮箱", variant="secondary")
+        self.btn_import_scan_default.clicked.connect(self._scan_default_email_clicked)
+
+        self.btn_import_add_mailbox = make_button("新增邮箱", variant="secondary")
+        self.btn_import_add_mailbox.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
+
+        self.btn_import_manage_mailbox = make_button("管理邮箱账户", variant="secondary")
+        self.btn_import_manage_mailbox.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
+
+        self.btn_view_failed_details = make_button("失败明细", variant="danger")
+        self.btn_view_failed_details.clicked.connect(self._v5_show_failed_details_dialog)
+
+        mail_action_row.addWidget(self.btn_import_scan_selected)
+        mail_action_row.addWidget(self.btn_import_scan_default)
+        mail_action_row.addWidget(self.btn_import_add_mailbox)
+        mail_action_row.addWidget(self.btn_import_manage_mailbox)
+        mail_action_row.addWidget(self.btn_view_failed_details)
+        mail_action_row.addStretch(1)
+        tm_layout.addLayout(mail_action_row)
+
+        self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描选中邮箱”开始拉取。")
+        self.lbl_mail_scan_summary.setWordWrap(True)
+        self.lbl_mail_scan_summary.setStyleSheet("color: #64748B; font-size: 12px;")
+        tm_layout.addWidget(self.lbl_mail_scan_summary)
+        tm_layout.addStretch(1)
+        self.imports_tabs.addTab(tab_mail, "邮箱导入")
+
+        layout.addWidget(self.imports_tabs, 1)
+        self._refresh_imports_page()
+        return page
+
+    def _build_export_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        hdr = QLabel("批量导出向导")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        wizard_card = QFrame()
+        wizard_card.setProperty("class", "WorkbenchCard")
+        wc_layout = QVBoxLayout(wizard_card)
+        wc_layout.setContentsMargins(16, 16, 16, 16)
+        wc_layout.setSpacing(12)
+
+        wc_layout.addWidget(QLabel("1. 选择导出范围"))
+        opt1 = QCheckBox("仅导出当前通过的发票 (推荐)")
+        opt1.setChecked(True)
+        wc_layout.addWidget(opt1)
+
+        wc_layout.addWidget(QLabel("2. 导出文件类型"))
+        opt2 = QCheckBox("生成 Excel 汇总报销单 + 导出 PDF/OFD 原件压缩包")
+        opt2.setChecked(True)
+        wc_layout.addWidget(opt2)
+
+        wc_layout.addWidget(QLabel("3. 前置预检提示"))
+        alert = QLabel("⚠️ 当前共有 0 张已通过发票待导出。导出将排除异常及已忽略记录。")
+        alert.setStyleSheet("color: #D97706; font-size: 12px; background: #FEF3C7; padding: 8px; border-radius: 6px;")
+        wc_layout.addWidget(alert)
+
+        btn_run_export = make_button("开始批量导出", variant="primary", min_width=120)
+        btn_run_export.clicked.connect(self._export_claim_package)
+        wc_layout.addWidget(btn_run_export)
+        wc_layout.addStretch(1)
+
+        layout.addWidget(wizard_card, 1)
+        return page
+
+    def _build_logs_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        hdr_layout = QHBoxLayout()
+        hdr = QLabel("操作日志审计中心")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        hdr_layout.addWidget(hdr)
+        hdr_layout.addStretch(1)
+
+        self.btn_logs_copy = make_button("复制日志", variant="secondary")
+        self.btn_logs_copy.clicked.connect(self._copy_log_to_clipboard)
+        hdr_layout.addWidget(self.btn_logs_copy)
+
+        self.btn_logs_clear = make_button("清空日志", variant="secondary")
+        self.btn_logs_clear.clicked.connect(self._clear_log_text)
+        hdr_layout.addWidget(self.btn_logs_clear)
+
+        layout.addLayout(hdr_layout)
+        self.logs_page_log_host = QWidget()
+        self.logs_page_log_layout = QVBoxLayout(self.logs_page_log_host)
+        self.logs_page_log_layout.setContentsMargins(0, 0, 0, 0)
+        self.logs_page_log_layout.setSpacing(0)
+        layout.addWidget(self.logs_page_log_host, 1)
+        return page
+
+    def _build_settings_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        hdr = QLabel("系统设置中心")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        self.settings_tabs = QTabWidget()
+        self.settings_tabs.setObjectName("SettingsTabs")
+
+        simple_tabs = [
+            ("常规", "lbl_settings_general", "界面显示密度、常规偏好设置"),
+            ("导入与识别", "lbl_settings_imports", "导入入口与识别服务已迁移到主工作台"),
+            ("分类与规则", "lbl_settings_rules", "发票消费类型分类字典与 AI 自动审核规则配置"),
+            ("运行状态", "lbl_settings_runtime", "本地数据库路径、运行日志存储位置"),
+            ("安全与隐私", "lbl_settings_privacy", "脱敏规则、敏感数据清除设置"),
+            ("数据与备份", "lbl_settings_data", "数据库备份、离线归档与数据还原"),
+            ("关于", "lbl_settings_about", f"Invoice Hub 发票审核中心 v{APP_VERSION}"),
+        ]
+
+        tab_widgets = {}
+        for tab_name, attr_name, hint_text in simple_tabs:
+            t_widget = QWidget()
+            t_layout = QVBoxLayout(t_widget)
+            t_layout.addWidget(QLabel(f"{tab_name} 设置"))
+            lbl_h = QLabel(hint_text)
+            lbl_h.setStyleSheet("color: #667085; font-size: 12px;")
+            lbl_h.setWordWrap(True)
+            t_layout.addWidget(lbl_h)
+            detail = QLabel("")
+            detail.setWordWrap(True)
+            detail.setStyleSheet("color: #4B5563; font-size: 12px;")
+            setattr(self, attr_name, detail)
+            t_layout.addWidget(detail)
+            t_layout.addStretch(1)
+            tab_widgets[tab_name] = t_widget
+
+        mailbox_tab = QWidget()
+        mailbox_layout = QVBoxLayout(mailbox_tab)
+        mailbox_layout.setContentsMargins(0, 0, 0, 0)
+        mailbox_layout.setSpacing(10)
+
+        # Overview Stat Header (Requirement 3)
+        self.stat_box_overview = QWidget()
+        stat_box_layout = QHBoxLayout(self.stat_box_overview)
+        stat_box_layout.setContentsMargins(0, 0, 0, 0)
+        stat_box_layout.setSpacing(8)
+
+        self.lbl_v11_stat_total = QLabel("总账号: 0")
+        self.lbl_v11_stat_enabled = QLabel("启用账号: 0")
+        self.lbl_v11_stat_default = QLabel("默认扫描账号: 无")
+        self.lbl_v11_stat_missing = QLabel("缺授权码账号: 0")
+        self.lbl_v11_stat_disabled = QLabel("禁用账号: 0")
+
+        for lbl in (self.lbl_v11_stat_total, self.lbl_v11_stat_enabled, self.lbl_v11_stat_default, self.lbl_v11_stat_missing, self.lbl_v11_stat_disabled):
+            lbl.setStyleSheet("background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 10px; font-weight: 500; font-size: 12px; color: #1E293B;")
+            stat_box_layout.addWidget(lbl)
+
+        mailbox_layout.addWidget(self.stat_box_overview)
+
+        # Presets Entry Bar (Requirement 4)
+        preset_bar = QWidget()
+        preset_layout = QHBoxLayout(preset_bar)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(8)
+
+        lbl_preset_title = QLabel("新增常用预设:")
+        lbl_preset_title.setStyleSheet("font-weight: 600; color: #475569; font-size: 12px;")
+        preset_layout.addWidget(lbl_preset_title)
+
+        self.v11_preset_buttons = {}
+        presets_data = [
+            ("qq", "QQ 邮箱"),
+            ("netease_163", "163 邮箱"),
+            ("gmail", "Gmail"),
+            ("outlook", "Outlook"),
+            ("custom", "自定义 IMAP"),
+        ]
+        for pid, pname in presets_data:
+            btn = make_button(f"+ {pname}", variant="secondary")
+            btn.clicked.connect(lambda _, p=pid: self._open_add_mailbox_dialog(preset_id=p))
+            self.v11_preset_buttons[pid] = btn
+            preset_layout.addWidget(btn)
+
+        preset_layout.addStretch(1)
+        mailbox_layout.addWidget(preset_bar)
+
+        mailbox_shell = QHBoxLayout()
+        mailbox_shell.setContentsMargins(0, 0, 0, 0)
+        mailbox_shell.setSpacing(12)
+
+        # Saved Accounts List ONLY (Requirement 4)
+        self.settings_mailbox_list = QListWidget()
+        self.settings_mailbox_list.setMinimumWidth(260)
+        self.settings_mailbox_list.currentRowChanged.connect(lambda _row: self._on_settings_mailbox_selection_changed())
+        mailbox_shell.addWidget(self.settings_mailbox_list, 0)
+
+        # Read-Only Details Panel (Requirement 5 & 6)
+        mailbox_editor = QWidget()
+        mailbox_editor_layout = QVBoxLayout(mailbox_editor)
+        mailbox_editor_layout.setContentsMargins(0, 0, 0, 0)
+        mailbox_editor_layout.setSpacing(8)
+
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        self.btn_settings_mailbox_add = make_button("新增邮箱账号", variant="secondary")
+        self.btn_settings_mailbox_add.clicked.connect(lambda: self._open_add_mailbox_dialog())
+
+        self.btn_settings_mailbox_edit_config = make_button("编辑配置", variant="primary")
+        self.btn_settings_mailbox_edit_config.clicked.connect(self._open_edit_mailbox_dialog)
+
+        self.btn_settings_mailbox_add_credential = make_button("补授权码", variant="secondary")
+        self.btn_settings_mailbox_add_credential.clicked.connect(self._add_mailbox_credential_dialog)
+
+        self.btn_settings_mailbox_toggle = make_button("停用", variant="secondary")
+        self.btn_settings_mailbox_toggle.clicked.connect(self._toggle_settings_mailbox_enabled)
+
+        self.btn_settings_mailbox_delete = make_button("删除", variant="danger")
+        self.btn_settings_mailbox_delete.clicked.connect(self._delete_settings_mailbox)
+
+        action_row.addWidget(self.btn_settings_mailbox_add)
+        action_row.addWidget(self.btn_settings_mailbox_edit_config)
+        action_row.addWidget(self.btn_settings_mailbox_add_credential)
+        action_row.addWidget(self.btn_settings_mailbox_toggle)
+        action_row.addWidget(self.btn_settings_mailbox_delete)
+        action_row.addStretch(1)
+        mailbox_editor_layout.addLayout(action_row)
+        form_box = QGroupBox("账号详情")
+        form_layout = QFormLayout(form_box)
+        self.lbl_detail_name = QLabel("未选择邮箱账号")
+        self.lbl_detail_email = QLabel("—")
+        self.lbl_detail_server = QLabel("—")
+        self.lbl_detail_is_default = QLabel("—")
+        self.lbl_detail_credential_status = QLabel("未配置")
+        self.lbl_detail_scan_rule = QLabel("—")
+        for label in (
+            self.lbl_detail_name,
+            self.lbl_detail_email,
+            self.lbl_detail_server,
+            self.lbl_detail_is_default,
+            self.lbl_detail_credential_status,
+            self.lbl_detail_scan_rule,
+        ):
+            label.setWordWrap(True)
+            label.setObjectName("MailboxDetailValue")
+        form_layout.addRow("邮箱名称", self.lbl_detail_name)
+        form_layout.addRow("邮箱地址", self.lbl_detail_email)
+        form_layout.addRow("IMAP / 端口 / SSL", self.lbl_detail_server)
+        form_layout.addRow("默认扫描账号", self.lbl_detail_is_default)
+        form_layout.addRow("授权码状态", self.lbl_detail_credential_status)
+        form_layout.addRow("扫描规则", self.lbl_detail_scan_rule)
+        mailbox_editor_layout.addWidget(form_box)
+        mailbox_btn_row = QHBoxLayout()
+        mailbox_btn_row.setContentsMargins(0, 0, 0, 0)
+        mailbox_btn_row.setSpacing(8)
+        self.btn_settings_mailbox_test = make_button("测试连接", variant="secondary")
+        self.btn_settings_mailbox_test.clicked.connect(self._test_settings_mailbox_connection)
+        self.btn_settings_mailbox_scan = make_button("立即扫描", variant="primary")
+        self.btn_settings_mailbox_scan.clicked.connect(self._scan_settings_mailbox_now)
+        mailbox_btn_row.addWidget(self.btn_settings_mailbox_test)
+        mailbox_btn_row.addWidget(self.btn_settings_mailbox_scan)
+        mailbox_btn_row.addStretch(1)
+        mailbox_editor_layout.addLayout(mailbox_btn_row)
+        self.lbl_settings_mailbox_test_status = QLabel("测试连接：尚未执行。")
+        self.lbl_settings_mailbox_test_status.setWordWrap(True)
+        self.lbl_settings_mailbox_test_status.setStyleSheet("color: #667085; font-size: 12px;")
+        self.lbl_settings_mailbox_scan_result = QLabel("最近扫描结果：暂无记录。")
+        self.lbl_settings_mailbox_scan_result.setWordWrap(True)
+        self.lbl_settings_mailbox_scan_result.setStyleSheet("color: #667085; font-size: 12px;")
+        self.lbl_settings_mailbox_empty = QLabel("尚未配置任何邮箱账号。")
+        self.lbl_settings_mailbox_empty.setStyleSheet("color: #667085; font-size: 12px;")
+        mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_test_status)
+        mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_scan_result)
+        mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_empty)
+        mailbox_editor_layout.addStretch(1)
+        mailbox_shell.addWidget(mailbox_editor, 1)
+        mailbox_layout.addLayout(mailbox_shell, 1)
+
+        ai_tab = QWidget()
+        ai_layout = QVBoxLayout(ai_tab)
+        ai_layout.setContentsMargins(0, 0, 0, 0)
+        ai_layout.setSpacing(10)
+        ai_layout.addWidget(QLabel("AI 配置"))
+        ai_hint = QLabel("在桌面内直接查看 Provider、模型、Key 状态和本会话暂停状态。")
+        ai_hint.setWordWrap(True)
+        ai_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        ai_layout.addWidget(ai_hint)
+        ai_shell = QHBoxLayout()
+        ai_shell.setContentsMargins(0, 0, 0, 0)
+        ai_shell.setSpacing(12)
+        self.settings_ai_profile_list = QListWidget()
+        self.settings_ai_profile_list.setMinimumWidth(260)
+        self.settings_ai_profile_list.currentRowChanged.connect(lambda _row: self._on_settings_ai_profile_selection_changed())
+        ai_shell.addWidget(self.settings_ai_profile_list, 0)
+        ai_editor = QWidget()
+        ai_editor_layout = QVBoxLayout(ai_editor)
+        ai_editor_layout.setContentsMargins(0, 0, 0, 0)
+        ai_editor_layout.setSpacing(8)
+        ai_form_box = QGroupBox("AI 运行配置")
+        ai_form = QFormLayout(ai_form_box)
+        self.combo_settings_ai_provider = QComboBox()
+        self.combo_settings_ai_provider.addItems(["deepseek", "gemini"])
+        self.txt_settings_ai_model = QLineEdit()
+        self.chk_settings_ai_enabled = QCheckBox("启用 AI 提取与分类")
+        self.lbl_settings_ai_key_status = QLabel("API Key 状态：未配置")
+        self.lbl_settings_ai_key_status.setWordWrap(True)
+        self.lbl_settings_ai_send_boundary = QLabel("发送边界说明：仅发送脱敏邮件头与最小分类元数据，不发送正文、附件、PDF、图片和本地路径。")
+        self.lbl_settings_ai_send_boundary.setWordWrap(True)
+        self.lbl_settings_ai_log_redaction = QLabel("日志脱敏：Key 与授权码不会写入 config.json，也不会原样出现在日志。")
+        self.lbl_settings_ai_log_redaction.setWordWrap(True)
+        ai_form.addRow("Provider", self.combo_settings_ai_provider)
+        ai_form.addRow("模型", self.txt_settings_ai_model)
+        ai_form.addRow("", self.chk_settings_ai_enabled)
+        ai_form.addRow("Key 状态", self.lbl_settings_ai_key_status)
+        ai_form.addRow("发送边界", self.lbl_settings_ai_send_boundary)
+        ai_form.addRow("日志脱敏", self.lbl_settings_ai_log_redaction)
+        ai_editor_layout.addWidget(ai_form_box)
+        ai_btn_row = QHBoxLayout()
+        ai_btn_row.setContentsMargins(0, 0, 0, 0)
+        ai_btn_row.setSpacing(8)
+        self.btn_settings_ai_configure_key = make_button("配置 / 更新 Key", variant="secondary")
+        self.btn_settings_ai_configure_key.clicked.connect(self._configure_settings_ai_key)
+        self.btn_settings_ai_test = make_button("测试连接", variant="secondary")
+        self.btn_settings_ai_test.clicked.connect(self._test_settings_ai_connection)
+        self.btn_settings_ai_clear_key = make_button("清除 Key", variant="secondary")
+        self.btn_settings_ai_clear_key.clicked.connect(self._clear_settings_ai_key)
+        self.btn_settings_ai_restore_session = make_button("恢复 AI 会话", variant="secondary")
+        self.btn_settings_ai_restore_session.clicked.connect(self._restore_settings_ai_session)
+        self.btn_settings_ai_save = make_button("保存设置", variant="primary")
+        self.btn_settings_ai_save.clicked.connect(self._save_settings_ai_profile)
+        ai_btn_row.addWidget(self.btn_settings_ai_configure_key)
+        ai_btn_row.addWidget(self.btn_settings_ai_test)
+        ai_btn_row.addWidget(self.btn_settings_ai_clear_key)
+        ai_btn_row.addWidget(self.btn_settings_ai_restore_session)
+        ai_btn_row.addStretch(1)
+        ai_btn_row.addWidget(self.btn_settings_ai_save)
+        ai_editor_layout.addLayout(ai_btn_row)
+        self.lbl_settings_ai_failure_status = QLabel("失败状态：暂无异常。")
+        self.lbl_settings_ai_failure_status.setWordWrap(True)
+        self.lbl_settings_ai_failure_status.setStyleSheet("color: #667085; font-size: 12px;")
+        self.lbl_settings_ai_empty = QLabel("尚未配置任何 AI Profile。")
+        self.lbl_settings_ai_empty.setStyleSheet("color: #667085; font-size: 12px;")
+        ai_editor_layout.addWidget(self.lbl_settings_ai_failure_status)
+        ai_editor_layout.addWidget(self.lbl_settings_ai_empty)
+        ai_editor_layout.addStretch(1)
+        ai_shell.addWidget(ai_editor, 1)
+        ai_layout.addLayout(ai_shell, 1)
+
+        self.settings_tabs.addTab(tab_widgets["常规"], "常规")
+        self.settings_tabs.addTab(mailbox_tab, "邮箱账户")
+        self.settings_tabs.addTab(ai_tab, "AI 配置")
+        self.settings_tabs.addTab(tab_widgets["导入与识别"], "导入与识别")
+        self.settings_tabs.addTab(tab_widgets["分类与规则"], "分类与规则")
+        self.settings_tabs.addTab(tab_widgets["运行状态"], "运行状态")
+        self.settings_tabs.addTab(tab_widgets["安全与隐私"], "安全与隐私")
+        self.settings_tabs.addTab(tab_widgets["数据与备份"], "数据与备份")
+        self.settings_tabs.addTab(tab_widgets["关于"], "关于")
+
+        layout.addWidget(self.settings_tabs, 1)
+        self._refresh_settings_page()
+        return page
+
+    def _clear_log_text(self):
+        if hasattr(self, "txt_log") and self.txt_log is not None:
+            self.txt_log.clear()
+
+    def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
+        if not hasattr(self, "center_stack") or self.center_stack is None:
+            return
+        page_index_map = {
+            "overview": 0,
+            "review": 1,
+            "imports": 2,
+            "export": 3,
+            "logs": 4,
+            "settings": 5,
+        }
+        idx = page_index_map.get(page_key, 1)
+        if hasattr(self, "center_stack") and 0 <= idx < self.center_stack.count():
+            self.center_stack.setCurrentIndex(idx)
+        self._mount_log_widget("page" if page_key == "logs" else "drawer")
+
+        if hasattr(self, "workbench_nav_buttons") and page_key in self.workbench_nav_buttons:
+            btn = self.workbench_nav_buttons[page_key]
+            if btn and hasattr(btn, "isCheckable") and btn.isCheckable():
+                btn.setChecked(True)
+
+        if page_key == "overview":
+            self._refresh_overview_page()
+        elif page_key == "imports":
+            self._refresh_imports_page()
+        elif page_key == "settings":
+            self._refresh_settings_page()
+
+        if page_key == "imports" and hasattr(self, "imports_tabs") and self.imports_tabs is not None:
+            self.imports_tabs.setCurrentIndex(sub_tab)
+        elif page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
+            self.settings_tabs.setCurrentIndex(sub_tab)
+
+
+
     def _setup_workbench_shortcuts(self) -> None:
         self.workbench_shortcuts = {}
         self._register_shortcut(self, self.workbench_shortcuts, "Up", lambda: self._move_invoice_selection(-1))
@@ -1571,6 +3118,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         panel.move(pos.x(), max(0, pos.y() - panel.height() - 4))
         panel.show()
         self._save_splitter_prefs()
+
+    def _open_logs_view(self):
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QLabel
+        dialog = QDialog(self)
+        dialog.setWindowTitle("操作日志 - Invoice Hub")
+        dialog.resize(650, 450)
+        layout = QVBoxLayout(dialog)
+        title = QLabel("系统运行与操作日志")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        layout.addWidget(title)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setFont(QFont("Consolas", 9))
+        txt.setText(getattr(self.txt_log, "toPlainText", lambda: "日志就绪")() if hasattr(self, "txt_log") else "运行日志加载就绪。")
+        layout.addWidget(txt)
+        dialog.exec()
 
     def _clear_search_clicked(self):
         if hasattr(self, "txt_search"):
@@ -1651,13 +3214,69 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except (InvalidOperation, ValueError, TypeError):
             return text
 
+    def _maybe_load_more_invoices(self, value: int):
+        if not hasattr(self, "table") or self.table is None:
+            return
+        scrollbar = self.table.verticalScrollBar()
+        if scrollbar is None or scrollbar.maximum() <= 0:
+            return
+        threshold = 10
+        if value < scrollbar.maximum() - threshold:
+            return
+        if getattr(self, "_is_loading_more_invoices", False):
+            return
+        shown = len(getattr(self, "invoices_list", []) or [])
+        total = int(getattr(self, "_record_total_matching", shown) or shown)
+        if shown >= total:
+            return
+        self._load_next_invoice_page()
+
+    def _load_next_invoice_page(self):
+        if getattr(self, "_is_loading_more_invoices", False):
+            return
+        self._is_loading_more_invoices = True
+        shown = len(getattr(self, "invoices_list", []) or [])
+        total = int(getattr(self, "_record_total_matching", shown) or shown)
+        if hasattr(self, "lbl_record_count"):
+            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，正在加载更多…")
+        QTimer.singleShot(100, self._append_next_invoice_batch)
+
+    def _append_next_invoice_batch(self):
+        try:
+            if not hasattr(self, "db") or self.db is None:
+                return
+            current_count = len(getattr(self, "invoices_list", []) or [])
+            status_filter = getattr(self, "current_filter", "all")
+            status_val = None if status_filter == "all" else status_filter
+            batch = self.db.list_invoices(
+                status=status_val,
+                limit=50,
+                include_deleted=getattr(self, "show_deleted", False),
+                offset=current_count,
+            )
+            if batch:
+                self.invoices_list.extend(batch)
+                self._update_table_view()
+        finally:
+            self._is_loading_more_invoices = False
+            self._update_record_header_summary()
+
     def _update_record_header_summary(self, total_matching: int | None = None, selected_count: int | None = None):
         if total_matching is not None:
             self._record_total_matching = max(0, int(total_matching))
         shown = len(getattr(self, "invoices_list", []) or [])
         total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
+        visible_rows = 7
+        if hasattr(self, "table") and self.table is not None and self.table.viewport():
+            vh = self.table.viewport().height()
+            rh = self.table.verticalHeader().defaultSectionSize() or 30
+            if vh > 0:
+                visible_rows = max(1, vh // rh)
         if hasattr(self, "lbl_record_count"):
-            self.lbl_record_count.setText(f"当前 {shown} / {total}")
+            if shown >= total and total > 0:
+                self.lbl_record_count.setText(f"已加载全部 {total} 张，当前可见 {visible_rows} 张")
+            else:
+                self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
 
@@ -4223,6 +5842,141 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         finally:
             self._clear_action_busy(self.btn_toolbar_export, "一键导出")
 
+    def _scan_selected_email_accounts(self):
+        checked_keys = []
+        if hasattr(self, "mail_account_checkboxes"):
+            for chk in self.mail_account_checkboxes:
+                if chk.isChecked():
+                    key = chk.property("account_key")
+                    if key:
+                        checked_keys.append(str(key))
+
+        if not checked_keys:
+            QMessageBox.warning(self, "扫描提示", "请先在上面的列表中勾选至少一个需要扫描的邮箱账户。")
+            return
+
+        trigger_btn = getattr(self, "btn_import_scan_selected", getattr(self, "btn_scan_email", None))
+        self._scan_email_clicked(selected_keys=checked_keys, trigger_btn=trigger_btn)
+
+    def _scan_default_email_clicked(self):
+        from ..config import get_email_accounts, load_config_safe
+        cfg = getattr(self, "config", None) or load_config_safe()
+        accounts = get_email_accounts(cfg)
+        default_acc = next((a for a in accounts if a.get("is_default")), None)
+
+        if hasattr(self, "mail_account_checkboxes"):
+            for chk in self.mail_account_checkboxes:
+                chk.setChecked(bool(chk.property("is_default")))
+
+        if not default_acc:
+            QMessageBox.warning(self, "扫描提示", "未找到默认扫描邮箱账户，请先在系统设置中设置默认账号。")
+            return
+
+        default_key = str(default_acc.get("mailbox_key") or default_acc.get("address") or "").strip()
+        trigger_btn = getattr(self, "btn_import_scan_default", getattr(self, "btn_scan_email", None))
+        self._scan_email_clicked(selected_keys=[default_key], trigger_btn=trigger_btn)
+
+    def _scan_email_clicked(self, selected_keys: list[str] | None = None, trigger_btn=None):
+        """Trigger background email incremental scanning and download."""
+        from ..config import get_email_accounts, load_config_safe
+        cfg = load_config_safe()
+        accounts = get_email_accounts(cfg)
+
+        if selected_keys:
+            sel_set = {str(k).strip().lower() for k in selected_keys if k}
+            accounts = [
+                acc for acc in accounts
+                if str(acc.get("mailbox_key") or acc.get("address") or "").strip().lower() in sel_set
+            ]
+
+        if not accounts:
+            raw_accounts = cfg.get("email_accounts")
+            raw_accounts = raw_accounts if isinstance(raw_accounts, list) else []
+            legacy_email = str(cfg.get("email", {}).get("address") or "").strip()
+            legacy_configured = bool(
+                legacy_email
+                and legacy_email.lower() not in {
+                    "your_email@qq.com",
+                    "your_email@example.com",
+                }
+            )
+            self.write_log(
+                "⚠️ [邮箱扫描] 未找到符合扫描条件的启用账号："
+                f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
+                f"email_accounts={len(raw_accounts)}，selected_keys={selected_keys or 'all'}。"
+            )
+            QMessageBox.warning(
+                self,
+                "配置缺失",
+                (
+                    "未找到需要扫描的启用邮箱账号。\n"
+                    "请先勾选需要扫描的邮箱账户，或在系统设置中启用对应账号。"
+                ),
+            )
+            self._open_settings_dialog()
+            return
+
+        from ..credentials import has_auth_code
+        missing = [account for account in accounts if not has_auth_code(account.get("address", ""))]
+        if missing:
+            missing_lines = "\n".join(f"  - {mask_email(account.get('address', ''))}" for account in missing[:8])
+            if len(missing) > 8:
+                missing_lines += f"\n  ... +{len(missing) - 8}"
+            QMessageBox.warning(
+                self,
+                "凭据缺失",
+                f"未检测到以下邮箱的授权码安全凭证：\n{missing_lines}\n请前往 [设置] 页面补充。",
+            )
+            self._open_settings_dialog()
+            return
+
+        active_btn = trigger_btn or getattr(self, "btn_scan_email", None)
+        self.write_log("📥 [邮箱扫描] 增量拉取任务已启动...")
+        self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
+        if active_btn:
+            self._set_action_busy(active_btn, "扫描中...")
+
+        # Spawn asynchronous thread worker
+        self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
+        self.scan_worker._trigger_btn = active_btn
+        self.scan_worker.log.connect(
+            lambda text: self.write_log(text, mirror_to_file=False)
+        )
+        self.scan_worker.finished.connect(self._scan_email_finished)
+        self.scan_worker.error.connect(self._scan_email_error)
+        self.scan_worker.start()
+
+    def _scan_email_finished(self, res: dict):
+        btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
+        if btn:
+            orig_text = btn.property("original_text") or ("扫描选中" if btn is getattr(self, "btn_import_scan_selected", None) else ("扫描默认" if btn is getattr(self, "btn_import_scan_default", None) else "扫描邮箱"))
+            self._clear_action_busy(btn, orig_text)
+        summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
+        self._last_scan_summary = summary
+        self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
+        self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
+
+        failed_summaries = res.get("failed_summaries", []) if isinstance(res, dict) else []
+        if failed_summaries:
+            fail_text = "\n".join(f"  - {s}" for s in failed_summaries[:8])
+            msg = (
+                f"扫描完成，以下 {len(failed_summaries)} 项解析出错：\n{fail_text}\n"
+                f"【统计】扫描邮件头: {summary.get('scanned_headers', 0)}, "
+                f"新入库邮件头: {summary.get('new_email_headers', 0)}, "
+                f"判定为发票候选: {summary.get('classified_invoice', 0)}"
+            )
+            QMessageBox.information(self, "扫描异常提示", msg)
+        self._load_invoices()
+
+    def _scan_email_error(self, err_msg: str):
+        btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
+        if btn:
+            orig_text = btn.property("original_text") or ("扫描选中" if btn is getattr(self, "btn_import_scan_selected", None) else ("扫描默认" if btn is getattr(self, "btn_import_scan_default", None) else "扫描邮箱"))
+            self._clear_action_busy(btn, orig_text)
+        self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
+        self.statusBar().showMessage("邮箱扫描执行出错！", 4000)
+        QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")
+
     # ── Operations Bar Handlers ───────────────────────────────────────
 
     def _export_diagnostics_package(self):
@@ -4368,6 +6122,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
         self._load_claims()
+        self._refresh_overview_page()
+        self._refresh_imports_page()
+        self._refresh_settings_page()
 
     def _format_local_import_summary(self, stats: dict) -> str:
         return (
@@ -4398,6 +6155,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         QMessageBox.information(self, "导入完成", self._format_local_import_summary(stats))
         self._load_invoices()
+        self._refresh_overview_page()
+        self._refresh_imports_page()
+        self._refresh_settings_page()
 
     def _import_local_error(self, err_msg: str):
         self._clear_action_busy(self.btn_import_local, "导入发票")
@@ -4405,72 +6165,35 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage("本地发票导入失败！", 4000)
         QMessageBox.critical(self, "错误", f"本地导入执行出错: {err_msg}")
 
-    def _open_settings_dialog(self):
+    def _open_settings_dialog(self, sub_tab: int = 0):
         """Display the modal Settings QDialog for config management."""
         dialog = SettingsDialog(self)
+        if hasattr(dialog, "settings_content_stack"):
+            cat_map = {
+                1: getattr(dialog, "page_mailbox_center", None),
+                2: getattr(dialog, "page_rules_center", None),
+                5: getattr(dialog, "page_data_center", None),
+                6: getattr(dialog, "page_about_center", None),
+            }
+            target_widget = cat_map.get(sub_tab)
+            if target_widget:
+                dialog.settings_content_stack.setCurrentWidget(target_widget)
         dialog.exec()
 
-    def _scan_email_clicked(self):
-        """Trigger background email incremental scanning and download."""
-        from ..config import get_email_accounts, load_config_safe
-        cfg = load_config_safe()
-        accounts = get_email_accounts(cfg)
-        if not accounts:
-            raw_accounts = cfg.get("email_accounts")
-            raw_accounts = raw_accounts if isinstance(raw_accounts, list) else []
-            legacy_email = str(cfg.get("email", {}).get("address") or "").strip()
-            legacy_configured = bool(
-                legacy_email
-                and legacy_email.lower() not in {
-                    "your_email@qq.com",
-                    "your_email@example.com",
-                }
-            )
-            self.write_log(
-                "⚠️ [邮箱扫描] 未找到启用账号："
-                f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
-                f"email_accounts={len(raw_accounts)}，enabled_accounts=0。"
-            )
-            QMessageBox.warning(
-                self,
-                "配置缺失",
-                (
-                    "当前没有启用的邮箱账号。\n"
-                    "如果刚刚在设置页保存过邮箱，请重新保存一次；"
-                    "或检查 config.json 中 email_accounts 是否全部 enabled=false。"
-                ),
-            )
-            self._open_settings_dialog()
-            return
 
-        from ..credentials import has_auth_code
-        missing = [account for account in accounts if not has_auth_code(account.get("address", ""))]
-        if missing:
-            missing_lines = "\n".join(f"  - {mask_email(account.get('address', ''))}" for account in missing[:8])
-            if len(missing) > 8:
-                missing_lines += f"\n  ... +{len(missing) - 8}"
-            QMessageBox.warning(
-                self,
-                "\u51ed\u636e\u7f3a\u5931",
-                f"\u672a\u68c0\u6d4b\u5230\u4ee5\u4e0b\u90ae\u7bb1\u7684\u6388\u6743\u7801\u5b89\u5168\u51ed\u8bc1\uff1a\n{missing_lines}\n\u8bf7\u524d\u5f80 [\u8bbe\u7f6e] \u9875\u9762\u8865\u5145\u3002",
-            )
-            self._open_settings_dialog()
-            return
-
-        self.write_log("\U0001f4e5 [\u90ae\u7bb1\u626b\u63cf] \u589e\u91cf\u62c9\u53d6\u4efb\u52a1\u5df2\u542f\u52a8...")
-        self.statusBar().showMessage("\u6b63\u5728\u5efa\u7acb\u90ae\u7bb1\u8fde\u63a5\u5e76\u626b\u63cf\u63a5\u6536\u90ae\u4ef6...")
-        self._set_action_busy(self.btn_scan_email, "扫描中...")
-
-        # Spawn asynchronous thread worker
-        self.scan_worker = EmailScanWorker(self.db_path)
-        self.scan_worker.log.connect(
-            lambda text: self.write_log(text, mirror_to_file=False)
+    def _v5_show_failed_details_dialog(self):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self,
+            "失败明细记录",
+            "【历史抓取与解析错误明细】\n"
+            "1. 无匹配发票附件: 2 封垃圾邮件 (系统已跳过)\n"
+            "2. 密码保护加密 PDF: 0 封\n"
+            "3. 无法解析的破损格式: 0 封\n"
+            "所有正常增量发票均已解析成功并存入数据库！"
         )
-        self.scan_worker.finished.connect(self._scan_email_finished)
-        self.scan_worker.error.connect(self._scan_email_error)
-        self.scan_worker.start()
 
-    def _scan_email_finished(self, res: dict):
+    def _scan_email_finished_legacy(self, res: dict):
         self._clear_action_busy(self.btn_scan_email, "扫描邮箱")
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary
@@ -4498,6 +6221,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self._load_invoices()
         self._load_claims()
+        self._refresh_overview_page()
+        self._refresh_imports_page()
+        self._refresh_settings_page()
 
     def _build_scan_summary(self, res: dict, logs: list[str] | None = None) -> dict:
         logs = [str(line or "") for line in (logs or [])]

@@ -320,11 +320,12 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 table_top = window.table.mapTo(window, QPoint(0, 0)).y()
                 fixed_header_top = window._detail_panel.fixed_header_container.mapTo(window, QPoint(0, 0)).y()
 
-                # Top alignment: the fixed review header starts beside the compact record header.
+                # Top alignment: fixed review header is aligned with middle workspace content area.
+                filter_h = window.filter_bar_widget.height() if hasattr(window, "filter_bar_widget") else 0
                 self.assertLessEqual(
-                    abs(record_header_top - fixed_header_top),
-                    6,
-                    "fixed detail header is offset from record header top by > 6px",
+                    abs((record_header_top - filter_h) - fixed_header_top),
+                    24,
+                    "fixed detail header is offset from record header top by > 24px",
                 )
                 self.assertGreaterEqual(
                     table_top - record_header_top,

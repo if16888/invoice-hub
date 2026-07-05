@@ -27,32 +27,32 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
     Breakpoints (width × height, inclusive upper bound):
       <= 1366 × 768  -> compact, collapsed navigation (laptop / small monitor)
       <= 1440 × 900  -> compact, collapsed navigation (medium monitor)
-      > 1440 × 900   -> full density with collapsed navigation by default (1920×1080 target)
+      > 1440 × 900   -> full density (1920×1080 target)
     """
-    if width <= 1366 or height <= 768:
+    if width <= 1366 or (width <= 1440 and height <= 768):
         return WorkbenchMetrics(
-            nav_width=52,
+            nav_width=56,
             nav_collapsed=True,
-            detail_width=400,
-            record_height=330,
-            thumbnail_width=68,
+            detail_width=380,
+            record_height=300,
+            thumbnail_width=96,
             compact=True,
         )
-    if width <= 1440 or height <= 900:
+    if width <= 1440:
         return WorkbenchMetrics(
-            nav_width=52,
-            nav_collapsed=True,
-            detail_width=420,
-            record_height=350,
-            thumbnail_width=68,
+            nav_width=208,
+            nav_collapsed=False,
+            detail_width=400,
+            record_height=320,
+            thumbnail_width=96,
             compact=True,
         )
     return WorkbenchMetrics(
-        nav_width=52,
-        nav_collapsed=True,
-        detail_width=440,
-        record_height=390,
-        thumbnail_width=68,
+        nav_width=208,
+        nav_collapsed=False,
+        detail_width=444,
+        record_height=340,
+        thumbnail_width=104,
         compact=False,
     )
 
