@@ -5135,6 +5135,52 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    def test_gui_logs_page_uses_single_text_edit_for_append_copy_and_clear(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_logs_page.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window.show()
+                    app.processEvents()
+
+                    original_log_widget = window.txt_log
+                    window._switch_main_page("logs")
+                    app.processEvents()
+
+                    window.write_log("测试日志页单实例")
+                    app.processEvents()
+
+                    self.assertIs(window.txt_log, original_log_widget)
+                    self.assertIn("测试日志页单实例", window.txt_log.toPlainText())
+                    self.assertIs(window.center_stack.currentWidget(), window.logs_page)
+                    self.assertIsNotNone(window.txt_log.parentWidget())
+
+                    clipboard = QApplication.clipboard()
+                    clipboard.clear()
+                    window.btn_logs_copy.click()
+                    app.processEvents()
+                    self.assertIn("测试日志页单实例", clipboard.text())
+
+                    window.btn_logs_clear.click()
+                    app.processEvents()
+                    self.assertEqual(window.txt_log.toPlainText().strip(), "")
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
     def test_gui_shell_version_about_and_more_menu_actions(self):
         try:
             from PySide6.QtWidgets import QApplication
@@ -5155,15 +5201,13 @@ class ClaimGroupsTests(unittest.TestCase):
                         "刷新数据",
                         "扫码上传",
                         "邮箱同步",
-                        "批量导出",
+                        "导出当前视图",
                         "打开数据目录",
                         "打开导出目录",
                         "打开日志目录",
                         "复制诊断信息",
                         "导出脱敏诊断包",
                         "打开 GitHub Issues",
-                        "系统设置",
-                        "关于 Invoice Hub",
                     ]
                     actions = [a for a in window.more_menu.actions() if not a.isSeparator()]
                     self.assertEqual([a.text() for a in actions], expected)
@@ -5184,6 +5228,164 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.btn_toolbar_export.property("variant"), "toolbar")
                     self.assertIn("购买方", window.txt_search.placeholderText())
                     self.assertIn("金额", window.txt_search.placeholderText())
+                    self.assertIsNotNone(window.btn_import_local.menu())
+                    self.assertEqual(
+                        [action.text() for action in window.btn_import_local.menu().actions()],
+                        ["本地文件导入", "扫码上传", "邮箱导入"],
+                    )
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_more_menu_export_routes_to_export_page(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_more_menu_export.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window.show()
+                    app.processEvents()
+                    window.action_toolbar_export.trigger()
+                    app.processEvents()
+                    self.assertIs(window.center_stack.currentWidget(), window.export_page)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_overview_page_does_not_show_hardcoded_dashboard_numbers(self):
+        try:
+            from PySide6.QtWidgets import QApplication, QLabel
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_overview_stats.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window.show()
+                    window._switch_main_page("overview")
+                    app.processEvents()
+                    overview_text = "\n".join(
+                        label.text()
+                        for label in window.overview_page.findChildren(QLabel)
+                        if label.text().strip()
+                    )
+                    self.assertNotIn("246", overview_text)
+                    self.assertNotIn("259", overview_text)
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_imports_page_shows_accounts_logs_and_scan_summary(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            cfg = {
+                "email_accounts": [
+                    {
+                        "enabled": True,
+                        "name": "报销邮箱",
+                        "address": "finance@example.com",
+                        "provider": "qq",
+                        "search": {"months_back": 6},
+                    }
+                ]
+            }
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_imports_page.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg):
+                    window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    window._last_scan_summary = {"new": 3, "duplicates": 1}
+                    with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg), patch.object(window, "_read_recent_runtime_logs", return_value=["[导入] 最近批次完成"]):
+                        window._refresh_imports_page()
+                        window._switch_main_page("imports", sub_tab=2)
+                    app.processEvents()
+
+                    self.assertEqual(window.imports_tabs.count(), 3)
+                    self.assertEqual(window.imports_tabs.tabText(0), "导入记录")
+                    self.assertEqual(window.imports_tabs.tabText(1), "扫码上传")
+                    self.assertEqual(window.imports_tabs.tabText(2), "邮箱导入")
+                    self.assertIn("最近批次完成", window.txt_import_records.toPlainText())
+                    self.assertIn("报销邮箱", window.lst_mail_accounts.toPlainText())
+                    self.assertIn("最近 6 个月", window.lst_mail_accounts.toPlainText())
+                    self.assertIn("new=3", window.lbl_mail_scan_summary.text())
+                    self.assertIn("duplicates=1", window.lbl_mail_scan_summary.text())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_settings_page_has_internal_tabs_with_real_content(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            cfg = {
+                "categories": {
+                    "meal": {"name": "餐饮"},
+                    "travel": {"name": "差旅"},
+                }
+            }
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_settings_page.db"
+                from scripts.invoice_fetch import APP_VERSION
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg):
+                    window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg):
+                        window._switch_main_page("settings", sub_tab=2)
+                    app.processEvents()
+
+                    expected_tabs = ["常规", "导入与识别", "分类与规则", "运行状态", "安全与隐私", "数据与备份", "关于"]
+                    self.assertEqual(
+                        [window.settings_tabs.tabText(i) for i in range(window.settings_tabs.count())],
+                        expected_tabs,
+                    )
+                    self.assertIn("餐饮", window.lbl_settings_rules.text())
+                    self.assertIn("差旅", window.lbl_settings_rules.text())
+                    self.assertIn("数据目录：", window.lbl_settings_data.text())
+                    self.assertIn(f"Version: {APP_VERSION}", window.lbl_settings_about.text())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
