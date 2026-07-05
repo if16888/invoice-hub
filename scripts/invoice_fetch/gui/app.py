@@ -1290,10 +1290,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.update_evidence_row = dp.update_evidence_row
 
     def _set_right_panel_state(self, has_records: bool):
-        if not hasattr(self, "right_stack"):
+        if not hasattr(self, "right_stack") or self.right_stack is None:
             return
         target = self.right_content_widget if has_records else self.right_empty_widget
-        if self.right_stack.currentWidget() != target:
+        widgets_in_stack = [self.right_stack.widget(i) for i in range(self.right_stack.count())]
+        if target in widgets_in_stack and self.right_stack.currentWidget() != target:
             self.right_stack.setCurrentWidget(target)
 
     def _schedule_invoice_reload(self, *_args):
