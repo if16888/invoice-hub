@@ -1724,11 +1724,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if not hasattr(self, "db") or self.db is None:
                 return
             current_count = len(getattr(self, "invoices_list", []) or [])
-            batch = self.db.get_invoices(
+            status_filter = getattr(self, "current_filter", "all")
+            status_val = None if status_filter == "all" else status_filter
+            batch = self.db.list_invoices(
+                status=status_val,
                 limit=50,
+                include_deleted=getattr(self, "show_deleted", False),
                 offset=current_count,
-                filters=getattr(self, "column_filters", None),
-                show_deleted=getattr(self, "show_deleted", False),
             )
             if batch:
                 self.invoices_list.extend(batch)
