@@ -487,6 +487,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._detail_panel.setMaximumWidth(16777215)
         self._detail_panel.setMinimumWidth(metrics.detail_width)
         self._detail_panel.setMaximumWidth(metrics.detail_width)
+        min_window_width = 1040 if metrics.compact else 1280
+        self.setMinimumSize(min_window_width, 530)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
         self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
@@ -1070,7 +1072,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.verticalHeader().setMinimumSectionSize(26)
         self.table.verticalHeader().setMaximumSectionSize(32)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
