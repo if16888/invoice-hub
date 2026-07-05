@@ -5565,6 +5565,141 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         finally:
             self._clear_action_busy(self.btn_toolbar_export, "一键导出")
 
+    def _scan_selected_email_accounts(self):
+        checked_keys = []
+        if hasattr(self, "mail_account_checkboxes"):
+            for chk in self.mail_account_checkboxes:
+                if chk.isChecked():
+                    key = chk.property("account_key")
+                    if key:
+                        checked_keys.append(str(key))
+
+        if not checked_keys:
+            QMessageBox.warning(self, "扫描提示", "请先在上面的列表中勾选至少一个需要扫描的邮箱账户。")
+            return
+
+        trigger_btn = getattr(self, "btn_import_scan_selected", getattr(self, "btn_scan_email", None))
+        self._scan_email_clicked(selected_keys=checked_keys, trigger_btn=trigger_btn)
+
+    def _scan_default_email_clicked(self):
+        from ..config import get_email_accounts, load_config_safe
+        cfg = getattr(self, "config", None) or load_config_safe()
+        accounts = get_email_accounts(cfg)
+        default_acc = next((a for a in accounts if a.get("is_default")), None)
+
+        if hasattr(self, "mail_account_checkboxes"):
+            for chk in self.mail_account_checkboxes:
+                chk.setChecked(bool(chk.property("is_default")))
+
+        if not default_acc:
+            QMessageBox.warning(self, "扫描提示", "未找到默认扫描邮箱账户，请先在系统设置中设置默认账号。")
+            return
+
+        default_key = str(default_acc.get("mailbox_key") or default_acc.get("address") or "").strip()
+        trigger_btn = getattr(self, "btn_import_scan_default", getattr(self, "btn_scan_email", None))
+        self._scan_email_clicked(selected_keys=[default_key], trigger_btn=trigger_btn)
+
+    def _scan_email_clicked(self, selected_keys: list[str] | None = None, trigger_btn=None):
+        """Trigger background email incremental scanning and download."""
+        from ..config import get_email_accounts, load_config_safe
+        cfg = load_config_safe()
+        accounts = get_email_accounts(cfg)
+
+        if selected_keys:
+            sel_set = {str(k).strip().lower() for k in selected_keys if k}
+            accounts = [
+                acc for acc in accounts
+                if str(acc.get("mailbox_key") or acc.get("address") or "").strip().lower() in sel_set
+            ]
+
+        if not accounts:
+            raw_accounts = cfg.get("email_accounts")
+            raw_accounts = raw_accounts if isinstance(raw_accounts, list) else []
+            legacy_email = str(cfg.get("email", {}).get("address") or "").strip()
+            legacy_configured = bool(
+                legacy_email
+                and legacy_email.lower() not in {
+                    "your_email@qq.com",
+                    "your_email@example.com",
+                }
+            )
+            self.write_log(
+                "⚠️ [邮箱扫描] 未找到符合扫描条件的启用账号："
+                f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
+                f"email_accounts={len(raw_accounts)}，selected_keys={selected_keys or 'all'}。"
+            )
+            QMessageBox.warning(
+                self,
+                "配置缺失",
+                (
+                    "未找到需要扫描的启用邮箱账号。\n"
+                    "请先勾选需要扫描的邮箱账户，或在系统设置中启用对应账号。"
+                ),
+            )
+            self._open_settings_dialog()
+            return
+
+        from ..credentials import has_auth_code
+        missing = [account for account in accounts if not has_auth_code(account.get("address", ""))]
+        if missing:
+            missing_lines = "\n".join(f"  - {mask_email(account.get('address', ''))}" for account in missing[:8])
+            if len(missing) > 8:
+                missing_lines += f"\n  ... +{len(missing) - 8}"
+            QMessageBox.warning(
+                self,
+                "凭据缺失",
+                f"未检测到以下邮箱的授权码安全凭证：\n{missing_lines}\n请前往 [设置] 页面补充。",
+            )
+            self._open_settings_dialog()
+            return
+
+        active_btn = trigger_btn or getattr(self, "btn_scan_email", None)
+        self.write_log("📥 [邮箱扫描] 增量拉取任务已启动...")
+        self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
+        if active_btn:
+            self._set_action_busy(active_btn, "扫描中...")
+
+        # Spawn asynchronous thread worker
+        self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
+        self.scan_worker._trigger_btn = active_btn
+        self.scan_worker.log.connect(
+            lambda text: self.write_log(text, mirror_to_file=False)
+        )
+        self.scan_worker.finished.connect(self._scan_email_finished)
+        self.scan_worker.error.connect(self._scan_email_error)
+        self.scan_worker.start()
+
+    def _scan_email_finished(self, res: dict):
+        btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
+        if btn:
+            orig_text = btn.property("original_text") or ("扫描选中" if btn is getattr(self, "btn_import_scan_selected", None) else ("扫描默认" if btn is getattr(self, "btn_import_scan_default", None) else "扫描邮箱"))
+            self._clear_action_busy(btn, orig_text)
+        summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
+        self._last_scan_summary = summary
+        self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
+        self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
+
+        failed_summaries = res.get("failed_summaries", []) if isinstance(res, dict) else []
+        if failed_summaries:
+            fail_text = "\n".join(f"  - {s}" for s in failed_summaries[:8])
+            msg = (
+                f"扫描完成，以下 {len(failed_summaries)} 项解析出错：\n{fail_text}\n"
+                f"【统计】扫描邮件头: {summary.get('scanned_headers', 0)}, "
+                f"新入库邮件头: {summary.get('new_email_headers', 0)}, "
+                f"判定为发票候选: {summary.get('classified_invoice', 0)}"
+            )
+            QMessageBox.information(self, "扫描异常提示", msg)
+        self._load_invoices()
+
+    def _scan_email_error(self, err_msg: str):
+        btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
+        if btn:
+            orig_text = btn.property("original_text") or ("扫描选中" if btn is getattr(self, "btn_import_scan_selected", None) else ("扫描默认" if btn is getattr(self, "btn_import_scan_default", None) else "扫描邮箱"))
+            self._clear_action_busy(btn, orig_text)
+        self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
+        self.statusBar().showMessage("邮箱扫描执行出错！", 4000)
+        QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")
+
     # ── Operations Bar Handlers ───────────────────────────────────────
 
     def _export_diagnostics_package(self):
@@ -5781,88 +5916,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "所有正常增量发票均已解析成功并存入数据库！"
         )
 
-    def _scan_selected_email_accounts(self):
-        checked_keys = []
-        if hasattr(self, "mail_account_checkboxes"):
-            for chk in self.mail_account_checkboxes:
-                if chk.isChecked():
-                    key = chk.property("account_key")
-                    if key:
-                        checked_keys.append(str(key))
-
-        if not checked_keys:
-            QMessageBox.warning(self, "扫描提示", "请先在上面的列表中勾选至少一个需要扫描的邮箱账户。")
-            return
-
-        self._scan_email_clicked(selected_keys=checked_keys)
-
-    def _scan_default_email_clicked(self):
-        if hasattr(self, "mail_account_checkboxes"):
-            for chk in self.mail_account_checkboxes:
-                chk.setChecked(bool(chk.property("is_default")))
-        self._scan_email_clicked()
-
-    def _scan_email_clicked(self, selected_keys: list[str] | None = None):
-        """Trigger background email incremental scanning and download."""
-        from ..config import get_email_accounts, load_config_safe
-        cfg = load_config_safe()
-        accounts = get_email_accounts(cfg)
-        if not accounts:
-            raw_accounts = cfg.get("email_accounts")
-            raw_accounts = raw_accounts if isinstance(raw_accounts, list) else []
-            legacy_email = str(cfg.get("email", {}).get("address") or "").strip()
-            legacy_configured = bool(
-                legacy_email
-                and legacy_email.lower() not in {
-                    "your_email@qq.com",
-                    "your_email@example.com",
-                }
-            )
-            self.write_log(
-                "⚠️ [邮箱扫描] 未找到启用账号："
-                f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
-                f"email_accounts={len(raw_accounts)}，enabled_accounts=0。"
-            )
-            QMessageBox.warning(
-                self,
-                "配置缺失",
-                (
-                    "当前没有启用的邮箱账号。\n"
-                    "如果刚刚在设置页保存过邮箱，请重新保存一次；"
-                    "或检查 config.json 中 email_accounts 是否全部 enabled=false。"
-                ),
-            )
-            self._open_settings_dialog()
-            return
-
-        from ..credentials import has_auth_code
-        missing = [account for account in accounts if not has_auth_code(account.get("address", ""))]
-        if missing:
-            missing_lines = "\n".join(f"  - {mask_email(account.get('address', ''))}" for account in missing[:8])
-            if len(missing) > 8:
-                missing_lines += f"\n  ... +{len(missing) - 8}"
-            QMessageBox.warning(
-                self,
-                "\u51ed\u636e\u7f3a\u5931",
-                f"\u672a\u68c0\u6d4b\u5230\u4ee5\u4e0b\u90ae\u7bb1\u7684\u6388\u6743\u7801\u5b89\u5168\u51ed\u8bc1\uff1a\n{missing_lines}\n\u8bf7\u524d\u5f80 [\u8bbe\u7f6e] \u9875\u9762\u8865\u5145\u3002",
-            )
-            self._open_settings_dialog()
-            return
-
-        self.write_log("\U0001f4e5 [\u90ae\u7bb1\u626b\u63cf] \u589e\u91cf\u62c9\u53d6\u4efb\u52a1\u5df2\u542f\u52a8...")
-        self.statusBar().showMessage("\u6b63\u5728\u5efa\u7acb\u90ae\u7bb1\u8fde\u63a5\u5e76\u626b\u63cf\u63a5\u6536\u90ae\u4ef6...")
-        self._set_action_busy(self.btn_scan_email, "扫描中...")
-
-        # Spawn asynchronous thread worker
-        self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
-        self.scan_worker.log.connect(
-            lambda text: self.write_log(text, mirror_to_file=False)
-        )
-        self.scan_worker.finished.connect(self._scan_email_finished)
-        self.scan_worker.error.connect(self._scan_email_error)
-        self.scan_worker.start()
-
-    def _scan_email_finished(self, res: dict):
+    def _scan_email_finished_legacy(self, res: dict):
         self._clear_action_busy(self.btn_scan_email, "扫描邮箱")
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary

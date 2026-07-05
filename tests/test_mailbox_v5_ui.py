@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from copy import deepcopy
 
-from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel
+from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel, QMessageBox
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
@@ -19,7 +19,6 @@ TEST_DB_PATH = Path("test.db")
 class TestMailboxV5UI(unittest.TestCase):
 
     def setUp(self):
-        from PySide6.QtWidgets import QMessageBox
         QMessageBox.information = lambda *args, **kwargs: QMessageBox.Ok
         QMessageBox.warning = lambda *args, **kwargs: QMessageBox.Ok
         QMessageBox.critical = lambda *args, **kwargs: QMessageBox.Ok
@@ -151,6 +150,62 @@ class TestMailboxV5UI(unittest.TestCase):
         window.config = deepcopy(self.cfg)
 
         self.assertTrue(hasattr(window, "_switch_main_page"))
+
+    def test_import_scan_default_passes_only_default_key(self):
+        """Final P0 Test: Scan default email only passes default account key."""
+        from unittest.mock import patch
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+        window._refresh_imports_page()
+
+        captured = []
+        def mock_scan(selected_keys=None, trigger_btn=None):
+            captured.append(selected_keys)
+
+        window._scan_email_clicked = mock_scan
+        with patch("scripts.invoice_fetch.config.load_config_safe", return_value=self.cfg):
+            window._scan_default_email_clicked()
+
+        self.assertEqual(captured, [["test_qq@qq.com"]])
+
+    def test_import_scan_selected_credential_check_only_selected(self):
+        """Final P0 Test: Credential check only inspects selected accounts."""
+        from unittest.mock import patch
+        from scripts.invoice_fetch.gui.workers import EmailScanWorker
+        orig_start = EmailScanWorker.start
+        EmailScanWorker.start = lambda self: None
+
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+        window._refresh_imports_page()
+
+        import scripts.invoice_fetch.credentials as creds
+        orig_has = creds.has_auth_code
+        creds.has_auth_code = lambda addr: addr == "test_qq@qq.com"
+
+        try:
+            with patch("scripts.invoice_fetch.config.load_config_safe", return_value=self.cfg):
+                window._scan_email_clicked(selected_keys=["test_qq@qq.com"])
+            self.assertTrue(hasattr(window, "scan_worker"))
+            self.assertEqual(window.scan_worker.selected_keys, ["test_qq@qq.com"])
+        finally:
+            creds.has_auth_code = orig_has
+            EmailScanWorker.start = orig_start
+
+    def test_import_scan_selected_no_checked_accounts_warns(self):
+        """Final P0 Test: Unchecking all accounts triggers warning without scanning."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+        window._refresh_imports_page()
+
+        for chk in window.mail_account_checkboxes:
+            chk.setChecked(False)
+
+        called = []
+        window._scan_email_clicked = lambda *args, **kwargs: called.append(True)
+        window._scan_selected_email_accounts()
+
+        self.assertEqual(len(called), 0)
 
 
 if __name__ == "__main__":

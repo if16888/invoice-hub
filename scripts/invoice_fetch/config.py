@@ -242,17 +242,20 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             }
             accounts.append(_normalize_email_account(legacy_account, source_cfg=cfg, legacy=True))
 
-    if accounts and not any(acc.get("is_default") for acc in accounts):
-        accounts[0]["is_default"] = True
-
-    return accounts
+    return _normalize_default_email_account(accounts)
 
 
 def _is_acc_outlook_like(acc: dict[str, Any]) -> bool:
-    p = acc.get("provider")
-    addr = acc.get("address")
-    srv = (acc.get("imap") if isinstance(acc.get("imap"), dict) else {}).get("server")
-    return is_outlook_like_account(p, addr, srv)
+    if not isinstance(acc, dict):
+        return False
+    p = str(acc.get("provider") or "").strip().lower()
+    addr = str(acc.get("address") or "").strip().lower()
+    imap_cfg = acc.get("imap") if isinstance(acc.get("imap"), dict) else {}
+    srv = str(imap_cfg.get("server") or "").strip().lower()
+    try:
+        return is_outlook_like_account(p, addr, srv)
+    except Exception:
+        return False
 
 
 def _normalize_default_email_account(
