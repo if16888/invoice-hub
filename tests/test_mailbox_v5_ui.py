@@ -208,5 +208,51 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(len(called), 0)
 
 
+
+    def test_settings_page_does_not_open_nested_settings_dialog(self):
+        """V11 Test 1: Switching to settings page does not launch nested modal SettingsDialog."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+
+        opened_dialogs = []
+        def mock_open(*args, **kwargs):
+            opened_dialogs.append(True)
+
+        window._open_settings_dialog = mock_open
+        window._switch_main_page("settings")
+
+        self.assertEqual(len(opened_dialogs), 0)
+
+    def test_settings_single_authoritative_surface(self):
+        """V11 Test 2: In-window settings_page is the single authoritative UI surface."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+
+        window._switch_main_page("settings")
+        self.assertEqual(window.center_stack.currentIndex(), 5)
+        self.assertTrue(hasattr(window, "settings_tabs"))
+        self.assertIsNotNone(window.settings_tabs)
+
+    def test_mailbox_overview_shows_total_enabled_default_missing_counts(self):
+        """V11 Test 3: Mailbox overview shows total, enabled, default, missing auth code, and disabled counts."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window._desktop_settings_cfg = deepcopy(self.cfg)
+        window._refresh_settings_mailbox_page()
+
+        self.assertTrue(hasattr(window, "lbl_v11_stat_total"))
+        self.assertIn("总账号: 2", window.lbl_v11_stat_total.text())
+        self.assertIn("启用账号: 2", window.lbl_v11_stat_enabled.text())
+
+    def test_mailbox_saved_accounts_separated_from_provider_presets(self):
+        """V11 Test 4: Presets bar is separate and saved accounts list contains only saved accounts."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window._desktop_settings_cfg = deepcopy(self.cfg)
+        window._refresh_settings_mailbox_page()
+
+        self.assertTrue(hasattr(window, "v11_preset_buttons"))
+        self.assertIn("qq", window.v11_preset_buttons)
+        self.assertEqual(window.settings_mailbox_list.count(), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

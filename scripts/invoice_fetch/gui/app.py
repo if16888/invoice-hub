@@ -1854,6 +1854,76 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return "outlook"
         return "custom"
 
+
+    def _open_add_mailbox_dialog(self, preset_id: str | None = None):
+        dialog = SingleTaskMailboxDialog(self, preset_id=preset_id)
+        if dialog.exec() == QDialog.Accepted:
+            acc, auth_code = dialog.get_result_account()
+            self._save_mailbox_account_entry(acc, auth_code)
+
+    def _open_edit_mailbox_dialog(self):
+        accounts = self._mailbox_accounts_for_settings()
+        row = self.settings_mailbox_list.currentRow() if hasattr(self, "settings_mailbox_list") else -1
+        if row < 0 or row >= len(accounts):
+            return
+        account = accounts[row]
+        dialog = SingleTaskMailboxDialog(self, account=account)
+        if dialog.exec() == QDialog.Accepted:
+            acc, auth_code = dialog.get_result_account()
+            self._save_mailbox_account_entry(acc, auth_code)
+
+    def _add_mailbox_credential_dialog(self):
+        accounts = self._mailbox_accounts_for_settings()
+        row = self.settings_mailbox_list.currentRow() if hasattr(self, "settings_mailbox_list") else -1
+        if row < 0 or row >= len(accounts):
+            return
+        account = accounts[row]
+        email = account.get("address", "")
+        if not email:
+            return
+        from PySide6.QtWidgets import QInputDialog, QLineEdit
+        code, ok = QInputDialog.getText(self, "补充授权码", f"请输入 [{email}] 的授权码 / 应用密码：", QLineEdit.Password)
+        if ok and code.strip():
+            from ..credentials import save_auth_code_for_email
+            save_auth_code_for_email(email, code.strip())
+            QMessageBox.information(self, "凭据保存", f"[{email}] 的授权码已成功存入系统安全凭据库。")
+            self._refresh_settings_page()
+
+    def _save_mailbox_account_entry(self, account: dict, auth_code: str = "") -> None:
+        cfg = deepcopy(getattr(self, "_desktop_settings_cfg", load_config_safe()))
+        from ..config import get_email_accounts, _normalize_default_email_account, _apply_primary_email_account, save_config
+
+        accounts = [dict(a) for a in get_email_accounts(cfg)]
+        key = account.get("mailbox_key") or account.get("address", "").lower()
+        replaced = False
+
+        for idx, existing in enumerate(accounts):
+            existing_key = str(existing.get("mailbox_key") or existing.get("address") or "").strip().lower()
+            if existing_key == key.lower():
+                accounts[idx] = account
+                replaced = True
+                break
+
+        if not replaced:
+            accounts.append(account)
+
+        pref_key = key if account.get("is_default") else None
+        accounts = _normalize_default_email_account(accounts, preferred_key=pref_key)
+        _apply_primary_email_account(cfg, accounts)
+
+        save_config(cfg)
+        self._desktop_settings_cfg = deepcopy(cfg)
+        self.config = deepcopy(cfg)
+        self._settings_mailbox_current_key = key
+
+        if auth_code:
+            from ..credentials import save_auth_code_for_email
+            save_auth_code_for_email(account.get("address", ""), auth_code)
+
+        self._refresh_settings_page()
+        self._refresh_imports_page()
+        QMessageBox.information(self, "保存成功", f"邮箱账户 [{account.get('address')}] 设置已保存。")
+
     def _mailbox_accounts_for_settings(self) -> list[dict]:
         from ..config import get_email_accounts
         cfg = getattr(self, "_desktop_settings_cfg", None)
@@ -1874,20 +1944,42 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _refresh_settings_mailbox_page(self) -> None:
         if not hasattr(self, "settings_mailbox_list"):
             return
+
         accounts = self._mailbox_accounts_for_settings()
+
+        # Update Stat Cards Overview
+        total_cnt = len(accounts)
+        enabled_cnt = sum(1 for a in accounts if a.get("enabled", True))
+        disabled_cnt = sum(1 for a in accounts if not a.get("enabled", True))
+        default_acc = next((a for a in accounts if a.get("is_default")), None)
+        default_name = str(default_acc.get("name") or default_acc.get("address") or "无").strip() if default_acc else "无"
+
+        from ..credentials import has_auth_code
+        missing_cnt = sum(1 for a in accounts if a.get("enabled", True) and not has_auth_code(a.get("address", "")))
+
+        if hasattr(self, "lbl_v11_stat_total"):
+            self.lbl_v11_stat_total.setText(f"总账号: {total_cnt}")
+            self.lbl_v11_stat_enabled.setText(f"启用账号: {enabled_cnt}")
+            self.lbl_v11_stat_default.setText(f"默认扫描账号: {default_name}")
+            self.lbl_v11_stat_missing.setText(f"缺授权码账号: {missing_cnt}")
+            self.lbl_v11_stat_disabled.setText(f"禁用账号: {disabled_cnt}")
+
         current_key = getattr(self, "_settings_mailbox_current_key", "")
         self.settings_mailbox_list.blockSignals(True)
         self.settings_mailbox_list.clear()
         for account in accounts:
             label = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
-            provider = str(account.get("provider") or "imap").strip()
+            addr = str(account.get("address") or "").strip()
+            is_def = " (默认)" if account.get("is_default") else ""
             state = "已启用" if account.get("enabled", True) else "已停用"
-            item = QListWidgetItem(f"{label} · {provider} · {state}")
+            item = QListWidgetItem(f"{label} ({addr}) · {state}{is_def}")
             item.setData(Qt.UserRole, str(account.get("mailbox_key") or account.get("address") or "").strip())
             self.settings_mailbox_list.addItem(item)
         self.settings_mailbox_list.blockSignals(False)
 
-        self.lbl_settings_mailbox_empty.setVisible(self.settings_mailbox_list.count() == 0)
+        if hasattr(self, "lbl_settings_mailbox_empty"):
+            self.lbl_settings_mailbox_empty.setVisible(self.settings_mailbox_list.count() == 0)
+
         if self.settings_mailbox_list.count() == 0:
             self._settings_mailbox_current_key = ""
             self._clear_settings_mailbox_form()
@@ -1923,19 +2015,35 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         account = accounts[row]
         self._settings_mailbox_current_key = str(account.get("mailbox_key") or account.get("address") or "").strip()
-        self.txt_settings_mailbox_name.setText(str(account.get("name") or "").strip())
-        self.txt_settings_mailbox_email.setText(str(account.get("address") or "").strip())
+        addr = str(account.get("address") or "").strip()
+        name = str(account.get("name") or addr or "").strip()
+
         imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
-        self.txt_settings_mailbox_server.setText(str(imap_cfg.get("server") or "").strip())
+        server = str(imap_cfg.get("server") or "").strip()
         try:
-            self.spin_settings_mailbox_port.setValue(int(imap_cfg.get("port") or 993))
+            port = int(imap_cfg.get("port") or 993)
         except (TypeError, ValueError):
-            self.spin_settings_mailbox_port.setValue(993)
+            port = 993
+        ssl = "SSL" if imap_cfg.get("ssl", True) else "非加密"
+
         search_cfg = account.get("search", {}) if isinstance(account.get("search"), dict) else {}
-        self.combo_settings_mailbox_scan_rule.setCurrentText(str(search_cfg.get("months_back") or 3))
-        self.chk_settings_mailbox_enabled.setChecked(bool(account.get("enabled", True)))
-        self.btn_settings_mailbox_toggle.setText("停用" if account.get("enabled", True) else "启用")
-        self.btn_settings_mailbox_delete.setEnabled(True)
+        months = search_cfg.get("months_back") or 3
+
+        from ..credentials import has_auth_code
+        cred_ok = has_auth_code(addr)
+
+        if hasattr(self, "lbl_detail_name"):
+            self.lbl_detail_name.setText(name)
+            self.lbl_detail_email.setText(addr)
+            self.lbl_detail_server.setText(f"{server}:{port} ({ssl})")
+            self.lbl_detail_is_default.setText("是 (默认扫描账号)" if account.get("is_default") else "否")
+            self.lbl_detail_credential_status.setText("凭据有效 ✅" if cred_ok else "⚠️ 缺失授权码")
+            self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
+            self.lbl_detail_scan_rule.setText(f"最近 {months} 个月 INBOX")
+
+        if hasattr(self, "btn_settings_mailbox_toggle"):
+            self.btn_settings_mailbox_toggle.setText("停用" if account.get("enabled", True) else "启用")
+            self.btn_settings_mailbox_delete.setEnabled(True)
 
     def _clear_settings_mailbox_form(self) -> None:
         self.txt_settings_mailbox_name.clear()
@@ -2583,32 +2691,89 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mailbox_layout = QVBoxLayout(mailbox_tab)
         mailbox_layout.setContentsMargins(0, 0, 0, 0)
         mailbox_layout.setSpacing(10)
-        mailbox_layout.addWidget(QLabel("邮箱账户配置"))
-        mailbox_hint = QLabel("在桌面内直接维护邮箱账户、IMAP 参数、扫描范围与最近扫描结果。")
-        mailbox_hint.setWordWrap(True)
-        mailbox_hint.setStyleSheet("color: #667085; font-size: 12px;")
-        mailbox_layout.addWidget(mailbox_hint)
+
+        # Overview Stat Header (Requirement 3)
+        self.stat_box_overview = QWidget()
+        stat_box_layout = QHBoxLayout(self.stat_box_overview)
+        stat_box_layout.setContentsMargins(0, 0, 0, 0)
+        stat_box_layout.setSpacing(8)
+
+        self.lbl_v11_stat_total = QLabel("总账号: 0")
+        self.lbl_v11_stat_enabled = QLabel("启用账号: 0")
+        self.lbl_v11_stat_default = QLabel("默认扫描账号: 无")
+        self.lbl_v11_stat_missing = QLabel("缺授权码账号: 0")
+        self.lbl_v11_stat_disabled = QLabel("禁用账号: 0")
+
+        for lbl in (self.lbl_v11_stat_total, self.lbl_v11_stat_enabled, self.lbl_v11_stat_default, self.lbl_v11_stat_missing, self.lbl_v11_stat_disabled):
+            lbl.setStyleSheet("background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 10px; font-weight: 500; font-size: 12px; color: #1E293B;")
+            stat_box_layout.addWidget(lbl)
+
+        mailbox_layout.addWidget(self.stat_box_overview)
+
+        # Presets Entry Bar (Requirement 4)
+        preset_bar = QWidget()
+        preset_layout = QHBoxLayout(preset_bar)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(8)
+
+        lbl_preset_title = QLabel("新增常用预设:")
+        lbl_preset_title.setStyleSheet("font-weight: 600; color: #475569; font-size: 12px;")
+        preset_layout.addWidget(lbl_preset_title)
+
+        self.v11_preset_buttons = {}
+        presets_data = [
+            ("qq", "QQ 邮箱"),
+            ("netease_163", "163 邮箱"),
+            ("gmail", "Gmail"),
+            ("outlook", "Outlook"),
+            ("custom", "自定义 IMAP"),
+        ]
+        for pid, pname in presets_data:
+            btn = make_button(f"+ {pname}", variant="secondary")
+            btn.clicked.connect(lambda _, p=pid: self._open_add_mailbox_dialog(preset_id=p))
+            self.v11_preset_buttons[pid] = btn
+            preset_layout.addWidget(btn)
+
+        preset_layout.addStretch(1)
+        mailbox_layout.addWidget(preset_bar)
+
         mailbox_shell = QHBoxLayout()
         mailbox_shell.setContentsMargins(0, 0, 0, 0)
         mailbox_shell.setSpacing(12)
+
+        # Saved Accounts List ONLY (Requirement 4)
         self.settings_mailbox_list = QListWidget()
         self.settings_mailbox_list.setMinimumWidth(260)
         self.settings_mailbox_list.currentRowChanged.connect(lambda _row: self._on_settings_mailbox_selection_changed())
         mailbox_shell.addWidget(self.settings_mailbox_list, 0)
+
+        # Read-Only Details Panel (Requirement 5 & 6)
         mailbox_editor = QWidget()
         mailbox_editor_layout = QVBoxLayout(mailbox_editor)
         mailbox_editor_layout.setContentsMargins(0, 0, 0, 0)
         mailbox_editor_layout.setSpacing(8)
+
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
         self.btn_settings_mailbox_add = make_button("新增邮箱账号", variant="secondary")
-        self.btn_settings_mailbox_add.clicked.connect(self._add_settings_mailbox)
+        self.btn_settings_mailbox_add.clicked.connect(lambda: self._open_add_mailbox_dialog())
+
+        self.btn_settings_mailbox_edit_config = make_button("编辑配置", variant="primary")
+        self.btn_settings_mailbox_edit_config.clicked.connect(self._open_edit_mailbox_dialog)
+
+        self.btn_settings_mailbox_add_credential = make_button("补授权码", variant="secondary")
+        self.btn_settings_mailbox_add_credential.clicked.connect(self._add_mailbox_credential_dialog)
+
         self.btn_settings_mailbox_toggle = make_button("停用", variant="secondary")
         self.btn_settings_mailbox_toggle.clicked.connect(self._toggle_settings_mailbox_enabled)
+
         self.btn_settings_mailbox_delete = make_button("删除", variant="danger")
         self.btn_settings_mailbox_delete.clicked.connect(self._delete_settings_mailbox)
+
         action_row.addWidget(self.btn_settings_mailbox_add)
+        action_row.addWidget(self.btn_settings_mailbox_edit_config)
+        action_row.addWidget(self.btn_settings_mailbox_add_credential)
         action_row.addWidget(self.btn_settings_mailbox_toggle)
         action_row.addWidget(self.btn_settings_mailbox_delete)
         action_row.addStretch(1)
@@ -2784,8 +2949,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         elif page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
             self.settings_tabs.setCurrentIndex(sub_tab)
 
-        if page_key == "settings":
-            self._open_settings_dialog(sub_tab=sub_tab)
+
 
     def _setup_workbench_shortcuts(self) -> None:
         self.workbench_shortcuts = {}
