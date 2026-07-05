@@ -1564,6 +1564,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._register_shortcut(target_widget, shortcuts, "Esc", self._handle_workbench_escape, guarded=False)
         return shortcuts
 
+    def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
+        if not hasattr(self, "center_stack") or self.center_stack is None:
+            return
+        page_index_map = {
+            "overview": 0,
+            "review": 1,
+            "imports": 2,
+            "export": 3,
+            "logs": 4,
+            "settings": 5,
+        }
+        idx = page_index_map.get(page_key, 1)
+        if hasattr(self, "center_stack") and 0 <= idx < self.center_stack.count():
+            self.center_stack.setCurrentIndex(idx)
+        
+        if hasattr(self, "workbench_nav_buttons") and page_key in self.workbench_nav_buttons:
+            btn = self.workbench_nav_buttons[page_key]
+            if btn and hasattr(btn, "isCheckable") and btn.isCheckable():
+                btn.setChecked(True)
+                
+        if page_key == "imports" and hasattr(self, "imports_tabs") and self.imports_tabs is not None:
+            self.imports_tabs.setCurrentIndex(sub_tab)
+        elif page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
+            self.settings_tabs.setCurrentIndex(sub_tab)
+
     def _setup_workbench_shortcuts(self) -> None:
         self.workbench_shortcuts = {}
         self._register_shortcut(self, self.workbench_shortcuts, "Up", lambda: self._move_invoice_selection(-1))
