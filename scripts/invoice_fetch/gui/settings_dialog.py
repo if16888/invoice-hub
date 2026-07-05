@@ -1956,17 +1956,9 @@ class SettingsDialog(QDialog):
             return
 
         target_account["enabled"] = enabled
-        self.cfg["email_accounts"] = email_accounts
-
-        first_enabled = next((acc for acc in email_accounts if acc.get("enabled", True)), None)
-        if first_enabled:
-            self.cfg["email"] = {
-                "provider": first_enabled.get("provider", "qq"),
-                "address": first_enabled.get("address", ""),
-                "username": first_enabled.get("username", first_enabled.get("address", "")),
-            }
-            self.cfg["imap"] = dict(first_enabled.get("imap", {}))
-            self.cfg["search"] = dict(first_enabled.get("search", {}))
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        email_accounts = _normalize_default_email_account(email_accounts)
+        self.cfg = _apply_primary_email_account(self.cfg, email_accounts)
 
         from ..config import save_config
         try:
@@ -2009,24 +2001,12 @@ class SettingsDialog(QDialog):
         updated_cfg = deepcopy(self.cfg)
         updated_cfg["email_accounts"] = updated_accounts
 
-        next_acc = None
-        for acc in updated_accounts:
-            p = acc.get("provider", "")
-            addr = acc.get("address", "")
-            srv = acc.get("imap", {}).get("server", "")
-            if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
-                next_acc = acc
-                break
-
-        if next_acc:
-            updated_cfg["email"] = {
-                "provider": next_acc.get("provider", "qq"),
-                "address": next_acc.get("address", ""),
-                "username": next_acc.get("username", next_acc.get("address", "")),
-            }
-            updated_cfg["imap"] = dict(next_acc.get("imap", {}))
-            updated_cfg["search"] = dict(next_acc.get("search", {}))
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        if updated_accounts:
+            updated_accounts = _normalize_default_email_account(updated_accounts)
+            updated_cfg = _apply_primary_email_account(updated_cfg, updated_accounts)
         else:
+            updated_cfg["email_accounts"] = []
             updated_cfg["email"] = {"provider": "qq", "address": "", "username": ""}
             updated_cfg["imap"] = {"server": "", "port": 993, "ssl": True}
             updated_cfg["search"] = {"folder": "INBOX", "months_back": 3}
@@ -3516,26 +3496,13 @@ class SettingsDialog(QDialog):
         else:
             email_accounts[existing_index] = account
 
-        if is_def:
-            for acc in email_accounts:
-                if acc is not account:
-                    acc["is_default"] = False
-        elif not any(acc.get("is_default") for acc in email_accounts):
-            email_accounts[0]["is_default"] = True
-
-        updated_cfg["email_accounts"] = email_accounts
-        updated_cfg.setdefault("email", {})
-        updated_cfg.setdefault("imap", {})
-        updated_cfg.setdefault("search", {})
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        email_accounts = _normalize_default_email_account(
+            email_accounts,
+            preferred_key=stable_mailbox_key if is_def else None,
+        )
+        updated_cfg = _apply_primary_email_account(updated_cfg, email_accounts)
         updated_cfg.setdefault("ai", {})
-        updated_cfg["email"]["provider"] = provider
-        updated_cfg["email"]["address"] = email
-        updated_cfg["email"]["username"] = email
-        updated_cfg["imap"]["server"] = imap_server
-        updated_cfg["imap"]["port"] = int(imap_port_str)
-        updated_cfg["imap"]["ssl"] = True
-        updated_cfg["search"]["folder"] = "INBOX"
-        updated_cfg["search"]["months_back"] = int(months_str)
 
 
         try:
@@ -3593,24 +3560,12 @@ class SettingsDialog(QDialog):
         updated_cfg = deepcopy(self.cfg)
         updated_cfg["email_accounts"] = updated_accounts
 
-        next_acc = None
-        for acc in updated_accounts:
-            p = acc.get("provider", "")
-            addr = acc.get("address", "")
-            srv = acc.get("imap", {}).get("server", "")
-            if acc.get("enabled", True) and not is_outlook_like_account(p, addr, srv):
-                next_acc = acc
-                break
-
-        if next_acc:
-            updated_cfg["email"] = {
-                "provider": next_acc.get("provider", "qq"),
-                "address": next_acc.get("address", ""),
-                "username": next_acc.get("username", next_acc.get("address", "")),
-            }
-            updated_cfg["imap"] = dict(next_acc.get("imap", {}))
-            updated_cfg["search"] = dict(next_acc.get("search", {}))
+        from ..config import _normalize_default_email_account, _apply_primary_email_account
+        if updated_accounts:
+            updated_accounts = _normalize_default_email_account(updated_accounts)
+            updated_cfg = _apply_primary_email_account(updated_cfg, updated_accounts)
         else:
+            updated_cfg["email_accounts"] = []
             updated_cfg["email"] = {"provider": "qq", "address": "", "username": ""}
             updated_cfg["imap"] = {"server": "", "port": 993, "ssl": True}
             updated_cfg["search"] = {"folder": "INBOX", "months_back": 3}

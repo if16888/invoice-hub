@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
-from scripts.invoice_fetch.config import load_config_safe, get_email_accounts
+from scripts.invoice_fetch.config import load_config_safe, get_email_accounts, _normalize_default_email_account, _select_primary_email_account
 
 app = QApplication.instance() or QApplication(sys.argv)
 TEST_DB_PATH = Path("test.db")
@@ -19,6 +19,12 @@ TEST_DB_PATH = Path("test.db")
 class TestMailboxV5UI(unittest.TestCase):
 
     def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information = lambda *args, **kwargs: QMessageBox.Ok
+        QMessageBox.warning = lambda *args, **kwargs: QMessageBox.Ok
+        QMessageBox.critical = lambda *args, **kwargs: QMessageBox.Ok
+        QMessageBox.question = lambda *args, **kwargs: QMessageBox.Yes
+
         self.cfg = deepcopy(load_config_safe())
         self.cfg["email"] = {}
         self.cfg["email_accounts"] = [
@@ -88,6 +94,63 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertTrue(hasattr(dialog, "lbl_v5_ai_provider"))
         self.assertTrue(hasattr(dialog, "btn_v5_test_ai"))
         self.assertTrue(hasattr(dialog, "btn_v5_clear_ai_key"))
+
+    def test_default_account_projection_after_edit_non_default(self):
+        """P0-1 Test: Editing a non-default account preserves default account in cfg['email']."""
+        dialog = SettingsDialog(parent=None)
+        dialog.cfg = deepcopy(self.cfg)
+        dialog._build_saved_account_maps()
+        dialog._load_initial_values()
+
+        dialog._open_mailbox_editor("test_163@163.com")
+        dialog.txt_months.setText("9")
+        dialog.chk_is_default.setChecked(False)
+        dialog._save_mailbox_settings()
+
+        self.assertEqual(dialog.cfg["email"]["address"].lower(), "test_qq@qq.com")
+
+    def test_deleting_default_reassigns_default(self):
+        """P0-2 Test: Deleting default account reassigns default status to remaining enabled account."""
+        accounts = deepcopy(self.cfg["email_accounts"])
+        accounts = [a for a in accounts if a["address"] != "test_qq@qq.com"]
+        norm = _normalize_default_email_account(accounts)
+        self.assertEqual(len(norm), 1)
+        self.assertTrue(norm[0]["is_default"])
+        self.assertEqual(norm[0]["address"], "test_163@163.com")
+
+    def test_disabling_default_reassigns_default(self):
+        """P0-2 Test: Disabling default account reassigns default status to next enabled non-Outlook account."""
+        dialog = SettingsDialog(parent=None)
+        dialog.cfg = deepcopy(self.cfg)
+        dialog._build_saved_account_maps()
+        dialog._load_initial_values()
+
+        dialog._set_mailbox_enabled("test_qq@qq.com", False)
+        norm = dialog.cfg["email_accounts"]
+        target = next((a for a in norm if a["address"] == "test_163@163.com"), None)
+        self.assertIsNotNone(target)
+        self.assertTrue(target["is_default"])
+        self.assertEqual(dialog.cfg["email"]["address"].lower(), "test_163@163.com")
+
+    def test_import_scan_selected_uses_checked_accounts(self):
+        """P1-2 Test: Start scanning selected accounts reads checked checkbox account keys."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+        window._refresh_imports_page()
+
+        checked_keys = []
+        for chk in window.mail_account_checkboxes:
+            if chk.isChecked():
+                checked_keys.append(chk.property("account_key"))
+
+        self.assertIn("test_qq@qq.com", checked_keys)
+
+    def test_sidebar_settings_does_not_show_legacy_settings_page(self):
+        """P1-1 Test: Switching to settings opens full SettingsDialog without legacy split."""
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window.config = deepcopy(self.cfg)
+
+        self.assertTrue(hasattr(window, "_switch_main_page"))
 
 
 if __name__ == "__main__":

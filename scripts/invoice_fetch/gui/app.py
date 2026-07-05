@@ -2439,8 +2439,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mail_action_row.setSpacing(8)
 
         self.btn_import_scan_selected = make_button("开始扫描选中邮箱", variant="primary")
-        self.btn_import_scan_selected.clicked.connect(self._scan_email_clicked)
-        self.btn_scan_email = self.btn_import_scan_selected
+        self.btn_import_scan_selected.clicked.connect(self._scan_selected_email_accounts)
 
         self.btn_import_scan_default = make_button("仅扫描默认邮箱", variant="secondary")
         self.btn_import_scan_default.clicked.connect(self._scan_default_email_clicked)
@@ -2784,6 +2783,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.imports_tabs.setCurrentIndex(sub_tab)
         elif page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
             self.settings_tabs.setCurrentIndex(sub_tab)
+
+        if page_key == "settings":
+            self._open_settings_dialog(sub_tab=sub_tab)
 
     def _setup_workbench_shortcuts(self) -> None:
         self.workbench_shortcuts = {}
@@ -5751,9 +5753,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage("本地发票导入失败！", 4000)
         QMessageBox.critical(self, "错误", f"本地导入执行出错: {err_msg}")
 
-    def _open_settings_dialog(self):
+    def _open_settings_dialog(self, sub_tab: int = 0):
         """Display the modal Settings QDialog for config management."""
         dialog = SettingsDialog(self)
+        if hasattr(dialog, "settings_content_stack"):
+            cat_map = {
+                1: getattr(dialog, "page_mailbox_center", None),
+                2: getattr(dialog, "page_rules_center", None),
+                5: getattr(dialog, "page_data_center", None),
+                6: getattr(dialog, "page_about_center", None),
+            }
+            target_widget = cat_map.get(sub_tab)
+            if target_widget:
+                dialog.settings_content_stack.setCurrentWidget(target_widget)
         dialog.exec()
 
 
@@ -5769,13 +5781,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "所有正常增量发票均已解析成功并存入数据库！"
         )
 
+    def _scan_selected_email_accounts(self):
+        checked_keys = []
+        if hasattr(self, "mail_account_checkboxes"):
+            for chk in self.mail_account_checkboxes:
+                if chk.isChecked():
+                    key = chk.property("account_key")
+                    if key:
+                        checked_keys.append(str(key))
+
+        if not checked_keys:
+            QMessageBox.warning(self, "扫描提示", "请先在上面的列表中勾选至少一个需要扫描的邮箱账户。")
+            return
+
+        self._scan_email_clicked(selected_keys=checked_keys)
+
     def _scan_default_email_clicked(self):
         if hasattr(self, "mail_account_checkboxes"):
             for chk in self.mail_account_checkboxes:
                 chk.setChecked(bool(chk.property("is_default")))
         self._scan_email_clicked()
 
-    def _scan_email_clicked(self):
+    def _scan_email_clicked(self, selected_keys: list[str] | None = None):
         """Trigger background email incremental scanning and download."""
         from ..config import get_email_accounts, load_config_safe
         cfg = load_config_safe()
@@ -5827,7 +5854,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._set_action_busy(self.btn_scan_email, "扫描中...")
 
         # Spawn asynchronous thread worker
-        self.scan_worker = EmailScanWorker(self.db_path)
+        self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
         self.scan_worker.log.connect(
             lambda text: self.write_log(text, mirror_to_file=False)
         )

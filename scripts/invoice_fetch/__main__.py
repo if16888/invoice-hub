@@ -3801,6 +3801,7 @@ def _scan_mailboxes_with_db(
     retry_failed: bool = False,
     log_callback=None,
     no_ai: bool = False,
+    selected_keys: list[str] | None = None,
 ) -> dict:
     """Sequentially scan multiple enabled mailboxes and process pending invoices."""
 
@@ -3812,6 +3813,12 @@ def _scan_mailboxes_with_db(
             _log.info(message)
 
     accounts = get_email_accounts(cfg)
+    if selected_keys:
+        sel_set = {str(k).strip().lower() for k in selected_keys if k}
+        accounts = [
+            acc for acc in accounts
+            if str(acc.get("mailbox_key") or acc.get("address") or "").strip().lower() in sel_set
+        ]
     if not accounts:
         raise ValueError("至少需要配置一个启用的邮箱账号。")
 

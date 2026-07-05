@@ -247,10 +247,95 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
     return accounts
 
+
+def _is_acc_outlook_like(acc: dict[str, Any]) -> bool:
+    p = acc.get("provider")
+    addr = acc.get("address")
+    srv = (acc.get("imap") if isinstance(acc.get("imap"), dict) else {}).get("server")
+    return is_outlook_like_account(p, addr, srv)
+
+
+def _normalize_default_email_account(
+    accounts: list[dict[str, Any]],
+    preferred_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Ensure exactly one account in accounts has is_default=True.
+    Hierarchy:
+    1. preferred_key if matched, enabled, and not Outlook
+    2. First existing is_default=True account that is enabled and not Outlook
+    3. First enabled non-Outlook account
+    4. First enabled account
+    5. First account overall
+    """
+    if not accounts:
+        return []
+
+    target_idx = None
+
+    if preferred_key:
+        pref_clean = str(preferred_key).strip().lower()
+        for idx, acc in enumerate(accounts):
+            acc_key = str(acc.get("mailbox_key") or acc.get("address") or "").strip().lower()
+            acc_addr = str(acc.get("address") or "").strip().lower()
+            if (acc_key == pref_clean or acc_addr == pref_clean) and acc.get("enabled", True) is not False and not _is_acc_outlook_like(acc):
+                target_idx = idx
+                break
+
+    if target_idx is None:
+        for idx, acc in enumerate(accounts):
+            if bool(acc.get("is_default") or acc.get("default")) and acc.get("enabled", True) is not False and not _is_acc_outlook_like(acc):
+                target_idx = idx
+                break
+
+    if target_idx is None:
+        for idx, acc in enumerate(accounts):
+            if acc.get("enabled", True) is not False and not _is_acc_outlook_like(acc):
+                target_idx = idx
+                break
+
+    if target_idx is None:
+        for idx, acc in enumerate(accounts):
+            if acc.get("enabled", True) is not False:
+                target_idx = idx
+                break
+
+    if target_idx is None:
+        target_idx = 0
+
+    for idx, acc in enumerate(accounts):
+        acc["is_default"] = (idx == target_idx)
+
+    return accounts
+
+
+def _select_primary_email_account(accounts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select primary account for legacy email/imap/search projection:
+    1. is_default=True AND enabled=True AND not is_outlook_like
+    2. is_default=True
+    3. First enabled account
+    4. First account
+    """
+    if not accounts:
+        return None
+    p1 = next((a for a in accounts if bool(a.get("is_default") or a.get("default")) and a.get("enabled", True) is not False and not _is_acc_outlook_like(a)), None)
+    if p1:
+        return p1
+    p2 = next((a for a in accounts if bool(a.get("is_default") or a.get("default"))), None)
+    if p2:
+        return p2
+    p3 = next((a for a in accounts if a.get("enabled", True) is not False), None)
+    if p3:
+        return p3
+    return accounts[0]
+
+
 def _apply_primary_email_account(cfg: dict[str, Any], accounts: list[dict[str, Any]]) -> dict[str, Any]:
     if not accounts:
         return cfg
-    primary = next((acc for acc in accounts if acc.get("is_default")), accounts[0])
+    accounts = _normalize_default_email_account(accounts)
+    primary = _select_primary_email_account(accounts)
+    if not primary:
+        return cfg
     cfg["email_accounts"] = accounts
     cfg["email"] = {
         "provider": primary["provider"],
@@ -258,9 +343,10 @@ def _apply_primary_email_account(cfg: dict[str, Any], accounts: list[dict[str, A
         "username": primary["username"],
         "name": primary.get("name") or primary["address"],
     }
-    cfg["imap"] = dict(primary["imap"])
-    cfg["search"] = dict(primary["search"])
+    cfg["imap"] = dict(primary.get("imap") or {})
+    cfg["search"] = dict(primary.get("search") or {})
     return cfg
+
 
 
 def _normalize_email_imap_config(

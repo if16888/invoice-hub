@@ -31,9 +31,10 @@ class EmailScanWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, selected_keys: list[str] | None = None):
         super().__init__()
         self.db_path = db_path
+        self.selected_keys = selected_keys
         self.summary_logs = []
 
     def run(self):
@@ -46,7 +47,8 @@ class EmailScanWorker(QThread):
 
             res = scan_email_and_download(
                 db_path=self.db_path,
-                log_callback=gui_log
+                log_callback=gui_log,
+                selected_keys=self.selected_keys,
             )
             self.finished.emit(res)
         except Exception as e:
