@@ -5342,6 +5342,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("最近 6 个月", window.lst_mail_accounts.toPlainText())
                     self.assertIn("new=3", window.lbl_mail_scan_summary.text())
                     self.assertIn("duplicates=1", window.lbl_mail_scan_summary.text())
+                    window.btn_import_manage_mailbox.click()
+                    app.processEvents()
+                    self.assertIs(window.center_stack.currentWidget(), window.settings_page)
+                    self.assertEqual(window.settings_tabs.currentIndex(), 1)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -5377,15 +5381,64 @@ class ClaimGroupsTests(unittest.TestCase):
                         window._switch_main_page("settings", sub_tab=2)
                     app.processEvents()
 
-                    expected_tabs = ["常规", "导入与识别", "分类与规则", "运行状态", "安全与隐私", "数据与备份", "关于"]
+                    expected_tabs = ["常规", "邮箱账户", "AI 配置", "导入与识别", "分类与规则", "运行状态", "安全与隐私", "数据与备份", "关于"]
                     self.assertEqual(
                         [window.settings_tabs.tabText(i) for i in range(window.settings_tabs.count())],
                         expected_tabs,
                     )
+                    self.assertIsNotNone(window.settings_mailbox_list)
+                    self.assertIsNotNone(window.btn_settings_mailbox_test)
+                    self.assertIsNotNone(window.btn_settings_mailbox_scan)
+                    self.assertIsNotNone(window.combo_settings_ai_provider)
+                    self.assertIsNotNone(window.txt_settings_ai_model)
+                    self.assertIsNotNone(window.lbl_settings_ai_key_status)
+                    self.assertIsNotNone(window.btn_settings_ai_test)
                     self.assertIn("餐饮", window.lbl_settings_rules.text())
                     self.assertIn("差旅", window.lbl_settings_rules.text())
                     self.assertIn("数据目录：", window.lbl_settings_data.text())
                     self.assertIn(f"Version: {APP_VERSION}", window.lbl_settings_about.text())
+                finally:
+                    if hasattr(window, "db") and window.db is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    app.processEvents()
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
+
+    def test_gui_center_stack_keeps_six_desktop_pages(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+            import sys
+            app = QApplication.instance() or QApplication(sys.argv)
+
+            with tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "test_gui_page_integrity.db"
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                window = InvoiceReviewApp(db_path, splash=None)
+                try:
+                    app.processEvents()
+                    self.assertEqual(window.center_stack.count(), 6)
+                    self.assertIs(window.center_stack.widget(0), window.dashboard_page)
+                    self.assertIs(window.center_stack.widget(1), window.review_page)
+                    self.assertIs(window.center_stack.widget(2), window.import_center_page)
+                    self.assertIs(window.center_stack.widget(3), window.export_page)
+                    self.assertIs(window.center_stack.widget(4), window.audit_log_page)
+                    self.assertIs(window.center_stack.widget(5), window.settings_page)
+
+                    for key, page in [
+                        ("overview", window.dashboard_page),
+                        ("review", window.review_page),
+                        ("imports", window.import_center_page),
+                        ("export", window.export_page),
+                        ("logs", window.audit_log_page),
+                        ("settings", window.settings_page),
+                    ]:
+                        window._switch_main_page(key)
+                        app.processEvents()
+                        self.assertIs(window.center_stack.currentWidget(), page)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
