@@ -573,7 +573,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         root_layout.addWidget(self.workbench_content, 1)
         self.main_layout = QVBoxLayout(self.workbench_content)
         main_layout = self.main_layout
-        main_layout.setContentsMargins(16, 14, 16, 0)
+        main_layout.setContentsMargins(12, 0, 12, 0)
         main_layout.setSpacing(8)
 
         self.search_reload_timer = QTimer(self)
@@ -616,7 +616,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.workbench_top_toolbar = QFrame()
         self.workbench_top_toolbar.setObjectName("WorkbenchTopToolbar")
         action_layout = QHBoxLayout(self.workbench_top_toolbar)
-        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setContentsMargins(0, 10, 0, 4)
         action_layout.setSpacing(8)
 
         self.txt_search = QLineEdit(self.workbench_top_toolbar)
