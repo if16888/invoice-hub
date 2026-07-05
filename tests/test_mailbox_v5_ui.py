@@ -5,8 +5,9 @@ import sys
 import unittest
 from pathlib import Path
 from copy import deepcopy
+from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel, QMessageBox
+from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel, QMessageBox, QLineEdit, QSpinBox, QComboBox
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
@@ -252,6 +253,69 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertTrue(hasattr(window, "v11_preset_buttons"))
         self.assertIn("qq", window.v11_preset_buttons)
         self.assertEqual(window.settings_mailbox_list.count(), 2)
+
+    def test_mailbox_detail_is_read_only_by_default(self):
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window._desktop_settings_cfg = deepcopy(self.cfg)
+        window._refresh_settings_mailbox_page()
+        mailbox_tab = window.settings_tabs.widget(1)
+
+        mailbox_detail_inputs = [
+            child for child in mailbox_tab.findChildren(QLineEdit)
+            if child.parent() is not None
+        ]
+        self.assertEqual(mailbox_detail_inputs, [])
+        self.assertIsInstance(window.lbl_detail_name, QLabel)
+        self.assertIsInstance(window.lbl_detail_email, QLabel)
+        self.assertIsInstance(window.lbl_detail_server, QLabel)
+        self.assertIsInstance(window.lbl_detail_scan_rule, QLabel)
+
+    def test_mailbox_detail_has_no_save_cancel_buttons(self):
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window._desktop_settings_cfg = deepcopy(self.cfg)
+        window._refresh_settings_mailbox_page()
+        mailbox_tab = window.settings_tabs.widget(1)
+
+        button_texts = [button.text() for button in mailbox_tab.findChildren(QPushButton)]
+        self.assertNotIn("保存设置", button_texts)
+        self.assertNotIn("取消", button_texts)
+        self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑配置")
+        self.assertEqual(window.btn_settings_mailbox_add_credential.text(), "补授权码")
+
+        mailbox_detail_spins = mailbox_tab.findChildren(QSpinBox)
+        mailbox_detail_combos = mailbox_tab.findChildren(QComboBox)
+        self.assertEqual(mailbox_detail_spins, [])
+        self.assertEqual(mailbox_detail_combos, [])
+
+    def test_edit_config_opens_single_task_dialog(self):
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window._desktop_settings_cfg = deepcopy(self.cfg)
+        window._refresh_settings_mailbox_page()
+        window.settings_mailbox_list.setCurrentRow(0)
+
+        with patch("scripts.invoice_fetch.gui.app.SingleTaskMailboxDialog") as dialog_cls, \
+             patch.object(window, "_save_mailbox_account_entry") as save_entry:
+            dialog = dialog_cls.return_value
+            dialog.exec.return_value = 1
+            dialog.get_result_account.return_value = (dict(self.cfg["email_accounts"][0]), "")
+            window.btn_settings_mailbox_edit_config.click()
+
+        dialog_cls.assert_called_once()
+        dialog_cls.assert_called_with(window, account=self.cfg["email_accounts"][0])
+        save_entry.assert_called_once()
+
+    def test_add_credential_separate_from_detail(self):
+        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window._desktop_settings_cfg = deepcopy(self.cfg)
+        window._refresh_settings_mailbox_page()
+        window.settings_mailbox_list.setCurrentRow(0)
+
+        with patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("secret-code", True)) as get_text, \
+             patch("scripts.invoice_fetch.credentials.set_auth_code") as set_code:
+            window.btn_settings_mailbox_add_credential.click()
+
+        get_text.assert_called_once()
+        set_code.assert_called_once_with("test_qq@qq.com", "secret-code")
 
 
 if __name__ == "__main__":
