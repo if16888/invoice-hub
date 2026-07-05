@@ -550,17 +550,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.workbench_nav_buttons[key] = button
             return button
 
-        add_nav_button("overview", "总览")
-        add_nav_button("review", "发票审核")
-        add_nav_button("imports", "导入记录")
-        add_nav_button("logs", "操作日志", self._open_logs_view)
-        add_nav_button("mobile_upload", "扫码上传", self._mobile_upload_clicked)
-        add_nav_button("export", "批量导出", self._export_claim_package)
-        add_nav_button("mail", "邮箱导入", self._scan_email_clicked)
-        add_nav_button("rules", "规则管理", self._open_settings_dialog)
-        add_nav_button("settings", "系统设置", self._open_settings_dialog)
-        add_nav_button("data", "数据与备份", self._open_settings_dialog)
-        add_nav_button("about", "关于我们", self._show_about_dialog)
+        # V2 Six Page IA Architecture: 6 Primary Business Navigation Items
+        add_nav_button("overview", "总览", lambda: self._switch_main_page("overview"))
+        add_nav_button("review", "发票审核", lambda: self._switch_main_page("review"))
+        add_nav_button("imports", "导入中心", lambda: self._switch_main_page("imports"))
+        add_nav_button("export", "批量导出", lambda: self._switch_main_page("export"))
+        add_nav_button("logs", "操作日志", lambda: self._switch_main_page("logs"))
+        add_nav_button("settings", "系统设置", lambda: self._switch_main_page("settings"))
+
+        # Map legacy sub-keys for backward compatibility & direct action proxies
+        self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "扫码上传", lambda: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mobile_upload"].hide()
+        self.workbench_nav_buttons["mail"] = add_nav_button("mail", "邮箱导入", lambda: self._switch_main_page("imports", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mail"].hide()
+        self.workbench_nav_buttons["rules"] = add_nav_button("rules", "规则管理", lambda: self._switch_main_page("settings", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["rules"].hide()
+        self.workbench_nav_buttons["data"] = add_nav_button("data", "数据与备份", lambda: self._switch_main_page("settings", sub_tab=5), selectable=False, enabled=True)
+        self.workbench_nav_buttons["data"].hide()
+        self.workbench_nav_buttons["about"] = add_nav_button("about", "关于我们", lambda: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
+        self.workbench_nav_buttons["about"].hide()
 
         review_button = self.workbench_nav_buttons["review"]
         review_button.setCheckable(True)

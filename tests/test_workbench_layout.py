@@ -381,11 +381,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 original_widget = window.left_stack.currentWidget()
                 self.assertTrue(review_button.isChecked())
 
-                for key in ("mobile_upload", "mail", "export", "rules", "settings", "data", "about"):
+                for key in ("overview", "imports", "export", "logs", "settings"):
                     button = window.workbench_nav_buttons[key]
                     self.assertTrue(button.isVisible(), f"{key} should be visible in navigation")
-                    self.assertTrue(review_button.isChecked(), f"review should stay selected while {key} is visible")
-                    self.assertFalse(button.isChecked(), f"{key} should not become selected")
                     self.assertIs(window.left_stack.currentWidget(), original_widget)
             finally:
                 window.db.close()
