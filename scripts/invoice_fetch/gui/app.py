@@ -471,6 +471,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return len(visible_selectable) <= 1
 
     def _init_ui(self):
+        # Pre-initialize logging text edit widget so page builders and mixins can safely reference it
+        if not hasattr(self, "txt_log") or self.txt_log is None:
+            self.txt_log = QTextEdit()
+            self.txt_log.setReadOnly(True)
+            self.txt_log.setFont(QFont("Consolas", 9))
+            self.txt_log.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E5E7EB; color: #374151;")
+
         # Main Layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -551,23 +558,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return button
 
         # V2 Six Page IA Architecture: 6 Primary Business Navigation Items
-        add_nav_button("overview", "总览", lambda: self._switch_main_page("overview"))
-        add_nav_button("review", "发票审核", lambda: self._switch_main_page("review"))
-        add_nav_button("imports", "导入中心", lambda: self._switch_main_page("imports"))
-        add_nav_button("export", "批量导出", lambda: self._switch_main_page("export"))
-        add_nav_button("logs", "操作日志", lambda: self._switch_main_page("logs"))
-        add_nav_button("settings", "系统设置", lambda: self._switch_main_page("settings"))
+        add_nav_button("overview", "总览", lambda *_a: self._switch_main_page("overview"))
+        add_nav_button("review", "发票审核", lambda *_a: self._switch_main_page("review"))
+        add_nav_button("imports", "导入中心", lambda *_a: self._switch_main_page("imports"))
+        add_nav_button("export", "批量导出", lambda *_a: self._switch_main_page("export"))
+        add_nav_button("logs", "操作日志", lambda *_a: self._switch_main_page("logs"))
+        add_nav_button("settings", "系统设置", lambda *_a: self._switch_main_page("settings"))
 
         # Map legacy sub-keys for backward compatibility & direct action proxies
-        self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "扫码上传", lambda: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "扫码上传", lambda *_a: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
         self.workbench_nav_buttons["mobile_upload"].hide()
-        self.workbench_nav_buttons["mail"] = add_nav_button("mail", "邮箱导入", lambda: self._switch_main_page("imports", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mail"] = add_nav_button("mail", "邮箱导入", lambda *_a: self._switch_main_page("imports", sub_tab=2), selectable=False, enabled=True)
         self.workbench_nav_buttons["mail"].hide()
-        self.workbench_nav_buttons["rules"] = add_nav_button("rules", "规则管理", lambda: self._switch_main_page("settings", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["rules"] = add_nav_button("rules", "规则管理", lambda *_a: self._switch_main_page("settings", sub_tab=2), selectable=False, enabled=True)
         self.workbench_nav_buttons["rules"].hide()
-        self.workbench_nav_buttons["data"] = add_nav_button("data", "数据与备份", lambda: self._switch_main_page("settings", sub_tab=5), selectable=False, enabled=True)
+        self.workbench_nav_buttons["data"] = add_nav_button("data", "数据与备份", lambda *_a: self._switch_main_page("settings", sub_tab=5), selectable=False, enabled=True)
         self.workbench_nav_buttons["data"].hide()
-        self.workbench_nav_buttons["about"] = add_nav_button("about", "关于我们", lambda: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
+        self.workbench_nav_buttons["about"] = add_nav_button("about", "关于我们", lambda *_a: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
         self.workbench_nav_buttons["about"].hide()
 
         review_button = self.workbench_nav_buttons["review"]
@@ -577,8 +584,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         root_layout.addWidget(self.workbench_nav)
 
+        # Central QStackedWidget for 6 V2 IA business pages
+        self.center_stack = QStackedWidget(central_widget)
+        root_layout.addWidget(self.center_stack, 1)
+
+        # Page 0: Overview Dashboard ("总览")
+        self.overview_page = self._build_overview_page_view()
+        self.center_stack.addWidget(self.overview_page)
+
+        # Page 1: Review Workbench ("发票审核")
         self.workbench_content = QWidget()
-        root_layout.addWidget(self.workbench_content, 1)
         self.main_layout = QVBoxLayout(self.workbench_content)
         main_layout = self.main_layout
         main_layout.setContentsMargins(12, 0, 12, 0)
@@ -1031,6 +1046,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Set default proportions: Table takes 60%, Form takes 40%
         splitter.setSizes([650, 450])
+
+        # Add Page 1 (发票审核) to center_stack
+        self.center_stack.addWidget(self.workbench_content)
+
+        # Page 2: Import Center ("导入中心")
+        self.imports_page = self._build_imports_page_view()
+        self.center_stack.addWidget(self.imports_page)
+
+        # Page 3: Batch Export ("批量导出")
+        self.export_page = self._build_export_page_view()
+        self.center_stack.addWidget(self.export_page)
+
+        # Page 4: Audit Logs ("操作日志")
+        self.logs_page = self._build_logs_page_view()
+        self.center_stack.addWidget(self.logs_page)
+
+        # Page 5: System Settings ("系统设置")
+        self.settings_page = self._build_settings_page_view()
+        self.center_stack.addWidget(self.settings_page)
+
+        # Set default active page to Page 1 (发票审核)
+        self.center_stack.setCurrentIndex(1)
 
         self._apply_workbench_metrics()
         self._setup_workbench_shortcuts()
@@ -1563,6 +1600,230 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._register_shortcut(target_widget, shortcuts, "Ctrl+E", lambda: self._set_selected_status(ERROR))
         self._register_shortcut(target_widget, shortcuts, "Esc", self._handle_workbench_escape, guarded=False)
         return shortcuts
+
+
+    # ── V2 Six Page IA Views ───────────────────────────────────
+
+    def _build_overview_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        hdr = QLabel("总览概览")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        metrics_frame = QFrame()
+        metrics_frame.setProperty("class", "WorkbenchCard")
+        m_layout = QHBoxLayout(metrics_frame)
+        m_layout.setContentsMargins(12, 12, 12, 12)
+        m_layout.setSpacing(12)
+
+        for title, val, color in [
+            ("今日导入", "0 张", "#2563EB"),
+            ("待审核", "246 张", "#D97706"),
+            ("异常票据", "0 张", "#DC2626"),
+            ("待补全", "0 张", "#4B5563"),
+            ("本月金额", "¥0.00", "#059669"),
+        ]:
+            card = QFrame()
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(8, 8, 8, 8)
+            t_lbl = QLabel(title)
+            t_lbl.setStyleSheet("color: #667085; font-size: 12px;")
+            v_lbl = QLabel(val)
+            v_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
+            v_lbl.setStyleSheet(f"color: {color};")
+            c_layout.addWidget(t_lbl)
+            c_layout.addWidget(v_lbl)
+            m_layout.addWidget(card, 1)
+
+        layout.addWidget(metrics_frame)
+
+        body_frame = QFrame()
+        body_layout = QHBoxLayout(body_frame)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
+
+        left_card = QFrame()
+        left_card.setProperty("class", "WorkbenchCard")
+        lc_layout = QVBoxLayout(left_card)
+        lc_layout.addWidget(QLabel("最近导入批次"))
+        lc_hint = QLabel("暂无最近导入日志。可在发票审核页或导入中心导入本地发票。")
+        lc_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        lc_layout.addWidget(lc_hint)
+        btn_jump_review = make_button("前往发票审核", variant="primary")
+        btn_jump_review.clicked.connect(lambda: self._switch_main_page("review"))
+        lc_layout.addWidget(btn_jump_review)
+        lc_layout.addStretch(1)
+
+        right_card = QFrame()
+        right_card.setProperty("class", "WorkbenchCard")
+        rc_layout = QVBoxLayout(right_card)
+        rc_layout.addWidget(QLabel("待处理提醒与系统概况"))
+        rc_hint = QLabel("· 当前发票库共有 259 张历史记录\n· 建议优先处理 246 张待审核发票")
+        rc_hint.setStyleSheet("color: #4B5563; font-size: 12px; line-height: 1.5;")
+        rc_layout.addWidget(rc_hint)
+        rc_layout.addStretch(1)
+
+        body_layout.addWidget(left_card, 1)
+        body_layout.addWidget(right_card, 1)
+        layout.addWidget(body_frame, 1)
+        return page
+
+    def _build_imports_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        hdr = QLabel("导入中心")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        self.imports_tabs = QTabWidget()
+        self.imports_tabs.setObjectName("ImportsTabs")
+
+        # Tab 0: 导入记录
+        tab_records = QWidget()
+        tr_layout = QVBoxLayout(tab_records)
+        tr_layout.addWidget(QLabel("导入历史记录与错误明细"))
+        tr_hint = QLabel("此处显示历次本地导入、邮箱抓取及扫码上传的日志批次。")
+        tr_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        tr_layout.addWidget(tr_hint)
+        tr_layout.addStretch(1)
+        self.imports_tabs.addTab(tab_records, "导入记录")
+
+        # Tab 1: 扫码上传
+        tab_qr = QWidget()
+        tq_layout = QVBoxLayout(tab_qr)
+        tq_layout.addWidget(QLabel("手机扫码上传发票与证明材料"))
+        tq_hint = QLabel("使用手机扫描二维码，可直接拍照或选择相册发票实时传输至本客户端。")
+        tq_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        tq_layout.addWidget(tq_hint)
+        tq_layout.addStretch(1)
+        self.imports_tabs.addTab(tab_qr, "扫码上传")
+
+        # Tab 2: 邮箱导入
+        tab_mail = QWidget()
+        tm_layout = QVBoxLayout(tab_mail)
+        tm_layout.addWidget(QLabel("邮箱自动抓取发票配置"))
+        tm_hint = QLabel("支持绑定 IMAP 邮箱服务，定期自动扫描发票邮件并导入系统。")
+        tm_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        tm_layout.addWidget(tm_hint)
+        btn_scan = make_button("立即同步邮箱", variant="primary")
+        btn_scan.clicked.connect(self._scan_email_clicked)
+        tm_layout.addWidget(btn_scan)
+        tm_layout.addStretch(1)
+        self.imports_tabs.addTab(tab_mail, "邮箱导入")
+
+        layout.addWidget(self.imports_tabs, 1)
+        return page
+
+    def _build_export_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        hdr = QLabel("批量导出向导")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        wizard_card = QFrame()
+        wizard_card.setProperty("class", "WorkbenchCard")
+        wc_layout = QVBoxLayout(wizard_card)
+        wc_layout.setContentsMargins(16, 16, 16, 16)
+        wc_layout.setSpacing(12)
+
+        wc_layout.addWidget(QLabel("1. 选择导出范围"))
+        opt1 = QCheckBox("仅导出当前通过的发票 (推荐)")
+        opt1.setChecked(True)
+        wc_layout.addWidget(opt1)
+
+        wc_layout.addWidget(QLabel("2. 导出文件类型"))
+        opt2 = QCheckBox("生成 Excel 汇总报销单 + 导出 PDF/OFD 原件压缩包")
+        opt2.setChecked(True)
+        wc_layout.addWidget(opt2)
+
+        wc_layout.addWidget(QLabel("3. 前置预检提示"))
+        alert = QLabel("⚠️ 当前共有 0 张已通过发票待导出。导出将排除异常及已忽略记录。")
+        alert.setStyleSheet("color: #D97706; font-size: 12px; background: #FEF3C7; padding: 8px; border-radius: 6px;")
+        wc_layout.addWidget(alert)
+
+        btn_run_export = make_button("开始批量导出", variant="primary", min_width=120)
+        btn_run_export.clicked.connect(self._export_claim_package)
+        wc_layout.addWidget(btn_run_export)
+        wc_layout.addStretch(1)
+
+        layout.addWidget(wizard_card, 1)
+        return page
+
+    def _build_logs_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        hdr_layout = QHBoxLayout()
+        hdr = QLabel("操作日志审计中心")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        hdr_layout.addWidget(hdr)
+        hdr_layout.addStretch(1)
+
+        btn_copy = make_button("复制日志", variant="secondary")
+        btn_copy.clicked.connect(self._copy_log_to_clipboard)
+        hdr_layout.addWidget(btn_copy)
+
+        btn_clear = make_button("清空日志", variant="secondary")
+        btn_clear.clicked.connect(self._clear_log_text)
+        hdr_layout.addWidget(btn_clear)
+
+        layout.addLayout(hdr_layout)
+        layout.addWidget(self.txt_log, 1)
+        return page
+
+    def _build_settings_page_view(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        hdr = QLabel("系统设置中心")
+        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        layout.addWidget(hdr)
+
+        self.settings_tabs = QTabWidget()
+        self.settings_tabs.setObjectName("SettingsTabs")
+
+        for tab_name, hint_text in [
+            ("常规", "界面显示密度、常规偏好设置"),
+            ("导入与识别", "OCR 识别引擎、PDF/OFD 解析精度设置"),
+            ("分类与规则", "发票消费类型分类字典与 AI 自动审核规则配置"),
+            ("运行状态", "本地数据库路径、运行日志存储位置"),
+            ("安全与隐私", "脱敏规则、敏感数据清除设置"),
+            ("数据与备份", "数据库备份、离线归档与数据还原"),
+            ("关于", f"Invoice Hub 发票审核中心 v{APP_VERSION}"),
+        ]:
+            t_widget = QWidget()
+            t_layout = QVBoxLayout(t_widget)
+            t_layout.addWidget(QLabel(f"{tab_name} 设置"))
+            lbl_h = QLabel(hint_text)
+            lbl_h.setStyleSheet("color: #667085; font-size: 12px;")
+            t_layout.addWidget(lbl_h)
+            btn_open_dlg = make_button(f"打开完整 {tab_name} 配置对话框", variant="secondary")
+            btn_open_dlg.clicked.connect(self._open_settings_dialog)
+            t_layout.addWidget(btn_open_dlg)
+            t_layout.addStretch(1)
+            self.settings_tabs.addTab(t_widget, tab_name)
+
+        layout.addWidget(self.settings_tabs, 1)
+        return page
+
+    def _clear_log_text(self):
+        if hasattr(self, "txt_log") and self.txt_log is not None:
+            self.txt_log.clear()
 
     def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
         if not hasattr(self, "center_stack") or self.center_stack is None:
