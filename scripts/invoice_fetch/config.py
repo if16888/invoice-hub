@@ -188,12 +188,14 @@ def _normalize_email_account(
 
     name = str(merged.get("name") or "").strip() or address or provider
     enabled = merged.get("enabled", True) is not False
+    is_default = bool(merged.get("is_default") or merged.get("default", False))
     raw_mailbox_key = str(merged.get("mailbox_key") or "").strip()
     mailbox_key = "legacy" if legacy else (raw_mailbox_key or address.lower())
 
     return {
         "name": name,
         "enabled": enabled,
+        "is_default": is_default,
         "provider": provider,
         "address": address,
         "username": username,
@@ -231,6 +233,7 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             legacy_account = {
                 "name": str(email_cfg.get("name") or "").strip() or legacy_email or str(email_cfg.get("provider") or "legacy"),
                 "enabled": True,
+                "is_default": True,
                 "provider": email_cfg.get("provider") or "qq",
                 "address": legacy_email,
                 "username": email_cfg.get("username") or "",
@@ -239,17 +242,21 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             }
             accounts.append(_normalize_email_account(legacy_account, source_cfg=cfg, legacy=True))
 
+    if accounts and not any(acc.get("is_default") for acc in accounts):
+        accounts[0]["is_default"] = True
+
     return accounts
 
 def _apply_primary_email_account(cfg: dict[str, Any], accounts: list[dict[str, Any]]) -> dict[str, Any]:
     if not accounts:
         return cfg
-    primary = accounts[0]
+    primary = next((acc for acc in accounts if acc.get("is_default")), accounts[0])
     cfg["email_accounts"] = accounts
     cfg["email"] = {
         "provider": primary["provider"],
         "address": primary["address"],
         "username": primary["username"],
+        "name": primary.get("name") or primary["address"],
     }
     cfg["imap"] = dict(primary["imap"])
     cfg["search"] = dict(primary["search"])
