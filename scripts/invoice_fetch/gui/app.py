@@ -378,6 +378,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._select_row_hint = -1  # hint for post-delete row selection
         self._left_splitter_sizes_initialized = False
         self._nav_collapsed_manual: bool | None = None
+        self._show_after_deferred_init = bool(self.splash)
 
         self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
 
@@ -436,6 +437,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # Ensure splash screen closes even if load fails so GUI doesn't get blocked
             if self.splash:
                 self.splash.close()
+            if self._show_after_deferred_init:
+                self._show_after_deferred_init = False
+                self.show()
             return
 
         load_time = _time_mod.time()
@@ -445,6 +449,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if self.splash:
             self.splash.show_message("加载完成！", 100)
             self.splash.close()
+        if self._show_after_deferred_init:
+            self._show_after_deferred_init = False
+            self.show()
 
         self.write_log(f"📊 [系统启动] First Invoice List Loaded: 成功检索并渲染首批数据 (耗时: {load_time - start_time:.4f}秒)")
         status_msg = f"本地数据库 invoices.db 加载成功，发票列表加载耗时 {load_time - start_time:.4f} 秒"
@@ -6445,8 +6452,8 @@ def start_gui_app(db_path: Path, startup_probe: bool = False, app_init_ms: int =
         first_paint_ms = 0
         total_startup_ms = app_init_ms
     else:
-        window.show()
-
+        if splash is None:
+            window.show()
         _t_shown = _time.monotonic()
         main_window_show_ms = int((_t_shown - _t_launch) * 1000)
         startup_ms = app_init_ms + main_window_show_ms

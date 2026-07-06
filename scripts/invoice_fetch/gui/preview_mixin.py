@@ -119,13 +119,12 @@ class PreviewMixin:
         self.btn_download_preview = self.overlay_toolbar.btn_download
         self.btn_print_preview = self.overlay_toolbar.btn_print
         self.btn_preview_focus = self.overlay_toolbar.btn_fullscreen
-        self.lbl_file_info = QLabel("0 / 0 无文件")
-        self.btn_prev = QToolButton()
-        self.btn_next = QToolButton()
-        self.btn_open_ext = QToolButton()
+        self.lbl_file_info = QLabel("0 / 0 无文件", self.overlay_toolbar)
+        self.btn_prev = QToolButton(self.overlay_toolbar)
+        self.btn_next = QToolButton(self.overlay_toolbar)
+        self.btn_open_ext = QToolButton(self.overlay_toolbar)
 
         for w in (self.lbl_file_info, self.btn_prev, self.btn_next, self.btn_open_ext):
-            w.setParent(self.overlay_toolbar)
             w.setGeometry(0, 0, 0, 0)
             w.hide()
 

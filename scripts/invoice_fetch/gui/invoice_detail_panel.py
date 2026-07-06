@@ -4001,7 +4001,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.lbl_claim_total = QLabel("0 条记录 · 合计 ¥0.00")
+        self.lbl_claim_total = QLabel("0 条记录 · 合计 ¥0.00", self)
 
 
 

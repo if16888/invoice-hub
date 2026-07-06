@@ -92,19 +92,36 @@ class TestGuiStartFunctionSignature(unittest.TestCase):
     def test_start_gui_app_accepts_startup_probe(self):
         """start_gui_app must accept startup_probe and app_init_ms."""
         import inspect
-        with patch.dict("sys.modules", {
-            "PySide6": MagicMock(),
-            "PySide6.QtWidgets": MagicMock(),
-            "PySide6.QtCore": MagicMock(),
-            "PySide6.QtGui": MagicMock(),
-        }):
-            import importlib
-            app_mod = importlib.import_module("scripts.invoice_fetch.gui.app")
+        import importlib
+        app_mod = importlib.import_module("scripts.invoice_fetch.gui.app")
 
         sig = inspect.signature(app_mod.start_gui_app)
         params = list(sig.parameters.keys())
         self.assertIn("startup_probe", params)
         self.assertIn("app_init_ms", params)
+
+    def test_start_gui_app_keeps_main_window_hidden_until_splash_finishes(self):
+        """Normal startup must not show the main window before the splash is dismissed."""
+        import importlib
+
+        app_mod = importlib.import_module("scripts.invoice_fetch.gui.app")
+        fake_app = MagicMock()
+        fake_app.exec.return_value = 0
+        fake_splash = MagicMock()
+        fake_window = MagicMock()
+        fake_window.db_open_ms = 0
+        fake_window.gui_init_ms = 0
+        fake_window.first_load_ms = 0
+
+        with patch.object(app_mod, "QApplication", return_value=fake_app), \
+             patch.object(app_mod, "StartupSplash", return_value=fake_splash), \
+             patch.object(app_mod, "InvoiceReviewApp", return_value=fake_window), \
+             patch.object(app_mod.sys, "exit") as mock_exit:
+            app_mod.start_gui_app(PROJECT_ROOT / "runtime" / "invoices.db", startup_probe=False, app_init_ms=0)
+
+        fake_splash.show.assert_called_once()
+        fake_window.show.assert_not_called()
+        mock_exit.assert_called_once_with(fake_app.exec.return_value)
 
 
 class TestCheckStartupTimeScript(unittest.TestCase):

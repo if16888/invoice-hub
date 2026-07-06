@@ -36,16 +36,16 @@ class StatCard(QFrame):
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(6)
 
-        self._lbl_icon = QLabel(icon_text)
+        self._lbl_icon = QLabel(icon_text, self)
         self._lbl_icon.setProperty("class", "CompactStatCardIcon")
         self._lbl_icon.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self._lbl_icon.setVisible(bool(icon_text))
 
-        self._lbl_title = QLabel(title)
+        self._lbl_title = QLabel(title, self)
         self._lbl_title.setProperty("class", "CompactStatCardTitle")
         self._lbl_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
-        self._lbl_value = QLabel(str(value))
+        self._lbl_value = QLabel(str(value), self)
         self._lbl_value.setProperty("class", "CompactStatCardValue")
         self._lbl_value.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 

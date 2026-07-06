@@ -48,6 +48,13 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
             ),
         )
 
+    def test_preview_stub_controls_are_parented_to_overlay_toolbar(self):
+        window, _ = self._make_window()
+        self.assertIs(window.lbl_file_info.parentWidget(), window.overlay_toolbar)
+        self.assertIs(window.btn_prev.parentWidget(), window.overlay_toolbar)
+        self.assertIs(window.btn_next.parentWidget(), window.overlay_toolbar)
+        self.assertIs(window.btn_open_ext.parentWidget(), window.overlay_toolbar)
+
     def test_thumbnail_selection_updates_document_index(self):
         window, root = self._make_window()
         first = root / "first.png"
