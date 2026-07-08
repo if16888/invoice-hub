@@ -192,10 +192,56 @@ QFrame#SummaryStrip {
     border: 1px solid #E5EAF2;
     border-radius: 12px;
 }
+QFrame#PageHeader {
+    background: transparent;
+    border: none;
+}
+QLabel[class="PageTitle"] {
+    color: #172033;
+    font-size: 18px;
+    font-weight: 700;
+}
+QLabel[class="PageHint"] {
+    color: #667085;
+    font-size: 12px;
+    font-weight: 500;
+}
+QFrame#CommandBar {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
 QFrame#SectionCard {
     background-color: #FFFFFF;
     border: 1px solid #E5EAF2;
     border-radius: 12px;
+}
+QFrame#ReadOnlyDetailPanel {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
+QFrame#SecondaryNavStack {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
+QListWidget#SecondaryNavList {
+    background-color: #F8FAFC;
+    border: none;
+    border-right: 1px solid #E5EAF2;
+    padding: 8px;
+}
+QListWidget#SecondaryNavList::item {
+    min-height: 32px;
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: #475467;
+}
+QListWidget#SecondaryNavList::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    font-weight: 700;
 }
 QLabel#InvoiceRecordTitle {
     color: #111827;
@@ -228,6 +274,22 @@ QTableWidget::item:selected {
 }
 QTableWidget::item:selected:active {
     background-color: #BFDBFE;
+}
+QListWidget#EntityList {
+    background-color: #FFFFFF;
+    alternate-background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    padding: 4px;
+}
+QListWidget#EntityList::item {
+    min-height: 28px;
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+QListWidget#EntityList::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
 }
 QHeaderView::section {
     background-color: #F8FAFC;

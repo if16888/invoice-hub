@@ -36,7 +36,14 @@ from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import APP_STYLESHEET
 from .ui_components import (
+    CommandBar,
     CompactStatCard,
+    EntityList,
+    LogDrawer,
+    MoreMenuButton,
+    PageHeader,
+    ReadOnlyDetailPanel,
+    SecondaryNavStack,
     SectionCard,
     ShortcutDisclosure,
     SummaryStrip,
@@ -739,13 +746,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.workbench_nav_buttons[key] = button
             return button
 
-        # V2 Six Page IA Architecture: 6 Primary Business Navigation Items
-        add_nav_button("overview", "总览", lambda *_a: self._switch_main_page("overview"))
+        add_nav_button("overview", "今日工作台", lambda *_a: self._switch_main_page("overview"))
         add_nav_button("review", "发票审核", lambda *_a: self._switch_main_page("review"))
         add_nav_button("imports", "导入中心", lambda *_a: self._switch_main_page("imports"))
-        add_nav_button("export", "批量导出", lambda *_a: self._switch_main_page("export"))
-        add_nav_button("logs", "操作日志", lambda *_a: self._switch_main_page("logs"))
+        add_nav_button("export", "报销组与导出", lambda *_a: self._switch_main_page("export"))
         add_nav_button("settings", "系统设置", lambda *_a: self._switch_main_page("settings"))
+        add_nav_button("logs", "操作日志", lambda *_a: self._switch_main_page("logs"), selectable=False, enabled=False)
+        self.workbench_nav_buttons["logs"].hide()
 
         # Map legacy sub-keys for backward compatibility & direct action proxies
         self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "扫码上传", lambda *_a: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
@@ -758,11 +765,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.workbench_nav_buttons["data"].hide()
         self.workbench_nav_buttons["about"] = add_nav_button("about", "关于我们", lambda *_a: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
         self.workbench_nav_buttons["about"].hide()
-
-        review_button = self.workbench_nav_buttons["review"]
-        review_button.setCheckable(True)
-        review_button.setChecked(True)
-        self.workbench_nav_group.addButton(review_button)
 
         root_layout.addWidget(self.workbench_nav)
 
@@ -786,11 +788,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.search_reload_timer = QTimer(self)
         self.search_reload_timer.setSingleShot(True)
         self.search_reload_timer.setInterval(250)
-
-        # All nav buttons are enabled and wired to dedicated page views
-        for key, button in self.workbench_nav_buttons.items():
-            button.setCheckable(True)
-            button.setEnabled(True)
 
         nav_layout.addStretch(1)
         self.btn_collapse_nav = QPushButton("收起侧边栏")
@@ -1249,6 +1246,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Set default active page to Page 1 (发票审核)
         self.center_stack.setCurrentIndex(1)
+        if "review" in self.workbench_nav_buttons:
+            self.workbench_nav_buttons["review"].setChecked(True)
 
         self._apply_workbench_metrics()
         self._setup_workbench_shortcuts()
@@ -1852,16 +1851,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         metrics = self._collect_overview_metrics()
         if metrics is None:
             for label in self.overview_value_labels.values():
-                label.setText("—")
+                label.set_value("—")
             self.lbl_overview_recent_imports.setText("暂无可用统计，等待数据库连接或首批导入完成。")
             self.lbl_overview_health.setText("当前无法读取审核队列统计，导入后会自动刷新。")
             return
 
-        self.overview_value_labels["today_imported"].setText(f"{metrics['today_imported']} 张")
-        self.overview_value_labels["to_review"].setText(f"{metrics['to_review']} 张")
-        self.overview_value_labels["error"].setText(f"{metrics['error']} 张")
-        self.overview_value_labels["needs_fix"].setText(f"{metrics['needs_fix']} 张")
-        self.overview_value_labels["month_total"].setText(f"¥{metrics['month_total']:.2f}")
+        self.overview_value_labels["today_imported"].set_value(f"{metrics['today_imported']} 张")
+        self.overview_value_labels["to_review"].set_value(f"{metrics['to_review']} 张")
+        self.overview_value_labels["error"].set_value(f"{metrics['error']} 张")
+        self.overview_value_labels["needs_fix"].set_value(f"{metrics['needs_fix']} 张")
+        self.overview_value_labels["month_total"].set_value(f"¥{metrics['month_total']:.2f}")
         self.lbl_overview_recent_imports.setText(
             f"当前数据库共有 {metrics['total']} 张有效记录，今天新增 {metrics['today_imported']} 张。"
         )
@@ -1973,6 +1972,47 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.imports_summary_strip.set_metric("missing", str(missing_cnt))
             self.imports_summary_strip.set_metric("recent", recent_text)
             self.imports_summary_strip.set_metric("failed", failed_text)
+
+    def _refresh_export_page(self) -> None:
+        if not hasattr(self, "combo_export_claims"):
+            return
+        claims = []
+        try:
+            claims = self.db.list_claim_groups()
+        except Exception as exc:
+            _log.debug("Failed to refresh export page: %s", exc)
+        self.combo_export_claims.blockSignals(True)
+        self.combo_export_claims.clear()
+        for claim in claims:
+            period = ""
+            if claim.get("period_start") or claim.get("period_end"):
+                period = f" - {claim.get('period_start')}~{claim.get('period_end')}"
+            self.combo_export_claims.addItem(f"{claim.get('name')}{period}", claim.get("id"))
+        self.combo_export_claims.blockSignals(False)
+
+        total_approved = 0
+        total_pending = 0
+        total_missing = 0
+        for claim in claims:
+            stats = self._claim_export_preflight_stats(claim.get("id"))
+            total_approved += int(stats.get(APPROVED, 0) or 0)
+            total_pending += int(stats.get(TO_REVIEW, 0) or 0)
+            total_missing += int(stats.get("missing_attachment", 0) or 0) + int(stats.get("missing_amount", 0) or 0)
+        self.export_summary_strip.set_metric("groups", str(len(claims)))
+        self.export_summary_strip.set_metric("approved", str(total_approved))
+        self.export_summary_strip.set_metric("pending", str(total_pending))
+        self.export_summary_strip.set_metric("missing", str(total_missing))
+
+        if not claims:
+            self.export_summary_strip.set_metric("ready", "无报销组")
+            self.lbl_export_integrity.setText("当前还没有报销组。先在审核页把发票关联到报销组，再回来导出。")
+            self.lbl_export_blockers.setText("阻塞：没有可导出的报销组。")
+            if hasattr(self, "export_invoice_list"):
+                self.export_invoice_list.clear()
+                self.lbl_export_invoice_meta.setText("当前未选择报销组。")
+            self.btn_run_export_page.setEnabled(False)
+            return
+        self._sync_export_claim_selection()
 
     def _refresh_settings_page(self) -> None:
         self._desktop_settings_cfg = deepcopy(load_config_safe())
@@ -2549,61 +2589,43 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        hdr = QLabel("总览概览")
-        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        layout.addWidget(hdr)
+        self.overview_header = PageHeader(
+            "今日工作台",
+            "先看今天的导入、待审和异常，再决定是去审核、补材料还是导出。",
+        )
+        layout.addWidget(self.overview_header)
 
-        metrics_frame = QFrame()
-        metrics_frame.setProperty("class", "WorkbenchCard")
-        m_layout = QHBoxLayout(metrics_frame)
-        m_layout.setContentsMargins(12, 12, 12, 12)
-        m_layout.setSpacing(12)
-
+        self.overview_summary_strip = SummaryStrip()
         self.overview_value_labels = {}
-        for stat_key, title, val, color in [
-            ("today_imported", "今日导入", "—", "#2563EB"),
-            ("to_review", "待审核", "—", "#D97706"),
-            ("error", "异常票据", "—", "#DC2626"),
-            ("needs_fix", "待补全", "—", "#4B5563"),
-            ("month_total", "本月金额", "—", "#059669"),
+        for stat_key, title, state in [
+            ("today_imported", "今日导入", "info"),
+            ("to_review", "待审核", "warning"),
+            ("error", "异常票据", "danger"),
+            ("needs_fix", "待补全", "muted"),
+            ("month_total", "本月金额", "success"),
         ]:
-            card = QFrame()
-            c_layout = QVBoxLayout(card)
-            c_layout.setContentsMargins(8, 8, 8, 8)
-            t_lbl = QLabel(title)
-            t_lbl.setStyleSheet("color: #667085; font-size: 12px;")
-            v_lbl = QLabel(val)
-            v_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
-            v_lbl.setStyleSheet(f"color: {color};")
-            c_layout.addWidget(t_lbl)
-            c_layout.addWidget(v_lbl)
-            m_layout.addWidget(card, 1)
-            self.overview_value_labels[stat_key] = v_lbl
-
-        layout.addWidget(metrics_frame)
+            card = self.overview_summary_strip.add_metric(stat_key, title, "—", state=state)
+            self.overview_value_labels[stat_key] = card
+        layout.addWidget(self.overview_summary_strip)
 
         body_frame = QFrame()
         body_layout = QHBoxLayout(body_frame)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(12)
 
-        left_card = QFrame()
-        left_card.setProperty("class", "WorkbenchCard")
-        lc_layout = QVBoxLayout(left_card)
-        lc_layout.addWidget(QLabel("最近导入批次"))
+        left_card = SectionCard("下一步", hint="默认流程是先看最近导入，再进入发票审核处理待审队列。")
+        lc_layout = left_card.body_layout
         self.lbl_overview_recent_imports = QLabel("暂无可用统计，等待数据库连接或首批导入完成。")
         self.lbl_overview_recent_imports.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_overview_recent_imports.setWordWrap(True)
         lc_layout.addWidget(self.lbl_overview_recent_imports)
-        btn_jump_review = make_button("前往发票审核", variant="primary")
+        btn_jump_review = make_button("开始审核", variant="primary")
         btn_jump_review.clicked.connect(lambda: self._switch_main_page("review"))
         lc_layout.addWidget(btn_jump_review)
         lc_layout.addStretch(1)
 
-        right_card = QFrame()
-        right_card.setProperty("class", "WorkbenchCard")
-        rc_layout = QVBoxLayout(right_card)
-        rc_layout.addWidget(QLabel("待处理提醒与系统概况"))
+        right_card = SectionCard("关注项", hint="这里只提醒需要处理的阻塞，不展示硬编码业务数字。")
+        rc_layout = right_card.body_layout
         self.lbl_overview_health = QLabel("当前无法读取审核队列统计，导入后会自动刷新。")
         self.lbl_overview_health.setStyleSheet("color: #4B5563; font-size: 12px; line-height: 1.5;")
         self.lbl_overview_health.setWordWrap(True)
@@ -2620,11 +2642,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
 
-        hdr = QLabel("导入中心")
-        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        layout.addWidget(hdr)
+        self.imports_header = PageHeader(
+            "导入中心",
+            "按“来源选择 → 导入规则 → 最近结果”完成一次导入，账号配置统一去系统设置处理。",
+        )
+        layout.addWidget(self.imports_header)
 
         self.imports_summary_strip = SummaryStrip()
         self.imports_summary_strip.add_metric("accounts", "邮箱账号", "0", state="info")
@@ -2634,58 +2658,39 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.imports_summary_strip.add_metric("failed", "失败数", "0", state="danger")
         layout.addWidget(self.imports_summary_strip)
 
-        self.imports_tabs = QTabWidget()
-        self.imports_tabs.setObjectName("ImportsTabs")
+        shell = QHBoxLayout()
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(12)
 
-        # Tab 0: 导入记录
-        tab_records = QWidget()
-        tr_layout = QVBoxLayout(tab_records)
-        tr_layout.addWidget(QLabel("导入历史记录与错误明细"))
-        tr_hint = QLabel("此处显示运行时历史日志中的最近导入、扫码上传和邮箱同步记录。")
-        tr_hint.setStyleSheet("color: #667085; font-size: 12px;")
-        tr_layout.addWidget(tr_hint)
-        self.txt_import_records = QPlainTextEdit()
-        self.txt_import_records.setReadOnly(True)
-        self.txt_import_records.setFont(QFont("Consolas", 9))
-        tr_layout.addWidget(self.txt_import_records, 1)
-        self.imports_tabs.addTab(tab_records, "导入记录")
-
-        # Tab 1: 扫码上传
-        tab_qr = QWidget()
-        tq_layout = QVBoxLayout(tab_qr)
-        tq_layout.addWidget(QLabel("手机扫码上传发票与证明材料"))
+        self.import_source_card = SectionCard("来源选择", hint="先决定本次从本地、扫码还是邮箱拉取。")
+        source_layout = self.import_source_card.body_layout
+        source_bar = CommandBar()
+        self.btn_import_local_pick = make_button("本地导入", variant="secondary")
+        self.btn_import_local_pick.clicked.connect(self._import_local_clicked)
+        self.btn_import_qr_open = make_button("扫码", variant="secondary")
+        self.btn_import_qr_open.clicked.connect(self._mobile_upload_clicked)
+        self.btn_import_mail_focus = make_button("邮箱", variant="secondary")
+        self.btn_import_mail_focus.clicked.connect(lambda: self._switch_main_page("imports"))
+        source_bar.layout.addWidget(self.btn_import_local_pick)
+        source_bar.layout.addWidget(self.btn_import_qr_open)
+        source_bar.layout.addWidget(self.btn_import_mail_focus)
+        source_bar.layout.addStretch(1)
+        source_layout.addWidget(source_bar)
         self.lbl_import_qr_status = QLabel("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
         self.lbl_import_qr_status.setWordWrap(True)
         self.lbl_import_qr_status.setStyleSheet("color: #667085; font-size: 12px;")
-        tq_layout.addWidget(self.lbl_import_qr_status)
-        tq_hint = QLabel("使用手机扫描二维码，可直接拍照或选择相册发票实时传输至本客户端。")
+        source_layout.addWidget(self.lbl_import_qr_status)
+        tq_hint = QLabel("邮箱导入只负责扫描执行；新增账号、补授权码和停用账号统一到系统设置。")
         tq_hint.setStyleSheet("color: #667085; font-size: 12px;")
-        tq_layout.addWidget(tq_hint)
-        btn_qr = make_button("启动扫码上传服务", variant="primary")
-        btn_qr.clicked.connect(self._mobile_upload_clicked)
-        tq_layout.addWidget(btn_qr)
-        tq_layout.addStretch(1)
-        self.imports_tabs.addTab(tab_qr, "扫码上传")
+        source_layout.addWidget(tq_hint)
+        self.txt_import_records = QPlainTextEdit()
+        self.txt_import_records.setReadOnly(True)
+        self.txt_import_records.setFont(QFont("Consolas", 9))
+        self.txt_import_records.setMaximumHeight(180)
+        source_layout.addWidget(self.txt_import_records, 1)
+        shell.addWidget(self.import_source_card, 1)
 
-        # Tab 2: 邮箱导入 (V5 可见工作流重构)
-        tab_mail = QWidget()
-        tm_layout = QVBoxLayout(tab_mail)
-        tm_layout.setContentsMargins(12, 12, 12, 12)
-        tm_layout.setSpacing(10)
-
-        tm_title = QLabel("邮箱发票抓取中心")
-        tm_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        tm_layout.addWidget(tm_title)
-
-        tm_hint = QLabel("勾选需要扫描的邮箱账户，直接触发增量发票邮件抓取与解析。配置编辑统一在系统设置中完成。")
-        tm_hint.setStyleSheet("color: #64748B; font-size: 12px;")
-        tm_layout.addWidget(tm_hint)
-
-        mail_shell = QHBoxLayout()
-        mail_shell.setContentsMargins(0, 0, 0, 0)
-        mail_shell.setSpacing(12)
-
-        self.import_mail_accounts_card = SectionCard("邮箱选择", hint="勾选本次需要扫描的邮箱账号。账号配置统一在系统设置中维护。")
+        self.import_mail_accounts_card = SectionCard("导入规则", hint="中间区域集中处理邮箱选择、扫描规则和扫描触发。")
         self.mail_accounts_checklist = QWidget()
         self.mail_checklist_layout = QVBoxLayout(self.mail_accounts_checklist)
         self.mail_checklist_layout.setContentsMargins(4, 4, 4, 4)
@@ -2697,7 +2702,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         scroll_accounts.setMaximumHeight(140)
         scroll_accounts.setWidget(self.mail_accounts_checklist)
         self.import_mail_accounts_card.body_layout.addWidget(scroll_accounts)
-        mail_shell.addWidget(self.import_mail_accounts_card, 1)
 
         # Legacy PlainTextEdit retained for backwards compatibility
         self.lst_mail_accounts = QPlainTextEdit()
@@ -2706,7 +2710,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lst_mail_accounts.setVisible(False)
         self.import_mail_accounts_card.body_layout.addWidget(self.lst_mail_accounts)
 
-        self.import_mail_rules_card = SectionCard("扫描规则", hint="导入中心只负责执行扫描，不在这里编辑邮箱配置。")
+        self.import_mail_rules_card = SectionCard("扫描规则", hint="这里展示当前全局抓取规则，并给出最少必要动作。")
         rules_box = QGroupBox("当前全局抓取与清洗规则概览")
         rules_layout = QGridLayout(rules_box)
         rules_layout.setContentsMargins(10, 8, 10, 8)
@@ -2729,48 +2733,42 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_import_scan_default = make_button("默认", variant="secondary")
         self.btn_import_scan_default.clicked.connect(self._scan_default_email_clicked)
 
-        self.btn_import_add_mailbox = make_button("新增邮箱", variant="secondary")
-        self.btn_import_add_mailbox.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
-
         self.btn_import_manage_mailbox = make_button("管理", variant="secondary")
         self.btn_import_manage_mailbox.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
 
         self.btn_view_failed_details = make_button("失败", variant="secondary")
         self.btn_view_failed_details.clicked.connect(self._v5_show_failed_details_dialog)
 
-        self.import_mail_more = QToolButton()
-        self.import_mail_more.setObjectName("WorkbenchTopIconButton")
-        self.import_mail_more.setText("⋯")
-        self.import_mail_more.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.import_mail_more = MoreMenuButton(parent=self)
         self.import_mail_more_menu = QMenu(self.import_mail_more)
         self.import_mail_more_menu.addAction("新增邮箱", lambda: self._switch_main_page("settings", sub_tab=1))
         self.import_mail_more_menu.addAction("管理邮箱", lambda: self._switch_main_page("settings", sub_tab=1))
         self.import_mail_more_menu.addAction("查看失败", self._v5_show_failed_details_dialog)
         self.import_mail_more.setMenu(self.import_mail_more_menu)
-        self.import_mail_more.setPopupMode(QToolButton.InstantPopup)
 
         mail_action_row.addWidget(self.btn_import_scan_selected)
         mail_action_row.addWidget(self.btn_import_scan_default)
-        mail_action_row.addStretch(1)
         mail_action_row.addWidget(self.btn_import_manage_mailbox)
         mail_action_row.addWidget(self.btn_view_failed_details)
+        mail_action_row.addStretch(1)
         mail_action_row.addWidget(self.import_mail_more)
         self.import_mail_rules_card.body_layout.addLayout(mail_action_row)
-        mail_shell.addWidget(self.import_mail_rules_card, 1)
+        self.import_mail_accounts_card.body_layout.addWidget(self.import_mail_rules_card)
+        shell.addWidget(self.import_mail_accounts_card, 1)
 
-        self.import_mail_recent_card = SectionCard("最近扫描", hint="展示最近一次邮箱扫描摘要。")
+        self.import_mail_recent_card = SectionCard("最近结果", hint="看最近一次扫描摘要和失败明细，再决定是否继续补授权或重试。")
         self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
         self.lbl_mail_scan_summary.setWordWrap(True)
         self.lbl_mail_scan_summary.setStyleSheet("color: #64748B; font-size: 12px;")
         self.import_mail_recent_card.body_layout.addWidget(self.lbl_mail_scan_summary)
+        self.lbl_import_recent_hint = QLabel("如果失败数持续增加，优先去系统设置检查缺授权或连接异常。")
+        self.lbl_import_recent_hint.setWordWrap(True)
+        self.lbl_import_recent_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        self.import_mail_recent_card.body_layout.addWidget(self.lbl_import_recent_hint)
         self.import_mail_recent_card.body_layout.addStretch(1)
-        mail_shell.addWidget(self.import_mail_recent_card, 1)
+        shell.addWidget(self.import_mail_recent_card, 1)
 
-        tm_layout.addLayout(mail_shell, 1)
-        tm_layout.addStretch(1)
-        self.imports_tabs.addTab(tab_mail, "邮箱导入")
-
-        layout.addWidget(self.imports_tabs, 1)
+        layout.addLayout(shell, 1)
         self._refresh_imports_page()
         return page
 
@@ -2780,37 +2778,61 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        hdr = QLabel("批量导出向导")
-        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        layout.addWidget(hdr)
+        self.export_header = PageHeader(
+            "报销组与导出",
+            "先选报销组，再看完整性检查；检查不过时先回到审核页或补材料。",
+        )
+        layout.addWidget(self.export_header)
 
-        wizard_card = QFrame()
-        wizard_card.setProperty("class", "WorkbenchCard")
-        wc_layout = QVBoxLayout(wizard_card)
-        wc_layout.setContentsMargins(16, 16, 16, 16)
-        wc_layout.setSpacing(12)
+        self.export_summary_strip = SummaryStrip()
+        self.export_summary_strip.add_metric("groups", "报销组", "0", state="info")
+        self.export_summary_strip.add_metric("approved", "已通过", "0", state="success")
+        self.export_summary_strip.add_metric("pending", "待处理", "0", state="warning")
+        self.export_summary_strip.add_metric("missing", "缺材料", "0", state="danger")
+        self.export_summary_strip.add_metric("ready", "导出状态", "待检查", state="muted")
+        layout.addWidget(self.export_summary_strip)
 
-        wc_layout.addWidget(QLabel("1. 选择导出范围"))
-        opt1 = QCheckBox("仅导出当前通过的发票 (推荐)")
-        opt1.setChecked(True)
-        wc_layout.addWidget(opt1)
+        shell = QHBoxLayout()
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(12)
 
-        wc_layout.addWidget(QLabel("2. 导出文件类型"))
-        opt2 = QCheckBox("生成 Excel 汇总报销单 + 导出 PDF/OFD 原件压缩包")
-        opt2.setChecked(True)
-        wc_layout.addWidget(opt2)
+        self.export_group_card = SectionCard("报销组选择", hint="选择要导出的报销组，完整性检查会随选择更新。")
+        self.combo_export_claims = QComboBox()
+        self.combo_export_claims.currentIndexChanged.connect(self._sync_export_claim_selection)
+        self.export_group_card.body_layout.addWidget(self.combo_export_claims)
+        self.lbl_export_scope_hint = QLabel("默认导出已通过发票；待审核发票可在导出时按提示决定是否一并打包。")
+        self.lbl_export_scope_hint.setWordWrap(True)
+        self.lbl_export_scope_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        self.export_group_card.body_layout.addWidget(self.lbl_export_scope_hint)
+        self.export_group_card.body_layout.addStretch(1)
+        shell.addWidget(self.export_group_card, 1)
 
-        wc_layout.addWidget(QLabel("3. 前置预检提示"))
-        alert = QLabel("⚠️ 当前共有 0 张已通过发票待导出。导出将排除异常及已忽略记录。")
-        alert.setStyleSheet("color: #D97706; font-size: 12px; background: #FEF3C7; padding: 8px; border-radius: 6px;")
-        wc_layout.addWidget(alert)
+        self.export_invoices_card = SectionCard("组内发票", hint="这里仅展示当前报销组内的发票队列，方便先看缺口再导出。")
+        self.export_invoice_list = EntityList()
+        self.export_invoices_card.body_layout.addWidget(self.export_invoice_list, 1)
+        self.lbl_export_invoice_meta = QLabel("当前未选择报销组。")
+        self.lbl_export_invoice_meta.setWordWrap(True)
+        self.lbl_export_invoice_meta.setStyleSheet("color: #667085; font-size: 12px;")
+        self.export_invoices_card.body_layout.addWidget(self.lbl_export_invoice_meta)
+        shell.addWidget(self.export_invoices_card, 1)
 
-        btn_run_export = make_button("开始批量导出", variant="primary", min_width=120)
-        btn_run_export.clicked.connect(self._export_claim_package)
-        wc_layout.addWidget(btn_run_export)
-        wc_layout.addStretch(1)
+        self.export_integrity_card = SectionCard("完整性检查与导出", hint="检查不通过时禁用导出；业务导出逻辑保持不变。")
+        self.lbl_export_integrity = QLabel("请选择报销组后查看完整性检查。")
+        self.lbl_export_integrity.setWordWrap(True)
+        self.lbl_export_integrity.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
+        self.export_integrity_card.body_layout.addWidget(self.lbl_export_integrity)
+        self.lbl_export_blockers = QLabel("当前暂无阻塞。")
+        self.lbl_export_blockers.setWordWrap(True)
+        self.lbl_export_blockers.setStyleSheet("color: #667085; font-size: 12px;")
+        self.export_integrity_card.body_layout.addWidget(self.lbl_export_blockers)
+        self.btn_run_export_page = make_button("开始导出", variant="primary", min_width=120)
+        self.btn_run_export_page.clicked.connect(self._export_claim_package)
+        self.export_integrity_card.body_layout.addWidget(self.btn_run_export_page)
+        self.export_integrity_card.body_layout.addStretch(1)
+        shell.addWidget(self.export_integrity_card, 1)
 
-        layout.addWidget(wizard_card, 1)
+        layout.addLayout(shell, 1)
+        self._refresh_export_page()
         return page
 
     def _build_logs_page_view(self) -> QWidget:
@@ -2845,14 +2867,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
 
-        hdr = QLabel("系统设置中心")
-        hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        layout.addWidget(hdr)
+        self.settings_header = PageHeader(
+            "系统设置",
+            "设置中心默认只展示状态和当前配置；需要修改时进入单任务弹窗或专用操作。",
+        )
+        layout.addWidget(self.settings_header)
 
-        self.settings_tabs = QTabWidget()
-        self.settings_tabs.setObjectName("SettingsTabs")
+        self.settings_tabs = SecondaryNavStack()
 
         simple_tabs = [
             ("常规", "lbl_settings_general", "界面显示密度、常规偏好设置"),
@@ -2929,7 +2952,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mailbox_shell.setSpacing(12)
 
         # Saved Accounts List ONLY (Requirement 4)
-        self.settings_mailbox_list = QListWidget()
+        self.settings_mailbox_list = EntityList()
         self.settings_mailbox_list.setMinimumWidth(260)
         self.settings_mailbox_list.setMinimumHeight(280)
         self.settings_mailbox_list.currentRowChanged.connect(lambda _row: self._on_settings_mailbox_selection_changed())
@@ -2966,8 +2989,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_row.addWidget(self.btn_settings_mailbox_delete)
         action_row.addStretch(1)
         mailbox_editor_layout.addLayout(action_row)
-        form_box = QGroupBox("账号详情")
-        form_layout = QFormLayout(form_box)
+        form_box = ReadOnlyDetailPanel("账号详情", "默认只读显示当前账号状态；编辑配置和补授权码通过独立入口触发。")
+        form_layout = QFormLayout(form_box.body)
         self.lbl_detail_name = QLabel("未选择邮箱账号")
         self.lbl_detail_email = QLabel("—")
         self.lbl_detail_server = QLabel("—")
@@ -3036,7 +3059,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ai_shell = QHBoxLayout()
         ai_shell.setContentsMargins(0, 0, 0, 0)
         ai_shell.setSpacing(12)
-        self.settings_ai_profile_list = QListWidget()
+        self.settings_ai_profile_list = EntityList()
         self.settings_ai_profile_list.setMinimumWidth(260)
         self.settings_ai_profile_list.currentRowChanged.connect(lambda _row: self._on_settings_ai_profile_selection_changed())
         ai_shell.addWidget(self.settings_ai_profile_list, 0)
@@ -3112,6 +3135,50 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "txt_log") and self.txt_log is not None:
             self.txt_log.clear()
 
+    def _sync_export_claim_selection(self) -> None:
+        if not hasattr(self, "combo_export_claims") or not hasattr(self, "combo_claims"):
+            return
+        if not getattr(self, "db", None) or not getattr(self.db, "is_open", False):
+            return
+        claim_id = self.combo_export_claims.currentData()
+        if claim_id is None:
+            self.export_summary_strip.set_metric("ready", "待检查")
+            self.lbl_export_integrity.setText("请选择报销组后查看完整性检查。")
+            self.lbl_export_blockers.setText("当前暂无阻塞。")
+            if hasattr(self, "export_invoice_list"):
+                self.export_invoice_list.clear()
+                self.lbl_export_invoice_meta.setText("当前未选择报销组。")
+            self.btn_run_export_page.setEnabled(False)
+            return
+        idx = self.combo_claims.findData(claim_id)
+        if idx >= 0 and self.combo_claims.currentIndex() != idx:
+            self.combo_claims.setCurrentIndex(idx)
+        stats = self._claim_export_preflight_stats(claim_id)
+        invoices = self.db.get_claim_invoices(claim_id)
+        if hasattr(self, "export_invoice_list"):
+            self.export_invoice_list.clear()
+            for inv in invoices:
+                status = self._get_invoice_review_status_chinese(inv)
+                number = str(inv.get("invoice_number") or "无票号").strip()
+                seller = str(inv.get("seller_name") or "未知销售方").strip()
+                amount = self._format_table_amount(inv.get("total_amount") or "")
+                self.export_invoice_list.addItem(f"{status} · {seller} · {amount} · {number}")
+            self.lbl_export_invoice_meta.setText(
+                f"当前报销组共 {len(invoices)} 张记录，其中已通过 {stats.get(APPROVED, 0)} 张，待处理 {stats.get(TO_REVIEW, 0)} 张。"
+            )
+        blockers = []
+        if int(stats.get(APPROVED, 0) or 0) <= 0:
+            blockers.append("没有已通过发票")
+        if int(stats.get("missing_attachment", 0) or 0) > 0:
+            blockers.append(f"缺原件 {stats.get('missing_attachment', 0)} 张")
+        if int(stats.get("missing_amount", 0) or 0) > 0:
+            blockers.append(f"缺金额 {stats.get('missing_amount', 0)} 张")
+        is_ready = not blockers
+        self.export_summary_strip.set_metric("ready", "可导出" if is_ready else "需处理")
+        self.lbl_export_integrity.setText(self._format_claim_export_preflight_text(stats))
+        self.lbl_export_blockers.setText("阻塞：" + "；".join(blockers) if blockers else "检查通过：可以直接开始导出。")
+        self.btn_run_export_page.setEnabled(is_ready)
+
     def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
         if not hasattr(self, "center_stack") or self.center_stack is None:
             return
@@ -3137,12 +3204,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._refresh_overview_page()
         elif page_key == "imports":
             self._refresh_imports_page()
+        elif page_key == "export":
+            self._refresh_export_page()
         elif page_key == "settings":
             self._refresh_settings_page()
 
-        if page_key == "imports" and hasattr(self, "imports_tabs") and self.imports_tabs is not None:
-            self.imports_tabs.setCurrentIndex(sub_tab)
-        elif page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
+        if page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
             self.settings_tabs.setCurrentIndex(sub_tab)
 
 
@@ -3981,6 +4048,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self._detail_panel, "claim_empty_hint"):
             self._detail_panel.claim_empty_hint.setVisible(not claims)
         self._update_claim_total()
+        if hasattr(self, "combo_export_claims"):
+            self._refresh_export_page()
 
     def _update_claim_total(self):
         if not hasattr(self, "lbl_claim_total"):
@@ -4061,6 +4130,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.btn_delete_claim.setToolTip(
                 "删除当前空报销组" if count == 0 else "当前报销组有关联记录，不能删除"
             )
+        if hasattr(self, "combo_export_claims") and self.combo_export_claims.count() > 0:
+            export_idx = self.combo_export_claims.findData(claim_id)
+            if export_idx >= 0 and self.combo_export_claims.currentIndex() != export_idx:
+                self.combo_export_claims.blockSignals(True)
+                self.combo_export_claims.setCurrentIndex(export_idx)
+                self.combo_export_claims.blockSignals(False)
+            self._sync_export_claim_selection()
 
     def _clear_detail_form(self):
         # Reset right hand details form to generic empty/placeholder state.

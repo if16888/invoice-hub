@@ -5334,15 +5334,14 @@ class ClaimGroupsTests(unittest.TestCase):
                         window._switch_main_page("imports", sub_tab=2)
                     app.processEvents()
 
-                    self.assertEqual(window.imports_tabs.count(), 3)
-                    self.assertEqual(window.imports_tabs.tabText(0), "导入记录")
-                    self.assertEqual(window.imports_tabs.tabText(1), "扫码上传")
-                    self.assertEqual(window.imports_tabs.tabText(2), "邮箱导入")
                     self.assertIn("最近批次完成", window.txt_import_records.toPlainText())
                     self.assertIn("报销邮箱", window.lst_mail_accounts.toPlainText())
                     self.assertIn("最近 6 个月", window.lst_mail_accounts.toPlainText())
                     self.assertIn("new=3", window.lbl_mail_scan_summary.text())
                     self.assertIn("duplicates=1", window.lbl_mail_scan_summary.text())
+                    self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
+                    self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "导入规则")
+                    self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
                     window.btn_import_manage_mailbox.click()
                     app.processEvents()
                     self.assertIs(window.center_stack.currentWidget(), window.settings_page)
@@ -5428,6 +5427,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIs(window.center_stack.widget(3), window.export_page)
                     self.assertIs(window.center_stack.widget(4), window.audit_log_page)
                     self.assertIs(window.center_stack.widget(5), window.settings_page)
+                    self.assertFalse(window.workbench_nav_buttons["logs"].isVisible())
 
                     for key, page in [
                         ("overview", window.dashboard_page),

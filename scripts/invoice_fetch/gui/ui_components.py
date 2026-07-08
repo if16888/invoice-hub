@@ -34,10 +34,14 @@ try:
         QHBoxLayout,
         QLabel,
         QPushButton,
+        QToolButton,
         QSizePolicy,
         QLayout,
         QWidget,
         QVBoxLayout,
+        QListWidget,
+        QListWidgetItem,
+        QStackedWidget,
     )
 
     _HAS_QT = True
@@ -231,6 +235,135 @@ if _HAS_QT:
         def set_hint(self, hint: str) -> None:
             self.lbl_hint.setText(hint)
             self.lbl_hint.setVisible(bool(hint))
+
+    class PageHeader(QFrame):
+        """Shared page title row with optional title and hint."""
+
+        def __init__(self, title: str, hint: str = "", parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("PageHeader")
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(4)
+
+            self.lbl_title = QLabel(title, self)
+            self.lbl_title.setProperty("class", "PageTitle")
+            layout.addWidget(self.lbl_title)
+
+            self.lbl_hint = QLabel(hint, self)
+            self.lbl_hint.setProperty("class", "PageHint")
+            self.lbl_hint.setWordWrap(True)
+            self.lbl_hint.setVisible(bool(hint))
+            layout.addWidget(self.lbl_hint)
+
+    class CommandBar(QFrame):
+        """Horizontal action bar wrapper used inside workbench pages."""
+
+        def __init__(self, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setProperty("class", "WorkbenchCard")
+            self.setObjectName("CommandBar")
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.layout = QHBoxLayout(self)
+            self.layout.setContentsMargins(12, 10, 12, 10)
+            self.layout.setSpacing(8)
+
+    class EntityList(QListWidget):
+        """Styled list surface for accounts, groups, and queue items."""
+
+        def __init__(self, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("EntityList")
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    class ReadOnlyDetailPanel(SectionCard):
+        """SectionCard variant for stacked read-only details."""
+
+        def __init__(self, title: str = "", hint: str = "", parent: QWidget | None = None) -> None:
+            super().__init__(title=title, hint=hint, parent=parent)
+            self.setObjectName("ReadOnlyDetailPanel")
+
+    class MoreMenuButton(QToolButton):
+        """Small 34x34 menu trigger reused across pages."""
+
+        def __init__(self, text: str = "⋯", parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("WorkbenchTopIconButton")
+            self.setText(text)
+            self.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            self.setPopupMode(QToolButton.InstantPopup)
+
+    class LogDrawer(QFrame):
+        """Simple host surface for the collapsible bottom log drawer."""
+
+        def __init__(self, title: str = "运行日志", parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setProperty("class", "WorkbenchCard")
+            self.setObjectName("LogDrawer")
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(8, 8, 8, 8)
+            layout.setSpacing(6)
+            self.lbl_title = QLabel(title, self)
+            self.lbl_title.setProperty("class", "SectionTitle")
+            layout.addWidget(self.lbl_title)
+            self.host = QWidget(self)
+            self.host_layout = QVBoxLayout(self.host)
+            self.host_layout.setContentsMargins(0, 0, 0, 0)
+            self.host_layout.setSpacing(0)
+            layout.addWidget(self.host)
+
+    class SecondaryNavStack(QFrame):
+        """Two-column secondary navigation with a compatibility tab-like API."""
+
+        def __init__(self, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("SecondaryNavStack")
+            self.setProperty("class", "WorkbenchCard")
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+
+            self.nav_list = QListWidget(self)
+            self.nav_list.setObjectName("SecondaryNavList")
+            self.nav_list.setFixedWidth(164)
+            self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+            layout.addWidget(self.nav_list, 0)
+
+            self.stack = QStackedWidget(self)
+            layout.addWidget(self.stack, 1)
+
+        def addTab(self, widget: QWidget, label: str) -> None:  # noqa: N802
+            self.stack.addWidget(widget)
+            self.nav_list.addItem(QListWidgetItem(label))
+            if self.stack.count() == 1:
+                self.nav_list.setCurrentRow(0)
+
+        def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+            if 0 <= index < self.stack.count():
+                self.nav_list.setCurrentRow(index)
+
+        def currentIndex(self) -> int:  # noqa: N802
+            return self.stack.currentIndex()
+
+        def currentWidget(self) -> QWidget | None:  # noqa: N802
+            return self.stack.currentWidget()
+
+        def count(self) -> int:
+            return self.stack.count()
+
+        def tabText(self, index: int) -> str:  # noqa: N802
+            item = self.nav_list.item(index)
+            return item.text() if item is not None else ""
+
+        def widget(self, index: int) -> QWidget | None:
+            return self.stack.widget(index)
+
+        def _on_nav_changed(self, row: int) -> None:
+            if 0 <= row < self.stack.count() and self.stack.currentIndex() != row:
+                self.stack.setCurrentIndex(row)
 
     # ---------------------------------------------------------------------------
     # CompactStatCard

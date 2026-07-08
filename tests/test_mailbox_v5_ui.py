@@ -233,6 +233,7 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(window.center_stack.currentIndex(), 5)
         self.assertTrue(hasattr(window, "settings_tabs"))
         self.assertIsNotNone(window.settings_tabs)
+        self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
 
     def test_mailbox_overview_shows_total_enabled_default_missing_counts(self):
         """V11 Test 3: Mailbox overview shows total, enabled, default, missing auth code, and disabled counts."""
@@ -261,6 +262,7 @@ class TestMailboxV5UI(unittest.TestCase):
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
         mailbox_tab = window.settings_tabs.widget(1)
+        self.assertEqual(window.settings_tabs.tabText(1), "邮箱账户")
 
         mailbox_detail_inputs = [
             child for child in mailbox_tab.findChildren(QLineEdit)

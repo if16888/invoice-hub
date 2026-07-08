@@ -388,10 +388,19 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 original_widget = window.left_stack.currentWidget()
                 self.assertTrue(review_button.isChecked())
 
-                for key in ("overview", "imports", "export", "logs", "settings"):
+                expected_labels = {
+                    "overview": "今日工作台",
+                    "review": "发票审核",
+                    "imports": "导入中心",
+                    "export": "报销组与导出",
+                    "settings": "系统设置",
+                }
+                for key, label in expected_labels.items():
                     button = window.workbench_nav_buttons[key]
                     self.assertTrue(button.isVisible(), f"{key} should be visible in navigation")
+                    self.assertEqual(button.text(), label)
                     self.assertIs(window.left_stack.currentWidget(), original_widget)
+                self.assertFalse(window.workbench_nav_buttons["logs"].isVisible())
             finally:
                 window.db.close()
                 window.close()
@@ -494,14 +503,17 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             window = self._make_window(td)
             try:
                 window.show()
-                window._switch_main_page("imports", sub_tab=2)
+                window._switch_main_page("imports")
                 QApplication.processEvents()
                 self.assertTrue(window.imports_summary_strip.isVisible())
                 self.assertEqual(window.btn_import_scan_selected.text(), "开始扫描")
                 self.assertEqual(window.btn_import_scan_default.text(), "默认")
                 self.assertEqual(window.btn_import_manage_mailbox.text(), "管理")
                 self.assertEqual(window.btn_view_failed_details.text(), "失败")
-                self.assertLessEqual(len(self._visible_primary_buttons(window.imports_tabs.currentWidget())), 1)
+                self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
+                self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "导入规则")
+                self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
+                self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
             finally:
                 window.db.close()
                 window.close()
@@ -516,8 +528,26 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window._switch_main_page("settings", sub_tab=1)
                 QApplication.processEvents()
                 self.assertTrue(window.stat_box_overview.isVisible())
+                self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
                 self.assertEqual(window.btn_settings_mailbox_add.text(), "新增账号")
                 self.assertLessEqual(len(self._visible_primary_buttons(window.settings_tabs.currentWidget())), 1)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_export_page_uses_claims_invoices_and_integrity_three_columns(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window._switch_main_page("export")
+                QApplication.processEvents()
+                self.assertEqual(window.export_group_card.lbl_title.text(), "报销组选择")
+                self.assertEqual(window.export_invoices_card.lbl_title.text(), "组内发票")
+                self.assertEqual(window.export_integrity_card.lbl_title.text(), "完整性检查与导出")
+                self.assertLessEqual(len(self._visible_primary_buttons(window.export_page)), 1)
             finally:
                 window.db.close()
                 window.close()
