@@ -184,8 +184,8 @@ class TestGUIFixes(unittest.TestCase):
         self.assertFalse(app.btn_toolbar_export.isEnabled())
 
         # Clear busy
-        app._clear_action_busy(app.btn_import_local, "导入发票")
-        self.assertEqual(app.btn_import_local.text(), "导入发票")
+        app._clear_action_busy(app.btn_import_local, "导入")
+        self.assertEqual(app.btn_import_local.text(), "导入")
         self.assertEqual(app.btn_import_local.property("busy"), "false")
 
         # Restored to enabled

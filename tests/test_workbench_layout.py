@@ -30,7 +30,7 @@ class TestMetricsForSize(unittest.TestCase):
         self.assertTrue(metrics.nav_collapsed)
         self.assertEqual(metrics.nav_width, 56)
         self.assertEqual(metrics.detail_width, 380)
-        self.assertEqual(metrics.record_height, 300)
+        self.assertEqual(metrics.record_height, 332)
 
     def test_1440_900_is_compact_but_not_collapsed(self):
         metrics = metrics_for_size(1440, 900)
@@ -92,7 +92,7 @@ class TestClampVerticalSplit(unittest.TestCase):
 
 try:
     from PySide6.QtCore import Qt, QSettings
-    from PySide6.QtWidgets import QApplication, QSizePolicy
+    from PySide6.QtWidgets import QApplication, QPushButton, QSizePolicy
 
     _HAS_PYSIDE6 = True
 except ImportError:
@@ -147,6 +147,13 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         db_path = Path(td) / "workbench_test.db"
         window = InvoiceReviewApp(db_path, splash=None)
         return window
+
+    def _visible_primary_buttons(self, root):
+        return [
+            button
+            for button in root.findChildren(QPushButton)
+            if button.isVisible() and button.property("variant") == "primary"
+        ]
 
     # ------------------------------------------------------------------
     # Splitter hierarchy and orientation
@@ -321,8 +328,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertIn("Ctrl + F", window.txt_search.placeholderText())
                 self.assertEqual(window.btn_import_local.property("emphasis"), "primary")
                 self.assertFalse(window.btn_mobile_upload.isVisible())
-                self.assertFalse(window.btn_scan_email.isVisible())
-                self.assertFalse(window.btn_toolbar_export.isVisible())
+                self.assertTrue(window.btn_scan_email.isVisible())
+                self.assertTrue(window.btn_toolbar_export.isVisible())
 
                 visible_nav_buttons = [
                     button for button in window.workbench_nav_buttons.values()
@@ -330,8 +337,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 ]
                 self.assertGreaterEqual(len(visible_nav_buttons), 1)
                 self.assertFalse(window.workbench_nav_buttons["review"].icon().isNull())
-                self.assertEqual(window.btn_scan_email.text(), "邮箱同步")
-                self.assertEqual(window.btn_toolbar_export.text(), "批量导出")
+                self.assertEqual(window.btn_scan_email.text(), "同步")
+                self.assertEqual(window.btn_toolbar_export.text(), "导出")
                 self.assertFalse(window.btn_toolbar_help.isVisible())
                 self.assertFalse(window.btn_toolbar_notify.isVisible())
                 self.assertTrue(hasattr(window, "btn_toolbar_user"))
@@ -462,6 +469,87 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertEqual(window.lbl_record_section_title.text(), "发票记录")
                 self.assertLessEqual(window.record_header.height(), 28)
                 self.assertGreaterEqual(window.record_header.height(), 24)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_review_page_primary_buttons_stay_within_one(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1600, 900)
+                QApplication.processEvents()
+                self.assertLessEqual(len(self._visible_primary_buttons(window.workbench_top_toolbar)), 1)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_imports_page_has_summary_strip_and_short_actions(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window._switch_main_page("imports", sub_tab=2)
+                QApplication.processEvents()
+                self.assertTrue(window.imports_summary_strip.isVisible())
+                self.assertEqual(window.btn_import_scan_selected.text(), "开始扫描")
+                self.assertEqual(window.btn_import_scan_default.text(), "默认")
+                self.assertEqual(window.btn_import_manage_mailbox.text(), "管理")
+                self.assertEqual(window.btn_view_failed_details.text(), "失败")
+                self.assertLessEqual(len(self._visible_primary_buttons(window.imports_tabs.currentWidget())), 1)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_settings_mailbox_page_keeps_read_only_detail_and_single_primary(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window._switch_main_page("settings", sub_tab=1)
+                QApplication.processEvents()
+                self.assertTrue(window.stat_box_overview.isVisible())
+                self.assertEqual(window.btn_settings_mailbox_add.text(), "新增账号")
+                self.assertLessEqual(len(self._visible_primary_buttons(window.settings_tabs.currentWidget())), 1)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_review_table_shows_at_least_seven_dense_rows_at_1366(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1366, 768)
+                QApplication.processEvents()
+                visible_rows = window.table.viewport().height() // window.table.verticalHeader().defaultSectionSize()
+                self.assertGreaterEqual(visible_rows, 7)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_workbench_core_surfaces_do_not_overflow_at_target_widths(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                for width in (1366, 1600, 1920):
+                    window.resize(width, 900)
+                    window.show()
+                    QApplication.processEvents()
+                    self.assertLessEqual(window.workbench_top_toolbar.width(), width)
+                    self.assertLessEqual(window.filter_bar_widget.width(), width)
+                    self.assertLessEqual(window.record_header.width(), width)
             finally:
                 window.db.close()
                 window.close()

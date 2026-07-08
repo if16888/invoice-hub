@@ -63,12 +63,12 @@ if _HAS_QT:
         btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
 
         # Apply height constraints
-        if variant == "toolbar":
-            btn.setFixedHeight(30)
-        elif variant == "chip":
-            pass
+        if variant == "chip":
+            btn.setFixedHeight(26)
+        elif variant == "toolbar":
+            btn.setFixedHeight(34)
         else:
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(34)
 
         btn.ensurePolished()
         text_width = btn.fontMetrics().horizontalAdvance(btn.text())
@@ -137,6 +137,101 @@ if _HAS_QT:
 
         return frame
 
+    class SummaryStrip(QFrame):
+        """Lightweight horizontal metrics strip shared by workbench pages."""
+
+        def __init__(self, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("SummaryStrip")
+            self.setProperty("class", "WorkbenchCard")
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+            self._layout = QHBoxLayout(self)
+            self._layout.setContentsMargins(12, 8, 12, 8)
+            self._layout.setSpacing(8)
+            self._items: dict[str, CompactStatCard] = {}
+
+        def add_metric(
+            self,
+            key: str,
+            title: str,
+            value: str = "0",
+            *,
+            state: str = "muted",
+            icon_text: str = "",
+        ) -> CompactStatCard:
+            card = CompactStatCard(title, value, state=state, icon_text=icon_text, parent=self)
+            card.setObjectName("SummaryStripCard")
+            card.setFixedHeight(40)
+            card.setMinimumWidth(120)
+            self._layout.addWidget(card, 1)
+            self._items[key] = card
+            return card
+
+        def set_metric(self, key: str, value: str, title: str | None = None) -> None:
+            card = self._items.get(key)
+            if not card:
+                return
+            if title is not None:
+                card.set_title(title)
+            card.set_value(value)
+
+        def card_for(self, key: str) -> CompactStatCard | None:
+            return self._items.get(key)
+
+        def metrics(self) -> dict[str, CompactStatCard]:
+            return dict(self._items)
+
+    class SectionCard(QFrame):
+        """Simple titled card for page sections."""
+
+        def __init__(
+            self,
+            title: str = "",
+            *,
+            eyebrow: str = "",
+            hint: str = "",
+            parent: QWidget | None = None,
+        ) -> None:
+            super().__init__(parent)
+            self.setProperty("class", "WorkbenchCard")
+            self.setObjectName("SectionCard")
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+            self._layout = QVBoxLayout(self)
+            self._layout.setContentsMargins(14, 12, 14, 12)
+            self._layout.setSpacing(10)
+
+            self.lbl_eyebrow = QLabel(eyebrow, self)
+            self.lbl_eyebrow.setProperty("class", "SectionEyebrow")
+            self.lbl_eyebrow.setVisible(bool(eyebrow))
+            self._layout.addWidget(self.lbl_eyebrow)
+
+            self.lbl_title = QLabel(title, self)
+            self.lbl_title.setProperty("class", "SectionTitle")
+            self.lbl_title.setVisible(bool(title))
+            self._layout.addWidget(self.lbl_title)
+
+            self.lbl_hint = QLabel(hint, self)
+            self.lbl_hint.setProperty("class", "SectionHint")
+            self.lbl_hint.setWordWrap(True)
+            self.lbl_hint.setVisible(bool(hint))
+            self._layout.addWidget(self.lbl_hint)
+
+            self.body = QWidget(self)
+            self.body_layout = QVBoxLayout(self.body)
+            self.body_layout.setContentsMargins(0, 0, 0, 0)
+            self.body_layout.setSpacing(8)
+            self._layout.addWidget(self.body)
+
+        def set_title(self, title: str) -> None:
+            self.lbl_title.setText(title)
+            self.lbl_title.setVisible(bool(title))
+
+        def set_hint(self, hint: str) -> None:
+            self.lbl_hint.setText(hint)
+            self.lbl_hint.setVisible(bool(hint))
+
     # ---------------------------------------------------------------------------
     # CompactStatCard
     # ---------------------------------------------------------------------------
@@ -193,8 +288,8 @@ if _HAS_QT:
             layout.addWidget(self._lbl_title)
             layout.addStretch(1)
             layout.addWidget(self._lbl_value)
-            self.setFixedHeight(48)
-            self.setMinimumWidth(140)
+            self.setFixedHeight(40)
+            self.setMinimumWidth(124)
 
             # Store raw value for programmatic access
             self._value = value

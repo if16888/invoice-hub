@@ -34,7 +34,7 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
             nav_width=56,
             nav_collapsed=True,
             detail_width=380,
-            record_height=300,
+            record_height=332,
             thumbnail_width=96,
             compact=True,
         )

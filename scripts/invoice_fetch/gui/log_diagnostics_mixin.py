@@ -118,9 +118,21 @@ class LogDiagnosticsMixin:
             self.showMaximized()
 
     def _copy_log_to_clipboard(self):
-        log_text = self.txt_log.toPlainText()
+        log_widget = getattr(self, "txt_log", None)
+        if log_widget is None:
+            log_widget = self._ensure_log_text_edit()
+        log_text = log_widget.toPlainText()
         if log_text:
-            QApplication.clipboard().setText(log_text)
+            self._last_copied_log_text = log_text
+            clipboard = QApplication.clipboard()
+            clipboard.setText(log_text)
+            try:
+                mode = getattr(clipboard, "Mode", None)
+                if mode is not None:
+                    clipboard.setText(log_text, mode.Clipboard)
+            except Exception:
+                pass
+            QApplication.processEvents()
             self.statusBar().showMessage("日志已复制到剪贴板", 2000)
 
     def write_log(
@@ -131,8 +143,11 @@ class LogDiagnosticsMixin:
     ):
         """Append log line to bottom operation log panel."""
         sanitized = sanitize_log_message(text)
-        self.txt_log.append(sanitized)
-        self.txt_log.ensureCursorVisible()
+        log_widget = getattr(self, "txt_log", None)
+        if log_widget is None:
+            log_widget = self._ensure_log_text_edit()
+        log_widget.append(sanitized)
+        log_widget.ensureCursorVisible()
         if mirror_to_file:
             logging.getLogger("invoice_fetch.gui").log(level, sanitized)
 

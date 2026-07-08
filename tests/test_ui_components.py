@@ -103,6 +103,25 @@ class TestCompactStatCard(unittest.TestCase):
         _ = card.clicked  # must not raise AttributeError
 
 
+class TestSummaryStrip(unittest.TestCase):
+    def setUp(self):
+        if not _HAS_PYSIDE6:
+            self.skipTest("PySide6 not available")
+        _get_app()
+
+    def test_summary_strip_tracks_metrics_by_key(self):
+        from scripts.invoice_fetch.gui.ui_components import SummaryStrip
+
+        strip = SummaryStrip()
+        strip.add_metric("all", "全部", "12", state="info")
+        strip.add_metric("error", "异常", "3", state="danger")
+
+        self.assertEqual(strip.card_for("all").text(), "全部 12")
+        strip.set_metric("error", "4", title="异常票据")
+        self.assertEqual(strip.card_for("error").text(), "异常票据 4")
+        self.assertEqual(set(strip.metrics().keys()), {"all", "error"})
+
+
 class TestShortcutDisclosure(unittest.TestCase):
     """Contract tests for ShortcutDisclosure."""
 

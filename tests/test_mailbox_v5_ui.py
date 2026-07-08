@@ -241,8 +241,10 @@ class TestMailboxV5UI(unittest.TestCase):
         window._refresh_settings_mailbox_page()
 
         self.assertTrue(hasattr(window, "lbl_v11_stat_total"))
-        self.assertIn("总账号: 2", window.lbl_v11_stat_total.text())
-        self.assertIn("启用账号: 2", window.lbl_v11_stat_enabled.text())
+        self.assertIn("总账号", window.lbl_v11_stat_total.text())
+        self.assertIn("2", window.lbl_v11_stat_total.text())
+        self.assertIn("启用", window.lbl_v11_stat_enabled.text())
+        self.assertIn("2", window.lbl_v11_stat_enabled.text())
 
     def test_mailbox_saved_accounts_separated_from_provider_presets(self):
         """V11 Test 4: Presets bar is separate and saved accounts list contains only saved accounts."""

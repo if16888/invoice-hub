@@ -560,7 +560,7 @@ class MobileUploadTests(unittest.TestCase):
             dialog = None
             try:
                 self.assertTrue(hasattr(window, "btn_mobile_upload"))
-                self.assertEqual(window.btn_mobile_upload.text(), "扫码上传")
+                self.assertEqual(window.btn_mobile_upload.text(), "扫码")
 
                 dialog = MobileUploadDialog(window, db_path)
                 self.assertIn("/u/", dialog.txt_url.text())

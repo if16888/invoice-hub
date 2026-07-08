@@ -105,10 +105,10 @@ QToolButton#WorkbenchTopIconButton {
     border: 1px solid #E5EAF2;
     border-radius: 8px;
     padding: 0;
-    min-width: 32px;
-    max-width: 32px;
-    min-height: 32px;
-    max-height: 32px;
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
 }
 QToolButton#WorkbenchTopIconButton:hover {
     background-color: #F8FAFC;
@@ -186,6 +186,16 @@ QLabel.SummarySeller {
 QFrame#InvoiceRecordHeader {
     background-color: transparent;
     border: none;
+}
+QFrame#SummaryStrip {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
+}
+QFrame#SectionCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 12px;
 }
 QLabel#InvoiceRecordTitle {
     color: #111827;
@@ -443,7 +453,7 @@ QPushButton {
     background-color: #FFFFFF;
     color: #374151;
     border: 1px solid #E5E7EB;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 14px;
     font-size: 12px;
     font-weight: 600;
@@ -566,8 +576,8 @@ QPushButton[variant="danger"]:disabled {
 }
 
 QPushButton[variant="toolbar"] {
-    min-height: 20px;
-    min-width: 86px;
+    min-height: 34px;
+    min-width: 72px;
     background-color: #FFFFFF;
     color: #374151;
     border: 1px solid #D1D5DB;
