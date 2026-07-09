@@ -1927,6 +1927,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 label.set_value("—")
             self.lbl_overview_recent_imports.setText("暂无可用统计，等待数据库连接或首批导入完成。")
             self.lbl_overview_health.setText("当前无法读取审核队列统计，导入后会自动刷新。")
+            if hasattr(self, "lbl_overview_next_actions"):
+                self.lbl_overview_next_actions.setText("建议顺序：先完成一次导入或加载数据库，再进入审核。")
+            if hasattr(self, "lbl_overview_export_hint"):
+                self.lbl_overview_export_hint.setText("报销组与导出会在有可导出分组后显示更明确的检查状态。")
             return
 
         self.overview_value_labels["today_imported"].set_value(f"{metrics['today_imported']} 张")
@@ -1940,6 +1944,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_overview_health.setText(
             f"待审核 {metrics['to_review']} 张 / 异常 {metrics['error']} 张 / 待补全 {metrics['needs_fix']} 张。"
         )
+        if hasattr(self, "lbl_overview_next_actions"):
+            if metrics["to_review"] > 0:
+                self.lbl_overview_next_actions.setText("建议顺序：优先清待审核，再回头处理异常和待补全。")
+            elif metrics["needs_fix"] > 0 or metrics["error"] > 0:
+                self.lbl_overview_next_actions.setText("审核队列已经清空，下一步优先补材料或处理异常。")
+            else:
+                self.lbl_overview_next_actions.setText("当前队列较干净，可以直接检查报销组并准备导出。")
+        if hasattr(self, "lbl_overview_export_hint"):
+            self.lbl_overview_export_hint.setText(
+                f"本月累计金额 ¥{metrics['month_total']:.2f}；若报销组检查通过，可直接进入导出页打包。"
+            )
 
     def _refresh_imports_page(self) -> None:
         from ..config import get_email_accounts
@@ -2011,14 +2026,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "lbl_mail_scan_summary"):
             last_scan_summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
             if isinstance(last_scan_summary, dict) and last_scan_summary:
-                summary_parts = [
-                    f"{key}={value}"
-                    for key, value in last_scan_summary.items()
-                    if value not in (None, "", [], {})
-                ]
-                self.lbl_mail_scan_summary.setText("最近扫描结果：" + (" / ".join(summary_parts) if summary_parts else "无可展示摘要"))
+                scanned = int(last_scan_summary.get("scanned") or last_scan_summary.get("scanned_headers") or 0)
+                new_items = int(last_scan_summary.get("new", 0) or 0)
+                restored = int(last_scan_summary.get("restored", 0) or 0)
+                duplicates = int(last_scan_summary.get("duplicates", 0) or 0)
+                failed_total = (
+                    int(last_scan_summary.get("download_failed", 0) or 0)
+                    + int(last_scan_summary.get("parse_failed", 0) or 0)
+                    + int(last_scan_summary.get("link_failed", 0) or 0)
+                )
+                self.lbl_mail_scan_summary.setText(
+                    f"最近扫描：扫描 {scanned} 封，新增 {new_items} 条，恢复 {restored} 条，失败 {failed_total} 条。"
+                    f" 详细计数：new={new_items} / restored={restored} / duplicates={duplicates} / failed={failed_total}"
+                )
+                if hasattr(self, "lbl_import_recent_status"):
+                    if failed_total > 0:
+                        self.lbl_import_recent_status.setText("当前有失败项，建议先查看失败明细，再决定是否补授权或重试。")
+                    else:
+                        self.lbl_import_recent_status.setText("最近一次扫描没有明显阻塞，可以继续拉取或切到审核页处理新增记录。")
             else:
                 self.lbl_mail_scan_summary.setText("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
+                if hasattr(self, "lbl_import_recent_status"):
+                    self.lbl_import_recent_status.setText("当前没有失败项，也没有待补授权提醒。")
 
         if hasattr(self, "imports_summary_strip"):
             cfg = getattr(self, "config", None) or load_config_safe()
@@ -2090,6 +2119,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.export_summary_strip.set_metric("ready", "无报销组")
             self.lbl_export_integrity.setText("当前还没有报销组。先在审核页把发票关联到报销组，再回来导出。")
             self.lbl_export_blockers.setText("阻塞：没有可导出的报销组。")
+            if hasattr(self, "lbl_export_action_hint"):
+                self.lbl_export_action_hint.setText("先在审核页关联报销组，完整性检查才会生效。")
             if hasattr(self, "export_invoice_list"):
                 self.export_invoice_list.clear()
                 self.lbl_export_invoice_meta.setText("当前未选择报销组。")
@@ -2716,28 +2747,35 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(12)
 
-        left_card = SectionCard("下一步", hint="默认流程是先看最近导入，再进入发票审核处理待审队列。")
+        left_card = SectionCard("下一步", hint="先确认今天的新增与待审，再直接进入审核队列。")
         lc_layout = left_card.body_layout
         self.lbl_overview_recent_imports = QLabel("暂无可用统计，等待数据库连接或首批导入完成。")
         self.lbl_overview_recent_imports.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_overview_recent_imports.setWordWrap(True)
         lc_layout.addWidget(self.lbl_overview_recent_imports)
+        self.lbl_overview_next_actions = QLabel("建议顺序：先处理待审核，再回头检查异常和缺材料。")
+        self.lbl_overview_next_actions.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
+        self.lbl_overview_next_actions.setWordWrap(True)
+        lc_layout.addWidget(self.lbl_overview_next_actions)
         btn_jump_review = make_button("开始审核", variant="primary")
         btn_jump_review.clicked.connect(lambda: self._switch_main_page("review"))
         lc_layout.addWidget(btn_jump_review)
-        lc_layout.addStretch(1)
 
-        right_card = SectionCard("关注项", hint="这里只提醒需要处理的阻塞，不展示硬编码业务数字。")
+        right_card = SectionCard("关注项", hint="只保留今天真正会阻塞处理的信号。")
         rc_layout = right_card.body_layout
         self.lbl_overview_health = QLabel("当前无法读取审核队列统计，导入后会自动刷新。")
         self.lbl_overview_health.setStyleSheet("color: #4B5563; font-size: 12px; line-height: 1.5;")
         self.lbl_overview_health.setWordWrap(True)
         rc_layout.addWidget(self.lbl_overview_health)
-        rc_layout.addStretch(1)
+        self.lbl_overview_export_hint = QLabel("若今天已有报销组且检查通过，可直接去“报销组与导出”打包。")
+        self.lbl_overview_export_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        self.lbl_overview_export_hint.setWordWrap(True)
+        rc_layout.addWidget(self.lbl_overview_export_hint)
 
         body_layout.addWidget(left_card, 1)
         body_layout.addWidget(right_card, 1)
-        layout.addWidget(body_frame, 1)
+        layout.addWidget(body_frame, 0)
+        layout.addStretch(1)
         self._refresh_overview_page()
         return page
 
@@ -2779,13 +2817,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         source_bar.layout.addWidget(self.btn_import_mail_focus)
         source_bar.layout.addStretch(1)
         source_layout.addWidget(source_bar)
+        self.lbl_import_source_focus = QLabel("当前主流程：邮箱扫描。扫码和本地导入作为补充入口保留在左侧。")
+        self.lbl_import_source_focus.setWordWrap(True)
+        self.lbl_import_source_focus.setStyleSheet("color: #475467; font-size: 12px;")
+        source_layout.addWidget(self.lbl_import_source_focus)
         self.lbl_import_qr_status = QLabel("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
         self.lbl_import_qr_status.setWordWrap(True)
         self.lbl_import_qr_status.setStyleSheet("color: #667085; font-size: 12px;")
         source_layout.addWidget(self.lbl_import_qr_status)
         tq_hint = QLabel("邮箱导入只负责扫描执行；新增账号、补授权码和停用账号统一到系统设置。")
         tq_hint.setStyleSheet("color: #667085; font-size: 12px;")
+        tq_hint.setWordWrap(True)
         source_layout.addWidget(tq_hint)
+        source_layout.addStretch(1)
         shell.addWidget(self.import_source_card, 1)
 
         self.import_mail_accounts_card = SectionCard("导入规则", hint="中间区域集中处理邮箱选择、扫描规则和扫描触发。")
@@ -2857,12 +2901,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_mail_recent_card = SectionCard("最近结果", hint="看最近一次扫描摘要和失败明细，再决定是否继续补授权或重试。")
         self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
         self.lbl_mail_scan_summary.setWordWrap(True)
-        self.lbl_mail_scan_summary.setStyleSheet("color: #64748B; font-size: 12px;")
+        self.lbl_mail_scan_summary.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
         self.import_mail_recent_card.body_layout.addWidget(self.lbl_mail_scan_summary)
+        self.lbl_import_recent_status = QLabel("当前没有失败项，也没有待补授权提醒。")
+        self.lbl_import_recent_status.setWordWrap(True)
+        self.lbl_import_recent_status.setStyleSheet("color: #667085; font-size: 12px;")
+        self.import_mail_recent_card.body_layout.addWidget(self.lbl_import_recent_status)
         self.txt_import_records = QPlainTextEdit()
         self.txt_import_records.setReadOnly(True)
         self.txt_import_records.setFont(QFont("Consolas", 9))
-        self.txt_import_records.setMaximumHeight(180)
+        self.txt_import_records.setMaximumHeight(140)
         self.import_mail_recent_card.body_layout.addWidget(self.txt_import_records)
         self.lbl_import_recent_hint = QLabel("如果失败数持续增加，优先去系统设置检查缺授权或连接异常。")
         self.lbl_import_recent_hint.setWordWrap(True)
@@ -2928,6 +2976,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_export_blockers.setWordWrap(True)
         self.lbl_export_blockers.setStyleSheet("color: #667085; font-size: 12px;")
         self.export_integrity_card.body_layout.addWidget(self.lbl_export_blockers)
+        self.lbl_export_action_hint = QLabel("未选报销组或检查未通过时，导出会保持禁用。")
+        self.lbl_export_action_hint.setWordWrap(True)
+        self.lbl_export_action_hint.setStyleSheet("color: #475467; font-size: 12px;")
+        self.export_integrity_card.body_layout.addWidget(self.lbl_export_action_hint)
         self.btn_run_export_page = make_button("导出报销包", variant="primary", min_width=120)
         self.btn_run_export_page.clicked.connect(self._export_claim_package)
         self.export_integrity_card.body_layout.addWidget(self.btn_run_export_page)
@@ -3228,23 +3280,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.txt_log.clear()
 
     def _sync_export_claim_selection(self) -> None:
-        if not hasattr(self, "combo_export_claims") or not hasattr(self, "combo_claims"):
+        if not hasattr(self, "export_group_list"):
             return
         if not getattr(self, "db", None) or not getattr(self.db, "is_open", False):
             return
-        claim_id = self.combo_export_claims.currentData()
+        current_item = self.export_group_list.currentItem()
+        claim_id = current_item.data(Qt.UserRole) if current_item is not None else None
         if claim_id is None:
             self.export_summary_strip.set_metric("ready", "待检查")
             self.lbl_export_integrity.setText("请选择报销组后查看完整性检查。")
-            self.lbl_export_blockers.setText("当前暂无阻塞。")
+            self.lbl_export_blockers.setText("阻塞：还没有选中任何报销组。")
+            if hasattr(self, "lbl_export_action_hint"):
+                self.lbl_export_action_hint.setText("先选左侧报销组，再确认组内发票和完整性检查。")
             if hasattr(self, "export_invoice_list"):
                 self.export_invoice_list.clear()
                 self.lbl_export_invoice_meta.setText("当前未选择报销组。")
             self.btn_run_export_page.setEnabled(False)
             return
-        idx = self.combo_claims.findData(claim_id)
-        if idx >= 0 and self.combo_claims.currentIndex() != idx:
-            self.combo_claims.setCurrentIndex(idx)
+        if hasattr(self, "combo_claims"):
+            idx = self.combo_claims.findData(claim_id)
+            if idx >= 0 and self.combo_claims.currentIndex() != idx:
+                self.combo_claims.setCurrentIndex(idx)
         stats = self._claim_export_preflight_stats(claim_id)
         invoices = self.db.get_claim_invoices(claim_id)
         if hasattr(self, "export_invoice_list"):
@@ -3268,7 +3324,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         is_ready = not blockers
         self.export_summary_strip.set_metric("ready", "可导出" if is_ready else "需处理")
         self.lbl_export_integrity.setText(self._format_claim_export_preflight_text(stats))
-        self.lbl_export_blockers.setText("阻塞：" + "；".join(blockers) if blockers else "检查通过：可以直接开始导出。")
+        self.lbl_export_blockers.setText("阻塞：" + "；".join(blockers) if blockers else "检查通过：当前报销组可以直接导出。")
+        if hasattr(self, "lbl_export_action_hint"):
+            self.lbl_export_action_hint.setText("导出会沿用现有业务逻辑；如果还缺材料，请先回审核页补齐。")
         self.btn_run_export_page.setEnabled(is_ready)
 
     def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
