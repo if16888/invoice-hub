@@ -31,6 +31,7 @@ try:
     from PySide6.QtGui import QKeyEvent
     from PySide6.QtWidgets import (
         QFrame,
+        QFormLayout,
         QHBoxLayout,
         QLabel,
         QPushButton,
@@ -268,6 +269,33 @@ if _HAS_QT:
             self.layout = QHBoxLayout(self)
             self.layout.setContentsMargins(12, 10, 12, 10)
             self.layout.setSpacing(8)
+            self.primary_action = None
+            self.secondary_actions: list[QWidget] = []
+            self.more_menu = None
+
+        def set_actions(
+            self,
+            primary_action: QWidget | None = None,
+            secondary_actions: list[QWidget] | None = None,
+            more_menu: QWidget | None = None,
+        ) -> None:
+            self.primary_action = primary_action
+            self.secondary_actions = list(secondary_actions or [])
+            self.more_menu = more_menu
+
+            while self.layout.count():
+                item = self.layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(None)
+
+            if self.primary_action is not None:
+                self.layout.addWidget(self.primary_action)
+            for action in self.secondary_actions:
+                self.layout.addWidget(action)
+            self.layout.addStretch(1)
+            if self.more_menu is not None:
+                self.layout.addWidget(self.more_menu)
 
     class EntityList(QListWidget):
         """Styled list surface for accounts, groups, and queue items."""
@@ -276,6 +304,55 @@ if _HAS_QT:
             super().__init__(parent)
             self.setObjectName("EntityList")
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.setAlternatingRowColors(True)
+
+        def add_entity_row(
+            self,
+            title: str,
+            subtitle: str = "",
+            status_badge: str = "",
+            meta: str = "",
+            user_data=None,
+        ) -> QListWidgetItem:
+            item = QListWidgetItem(self)
+            item.setData(Qt.UserRole, user_data)
+            row = QWidget(self)
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(2, 2, 2, 2)
+            layout.setSpacing(8)
+
+            text_col = QVBoxLayout()
+            text_col.setContentsMargins(0, 0, 0, 0)
+            text_col.setSpacing(2)
+
+            lbl_title = QLabel(title, row)
+            lbl_title.setProperty("class", "EntityListTitle")
+            lbl_title.setWordWrap(True)
+            text_col.addWidget(lbl_title)
+
+            if subtitle:
+                lbl_subtitle = QLabel(subtitle, row)
+                lbl_subtitle.setProperty("class", "EntityListSubtitle")
+                lbl_subtitle.setWordWrap(True)
+                text_col.addWidget(lbl_subtitle)
+
+            layout.addLayout(text_col, 1)
+
+            if meta:
+                lbl_meta = QLabel(meta, row)
+                lbl_meta.setProperty("class", "EntityListMeta")
+                lbl_meta.setWordWrap(True)
+                lbl_meta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                layout.addWidget(lbl_meta, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+            if status_badge:
+                badge = make_badge(status_badge)
+                layout.addWidget(badge, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+            item.setSizeHint(row.sizeHint())
+            self.addItem(item)
+            self.setItemWidget(item, row)
+            return item
 
     class ReadOnlyDetailPanel(SectionCard):
         """SectionCard variant for stacked read-only details."""
@@ -283,6 +360,20 @@ if _HAS_QT:
         def __init__(self, title: str = "", hint: str = "", parent: QWidget | None = None) -> None:
             super().__init__(title=title, hint=hint, parent=parent)
             self.setObjectName("ReadOnlyDetailPanel")
+            self.rows_layout = QFormLayout()
+            self.rows_layout.setContentsMargins(0, 0, 0, 0)
+            self.rows_layout.setSpacing(8)
+            self.body_layout.addLayout(self.rows_layout)
+
+        def add_row(self, key: str, value: str | QWidget) -> QWidget:
+            if isinstance(value, QWidget):
+                widget = value
+            else:
+                widget = QLabel(str(value))
+                widget.setWordWrap(True)
+                widget.setProperty("class", "DetailValue")
+            self.rows_layout.addRow(key, widget)
+            return widget
 
     class MoreMenuButton(QToolButton):
         """Small 34x34 menu trigger reused across pages."""
@@ -293,6 +384,7 @@ if _HAS_QT:
             self.setText(text)
             self.setToolButtonStyle(Qt.ToolButtonTextOnly)
             self.setPopupMode(QToolButton.InstantPopup)
+            self.setFixedSize(34, 34)
 
     class LogDrawer(QFrame):
         """Simple host surface for the collapsible bottom log drawer."""

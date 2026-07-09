@@ -291,6 +291,24 @@ QListWidget#EntityList::item:selected {
     background-color: #EFF6FF;
     color: #1D4ED8;
 }
+QLabel[class="EntityListTitle"] {
+    color: #172033;
+    font-size: 13px;
+    font-weight: 600;
+}
+QLabel[class="EntityListSubtitle"] {
+    color: #667085;
+    font-size: 12px;
+}
+QLabel[class="EntityListMeta"] {
+    color: #475467;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel[class="DetailValue"] {
+    color: #172033;
+    font-size: 13px;
+}
 QHeaderView::section {
     background-color: #F8FAFC;
     border: none;

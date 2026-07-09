@@ -92,7 +92,7 @@ class TestClampVerticalSplit(unittest.TestCase):
 
 try:
     from PySide6.QtCore import Qt, QSettings
-    from PySide6.QtWidgets import QApplication, QPushButton, QSizePolicy
+    from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QSizePolicy
 
     _HAS_PYSIDE6 = True
 except ImportError:
@@ -507,12 +507,13 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
                 self.assertTrue(window.imports_summary_strip.isVisible())
                 self.assertEqual(window.btn_import_scan_selected.text(), "开始扫描")
-                self.assertEqual(window.btn_import_scan_default.text(), "默认")
-                self.assertEqual(window.btn_import_manage_mailbox.text(), "管理")
-                self.assertEqual(window.btn_view_failed_details.text(), "失败")
+                self.assertEqual(window.btn_import_scan_default.text(), "扫默认")
+                self.assertEqual(window.btn_import_manage_mailbox.text(), "管理邮箱")
+                self.assertEqual(window.btn_view_failed_details.text(), "失败明细")
                 self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
                 self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "导入规则")
                 self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
+                self.assertFalse(hasattr(window, "btn_settings_mailbox_add"))
                 self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
             finally:
                 window.db.close()
@@ -529,8 +530,28 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
                 self.assertTrue(window.stat_box_overview.isVisible())
                 self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
-                self.assertEqual(window.btn_settings_mailbox_add.text(), "新增账号")
+                self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑")
+                self.assertEqual(window.btn_settings_mailbox_scan.text(), "立即扫描")
                 self.assertLessEqual(len(self._visible_primary_buttons(window.settings_tabs.currentWidget())), 1)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_settings_ai_page_is_read_only_by_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window._switch_main_page("settings", sub_tab=2)
+                QApplication.processEvents()
+                current = window.settings_tabs.currentWidget()
+                self.assertEqual(current.findChildren(QComboBox), [])
+                self.assertEqual(current.findChildren(QLineEdit), [])
+                button_texts = [button.text() for button in current.findChildren(QPushButton)]
+                self.assertNotIn("保存设置", button_texts)
+                self.assertEqual(window.btn_settings_ai_edit.text(), "编辑配置")
             finally:
                 window.db.close()
                 window.close()
@@ -544,9 +565,10 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window._switch_main_page("export")
                 QApplication.processEvents()
-                self.assertEqual(window.export_group_card.lbl_title.text(), "报销组选择")
+                self.assertEqual(window.export_group_card.lbl_title.text(), "报销组")
                 self.assertEqual(window.export_invoices_card.lbl_title.text(), "组内发票")
                 self.assertEqual(window.export_integrity_card.lbl_title.text(), "完整性检查与导出")
+                self.assertFalse(hasattr(window, "combo_export_claims"))
                 self.assertLessEqual(len(self._visible_primary_buttons(window.export_page)), 1)
             finally:
                 window.db.close()

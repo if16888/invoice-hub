@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Invoice Hub PySide6 App Window
 """
@@ -77,17 +77,17 @@ _log.addFilter(PrivacyLogFilter())
 
 GITHUB_ISSUES_URL = "https://github.com/if16888/invoice-hub/issues/new/choose"
 FEEDBACK_PRIVACY_NOTICE = (
-    "请不要上传真实发票、receipt、水单、行程单、邮箱授权码、API Key、SQLite 数据库、"
-    "Excel 报销包或完整下载链接。建议只上传应用生成的脱敏诊断包。"
+    "璇蜂笉瑕佷笂浼犵湡瀹炲彂绁ㄣ€乺eceipt銆佹按鍗曘€佽绋嬪崟銆侀偖绠辨巿鏉冪爜銆丄PI Key銆丼QLite 鏁版嵁搴撱€?
+    "Excel 鎶ラ攢鍖呮垨瀹屾暣涓嬭浇閾炬帴銆傚缓璁彧涓婁紶搴旂敤鐢熸垚鐨勮劚鏁忚瘖鏂寘銆?
 )
 
-DEFAULT_CATEGORY_OPTIONS = ["餐饮", "交通", "住宿", "办公", "通讯", "其他"]
+DEFAULT_CATEGORY_OPTIONS = ["椁愰ギ", "浜ら€?, "浣忓", "鍔炲叕", "閫氳", "鍏朵粬"]
 CONFIG_CATEGORY_LABELS = {
-    "hotel": "住宿",
-    "taxi": "交通",
-    "meal": "餐饮",
-    "telecom": "通讯",
-    "transport": "交通",
+    "hotel": "浣忓",
+    "taxi": "浜ら€?,
+    "meal": "椁愰ギ",
+    "telecom": "閫氳",
+    "transport": "浜ら€?,
 }
 
 
@@ -109,11 +109,11 @@ REVIEW_STATUS_BADGES = {
 }
 
 DATA_STATUS_BADGES = {
-    "正常": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
-    "待补全": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
-    "缺原件": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
-    "缺证明": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
-    "未识别": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+    "姝ｅ父": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
+    "寰呰ˉ鍏?: {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+    "缂哄師浠?: {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+    "缂鸿瘉鏄?: {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+    "鏈瘑鍒?: {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
 }
 
 
@@ -184,20 +184,20 @@ def _is_file_valid_and_openable(path) -> bool:
 def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details: list[str] | None = None) -> str:
     failure_details = failure_details or []
     msg = (
-        f"已完成 {count} 张发票的重新下载流程！\n\n"
-        f"原文件修复成功: {int(buckets.get('file_restored', 0) or 0)} 张\n"
-        f"仅刷新元数据/待手动下载: {int(buckets.get('metadata_refreshed', 0) or 0)} 张\n"
-        f"仅命中已有重复记录: {int(buckets.get('duplicate_only', 0) or 0)} 张\n"
-        f"下载失败: {int(buckets.get('download_failed', 0) or 0)} 张\n"
-        f"无候选链接: {int(buckets.get('no_candidate_link', 0) or 0)} 张"
+        f"宸插畬鎴?{count} 寮犲彂绁ㄧ殑閲嶆柊涓嬭浇娴佺▼锛乗n\n"
+        f"鍘熸枃浠朵慨澶嶆垚鍔? {int(buckets.get('file_restored', 0) or 0)} 寮燶n"
+        f"浠呭埛鏂板厓鏁版嵁/寰呮墜鍔ㄤ笅杞? {int(buckets.get('metadata_refreshed', 0) or 0)} 寮燶n"
+        f"浠呭懡涓凡鏈夐噸澶嶈褰? {int(buckets.get('duplicate_only', 0) or 0)} 寮燶n"
+        f"涓嬭浇澶辫触: {int(buckets.get('download_failed', 0) or 0)} 寮燶n"
+        f"鏃犲€欓€夐摼鎺? {int(buckets.get('no_candidate_link', 0) or 0)} 寮?
     )
     if int(buckets.get("duplicate_only", 0) or 0) > 0 and int(buckets.get("file_restored", 0) or 0) == 0:
-        msg += "\n\n已确认是已有发票，但未恢复原件文件。可能需要手动补充原件或稍后重试。"
+        msg += "\n\n宸茬‘璁ゆ槸宸叉湁鍙戠エ锛屼絾鏈仮澶嶅師浠舵枃浠躲€傚彲鑳介渶瑕佹墜鍔ㄨˉ鍏呭師浠舵垨绋嶅悗閲嶈瘯銆?
 
     if failure_details:
-        msg += "\n\n以下发票仍然失败:\n" + "\n".join(failure_details[:10])
+        msg += "\n\n浠ヤ笅鍙戠エ浠嶇劧澶辫触:\n" + "\n".join(failure_details[:10])
         if len(failure_details) > 10:
-            msg += f"\n... 以及其他 {len(failure_details) - 10} 个文件"
+            msg += f"\n... 浠ュ強鍏朵粬 {len(failure_details) - 10} 涓枃浠?
     return msg
 
 
@@ -209,18 +209,18 @@ class SingleTaskMailboxDialog(QDialog):
         self._result_account: dict | None = None
         self._result_auth_code = ""
 
-        self.setWindowTitle("邮箱账户配置")
+        self.setWindowTitle("閭璐︽埛閰嶇疆")
         self.resize(540, 420)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("单任务邮箱配置")
+        title = QLabel("鍗曚换鍔￠偖绠遍厤缃?)
         title.setFont(QFont("Segoe UI", 12, QFont.Bold))
         layout.addWidget(title)
 
-        hint = QLabel("仅处理当前邮箱账号的新增或编辑，保存后返回桌面系统设置页。")
+        hint = QLabel("浠呭鐞嗗綋鍓嶉偖绠辫处鍙风殑鏂板鎴栫紪杈戯紝淇濆瓨鍚庤繑鍥炴闈㈢郴缁熻缃〉銆?)
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #667085; font-size: 12px;")
         layout.addWidget(hint)
@@ -235,30 +235,30 @@ class SingleTaskMailboxDialog(QDialog):
         self.spin_port = QSpinBox()
         self.spin_port.setRange(1, 65535)
         self.spin_port.setValue(993)
-        self.chk_enabled = QCheckBox("启用此账号")
+        self.chk_enabled = QCheckBox("鍚敤姝よ处鍙?)
         self.chk_enabled.setChecked(True)
-        self.chk_default = QCheckBox("设为默认扫描账号")
+        self.chk_default = QCheckBox("璁句负榛樿鎵弿璐﹀彿")
         self.combo_months = QComboBox()
         self.combo_months.addItems(["1", "3", "6", "12"])
         self.txt_auth_code = QLineEdit()
         self.txt_auth_code.setEchoMode(QLineEdit.Password)
-        self.txt_auth_code.setPlaceholderText("仅在新增或补录授权码时填写")
-        form.addRow("邮箱名称", self.txt_name)
-        form.addRow("邮箱地址", self.txt_email)
+        self.txt_auth_code.setPlaceholderText("浠呭湪鏂板鎴栬ˉ褰曟巿鏉冪爜鏃跺～鍐?)
+        form.addRow("閭鍚嶇О", self.txt_name)
+        form.addRow("閭鍦板潃", self.txt_email)
         form.addRow("Provider", self.combo_provider)
-        form.addRow("IMAP 服务器", self.txt_server)
-        form.addRow("端口", self.spin_port)
-        form.addRow("扫描规则（月）", self.combo_months)
+        form.addRow("IMAP 鏈嶅姟鍣?, self.txt_server)
+        form.addRow("绔彛", self.spin_port)
+        form.addRow("鎵弿瑙勫垯锛堟湀锛?, self.combo_months)
         form.addRow("", self.chk_enabled)
         form.addRow("", self.chk_default)
-        form.addRow("授权码", self.txt_auth_code)
+        form.addRow("鎺堟潈鐮?, self.txt_auth_code)
         layout.addLayout(form)
 
         footer = QHBoxLayout()
         footer.addStretch(1)
-        btn_cancel = make_button("取消", variant="secondary")
+        btn_cancel = make_button("鍙栨秷", variant="secondary")
         btn_cancel.clicked.connect(self.reject)
-        btn_save = make_button("保存", variant="primary")
+        btn_save = make_button("淇濆瓨", variant="primary")
         btn_save.clicked.connect(self._accept_form)
         footer.addWidget(btn_cancel)
         footer.addWidget(btn_save)
@@ -311,12 +311,12 @@ class SingleTaskMailboxDialog(QDialog):
     def _accept_form(self) -> None:
         email = self.txt_email.text().strip()
         if not email:
-            QMessageBox.warning(self, "邮箱地址为空", "请先填写邮箱地址。")
+            QMessageBox.warning(self, "閭鍦板潃涓虹┖", "璇峰厛濉啓閭鍦板潃銆?)
             return
         provider = self.combo_provider.currentText().strip()
         server = self.txt_server.text().strip()
         if not server:
-            QMessageBox.warning(self, "IMAP 未配置", "请先填写 IMAP 服务器。")
+            QMessageBox.warning(self, "IMAP 鏈厤缃?, "璇峰厛濉啓 IMAP 鏈嶅姟鍣ㄣ€?)
             return
         name = self.txt_name.text().strip() or email
         account = dict(self._source_account)
@@ -368,7 +368,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.db_path = db_path
         if self.splash:
-            self.splash.show_message("正在打开本地数据库...", 40)
+            self.splash.show_message("姝ｅ湪鎵撳紑鏈湴鏁版嵁搴?..", 40)
         self.db = InvoiceDB(db_path)
         self.config = load_config_safe()
         db_time = _time_mod.time()
@@ -395,7 +395,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._nav_collapsed_manual: bool | None = None
         self._show_after_deferred_init = bool(self.splash)
 
-        self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 发票审核与报销整理")
+        self.setWindowTitle(f"Invoice Hub {APP_VERSION} - 鍙戠エ瀹℃牳涓庢姤閿€鏁寸悊")
 
         if self.startup_probe:
             self._init_ui_probe()
@@ -413,16 +413,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
 
         if self.splash:
-            self.splash.show_message("正在初始化界面布局...", 70)
+            self.splash.show_message("姝ｅ湪鍒濆鍖栫晫闈㈠竷灞€...", 70)
         self._init_ui()
         self._restore_splitter_prefs()
         init_time = _time_mod.time()
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
         # Startup responsiveness logs
-        self.write_log(f"⚡ [系统启动] GUI Import/Load Start: 正在初始化界面主框架...")
-        self.write_log(f"💾 [系统启动] DB Open Complete: 成功打开本地 SQLite 数据库 (耗时: {db_time - start_time:.4f}秒)")
-        self.write_log(f"🎨 [系统启动] GUI Init Complete: UI 工作流外壳与部件构建完成 (耗时: {init_time - db_time:.4f}秒)")
+        self.write_log(f"鈿?[绯荤粺鍚姩] GUI Import/Load Start: 姝ｅ湪鍒濆鍖栫晫闈富妗嗘灦...")
+        self.write_log(f"馃捑 [绯荤粺鍚姩] DB Open Complete: 鎴愬姛鎵撳紑鏈湴 SQLite 鏁版嵁搴?(鑰楁椂: {db_time - start_time:.4f}绉?")
+        self.write_log(f"馃帹 [绯荤粺鍚姩] GUI Init Complete: UI 宸ヤ綔娴佸澹充笌閮ㄤ欢鏋勫缓瀹屾垚 (鑰楁椂: {init_time - db_time:.4f}绉?")
 
         # Register deferred load
         QTimer.singleShot(50, self._deferred_init)
@@ -438,17 +438,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         import time as _time_mod
         start_time = _time_mod.time()
         if self.splash:
-            self.splash.show_message("正在加载发票列表...", 90)
+            self.splash.show_message("姝ｅ湪鍔犺浇鍙戠エ鍒楄〃...", 90)
 
         try:
             self._load_invoices()
             self._load_claims()
         except Exception as e:
             # Show a user-visible warning or status bar message instead of silently swallowing the error!
-            err_msg = f"发票列表加载失败: {e}"
+            err_msg = f"鍙戠エ鍒楄〃鍔犺浇澶辫触: {e}"
             _log.error(err_msg)
             self.statusBar().showMessage(err_msg, 6000)
-            self.write_log(f"⚠️ [加载失败] {err_msg}")
+            self.write_log(f"鈿狅笍 [鍔犺浇澶辫触] {err_msg}")
             # Ensure splash screen closes even if load fails so GUI doesn't get blocked
             if self.splash:
                 self.splash.close()
@@ -462,16 +462,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Close splash screen
         if self.splash:
-            self.splash.show_message("加载完成！", 100)
+            self.splash.show_message("鍔犺浇瀹屾垚锛?, 100)
             self.splash.close()
         if self._show_after_deferred_init:
             self._show_after_deferred_init = False
             self.show()
 
-        self.write_log(f"📊 [系统启动] First Invoice List Loaded: 成功检索并渲染首批数据 (耗时: {load_time - start_time:.4f}秒)")
-        status_msg = f"本地数据库 invoices.db 加载成功，发票列表加载耗时 {load_time - start_time:.4f} 秒"
+        self.write_log(f"馃搳 [绯荤粺鍚姩] First Invoice List Loaded: 鎴愬姛妫€绱㈠苟娓叉煋棣栨壒鏁版嵁 (鑰楁椂: {load_time - start_time:.4f}绉?")
+        status_msg = f"鏈湴鏁版嵁搴?invoices.db 鍔犺浇鎴愬姛锛屽彂绁ㄥ垪琛ㄥ姞杞借€楁椂 {load_time - start_time:.4f} 绉?
         if getattr(self, "_first_load_notice", None):
-            status_msg = f"{status_msg}｜{self._first_load_notice}"
+            status_msg = f"{status_msg}锝渰self._first_load_notice}"
         self.statusBar().showMessage(status_msg, 4000)
 
     def closeEvent(self, event):
@@ -493,9 +493,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_compact = nav_collapsed
         search_placeholder = (
-            "搜索发票号 / 销售方 / 购买方 / 金额    Ctrl + F"
+            "鎼滅储鍙戠エ鍙?/ 閿€鍞柟 / 璐拱鏂?/ 閲戦    Ctrl + F"
             if metrics.compact
-            else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
+            else "鎼滅储鍙戠エ鍙?/ 閿€鍞柟 / 璐拱鏂?/ 閲戦 / 閭欢涓婚    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
         nav_width = 56 if nav_collapsed else metrics.nav_width
@@ -513,7 +513,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.setMinimumSize(min_window_width, 530)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
-        self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
+        self.btn_more.setText("鏇村鎿嶄綔  鈻? if not metrics.compact else "鏇村")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
         for card in self.filter_buttons.values():
             card.setMinimumWidth(118)
@@ -530,8 +530,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button.setMinimumHeight(36 if not nav_collapsed else 44)
             button.style().unpolish(button)
             button.style().polish(button)
-        self.btn_collapse_nav.setText("" if nav_collapsed else "收起侧边栏")
-        self.btn_collapse_nav.setToolTip("展开侧边栏" if nav_collapsed else "收起侧边栏")
+        self.btn_collapse_nav.setText("" if nav_collapsed else "鏀惰捣渚ц竟鏍?)
+        self.btn_collapse_nav.setToolTip("灞曞紑渚ц竟鏍? if nav_collapsed else "鏀惰捣渚ц竟鏍?)
         self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
@@ -688,7 +688,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         nav_layout.addWidget(nav_title)
         self.workbench_nav_title = nav_title
 
-        nav_subtitle = QLabel(f"发票审核中心 v{APP_VERSION}")
+        nav_subtitle = QLabel(f"鍙戠エ瀹℃牳涓績 v{APP_VERSION}")
         nav_subtitle.setObjectName("WorkbenchNavSubtitle")
         nav_layout.addWidget(nav_subtitle)
         self.workbench_nav_subtitle = nav_subtitle
@@ -714,8 +714,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "about": QStyle.SP_MessageBoxQuestion,
         }
         self._toolbar_icon_tooltips = {
-            "help": "帮助",
-            "notify": "通知",
+            "help": "甯姪",
+            "notify": "閫氱煡",
         }
 
 
@@ -746,24 +746,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.workbench_nav_buttons[key] = button
             return button
 
-        add_nav_button("overview", "今日工作台", lambda *_a: self._switch_main_page("overview"))
-        add_nav_button("review", "发票审核", lambda *_a: self._switch_main_page("review"))
-        add_nav_button("imports", "导入中心", lambda *_a: self._switch_main_page("imports"))
-        add_nav_button("export", "报销组与导出", lambda *_a: self._switch_main_page("export"))
-        add_nav_button("settings", "系统设置", lambda *_a: self._switch_main_page("settings"))
-        add_nav_button("logs", "操作日志", lambda *_a: self._switch_main_page("logs"), selectable=False, enabled=False)
+        add_nav_button("overview", "浠婃棩宸ヤ綔鍙?, lambda *_a: self._switch_main_page("overview"))
+        add_nav_button("review", "鍙戠エ瀹℃牳", lambda *_a: self._switch_main_page("review"))
+        add_nav_button("imports", "瀵煎叆涓績", lambda *_a: self._switch_main_page("imports"))
+        add_nav_button("export", "鎶ラ攢缁勪笌瀵煎嚭", lambda *_a: self._switch_main_page("export"))
+        add_nav_button("settings", "绯荤粺璁剧疆", lambda *_a: self._switch_main_page("settings"))
+        add_nav_button("logs", "鎿嶄綔鏃ュ織", lambda *_a: self._switch_main_page("logs"), selectable=False, enabled=False)
         self.workbench_nav_buttons["logs"].hide()
 
         # Map legacy sub-keys for backward compatibility & direct action proxies
-        self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "扫码上传", lambda *_a: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mobile_upload"] = add_nav_button("mobile_upload", "鎵爜涓婁紶", lambda *_a: self._switch_main_page("imports", sub_tab=1), selectable=False, enabled=True)
         self.workbench_nav_buttons["mobile_upload"].hide()
-        self.workbench_nav_buttons["mail"] = add_nav_button("mail", "邮箱导入", lambda *_a: self._switch_main_page("imports", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["mail"] = add_nav_button("mail", "閭瀵煎叆", lambda *_a: self._switch_main_page("imports", sub_tab=2), selectable=False, enabled=True)
         self.workbench_nav_buttons["mail"].hide()
-        self.workbench_nav_buttons["rules"] = add_nav_button("rules", "规则管理", lambda *_a: self._switch_main_page("settings", sub_tab=2), selectable=False, enabled=True)
+        self.workbench_nav_buttons["rules"] = add_nav_button("rules", "瑙勫垯绠＄悊", lambda *_a: self._switch_main_page("settings", sub_tab=2), selectable=False, enabled=True)
         self.workbench_nav_buttons["rules"].hide()
-        self.workbench_nav_buttons["data"] = add_nav_button("data", "数据与备份", lambda *_a: self._switch_main_page("settings", sub_tab=5), selectable=False, enabled=True)
+        self.workbench_nav_buttons["data"] = add_nav_button("data", "鏁版嵁涓庡浠?, lambda *_a: self._switch_main_page("settings", sub_tab=5), selectable=False, enabled=True)
         self.workbench_nav_buttons["data"].hide()
-        self.workbench_nav_buttons["about"] = add_nav_button("about", "关于我们", lambda *_a: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
+        self.workbench_nav_buttons["about"] = add_nav_button("about", "鍏充簬鎴戜滑", lambda *_a: self._switch_main_page("settings", sub_tab=6), selectable=False, enabled=True)
         self.workbench_nav_buttons["about"].hide()
 
         root_layout.addWidget(self.workbench_nav)
@@ -772,12 +772,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.center_stack = QStackedWidget(central_widget)
         root_layout.addWidget(self.center_stack, 1)
 
-        # Page 0: Overview Dashboard ("总览")
+        # Page 0: Overview Dashboard ("鎬昏")
         self.overview_page = self._build_overview_page_view()
         self.dashboard_page = self.overview_page
         self.center_stack.addWidget(self.overview_page)
 
-        # Page 1: Review Workbench ("发票审核")
+        # Page 1: Review Workbench ("鍙戠エ瀹℃牳")
         self.workbench_content = QWidget()
         self.review_page = self.workbench_content
         self.main_layout = QVBoxLayout(self.workbench_content)
@@ -790,17 +790,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.search_reload_timer.setInterval(250)
 
         nav_layout.addStretch(1)
-        self.btn_collapse_nav = QPushButton("收起侧边栏")
+        self.btn_collapse_nav = QPushButton("鏀惰捣渚ц竟鏍?)
         self.btn_collapse_nav.setObjectName("workbench_nav_collapse")
         self.btn_collapse_nav.setProperty("class", "WorkbenchNavButton")
         self.btn_collapse_nav.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
-        self.btn_collapse_nav.setToolTip("收起或展开侧边栏")
+        self.btn_collapse_nav.setToolTip("鏀惰捣鎴栧睍寮€渚ц竟鏍?)
         self.btn_collapse_nav.setMinimumHeight(32)
         self.btn_collapse_nav.clicked.connect(self._toggle_workbench_nav_collapsed)
         nav_layout.addWidget(self.btn_collapse_nav)
 
         # Shortcut help entry lives at nav bottom
-        self.btn_shortcut_help = QPushButton("快捷键：Enter 通过 · Del 忽略")
+        self.btn_shortcut_help = QPushButton("蹇嵎閿細Enter 閫氳繃 路 Del 蹇界暐")
         self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
         self.btn_shortcut_help.setProperty("class", "WorkbenchNavButton")
         self.btn_shortcut_help.setMinimumHeight(32)
@@ -823,22 +823,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_layout.setSpacing(8)
 
         self.txt_search = QLineEdit(self.workbench_top_toolbar)
-        self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F")
+        self.txt_search.setPlaceholderText("鎼滅储鍙戠エ鍙?/ 閿€鍞柟 / 璐拱鏂?/ 閲戦 / 閭欢涓婚    Ctrl + F")
         self.txt_search.setClearButtonEnabled(True)
         self.txt_search.textChanged.connect(self._schedule_invoice_reload)
         action_layout.addWidget(self.txt_search, 2)
 
-        self.btn_import_local = make_button("导入", variant="toolbar")
+        self.btn_import_local = make_button("瀵煎叆", variant="toolbar")
         self.btn_import_local.setProperty("emphasis", "primary")
         self.import_menu = QMenu(self)
         self.action_import_local = self._make_menu_action(
-            "本地文件导入", QStyle.SP_DialogOpenButton, self._import_local_clicked, "选择本地文件夹导入 PDF/ZIP/OFD 发票"
+            "鏈湴鏂囦欢瀵煎叆", QStyle.SP_DialogOpenButton, self._import_local_clicked, "閫夋嫨鏈湴鏂囦欢澶瑰鍏?PDF/ZIP/OFD 鍙戠エ"
         )
         self.action_import_mobile = self._make_menu_action(
-            "扫码上传", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "打开扫码上传入口"
+            "鎵爜涓婁紶", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "鎵撳紑鎵爜涓婁紶鍏ュ彛"
         )
         self.action_import_mail = self._make_menu_action(
-            "邮箱导入", QStyle.SP_MessageBoxInformation, lambda: self._switch_main_page("imports", sub_tab=2), "进入邮箱导入页并查看账号与最近扫描结果"
+            "閭瀵煎叆", QStyle.SP_MessageBoxInformation, lambda: self._switch_main_page("imports", sub_tab=2), "杩涘叆閭瀵煎叆椤靛苟鏌ョ湅璐﹀彿涓庢渶杩戞壂鎻忕粨鏋?
         )
         self.import_menu.addAction(self.action_import_local)
         self.import_menu.addAction(self.action_import_mobile)
@@ -846,20 +846,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_import_local.setMenu(self.import_menu)
         action_layout.addWidget(self.btn_import_local)
 
-        self.btn_mobile_upload = make_button("扫码", variant="toolbar")
+        self.btn_mobile_upload = make_button("鎵爜", variant="toolbar")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
         self.btn_mobile_upload.hide()
 
-        self.btn_scan_email = make_button("同步", variant="toolbar")
+        self.btn_scan_email = make_button("鍚屾", variant="toolbar")
         self.btn_scan_email.clicked.connect(self._scan_email_clicked)
         action_layout.addWidget(self.btn_scan_email)
 
         action_layout.addStretch()
-        self.btn_toolbar_export = make_button("导出", variant="toolbar")
+        self.btn_toolbar_export = make_button("瀵煎嚭", variant="toolbar")
         self.btn_toolbar_export.clicked.connect(self._export_claim_package)
         action_layout.addWidget(self.btn_toolbar_export)
 
-        self.btn_more = make_button("更多  ▼", variant="toolbar")
+        self.btn_more = make_button("鏇村  鈻?, variant="toolbar")
         self.btn_toolbar_help = QToolButton(self.workbench_top_toolbar)
         self.btn_toolbar_help.setObjectName("WorkbenchTopIconButton")
         self.btn_toolbar_help.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxQuestion))
@@ -874,7 +874,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_toolbar_notify.clicked.connect(self._toggle_log)
         self.btn_toolbar_notify.hide()
 
-        self.btn_toolbar_user = QPushButton("本地模式 ▾")
+        self.btn_toolbar_user = QPushButton("鏈湴妯″紡 鈻?)
         self.btn_toolbar_user.setObjectName("WorkbenchUserButton")
         self.btn_toolbar_user.setProperty("variant", "toolbar")
         self.btn_toolbar_user.setMinimumHeight(34)
@@ -883,34 +883,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.more_menu.setToolTipsVisible(True)
 
         self.action_refresh = self._make_menu_action(
-            "刷新数据", QStyle.SP_BrowserReload, self._manual_refresh, "刷新当前发票列表"
+            "鍒锋柊鏁版嵁", QStyle.SP_BrowserReload, self._manual_refresh, "鍒锋柊褰撳墠鍙戠エ鍒楄〃"
         )
         self.action_mobile_upload = self._make_menu_action(
-            "扫码上传", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "打开扫码上传入口"
+            "鎵爜涓婁紶", QStyle.SP_ArrowUp, self._mobile_upload_clicked, "鎵撳紑鎵爜涓婁紶鍏ュ彛"
         )
         self.action_scan_email = self._make_menu_action(
-            "邮箱同步", QStyle.SP_MessageBoxInformation, self._scan_email_clicked, "同步配置邮箱中的发票"
+            "閭鍚屾", QStyle.SP_MessageBoxInformation, self._scan_email_clicked, "鍚屾閰嶇疆閭涓殑鍙戠エ"
         )
         self.action_toolbar_export = self._make_menu_action(
-            "导出当前视图", QStyle.SP_DialogSaveButton, self._show_export_page, "进入批量导出页并选择导出范围"
+            "瀵煎嚭褰撳墠瑙嗗浘", QStyle.SP_DialogSaveButton, self._show_export_page, "杩涘叆鎵归噺瀵煎嚭椤靛苟閫夋嫨瀵煎嚭鑼冨洿"
         )
         self.action_runtime = self._make_menu_action(
-            "打开数据目录", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "打开本地运行数据目录"
+            "鎵撳紑鏁版嵁鐩綍", QStyle.SP_DirOpenIcon, self._open_runtime_dir, "鎵撳紑鏈湴杩愯鏁版嵁鐩綍"
         )
         self.action_exports = self._make_menu_action(
-            "打开导出目录", QStyle.SP_DriveHDIcon, self._open_exports_directory, "打开本地导出目录"
+            "鎵撳紑瀵煎嚭鐩綍", QStyle.SP_DriveHDIcon, self._open_exports_directory, "鎵撳紑鏈湴瀵煎嚭鐩綍"
         )
         self.action_logs = self._make_menu_action(
-            "打开日志目录", QStyle.SP_FileDialogDetailedView, self._open_logs_directory, "打开本地日志目录"
+            "鎵撳紑鏃ュ織鐩綍", QStyle.SP_FileDialogDetailedView, self._open_logs_directory, "鎵撳紑鏈湴鏃ュ織鐩綍"
         )
         self.action_copy_diag = self._make_menu_action(
-            "复制诊断信息", QStyle.SP_FileDialogInfoView, self._copy_diagnostic_info, "复制脱敏诊断信息"
+            "澶嶅埗璇婃柇淇℃伅", QStyle.SP_FileDialogInfoView, self._copy_diagnostic_info, "澶嶅埗鑴辨晱璇婃柇淇℃伅"
         )
         self.action_export_diag = self._make_menu_action(
-            "导出脱敏诊断包", QStyle.SP_DialogSaveButton, self._export_diagnostics_package, "导出可用于反馈的脱敏诊断包"
+            "瀵煎嚭鑴辨晱璇婃柇鍖?, QStyle.SP_DialogSaveButton, self._export_diagnostics_package, "瀵煎嚭鍙敤浜庡弽棣堢殑鑴辨晱璇婃柇鍖?
         )
         self.action_github_issues = self._make_menu_action(
-            "打开 GitHub Issues", QStyle.SP_MessageBoxQuestion, self._open_github_issues, "打开公开 Issue 反馈入口"
+            "鎵撳紑 GitHub Issues", QStyle.SP_MessageBoxQuestion, self._open_github_issues, "鎵撳紑鍏紑 Issue 鍙嶉鍏ュ彛"
         )
         self.more_menu.addAction(self.action_refresh)
         self.more_menu.addAction(self.action_mobile_upload)
@@ -941,11 +941,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.filter_buttons = {}
         self.filter_base_labels = {
-            "all": "全部",
-            TO_REVIEW: "待审核",
-            APPROVED: "已通过",
-            IGNORED: "已忽略",
-            ERROR: "异常",
+            "all": "鍏ㄩ儴",
+            TO_REVIEW: "寰呭鏍?,
+            APPROVED: "宸查€氳繃",
+            IGNORED: "宸插拷鐣?,
+            ERROR: "寮傚父",
         }
 
         state_by_status = {
@@ -956,11 +956,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ERROR: "danger",
         }
         icon_by_status = {
-            "all": "◎",
-            TO_REVIEW: "◔",
-            APPROVED: "●",
-            IGNORED: "◌",
-            ERROR: "▲",
+            "all": "鈼?,
+            TO_REVIEW: "鈼?,
+            APPROVED: "鈼?,
+            IGNORED: "鈼?,
+            ERROR: "鈻?,
         }
         for status, text in self.filter_base_labels.items():
             card = CompactStatCard(
@@ -980,22 +980,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         filter_layout.addStretch()
 
         # Advanced Filter Menu Popup for Secondary Filters
-        self.btn_advanced_filter = make_button("筛选 ▾", variant="secondary", min_width=72)
+        self.btn_advanced_filter = make_button("绛涢€?鈻?, variant="secondary", min_width=72)
         self.advanced_filter_menu = QMenu(self)
-        
-        self.chk_unlinked = QCheckBox("未关联报销组", self)
+
+        self.chk_unlinked = QCheckBox("鏈叧鑱旀姤閿€缁?, self)
         self.chk_unlinked.stateChanged.connect(self._on_chk_unlinked_changed)
         action_unlinked = QWidgetAction(self)
         action_unlinked.setDefaultWidget(self.chk_unlinked)
         self.advanced_filter_menu.addAction(action_unlinked)
 
-        self.chk_needs_fix = QCheckBox("待补全", self)
+        self.chk_needs_fix = QCheckBox("寰呰ˉ鍏?, self)
         self.chk_needs_fix.stateChanged.connect(self._on_chk_needs_fix_changed)
         action_needs_fix = QWidgetAction(self)
         action_needs_fix.setDefaultWidget(self.chk_needs_fix)
         self.advanced_filter_menu.addAction(action_needs_fix)
 
-        self.chk_show_deleted = QCheckBox("显示已删除", self)
+        self.chk_show_deleted = QCheckBox("鏄剧ず宸插垹闄?, self)
         self.chk_show_deleted.stateChanged.connect(self._schedule_invoice_reload)
         action_show_deleted = QWidgetAction(self)
         action_show_deleted.setDefaultWidget(self.chk_show_deleted)
@@ -1004,7 +1004,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_advanced_filter.setMenu(self.advanced_filter_menu)
         filter_layout.addWidget(self.btn_advanced_filter)
 
-        self.btn_reset_filters = make_button("重置", variant="secondary", min_width=60)
+        self.btn_reset_filters = make_button("閲嶇疆", variant="secondary", min_width=60)
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
         filter_layout.addWidget(self.btn_reset_filters)
 
@@ -1014,7 +1014,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.filter_chips_layout.setContentsMargins(5, 2, 5, 2)
         self.filter_chips_layout.setSpacing(6)
 
-        self.lbl_chips_title = QLabel("已启用:")
+        self.lbl_chips_title = QLabel("宸插惎鐢?")
         self.lbl_chips_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.lbl_chips_title.setStyleSheet("color: #4B5563;")
         self.filter_chips_layout.addWidget(self.lbl_chips_title)
@@ -1049,17 +1049,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         record_header_layout = QHBoxLayout(self.record_header)
         record_header_layout.setContentsMargins(2, 0, 2, 0)
         record_header_layout.setSpacing(8)
-        self.lbl_record_section_title = QLabel("发票记录")
+        self.lbl_record_section_title = QLabel("鍙戠エ璁板綍")
         self.lbl_record_section_title.setObjectName("InvoiceRecordTitle")
         record_header_layout.addWidget(self.lbl_record_section_title)
-        self.lbl_record_count = QLabel("当前 0 / 0")
+        self.lbl_record_count = QLabel("褰撳墠 0 / 0")
         self.lbl_record_count.setObjectName("InvoiceRecordMeta")
         record_header_layout.addWidget(self.lbl_record_count)
         record_header_layout.addStretch(1)
-        self.lbl_record_sort = QLabel("按费用日期倒序")
+        self.lbl_record_sort = QLabel("鎸夎垂鐢ㄦ棩鏈熷€掑簭")
         self.lbl_record_sort.setObjectName("InvoiceRecordSort")
         record_header_layout.addWidget(self.lbl_record_sort)
-        self.lbl_record_selection = QLabel("已选 0 张")
+        self.lbl_record_selection = QLabel("宸查€?0 寮?)
         self.lbl_record_selection.setObjectName("InvoiceRecordSelection")
         record_header_layout.addWidget(self.lbl_record_selection)
 
@@ -1108,16 +1108,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         empty_layout.setAlignment(Qt.AlignCenter)
         empty_layout.setSpacing(15)
 
-        self.lbl_empty_title = QLabel("当前没有发票记录")
+        self.lbl_empty_title = QLabel("褰撳墠娌℃湁鍙戠エ璁板綍")
         self.lbl_empty_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         self.lbl_empty_title.setStyleSheet("color: #4B5563;")
         empty_layout.addWidget(self.lbl_empty_title)
 
         self.lbl_guide = QLabel(
-            "您可以执行以下操作以加载发票数据：\n\n"
-            "  1. 点击“导入发票”选择本地文件夹导入 PDF/ZIP 发票；\n"
-            "  2. 点击“配置邮箱”配置您的邮箱，然后点击“扫描邮箱”开始增量同步；\n"
-            "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
+            "鎮ㄥ彲浠ユ墽琛屼互涓嬫搷浣滀互鍔犺浇鍙戠エ鏁版嵁锛歕n\n"
+            "  1. 鐐瑰嚮鈥滃鍏ュ彂绁ㄢ€濋€夋嫨鏈湴鏂囦欢澶瑰鍏?PDF/ZIP 鍙戠エ锛沑n"
+            "  2. 鐐瑰嚮鈥滈厤缃偖绠扁€濋厤缃偍鐨勯偖绠憋紝鐒跺悗鐐瑰嚮鈥滄壂鎻忛偖绠扁€濆紑濮嬪閲忓悓姝ワ紱\n"
+            "  3. 鐐瑰嚮鈥滄壂鐮佷笂浼犫€濓紝鐢ㄦ墜鏈轰笂浼?PDF/OFD銆佺浉鍐屽浘鐗囨垨鎷嶇収鏉愭枡銆?
         )
         self.lbl_guide.setFont(QFont("Segoe UI", 10))
         self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
@@ -1129,23 +1129,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         btn_layout.setSpacing(10)
         btn_layout.setAlignment(Qt.AlignCenter)
 
-        self.empty_btn_import = make_button("导入发票", variant="secondary", min_width=56)
+        self.empty_btn_import = make_button("瀵煎叆鍙戠エ", variant="secondary", min_width=56)
         self.empty_btn_import.clicked.connect(self._import_local_clicked)
 
-        self.empty_btn_settings = make_button("配置邮箱", variant="secondary", min_width=56)
+        self.empty_btn_settings = make_button("閰嶇疆閭", variant="secondary", min_width=56)
         self.empty_btn_settings.clicked.connect(self._open_settings_dialog)
 
-        self.empty_btn_scan = make_button("扫描邮箱", variant="secondary", min_width=56)
+        self.empty_btn_scan = make_button("鎵弿閭", variant="secondary", min_width=56)
         self.empty_btn_scan.clicked.connect(self._scan_email_clicked)
 
-        self.empty_btn_mobile_upload = make_button("扫码上传", variant="secondary", min_width=56)
+        self.empty_btn_mobile_upload = make_button("鎵爜涓婁紶", variant="secondary", min_width=56)
         self.empty_btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
 
         # Search / filter fail actions
-        self.empty_btn_clear_search = make_button("清空搜索", variant="primary", min_width=76)
+        self.empty_btn_clear_search = make_button("娓呯┖鎼滅储", variant="primary", min_width=76)
         self.empty_btn_clear_search.clicked.connect(self._clear_search_clicked)
 
-        self.empty_btn_reset_filters = make_button("重置筛选", variant="secondary", min_width=76)
+        self.empty_btn_reset_filters = make_button("閲嶇疆绛涢€?, variant="secondary", min_width=76)
         self.empty_btn_reset_filters.clicked.connect(self._reset_invoice_filters)
 
         btn_layout.addWidget(self.empty_btn_import)
@@ -1223,28 +1223,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Set default proportions: Table takes 60%, Form takes 40%
         splitter.setSizes([650, 450])
 
-        # Add Page 1 (发票审核) to center_stack
+        # Add Page 1 (鍙戠エ瀹℃牳) to center_stack
         self.center_stack.addWidget(self.workbench_content)
 
-        # Page 2: Import Center ("导入中心")
+        # Page 2: Import Center ("瀵煎叆涓績")
         self.imports_page = self._build_imports_page_view()
         self.import_center_page = self.imports_page
         self.center_stack.addWidget(self.imports_page)
 
-        # Page 3: Batch Export ("批量导出")
+        # Page 3: Batch Export ("鎵归噺瀵煎嚭")
         self.export_page = self._build_export_page_view()
         self.center_stack.addWidget(self.export_page)
 
-        # Page 4: Audit Logs ("操作日志")
+        # Page 4: Audit Logs ("鎿嶄綔鏃ュ織")
         self.logs_page = self._build_logs_page_view()
         self.audit_log_page = self.logs_page
         self.center_stack.addWidget(self.logs_page)
 
-        # Page 5: System Settings ("系统设置")
+        # Page 5: System Settings ("绯荤粺璁剧疆")
         self.settings_page = self._build_settings_page_view()
         self.center_stack.addWidget(self.settings_page)
 
-        # Set default active page to Page 1 (发票审核)
+        # Set default active page to Page 1 (鍙戠エ瀹℃牳)
         self.center_stack.setCurrentIndex(1)
         if "review" in self.workbench_nav_buttons:
             self.workbench_nav_buttons["review"].setChecked(True)
@@ -1271,17 +1271,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status_layout = QHBoxLayout(status_bar)
         status_layout.setContentsMargins(6, 3, 6, 3)
 
-        self.lbl_status_left = QLabel("当前筛选 0 张")
+        self.lbl_status_left = QLabel("褰撳墠绛涢€?0 寮?)
         self.lbl_status_left.setFont(QFont("Segoe UI", 9))
         self.lbl_status_left.setStyleSheet("color: #4B5563;")
-        self.lbl_status_left.setToolTip("当前发票筛选状态")
+        self.lbl_status_left.setToolTip("褰撳墠鍙戠エ绛涢€夌姸鎬?)
         self.lbl_status_left.setMinimumWidth(120)
         status_layout.addWidget(self.lbl_status_left, 1)
 
-        self.lbl_status_middle = QLabel("未选择发票")
+        self.lbl_status_middle = QLabel("鏈€夋嫨鍙戠エ")
         self.lbl_status_middle.setFont(QFont("Segoe UI", 9))
         self.lbl_status_middle.setStyleSheet("color: #4B5563;")
-        self.lbl_status_middle.setToolTip("选中发票及金额合计")
+        self.lbl_status_middle.setToolTip("閫変腑鍙戠エ鍙婇噾棰濆悎璁?)
         self.lbl_status_middle.setAlignment(Qt.AlignCenter)
         self.lbl_status_middle.setMinimumWidth(180)
         status_layout.addWidget(self.lbl_status_middle, 1)
@@ -1299,10 +1299,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_version = QLabel(APP_VERSION)
         self.lbl_version.setFont(QFont("Segoe UI", 8))
         self.lbl_version.setStyleSheet("color: #6B7280;")
-        self.lbl_version.setToolTip("当前 Invoice Hub 版本")
+        self.lbl_version.setToolTip("褰撳墠 Invoice Hub 鐗堟湰")
         right_layout.addWidget(self.lbl_version)
 
-        self.btn_load_all = make_button("加载全部", variant="secondary", min_width=56)
+        self.btn_load_all = make_button("鍔犺浇鍏ㄩ儴", variant="secondary", min_width=56)
         self.btn_load_all.setFont(QFont("Segoe UI", 9, QFont.Bold))
         self.btn_load_all.ensurePolished()
         self.btn_load_all.setMinimumWidth(
@@ -1313,12 +1313,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
         )
         self.btn_load_all.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.btn_load_all.setToolTip("首屏仅加载部分记录，点击加载完整列表")
+        self.btn_load_all.setToolTip("棣栧睆浠呭姞杞介儴鍒嗚褰曪紝鐐瑰嚮鍔犺浇瀹屾暣鍒楄〃")
         self.btn_load_all.clicked.connect(self._load_all_invoices_clicked)
         self.btn_load_all.setVisible(False)
         right_layout.addWidget(self.btn_load_all)
 
-        self.btn_toggle_log = make_button("展开日志", variant="secondary", min_width=76)
+        self.btn_toggle_log = make_button("灞曞紑鏃ュ織", variant="secondary", min_width=76)
         self.btn_toggle_log.setVisible(False)
         self.btn_toggle_log.clicked.connect(self._toggle_log)
         right_layout.addWidget(self.btn_toggle_log)
@@ -1337,22 +1337,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         log_header_layout = QHBoxLayout(log_header)
         log_header_layout.setContentsMargins(6, 0, 6, 0)
 
-        lbl_log_title = QLabel("系统运行日志")
+        lbl_log_title = QLabel("绯荤粺杩愯鏃ュ織")
         lbl_log_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
         lbl_log_title.setStyleSheet("color: #111827;")
 
-        self.btn_clear_log = QPushButton("清空")
+        self.btn_clear_log = QPushButton("娓呯┖")
         self.btn_clear_log.setProperty("class", "SecondaryBtn")
         self.btn_clear_log.setMinimumWidth(68)
         self.btn_clear_log.setMaximumWidth(80)
-        self.btn_clear_log.setToolTip("清空当前运行日志")
+        self.btn_clear_log.setToolTip("娓呯┖褰撳墠杩愯鏃ュ織")
         self.btn_clear_log.clicked.connect(self.txt_log.clear)
 
-        self.btn_copy_log = QPushButton("复制")
+        self.btn_copy_log = QPushButton("澶嶅埗")
         self.btn_copy_log.setProperty("class", "SecondaryBtn")
         self.btn_copy_log.setMinimumWidth(68)
         self.btn_copy_log.setMaximumWidth(80)
-        self.btn_copy_log.setToolTip("复制当前运行日志")
+        self.btn_copy_log.setToolTip("澶嶅埗褰撳墠杩愯鏃ュ織")
         self.btn_copy_log.clicked.connect(self._copy_log_to_clipboard)
 
         log_header_layout.addWidget(lbl_log_title, 1)
@@ -1389,7 +1389,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         main_layout.addWidget(self.log_drawer)
         self._log_panel_visible = False
 
-    # ── Detail panel wiring ────────────────────────────────────
+    # 鈹€鈹€ Detail panel wiring 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _setup_detail_panel(self):
         cbs = InvoiceDetailCallbacks(
@@ -1536,7 +1536,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _reset_invoice_filters(self):
         # Reset search and quick filters to the default view.
         self.txt_search.setText("")
-        
+
         # Block signals to prevent redundant loads during reset
         self.chk_unlinked.blockSignals(True)
         self.chk_needs_fix.blockSignals(True)
@@ -1549,7 +1549,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.chk_show_deleted.setChecked(False)
         if hasattr(self, "search_reload_timer"):
             self.search_reload_timer.stop()
-            
+
         self.column_filters.clear()
         self._column_filters_load_all = False
         self._limited_first_load_active = False
@@ -1582,13 +1582,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if item is None:
                 item = QTableWidgetItem()
                 self.table.setHorizontalHeaderItem(index, item)
-            item.setText(f"{label} · 已筛选" if active else label)
+            item.setText(f"{label} 路 宸茬瓫閫? if active else label)
             item.setToolTip(self._column_filter_header_tooltip(label, active))
 
     def _column_filter_header_tooltip(self, label: str, active: bool) -> str:
         if active:
-            return f"{label}：已启用列筛选，点击右侧修改"
-        return f"{label}：点击列标题右侧筛选"
+            return f"{label}锛氬凡鍚敤鍒楃瓫閫夛紝鐐瑰嚮鍙充晶淇敼"
+        return f"{label}锛氱偣鍑诲垪鏍囬鍙充晶绛涢€?
 
     def _set_column_filter(self, key: str, spec: dict):
         if key not in COLUMN_KEYS and key != "review_status":
@@ -1795,7 +1795,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return shortcuts
 
 
-    # ── V2 Six Page IA Views ───────────────────────────────────
+    # 鈹€鈹€ V2 Six Page IA Views 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _collect_overview_metrics(self) -> dict | None:
         if not hasattr(self, "db") or self.db is None:
@@ -1816,7 +1816,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if created_at[:10] == today:
                 today_imported += 1
             quality = self._get_invoice_quality(inv)
-            if quality in {"待补全", "缺原件", "缺证明", "未识别"}:
+            if quality in {"寰呰ˉ鍏?, "缂哄師浠?, "缂鸿瘉鏄?, "鏈瘑鍒?}:
                 needs_fix += 1
             date_text = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
             if date_text.startswith(month_prefix):
@@ -1851,21 +1851,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         metrics = self._collect_overview_metrics()
         if metrics is None:
             for label in self.overview_value_labels.values():
-                label.set_value("—")
-            self.lbl_overview_recent_imports.setText("暂无可用统计，等待数据库连接或首批导入完成。")
-            self.lbl_overview_health.setText("当前无法读取审核队列统计，导入后会自动刷新。")
+                label.set_value("鈥?)
+            self.lbl_overview_recent_imports.setText("鏆傛棤鍙敤缁熻锛岀瓑寰呮暟鎹簱杩炴帴鎴栭鎵瑰鍏ュ畬鎴愩€?)
+            self.lbl_overview_health.setText("褰撳墠鏃犳硶璇诲彇瀹℃牳闃熷垪缁熻锛屽鍏ュ悗浼氳嚜鍔ㄥ埛鏂般€?)
             return
 
-        self.overview_value_labels["today_imported"].set_value(f"{metrics['today_imported']} 张")
-        self.overview_value_labels["to_review"].set_value(f"{metrics['to_review']} 张")
-        self.overview_value_labels["error"].set_value(f"{metrics['error']} 张")
-        self.overview_value_labels["needs_fix"].set_value(f"{metrics['needs_fix']} 张")
-        self.overview_value_labels["month_total"].set_value(f"¥{metrics['month_total']:.2f}")
+        self.overview_value_labels["today_imported"].set_value(f"{metrics['today_imported']} 寮?)
+        self.overview_value_labels["to_review"].set_value(f"{metrics['to_review']} 寮?)
+        self.overview_value_labels["error"].set_value(f"{metrics['error']} 寮?)
+        self.overview_value_labels["needs_fix"].set_value(f"{metrics['needs_fix']} 寮?)
+        self.overview_value_labels["month_total"].set_value(f"楼{metrics['month_total']:.2f}")
         self.lbl_overview_recent_imports.setText(
-            f"当前数据库共有 {metrics['total']} 张有效记录，今天新增 {metrics['today_imported']} 张。"
+            f"褰撳墠鏁版嵁搴撳叡鏈?{metrics['total']} 寮犳湁鏁堣褰曪紝浠婂ぉ鏂板 {metrics['today_imported']} 寮犮€?
         )
         self.lbl_overview_health.setText(
-            f"待审核 {metrics['to_review']} 张 / 异常 {metrics['error']} 张 / 待补全 {metrics['needs_fix']} 张。"
+            f"寰呭鏍?{metrics['to_review']} 寮?/ 寮傚父 {metrics['error']} 寮?/ 寰呰ˉ鍏?{metrics['needs_fix']} 寮犮€?
         )
 
     def _refresh_imports_page(self) -> None:
@@ -1874,11 +1874,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         log_lines = self._read_recent_runtime_logs()
         if hasattr(self, "txt_import_records"):
             self.txt_import_records.setPlainText(
-                "\n".join(log_lines) if log_lines else "暂无历史日志文件。完成本地导入、扫码上传或邮箱扫描后会显示最近记录。"
+                "\n".join(log_lines) if log_lines else "鏆傛棤鍘嗗彶鏃ュ織鏂囦欢銆傚畬鎴愭湰鍦板鍏ャ€佹壂鐮佷笂浼犳垨閭鎵弿鍚庝細鏄剧ず鏈€杩戣褰曘€?
             )
 
         if hasattr(self, "lbl_import_qr_status"):
-            self.lbl_import_qr_status.setText("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
+            self.lbl_import_qr_status.setText("鎵爜涓婁紶鏈嶅姟鏈惎鍔ㄣ€傜偣鍑讳笅鏂规寜閽彲鍚姩鐪熷疄涓婁紶鏈嶅姟骞舵樉绀轰簩缁寸爜銆?)
 
         if hasattr(self, "mail_checklist_layout"):
             while self.mail_checklist_layout.count():
@@ -1891,7 +1891,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.mail_account_checkboxes = []
 
             if not accounts:
-                lbl_empty = QLabel("暂无已启用邮箱账号。点击“管理”进入系统设置完成配置。")
+                lbl_empty = QLabel("鏆傛棤宸插惎鐢ㄩ偖绠辫处鍙枫€傜偣鍑烩€滅鐞嗏€濊繘鍏ョ郴缁熻缃畬鎴愰厤缃€?)
                 lbl_empty.setStyleSheet("color: #94A3B8; font-size: 12px;")
                 self.mail_checklist_layout.addWidget(lbl_empty)
             else:
@@ -1901,7 +1901,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     row_layout.setContentsMargins(6, 4, 6, 4)
                     row_layout.setSpacing(8)
 
-                    display_name = str(acc.get("name") or acc.get("address") or "未命名").strip()
+                    display_name = str(acc.get("name") or acc.get("address") or "鏈懡鍚?).strip()
                     masked_addr = mask_email(acc.get("address") or "")
                     provider = str(acc.get("provider") or "imap").strip()
                     months = int((acc.get("search") or {}).get("months_back", 3))
@@ -1914,10 +1914,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     row_layout.addWidget(chk)
 
                     if is_default:
-                        row_layout.addWidget(make_badge("默认扫描账号", variant="primary"))
+                        row_layout.addWidget(make_badge("榛樿鎵弿璐﹀彿", variant="primary"))
 
                     row_layout.addWidget(make_badge(provider.upper(), variant="info"))
-                    row_layout.addWidget(make_badge(f"最近 {months} 个月", variant="muted"))
+                    row_layout.addWidget(make_badge(f"鏈€杩?{months} 涓湀", variant="muted"))
                     row_layout.addStretch()
 
                     self.mail_checklist_layout.addWidget(row_widget)
@@ -1928,11 +1928,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             lines = []
             for account in get_email_accounts(cfg):
                 months = int((account.get("search") or {}).get("months_back", 3))
-                display_name = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
+                display_name = str(account.get("name") or account.get("address") or "鏈懡鍚嶉偖绠?).strip()
                 provider = str(account.get("provider") or "imap").strip()
-                lines.append(f"{display_name} · {provider} · 最近 {months} 个月")
+                lines.append(f"{display_name} 路 {provider} 路 鏈€杩?{months} 涓湀")
             self.lst_mail_accounts.setPlainText(
-                "\n".join(lines) if lines else "暂无已启用邮箱账号。请先在系统设置中完成邮箱配置。"
+                "\n".join(lines) if lines else "鏆傛棤宸插惎鐢ㄩ偖绠辫处鍙枫€傝鍏堝湪绯荤粺璁剧疆涓畬鎴愰偖绠遍厤缃€?
             )
 
         if hasattr(self, "lbl_mail_scan_summary"):
@@ -1943,9 +1943,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     for key, value in last_scan_summary.items()
                     if value not in (None, "", [], {})
                 ]
-                self.lbl_mail_scan_summary.setText("最近扫描结果：" + (" / ".join(summary_parts) if summary_parts else "无可展示摘要"))
+                self.lbl_mail_scan_summary.setText("鏈€杩戞壂鎻忕粨鏋滐細" + (" / ".join(summary_parts) if summary_parts else "鏃犲彲灞曠ず鎽樿"))
             else:
-                self.lbl_mail_scan_summary.setText("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
+                self.lbl_mail_scan_summary.setText("鏈€杩戞壂鎻忕粨鏋滐細鏆傛棤璁板綍銆傜偣鍑烩€滃紑濮嬫壂鎻忊€濆紑濮嬫媺鍙栥€?)
 
         if hasattr(self, "imports_summary_strip"):
             cfg = getattr(self, "config", None) or load_config_safe()
@@ -1953,10 +1953,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             from ..credentials import has_auth_code
 
             default_acc = next((acc for acc in accounts if acc.get("is_default")), None)
-            default_name = str(default_acc.get("name") or default_acc.get("address") or "无").strip() if default_acc else "无"
+            default_name = str(default_acc.get("name") or default_acc.get("address") or "鏃?).strip() if default_acc else "鏃?
             missing_cnt = sum(1 for acc in accounts if acc.get("enabled", True) and not has_auth_code(acc.get("address", "")))
             last_scan_summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
-            recent_text = "暂无"
+            recent_text = "鏆傛棤"
             failed_text = "0"
             if isinstance(last_scan_summary, dict) and last_scan_summary:
                 scanned = last_scan_summary.get("scanned") or last_scan_summary.get("scanned_headers") or 0
@@ -1974,21 +1974,35 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.imports_summary_strip.set_metric("failed", failed_text)
 
     def _refresh_export_page(self) -> None:
-        if not hasattr(self, "combo_export_claims"):
+        if not hasattr(self, "export_group_list"):
             return
         claims = []
         try:
             claims = self.db.list_claim_groups()
         except Exception as exc:
             _log.debug("Failed to refresh export page: %s", exc)
-        self.combo_export_claims.blockSignals(True)
-        self.combo_export_claims.clear()
+        current_claim_id = self.export_group_list.currentItem().data(Qt.UserRole) if self.export_group_list.currentItem() else None
+        self.export_group_list.blockSignals(True)
+        self.export_group_list.clear()
         for claim in claims:
-            period = ""
-            if claim.get("period_start") or claim.get("period_end"):
-                period = f" - {claim.get('period_start')}~{claim.get('period_end')}"
-            self.combo_export_claims.addItem(f"{claim.get('name')}{period}", claim.get("id"))
-        self.combo_export_claims.blockSignals(False)
+            stats = self._claim_export_preflight_stats(claim.get("id"))
+            invoice_count = int(claim.get("invoice_count") or stats.get("all", 0) or 0)
+            claim_total = claim.get("amount_total")
+            try:
+                amount_text = f"楼{Decimal(str(claim_total or 0)).quantize(Decimal('0.01'))}"
+            except (InvalidOperation, ValueError, TypeError):
+                amount_text = "楼0.00"
+            missing_count = int(stats.get("missing_attachment", 0) or 0) + int(stats.get("missing_amount", 0) or 0)
+            ready = missing_count == 0 and int(stats.get(APPROVED, 0) or 0) > 0
+            item = self.export_group_list.add_entity_row(
+                title=str(claim.get("name") or "鏈懡鍚嶆姤閿€缁?),
+                subtitle=f"{invoice_count} 寮犲彂绁?,
+                status_badge="鍙鍑? if ready else "寰呭鐞?,
+                meta=f"{amount_text} / 缂烘潗鏂?{missing_count}",
+                user_data=claim.get("id"),
+            )
+            item.setToolTip(str(claim.get("period_start") or "") + (" ~ " + str(claim.get("period_end") or "") if claim.get("period_end") else ""))
+        self.export_group_list.blockSignals(False)
 
         total_approved = 0
         total_pending = 0
@@ -2004,14 +2018,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_summary_strip.set_metric("missing", str(total_missing))
 
         if not claims:
-            self.export_summary_strip.set_metric("ready", "无报销组")
-            self.lbl_export_integrity.setText("当前还没有报销组。先在审核页把发票关联到报销组，再回来导出。")
-            self.lbl_export_blockers.setText("阻塞：没有可导出的报销组。")
+            self.export_summary_strip.set_metric("ready", "鏃犳姤閿€缁?)
+            self.lbl_export_integrity.setText("褰撳墠杩樻病鏈夋姤閿€缁勩€傚厛鍦ㄥ鏍搁〉鎶婂彂绁ㄥ叧鑱斿埌鎶ラ攢缁勶紝鍐嶅洖鏉ュ鍑恒€?)
+            self.lbl_export_blockers.setText("闃诲锛氭病鏈夊彲瀵煎嚭鐨勬姤閿€缁勩€?)
             if hasattr(self, "export_invoice_list"):
                 self.export_invoice_list.clear()
-                self.lbl_export_invoice_meta.setText("当前未选择报销组。")
+                self.lbl_export_invoice_meta.setText("褰撳墠鏈€夋嫨鎶ラ攢缁勩€?)
             self.btn_run_export_page.setEnabled(False)
             return
+        target_row = 0
+        if current_claim_id is not None:
+            for row in range(self.export_group_list.count()):
+                if self.export_group_list.item(row).data(Qt.UserRole) == current_claim_id:
+                    target_row = row
+                    break
+        self.export_group_list.blockSignals(True)
+        self.export_group_list.setCurrentRow(target_row)
+        self.export_group_list.blockSignals(False)
         self._sync_export_claim_selection()
 
     def _refresh_settings_page(self) -> None:
@@ -2020,10 +2043,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         cfg = load_config_safe()
         if hasattr(self, "lbl_settings_general"):
             self.lbl_settings_general.setText(
-                f"当前运行目录：{RUNTIME_DIR}\n当前搜索占位提示：{self.txt_search.placeholderText() if hasattr(self, 'txt_search') else '—'}"
+                f"褰撳墠杩愯鐩綍锛歿RUNTIME_DIR}\n褰撳墠鎼滅储鍗犱綅鎻愮ず锛歿self.txt_search.placeholderText() if hasattr(self, 'txt_search') else '鈥?}"
             )
         if hasattr(self, "lbl_settings_imports"):
-            self.lbl_settings_imports.setText("导入入口已迁移到工作台：本地文件导入、扫码上传、邮箱导入均可直接从主界面进入。")
+            self.lbl_settings_imports.setText("瀵煎叆鍏ュ彛宸茶縼绉诲埌宸ヤ綔鍙帮細鏈湴鏂囦欢瀵煎叆銆佹壂鐮佷笂浼犮€侀偖绠卞鍏ュ潎鍙洿鎺ヤ粠涓荤晫闈㈣繘鍏ャ€?)
         if hasattr(self, "lbl_settings_rules"):
             categories = cfg.get("categories", {}) if isinstance(cfg.get("categories"), dict) else {}
             category_names = []
@@ -2035,18 +2058,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if label:
                     category_names.append(label)
             self.lbl_settings_rules.setText(
-                "分类与规则："
-                + ("、".join(category_names) if category_names else "暂无自定义分类，当前仅使用内置默认分类。")
+                "鍒嗙被涓庤鍒欙細"
+                + ("銆?.join(category_names) if category_names else "鏆傛棤鑷畾涔夊垎绫伙紝褰撳墠浠呬娇鐢ㄥ唴缃粯璁ゅ垎绫汇€?)
             )
         if hasattr(self, "lbl_settings_runtime"):
             self.lbl_settings_runtime.setText(
-                f"数据库：{RUNTIME_DIR / 'invoices.db'}\n日志目录：{RUNTIME_DIR / 'logs'}\n最近错误：{getattr(self.db, 'last_error', '') or '无'}"
+                f"鏁版嵁搴擄細{RUNTIME_DIR / 'invoices.db'}\n鏃ュ織鐩綍锛歿RUNTIME_DIR / 'logs'}\n鏈€杩戦敊璇細{getattr(self.db, 'last_error', '') or '鏃?}"
             )
         if hasattr(self, "lbl_settings_privacy"):
-            self.lbl_settings_privacy.setText("敏感信息仍由系统凭据管理器保存；配置文件与日志只保留脱敏内容。")
+            self.lbl_settings_privacy.setText("鏁忔劅淇℃伅浠嶇敱绯荤粺鍑嵁绠＄悊鍣ㄤ繚瀛橈紱閰嶇疆鏂囦欢涓庢棩蹇楀彧淇濈暀鑴辨晱鍐呭銆?)
         if hasattr(self, "lbl_settings_data"):
             self.lbl_settings_data.setText(
-                f"数据目录：{RUNTIME_DIR}\n导出目录：{RUNTIME_DIR / 'exports'}\n诊断包目录：{RUNTIME_DIR / 'diagnostics'}"
+                f"鏁版嵁鐩綍锛歿RUNTIME_DIR}\n瀵煎嚭鐩綍锛歿RUNTIME_DIR / 'exports'}\n璇婃柇鍖呯洰褰曪細{RUNTIME_DIR / 'diagnostics'}"
             )
         if hasattr(self, "lbl_settings_about"):
             self.lbl_settings_about.setText(self._about_text())
@@ -2110,11 +2133,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not email:
             return
         from PySide6.QtWidgets import QInputDialog, QLineEdit
-        code, ok = QInputDialog.getText(self, "补充授权码", f"请输入 [{email}] 的授权码 / 应用密码：", QLineEdit.Password)
+        code, ok = QInputDialog.getText(self, "琛ュ厖鎺堟潈鐮?, f"璇疯緭鍏?[{email}] 鐨勬巿鏉冪爜 / 搴旂敤瀵嗙爜锛?, QLineEdit.Password)
         if ok and code.strip():
             from ..credentials import set_auth_code
             set_auth_code(email, code.strip())
-            QMessageBox.information(self, "凭据保存", f"[{email}] 的授权码已成功存入系统安全凭据库。")
+            QMessageBox.information(self, "鍑嵁淇濆瓨", f"[{email}] 鐨勬巿鏉冪爜宸叉垚鍔熷瓨鍏ョ郴缁熷畨鍏ㄥ嚟鎹簱銆?)
             self._refresh_settings_page()
 
     def _save_mailbox_account_entry(self, account: dict, auth_code: str = "") -> None:
@@ -2150,7 +2173,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self._refresh_settings_page()
         self._refresh_imports_page()
-        QMessageBox.information(self, "保存成功", f"邮箱账户 [{account.get('address')}] 设置已保存。")
+        QMessageBox.information(self, "淇濆瓨鎴愬姛", f"閭璐︽埛 [{account.get('address')}] 璁剧疆宸蹭繚瀛樸€?)
 
     def _mailbox_accounts_for_settings(self) -> list[dict]:
         from ..config import get_email_accounts
@@ -2180,7 +2203,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         enabled_cnt = sum(1 for a in accounts if a.get("enabled", True))
         disabled_cnt = sum(1 for a in accounts if not a.get("enabled", True))
         default_acc = next((a for a in accounts if a.get("is_default")), None)
-        default_name = str(default_acc.get("name") or default_acc.get("address") or "无").strip() if default_acc else "无"
+        default_name = str(default_acc.get("name") or default_acc.get("address") or "鏃?).strip() if default_acc else "鏃?
 
         from ..credentials import has_auth_code
         missing_cnt = sum(1 for a in accounts if a.get("enabled", True) and not has_auth_code(a.get("address", "")))
@@ -2196,13 +2219,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_mailbox_list.blockSignals(True)
         self.settings_mailbox_list.clear()
         for account in accounts:
-            label = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
+            label = str(account.get("name") or account.get("address") or "鏈懡鍚嶉偖绠?).strip()
             addr = str(account.get("address") or "").strip()
-            is_def = " (默认)" if account.get("is_default") else ""
-            state = "已启用" if account.get("enabled", True) else "已停用"
-            item = QListWidgetItem(f"{label} ({addr}) · {state}{is_def}")
-            item.setData(Qt.UserRole, str(account.get("mailbox_key") or account.get("address") or "").strip())
-            self.settings_mailbox_list.addItem(item)
+            is_def = " (榛樿)" if account.get("is_default") else ""
+            state = "宸插惎鐢? if account.get("enabled", True) else "宸插仠鐢?
+            item = self.settings_mailbox_list.add_entity_row(
+                title=label,
+                subtitle=addr or "鏈厤缃湴鍧€",
+                status_badge=f"{state}{is_def}",
+                meta=f"鏈€杩?{account.get('search', {}).get('months_back', 3)} 涓湀",
+                user_data=str(account.get("mailbox_key") or account.get("address") or "").strip(),
+            )
+            item.setToolTip(addr or label)
         self.settings_mailbox_list.blockSignals(False)
 
         if hasattr(self, "lbl_settings_mailbox_empty"):
@@ -2227,9 +2255,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
         if isinstance(summary, dict) and summary:
             parts = [f"{key}={value}" for key, value in summary.items() if value not in (None, "", [], {})]
-            self.lbl_settings_mailbox_scan_result.setText("最近扫描结果：" + (" / ".join(parts) if parts else "暂无摘要"))
+            self.lbl_settings_mailbox_scan_result.setText("鏈€杩戞壂鎻忕粨鏋滐細" + (" / ".join(parts) if parts else "鏆傛棤鎽樿"))
         else:
-            self.lbl_settings_mailbox_scan_result.setText("最近扫描结果：暂无记录。")
+            self.lbl_settings_mailbox_scan_result.setText("鏈€杩戞壂鎻忕粨鏋滐細鏆傛棤璁板綍銆?)
 
     def _on_settings_mailbox_selection_changed(self) -> None:
         if not hasattr(self, "settings_mailbox_list") or self.settings_mailbox_list.currentRow() < 0:
@@ -2252,7 +2280,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             port = int(imap_cfg.get("port") or 993)
         except (TypeError, ValueError):
             port = 993
-        ssl = "SSL" if imap_cfg.get("ssl", True) else "非加密"
+        ssl = "SSL" if imap_cfg.get("ssl", True) else "闈炲姞瀵?
 
         search_cfg = account.get("search", {}) if isinstance(account.get("search"), dict) else {}
         months = search_cfg.get("months_back") or 3
@@ -2264,10 +2292,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_detail_name.setText(name)
             self.lbl_detail_email.setText(addr)
             self.lbl_detail_server.setText(f"{server}:{port} ({ssl})")
-            self.lbl_detail_is_default.setText("是 (默认扫描账号)" if account.get("is_default") else "否")
-            self.lbl_detail_credential_status.setText("凭据有效 ✅" if cred_ok else "⚠️ 缺失授权码")
+            self.lbl_detail_is_default.setText("鏄? if account.get("is_default") else "鍚?)
+            self.lbl_detail_credential_status.setText("鍑嵁鏈夋晥" if cred_ok else "缂烘巿鏉冪爜")
             self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
-            self.lbl_detail_scan_rule.setText(f"最近 {months} 个月 INBOX")
+            self.lbl_detail_scan_rule.setText(f"鏈€杩?{months} 涓湀 / INBOX")
 
         for attr in (
             "btn_settings_mailbox_edit_config",
@@ -2281,21 +2309,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 getattr(self, attr).setEnabled(True)
 
         if hasattr(self, "btn_settings_mailbox_toggle"):
-            self.btn_settings_mailbox_toggle.setText("停用" if account.get("enabled", True) else "启用")
+            self.btn_settings_mailbox_toggle.setText("鍋滅敤" if account.get("enabled", True) else "鍚敤")
             self.btn_settings_mailbox_delete.setEnabled(True)
+        self.btn_settings_mailbox_add_credential.setProperty("variant", "primary" if not cred_ok else "secondary")
+        self.btn_settings_mailbox_scan.setProperty("variant", "secondary" if not cred_ok else "primary")
+        for btn in (self.btn_settings_mailbox_add_credential, self.btn_settings_mailbox_scan):
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
 
     def _clear_settings_mailbox_form(self) -> None:
         self._settings_mailbox_current_key = ""
         if hasattr(self, "lbl_detail_name"):
-            self.lbl_detail_name.setText("未选择邮箱账号")
-            self.lbl_detail_email.setText("—")
-            self.lbl_detail_server.setText("—")
-            self.lbl_detail_is_default.setText("—")
-            self.lbl_detail_credential_status.setText("未配置")
+            self.lbl_detail_name.setText("鏈€夋嫨閭璐﹀彿")
+            self.lbl_detail_email.setText("鈥?)
+            self.lbl_detail_server.setText("鈥?)
+            self.lbl_detail_is_default.setText("鈥?)
+            self.lbl_detail_credential_status.setText("鏈厤缃?)
             self.lbl_detail_credential_status.setStyleSheet("color: #64748B; font-weight: 600;")
-            self.lbl_detail_scan_rule.setText("—")
+            self.lbl_detail_scan_rule.setText("鈥?)
         if hasattr(self, "btn_settings_mailbox_toggle"):
-            self.btn_settings_mailbox_toggle.setText("停用")
+            self.btn_settings_mailbox_toggle.setText("鍋滅敤")
         for attr in (
             "btn_settings_mailbox_edit_config",
             "btn_settings_mailbox_add_credential",
@@ -2306,6 +2340,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ):
             if hasattr(self, attr):
                 getattr(self, attr).setEnabled(False)
+        if hasattr(self, "btn_settings_mailbox_add_credential"):
+            self.btn_settings_mailbox_add_credential.setProperty("variant", "secondary")
+            self.btn_settings_mailbox_add_credential.style().unpolish(self.btn_settings_mailbox_add_credential)
+            self.btn_settings_mailbox_add_credential.style().polish(self.btn_settings_mailbox_add_credential)
+        if hasattr(self, "btn_settings_mailbox_scan"):
+            self.btn_settings_mailbox_scan.setProperty("variant", "secondary")
+            self.btn_settings_mailbox_scan.style().unpolish(self.btn_settings_mailbox_scan)
+            self.btn_settings_mailbox_scan.style().polish(self.btn_settings_mailbox_scan)
 
     def _add_settings_mailbox(self) -> None:
         self._open_add_mailbox_dialog()
@@ -2319,7 +2361,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             account_key = str(account.get("mailbox_key") or account.get("address") or "").strip()
             if account_key == current_key:
                 if account.get("enabled", True) and sum(1 for acc in accounts if acc.get("enabled", True)) <= 1:
-                    QMessageBox.warning(self, "操作被拒绝", "至少需要保留一个启用的邮箱账号。")
+                    QMessageBox.warning(self, "鎿嶄綔琚嫆缁?, "鑷冲皯闇€瑕佷繚鐣欎竴涓惎鐢ㄧ殑閭璐﹀彿銆?)
                     return
                 updated = dict(account)
                 updated["enabled"] = not bool(account.get("enabled", True))
@@ -2332,8 +2374,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         reply = QMessageBox.question(
             self,
-            "确认删除",
-            "删除邮箱配置不会删除已导入的发票和附件，是否继续？",
+            "纭鍒犻櫎",
+            "鍒犻櫎閭閰嶇疆涓嶄細鍒犻櫎宸插鍏ョ殑鍙戠エ鍜岄檮浠讹紝鏄惁缁х画锛?,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -2375,18 +2417,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
         server = str(imap_cfg.get("server") or "").strip()
         if not email or not server:
-            QMessageBox.warning(self, "校验提示", "当前账号缺少邮箱地址或 IMAP 服务器。")
+            QMessageBox.warning(self, "鏍￠獙鎻愮ず", "褰撳墠璐﹀彿缂哄皯閭鍦板潃鎴?IMAP 鏈嶅姟鍣ㄣ€?)
             return
         provider = self._infer_mail_provider(email, server)
         if provider == "outlook":
-            QMessageBox.warning(self, "测试连接", "Outlook 邮箱当前仍需要 OAuth2/XOAUTH2，桌面页不支持授权码直连测试。")
+            QMessageBox.warning(self, "娴嬭瘯杩炴帴", "Outlook 閭褰撳墠浠嶉渶瑕?OAuth2/XOAUTH2锛屾闈㈤〉涓嶆敮鎸佹巿鏉冪爜鐩磋繛娴嬭瘯銆?)
             return
         from ..credentials import get_auth_code
         from ..mail_fetcher import MailFetcher
         try:
             auth_code = get_auth_code(email)
         except SystemExit:
-            QMessageBox.warning(self, "缺少授权码", "未检测到该邮箱的授权码，请先在旧设置向导中补充一次凭据。")
+            QMessageBox.warning(self, "缂哄皯鎺堟潈鐮?, "鏈娴嬪埌璇ラ偖绠辩殑鎺堟潈鐮侊紝璇峰厛鍦ㄦ棫璁剧疆鍚戝涓ˉ鍏呬竴娆″嚟鎹€?)
             return
         port = int(imap_cfg.get("port") or 993)
         try:
@@ -2394,9 +2436,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             fetcher = MailFetcher(address=email, auth_code=auth_code, server=server, port=port)
             fetcher.connect()
             fetcher.disconnect()
-            self.lbl_settings_mailbox_test_status.setText(f"测试连接成功：{email} 可连接 {server}:{port}。")
+            self.lbl_settings_mailbox_test_status.setText(f"娴嬭瘯杩炴帴鎴愬姛锛歿email} 鍙繛鎺?{server}:{port}銆?)
         except Exception as exc:
-            self.lbl_settings_mailbox_test_status.setText(f"测试连接失败：{sanitize_log_message(str(exc))}")
+            self.lbl_settings_mailbox_test_status.setText(f"娴嬭瘯杩炴帴澶辫触锛歿sanitize_log_message(str(exc))}")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -2404,6 +2446,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         current_key = getattr(self, "_settings_mailbox_current_key", "")
         if current_key:
             self._scan_email_clicked(selected_keys=[current_key], trigger_btn=self.btn_settings_mailbox_scan)
+
+    def _current_settings_ai_profile(self) -> dict | None:
+        profile_id = getattr(self, "_settings_ai_current_profile_id", "")
+        profiles = self._ai_profiles_for_settings()
+        if profile_id:
+            for profile in profiles:
+                if profile.get("profile_id") == profile_id:
+                    return dict(profile)
+        return dict(profiles[0]) if profiles else None
+
+    def _open_edit_ai_profile_dialog(self) -> None:
+        profile = self._current_settings_ai_profile() or {}
+        dialog = SingleTaskAiProfileDialog(self, profile=profile)
+        if dialog.exec() == QDialog.Accepted:
+            self._save_settings_ai_profile(dialog.get_result_profile())
 
     def _refresh_settings_ai_page(self) -> None:
         if not hasattr(self, "settings_ai_profile_list"):
@@ -2416,25 +2473,33 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_ai_profile_list.blockSignals(True)
         self.settings_ai_profile_list.clear()
         for profile in profiles:
-            item = QListWidgetItem(f"{profile.get('name', '')} · {profile.get('provider', '')} · {'已启用' if profile.get('enabled') else '未启用'}")
-            item.setData(Qt.UserRole, profile.get("profile_id", ""))
-            self.settings_ai_profile_list.addItem(item)
+            provider = str(profile.get("provider") or "鈥?)
+            model = str(profile.get("model") or "鈥?)
+            enabled = bool(profile.get("enabled", False))
+            item = self.settings_ai_profile_list.add_entity_row(
+                title=str(profile.get("name") or f"{provider} 路 {model}"),
+                subtitle=f"{provider} / {model}",
+                status_badge="宸插惎鐢? if enabled else "鏈惎鐢?,
+                meta="AI",
+                user_data=profile.get("profile_id", ""),
+            )
+            item.setToolTip(f"{provider} / {model}")
         self.settings_ai_profile_list.blockSignals(False)
 
         self.lbl_settings_ai_empty.setVisible(self.settings_ai_profile_list.count() == 0)
         if self.settings_ai_profile_list.count() == 0:
             self._settings_ai_current_profile_id = ""
-            self.combo_settings_ai_provider.setCurrentText("deepseek")
-            self.txt_settings_ai_model.setText("deepseek-chat")
-            self.chk_settings_ai_enabled.setChecked(False)
-            self.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
-            self.lbl_settings_ai_failure_status.setText("失败状态：暂无 AI 配置。")
-            if hasattr(self, "settings_ai_summary_strip"):
-                self.settings_ai_summary_strip.set_metric("enabled", "关闭")
-                self.settings_ai_summary_strip.set_metric("provider", "—")
-                self.settings_ai_summary_strip.set_metric("model", "—")
-                self.settings_ai_summary_strip.set_metric("key", "未配置")
-                self.settings_ai_summary_strip.set_metric("paused", "正常")
+            self.lbl_settings_ai_provider.setText("鈥?)
+            self.lbl_settings_ai_model.setText("鈥?)
+            self.lbl_settings_ai_enabled.setText("鍏抽棴")
+            self.lbl_settings_ai_session_state.setText("姝ｅ父")
+            self.lbl_settings_ai_key_status.setText("API Key 鐘舵€侊細鏈厤缃?)
+            self.lbl_settings_ai_failure_status.setText("澶辫触鐘舵€侊細鏆傛棤 AI 閰嶇疆銆?)
+            self.settings_ai_summary_strip.set_metric("enabled", "鍏抽棴")
+            self.settings_ai_summary_strip.set_metric("provider", "鈥?)
+            self.settings_ai_summary_strip.set_metric("model", "鈥?)
+            self.settings_ai_summary_strip.set_metric("key", "鏈厤缃?)
+            self.settings_ai_summary_strip.set_metric("paused", "姝ｅ父")
             return
 
         target_row = 0
@@ -2446,21 +2511,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_ai_profile_list.blockSignals(True)
         self.settings_ai_profile_list.setCurrentRow(target_row)
         self.settings_ai_profile_list.blockSignals(False)
-        profile = profiles[target_row]
-        self._settings_ai_current_profile_id = profile.get("profile_id", "")
-        self.combo_settings_ai_provider.setCurrentText(profile.get("provider", "deepseek"))
-        self.txt_settings_ai_model.setText(profile.get("model", ""))
-        self.chk_settings_ai_enabled.setChecked(bool(profile.get("enabled", False)))
-        key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
-        self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
-        paused = is_provider_session_paused(profile.get("provider", ""))
-        self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
-        if hasattr(self, "settings_ai_summary_strip"):
-            self.settings_ai_summary_strip.set_metric("enabled", "开启" if profile.get("enabled", False) else "关闭")
-            self.settings_ai_summary_strip.set_metric("provider", str(profile.get("provider", "—") or "—"))
-            self.settings_ai_summary_strip.set_metric("model", str(profile.get("model", "—") or "—"))
-            self.settings_ai_summary_strip.set_metric("key", key_source)
-            self.settings_ai_summary_strip.set_metric("paused", "已暂停" if paused else "正常")
+        self._on_settings_ai_profile_selection_changed()
 
     def _on_settings_ai_profile_selection_changed(self) -> None:
         if not hasattr(self, "settings_ai_profile_list") or self.settings_ai_profile_list.currentRow() < 0:
@@ -2471,40 +2522,41 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         profile = profiles[row]
         self._settings_ai_current_profile_id = profile.get("profile_id", "")
-        self.combo_settings_ai_provider.setCurrentText(profile.get("provider", "deepseek"))
-        self.txt_settings_ai_model.setText(profile.get("model", ""))
-        self.chk_settings_ai_enabled.setChecked(bool(profile.get("enabled", False)))
         from ..credentials import get_ai_api_key_source
         from ..ai_classifier import is_provider_session_paused
 
         key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
-        self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
+        self.lbl_settings_ai_provider.setText(str(profile.get("provider") or "鈥?))
+        self.lbl_settings_ai_model.setText(str(profile.get("model") or "鈥?))
+        self.lbl_settings_ai_enabled.setText("寮€鍚? if profile.get("enabled", False) else "鍏抽棴")
+        self.lbl_settings_ai_key_status.setText(f"API Key 鐘舵€侊細{key_source}")
         paused = is_provider_session_paused(profile.get("provider", ""))
-        self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
-        if hasattr(self, "settings_ai_summary_strip"):
-            self.settings_ai_summary_strip.set_metric("enabled", "开启" if profile.get("enabled", False) else "关闭")
-            self.settings_ai_summary_strip.set_metric("provider", str(profile.get("provider", "—") or "—"))
-            self.settings_ai_summary_strip.set_metric("model", str(profile.get("model", "—") or "—"))
-            self.settings_ai_summary_strip.set_metric("key", key_source)
-            self.settings_ai_summary_strip.set_metric("paused", "已暂停" if paused else "正常")
+        self.lbl_settings_ai_session_state.setText("宸叉殏鍋? if paused else "姝ｅ父")
+        self.lbl_settings_ai_failure_status.setText(f"澶辫触鐘舵€侊細{'401 / 403 鍚庢湰浼氳瘽宸叉殏鍋? if paused else '褰撳墠浼氳瘽鍙敤'}")
+        self.settings_ai_summary_strip.set_metric("enabled", "寮€鍚? if profile.get("enabled", False) else "鍏抽棴")
+        self.settings_ai_summary_strip.set_metric("provider", str(profile.get("provider", "鈥?) or "鈥?))
+        self.settings_ai_summary_strip.set_metric("model", str(profile.get("model", "鈥?) or "鈥?))
+        self.settings_ai_summary_strip.set_metric("key", key_source)
+        self.settings_ai_summary_strip.set_metric("paused", "宸叉殏鍋? if paused else "姝ｅ父")
 
-    def _save_settings_ai_profile(self) -> bool:
+    def _save_settings_ai_profile(self, profile_override: dict | None = None) -> bool:
         from ..ai_profiles import apply_active_ai_profile, get_ai_profiles
 
-        provider = self.combo_settings_ai_provider.currentText().strip()
-        model = self.txt_settings_ai_model.text().strip()
+        profile_override = dict(profile_override or {})
+        provider = str(profile_override.get("provider") or "").strip()
+        model = str(profile_override.get("model") or "").strip()
         if not provider or not model:
-            QMessageBox.warning(self, "AI 配置不完整", "请先填写 Provider 和模型。")
+            QMessageBox.warning(self, "AI 閰嶇疆涓嶅畬鏁?, "璇峰厛濉啓 Provider 鍜屾ā鍨嬨€?)
             return False
         cfg = deepcopy(getattr(self, "_desktop_settings_cfg", load_config_safe()))
         profiles = [dict(profile) for profile in get_ai_profiles(cfg)]
-        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        profile_id = str(profile_override.get("profile_id") or getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}")
         target = {
             "profile_id": profile_id,
-            "name": f"{provider} · {model}",
+            "name": str(profile_override.get("name") or f"{provider} 路 {model}"),
             "provider": provider,
             "model": model,
-            "enabled": self.chk_settings_ai_enabled.isChecked(),
+            "enabled": bool(profile_override.get("enabled", False)),
         }
         replaced = False
         for idx, existing in enumerate(profiles):
@@ -2533,19 +2585,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _configure_settings_ai_key(self) -> None:
         from ..credentials import set_ai_api_key
 
-        provider = self.combo_settings_ai_provider.currentText().strip()
+        profile = self._current_settings_ai_profile()
+        provider = str((profile or {}).get("provider") or "").strip()
         if not provider:
-            QMessageBox.warning(self, "未选择 Provider", "请先选择 AI Provider。")
+            QMessageBox.warning(self, "鏈€夋嫨 Provider", "璇峰厛閫夋嫨 AI Profile銆?)
             return
         key_text, accepted = QInputDialog.getText(
             self,
-            "配置 API Key",
-            f"请输入 {provider} 的 API Key：",
+            "閰嶇疆 API Key",
+            f"璇疯緭鍏?{provider} 鐨?API Key锛?,
             QLineEdit.Password,
         )
         if not accepted or not key_text.strip():
             return
-        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        profile_id = str((profile or {}).get("profile_id") or getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}")
         set_ai_api_key(provider, key_text.strip(), profile_id=profile_id)
         self._settings_ai_current_profile_id = profile_id
         self._refresh_settings_ai_page()
@@ -2553,31 +2606,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _clear_settings_ai_key(self) -> None:
         from ..credentials import delete_ai_api_key
 
-        provider = self.combo_settings_ai_provider.currentText().strip()
-        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        profile = self._current_settings_ai_profile()
+        provider = str((profile or {}).get("provider") or "").strip()
+        profile_id = str((profile or {}).get("profile_id") or getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}")
         delete_ai_api_key(provider, profile_id=profile_id)
         self._refresh_settings_ai_page()
 
     def _test_settings_ai_connection(self) -> None:
         from ..credentials import has_ai_api_key
 
-        provider = self.combo_settings_ai_provider.currentText().strip()
-        model = self.txt_settings_ai_model.text().strip()
-        profile_id = getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}"
+        profile = self._current_settings_ai_profile()
+        provider = str((profile or {}).get("provider") or "").strip()
+        model = str((profile or {}).get("model") or "").strip()
+        profile_id = str((profile or {}).get("profile_id") or getattr(self, "_settings_ai_current_profile_id", "") or f"desktop-{provider}")
         if not provider or not model:
-            QMessageBox.warning(self, "AI 配置不完整", "请先填写 Provider 和模型。")
+            QMessageBox.warning(self, "AI 閰嶇疆涓嶅畬鏁?, "璇峰厛閫夋嫨鏈夋晥鐨?AI Profile銆?)
             return
         if not has_ai_api_key(provider, profile_id=profile_id):
-            self.lbl_settings_ai_failure_status.setText("失败状态：未检测到可用 API Key，无法进行本地连通性预检。")
+            self.lbl_settings_ai_failure_status.setText("澶辫触鐘舵€侊細鏈娴嬪埌鍙敤 API Key锛屾棤娉曡繘琛屾湰鍦拌繛閫氭€ч妫€銆?)
             return
         self.lbl_settings_ai_failure_status.setText(
-            f"失败状态：本地预检通过，{provider}/{model} 已具备 Key；真实远端连通性会在首次分类请求时验证。"
+            f"澶辫触鐘舵€侊細鏈湴棰勬閫氳繃锛寋provider}/{model} 宸插叿澶?Key锛涚湡瀹炶繙绔繛閫氭€т細鍦ㄩ娆″垎绫昏姹傛椂楠岃瘉銆?
         )
 
     def _restore_settings_ai_session(self) -> None:
         from ..ai_classifier import clear_provider_session_paused
 
-        provider = self.combo_settings_ai_provider.currentText().strip()
+        profile = self._current_settings_ai_profile()
+        provider = str((profile or {}).get("provider") or "").strip()
         if not provider:
             return
         clear_provider_session_paused(provider)
@@ -2590,21 +2646,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setSpacing(12)
 
         self.overview_header = PageHeader(
-            "今日工作台",
-            "先看今天的导入、待审和异常，再决定是去审核、补材料还是导出。",
+            "浠婃棩宸ヤ綔鍙?,
+            "鍏堢湅浠婂ぉ鐨勫鍏ャ€佸緟瀹″拰寮傚父锛屽啀鍐冲畾鏄幓瀹℃牳銆佽ˉ鏉愭枡杩樻槸瀵煎嚭銆?,
         )
         layout.addWidget(self.overview_header)
 
         self.overview_summary_strip = SummaryStrip()
         self.overview_value_labels = {}
         for stat_key, title, state in [
-            ("today_imported", "今日导入", "info"),
-            ("to_review", "待审核", "warning"),
-            ("error", "异常票据", "danger"),
-            ("needs_fix", "待补全", "muted"),
-            ("month_total", "本月金额", "success"),
+            ("today_imported", "浠婃棩瀵煎叆", "info"),
+            ("to_review", "寰呭鏍?, "warning"),
+            ("error", "寮傚父绁ㄦ嵁", "danger"),
+            ("needs_fix", "寰呰ˉ鍏?, "muted"),
+            ("month_total", "鏈湀閲戦", "success"),
         ]:
-            card = self.overview_summary_strip.add_metric(stat_key, title, "—", state=state)
+            card = self.overview_summary_strip.add_metric(stat_key, title, "鈥?, state=state)
             self.overview_value_labels[stat_key] = card
         layout.addWidget(self.overview_summary_strip)
 
@@ -2613,20 +2669,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(12)
 
-        left_card = SectionCard("下一步", hint="默认流程是先看最近导入，再进入发票审核处理待审队列。")
+        left_card = SectionCard("涓嬩竴姝?, hint="榛樿娴佺▼鏄厛鐪嬫渶杩戝鍏ワ紝鍐嶈繘鍏ュ彂绁ㄥ鏍稿鐞嗗緟瀹￠槦鍒椼€?)
         lc_layout = left_card.body_layout
-        self.lbl_overview_recent_imports = QLabel("暂无可用统计，等待数据库连接或首批导入完成。")
+        self.lbl_overview_recent_imports = QLabel("鏆傛棤鍙敤缁熻锛岀瓑寰呮暟鎹簱杩炴帴鎴栭鎵瑰鍏ュ畬鎴愩€?)
         self.lbl_overview_recent_imports.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_overview_recent_imports.setWordWrap(True)
         lc_layout.addWidget(self.lbl_overview_recent_imports)
-        btn_jump_review = make_button("开始审核", variant="primary")
+        btn_jump_review = make_button("寮€濮嬪鏍?, variant="primary")
         btn_jump_review.clicked.connect(lambda: self._switch_main_page("review"))
         lc_layout.addWidget(btn_jump_review)
         lc_layout.addStretch(1)
 
-        right_card = SectionCard("关注项", hint="这里只提醒需要处理的阻塞，不展示硬编码业务数字。")
+        right_card = SectionCard("鍏虫敞椤?, hint="杩欓噷鍙彁閱掗渶瑕佸鐞嗙殑闃诲锛屼笉灞曠ず纭紪鐮佷笟鍔℃暟瀛椼€?)
         rc_layout = right_card.body_layout
-        self.lbl_overview_health = QLabel("当前无法读取审核队列统计，导入后会自动刷新。")
+        self.lbl_overview_health = QLabel("褰撳墠鏃犳硶璇诲彇瀹℃牳闃熷垪缁熻锛屽鍏ュ悗浼氳嚜鍔ㄥ埛鏂般€?)
         self.lbl_overview_health.setStyleSheet("color: #4B5563; font-size: 12px; line-height: 1.5;")
         self.lbl_overview_health.setWordWrap(True)
         rc_layout.addWidget(self.lbl_overview_health)
@@ -2645,52 +2701,47 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setSpacing(12)
 
         self.imports_header = PageHeader(
-            "导入中心",
-            "按“来源选择 → 导入规则 → 最近结果”完成一次导入，账号配置统一去系统设置处理。",
+            "瀵煎叆涓績",
+            "鎸夆€滄潵婧愰€夋嫨 鈫?瀵煎叆瑙勫垯 鈫?鏈€杩戠粨鏋溾€濆畬鎴愪竴娆″鍏ワ紝璐﹀彿閰嶇疆缁熶竴鍘荤郴缁熻缃鐞嗐€?,
         )
         layout.addWidget(self.imports_header)
 
         self.imports_summary_strip = SummaryStrip()
-        self.imports_summary_strip.add_metric("accounts", "邮箱账号", "0", state="info")
-        self.imports_summary_strip.add_metric("default", "默认账号", "无", state="success")
-        self.imports_summary_strip.add_metric("missing", "缺授权", "0", state="warning")
-        self.imports_summary_strip.add_metric("recent", "最近扫描", "暂无", state="muted")
-        self.imports_summary_strip.add_metric("failed", "失败数", "0", state="danger")
+        self.imports_summary_strip.add_metric("accounts", "閭璐﹀彿", "0", state="info")
+        self.imports_summary_strip.add_metric("default", "榛樿璐﹀彿", "鏃?, state="success")
+        self.imports_summary_strip.add_metric("missing", "缂烘巿鏉?, "0", state="warning")
+        self.imports_summary_strip.add_metric("recent", "鏈€杩戞壂鎻?, "鏆傛棤", state="muted")
+        self.imports_summary_strip.add_metric("failed", "澶辫触鏁?, "0", state="danger")
         layout.addWidget(self.imports_summary_strip)
 
         shell = QHBoxLayout()
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(12)
 
-        self.import_source_card = SectionCard("来源选择", hint="先决定本次从本地、扫码还是邮箱拉取。")
+        self.import_source_card = SectionCard("鏉ユ簮閫夋嫨", hint="鍏堝喅瀹氭湰娆′粠鏈湴銆佹壂鐮佽繕鏄偖绠辨媺鍙栥€?)
         source_layout = self.import_source_card.body_layout
         source_bar = CommandBar()
-        self.btn_import_local_pick = make_button("本地导入", variant="secondary")
+        self.btn_import_local_pick = make_button("鏈湴瀵煎叆", variant="secondary")
         self.btn_import_local_pick.clicked.connect(self._import_local_clicked)
-        self.btn_import_qr_open = make_button("扫码", variant="secondary")
+        self.btn_import_qr_open = make_button("鎵爜", variant="secondary")
         self.btn_import_qr_open.clicked.connect(self._mobile_upload_clicked)
-        self.btn_import_mail_focus = make_button("邮箱", variant="secondary")
+        self.btn_import_mail_focus = make_button("閭", variant="secondary")
         self.btn_import_mail_focus.clicked.connect(lambda: self._switch_main_page("imports"))
         source_bar.layout.addWidget(self.btn_import_local_pick)
         source_bar.layout.addWidget(self.btn_import_qr_open)
         source_bar.layout.addWidget(self.btn_import_mail_focus)
         source_bar.layout.addStretch(1)
         source_layout.addWidget(source_bar)
-        self.lbl_import_qr_status = QLabel("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
+        self.lbl_import_qr_status = QLabel("鎵爜涓婁紶鏈嶅姟鏈惎鍔ㄣ€傜偣鍑讳笅鏂规寜閽彲鍚姩鐪熷疄涓婁紶鏈嶅姟骞舵樉绀轰簩缁寸爜銆?)
         self.lbl_import_qr_status.setWordWrap(True)
         self.lbl_import_qr_status.setStyleSheet("color: #667085; font-size: 12px;")
         source_layout.addWidget(self.lbl_import_qr_status)
-        tq_hint = QLabel("邮箱导入只负责扫描执行；新增账号、补授权码和停用账号统一到系统设置。")
+        tq_hint = QLabel("閭瀵煎叆鍙礋璐ｆ壂鎻忔墽琛岋紱鏂板璐﹀彿銆佽ˉ鎺堟潈鐮佸拰鍋滅敤璐﹀彿缁熶竴鍒扮郴缁熻缃€?)
         tq_hint.setStyleSheet("color: #667085; font-size: 12px;")
         source_layout.addWidget(tq_hint)
-        self.txt_import_records = QPlainTextEdit()
-        self.txt_import_records.setReadOnly(True)
-        self.txt_import_records.setFont(QFont("Consolas", 9))
-        self.txt_import_records.setMaximumHeight(180)
-        source_layout.addWidget(self.txt_import_records, 1)
         shell.addWidget(self.import_source_card, 1)
 
-        self.import_mail_accounts_card = SectionCard("导入规则", hint="中间区域集中处理邮箱选择、扫描规则和扫描触发。")
+        self.import_mail_accounts_card = SectionCard("瀵煎叆瑙勫垯", hint="涓棿鍖哄煙闆嗕腑澶勭悊閭閫夋嫨銆佹壂鎻忚鍒欏拰鎵弿瑙﹀彂銆?)
         self.mail_accounts_checklist = QWidget()
         self.mail_checklist_layout = QVBoxLayout(self.mail_accounts_checklist)
         self.mail_checklist_layout.setContentsMargins(4, 4, 4, 4)
@@ -2710,58 +2761,60 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lst_mail_accounts.setVisible(False)
         self.import_mail_accounts_card.body_layout.addWidget(self.lst_mail_accounts)
 
-        self.import_mail_rules_card = SectionCard("扫描规则", hint="这里展示当前全局抓取规则，并给出最少必要动作。")
-        rules_box = QGroupBox("当前全局抓取与清洗规则概览")
-        rules_layout = QGridLayout(rules_box)
-        rules_layout.setContentsMargins(10, 8, 10, 8)
-        rules_layout.setSpacing(6)
+        self.import_mail_rules_card = SectionCard("鎵弿瑙勫垯", hint="杩欓噷浠呭睍绀哄綋鍓嶅叏灞€瑙勫垯鎽樿锛屼笉鍦ㄥ鍏ヤ腑蹇冨唴鍋氶厤缃紪杈戙€?)
+        self.import_rules_detail = ReadOnlyDetailPanel("瑙勫垯鎽樿", "鍙敤浜庨槄璇绘壂鎻忚涓猴紝璐﹀彿鍜岃缁嗚鍒欑淮鎶ゅ湪绯荤粺璁剧疆涓畬鎴愩€?)
+        self.lbl_import_rule_time_range = self.import_rules_detail.add_row("鏃堕棿鑼冨洿", "鏈€杩?3 涓湀澧為噺鎶撳彇")
+        self.lbl_import_rule_attachment_types = self.import_rules_detail.add_row("闄勪欢绫诲瀷", "PDF / OFD / XML / 甯哥敤鍥剧墖")
+        self.lbl_import_rule_subject_filter = self.import_rules_detail.add_row("涓婚杩囨护", "鍙戠エ / 琛岀▼鍗?/ 鐢靛瓙鍙戠エ / 璐﹀崟")
+        self.lbl_import_rule_duplicate = self.import_rules_detail.add_row("閲嶅澶勭悊", "鐩稿悓鍙戠エ浠ｇ爜+鍙风爜鑷姩鍘婚噸")
+        self.lbl_import_rule_failure = self.import_rules_detail.add_row("澶辫触澶勭悊", "澶辫触璁板綍娌夋穩鍒版渶杩戠粨鏋滐紝鍙洿鎺ユ煡鐪嬪け璐ユ槑缁?)
+        self.import_mail_rules_card.body_layout.addWidget(self.import_rules_detail)
 
-        rules_layout.addWidget(QLabel("📅 扫描时间窗口: 最近 3 个月增量极速抓取"), 0, 0)
-        rules_layout.addWidget(QLabel("📎 支持附件格式: PDF / OFD / XML / 常用图片格式"), 0, 1)
-        rules_layout.addWidget(QLabel("🔍 邮件主题过滤: 包含“发票 / 行程单 / 电子发票 / 账单”"), 1, 0)
-        rules_layout.addWidget(QLabel("🛡️ 重复策略: 相同发票代码+号码全局自动忽略去重"), 1, 1)
+        mail_action_bar = CommandBar()
 
-        self.import_mail_rules_card.body_layout.addWidget(rules_box)
-
-        mail_action_row = QHBoxLayout()
-        mail_action_row.setContentsMargins(0, 0, 0, 0)
-        mail_action_row.setSpacing(8)
-
-        self.btn_import_scan_selected = make_button("开始扫描", variant="primary")
+        self.btn_import_scan_selected = make_button("寮€濮嬫壂鎻?, variant="primary")
         self.btn_import_scan_selected.clicked.connect(self._scan_selected_email_accounts)
 
-        self.btn_import_scan_default = make_button("默认", variant="secondary")
+        self.btn_import_scan_default = make_button("鎵粯璁?, variant="secondary")
         self.btn_import_scan_default.clicked.connect(self._scan_default_email_clicked)
 
-        self.btn_import_manage_mailbox = make_button("管理", variant="secondary")
+        self.btn_import_manage_mailbox = make_button("绠＄悊閭", variant="secondary")
         self.btn_import_manage_mailbox.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
 
-        self.btn_view_failed_details = make_button("失败", variant="secondary")
+        self.btn_view_failed_details = make_button("澶辫触鏄庣粏", variant="secondary")
         self.btn_view_failed_details.clicked.connect(self._v5_show_failed_details_dialog)
 
         self.import_mail_more = MoreMenuButton(parent=self)
         self.import_mail_more_menu = QMenu(self.import_mail_more)
-        self.import_mail_more_menu.addAction("新增邮箱", lambda: self._switch_main_page("settings", sub_tab=1))
-        self.import_mail_more_menu.addAction("管理邮箱", lambda: self._switch_main_page("settings", sub_tab=1))
-        self.import_mail_more_menu.addAction("查看失败", self._v5_show_failed_details_dialog)
+        self.import_mail_more_menu.addAction("鏂板閭", lambda: self._switch_main_page("settings", sub_tab=1))
+        self.import_mail_more_menu.addAction("绠＄悊閭", lambda: self._switch_main_page("settings", sub_tab=1))
+        self.import_mail_more_menu.addAction("鏌ョ湅澶辫触", self._v5_show_failed_details_dialog)
         self.import_mail_more.setMenu(self.import_mail_more_menu)
 
-        mail_action_row.addWidget(self.btn_import_scan_selected)
-        mail_action_row.addWidget(self.btn_import_scan_default)
-        mail_action_row.addWidget(self.btn_import_manage_mailbox)
-        mail_action_row.addWidget(self.btn_view_failed_details)
-        mail_action_row.addStretch(1)
-        mail_action_row.addWidget(self.import_mail_more)
-        self.import_mail_rules_card.body_layout.addLayout(mail_action_row)
+        mail_action_bar.set_actions(
+            primary_action=self.btn_import_scan_selected,
+            secondary_actions=[
+                self.btn_import_scan_default,
+                self.btn_import_manage_mailbox,
+                self.btn_view_failed_details,
+            ],
+            more_menu=self.import_mail_more,
+        )
+        self.import_mail_rules_card.body_layout.addWidget(mail_action_bar)
         self.import_mail_accounts_card.body_layout.addWidget(self.import_mail_rules_card)
         shell.addWidget(self.import_mail_accounts_card, 1)
 
-        self.import_mail_recent_card = SectionCard("最近结果", hint="看最近一次扫描摘要和失败明细，再决定是否继续补授权或重试。")
-        self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
+        self.import_mail_recent_card = SectionCard("鏈€杩戠粨鏋?, hint="鐪嬫渶杩戜竴娆℃壂鎻忔憳瑕佸拰澶辫触鏄庣粏锛屽啀鍐冲畾鏄惁缁х画琛ユ巿鏉冩垨閲嶈瘯銆?)
+        self.lbl_mail_scan_summary = QLabel("鏈€杩戞壂鎻忕粨鏋滐細鏆傛棤璁板綍銆傜偣鍑烩€滃紑濮嬫壂鎻忊€濆紑濮嬫媺鍙栥€?)
         self.lbl_mail_scan_summary.setWordWrap(True)
         self.lbl_mail_scan_summary.setStyleSheet("color: #64748B; font-size: 12px;")
         self.import_mail_recent_card.body_layout.addWidget(self.lbl_mail_scan_summary)
-        self.lbl_import_recent_hint = QLabel("如果失败数持续增加，优先去系统设置检查缺授权或连接异常。")
+        self.txt_import_records = QPlainTextEdit()
+        self.txt_import_records.setReadOnly(True)
+        self.txt_import_records.setFont(QFont("Consolas", 9))
+        self.txt_import_records.setMaximumHeight(180)
+        self.import_mail_recent_card.body_layout.addWidget(self.txt_import_records)
+        self.lbl_import_recent_hint = QLabel("濡傛灉澶辫触鏁版寔缁鍔狅紝浼樺厛鍘荤郴缁熻缃鏌ョ己鎺堟潈鎴栬繛鎺ュ紓甯搞€?)
         self.lbl_import_recent_hint.setWordWrap(True)
         self.lbl_import_recent_hint.setStyleSheet("color: #667085; font-size: 12px;")
         self.import_mail_recent_card.body_layout.addWidget(self.lbl_import_recent_hint)
@@ -2779,53 +2832,53 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setSpacing(12)
 
         self.export_header = PageHeader(
-            "报销组与导出",
-            "先选报销组，再看完整性检查；检查不过时先回到审核页或补材料。",
+            "鎶ラ攢缁勪笌瀵煎嚭",
+            "鍏堥€夋姤閿€缁勶紝鍐嶇湅瀹屾暣鎬ф鏌ワ紱妫€鏌ヤ笉杩囨椂鍏堝洖鍒板鏍搁〉鎴栬ˉ鏉愭枡銆?,
         )
         layout.addWidget(self.export_header)
 
         self.export_summary_strip = SummaryStrip()
-        self.export_summary_strip.add_metric("groups", "报销组", "0", state="info")
-        self.export_summary_strip.add_metric("approved", "已通过", "0", state="success")
-        self.export_summary_strip.add_metric("pending", "待处理", "0", state="warning")
-        self.export_summary_strip.add_metric("missing", "缺材料", "0", state="danger")
-        self.export_summary_strip.add_metric("ready", "导出状态", "待检查", state="muted")
+        self.export_summary_strip.add_metric("groups", "鎶ラ攢缁?, "0", state="info")
+        self.export_summary_strip.add_metric("approved", "宸查€氳繃", "0", state="success")
+        self.export_summary_strip.add_metric("pending", "寰呭鐞?, "0", state="warning")
+        self.export_summary_strip.add_metric("missing", "缂烘潗鏂?, "0", state="danger")
+        self.export_summary_strip.add_metric("ready", "瀵煎嚭鐘舵€?, "寰呮鏌?, state="muted")
         layout.addWidget(self.export_summary_strip)
 
         shell = QHBoxLayout()
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(12)
 
-        self.export_group_card = SectionCard("报销组选择", hint="选择要导出的报销组，完整性检查会随选择更新。")
-        self.combo_export_claims = QComboBox()
-        self.combo_export_claims.currentIndexChanged.connect(self._sync_export_claim_selection)
-        self.export_group_card.body_layout.addWidget(self.combo_export_claims)
-        self.lbl_export_scope_hint = QLabel("默认导出已通过发票；待审核发票可在导出时按提示决定是否一并打包。")
+        self.export_group_card = SectionCard("鎶ラ攢缁?, hint="宸︿晶鏀逛负闃熷垪鍒楄〃锛屽厛鐪嬬粍鐘舵€佸啀鍐冲畾鏄惁瀵煎嚭銆?)
+        self.export_group_list = EntityList()
+        self.export_group_list.currentRowChanged.connect(self._sync_export_claim_selection)
+        self.export_group_card.body_layout.addWidget(self.export_group_list, 1)
+        self.lbl_export_scope_hint = QLabel("榛樿瀵煎嚭宸查€氳繃鍙戠エ锛涘緟瀹℃牳鍙戠エ鍙湪瀵煎嚭鏃舵寜鎻愮ず鍐冲畾鏄惁涓€骞舵墦鍖呫€?)
         self.lbl_export_scope_hint.setWordWrap(True)
         self.lbl_export_scope_hint.setStyleSheet("color: #667085; font-size: 12px;")
         self.export_group_card.body_layout.addWidget(self.lbl_export_scope_hint)
         self.export_group_card.body_layout.addStretch(1)
         shell.addWidget(self.export_group_card, 1)
 
-        self.export_invoices_card = SectionCard("组内发票", hint="这里仅展示当前报销组内的发票队列，方便先看缺口再导出。")
+        self.export_invoices_card = SectionCard("缁勫唴鍙戠エ", hint="杩欓噷浠呭睍绀哄綋鍓嶆姤閿€缁勫唴鐨勫彂绁ㄩ槦鍒楋紝鏂逛究鍏堢湅缂哄彛鍐嶅鍑恒€?)
         self.export_invoice_list = EntityList()
         self.export_invoices_card.body_layout.addWidget(self.export_invoice_list, 1)
-        self.lbl_export_invoice_meta = QLabel("当前未选择报销组。")
+        self.lbl_export_invoice_meta = QLabel("褰撳墠鏈€夋嫨鎶ラ攢缁勩€?)
         self.lbl_export_invoice_meta.setWordWrap(True)
         self.lbl_export_invoice_meta.setStyleSheet("color: #667085; font-size: 12px;")
         self.export_invoices_card.body_layout.addWidget(self.lbl_export_invoice_meta)
         shell.addWidget(self.export_invoices_card, 1)
 
-        self.export_integrity_card = SectionCard("完整性检查与导出", hint="检查不通过时禁用导出；业务导出逻辑保持不变。")
-        self.lbl_export_integrity = QLabel("请选择报销组后查看完整性检查。")
+        self.export_integrity_card = SectionCard("瀹屾暣鎬ф鏌ヤ笌瀵煎嚭", hint="妫€鏌ヤ笉閫氳繃鏃剁鐢ㄥ鍑猴紱涓氬姟瀵煎嚭閫昏緫淇濇寔涓嶅彉銆?)
+        self.lbl_export_integrity = QLabel("璇烽€夋嫨鎶ラ攢缁勫悗鏌ョ湅瀹屾暣鎬ф鏌ャ€?)
         self.lbl_export_integrity.setWordWrap(True)
         self.lbl_export_integrity.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
         self.export_integrity_card.body_layout.addWidget(self.lbl_export_integrity)
-        self.lbl_export_blockers = QLabel("当前暂无阻塞。")
+        self.lbl_export_blockers = QLabel("褰撳墠鏆傛棤闃诲銆?)
         self.lbl_export_blockers.setWordWrap(True)
         self.lbl_export_blockers.setStyleSheet("color: #667085; font-size: 12px;")
         self.export_integrity_card.body_layout.addWidget(self.lbl_export_blockers)
-        self.btn_run_export_page = make_button("开始导出", variant="primary", min_width=120)
+        self.btn_run_export_page = make_button("瀵煎嚭鎶ラ攢鍖?, variant="primary", min_width=120)
         self.btn_run_export_page.clicked.connect(self._export_claim_package)
         self.export_integrity_card.body_layout.addWidget(self.btn_run_export_page)
         self.export_integrity_card.body_layout.addStretch(1)
@@ -2842,16 +2895,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setSpacing(8)
 
         hdr_layout = QHBoxLayout()
-        hdr = QLabel("操作日志审计中心")
+        hdr = QLabel("鎿嶄綔鏃ュ織瀹¤涓績")
         hdr.setFont(QFont("Segoe UI", 14, QFont.Bold))
         hdr_layout.addWidget(hdr)
         hdr_layout.addStretch(1)
 
-        self.btn_logs_copy = make_button("复制日志", variant="secondary")
+        self.btn_logs_copy = make_button("澶嶅埗鏃ュ織", variant="secondary")
         self.btn_logs_copy.clicked.connect(self._copy_log_to_clipboard)
         hdr_layout.addWidget(self.btn_logs_copy)
 
-        self.btn_logs_clear = make_button("清空日志", variant="secondary")
+        self.btn_logs_clear = make_button("娓呯┖鏃ュ織", variant="secondary")
         self.btn_logs_clear.clicked.connect(self._clear_log_text)
         hdr_layout.addWidget(self.btn_logs_clear)
 
@@ -2870,28 +2923,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout.setSpacing(12)
 
         self.settings_header = PageHeader(
-            "系统设置",
-            "设置中心默认只展示状态和当前配置；需要修改时进入单任务弹窗或专用操作。",
+            "绯荤粺璁剧疆",
+            "璁剧疆涓績榛樿鍙睍绀虹姸鎬佸拰褰撳墠閰嶇疆锛涢渶瑕佷慨鏀规椂杩涘叆鍗曚换鍔″脊绐楁垨涓撶敤鎿嶄綔銆?,
         )
         layout.addWidget(self.settings_header)
 
         self.settings_tabs = SecondaryNavStack()
 
         simple_tabs = [
-            ("常规", "lbl_settings_general", "界面显示密度、常规偏好设置"),
-            ("导入与识别", "lbl_settings_imports", "导入入口与识别服务已迁移到主工作台"),
-            ("分类与规则", "lbl_settings_rules", "发票消费类型分类字典与 AI 自动审核规则配置"),
-            ("运行状态", "lbl_settings_runtime", "本地数据库路径、运行日志存储位置"),
-            ("安全与隐私", "lbl_settings_privacy", "脱敏规则、敏感数据清除设置"),
-            ("数据与备份", "lbl_settings_data", "数据库备份、离线归档与数据还原"),
-            ("关于", "lbl_settings_about", f"Invoice Hub 发票审核中心 v{APP_VERSION}"),
+            ("甯歌", "lbl_settings_general", "鐣岄潰鏄剧ず瀵嗗害銆佸父瑙勫亸濂借缃?),
+            ("瀵煎叆涓庤瘑鍒?, "lbl_settings_imports", "瀵煎叆鍏ュ彛涓庤瘑鍒湇鍔″凡杩佺Щ鍒颁富宸ヤ綔鍙?),
+            ("鍒嗙被涓庤鍒?, "lbl_settings_rules", "鍙戠エ娑堣垂绫诲瀷鍒嗙被瀛楀吀涓?AI 鑷姩瀹℃牳瑙勫垯閰嶇疆"),
+            ("杩愯鐘舵€?, "lbl_settings_runtime", "鏈湴鏁版嵁搴撹矾寰勩€佽繍琛屾棩蹇楀瓨鍌ㄤ綅缃?),
+            ("瀹夊叏涓庨殣绉?, "lbl_settings_privacy", "鑴辨晱瑙勫垯銆佹晱鎰熸暟鎹竻闄よ缃?),
+            ("鏁版嵁涓庡浠?, "lbl_settings_data", "鏁版嵁搴撳浠姐€佺绾垮綊妗ｄ笌鏁版嵁杩樺師"),
+            ("鍏充簬", "lbl_settings_about", f"Invoice Hub 鍙戠エ瀹℃牳涓績 v{APP_VERSION}"),
         ]
 
         tab_widgets = {}
         for tab_name, attr_name, hint_text in simple_tabs:
             t_widget = QWidget()
             t_layout = QVBoxLayout(t_widget)
-            t_layout.addWidget(QLabel(f"{tab_name} 设置"))
+            t_layout.addWidget(QLabel(f"{tab_name} 璁剧疆"))
             lbl_h = QLabel(hint_text)
             lbl_h.setStyleSheet("color: #667085; font-size: 12px;")
             lbl_h.setWordWrap(True)
@@ -2911,30 +2964,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Overview Stat Header (Requirement 3)
         self.stat_box_overview = SummaryStrip()
-        self.lbl_v11_stat_total = self.stat_box_overview.add_metric("total", "总账号", "0", state="info")
-        self.lbl_v11_stat_enabled = self.stat_box_overview.add_metric("enabled", "启用", "0", state="success")
-        self.lbl_v11_stat_default = self.stat_box_overview.add_metric("default", "默认扫描", "无", state="info")
-        self.lbl_v11_stat_missing = self.stat_box_overview.add_metric("missing", "缺授权", "0", state="warning")
-        self.lbl_v11_stat_disabled = self.stat_box_overview.add_metric("disabled", "禁用", "0", state="muted")
+        self.lbl_v11_stat_total = self.stat_box_overview.add_metric("total", "鎬昏处鍙?, "0", state="info")
+        self.lbl_v11_stat_enabled = self.stat_box_overview.add_metric("enabled", "鍚敤", "0", state="success")
+        self.lbl_v11_stat_default = self.stat_box_overview.add_metric("default", "榛樿鎵弿", "鏃?, state="info")
+        self.lbl_v11_stat_missing = self.stat_box_overview.add_metric("missing", "缂烘巿鏉?, "0", state="warning")
+        self.lbl_v11_stat_disabled = self.stat_box_overview.add_metric("disabled", "绂佺敤", "0", state="muted")
         mailbox_layout.addWidget(self.stat_box_overview)
 
         # Presets Entry Bar (Requirement 4)
-        preset_bar = SectionCard("新增账号", hint="常用邮箱预设只用于创建新账号，不会混入已保存账号列表。")
+        preset_bar = SectionCard("鏂板璐﹀彿", hint="甯哥敤閭棰勮鍙敤浜庡垱寤烘柊璐﹀彿锛屼笉浼氭贩鍏ュ凡淇濆瓨璐﹀彿鍒楄〃銆?)
         preset_layout = QHBoxLayout()
         preset_layout.setContentsMargins(0, 0, 0, 0)
         preset_layout.setSpacing(8)
 
-        lbl_preset_title = QLabel("新增常用预设:")
+        lbl_preset_title = QLabel("鏂板甯哥敤棰勮:")
         lbl_preset_title.setStyleSheet("font-weight: 600; color: #475569; font-size: 12px;")
         preset_layout.addWidget(lbl_preset_title)
 
         self.v11_preset_buttons = {}
         presets_data = [
-            ("qq", "QQ 邮箱"),
-            ("netease_163", "163 邮箱"),
+            ("qq", "QQ 閭"),
+            ("netease_163", "163 閭"),
             ("gmail", "Gmail"),
             ("outlook", "Outlook"),
-            ("custom", "自定义 IMAP"),
+            ("custom", "鑷畾涔?IMAP"),
         ]
         for pid, pname in presets_data:
             btn = make_button(f"+ {pname}", variant="secondary")
@@ -2967,71 +3020,47 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
-        self.btn_settings_mailbox_add = make_button("新增账号", variant="secondary")
-        self.btn_settings_mailbox_add.clicked.connect(lambda: self._open_add_mailbox_dialog())
-
-        self.btn_settings_mailbox_edit_config = make_button("编辑配置", variant="primary")
+        self.btn_settings_mailbox_edit_config = make_button("缂栬緫", variant="secondary")
         self.btn_settings_mailbox_edit_config.clicked.connect(self._open_edit_mailbox_dialog)
 
-        self.btn_settings_mailbox_add_credential = make_button("补授权码", variant="secondary")
+        self.btn_settings_mailbox_add_credential = make_button("琛ユ巿鏉冪爜", variant="secondary")
         self.btn_settings_mailbox_add_credential.clicked.connect(self._add_mailbox_credential_dialog)
 
-        self.btn_settings_mailbox_toggle = make_button("停用", variant="secondary")
+        self.btn_settings_mailbox_test = make_button("娴嬭瘯杩炴帴", variant="secondary")
+        self.btn_settings_mailbox_test.clicked.connect(self._test_settings_mailbox_connection)
+
+        self.btn_settings_mailbox_scan = make_button("绔嬪嵆鎵弿", variant="secondary")
+        self.btn_settings_mailbox_scan.clicked.connect(self._scan_settings_mailbox_now)
+
+        self.btn_settings_mailbox_toggle = make_button("鍋滅敤", variant="secondary")
         self.btn_settings_mailbox_toggle.clicked.connect(self._toggle_settings_mailbox_enabled)
 
-        self.btn_settings_mailbox_delete = make_button("删除", variant="danger")
+        self.btn_settings_mailbox_delete = make_button("鍒犻櫎", variant="danger")
         self.btn_settings_mailbox_delete.clicked.connect(self._delete_settings_mailbox)
 
-        action_row.addWidget(self.btn_settings_mailbox_add)
-        action_row.addWidget(self.btn_settings_mailbox_edit_config)
         action_row.addWidget(self.btn_settings_mailbox_add_credential)
+        action_row.addWidget(self.btn_settings_mailbox_test)
+        action_row.addWidget(self.btn_settings_mailbox_scan)
+        action_row.addWidget(self.btn_settings_mailbox_edit_config)
         action_row.addWidget(self.btn_settings_mailbox_toggle)
         action_row.addWidget(self.btn_settings_mailbox_delete)
         action_row.addStretch(1)
         mailbox_editor_layout.addLayout(action_row)
-        form_box = ReadOnlyDetailPanel("账号详情", "默认只读显示当前账号状态；编辑配置和补授权码通过独立入口触发。")
-        form_layout = QFormLayout(form_box.body)
-        self.lbl_detail_name = QLabel("未选择邮箱账号")
-        self.lbl_detail_email = QLabel("—")
-        self.lbl_detail_server = QLabel("—")
-        self.lbl_detail_is_default = QLabel("—")
-        self.lbl_detail_credential_status = QLabel("未配置")
-        self.lbl_detail_scan_rule = QLabel("—")
-        for label in (
-            self.lbl_detail_name,
-            self.lbl_detail_email,
-            self.lbl_detail_server,
-            self.lbl_detail_is_default,
-            self.lbl_detail_credential_status,
-            self.lbl_detail_scan_rule,
-        ):
-            label.setWordWrap(True)
-            label.setObjectName("MailboxDetailValue")
-        form_layout.addRow("邮箱名称", self.lbl_detail_name)
-        form_layout.addRow("邮箱地址", self.lbl_detail_email)
-        form_layout.addRow("IMAP / 端口 / SSL", self.lbl_detail_server)
-        form_layout.addRow("默认扫描账号", self.lbl_detail_is_default)
-        form_layout.addRow("授权码状态", self.lbl_detail_credential_status)
-        form_layout.addRow("扫描规则", self.lbl_detail_scan_rule)
+        form_box = ReadOnlyDetailPanel("璐﹀彿璇︽儏", "榛樿鍙鏄剧ず褰撳墠璐﹀彿鐘舵€侊紱缂栬緫閰嶇疆鍜岃ˉ鎺堟潈鐮侀€氳繃鐙珛鍏ュ彛瑙﹀彂銆?)
+        self.lbl_detail_name = form_box.add_row("閭鍚嶇О", "鏈€夋嫨閭璐﹀彿")
+        self.lbl_detail_email = form_box.add_row("閭鍦板潃", "鈥?)
+        self.lbl_detail_server = form_box.add_row("IMAP / 绔彛 / SSL", "鈥?)
+        self.lbl_detail_is_default = form_box.add_row("榛樿鎵弿璐﹀彿", "鈥?)
+        self.lbl_detail_credential_status = form_box.add_row("鎺堟潈鐮佺姸鎬?, "鏈厤缃?)
+        self.lbl_detail_scan_rule = form_box.add_row("鎵弿瑙勫垯", "鈥?)
         mailbox_editor_layout.addWidget(form_box)
-        mailbox_btn_row = QHBoxLayout()
-        mailbox_btn_row.setContentsMargins(0, 0, 0, 0)
-        mailbox_btn_row.setSpacing(8)
-        self.btn_settings_mailbox_test = make_button("测试连接", variant="secondary")
-        self.btn_settings_mailbox_test.clicked.connect(self._test_settings_mailbox_connection)
-        self.btn_settings_mailbox_scan = make_button("立即扫描", variant="secondary")
-        self.btn_settings_mailbox_scan.clicked.connect(self._scan_settings_mailbox_now)
-        mailbox_btn_row.addWidget(self.btn_settings_mailbox_test)
-        mailbox_btn_row.addWidget(self.btn_settings_mailbox_scan)
-        mailbox_btn_row.addStretch(1)
-        mailbox_editor_layout.addLayout(mailbox_btn_row)
-        self.lbl_settings_mailbox_test_status = QLabel("测试连接：尚未执行。")
+        self.lbl_settings_mailbox_test_status = QLabel("娴嬭瘯杩炴帴锛氬皻鏈墽琛屻€?)
         self.lbl_settings_mailbox_test_status.setWordWrap(True)
         self.lbl_settings_mailbox_test_status.setStyleSheet("color: #667085; font-size: 12px;")
-        self.lbl_settings_mailbox_scan_result = QLabel("最近扫描结果：暂无记录。")
+        self.lbl_settings_mailbox_scan_result = QLabel("鏈€杩戞壂鎻忕粨鏋滐細鏆傛棤璁板綍銆?)
         self.lbl_settings_mailbox_scan_result.setWordWrap(True)
         self.lbl_settings_mailbox_scan_result.setStyleSheet("color: #667085; font-size: 12px;")
-        self.lbl_settings_mailbox_empty = QLabel("尚未配置任何邮箱账号。")
+        self.lbl_settings_mailbox_empty = QLabel("灏氭湭閰嶇疆浠讳綍閭璐﹀彿銆?)
         self.lbl_settings_mailbox_empty.setStyleSheet("color: #667085; font-size: 12px;")
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_test_status)
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_scan_result)
@@ -3044,15 +3073,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ai_layout = QVBoxLayout(ai_tab)
         ai_layout.setContentsMargins(0, 0, 0, 0)
         ai_layout.setSpacing(10)
-        ai_layout.addWidget(QLabel("AI 配置"))
+        ai_layout.addWidget(QLabel("AI 閰嶇疆"))
         self.settings_ai_summary_strip = SummaryStrip()
-        self.lbl_settings_ai_stat_enabled = self.settings_ai_summary_strip.add_metric("enabled", "AI 状态", "关闭", state="muted")
-        self.lbl_settings_ai_stat_provider = self.settings_ai_summary_strip.add_metric("provider", "Provider", "—", state="info")
-        self.lbl_settings_ai_stat_model = self.settings_ai_summary_strip.add_metric("model", "模型", "—", state="info")
-        self.lbl_settings_ai_stat_key = self.settings_ai_summary_strip.add_metric("key", "Key 健康", "未配置", state="warning")
-        self.lbl_settings_ai_stat_paused = self.settings_ai_summary_strip.add_metric("paused", "暂停状态", "正常", state="success")
+        self.lbl_settings_ai_stat_enabled = self.settings_ai_summary_strip.add_metric("enabled", "AI 鐘舵€?, "鍏抽棴", state="muted")
+        self.lbl_settings_ai_stat_provider = self.settings_ai_summary_strip.add_metric("provider", "Provider", "鈥?, state="info")
+        self.lbl_settings_ai_stat_model = self.settings_ai_summary_strip.add_metric("model", "妯″瀷", "鈥?, state="info")
+        self.lbl_settings_ai_stat_key = self.settings_ai_summary_strip.add_metric("key", "Key 鍋ュ悍", "鏈厤缃?, state="warning")
+        self.lbl_settings_ai_stat_paused = self.settings_ai_summary_strip.add_metric("paused", "鏆傚仠鐘舵€?, "姝ｅ父", state="success")
         ai_layout.addWidget(self.settings_ai_summary_strip)
-        ai_hint = QLabel("在桌面内直接查看 Provider、模型、Key 状态和本会话暂停状态。")
+        ai_hint = QLabel("鍦ㄦ闈㈠唴鐩存帴鏌ョ湅 Provider銆佹ā鍨嬨€並ey 鐘舵€佸拰鏈細璇濇殏鍋滅姸鎬併€?)
         ai_hint.setWordWrap(True)
         ai_hint.setStyleSheet("color: #667085; font-size: 12px;")
         ai_layout.addWidget(ai_hint)
@@ -3067,49 +3096,46 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ai_editor_layout = QVBoxLayout(ai_editor)
         ai_editor_layout.setContentsMargins(0, 0, 0, 0)
         ai_editor_layout.setSpacing(8)
-        ai_form_box = QGroupBox("AI 运行配置")
-        ai_form = QFormLayout(ai_form_box)
-        self.combo_settings_ai_provider = QComboBox()
-        self.combo_settings_ai_provider.addItems(["deepseek", "gemini"])
-        self.txt_settings_ai_model = QLineEdit()
-        self.chk_settings_ai_enabled = QCheckBox("启用 AI 提取与分类")
-        self.lbl_settings_ai_key_status = QLabel("API Key 状态：未配置")
+        ai_form_box = ReadOnlyDetailPanel("AI 杩愯閰嶇疆", "榛樿鍙灞曠ず Provider銆佹ā鍨嬨€並ey 鐘舵€佸拰浼氳瘽鐘舵€併€?)
+        self.lbl_settings_ai_provider = ai_form_box.add_row("Provider", "鈥?)
+        self.lbl_settings_ai_model = ai_form_box.add_row("妯″瀷", "鈥?)
+        self.lbl_settings_ai_enabled = ai_form_box.add_row("鍚敤鐘舵€?, "鍏抽棴")
+        self.lbl_settings_ai_session_state = ai_form_box.add_row("浼氳瘽鐘舵€?, "姝ｅ父")
+        self.lbl_settings_ai_key_status = QLabel("API Key 鐘舵€侊細鏈厤缃?)
         self.lbl_settings_ai_key_status.setWordWrap(True)
-        self.lbl_settings_ai_send_boundary = QLabel("发送边界说明：仅发送脱敏邮件头与最小分类元数据，不发送正文、附件、PDF、图片和本地路径。")
+        self.lbl_settings_ai_send_boundary = QLabel("鍙戦€佽竟鐣岃鏄庯細浠呭彂閫佽劚鏁忛偖浠跺ご涓庢渶灏忓垎绫诲厓鏁版嵁锛屼笉鍙戦€佹鏂囥€侀檮浠躲€丳DF銆佸浘鐗囧拰鏈湴璺緞銆?)
         self.lbl_settings_ai_send_boundary.setWordWrap(True)
-        self.lbl_settings_ai_log_redaction = QLabel("日志脱敏：Key 与授权码不会写入 config.json，也不会原样出现在日志。")
+        self.lbl_settings_ai_log_redaction = QLabel("鏃ュ織鑴辨晱锛欿ey 涓庢巿鏉冪爜涓嶄細鍐欏叆 config.json锛屼篃涓嶄細鍘熸牱鍑虹幇鍦ㄦ棩蹇椼€?)
         self.lbl_settings_ai_log_redaction.setWordWrap(True)
-        ai_form.addRow("Provider", self.combo_settings_ai_provider)
-        ai_form.addRow("模型", self.txt_settings_ai_model)
-        ai_form.addRow("", self.chk_settings_ai_enabled)
-        ai_form.addRow("Key 状态", self.lbl_settings_ai_key_status)
-        ai_form.addRow("发送边界", self.lbl_settings_ai_send_boundary)
-        ai_form.addRow("日志脱敏", self.lbl_settings_ai_log_redaction)
+        ai_form_box.add_row("Key 鐘舵€?, self.lbl_settings_ai_key_status)
+        ai_form_box.add_row("鍙戦€佽竟鐣?, self.lbl_settings_ai_send_boundary)
+        ai_form_box.add_row("鏃ュ織鑴辨晱", self.lbl_settings_ai_log_redaction)
         ai_editor_layout.addWidget(ai_form_box)
-        ai_btn_row = QHBoxLayout()
-        ai_btn_row.setContentsMargins(0, 0, 0, 0)
-        ai_btn_row.setSpacing(8)
-        self.btn_settings_ai_configure_key = make_button("配置 / 更新 Key", variant="secondary")
+        ai_btn_bar = CommandBar()
+        self.btn_settings_ai_configure_key = make_button("閰嶇疆 / 鏇存柊 Key", variant="secondary")
         self.btn_settings_ai_configure_key.clicked.connect(self._configure_settings_ai_key)
-        self.btn_settings_ai_test = make_button("测试连接", variant="secondary")
+        self.btn_settings_ai_test = make_button("娴嬭瘯杩炴帴", variant="secondary")
         self.btn_settings_ai_test.clicked.connect(self._test_settings_ai_connection)
-        self.btn_settings_ai_clear_key = make_button("清除 Key", variant="secondary")
+        self.btn_settings_ai_clear_key = make_button("娓呴櫎 Key", variant="secondary")
         self.btn_settings_ai_clear_key.clicked.connect(self._clear_settings_ai_key)
-        self.btn_settings_ai_restore_session = make_button("恢复 AI 会话", variant="secondary")
+        self.btn_settings_ai_restore_session = make_button("鎭㈠ AI 浼氳瘽", variant="secondary")
         self.btn_settings_ai_restore_session.clicked.connect(self._restore_settings_ai_session)
-        self.btn_settings_ai_save = make_button("保存设置", variant="primary")
-        self.btn_settings_ai_save.clicked.connect(self._save_settings_ai_profile)
-        ai_btn_row.addWidget(self.btn_settings_ai_configure_key)
-        ai_btn_row.addWidget(self.btn_settings_ai_test)
-        ai_btn_row.addWidget(self.btn_settings_ai_clear_key)
-        ai_btn_row.addWidget(self.btn_settings_ai_restore_session)
-        ai_btn_row.addStretch(1)
-        ai_btn_row.addWidget(self.btn_settings_ai_save)
-        ai_editor_layout.addLayout(ai_btn_row)
-        self.lbl_settings_ai_failure_status = QLabel("失败状态：暂无异常。")
+        self.btn_settings_ai_edit = make_button("缂栬緫閰嶇疆", variant="primary")
+        self.btn_settings_ai_edit.clicked.connect(self._open_edit_ai_profile_dialog)
+        ai_btn_bar.set_actions(
+            primary_action=self.btn_settings_ai_edit,
+            secondary_actions=[
+                self.btn_settings_ai_configure_key,
+                self.btn_settings_ai_test,
+                self.btn_settings_ai_clear_key,
+                self.btn_settings_ai_restore_session,
+            ],
+        )
+        ai_editor_layout.addWidget(ai_btn_bar)
+        self.lbl_settings_ai_failure_status = QLabel("澶辫触鐘舵€侊細鏆傛棤寮傚父銆?)
         self.lbl_settings_ai_failure_status.setWordWrap(True)
         self.lbl_settings_ai_failure_status.setStyleSheet("color: #667085; font-size: 12px;")
-        self.lbl_settings_ai_empty = QLabel("尚未配置任何 AI Profile。")
+        self.lbl_settings_ai_empty = QLabel("灏氭湭閰嶇疆浠讳綍 AI Profile銆?)
         self.lbl_settings_ai_empty.setStyleSheet("color: #667085; font-size: 12px;")
         ai_editor_layout.addWidget(self.lbl_settings_ai_failure_status)
         ai_editor_layout.addWidget(self.lbl_settings_ai_empty)
@@ -3117,15 +3143,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ai_shell.addWidget(ai_editor, 1)
         ai_layout.addLayout(ai_shell, 1)
 
-        self.settings_tabs.addTab(tab_widgets["常规"], "常规")
-        self.settings_tabs.addTab(mailbox_tab, "邮箱账户")
-        self.settings_tabs.addTab(ai_tab, "AI 配置")
-        self.settings_tabs.addTab(tab_widgets["导入与识别"], "导入与识别")
-        self.settings_tabs.addTab(tab_widgets["分类与规则"], "分类与规则")
-        self.settings_tabs.addTab(tab_widgets["运行状态"], "运行状态")
-        self.settings_tabs.addTab(tab_widgets["安全与隐私"], "安全与隐私")
-        self.settings_tabs.addTab(tab_widgets["数据与备份"], "数据与备份")
-        self.settings_tabs.addTab(tab_widgets["关于"], "关于")
+        self.settings_tabs.addTab(tab_widgets["甯歌"], "甯歌")
+        self.settings_tabs.addTab(mailbox_tab, "閭璐︽埛")
+        self.settings_tabs.addTab(ai_tab, "AI 閰嶇疆")
+        self.settings_tabs.addTab(tab_widgets["瀵煎叆涓庤瘑鍒?], "瀵煎叆涓庤瘑鍒?)
+        self.settings_tabs.addTab(tab_widgets["鍒嗙被涓庤鍒?], "鍒嗙被涓庤鍒?)
+        self.settings_tabs.addTab(tab_widgets["杩愯鐘舵€?], "杩愯鐘舵€?)
+        self.settings_tabs.addTab(tab_widgets["瀹夊叏涓庨殣绉?], "瀹夊叏涓庨殣绉?)
+        self.settings_tabs.addTab(tab_widgets["鏁版嵁涓庡浠?], "鏁版嵁涓庡浠?)
+        self.settings_tabs.addTab(tab_widgets["鍏充簬"], "鍏充簬")
 
         layout.addWidget(self.settings_tabs, 1)
         self._refresh_settings_page()
@@ -3136,18 +3162,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.txt_log.clear()
 
     def _sync_export_claim_selection(self) -> None:
-        if not hasattr(self, "combo_export_claims") or not hasattr(self, "combo_claims"):
+        if not hasattr(self, "export_group_list") or not hasattr(self, "combo_claims"):
             return
         if not getattr(self, "db", None) or not getattr(self.db, "is_open", False):
             return
-        claim_id = self.combo_export_claims.currentData()
+        current_item = self.export_group_list.currentItem()
+        claim_id = current_item.data(Qt.UserRole) if current_item is not None else None
         if claim_id is None:
-            self.export_summary_strip.set_metric("ready", "待检查")
-            self.lbl_export_integrity.setText("请选择报销组后查看完整性检查。")
-            self.lbl_export_blockers.setText("当前暂无阻塞。")
+            self.export_summary_strip.set_metric("ready", "寰呮鏌?)
+            self.lbl_export_integrity.setText("璇烽€夋嫨鎶ラ攢缁勫悗鏌ョ湅瀹屾暣鎬ф鏌ャ€?)
+            self.lbl_export_blockers.setText("褰撳墠鏆傛棤闃诲銆?)
             if hasattr(self, "export_invoice_list"):
                 self.export_invoice_list.clear()
-                self.lbl_export_invoice_meta.setText("当前未选择报销组。")
+                self.lbl_export_invoice_meta.setText("褰撳墠鏈€夋嫨鎶ラ攢缁勩€?)
             self.btn_run_export_page.setEnabled(False)
             return
         idx = self.combo_claims.findData(claim_id)
@@ -3159,24 +3186,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.export_invoice_list.clear()
             for inv in invoices:
                 status = self._get_invoice_review_status_chinese(inv)
-                number = str(inv.get("invoice_number") or "无票号").strip()
-                seller = str(inv.get("seller_name") or "未知销售方").strip()
+                number = str(inv.get("invoice_number") or "鏃犵エ鍙?).strip()
+                seller = str(inv.get("seller_name") or "鏈煡閿€鍞柟").strip()
                 amount = self._format_table_amount(inv.get("total_amount") or "")
-                self.export_invoice_list.addItem(f"{status} · {seller} · {amount} · {number}")
+                item = self.export_invoice_list.add_entity_row(
+                    title=seller,
+                    subtitle=number,
+                    status_badge=status,
+                    meta=amount,
+                    user_data=inv.get("id"),
+                )
+                item.setToolTip(f"{seller}\n{number}")
             self.lbl_export_invoice_meta.setText(
-                f"当前报销组共 {len(invoices)} 张记录，其中已通过 {stats.get(APPROVED, 0)} 张，待处理 {stats.get(TO_REVIEW, 0)} 张。"
+                f"褰撳墠鎶ラ攢缁勫叡 {len(invoices)} 寮犺褰曪紝鍏朵腑宸查€氳繃 {stats.get(APPROVED, 0)} 寮狅紝寰呭鐞?{stats.get(TO_REVIEW, 0)} 寮犮€?
             )
         blockers = []
         if int(stats.get(APPROVED, 0) or 0) <= 0:
-            blockers.append("没有已通过发票")
+            blockers.append("娌℃湁宸查€氳繃鍙戠エ")
         if int(stats.get("missing_attachment", 0) or 0) > 0:
-            blockers.append(f"缺原件 {stats.get('missing_attachment', 0)} 张")
+            blockers.append(f"缂哄師浠?{stats.get('missing_attachment', 0)} 寮?)
         if int(stats.get("missing_amount", 0) or 0) > 0:
-            blockers.append(f"缺金额 {stats.get('missing_amount', 0)} 张")
+            blockers.append(f"缂洪噾棰?{stats.get('missing_amount', 0)} 寮?)
         is_ready = not blockers
-        self.export_summary_strip.set_metric("ready", "可导出" if is_ready else "需处理")
+        self.export_summary_strip.set_metric("ready", "鍙鍑? if is_ready else "闇€澶勭悊")
         self.lbl_export_integrity.setText(self._format_claim_export_preflight_text(stats))
-        self.lbl_export_blockers.setText("阻塞：" + "；".join(blockers) if blockers else "检查通过：可以直接开始导出。")
+        self.lbl_export_blockers.setText("闃诲锛? + "锛?.join(blockers) if blockers else "妫€鏌ラ€氳繃锛氬彲浠ョ洿鎺ュ紑濮嬪鍑恒€?)
         self.btn_run_export_page.setEnabled(is_ready)
 
     def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
@@ -3232,8 +3266,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             needle = self.txt_search.text().strip() if hasattr(self, "txt_search") else ""
             column_filters_active = has_active_filters(self.column_filters) if hasattr(self, "column_filters") else False
             if needle or column_filters_active:
-                return "当前范围全部"
-            return "全部"
+                return "褰撳墠鑼冨洿鍏ㄩ儴"
+            return "鍏ㄩ儴"
         return self.filter_base_labels.get(status, str(status))
 
     def _update_filter_counts(self, invoices_or_counts):
@@ -3272,16 +3306,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _open_logs_view(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QLabel
         dialog = QDialog(self)
-        dialog.setWindowTitle("操作日志 - Invoice Hub")
+        dialog.setWindowTitle("鎿嶄綔鏃ュ織 - Invoice Hub")
         dialog.resize(650, 450)
         layout = QVBoxLayout(dialog)
-        title = QLabel("系统运行与操作日志")
+        title = QLabel("绯荤粺杩愯涓庢搷浣滄棩蹇?)
         title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         layout.addWidget(title)
         txt = QTextEdit()
         txt.setReadOnly(True)
         txt.setFont(QFont("Consolas", 9))
-        txt.setText(getattr(self.txt_log, "toPlainText", lambda: "日志就绪")() if hasattr(self, "txt_log") else "运行日志加载就绪。")
+        txt.setText(getattr(self.txt_log, "toPlainText", lambda: "鏃ュ織灏辩华")() if hasattr(self, "txt_log") else "杩愯鏃ュ織鍔犺浇灏辩华銆?)
         layout.addWidget(txt)
         dialog.exec()
 
@@ -3298,25 +3332,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         download_url = str(inv.get("download_url") or "")
         mail_sender = str(inv.get("mail_sender") or "")
         if mail_sender == "mobile_qr":
-            return "手机"
+            return "鎵嬫満"
         if attachment_path and mail_uid is not None:
-            return "邮箱+本地"
+            return "閭+鏈湴"
         if attachment_path:
-            return "本地"
+            return "鏈湴"
         if download_url:
-            return "链接"
+            return "閾炬帴"
         if mail_uid is not None:
-            return "邮箱"
-        return "未知"
+            return "閭"
+        return "鏈煡"
 
     def _get_invoice_review_status_chinese(self, inv: dict) -> str:
         status_mapping = {
-            "to_review": "待审核",
-            "approved": "已通过",
-            "ignored": "已忽略",
-            "error": "异常",
+            "to_review": "寰呭鏍?,
+            "approved": "宸查€氳繃",
+            "ignored": "宸插拷鐣?,
+            "error": "寮傚父",
         }
-        return status_mapping.get(inv.get("review_status") or TO_REVIEW, "待审核")
+        return status_mapping.get(inv.get("review_status") or TO_REVIEW, "寰呭鏍?)
 
     def _get_invoice_claim_group(self, inv: dict) -> str:
         for key in ("claim_name", "claim_group_name", "claim_group"):
@@ -3327,7 +3361,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _get_invoice_quality(self, inv: dict) -> str:
         status = self._get_invoice_data_status(inv)
-        if status == "正常":
+        if status == "姝ｅ父":
             return ""
         return status
 
@@ -3340,14 +3374,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         missing_extra = bool(inv.get("missing_extra"))
 
         if not inv_num and not total_amt and not seller:
-            return "未识别"
+            return "鏈瘑鍒?
         if not inv_num or not total_amt or not inv_date or not seller:
-            return "待补全"
+            return "寰呰ˉ鍏?
         if not attachment_path:
-            return "缺原件"
+            return "缂哄師浠?
         if missing_extra:
-            return "缺证明"
-        return "正常"
+            return "缂鸿瘉鏄?
+        return "姝ｅ父"
 
     def _badge_spec_for_review_status(self, status: str) -> dict | None:
         return REVIEW_STATUS_BADGES.get(status or TO_REVIEW)
@@ -3358,7 +3392,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _format_table_amount(self, amount_text: str) -> str:
         text = str(amount_text or "").strip()
         if not text:
-            return "—"
+            return "鈥?
         try:
             return f"{Decimal(text):.2f}"
         except (InvalidOperation, ValueError, TypeError):
@@ -3388,7 +3422,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shown = len(getattr(self, "invoices_list", []) or [])
         total = int(getattr(self, "_record_total_matching", shown) or shown)
         if hasattr(self, "lbl_record_count"):
-            self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，正在加载更多…")
+            self.lbl_record_count.setText(f"宸插姞杞?{shown} / {total} 寮狅紝姝ｅ湪鍔犺浇鏇村鈥?)
         QTimer.singleShot(100, self._append_next_invoice_batch)
 
     def _append_next_invoice_batch(self):
@@ -3424,15 +3458,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 visible_rows = max(1, vh // rh)
         if hasattr(self, "lbl_record_count"):
             if shown >= total and total > 0:
-                self.lbl_record_count.setText(f"已加载全部 {total} 张，当前可见 {visible_rows} 张")
+                self.lbl_record_count.setText(f"宸插姞杞藉叏閮?{total} 寮狅紝褰撳墠鍙 {visible_rows} 寮?)
             else:
-                self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
+                self.lbl_record_count.setText(f"宸插姞杞?{shown} / {total} 寮狅紝褰撳墠鍙 {visible_rows} 寮?)
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
-            self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
+            self.lbl_record_selection.setText("鏈€? if selected_count <= 0 else f"宸查€?{selected_count} 寮?)
 
     def _on_chk_needs_fix_changed(self, state):
         if state == Qt.Checked or state == 2:
-            self.column_filters["status"] = {"values": {"未识别", "待补全", "缺原件", "缺证明"}}
+            self.column_filters["status"] = {"values": {"鏈瘑鍒?, "寰呰ˉ鍏?, "缂哄師浠?, "缂鸿瘉鏄?}}
         else:
             self.column_filters.pop("status", None)
         self._refresh_column_filter_headers()
@@ -3441,7 +3475,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _on_chk_unlinked_changed(self, state):
         if state == Qt.Checked or state == 2:
-            self.column_filters["claim_name"] = {"values": {"(空白)"}}
+            self.column_filters["claim_name"] = {"values": {"(绌虹櫧)"}}
         else:
             self.column_filters.pop("claim_name", None)
         self._refresh_column_filter_headers()
@@ -3454,7 +3488,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             status_filter = self.column_filters.get("status")
             if status_filter and "values" in status_filter:
                 vals = set(status_filter["values"])
-                self.chk_needs_fix.setChecked(vals == {"未识别", "待补全", "缺原件", "缺证明"})
+                self.chk_needs_fix.setChecked(vals == {"鏈瘑鍒?, "寰呰ˉ鍏?, "缂哄師浠?, "缂鸿瘉鏄?})
             else:
                 self.chk_needs_fix.setChecked(False)
             self.chk_needs_fix.blockSignals(False)
@@ -3464,7 +3498,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             claim_filter = self.column_filters.get("claim_name")
             if claim_filter and "values" in claim_filter:
                 vals = set(claim_filter["values"])
-                self.chk_unlinked.setChecked(vals == {"(空白)"})
+                self.chk_unlinked.setChecked(vals == {"(绌虹櫧)"})
             else:
                 self.chk_unlinked.setChecked(False)
             self.chk_unlinked.blockSignals(False)
@@ -3482,8 +3516,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             label = COLUMN_LABELS.get(key, key)
             if key == "status":
                 vals = set(spec.get("values") or ())
-                if vals == {"未识别", "待补全", "缺原件", "缺证明"}:
-                    chips_to_add.append(("待补全", key))
+                if vals == {"鏈瘑鍒?, "寰呰ˉ鍏?, "缂哄師浠?, "缂鸿瘉鏄?}:
+                    chips_to_add.append(("寰呰ˉ鍏?, key))
                 else:
                     summary = ",".join(sorted(vals))
                     if len(summary) > 15:
@@ -3491,8 +3525,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     chips_to_add.append((f"{label}: {summary}", key))
             elif key == "claim_name":
                 vals = set(spec.get("values") or ())
-                if vals == {"(空白)"}:
-                    chips_to_add.append(("未关联报销组", key))
+                if vals == {"(绌虹櫧)"}:
+                    chips_to_add.append(("鏈叧鑱旀姤閿€缁?, key))
                 else:
                     summary = ",".join(sorted(vals))
                     if len(summary) > 15:
@@ -3508,23 +3542,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 min_v = spec.get("min", "")
                 max_v = spec.get("max", "")
                 if min_v and max_v:
-                    chips_to_add.append((f"金额: {min_v}~{max_v}", key))
+                    chips_to_add.append((f"閲戦: {min_v}~{max_v}", key))
                 elif min_v:
-                    chips_to_add.append((f"金额 >= {min_v}", key))
+                    chips_to_add.append((f"閲戦 >= {min_v}", key))
                 elif max_v:
-                    chips_to_add.append((f"金额 <= {max_v}", key))
+                    chips_to_add.append((f"閲戦 <= {max_v}", key))
             elif "quick" in spec:
                 quick_disp = {
-                    "today": "今天",
-                    "week": "本周",
-                    "month": "本月",
-                    "last_30_days": "最近 30 天",
+                    "today": "浠婂ぉ",
+                    "week": "鏈懆",
+                    "month": "鏈湀",
+                    "last_30_days": "鏈€杩?30 澶?,
                 }.get(spec["quick"], spec["quick"])
-                chips_to_add.append((f"费用日期: {quick_disp}", key))
+                chips_to_add.append((f"璐圭敤鏃ユ湡: {quick_disp}", key))
 
         needle = self.txt_search.text().strip()
         if needle:
-            chips_to_add.append((f"搜索: {needle}", "search"))
+            chips_to_add.append((f"鎼滅储: {needle}", "search"))
 
         if chips_to_add:
             self.filter_chips_widget.setVisible(True)
@@ -3634,7 +3668,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         inv_number = self.txt_number.text().strip()
         if inv_number:
             QApplication.clipboard().setText(inv_number)
-            self.statusBar().showMessage(f"已复制发票号码: {inv_number}", 2000)
+            self.statusBar().showMessage(f"宸插鍒跺彂绁ㄥ彿鐮? {inv_number}", 2000)
 
     # Controller & Data loading
 
@@ -3648,13 +3682,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else:
                 btn.setChecked(s == status)
         self._load_invoices()
-        self.statusBar().showMessage(f"已切换筛选条件: {self.filter_buttons[status].text()}", 2000)
+        self.statusBar().showMessage(f"宸插垏鎹㈢瓫閫夋潯浠? {self.filter_buttons[status].text()}", 2000)
 
     def _manual_refresh(self):
         # Refresh invoice list and claims dropdown manually, notify status bar.
         self._load_invoices()
         self._load_claims()
-        self.statusBar().showMessage("数据已成功刷新！", 3000)
+        self.statusBar().showMessage("鏁版嵁宸叉垚鍔熷埛鏂帮紒", 3000)
 
     def _load_all_invoices_clicked(self):
         """User clicked 'Load All' to bypass the first-load limit."""
@@ -3718,11 +3752,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._is_first_load = False
         except Exception as e:
             _log.error("Failed to load invoices from DB: %s", e)
-            QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鍔犺浇鍙戠エ澶辫触: {e}")
             display_source = []
 
         filter_start = time.perf_counter()
-        
+
         # 1. Apply global search
         if is_default_view:
             filtered_invoices = display_source
@@ -3798,11 +3832,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._limited_first_load_total = total_matching
             shown = len(displayed_invoices)
             notice = (
-                f"当前范围全部 {total_matching} 张 (首屏已加载最近 {shown} 张)。"
-                f"点击\"加载全部\"查看完整列表，或使用搜索/筛选缩小范围。"
+                f"褰撳墠鑼冨洿鍏ㄩ儴 {total_matching} 寮?(棣栧睆宸插姞杞芥渶杩?{shown} 寮?銆?
+                f"鐐瑰嚮\"鍔犺浇鍏ㄩ儴\"鏌ョ湅瀹屾暣鍒楄〃锛屾垨浣跨敤鎼滅储/绛涢€夌缉灏忚寖鍥淬€?
             )
             self._first_load_notice = notice
-            self.write_log(f"ℹ️ [首屏提示] {notice}")
+            self.write_log(f"鈩癸笍 [棣栧睆鎻愮ず] {notice}")
         else:
             self._limited_first_load_active = False
             self._limited_first_load_total = 0
@@ -3814,9 +3848,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "btn_load_all"):
             if self._limited_first_load_active:
                 shown = len(self.invoices_list) if self.invoices_list else 50
-                self.btn_load_all.setText("加载全部")
+                self.btn_load_all.setText("鍔犺浇鍏ㄩ儴")
                 self.btn_load_all.setToolTip(
-                    f"首屏仅加载 {shown} / {self._limited_first_load_total} 张，点击加载完整列表"
+                    f"棣栧睆浠呭姞杞?{shown} / {self._limited_first_load_total} 寮狅紝鐐瑰嚮鍔犺浇瀹屾暣鍒楄〃"
                 )
                 self.btn_load_all.setVisible(True)
             else:
@@ -3839,7 +3873,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 display_date = expense_date or inv_date
                 total_amt = str(inv.get("total_amount") or "")
                 display_amount = self._format_table_amount(total_amt)
-                category = str(inv.get("category") or "未分类")
+                category = str(inv.get("category") or "鏈垎绫?)
                 seller = str(inv.get("seller_name") or "")
                 display_status = self._get_invoice_data_status(inv)
                 review_status = inv.get("review_status") or TO_REVIEW
@@ -3857,10 +3891,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 row_items = [
                     rev_chinese,
                     display_status,
-                    display_date or "—",
+                    display_date or "鈥?,
                     display_amount,
-                    seller or "—",
-                    inv_num or "—",
+                    seller or "鈥?,
+                    inv_num or "鈥?,
                 ]
 
                 for col, text in enumerate(row_items):
@@ -3880,7 +3914,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         badge = self._badge_spec_for_review_status(review_status)
                         if badge:
                             item.setData(TABLE_BADGE_ROLE, badge)
-                        item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
+                        item.setToolTip(f"璧勬枡鐘舵€? {display_status}\n瀹℃牳鐘舵€? {rev_chinese}")
                     elif col == 1:
                         font = item.font()
                         font.setBold(True)
@@ -3888,19 +3922,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         badge = self._badge_spec_for_data_status(display_status)
                         if badge:
                             item.setData(TABLE_BADGE_ROLE, badge)
-                        item.setToolTip(f"资料状态: {display_status}")
+                        item.setToolTip(f"璧勬枡鐘舵€? {display_status}")
                     elif col == 2:
                         date_source_disp = {
-                            "travel_date": "乘车日期",
-                            "invoice_date": "开票日期",
-                            "legacy": "历史数据",
-                            "service_date": "服务日期",
-                            "payment_date": "付款日期",
-                        }.get(date_source, "未知")
+                            "travel_date": "涔樿溅鏃ユ湡",
+                            "invoice_date": "寮€绁ㄦ棩鏈?,
+                            "legacy": "鍘嗗彶鏁版嵁",
+                            "service_date": "鏈嶅姟鏃ユ湡",
+                            "payment_date": "浠樻鏃ユ湡",
+                        }.get(date_source, "鏈煡")
                         tooltip_lines = [
-                            f"费用日期: {display_date or '—'}",
-                            f"日期来源: {date_source_disp}",
-                            f"开票日期: {inv_date or '—'}"
+                            f"璐圭敤鏃ユ湡: {display_date or '鈥?}",
+                            f"鏃ユ湡鏉ユ簮: {date_source_disp}",
+                            f"寮€绁ㄦ棩鏈? {inv_date or '鈥?}"
                         ]
                         item.setToolTip("\n".join(tooltip_lines))
                     elif col == 4 and seller:
@@ -3928,12 +3962,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 pass
 
             if total_in_db == 0:
-                self.lbl_empty_title.setText("当前没有发票记录")
+                self.lbl_empty_title.setText("褰撳墠娌℃湁鍙戠エ璁板綍")
                 self.lbl_guide.setText(
-                    "您可以执行以下操作以加载发票数据：\n\n"
-                    "  1. 点击“导入发票”选择本地文件夹导入 PDF/ZIP 发票；\n"
-                    "  2. 点击“配置邮箱”配置您的邮箱，然后点击“扫描邮箱”开始增量同步；\n"
-                    "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
+                    "鎮ㄥ彲浠ユ墽琛屼互涓嬫搷浣滀互鍔犺浇鍙戠エ鏁版嵁锛歕n\n"
+                    "  1. 鐐瑰嚮鈥滃鍏ュ彂绁ㄢ€濋€夋嫨鏈湴鏂囦欢澶瑰鍏?PDF/ZIP 鍙戠エ锛沑n"
+                    "  2. 鐐瑰嚮鈥滈厤缃偖绠扁€濋厤缃偍鐨勯偖绠憋紝鐒跺悗鐐瑰嚮鈥滄壂鎻忛偖绠扁€濆紑濮嬪閲忓悓姝ワ紱\n"
+                    "  3. 鐐瑰嚮鈥滄壂鐮佷笂浼犫€濓紝鐢ㄦ墜鏈轰笂浼?PDF/OFD銆佺浉鍐屽浘鐗囨垨鎷嶇収鏉愭枡銆?
                 )
                 self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
                 self.lbl_guide.setVisible(True)
@@ -3945,8 +3979,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.empty_btn_clear_search.setVisible(False)
                 self.empty_btn_reset_filters.setVisible(False)
             else:
-                self.lbl_empty_title.setText("没有符合条件的发票")
-                self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
+                self.lbl_empty_title.setText("娌℃湁绗﹀悎鏉′欢鐨勫彂绁?)
+                self.lbl_guide.setText("璇锋竻绌烘悳绱㈣瘝鎴栭噸缃瓫閫夋潯浠躲€?)
                 self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
                 self.lbl_guide.setVisible(True)
 
@@ -3961,7 +3995,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.current_invoice = None
             self.current_preview_docs = []
             self.current_preview_index = 0
-            self._preview_empty_message = "没有符合条件的发票" if total_in_db > 0 else "请选择一张发票查看原件"
+            self._preview_empty_message = "娌℃湁绗﹀悎鏉′欢鐨勫彂绁? if total_in_db > 0 else "璇烽€夋嫨涓€寮犲彂绁ㄦ煡鐪嬪師浠?
             self._update_document_preview()
             self._clear_detail_form()
             self._set_selection_total_status([])
@@ -4013,7 +4047,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._set_selection_total_status(selected)
 
         self.write_log(
-            f"[性能] 发票列表刷新: db={db_elapsed_ms}ms "
+            f"[鎬ц兘] 鍙戠エ鍒楄〃鍒锋柊: db={db_elapsed_ms}ms "
             f"filter={filter_elapsed_ms}ms render={render_elapsed_ms}ms "
             f"rows={len(self.invoices_list)}"
         )
@@ -4039,7 +4073,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 period = f" - {c.get('period_start')}~{c.get('period_end')}"
             display_text = f"{c.get('name')}{period}"
             self.combo_claims.addItem(display_text, c.get("id"))
-        self.combo_claims.addItem("＋ 新建报销组…", self._NEW_CLAIM_VALUE)
+        self.combo_claims.addItem("锛?鏂板缓鎶ラ攢缁勨€?, self._NEW_CLAIM_VALUE)
         if current_claim_id is not None:
             idx = self.combo_claims.findData(current_claim_id)
             if idx >= 0:
@@ -4048,7 +4082,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self._detail_panel, "claim_empty_hint"):
             self._detail_panel.claim_empty_hint.setVisible(not claims)
         self._update_claim_total()
-        if hasattr(self, "combo_export_claims"):
+        if hasattr(self, "export_group_list"):
             self._refresh_export_page()
 
     def _update_claim_total(self):
@@ -4056,10 +4090,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         claim_idx = self.combo_claims.currentIndex() if hasattr(self, "combo_claims") else -1
         if claim_idx < 0:
-            self.lbl_claim_total.setText("0 条记录 · 合计 ¥0.00")
+            self.lbl_claim_total.setText("0 鏉¤褰?路 鍚堣 楼0.00")
             if hasattr(self, "btn_add_to_claim"):
-                self.btn_add_to_claim.setText("加入")
-                self.btn_add_to_claim.setToolTip("请先选择报销组")
+                self.btn_add_to_claim.setText("鍔犲叆")
+                self.btn_add_to_claim.setToolTip("璇峰厛閫夋嫨鎶ラ攢缁?)
                 self.btn_add_to_claim.setEnabled(False)
             if hasattr(self, "btn_export"):
                 self.btn_export.setEnabled(False)
@@ -4069,8 +4103,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_id = self.combo_claims.itemData(claim_idx)
         if claim_id == self._NEW_CLAIM_VALUE:
             self._detail_panel._set_new_claim_input_visible(True)
-            self.lbl_claim_total.setText("输入名称并确认后即可加入发票")
-            self.btn_add_to_claim.setText("加入")
+            self.lbl_claim_total.setText("杈撳叆鍚嶇О骞剁‘璁ゅ悗鍗冲彲鍔犲叆鍙戠エ")
+            self.btn_add_to_claim.setText("鍔犲叆")
             self.btn_add_to_claim.setEnabled(False)
             self.btn_export.setEnabled(False)
             self.btn_delete_claim.setEnabled(False)
@@ -4089,9 +4123,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         from ..reimbursement import amount_total
         count, total, has_missing = amount_total(invoices)
-        suffix = "，部分金额缺失" if has_missing else ""
-        self.lbl_claim_total.setText(f"{group_name}：{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
-        
+        suffix = "锛岄儴鍒嗛噾棰濈己澶? if has_missing else ""
+        self.lbl_claim_total.setText(f"{group_name}锛歿count} 鏉¤褰?路 鍚堣 楼{total:.2f}{suffix}")
+
         if hasattr(self, "btn_add_to_claim"):
             existing_group = ""
             can_add = False
@@ -4113,29 +4147,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             break
                     except Exception as exc:
                         _log.debug("Failed to inspect selected invoice claim links: %s", exc)
-            display_group = group_name if len(group_name) <= 12 else f"{group_name[:12]}…"
+            display_group = group_name if len(group_name) <= 12 else f"{group_name[:12]}鈥?
             if can_add:
-                self.btn_add_to_claim.setText(f"加入 {display_group}")
-                self.btn_add_to_claim.setToolTip(f"将当前选中的未归组发票加入“{group_name}”")
+                self.btn_add_to_claim.setText(f"鍔犲叆 {display_group}")
+                self.btn_add_to_claim.setToolTip(f"灏嗗綋鍓嶉€変腑鐨勬湭褰掔粍鍙戠エ鍔犲叆鈥渰group_name}鈥?)
             else:
-                assigned_name = existing_group or "其他报销组"
-                display_assigned = assigned_name if len(assigned_name) <= 12 else f"{assigned_name[:12]}…"
-                self.btn_add_to_claim.setText(f"已在 {display_assigned}")
-                self.btn_add_to_claim.setToolTip("当前发票已有报销组，不能重复加入")
+                assigned_name = existing_group or "鍏朵粬鎶ラ攢缁?
+                display_assigned = assigned_name if len(assigned_name) <= 12 else f"{assigned_name[:12]}鈥?
+                self.btn_add_to_claim.setText(f"宸插湪 {display_assigned}")
+                self.btn_add_to_claim.setToolTip("褰撳墠鍙戠エ宸叉湁鎶ラ攢缁勶紝涓嶈兘閲嶅鍔犲叆")
             self.btn_add_to_claim.setEnabled(can_add)
         if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(count > 0)
         if hasattr(self, "btn_delete_claim"):
             self.btn_delete_claim.setEnabled(count == 0)
             self.btn_delete_claim.setToolTip(
-                "删除当前空报销组" if count == 0 else "当前报销组有关联记录，不能删除"
+                "鍒犻櫎褰撳墠绌烘姤閿€缁? if count == 0 else "褰撳墠鎶ラ攢缁勬湁鍏宠仈璁板綍锛屼笉鑳藉垹闄?
             )
-        if hasattr(self, "combo_export_claims") and self.combo_export_claims.count() > 0:
-            export_idx = self.combo_export_claims.findData(claim_id)
-            if export_idx >= 0 and self.combo_export_claims.currentIndex() != export_idx:
-                self.combo_export_claims.blockSignals(True)
-                self.combo_export_claims.setCurrentIndex(export_idx)
-                self.combo_export_claims.blockSignals(False)
+        if hasattr(self, "export_group_list") and self.export_group_list.count() > 0:
+            for row in range(self.export_group_list.count()):
+                item = self.export_group_list.item(row)
+                if item.data(Qt.UserRole) == claim_id:
+                    if self.export_group_list.currentRow() != row:
+                        self.export_group_list.blockSignals(True)
+                        self.export_group_list.setCurrentRow(row)
+                        self.export_group_list.blockSignals(False)
+                    break
             self._sync_export_claim_selection()
 
     def _clear_detail_form(self):
@@ -4154,8 +4191,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Return the leading count segment for the status bar, reflecting limited-load state."""
         shown = len(self.invoices_list)
         if self._limited_first_load_active and self._limited_first_load_total > shown:
-            return f"当前显示 {shown} / {self._limited_first_load_total} 张｜首屏限量加载"
-        return f"当前筛选 {shown} 张"
+            return f"褰撳墠鏄剧ず {shown} / {self._limited_first_load_total} 寮狅綔棣栧睆闄愰噺鍔犺浇"
+        return f"褰撳墠绛涢€?{shown} 寮?
 
     def _set_selection_total_status(self, selected_indexes):
         if not selected_indexes:
@@ -4164,8 +4201,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_status_left.setText(prefix)
             self.lbl_status_left.setToolTip(prefix)
             self._update_record_header_summary(selected_count=0)
-            
-            mid_text = "未选择发票"
+
+            mid_text = "鏈€夋嫨鍙戠エ"
             self.lbl_status_middle.setText(mid_text)
             self.lbl_status_middle.setToolTip(mid_text)
             return
@@ -4184,12 +4221,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 return
             prefix = self._format_status_count_prefix()
             count, total, has_missing = amount_total(rows)
-            suffix = " (部分金额缺失)" if has_missing else ""
-            
+            suffix = " (閮ㄥ垎閲戦缂哄け)" if has_missing else ""
+
             self.lbl_status_left.setText(prefix)
             self.lbl_status_left.setToolTip(prefix)
-            
-            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
+
+            mid_text = f"宸查€変腑 {count} 寮狅綔鍚堣 楼{total:.2f}{suffix}"
             self.lbl_status_middle.setText(mid_text)
             self.lbl_status_middle.setToolTip(mid_text)
 
@@ -4202,7 +4239,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_status_left.setToolTip(prefix)
             self._update_record_header_summary(selected_count=0)
 
-            mid_text = "未选择发票"
+            mid_text = "鏈€夋嫨鍙戠エ"
             self.lbl_status_middle.setText(mid_text)
             self.lbl_status_middle.setToolTip(mid_text)
             return
@@ -4221,13 +4258,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 return
             prefix = self._format_status_count_prefix()
             count, total, has_missing = amount_total(rows)
-            suffix = " (部分金额缺失)" if has_missing else ""
+            suffix = " (閮ㄥ垎閲戦缂哄け)" if has_missing else ""
 
             self.lbl_status_left.setText(prefix)
             self.lbl_status_left.setToolTip(prefix)
             self._update_record_header_summary(selected_count=count)
 
-            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
+            mid_text = f"宸查€変腑 {count} 寮狅綔鍚堣 楼{total:.2f}{suffix}"
             self.lbl_status_middle.setText(mid_text)
             self.lbl_status_middle.setToolTip(mid_text)
 
@@ -4253,7 +4290,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         num_selected = len(selected_indexes)
 
         if num_selected == 0:
-            self._preview_empty_message = "请选择一张发票查看原件"
+            self._preview_empty_message = "璇烽€夋嫨涓€寮犲彂绁ㄦ煡鐪嬪師浠?
             self._clear_detail_form()
             self._set_selection_total_status([])
             self.current_preview_docs = []
@@ -4274,17 +4311,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "action_inline_delete") and num_selected > 0:
             first_inv = self.invoices_list[selected_indexes[0].row()]
             if first_inv.get("is_deleted") == 1:
-                self.action_inline_delete.setText("恢复发票")
+                self.action_inline_delete.setText("鎭㈠鍙戠エ")
             else:
-                self.action_inline_delete.setText("删除发票")
+                self.action_inline_delete.setText("鍒犻櫎鍙戠エ")
 
         if hasattr(self, "btn_delete_invoice") and num_selected > 0:
             first_inv = self.invoices_list[selected_indexes[0].row()]
             if first_inv.get("is_deleted") == 1:
-                self.btn_delete_invoice.setText("🔄 恢复发票")
+                self.btn_delete_invoice.setText("馃攧 鎭㈠鍙戠エ")
                 self.btn_delete_invoice.setProperty("variant", "secondary")
             else:
-                self.btn_delete_invoice.setText("🗑️ 删除发票")
+                self.btn_delete_invoice.setText("馃棏锔?鍒犻櫎鍙戠エ")
                 self.btn_delete_invoice.setProperty("variant", "danger")
             self._refresh_widget_style(self.btn_delete_invoice)
 
@@ -4304,17 +4341,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             seller = str(inv.get("seller_name") or "")
             buyer = str(inv.get("buyer_name") or "")
             total_amt = str(inv.get("total_amount") or "")
-            category = str(inv.get("category") or "未分类")
+            category = str(inv.get("category") or "鏈垎绫?)
             status = inv.get("review_status") or "to_review"
             att_path = str(inv.get("attachment_path") or "")
 
             # Populate form fields via panel
             date_source_disp = {
-                "travel_date": "乘车日期",
-                "invoice_date": "开票日期",
-                "legacy": "历史数据",
-                "service_date": "服务日期",
-                "payment_date": "付款日期",
+                "travel_date": "涔樿溅鏃ユ湡",
+                "invoice_date": "寮€绁ㄦ棩鏈?,
+                "legacy": "鍘嗗彶鏁版嵁",
+                "service_date": "鏈嶅姟鏃ユ湡",
+                "payment_date": "浠樻鏃ユ湡",
             }.get(date_source, date_source)
             mail_uid = inv.get("mail_uid")
             download_url = str(inv.get("download_url") or "").strip()
@@ -4350,17 +4387,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 buyer_warning=buyer_check_warning,
                 date_warning=get_date_warning(inv),
             )
-            if buyer_check_warning.startswith("购买方抬头不匹配"):
+            if buyer_check_warning.startswith("璐拱鏂规姮澶翠笉鍖归厤"):
                 # Buyer title risk surfaced near buyer field, not in summary card.
                 cfg = load_config_safe()
                 expected = str(cfg.get("reimbursement", {}).get("buyer_name") or "").strip()
-                self.txt_buyer.setToolTip(f"抬头不匹配 — 期望抬头：{expected}\n实际抬头：{buyer}")
+                self.txt_buyer.setToolTip(f"鎶ご涓嶅尮閰?鈥?鏈熸湜鎶ご锛歿expected}\n瀹為檯鎶ご锛歿buyer}")
             else:
                 self.txt_buyer.setToolTip(buyer if buyer else "")
 
 
             if not buyer.strip():
-                self.txt_buyer.setPlaceholderText("待补全")
+                self.txt_buyer.setPlaceholderText("寰呰ˉ鍏?)
             else:
                 self.txt_buyer.setPlaceholderText("")
 
@@ -4390,23 +4427,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             from .helpers import resolve_invoice_documents_with_evidence
             self.current_preview_docs = resolve_invoice_documents_with_evidence(inv, self.db, RUNTIME_DIR)
             self.current_preview_index = 0
-            self._preview_empty_message = "当前发票没有可预览的原件"
+            self._preview_empty_message = "褰撳墠鍙戠エ娌℃湁鍙瑙堢殑鍘熶欢"
             if self.current_preview_docs:
-                self._preview_empty_message = "请选择一张发票查看原件"
+                self._preview_empty_message = "璇烽€夋嫨涓€寮犲彂绁ㄦ煡鐪嬪師浠?
             self._update_document_preview()
         else:
-            self._preview_empty_message = "已选择多张发票，请选择单张查看原件"
+            self._preview_empty_message = "宸查€夋嫨澶氬紶鍙戠エ锛岃閫夋嫨鍗曞紶鏌ョ湅鍘熶欢"
             self._clear_detail_form()
             self._detail_panel.set_multi_selection_state(num_selected)
             self.current_preview_docs = []
             self.current_preview_index = 0
-            self.lbl_file_info.setText("0 / 0 无文件")
+            self.lbl_file_info.setText("0 / 0 鏃犳枃浠?)
             self.btn_prev.setEnabled(False)
             self.btn_next.setEnabled(False)
             self.btn_open_ext.setEnabled(False)
             self._show_preview_status(self._preview_empty_message)
             if hasattr(self, "lbl_closing_desc"):
-                self.lbl_closing_desc.setText("已选中多张发票，请使用下方或右键菜单进行批量操作。")
+                self.lbl_closing_desc.setText("宸查€変腑澶氬紶鍙戠エ锛岃浣跨敤涓嬫柟鎴栧彸閿彍鍗曡繘琛屾壒閲忔搷浣溿€?)
 
         self._update_claim_total()
 
@@ -4426,38 +4463,38 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 break
 
         if all_deleted:
-            action_restore = menu.addAction("🔄 恢复发票")
+            action_restore = menu.addAction("馃攧 鎭㈠鍙戠エ")
             action_restore.triggered.connect(self._restore_selected_invoices)
         else:
             # Multi-select friendly claim linking options
             claim_idx = self.combo_claims.currentIndex()
             if claim_idx >= 0:
                 claim_name = self.combo_claims.currentText()
-                action_link = menu.addAction(f"🔗 关联到当前报销组: {claim_name}")
+                action_link = menu.addAction(f"馃敆 鍏宠仈鍒板綋鍓嶆姤閿€缁? {claim_name}")
                 action_link.triggered.connect(self._link_invoices_to_claim)
 
-                action_unlink = menu.addAction("🔓 从当前报销组取消关联")
+                action_unlink = menu.addAction("馃敁 浠庡綋鍓嶆姤閿€缁勫彇娑堝叧鑱?)
                 action_unlink.triggered.connect(self._unlink_selected_invoices)
                 menu.addSeparator()
 
             # Batch review status configuration submenu
-            menu_status = menu.addMenu("🎯 批量设置审核状态")
-            action_app = menu_status.addAction("🟢 已通过")
+            menu_status = menu.addMenu("馃幆 鎵归噺璁剧疆瀹℃牳鐘舵€?)
+            action_app = menu_status.addAction("馃煝 宸查€氳繃")
             action_app.triggered.connect(lambda: self._set_selected_status(APPROVED))
-            action_ign = menu_status.addAction("⚪ 已忽略")
+            action_ign = menu_status.addAction("鈿?宸插拷鐣?)
             action_ign.triggered.connect(lambda: self._set_selected_status(IGNORED))
-            action_err = menu_status.addAction("🔴 异常")
+            action_err = menu_status.addAction("馃敶 寮傚父")
             action_err.triggered.connect(lambda: self._set_selected_status(ERROR))
-            action_rev = menu_status.addAction("🟠 待审核")
+            action_rev = menu_status.addAction("馃煚 寰呭鏍?)
             action_rev.triggered.connect(lambda: self._set_selected_status(TO_REVIEW))
             menu.addSeparator()
 
-            action_reparse = menu.addAction("🔄 重新解析发票")
+            action_reparse = menu.addAction("馃攧 閲嶆柊瑙ｆ瀽鍙戠エ")
             action_reparse.triggered.connect(self._reparse_selected_invoices)
-            action_redownload = menu.addAction("📥 重新下载发票")
+            action_redownload = menu.addAction("馃摜 閲嶆柊涓嬭浇鍙戠エ")
             action_redownload.triggered.connect(self._redownload_selected_invoices)
             menu.addSeparator()
-            action_delete = menu.addAction("🗑️ 删除发票")
+            action_delete = menu.addAction("馃棏锔?鍒犻櫎鍙戠エ")
             action_delete.triggered.connect(self._delete_selected_invoices)
 
         menu.exec(self.table.mapToGlobal(pos))
@@ -4503,12 +4540,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             attachment_path = inv.get("attachment_path")
 
             if not attachment_path:
-                missing_files.append(f"发票 ID {inv_id}: 无附件文件记录")
+                missing_files.append(f"鍙戠エ ID {inv_id}: 鏃犻檮浠舵枃浠惰褰?)
                 continue
 
             file_path = self._resolve_attachment_path(attachment_path)
             if not file_path or not file_path.exists():
-                missing_files.append(f"发票 ID {inv_id}: 文件不存在 ({attachment_path})")
+                missing_files.append(f"鍙戠エ ID {inv_id}: 鏂囦欢涓嶅瓨鍦?({attachment_path})")
                 continue
 
             # Run PDF parser
@@ -4532,22 +4569,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         if duplicate_claim_count == 0:
                             if self.db.delete_invoice_permanently(int(duplicate["id"])):
                                 duplicate_conflicts.append(
-                                    f"发票 ID {inv_id}: 已删除旧重复记录 ID {duplicate.get('id')}"
+                                    f"鍙戠エ ID {inv_id}: 宸插垹闄ゆ棫閲嶅璁板綍 ID {duplicate.get('id')}"
                                 )
                                 self.write_log(
-                                    f"🔁 [重新解析] 发票 ID {inv_id} 命中旧重复记录 ID {duplicate.get('id')}，已删除旧记录并修复当前记录"
+                                    f"馃攣 [閲嶆柊瑙ｆ瀽] 鍙戠エ ID {inv_id} 鍛戒腑鏃ч噸澶嶈褰?ID {duplicate.get('id')}锛屽凡鍒犻櫎鏃ц褰曞苟淇褰撳墠璁板綍"
                                 )
                             else:
                                 duplicate_conflicts.append(
-                                    f"发票 ID {inv_id}: 发现重复记录 ID {duplicate.get('id')}，但无法清理旧记录"
+                                    f"鍙戠エ ID {inv_id}: 鍙戠幇閲嶅璁板綍 ID {duplicate.get('id')}锛屼絾鏃犳硶娓呯悊鏃ц褰?
                                 )
                                 self.write_log(
-                                    f"⚠️ [重新解析] 发票 ID {inv_id} 命中重复记录 ID {duplicate.get('id')}，旧记录清理失败"
+                                    f"鈿狅笍 [閲嶆柊瑙ｆ瀽] 鍙戠エ ID {inv_id} 鍛戒腑閲嶅璁板綍 ID {duplicate.get('id')}锛屾棫璁板綍娓呯悊澶辫触"
                                 )
                         else:
                             repair_target_id = int(duplicate["id"])
                             self.write_log(
-                                f"🔁 [重新解析] 发票 ID {inv_id} 命中已关联报销组的重复记录 ID {duplicate.get('id')}，改为更新该主记录"
+                                f"馃攣 [閲嶆柊瑙ｆ瀽] 鍙戠エ ID {inv_id} 鍛戒腑宸插叧鑱旀姤閿€缁勭殑閲嶅璁板綍 ID {duplicate.get('id')}锛屾敼涓烘洿鏂拌涓昏褰?
                             )
 
                     # Update database in-place
@@ -4560,13 +4597,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         total_amount=info.total_amount,
                         seller_name=info.seller_name,
                         buyer_name=info.buyer_name,
-                        invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
+                        invoice_type=info.invoice_type or inv.get("invoice_type") or "鐢靛瓙鍙戠エ",
                         category=category,
                         has_extra=inv.get("has_extra") or False,
                         extra_type=extra_type,
                         missing_extra=extra_required,
                         parse_success=True,
-                        parse_note=info.parse_note or "重新解析",
+                        parse_note=info.parse_note or "閲嶆柊瑙ｆ瀽",
                         item_name=getattr(info, "item_name", ""),
                         expense_date=getattr(info, "expense_date", ""),
                         date_source=getattr(info, "date_source", ""),
@@ -4575,24 +4612,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         if repair_target_id != inv_id:
                             self.db.soft_delete_invoice(inv_id)
                             self.write_log(
-                                f"✅ [重新解析] 发票 ID {inv_id} 已合并到主记录 ID {repair_target_id}"
+                                f"鉁?[閲嶆柊瑙ｆ瀽] 鍙戠エ ID {inv_id} 宸插悎骞跺埌涓昏褰?ID {repair_target_id}"
                             )
                         else:
-                            self.write_log(f"✅ [重新解析] 发票 ID {inv_id} 已更新解析结果")
+                            self.write_log(f"鉁?[閲嶆柊瑙ｆ瀽] 鍙戠エ ID {inv_id} 宸叉洿鏂拌В鏋愮粨鏋?)
                         success_count += 1
                     elif getattr(self.db, "last_error", "") == "unique_conflict":
                         duplicate_conflicts.append(
-                            f"发票 ID {inv_id}: 解析结果与已有发票唯一键冲突"
+                            f"鍙戠エ ID {inv_id}: 瑙ｆ瀽缁撴灉涓庡凡鏈夊彂绁ㄥ敮涓€閿啿绐?
                         )
                         self.write_log(
-                            f"⚠️ [重新解析] 发票 ID {inv_id} 与已有发票重复，未覆盖当前记录"
+                            f"鈿狅笍 [閲嶆柊瑙ｆ瀽] 鍙戠エ ID {inv_id} 涓庡凡鏈夊彂绁ㄩ噸澶嶏紝鏈鐩栧綋鍓嶈褰?
                         )
                     else:
-                        parse_failed_files.append(f"发票 ID {inv_id}: 解析结果写入失败 ({info.parse_note})")
+                        parse_failed_files.append(f"鍙戠エ ID {inv_id}: 瑙ｆ瀽缁撴灉鍐欏叆澶辫触 ({info.parse_note})")
                 else:
-                    parse_failed_files.append(f"发票 ID {inv_id}: 解析失败 ({info.parse_note})")
+                    parse_failed_files.append(f"鍙戠エ ID {inv_id}: 瑙ｆ瀽澶辫触 ({info.parse_note})")
             except Exception as e:
-                parse_failed_files.append(f"发票 ID {inv_id}: 异常 ({str(e)})")
+                parse_failed_files.append(f"鍙戠エ ID {inv_id}: 寮傚父 ({str(e)})")
 
         # Reload data
         self._select_row_hint = self._capture_selection_row_hint()
@@ -4601,24 +4638,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._on_table_selection_changed()
 
         # Build notification message
-        msg = f"已完成 {count} 张发票的重新解析流程！\n\n成功重新解析并更新: {success_count} 张"
+        msg = f"宸插畬鎴?{count} 寮犲彂绁ㄧ殑閲嶆柊瑙ｆ瀽娴佺▼锛乗n\n鎴愬姛閲嶆柊瑙ｆ瀽骞舵洿鏂? {success_count} 寮?
         if missing_files:
-            msg += f"\n\n以下发票的本地文件不存在:\n" + "\n".join(missing_files[:10])
+            msg += f"\n\n浠ヤ笅鍙戠エ鐨勬湰鍦版枃浠朵笉瀛樺湪:\n" + "\n".join(missing_files[:10])
             if len(missing_files) > 10:
-                msg += f"\n... 以及其他 {len(missing_files)-10} 个文件"
+                msg += f"\n... 浠ュ強鍏朵粬 {len(missing_files)-10} 涓枃浠?
         if duplicate_conflicts:
-            msg += f"\n\n以下发票已处理重复记录:\n" + "\n".join(duplicate_conflicts[:10])
+            msg += f"\n\n浠ヤ笅鍙戠エ宸插鐞嗛噸澶嶈褰?\n" + "\n".join(duplicate_conflicts[:10])
             if len(duplicate_conflicts) > 10:
-                msg += f"\n... 以及其他 {len(duplicate_conflicts)-10} 个重复项"
+                msg += f"\n... 浠ュ強鍏朵粬 {len(duplicate_conflicts)-10} 涓噸澶嶉」"
         if parse_failed_files:
-            msg += f"\n\n以下发票解析失败:\n" + "\n".join(parse_failed_files[:10])
+            msg += f"\n\n浠ヤ笅鍙戠エ瑙ｆ瀽澶辫触:\n" + "\n".join(parse_failed_files[:10])
             if len(parse_failed_files) > 10:
-                msg += f"\n... 以及其他 {len(parse_failed_files)-10} 个文件"
+                msg += f"\n... 浠ュ強鍏朵粬 {len(parse_failed_files)-10} 涓枃浠?
 
-        QMessageBox.information(self, "重新解析结果", msg)
+        QMessageBox.information(self, "閲嶆柊瑙ｆ瀽缁撴灉", msg)
         self.write_log(
-            f"🔄 [重新解析] 完成。成功: {success_count}, 重复处理: {len(duplicate_conflicts)}, "
-            f"缺失文件: {len(missing_files)}, 失败: {len(parse_failed_files)}"
+            f"馃攧 [閲嶆柊瑙ｆ瀽] 瀹屾垚銆傛垚鍔? {success_count}, 閲嶅澶勭悊: {len(duplicate_conflicts)}, "
+            f"缂哄け鏂囦欢: {len(missing_files)}, 澶辫触: {len(parse_failed_files)}"
         )
 
     def _redownload_selected_invoices(self):
@@ -4648,7 +4685,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         try:
             downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"启动下载引擎失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鍚姩涓嬭浇寮曟搸澶辫触: {e}")
             return
 
         parser = InvoiceParser()
@@ -4675,13 +4712,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             account = account_map.get(key, default_account)
             email_addr = str(account.get("address") or "")
             if not email_addr or email_addr == "your_email@qq.com":
-                raise ValueError("请先在[设置]中配置邮箱账号")
+                raise ValueError("璇峰厛鍦╗璁剧疆]涓厤缃偖绠辫处鍙?)
             if not has_auth_code(email_addr):
-                raise ValueError(f"邮箱账号 {email_addr} 未配置授权码，请先在[设置]中配置")
+                raise ValueError(f"閭璐﹀彿 {email_addr} 鏈厤缃巿鏉冪爜锛岃鍏堝湪[璁剧疆]涓厤缃?)
 
             auth_code = get_auth_code(email_addr)
             imap_cfg = account.get("imap") or cfg.get("imap", {})
-            self.write_log(f"📥 [重新下载] 连接 IMAP {email_addr} ...")
+            self.write_log(f"馃摜 [閲嶆柊涓嬭浇] 杩炴帴 IMAP {email_addr} ...")
             mail_fetcher_cm = MailFetcher(
                 address=email_addr,
                 auth_code=auth_code,
@@ -4693,7 +4730,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return mail_fetcher
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.statusBar().showMessage("正在启动下载引擎并获取发票文件...")
+        self.statusBar().showMessage("姝ｅ湪鍚姩涓嬭浇寮曟搸骞惰幏鍙栧彂绁ㄦ枃浠?..")
         QApplication.processEvents()
 
         try:
@@ -4742,25 +4779,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                         total_amount=info.total_amount,
                                         seller_name=info.seller_name,
                                         buyer_name=info.buyer_name,
-                                        invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
+                                        invoice_type=info.invoice_type or inv.get("invoice_type") or "鐢靛瓙鍙戠エ",
                                         category=cat,
                                         has_extra=inv.get("has_extra") or False,
                                         extra_type=extra_type,
                                         missing_extra=extra_req,
                                         parse_success=True,
-                                        parse_note="重新下载后解析",
+                                        parse_note="閲嶆柊涓嬭浇鍚庤В鏋?,
                                         item_name=getattr(info, "item_name", ""),
                                         expense_date=getattr(info, "expense_date", ""),
                                         date_source=getattr(info, "date_source", ""),
                                     )
                                     if not updated:
                                         if getattr(self.db, "last_error", "") == "unique_conflict":
-                                            fallback_reason = "解析结果与已有发票唯一键冲突"
+                                            fallback_reason = "瑙ｆ瀽缁撴灉涓庡凡鏈夊彂绁ㄥ敮涓€閿啿绐?
                                             self.write_log(
-                                                f"⚠️ [重新下载] 发票 ID {inv_id} 更新元数据时发生唯一键冲突，尝试回读邮件"
+                                                f"鈿狅笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 鏇存柊鍏冩暟鎹椂鍙戠敓鍞竴閿啿绐侊紝灏濊瘯鍥炶閭欢"
                                             )
                                         else:
-                                            fallback_reason = "解析结果写入数据库失败"
+                                            fallback_reason = "瑙ｆ瀽缁撴灉鍐欏叆鏁版嵁搴撳け璐?
                                     else:
                                         self.db._conn.execute(
                                             "UPDATE invoices SET attachment_path = ? WHERE id = ?",
@@ -4770,17 +4807,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                         success_count += 1
                                         redownload_buckets["file_restored"] += 1
                                         direct_download_ok = True
-                                        self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
+                                        self.write_log(f"鉁?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 閾炬帴涓嬭浇鎴愬姛")
                                 else:
-                                    fallback_reason = f"链接下载后解析失败: {info.parse_note}"
+                                    fallback_reason = f"閾炬帴涓嬭浇鍚庤В鏋愬け璐? {info.parse_note}"
                                     if os.path.exists(dl.file_path):
-                                        self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 下载的文件是 PDF 但解析失败，正在删除临时文件: {dl.file_path}")
+                                        self.write_log(f"鈿狅笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 涓嬭浇鐨勬枃浠舵槸 PDF 浣嗚В鏋愬け璐ワ紝姝ｅ湪鍒犻櫎涓存椂鏂囦欢: {dl.file_path}")
                                         os.remove(dl.file_path)
                             elif suffix == ".ofd":
                                 from ..__main__ import _rename_by_invoice_code
                                 code = inv.get("invoice_code") or inv.get("invoice_number") or ""
                                 inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
-                                cat = inv.get("category") or "其他"
+                                cat = inv.get("category") or "鍏朵粬"
                                 amt = inv.get("total_amount") or ""
                                 inv_num = inv.get("invoice_number") or ""
                                 att_path = _rename_by_invoice_code(
@@ -4795,17 +4832,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                 )
                                 self.db._conn.execute(
                                     "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
-                                    (att_path, "OFD 原件已恢复，需手动处理/转换后再解析。", inv_id),
+                                    (att_path, "OFD 鍘熶欢宸叉仮澶嶏紝闇€鎵嬪姩澶勭悊/杞崲鍚庡啀瑙ｆ瀽銆?, inv_id),
                                 )
                                 self.db._conn.commit()
-                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} OFD 原件已恢复，需手动处理/转换后再解析。")
+                                self.write_log(f"鉁?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} OFD 鍘熶欢宸叉仮澶嶏紝闇€鎵嬪姩澶勭悊/杞崲鍚庡啀瑙ｆ瀽銆?)
                                 redownload_buckets["metadata_refreshed"] += 1
                                 direct_download_ok = True
                             else:
                                 from ..__main__ import _rename_by_invoice_code
                                 code = inv.get("invoice_code") or inv.get("invoice_number") or ""
                                 inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
-                                cat = inv.get("category") or "其他"
+                                cat = inv.get("category") or "鍏朵粬"
                                 amt = inv.get("total_amount") or ""
                                 inv_num = inv.get("invoice_number") or ""
                                 att_path = _rename_by_invoice_code(
@@ -4820,16 +4857,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                 )
                                 self.db._conn.execute(
                                     "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
-                                    (att_path, f"下载了不支持的文件类型 ({suffix})，需手动处理。", inv_id),
+                                    (att_path, f"涓嬭浇浜嗕笉鏀寔鐨勬枃浠剁被鍨?({suffix})锛岄渶鎵嬪姩澶勭悊銆?, inv_id),
                                 )
                                 self.db._conn.commit()
-                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 下载了不支持的文件类型 ({suffix})，已保存，需手动处理。")
+                                self.write_log(f"鉁?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 涓嬭浇浜嗕笉鏀寔鐨勬枃浠剁被鍨?({suffix})锛屽凡淇濆瓨锛岄渶鎵嬪姩澶勭悊銆?)
                                 redownload_buckets["metadata_refreshed"] += 1
                                 direct_download_ok = True
                         else:
-                            fallback_reason = "下载超时或链接失效"
+                            fallback_reason = "涓嬭浇瓒呮椂鎴栭摼鎺ュけ鏁?
                     except Exception as e:
-                        fallback_reason = f"链接下载异常: {e}"
+                        fallback_reason = f"閾炬帴涓嬭浇寮傚父: {e}"
 
                 if direct_download_ok:
                     continue
@@ -4837,13 +4874,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if not mail_uid:
                     no_url_count += 1
                     failed_count += 1
-                    failure_detail = fallback_reason or "无邮件 UID，无法重新读取邮件"
+                    failure_detail = fallback_reason or "鏃犻偖浠?UID锛屾棤娉曢噸鏂拌鍙栭偖浠?
                     if download_url or fallback_reason:
                         redownload_buckets["download_failed"] += 1
                     else:
                         redownload_buckets["no_candidate_link"] += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: {failure_detail}")
-                    self.write_log(f"❌ [重新下载] 发票 ID {inv_id} {failure_detail}")
+                    download_failed_files.append(f"鍙戠エ ID {inv_id}: {failure_detail}")
+                    self.write_log(f"鉂?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} {failure_detail}")
                     continue
 
                 reread_count += 1
@@ -4856,7 +4893,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     mailbox_folder = account.get("search", {}).get("folder", "INBOX")
                     fetcher = ensure_mail_fetcher(mailbox_key)
                     self.write_log(
-                        f"↩️ [重新下载] 发票 ID {inv_id} {fallback_reason or '无下载链接'}，改为重新读取邮件 UID={mail_uid}"
+                        f"鈫╋笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} {fallback_reason or '鏃犱笅杞介摼鎺?}锛屾敼涓洪噸鏂拌鍙栭偖浠?UID={mail_uid}"
                     )
                     reread_ok = _handle_pending_email(
                         row={"uid": mail_uid, "mail_date": mail_date, "mailbox_key": mailbox_key},
@@ -4886,11 +4923,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         if bucket == "file_restored":
                             success_count += 1
                             reread_success_count += 1
-                            self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 已通过重新读取邮件修复原文件")
+                            self.write_log(f"鉁?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 宸查€氳繃閲嶆柊璇诲彇閭欢淇鍘熸枃浠?)
                         elif bucket == "metadata_refreshed":
-                            self.write_log(f"ℹ️ [重新下载] 发票 ID {inv_id} 仅刷新元数据或仍需手动下载")
+                            self.write_log(f"鈩癸笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 浠呭埛鏂板厓鏁版嵁鎴栦粛闇€鎵嬪姩涓嬭浇")
                         elif bucket == "duplicate_only":
-                            self.write_log(f"ℹ️ [重新下载] 发票 ID {inv_id} 仅命中已有重复记录")
+                            self.write_log(f"鈩癸笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 浠呭懡涓凡鏈夐噸澶嶈褰?)
                         else:
                             reread_failed_count += 1
                             failed_count += 1
@@ -4898,32 +4935,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             attempted = int(diagnostics.get("attempted", 0) or 0)
                             failed = int(diagnostics.get("failed", 0) or 0)
                             if attempted > 0 and failed > 0:
-                                fail_reason = "链接下载失败并且未恢复原件"
+                                fail_reason = "閾炬帴涓嬭浇澶辫触骞朵笖鏈仮澶嶅師浠?
                             else:
-                                fail_reason = "未恢复原件文件"
-                            download_failed_files.append(f"发票 ID {inv_id}: {fail_reason}")
-                            self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件后仍未成功恢复原件")
+                                fail_reason = "鏈仮澶嶅師浠舵枃浠?
+                            download_failed_files.append(f"鍙戠エ ID {inv_id}: {fail_reason}")
+                            self.write_log(f"鉂?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 閲嶆柊璇诲彇閭欢鍚庝粛鏈垚鍔熸仮澶嶅師浠?)
                         continue
 
                     if reread_status == "no_candidate_link":
                         redownload_buckets["no_candidate_link"] += 1
                         reread_failed_count += 1
                         failed_count += 1
-                        download_failed_files.append(f"发票 ID {inv_id}: 无候选下载链接")
-                        self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 无候选下载链接")
+                        download_failed_files.append(f"鍙戠エ ID {inv_id}: 鏃犲€欓€変笅杞介摼鎺?)
+                        self.write_log(f"鈿狅笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 鏃犲€欓€変笅杞介摼鎺?)
                         continue
 
                     reread_failed_count += 1
                     failed_count += 1
                     redownload_buckets["download_failed"] += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: 重新读取邮件后仍未成功入库")
-                    self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 重新读取邮件后仍未成功入库")
+                    download_failed_files.append(f"鍙戠エ ID {inv_id}: 閲嶆柊璇诲彇閭欢鍚庝粛鏈垚鍔熷叆搴?)
+                    self.write_log(f"鈿狅笍 [閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 閲嶆柊璇诲彇閭欢鍚庝粛鏈垚鍔熷叆搴?)
                 except Exception as e:
                     reread_failed_count += 1
                     failed_count += 1
                     redownload_buckets["download_failed"] += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: 重新读取邮件失败 ({str(e)})")
-                    self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件失败: {e}")
+                    download_failed_files.append(f"鍙戠エ ID {inv_id}: 閲嶆柊璇诲彇閭欢澶辫触 ({str(e)})")
+                    self.write_log(f"鉂?[閲嶆柊涓嬭浇] 鍙戠エ ID {inv_id} 閲嶆柊璇诲彇閭欢澶辫触: {e}")
         finally:
             downloader.close()
             for _, mail_fetcher_cm in mail_fetchers.values():
@@ -4939,25 +4976,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         msg = _format_redownload_bucket_summary(count, redownload_buckets, download_failed_files)
         if reread_count:
             msg += (
-                f"\n\n其中 {reread_count} 张需要重新读取邮件，"
-                f"成功修复 {reread_success_count} 张，失败 {reread_failed_count} 张。"
+                f"\n\n鍏朵腑 {reread_count} 寮犻渶瑕侀噸鏂拌鍙栭偖浠讹紝"
+                f"鎴愬姛淇 {reread_success_count} 寮狅紝澶辫触 {reread_failed_count} 寮犮€?
             )
         if no_url_count:
-            msg += f"\n\n{no_url_count} 张没有直接下载链接，已尝试从邮件重新读取。"
+            msg += f"\n\n{no_url_count} 寮犳病鏈夌洿鎺ヤ笅杞介摼鎺ワ紝宸插皾璇曚粠閭欢閲嶆柊璇诲彇銆?
 
         if (redownload_buckets.get("download_failed", 0) > 0 or
             (redownload_buckets.get("duplicate_only", 0) > 0 and redownload_buckets.get("file_restored", 0) == 0)):
-            QMessageBox.warning(self, "重新下载结果", msg)
+            QMessageBox.warning(self, "閲嶆柊涓嬭浇缁撴灉", msg)
         else:
-            QMessageBox.information(self, "重新下载结果", msg)
+            QMessageBox.information(self, "閲嶆柊涓嬭浇缁撴灉", msg)
         self.write_log(
-            "📥 [重新下载] 完成。"
+            "馃摜 [閲嶆柊涓嬭浇] 瀹屾垚銆?
             f"file_restored={redownload_buckets['file_restored']} "
             f"metadata_refreshed={redownload_buckets['metadata_refreshed']} "
             f"duplicate_only={redownload_buckets['duplicate_only']} "
             f"download_failed={redownload_buckets['download_failed']} "
             f"no_candidate_link={redownload_buckets['no_candidate_link']} "
-            f"回读邮件: {reread_success_count}/{reread_count}, 失败: {failed_count}"
+            f"鍥炶閭欢: {reread_success_count}/{reread_count}, 澶辫触: {failed_count}"
         )
 
     def _delete_selected_invoices(self):
@@ -4981,8 +5018,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         count = len(unique_indexes)
         reply = QMessageBox.question(
-            self, "确认删除",
-            f"确定要删除选中的 {count} 张发票吗？\n删除后发票将不会显示在列表中，但保留数据库恢复能力。",
+            self, "纭鍒犻櫎",
+            f"纭畾瑕佸垹闄ら€変腑鐨?{count} 寮犲彂绁ㄥ悧锛焅n鍒犻櫎鍚庡彂绁ㄥ皢涓嶄細鏄剧ず鍦ㄥ垪琛ㄤ腑锛屼絾淇濈暀鏁版嵁搴撴仮澶嶈兘鍔涖€?,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if reply != QMessageBox.Yes:
@@ -4995,8 +5032,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if inv_id and self.db.soft_delete_invoice(inv_id):
                 success_count += 1
 
-        self.write_log(f"🗑️ [删除发票] 成功删除 {success_count}/{count} 张发票。")
-        self.statusBar().showMessage(f"成功删除 {success_count} 张发票", 4000)
+        self.write_log(f"馃棏锔?[鍒犻櫎鍙戠エ] 鎴愬姛鍒犻櫎 {success_count}/{count} 寮犲彂绁ㄣ€?)
+        self.statusBar().showMessage(f"鎴愬姛鍒犻櫎 {success_count} 寮犲彂绁?, 4000)
         self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
@@ -5028,8 +5065,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if inv_id and self.db.restore_invoice(inv_id):
                 success_count += 1
 
-        self.write_log(f"🔄 [恢复发票] 成功恢复 {success_count}/{count} 张发票。")
-        self.statusBar().showMessage(f"成功恢复 {success_count} 张发票", 4000)
+        self.write_log(f"馃攧 [鎭㈠鍙戠エ] 鎴愬姛鎭㈠ {success_count}/{count} 寮犲彂绁ㄣ€?)
+        self.statusBar().showMessage(f"鎴愬姛鎭㈠ {success_count} 寮犲彂绁?, 4000)
         self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
@@ -5078,13 +5115,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not file_path.exists():
             QMessageBox.warning(
                 self,
-                "警告",
-                f"文件不存在于路径:\n{file_path}\n\n原始记录:\n{attachment_path}",
+                "璀﹀憡",
+                f"鏂囦欢涓嶅瓨鍦ㄤ簬璺緞:\n{file_path}\n\n鍘熷璁板綍:\n{attachment_path}",
             )
             return
 
         self._open_local_path(file_path)
-        self.statusBar().showMessage(f"已成功加载本地附件: {file_path.name}", 2000)
+        self.statusBar().showMessage(f"宸叉垚鍔熷姞杞芥湰鍦伴檮浠? {file_path.name}", 2000)
 
     def _add_attachment_manually(self):
         if not self.current_invoice:
@@ -5094,9 +5131,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "选择发票原件",
+            "閫夋嫨鍙戠エ鍘熶欢",
             "",
-            "发票文件 (*.pdf *.ofd *.png *.jpg *.jpeg);;所有文件 (*.*)"
+            "鍙戠エ鏂囦欢 (*.pdf *.ofd *.png *.jpg *.jpeg);;鎵€鏈夋枃浠?(*.*)"
         )
         if not file_path:
             return
@@ -5127,7 +5164,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 category=self.current_invoice.get("category"),
                 total_amount=self.current_invoice.get("total_amount"),
                 invoice_number=self.current_invoice.get("invoice_number"),
-                role="原件",
+                role="鍘熶欢",
             )
             if not dest_name.lower().endswith(ext):
                 dest_name = os.path.splitext(dest_name)[0] + ext
@@ -5166,12 +5203,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._update_document_preview()
             self._load_invoices()
 
-            _log.info("用户手动补齐发票原件: invoice_id=%s, filename=%s", inv_id, dest_path.name)
-            self.statusBar().showMessage("手动补齐原件成功", 3000)
+            _log.info("鐢ㄦ埛鎵嬪姩琛ラ綈鍙戠エ鍘熶欢: invoice_id=%s, filename=%s", inv_id, dest_path.name)
+            self.statusBar().showMessage("鎵嬪姩琛ラ綈鍘熶欢鎴愬姛", 3000)
 
         except Exception as e:
-            _log.error("手动补齐原件失败: %s", e)
-            QMessageBox.critical(self, "错误", f"补齐原件失败: {e}")
+            _log.error("鎵嬪姩琛ラ綈鍘熶欢澶辫触: %s", e)
+            QMessageBox.critical(self, "閿欒", f"琛ラ綈鍘熶欢澶辫触: {e}")
 
     def _add_evidence_manually(self):
         if not self.current_invoice:
@@ -5181,9 +5218,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "选择证明材料",
+            "閫夋嫨璇佹槑鏉愭枡",
             "",
-            "证明文件 (*.pdf *.ofd *.png *.jpg *.jpeg *.docx *.xlsx *.zip);;所有文件 (*.*)"
+            "璇佹槑鏂囦欢 (*.pdf *.ofd *.png *.jpg *.jpeg *.docx *.xlsx *.zip);;鎵€鏈夋枃浠?(*.*)"
         )
         if not file_path:
             return
@@ -5210,7 +5247,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 category=self.current_invoice.get("category"),
                 total_amount=self.current_invoice.get("total_amount"),
                 invoice_number=self.current_invoice.get("invoice_number"),
-                role="证明材料",
+                role="璇佹槑鏉愭枡",
             )
             if not dest_name.lower().endswith(ext):
                 dest_name = os.path.splitext(dest_name)[0] + ext
@@ -5270,12 +5307,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._update_document_preview()
             self._load_invoices()
 
-            _log.info("用户手动补齐证明材料: invoice_id=%s, filename=%s", inv_id, dest_path.name)
-            self.statusBar().showMessage("手动补齐证明材料成功", 3000)
+            _log.info("鐢ㄦ埛鎵嬪姩琛ラ綈璇佹槑鏉愭枡: invoice_id=%s, filename=%s", inv_id, dest_path.name)
+            self.statusBar().showMessage("鎵嬪姩琛ラ綈璇佹槑鏉愭枡鎴愬姛", 3000)
 
         except Exception as e:
-            _log.error("手动补齐证明材料失败: %s", e)
-            QMessageBox.critical(self, "错误", f"补齐证明材料失败: {e}")
+            _log.error("鎵嬪姩琛ラ綈璇佹槑鏉愭枡澶辫触: %s", e)
+            QMessageBox.critical(self, "閿欒", f"琛ラ綈璇佹槑鏉愭枡澶辫触: {e}")
 
     def _retry_download_link(self):
         if not self.current_invoice:
@@ -5286,8 +5323,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         from PySide6.QtWidgets import QProgressDialog, QMessageBox
-        progress = QProgressDialog("正在从链接尝试下载发票文件...", "取消", 0, 0, self)
-        progress.setWindowTitle("下载引擎")
+        progress = QProgressDialog("姝ｅ湪浠庨摼鎺ュ皾璇曚笅杞藉彂绁ㄦ枃浠?..", "鍙栨秷", 0, 0, self)
+        progress.setWindowTitle("涓嬭浇寮曟搸")
         progress.setWindowModality(Qt.WindowModal)
         progress.show()
         progress.setValue(0)
@@ -5327,7 +5364,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     category=self.current_invoice.get("category"),
                     total_amount=self.current_invoice.get("total_amount"),
                     invoice_number=self.current_invoice.get("invoice_number"),
-                    role="原件",
+                    role="鍘熶欢",
                 )
                 if not dest_name.lower().endswith(ext):
                     dest_name = os.path.splitext(dest_name)[0] + ext
@@ -5364,19 +5401,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
             downloader.close()
         except Exception as e:
-            _log.error("重试下载发生错误: %s", e)
+            _log.error("閲嶈瘯涓嬭浇鍙戠敓閿欒: %s", e)
 
         progress.close()
 
         if success:
-            QMessageBox.information(self, "成功", "发票原件下载并关联成功！")
+            QMessageBox.information(self, "鎴愬姛", "鍙戠エ鍘熶欢涓嬭浇骞跺叧鑱旀垚鍔燂紒")
             self._update_detail_fields(self.current_invoice)
             self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
             self.current_preview_index = 0
             self._update_document_preview()
             self._load_invoices()
         else:
-            QMessageBox.warning(self, "下载失败", "未能从链接获取官方 PDF/OFD，请尝试人工补齐原件文件。")
+            QMessageBox.warning(self, "涓嬭浇澶辫触", "鏈兘浠庨摼鎺ヨ幏鍙栧畼鏂?PDF/OFD锛岃灏濊瘯浜哄伐琛ラ綈鍘熶欢鏂囦欢銆?)
 
     def _open_extra_docs(self):
         """Open the currently selected extra/unassociated supporting doc."""
@@ -5384,12 +5421,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         if not hasattr(self, "supporting_doc_items") or not self.supporting_doc_items:
-            QMessageBox.information(self, "提示", "未找到可供查看的证明材料文件。")
+            QMessageBox.information(self, "鎻愮ず", "鏈壘鍒板彲渚涙煡鐪嬬殑璇佹槑鏉愭枡鏂囦欢銆?)
             return
 
         idx = self.combo_supporting_docs.currentIndex()
         if idx < 0 or idx >= len(self.supporting_doc_items):
-            QMessageBox.information(self, "提示", "未找到可供查看的证明材料文件。")
+            QMessageBox.information(self, "鎻愮ず", "鏈壘鍒板彲渚涙煡鐪嬬殑璇佹槑鏉愭枡鏂囦欢銆?)
             return
 
         item = self.supporting_doc_items[idx]
@@ -5397,12 +5434,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if file_path and file_path.exists():
             self._open_local_path(file_path)
-            self.statusBar().showMessage(f"已打开证明材料: {file_path.name}", 2000)
+            self.statusBar().showMessage(f"宸叉墦寮€璇佹槑鏉愭枡: {file_path.name}", 2000)
         else:
             QMessageBox.warning(
                 self,
-                "警告",
-                f"文件不存在于路径:\n{file_path}",
+                "璀﹀憡",
+                f"鏂囦欢涓嶅瓨鍦ㄤ簬璺緞:\n{file_path}",
             )
 
     def _locate_attachment(self):
@@ -5421,7 +5458,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             target_dir.mkdir(parents=True, exist_ok=True)
 
         self._open_local_path(target_dir)
-        self.statusBar().showMessage(f"已打开附件所在目录: {target_dir}", 2000)
+        self.statusBar().showMessage(f"宸叉墦寮€闄勪欢鎵€鍦ㄧ洰褰? {target_dir}", 2000)
 
     def _locate_attachment_file(self):
         """Open Explorer and highlight/select the current attachment file."""
@@ -5432,8 +5469,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not file_path or not file_path.exists():
             QMessageBox.warning(
                 self,
-                "警告",
-                f"文件不存在于路径:\n{file_path}",
+                "璀﹀憡",
+                f"鏂囦欢涓嶅瓨鍦ㄤ簬璺緞:\n{file_path}",
             )
             return
 
@@ -5453,7 +5490,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         exports_dir = PROJECT_ROOT / "exports"
         exports_dir.mkdir(parents=True, exist_ok=True)
         self._open_local_path(exports_dir)
-        self.statusBar().showMessage("已打开总导出 exports 目录", 3000)
+        self.statusBar().showMessage("宸叉墦寮€鎬诲鍑?exports 鐩綍", 3000)
 
     def _save_invoice_fields(self):
         # Save manually edited metadata fields in the form to database.
@@ -5469,8 +5506,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         note = self.txt_note.toPlainText().strip()
 
         if not amount:
-            self.statusBar().showMessage("金额为空，已保存为待补全；标记通过前会再次确认。", 5000)
-            self.write_log("⚠️ [手工补录] 当前记录金额为空，已按待补全材料保存。")
+            self.statusBar().showMessage("閲戦涓虹┖锛屽凡淇濆瓨涓哄緟琛ュ叏锛涙爣璁伴€氳繃鍓嶄細鍐嶆纭銆?, 5000)
+            self.write_log("鈿狅笍 [鎵嬪伐琛ュ綍] 褰撳墠璁板綍閲戦涓虹┖锛屽凡鎸夊緟琛ュ叏鏉愭枡淇濆瓨銆?)
 
         try:
             success = self.db.update_invoice_fields(
@@ -5487,14 +5524,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if getattr(self.db, "last_error", "") == "unique_conflict":
                     QMessageBox.warning(
                         self,
-                        "保存失败",
-                        "保存内容与已有发票重复，请检查发票号码、金额和销售方。",
+                        "淇濆瓨澶辫触",
+                        "淇濆瓨鍐呭涓庡凡鏈夊彂绁ㄩ噸澶嶏紝璇锋鏌ュ彂绁ㄥ彿鐮併€侀噾棰濆拰閿€鍞柟銆?,
                     )
                 else:
-                    QMessageBox.warning(self, "保存失败", "未能保存发票修改")
+                    QMessageBox.warning(self, "淇濆瓨澶辫触", "鏈兘淇濆瓨鍙戠エ淇敼")
                 return
 
-            self.statusBar().showMessage("发票修改已保存", 3000)
+            self.statusBar().showMessage("鍙戠エ淇敼宸蹭繚瀛?, 3000)
             current_row = self.table.currentRow()
             refreshed = self.db.get_invoice(inv_id)
             if refreshed:
@@ -5509,18 +5546,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.btn_save_draft.setEnabled(False)
         except Exception as e:
             _log.error("Failed to save invoice edits: %s", e)
-            QMessageBox.critical(self, "错误", f"保存发票失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"淇濆瓨鍙戠エ澶辫触: {e}")
 
     def _approval_missing_fields(self, inv: dict) -> list[str]:
         missing = []
         if not str(inv.get("invoice_number") or "").strip():
-            missing.append("发票号码")
+            missing.append("鍙戠エ鍙风爜")
         if not str(inv.get("total_amount") or "").strip():
-            missing.append("金额")
+            missing.append("閲戦")
         if not str(inv.get("expense_date") or inv.get("invoice_date") or "").strip():
-            missing.append("费用日期")
+            missing.append("璐圭敤鏃ユ湡")
         if not str(inv.get("attachment_path") or "").strip():
-            missing.append("原件")
+            missing.append("鍘熶欢")
         return missing
 
     def _confirm_approve_incomplete_invoices(
@@ -5533,40 +5570,40 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for inv in invoices:
             missing = self._approval_missing_fields(inv)
             if missing:
-                if "原件" in missing:
+                if "鍘熶欢" in missing:
                     has_missing_attachment = True
                 label = str(inv.get("invoice_number") or inv.get("seller_name") or f"ID {inv.get('id')}").strip()
-                incomplete.append(f"- {label}: 缺 {', '.join(missing)}")
+                incomplete.append(f"- {label}: 缂?{', '.join(missing)}")
 
         if not incomplete and not skipped_evidence_count:
             return True
 
         preview = "\n".join(incomplete[:8])
         if len(incomplete) > 8:
-            preview += f"\n... 另有 {len(incomplete) - 8} 条"
+            preview += f"\n... 鍙︽湁 {len(incomplete) - 8} 鏉?
         selection_summary = ""
         if skipped_evidence_count:
             selection_summary = (
-                f"将跳过 {skipped_evidence_count} 条待关联证明材料，"
-                f"并处理 {len(invoices)} 条正式发票。\n\n"
+                f"灏嗚烦杩?{skipped_evidence_count} 鏉″緟鍏宠仈璇佹槑鏉愭枡锛?
+                f"骞跺鐞?{len(invoices)} 鏉℃寮忓彂绁ㄣ€俓n\n"
             )
         missing_summary = (
-            f"以下正式发票仍缺少关键信息：\n{preview}\n\n"
+            f"浠ヤ笅姝ｅ紡鍙戠エ浠嶇己灏戝叧閿俊鎭細\n{preview}\n\n"
             if incomplete else ""
         )
 
         if len(invoices) == 1 and has_missing_attachment and len(incomplete) == 1:
-            prompt_text = "该发票缺少本地原件文件，是否仍通过？"
+            prompt_text = "璇ュ彂绁ㄧ己灏戞湰鍦板師浠舵枃浠讹紝鏄惁浠嶉€氳繃锛?
         else:
             prompt_text = (
                 selection_summary
                 + missing_summary
-                + "如果这是图片、receipt、水单或其他未识别材料，请确认原件和手工补录信息无误后再通过审核。是否继续标记为已通过？"
+                + "濡傛灉杩欐槸鍥剧墖銆乺eceipt銆佹按鍗曟垨鍏朵粬鏈瘑鍒潗鏂欙紝璇风‘璁ゅ師浠跺拰鎵嬪伐琛ュ綍淇℃伅鏃犺鍚庡啀閫氳繃瀹℃牳銆傛槸鍚︾户缁爣璁颁负宸查€氳繃锛?
             )
 
         reply = QMessageBox.question(
             self,
-            "确认通过审核",
+            "纭閫氳繃瀹℃牳",
             prompt_text,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
@@ -5594,7 +5631,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         next_select_row = max_row + 1 - len(selected_indexes)
         selected_invoices = [self.invoices_list[row_idx] for row_idx in row_indexes]
-        note = self.txt_note.toPlainText().strip() if len(selected_indexes) == 1 else "批量修改状态"
+        note = self.txt_note.toPlainText().strip() if len(selected_indexes) == 1 else "鎵归噺淇敼鐘舵€?
 
         actionable_invoices = selected_invoices
         if status == APPROVED:
@@ -5608,14 +5645,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if not actionable_invoices:
                 QMessageBox.warning(
                     self,
-                    "无法标记通过",
+                    "鏃犳硶鏍囪閫氳繃",
                     (
-                        "待关联证明材料不能直接标记为已通过，"
-                        "请先关联到主发票或补录为正式报销记录。"
+                        "寰呭叧鑱旇瘉鏄庢潗鏂欎笉鑳界洿鎺ユ爣璁颁负宸查€氳繃锛?
+                        "璇峰厛鍏宠仈鍒颁富鍙戠エ鎴栬ˉ褰曚负姝ｅ紡鎶ラ攢璁板綍銆?
                     ),
                 )
                 self.statusBar().showMessage(
-                    f"已跳过 {result['evidence_only']} 条待关联证明材料。",
+                    f"宸茶烦杩?{result['evidence_only']} 鏉″緟鍏宠仈璇佹槑鏉愭枡銆?,
                     4000,
                 )
                 return result
@@ -5623,9 +5660,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 actionable_invoices,
                 skipped_evidence_count=result["evidence_only"],
             ):
-                cancel_message = "已取消标记通过，正式发票仍保持待审核。"
+                cancel_message = "宸插彇娑堟爣璁伴€氳繃锛屾寮忓彂绁ㄤ粛淇濇寔寰呭鏍搞€?
                 if result["evidence_only"]:
-                    cancel_message += f" 已跳过 {result['evidence_only']} 条待关联证明材料。"
+                    cancel_message += f" 宸茶烦杩?{result['evidence_only']} 鏉″緟鍏宠仈璇佹槑鏉愭枡銆?
                 self.statusBar().showMessage(cancel_message, 4000)
                 return result
 
@@ -5645,14 +5682,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
             summary_parts = []
             if result["success"]:
-                summary_parts.append(f"成功 {result['success']} 条")
+                summary_parts.append(f"鎴愬姛 {result['success']} 鏉?)
             if result["evidence_only"]:
-                summary_parts.append(f"跳过待关联证明材料 {result['evidence_only']} 条")
+                summary_parts.append(f"璺宠繃寰呭叧鑱旇瘉鏄庢潗鏂?{result['evidence_only']} 鏉?)
             if result["not_found"]:
-                summary_parts.append(f"记录不存在 {result['not_found']} 条")
+                summary_parts.append(f"璁板綍涓嶅瓨鍦?{result['not_found']} 鏉?)
             if result["other_failed"]:
-                summary_parts.append(f"失败 {result['other_failed']} 条")
-            self.statusBar().showMessage("；".join(summary_parts), 4000)
+                summary_parts.append(f"澶辫触 {result['other_failed']} 鏉?)
+            self.statusBar().showMessage("锛?.join(summary_parts), 4000)
             self._load_invoices()
 
             num_rows = self.table.rowCount()
@@ -5687,7 +5724,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         except Exception as e:
             _log.error("Failed to update status: %s", e)
-            QMessageBox.critical(self, "错误", f"更新状态失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鏇存柊鐘舵€佸け璐? {e}")
             result["other_failed"] += 1
             return result
 
@@ -5695,20 +5732,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Insert a new claim group into DB and reload dropdown."""
         name = self.txt_new_claim.text().strip()
         if not name:
-            QMessageBox.warning(self, "输入有误", "请输入报销组名称！")
+            QMessageBox.warning(self, "杈撳叆鏈夎", "璇疯緭鍏ユ姤閿€缁勫悕绉帮紒")
             return
 
         try:
             claim_id = self.db.create_claim_group(name=name)
             self.txt_new_claim.clear()
             self._load_claims(selected_claim_id=claim_id)
-            self.statusBar().showMessage(f"成功创建报销组: '{name}'", 3000)
+            self.statusBar().showMessage(f"鎴愬姛鍒涘缓鎶ラ攢缁? '{name}'", 3000)
             if hasattr(self._detail_panel, "new_claim_widget"):
                 self._detail_panel.new_claim_widget.setVisible(False)
-            QMessageBox.information(self, "创建成功", f"已创建并选中报销组“{name}”；当前发票尚未加入。")
+            QMessageBox.information(self, "鍒涘缓鎴愬姛", f"宸插垱寤哄苟閫変腑鎶ラ攢缁勨€渰name}鈥濓紱褰撳墠鍙戠エ灏氭湭鍔犲叆銆?)
         except Exception as e:
             _log.error("Failed to create claim group: %s", e)
-            QMessageBox.critical(self, "错误", f"新建报销组失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鏂板缓鎶ラ攢缁勫け璐? {e}")
 
     def _delete_empty_claim(self):
         """Delete the selected claim group after confirming it has no records."""
@@ -5721,8 +5758,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_name = self.combo_claims.currentText().split(" - ", 1)[0].strip()
         if QMessageBox.question(
             self,
-            "删除报销组",
-            f"确定删除空报销组“{claim_name}”吗？",
+            "鍒犻櫎鎶ラ攢缁?,
+            f"纭畾鍒犻櫎绌烘姤閿€缁勨€渰claim_name}鈥濆悧锛?,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         ) != QMessageBox.Yes:
@@ -5730,30 +5767,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if not self.db.delete_claim_group_if_empty(claim_id):
             if getattr(self.db, "last_error", "") == "not_empty":
-                QMessageBox.warning(self, "无法删除", "当前报销组已有记录，不能删除。")
+                QMessageBox.warning(self, "鏃犳硶鍒犻櫎", "褰撳墠鎶ラ攢缁勫凡鏈夎褰曪紝涓嶈兘鍒犻櫎銆?)
             else:
-                QMessageBox.warning(self, "无法删除", "报销组不存在或已被删除。")
+                QMessageBox.warning(self, "鏃犳硶鍒犻櫎", "鎶ラ攢缁勪笉瀛樺湪鎴栧凡琚垹闄ゃ€?)
             self._load_claims()
             return
 
         self._load_claims()
-        self.statusBar().showMessage(f"已删除空报销组：{claim_name}", 3000)
+        self.statusBar().showMessage(f"宸插垹闄ょ┖鎶ラ攢缁勶細{claim_name}", 3000)
 
     def _link_invoices_to_claim(self):
         """Map selected invoices to the dropdown claim group in the SQLite DB."""
         selected_indexes = self.table.selectionModel().selectedRows()
         if not selected_indexes:
-            QMessageBox.warning(self, "选择为空", "请先在左侧表格中选中发票记录！")
+            QMessageBox.warning(self, "閫夋嫨涓虹┖", "璇峰厛鍦ㄥ乏渚ц〃鏍间腑閫変腑鍙戠エ璁板綍锛?)
             return
 
         claim_idx = self.combo_claims.currentIndex()
         if claim_idx < 0:
-            QMessageBox.warning(self, "选择为空", "请选择要关联的目标报销组！")
+            QMessageBox.warning(self, "閫夋嫨涓虹┖", "璇烽€夋嫨瑕佸叧鑱旂殑鐩爣鎶ラ攢缁勶紒")
             return
 
         claim_id = self.combo_claims.itemData(claim_idx)
         if claim_id == self._NEW_CLAIM_VALUE:
-            QMessageBox.warning(self, "选择为空", "请先创建或选择目标报销组！")
+            QMessageBox.warning(self, "閫夋嫨涓虹┖", "璇峰厛鍒涘缓鎴栭€夋嫨鐩爣鎶ラ攢缁勶紒")
             return
         claim_name = self.combo_claims.currentText()
         linked_count = 0
@@ -5781,21 +5818,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
             message_parts = []
             if linked_count:
-                message_parts.append(f"成功关联 {linked_count} 张发票")
+                message_parts.append(f"鎴愬姛鍏宠仈 {linked_count} 寮犲彂绁?)
             if assigned_count:
-                message_parts.append(f"已归组跳过 {assigned_count} 张")
+                message_parts.append(f"宸插綊缁勮烦杩?{assigned_count} 寮?)
             if evidence_only_count:
-                message_parts.append(f"跳过待关联证明材料 {evidence_only_count} 张")
+                message_parts.append(f"璺宠繃寰呭叧鑱旇瘉鏄庢潗鏂?{evidence_only_count} 寮?)
             if failed_count:
-                message_parts.append(f"失败 {failed_count} 张")
+                message_parts.append(f"澶辫触 {failed_count} 寮?)
             if not linked_count:
-                message_parts.insert(0, "未关联任何发票")
-            msg = "；".join(message_parts) + "。"
+                message_parts.insert(0, "鏈叧鑱斾换浣曞彂绁?)
+            msg = "锛?.join(message_parts) + "銆?
             self.statusBar().showMessage(
-                f"报销组【{claim_name}】: " + "；".join(message_parts),
+                f"鎶ラ攢缁勩€恵claim_name}銆? " + "锛?.join(message_parts),
                 4000,
             )
-            dialog_title = "关联结果" if linked_count else "未关联"
+            dialog_title = "鍏宠仈缁撴灉" if linked_count else "鏈叧鑱?
             QMessageBox.information(self, dialog_title, msg)
             self._load_claims()
             self._select_row_hint = self._capture_selection_row_hint()
@@ -5809,7 +5846,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         except Exception as e:
             _log.error("Failed to link invoices to claim: %s", e)
-            QMessageBox.critical(self, "错误", f"关联发票失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鍏宠仈鍙戠エ澶辫触: {e}")
             return {
                 "linked": linked_count,
                 "assigned": assigned_count,
@@ -5821,12 +5858,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Remove selected invoices from the active claim group in the SQLite DB."""
         selected_indexes = self.table.selectionModel().selectedRows()
         if not selected_indexes:
-            QMessageBox.warning(self, "选择为空", "请先在左侧表格中选中发票记录！")
+            QMessageBox.warning(self, "閫夋嫨涓虹┖", "璇峰厛鍦ㄥ乏渚ц〃鏍间腑閫変腑鍙戠エ璁板綍锛?)
             return
 
         claim_idx = self.combo_claims.currentIndex()
         if claim_idx < 0:
-            QMessageBox.warning(self, "选择为空", "请选择要取消关联的源报销组！")
+            QMessageBox.warning(self, "閫夋嫨涓虹┖", "璇烽€夋嫨瑕佸彇娑堝叧鑱旂殑婧愭姤閿€缁勶紒")
             return
 
         claim_id = self.combo_claims.itemData(claim_idx)
@@ -5839,15 +5876,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.db.remove_invoice_from_claim(claim_id, inv["id"])
                 unlinked_count += 1
 
-            self.statusBar().showMessage(f"已从报销组【{claim_name}】中取消关联 {unlinked_count} 张发票", 3000)
-            QMessageBox.information(self, "成功", f"已成功取消关联 {unlinked_count} 张发票！")
+            self.statusBar().showMessage(f"宸蹭粠鎶ラ攢缁勩€恵claim_name}銆戜腑鍙栨秷鍏宠仈 {unlinked_count} 寮犲彂绁?, 3000)
+            QMessageBox.information(self, "鎴愬姛", f"宸叉垚鍔熷彇娑堝叧鑱?{unlinked_count} 寮犲彂绁紒")
             self._load_claims()
             self._select_row_hint = self._capture_selection_row_hint()
             self._load_invoices()
 
         except Exception as e:
             _log.error("Failed to unlink invoices from claim: %s", e)
-            QMessageBox.critical(self, "错误", f"取消关联失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鍙栨秷鍏宠仈澶辫触: {e}")
 
     def _claim_export_preflight_stats(self, claim_id: int) -> dict:
         invoices = self.db.get_claim_invoices(claim_id)
@@ -5872,22 +5909,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _format_claim_export_preflight_text(self, stats: dict) -> str:
         return (
-            "导出已通过 + 待审核发票。\n"
-            "ignored/error 永远跳过，不会进入报销包。\n\n"
-            "导出前统计:\n"
+            "瀵煎嚭宸查€氳繃 + 寰呭鏍稿彂绁ㄣ€俓n"
+            "ignored/error 姘歌繙璺宠繃锛屼笉浼氳繘鍏ユ姤閿€鍖呫€俓n\n"
+            "瀵煎嚭鍓嶇粺璁?\n"
             f"- approved: {stats.get(APPROVED, 0)}\n"
             f"- to_review: {stats.get(TO_REVIEW, 0)}\n"
             f"- ignored: {stats.get(IGNORED, 0)}\n"
             f"- error: {stats.get(ERROR, 0)}\n"
-            f"- 缺附件: {stats.get('missing_attachment', 0)}\n"
-            f"- 缺金额: {stats.get('missing_amount', 0)}"
+            f"- 缂洪檮浠? {stats.get('missing_attachment', 0)}\n"
+            f"- 缂洪噾棰? {stats.get('missing_amount', 0)}"
         )
 
     def _export_claim_package(self):
         """Run standard claim export (offering choices for range scope) and offer direct file manager folder opening."""
         claim_idx = self.combo_claims.currentIndex()
         if claim_idx < 0:
-            QMessageBox.warning(self, "关联空", "请选择需要导出的报销组！")
+            QMessageBox.warning(self, "鍏宠仈绌?, "璇烽€夋嫨闇€瑕佸鍑虹殑鎶ラ攢缁勶紒")
             return
 
         claim_id = self.combo_claims.itemData(claim_idx)
@@ -5900,23 +5937,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             + preflight_stats.get(ERROR, 0)
         )
         if total_invoices == 0:
-            QMessageBox.warning(self, "关联空", "当前报销组内没有发票，无法导出！")
+            QMessageBox.warning(self, "鍏宠仈绌?, "褰撳墠鎶ラ攢缁勫唴娌℃湁鍙戠エ锛屾棤娉曞鍑猴紒")
             return
         preflight_text = self._format_claim_export_preflight_text(preflight_stats)
 
         # Premium selection dialog for export range
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
-        box.setWindowTitle("确认导出范围")
+        box.setWindowTitle("纭瀵煎嚭鑼冨洿")
         box.setText(
-            f"将开始导出【{claim_name}】的报销文件包。\n\n"
-            "默认策略仅打包处于「已审核通过 (approved)」状态的合格发票。\n"
-            "对于当前处于「待审核」或「异常」状态的关联记录，您希望如何处理？"
+            f"灏嗗紑濮嬪鍑恒€恵claim_name}銆戠殑鎶ラ攢鏂囦欢鍖呫€俓n\n"
+            "榛樿绛栫暐浠呮墦鍖呭浜庛€屽凡瀹℃牳閫氳繃 (approved)銆嶇姸鎬佺殑鍚堟牸鍙戠エ銆俓n"
+            "瀵逛簬褰撳墠澶勪簬銆屽緟瀹℃牳銆嶆垨銆屽紓甯搞€嶇姸鎬佺殑鍏宠仈璁板綍锛屾偍甯屾湜濡備綍澶勭悊锛?
         )
         box.setInformativeText(preflight_text)
-        btn_approved_only = box.addButton("🟢 仅打包已通过发票", QMessageBox.YesRole)
-        btn_include_all = box.addButton("🟡 导出已通过 + 待审核发票", QMessageBox.NoRole)
-        btn_cancel = box.addButton("取消", QMessageBox.RejectRole)
+        btn_approved_only = box.addButton("馃煝 浠呮墦鍖呭凡閫氳繃鍙戠エ", QMessageBox.YesRole)
+        btn_include_all = box.addButton("馃煛 瀵煎嚭宸查€氳繃 + 寰呭鏍稿彂绁?, QMessageBox.NoRole)
+        btn_cancel = box.addButton("鍙栨秷", QMessageBox.RejectRole)
 
         box.exec()
 
@@ -5925,7 +5962,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         include_to_review = (box.clickedButton() == btn_include_all)
 
-        self._set_action_busy(self.btn_toolbar_export, "导出中...")
+        self._set_action_busy(self.btn_toolbar_export, "瀵煎嚭涓?..")
         try:
             # Trigger standard package exporter
             from ..claim_export import export_claim_package
@@ -5946,23 +5983,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             qa_warnings_count = summary.get("qa_warnings_count", 0)
 
             # Format skipped stats neatly
-            skip_items = [f"{k}: {v}张" for k, v in skipped.items() if v > 0]
-            skip_text = ", ".join(skip_items) if skip_items else "无"
+            skip_items = [f"{k}: {v}寮? for k, v in skipped.items() if v > 0]
+            skip_text = ", ".join(skip_items) if skip_items else "鏃?
 
             # Render export summary panel
-            summary_msg = f"<b>上一次导出结果：</b><br>" \
-                          f"• 成功打包发票: <font color='#10B981'><b>{item_count}</b></font> 张<br>" \
-                          f"• 过滤跳过记录: {skip_text}"
+            summary_msg = f"<b>涓婁竴娆″鍑虹粨鏋滐細</b><br>" \
+                          f"鈥?鎴愬姛鎵撳寘鍙戠エ: <font color='#10B981'><b>{item_count}</b></font> 寮?br>" \
+                          f"鈥?杩囨护璺宠繃璁板綍: {skip_text}"
             self.lbl_export_summary.setText(summary_msg)
 
-            self.statusBar().showMessage(f"报销组【{claim_name}】打包导出成功，共计 {item_count} 张", 4000)
+            self.statusBar().showMessage(f"鎶ラ攢缁勩€恵claim_name}銆戞墦鍖呭鍑烘垚鍔燂紝鍏辫 {item_count} 寮?, 4000)
 
             # Success dialog with direct Open Folder button
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
-            box.setWindowTitle("导出成功")
+            box.setWindowTitle("瀵煎嚭鎴愬姛")
 
-            # 不要泄露完整本机路径: show path relative to project root
+            # 涓嶈娉勯湶瀹屾暣鏈満璺緞: show path relative to project root
             relative_export_dir = ""
             try:
                 relative_export_dir = "exports/" + Path(export_dir).relative_to(PROJECT_ROOT / "exports").as_posix()
@@ -5974,18 +6011,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     relative_export_dir = mask_path(export_dir)
 
             if qa_warnings_count == 0:
-                qa_text = "导出完成，质量检查未发现需确认项。"
+                qa_text = "瀵煎嚭瀹屾垚锛岃川閲忔鏌ユ湭鍙戠幇闇€纭椤广€?
             else:
-                qa_text = f"导出完成，发现 {qa_warnings_count} 个需确认项，请查看质量报告。"
+                qa_text = f"瀵煎嚭瀹屾垚锛屽彂鐜?{qa_warnings_count} 涓渶纭椤癸紝璇锋煡鐪嬭川閲忔姤鍛娿€?
 
             box.setText(
                 f"{qa_text}\n\n"
-                f"共计打包发票: {item_count} 张\n"
-                f"过滤跳过记录: {skip_text}\n\n"
-                f"输出路径: {relative_export_dir}"
+                f"鍏辫鎵撳寘鍙戠エ: {item_count} 寮燶n"
+                f"杩囨护璺宠繃璁板綍: {skip_text}\n\n"
+                f"杈撳嚭璺緞: {relative_export_dir}"
             )
-            btn_open = box.addButton("📁 打开导出目录", QMessageBox.AcceptRole)
-            btn_close = box.addButton("关闭", QMessageBox.RejectRole)
+            btn_open = box.addButton("馃搧 鎵撳紑瀵煎嚭鐩綍", QMessageBox.AcceptRole)
+            btn_close = box.addButton("鍏抽棴", QMessageBox.RejectRole)
             box.exec()
 
             if box.clickedButton() == btn_open:
@@ -5997,9 +6034,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         except Exception as e:
             _log.error("Failed to export claim package: %s", e)
-            QMessageBox.critical(self, "错误", f"打包导出失败: {e}")
+            QMessageBox.critical(self, "閿欒", f"鎵撳寘瀵煎嚭澶辫触: {e}")
         finally:
-            self._clear_action_busy(self.btn_toolbar_export, "导出")
+            self._clear_action_busy(self.btn_toolbar_export, "瀵煎嚭")
 
     def _scan_selected_email_accounts(self):
         checked_keys = []
@@ -6011,7 +6048,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         checked_keys.append(str(key))
 
         if not checked_keys:
-            QMessageBox.warning(self, "扫描提示", "请先在上面的列表中勾选至少一个需要扫描的邮箱账户。")
+            QMessageBox.warning(self, "鎵弿鎻愮ず", "璇峰厛鍦ㄤ笂闈㈢殑鍒楄〃涓嬀閫夎嚦灏戜竴涓渶瑕佹壂鎻忕殑閭璐︽埛銆?)
             return
 
         trigger_btn = getattr(self, "btn_import_scan_selected", getattr(self, "btn_scan_email", None))
@@ -6028,7 +6065,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 chk.setChecked(bool(chk.property("is_default")))
 
         if not default_acc:
-            QMessageBox.warning(self, "扫描提示", "未找到默认扫描邮箱账户，请先在系统设置中设置默认账号。")
+            QMessageBox.warning(self, "鎵弿鎻愮ず", "鏈壘鍒伴粯璁ゆ壂鎻忛偖绠辫处鎴凤紝璇峰厛鍦ㄧ郴缁熻缃腑璁剧疆榛樿璐﹀彿銆?)
             return
 
         default_key = str(default_acc.get("mailbox_key") or default_acc.get("address") or "").strip()
@@ -6060,16 +6097,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 }
             )
             self.write_log(
-                "⚠️ [邮箱扫描] 未找到符合扫描条件的启用账号："
-                f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
-                f"email_accounts={len(raw_accounts)}，selected_keys={selected_keys or 'all'}。"
+                "鈿狅笍 [閭鎵弿] 鏈壘鍒扮鍚堟壂鎻忔潯浠剁殑鍚敤璐﹀彿锛?
+                f"legacy_email={'宸查厤缃? if legacy_configured else '鏈厤缃?}锛?
+                f"email_accounts={len(raw_accounts)}锛宻elected_keys={selected_keys or 'all'}銆?
             )
             QMessageBox.warning(
                 self,
-                "配置缺失",
+                "閰嶇疆缂哄け",
                 (
-                    "未找到需要扫描的启用邮箱账号。\n"
-                    "请先勾选需要扫描的邮箱账户，或在系统设置中启用对应账号。"
+                    "鏈壘鍒伴渶瑕佹壂鎻忕殑鍚敤閭璐﹀彿銆俓n"
+                    "璇峰厛鍕鹃€夐渶瑕佹壂鎻忕殑閭璐︽埛锛屾垨鍦ㄧ郴缁熻缃腑鍚敤瀵瑰簲璐﹀彿銆?
                 ),
             )
             self._open_settings_dialog()
@@ -6083,17 +6120,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 missing_lines += f"\n  ... +{len(missing) - 8}"
             QMessageBox.warning(
                 self,
-                "凭据缺失",
-                f"未检测到以下邮箱的授权码安全凭证：\n{missing_lines}\n请前往 [设置] 页面补充。",
+                "鍑嵁缂哄け",
+                f"鏈娴嬪埌浠ヤ笅閭鐨勬巿鏉冪爜瀹夊叏鍑瘉锛歕n{missing_lines}\n璇峰墠寰€ [璁剧疆] 椤甸潰琛ュ厖銆?,
             )
             self._open_settings_dialog()
             return
 
         active_btn = trigger_btn or getattr(self, "btn_scan_email", None)
-        self.write_log("📥 [邮箱扫描] 增量拉取任务已启动...")
-        self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
+        self.write_log("馃摜 [閭鎵弿] 澧為噺鎷夊彇浠诲姟宸插惎鍔?..")
+        self.statusBar().showMessage("姝ｅ湪寤虹珛閭杩炴帴骞舵壂鎻忔帴鏀堕偖浠?..")
         if active_btn:
-            self._set_action_busy(active_btn, "扫描中...")
+            self._set_action_busy(active_btn, "鎵弿涓?..")
 
         # Spawn asynchronous thread worker
         self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
@@ -6108,67 +6145,67 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _scan_email_finished(self, res: dict):
         btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
-            orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))
+            orig_text = btn.property("original_text") or ("寮€濮嬫壂鎻? if btn is getattr(self, "btn_import_scan_selected", None) else ("鎵粯璁? if btn is getattr(self, "btn_import_scan_default", None) else "鍚屾"))
             self._clear_action_busy(btn, orig_text)
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary
-        self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
-        self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
+        self.write_log(f"鉁?[閭鎵弿] 瀹屾垚: {summary}")
+        self.statusBar().showMessage(f"閭鎵弿瀹屾垚: {summary}", 6000)
 
         failed_summaries = res.get("failed_summaries", []) if isinstance(res, dict) else []
         if failed_summaries:
             fail_text = "\n".join(f"  - {s}" for s in failed_summaries[:8])
             msg = (
-                f"扫描完成，以下 {len(failed_summaries)} 项解析出错：\n{fail_text}\n"
-                f"【统计】扫描邮件头: {summary.get('scanned_headers', 0)}, "
-                f"新入库邮件头: {summary.get('new_email_headers', 0)}, "
-                f"判定为发票候选: {summary.get('classified_invoice', 0)}"
+                f"鎵弿瀹屾垚锛屼互涓?{len(failed_summaries)} 椤硅В鏋愬嚭閿欙細\n{fail_text}\n"
+                f"銆愮粺璁°€戞壂鎻忛偖浠跺ご: {summary.get('scanned_headers', 0)}, "
+                f"鏂板叆搴撻偖浠跺ご: {summary.get('new_email_headers', 0)}, "
+                f"鍒ゅ畾涓哄彂绁ㄥ€欓€? {summary.get('classified_invoice', 0)}"
             )
-            QMessageBox.information(self, "扫描异常提示", msg)
+            QMessageBox.information(self, "鎵弿寮傚父鎻愮ず", msg)
         self._load_invoices()
 
     def _scan_email_error(self, err_msg: str):
         btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
-            orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))
+            orig_text = btn.property("original_text") or ("寮€濮嬫壂鎻? if btn is getattr(self, "btn_import_scan_selected", None) else ("鎵粯璁? if btn is getattr(self, "btn_import_scan_default", None) else "鍚屾"))
             self._clear_action_busy(btn, orig_text)
-        self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
-        self.statusBar().showMessage("邮箱扫描执行出错！", 4000)
-        QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")
+        self.write_log(f"鉂?[閭鎵弿] 澶辫触: {err_msg}")
+        self.statusBar().showMessage("閭鎵弿鎵ц鍑洪敊锛?, 4000)
+        QMessageBox.critical(self, "閿欒", f"閭鎵弿鎵ц鍑洪敊: {err_msg}")
 
-    # ── Operations Bar Handlers ───────────────────────────────────────
+    # 鈹€鈹€ Operations Bar Handlers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _export_diagnostics_package(self):
         """Export a redacted diagnostics package for support and GitHub issues."""
         confirm = QMessageBox.question(
             self,
-            "导出脱敏诊断包",
+            "瀵煎嚭鑴辨晱璇婃柇鍖?,
             (
                 f"{FEEDBACK_PRIVACY_NOTICE}\n\n"
-                "诊断包只包含 app_info.json、latest.log.redacted、config.redacted.json、"
-                "environment.txt 和 privacy_scan_result.txt。\n\n"
-                "不会打包 invoices.db、attachments/、exports/、PDF/OFD/图片、Excel、"
-                "邮箱授权码、API Key 或完整下载链接。是否继续？"
+                "璇婃柇鍖呭彧鍖呭惈 app_info.json銆乴atest.log.redacted銆乧onfig.redacted.json銆?
+                "environment.txt 鍜?privacy_scan_result.txt銆俓n\n"
+                "涓嶄細鎵撳寘 invoices.db銆乤ttachments/銆乪xports/銆丳DF/OFD/鍥剧墖銆丒xcel銆?
+                "閭鎺堟潈鐮併€丄PI Key 鎴栧畬鏁翠笅杞介摼鎺ャ€傛槸鍚︾户缁紵"
             ),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if confirm != QMessageBox.Yes:
             return
-        folder = QFileDialog.getExistingDirectory(self, "选择诊断包导出目录")
+        folder = QFileDialog.getExistingDirectory(self, "閫夋嫨璇婃柇鍖呭鍑虹洰褰?)
         if not folder:
             return
         try:
             zip_path = export_diagnostics_zip(folder)
         except Exception as exc:
-            QMessageBox.critical(self, "导出失败", f"导出脱敏诊断包失败: {exc}")
+            QMessageBox.critical(self, "瀵煎嚭澶辫触", f"瀵煎嚭鑴辨晱璇婃柇鍖呭け璐? {exc}")
             return
-        self.write_log(f"已导出脱敏诊断包: {zip_path.name}")
-        self.statusBar().showMessage(f"已导出诊断包: {zip_path.name}", 5000)
+        self.write_log(f"宸插鍑鸿劚鏁忚瘖鏂寘: {zip_path.name}")
+        self.statusBar().showMessage(f"宸插鍑鸿瘖鏂寘: {zip_path.name}", 5000)
         reply = QMessageBox.question(
             self,
-            "导出完成",
-            f"已生成脱敏诊断包:\n{zip_path}\n\n请勿额外上传 invoices.db、附件原件或未脱敏日志。\n\n是否打开所在文件夹？",
+            "瀵煎嚭瀹屾垚",
+            f"宸茬敓鎴愯劚鏁忚瘖鏂寘:\n{zip_path}\n\n璇峰嬁棰濆涓婁紶 invoices.db銆侀檮浠跺師浠舵垨鏈劚鏁忔棩蹇椼€俓n\n鏄惁鎵撳紑鎵€鍦ㄦ枃浠跺す锛?,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -6179,21 +6216,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Open the GitHub issue chooser."""
         QMessageBox.information(
             self,
-            "反馈前隐私提示",
+            "鍙嶉鍓嶉殣绉佹彁绀?,
             FEEDBACK_PRIVACY_NOTICE,
         )
         if not QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL)):
             QApplication.clipboard().setText(GITHUB_ISSUES_URL)
             QMessageBox.warning(
                 self,
-                "无法打开浏览器",
-                f"无法自动打开 GitHub Issues 页面，链接已复制到剪贴板:\n{GITHUB_ISSUES_URL}",
+                "鏃犳硶鎵撳紑娴忚鍣?,
+                f"鏃犳硶鑷姩鎵撳紑 GitHub Issues 椤甸潰锛岄摼鎺ュ凡澶嶅埗鍒板壀璐存澘:\n{GITHUB_ISSUES_URL}",
             )
-            self.write_log("无法自动打开 GitHub Issues 页面，已复制链接到剪贴板。")
-            self.statusBar().showMessage("GitHub Issues 链接已复制", 5000)
+            self.write_log("鏃犳硶鑷姩鎵撳紑 GitHub Issues 椤甸潰锛屽凡澶嶅埗閾炬帴鍒板壀璐存澘銆?)
+            self.statusBar().showMessage("GitHub Issues 閾炬帴宸插鍒?, 5000)
             return
-        self.write_log("已打开 GitHub Issues 页面。")
-        self.statusBar().showMessage("已打开 GitHub Issues", 3000)
+        self.write_log("宸叉墦寮€ GitHub Issues 椤甸潰銆?)
+        self.statusBar().showMessage("宸叉墦寮€ GitHub Issues", 3000)
 
     def _get_toolbar_action_buttons(self) -> list:
         """Return all top-level toolbar action buttons for busy-state management."""
@@ -6253,14 +6290,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _import_local_clicked(self):
         """Trigger QFileDialog to choose a directory for invoice importing."""
-        folder = QFileDialog.getExistingDirectory(self, "选择本地发票文件夹")
+        folder = QFileDialog.getExistingDirectory(self, "閫夋嫨鏈湴鍙戠エ鏂囦欢澶?)
         if not folder:
             return
 
         path = Path(folder)
-        self.write_log(f"📁 [本地导入] 已选择本地文件夹: {path.absolute()}")
-        self.statusBar().showMessage(f"正在读取与导入本地发票: {path.name}...")
-        self._set_action_busy(self.btn_import_local, "导入中...")
+        self.write_log(f"馃搧 [鏈湴瀵煎叆] 宸查€夋嫨鏈湴鏂囦欢澶? {path.absolute()}")
+        self.statusBar().showMessage(f"姝ｅ湪璇诲彇涓庡鍏ユ湰鍦板彂绁? {path.name}...")
+        self._set_action_busy(self.btn_import_local, "瀵煎叆涓?..")
 
         # Spawn asynchronous thread worker
         self.import_worker = LocalImportWorker(path, self.db_path)
@@ -6269,16 +6306,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_worker.start()
 
     def _mobile_upload_clicked(self):
-        self._set_action_busy(self.btn_mobile_upload, "等待上传...")
+        self._set_action_busy(self.btn_mobile_upload, "绛夊緟涓婁紶...")
         try:
             dialog = MobileUploadDialog(self, self.db_path)
             dialog.upload_finished.connect(self._mobile_upload_finished)
             dialog.exec()
         finally:
-            self._clear_action_busy(self.btn_mobile_upload, "扫码上传")
+            self._clear_action_busy(self.btn_mobile_upload, "鎵爜涓婁紶")
 
     def _mobile_upload_finished(self):
-        self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
+        self.write_log("馃摫 [鎵爜涓婁紶] 鎵嬫満涓婁紶鎵规宸叉洿鏂帮紝姝ｅ湪鍒锋柊鍙戠エ鍒楄〃銆?)
         self._load_invoices()
         self._load_claims()
         self._refresh_overview_page()
@@ -6287,42 +6324,42 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _format_local_import_summary(self, stats: dict) -> str:
         return (
-            "本地发票批量导入完成：\n\n"
-            f"- 成功识别: {stats.get('added', 0)} 条\n"
-            f"- 重复跳过: {stats.get('duplicates', 0)} 条\n"
-            f"- 冲突待确认: {stats.get('conflicts', 0)} 条\n"
-            f"- 需人工确认材料: {stats.get('pending_manual', 0)} 条\n"
-            f"- 真正失败: {stats.get('failed', 0)} 条"
+            "鏈湴鍙戠エ鎵归噺瀵煎叆瀹屾垚锛歕n\n"
+            f"- 鎴愬姛璇嗗埆: {stats.get('added', 0)} 鏉n"
+            f"- 閲嶅璺宠繃: {stats.get('duplicates', 0)} 鏉n"
+            f"- 鍐茬獊寰呯‘璁? {stats.get('conflicts', 0)} 鏉n"
+            f"- 闇€浜哄伐纭鏉愭枡: {stats.get('pending_manual', 0)} 鏉n"
+            f"- 鐪熸澶辫触: {stats.get('failed', 0)} 鏉?
         )
 
     def _import_local_finished(self, stats: dict):
-        self._clear_action_busy(self.btn_import_local, "导入")
+        self._clear_action_busy(self.btn_import_local, "瀵煎叆")
         added = stats.get("added", 0)
         duplicates = stats.get("duplicates", 0)
         conflicts = stats.get("conflicts", 0)
         pending_manual = stats.get("pending_manual", 0)
         failed = stats.get("failed", 0)
         self.write_log(
-            f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"
-            f"冲突待确认 {conflicts} 条，需人工确认材料 {pending_manual} 条，真正失败 {failed} 条。"
+            f"鉁?[鏈湴瀵煎叆] 瀹屾垚锛氭垚鍔熻瘑鍒?{added} 鏉★紝閲嶅 {duplicates} 鏉★紝"
+            f"鍐茬獊寰呯‘璁?{conflicts} 鏉★紝闇€浜哄伐纭鏉愭枡 {pending_manual} 鏉★紝鐪熸澶辫触 {failed} 鏉°€?
         )
         self.statusBar().showMessage(
-            f"本地导入完成: 成功识别 {added}, 重复 {duplicates}, 冲突 {conflicts}, "
-            f"需人工确认材料 {pending_manual}, 失败 {failed}",
+            f"鏈湴瀵煎叆瀹屾垚: 鎴愬姛璇嗗埆 {added}, 閲嶅 {duplicates}, 鍐茬獊 {conflicts}, "
+            f"闇€浜哄伐纭鏉愭枡 {pending_manual}, 澶辫触 {failed}",
             4000,
         )
 
-        QMessageBox.information(self, "导入完成", self._format_local_import_summary(stats))
+        QMessageBox.information(self, "瀵煎叆瀹屾垚", self._format_local_import_summary(stats))
         self._load_invoices()
         self._refresh_overview_page()
         self._refresh_imports_page()
         self._refresh_settings_page()
 
     def _import_local_error(self, err_msg: str):
-        self._clear_action_busy(self.btn_import_local, "导入")
-        self.write_log(f"❌ [本地导入] 失败: {err_msg}")
-        self.statusBar().showMessage("本地发票导入失败！", 4000)
-        QMessageBox.critical(self, "错误", f"本地导入执行出错: {err_msg}")
+        self._clear_action_busy(self.btn_import_local, "瀵煎叆")
+        self.write_log(f"鉂?[鏈湴瀵煎叆] 澶辫触: {err_msg}")
+        self.statusBar().showMessage("鏈湴鍙戠エ瀵煎叆澶辫触锛?, 4000)
+        QMessageBox.critical(self, "閿欒", f"鏈湴瀵煎叆鎵ц鍑洪敊: {err_msg}")
 
     def _open_settings_dialog(self, sub_tab: int = 0):
         """Display the modal Settings QDialog for config management."""
@@ -6344,26 +6381,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.information(
             self,
-            "失败明细记录",
-            "【历史抓取与解析错误明细】\n"
-            "1. 无匹配发票附件: 2 封垃圾邮件 (系统已跳过)\n"
-            "2. 密码保护加密 PDF: 0 封\n"
-            "3. 无法解析的破损格式: 0 封\n"
-            "所有正常增量发票均已解析成功并存入数据库！"
+            "澶辫触鏄庣粏璁板綍",
+            "銆愬巻鍙叉姄鍙栦笌瑙ｆ瀽閿欒鏄庣粏銆慭n"
+            "1. 鏃犲尮閰嶅彂绁ㄩ檮浠? 2 灏佸瀮鍦鹃偖浠?(绯荤粺宸茶烦杩?\n"
+            "2. 瀵嗙爜淇濇姢鍔犲瘑 PDF: 0 灏乗n"
+            "3. 鏃犳硶瑙ｆ瀽鐨勭牬鎹熸牸寮? 0 灏乗n"
+            "鎵€鏈夋甯稿閲忓彂绁ㄥ潎宸茶В鏋愭垚鍔熷苟瀛樺叆鏁版嵁搴擄紒"
         )
 
     def _scan_email_finished_legacy(self, res: dict):
-        self._clear_action_busy(self.btn_scan_email, "同步")
+        self._clear_action_busy(self.btn_scan_email, "鍚屾")
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary
 
         self.write_log(
-            "✅ [邮箱扫描] 完成！"
-            f"新增 {summary['new']}，恢复 {summary['restored']}，重复 {summary['duplicates']}，"
-            f"链接失败 {summary['link_failed']}，待重试 {summary['pending_retry']}。"
+            "鉁?[閭鎵弿] 瀹屾垚锛?
+            f"鏂板 {summary['new']}锛屾仮澶?{summary['restored']}锛岄噸澶?{summary['duplicates']}锛?
+            f"閾炬帴澶辫触 {summary['link_failed']}锛屽緟閲嶈瘯 {summary['pending_retry']}銆?
         )
         self.write_log(
-            "[扫描摘要] "
+            "[鎵弿鎽樿] "
             f"rule_excluded={summary['rule_excluded']} "
             f"no_candidate_link={summary['no_candidate_link']} "
             f"download_failed={summary['download_failed']} "
@@ -6375,7 +6412,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage(self._format_scan_summary_status(summary), 6000)
 
         QMessageBox.information(
-            self, "扫描完成",
+            self, "鎵弿瀹屾垚",
             self._format_scan_summary_message(summary)
         )
         self._load_invoices()
@@ -6386,13 +6423,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _build_scan_summary(self, res: dict, logs: list[str] | None = None) -> dict:
         logs = [str(line or "") for line in (logs or [])]
-        restored = sum(1 for line in logs if "已恢复已删除的重复发票" in line)
+        restored = sum(1 for line in logs if "宸叉仮澶嶅凡鍒犻櫎鐨勯噸澶嶅彂绁? in line)
         duplicates = sum(
             1 for line in logs
-            if ("跳过重复" in line or "重复发票" in line) and "已恢复已删除" not in line
+            if ("璺宠繃閲嶅" in line or "閲嶅鍙戠エ" in line) and "宸叉仮澶嶅凡鍒犻櫎" not in line
         )
-        link_failed = sum(1 for line in logs if "未获得官方 PDF/OFD" in line or "链接下载失败" in line)
-        pending_retry = sum(1 for line in logs if "保留为待下载" in line or "待下载以便重试" in line or "待重试" in line)
+        link_failed = sum(1 for line in logs if "鏈幏寰楀畼鏂?PDF/OFD" in line or "閾炬帴涓嬭浇澶辫触" in line)
+        pending_retry = sum(1 for line in logs if "淇濈暀涓哄緟涓嬭浇" in line or "寰呬笅杞戒互渚块噸璇? in line or "寰呴噸璇? in line)
         manual_review_required = int(
             res.get("manual_review_required", res.get("pending_manual", 0)) or 0
         )
@@ -6443,46 +6480,46 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _format_scan_summary_status(self, summary: dict) -> str:
         return (
-            f"邮箱扫描完成: 新增记录 {summary.get('new', 0)}，恢复 {summary.get('restored', 0)}，"
-            f"重复 {summary.get('duplicates', 0)}，需人工确认材料 {summary.get('manual_review_required', 0)}，"
-            f"待重试 {summary.get('pending_retry', 0)}，"
-            f"失败 {summary.get('failed', 0)}"
+            f"閭鎵弿瀹屾垚: 鏂板璁板綍 {summary.get('new', 0)}锛屾仮澶?{summary.get('restored', 0)}锛?
+            f"閲嶅 {summary.get('duplicates', 0)}锛岄渶浜哄伐纭鏉愭枡 {summary.get('manual_review_required', 0)}锛?
+            f"寰呴噸璇?{summary.get('pending_retry', 0)}锛?
+            f"澶辫触 {summary.get('failed', 0)}"
         )
 
     def _format_scan_summary_message(self, summary: dict) -> str:
         failures = [str(line or "") for line in (summary.get("failed_summaries") or [])]
-        failure_text = "\n".join(f"  - {line}" for line in failures[:5]) if failures else "无"
+        failure_text = "\n".join(f"  - {line}" for line in failures[:5]) if failures else "鏃?
         ai_pending = int(summary.get("ai_pending_classification", 0) or 0)
         ai_text = ""
         if summary.get("ai_auth_failed"):
-            ai_text = f"- AI 已暂停，{ai_pending} 封邮件待分类。\n"
+            ai_text = f"- AI 宸叉殏鍋滐紝{ai_pending} 灏侀偖浠跺緟鍒嗙被銆俓n"
         return (
-            "邮箱增量扫描完成。\n\n"
-            f"- 扫描邮件头: {summary.get('scanned_headers', 0)} 封\n"
-            f"- 新入库邮件头: {summary.get('new_email_headers', 0)} 封\n"
-            f"- 判定为发票候选: {summary.get('classified_invoice', 0)} 封\n"
-            f"- 成功处理邮件: {summary.get('downloaded_emails', 0)} 封\n"
-            f"- 新增记录（发票或待补全材料）: {summary.get('new', 0)} 条\n"
-            f"- 恢复软删除: {summary.get('restored', 0)} 条\n"
-            f"- 重复已存在: {summary.get('duplicates', 0)} 条\n"
-            f"- 规则排除历史误分类: {summary.get('rule_excluded', 0)} 封\n"
-            f"- 未找到候选链接: {summary.get('no_candidate_link', 0)} 封\n"
-            f"- 链接下载失败: {summary.get('download_failed', 0)} 封\n"
-            f"- 需人工确认材料: {summary.get('manual_review_required', 0)} 条\n"
-            f"- 下载内容解析失败: {summary.get('parse_failed', 0)} 封\n"
-            f"- 待重试: {summary.get('pending_retry', 0)} 封\n"
-            f"- 处理失败: {summary.get('failed', 0)} 封\n"
+            "閭澧為噺鎵弿瀹屾垚銆俓n\n"
+            f"- 鎵弿閭欢澶? {summary.get('scanned_headers', 0)} 灏乗n"
+            f"- 鏂板叆搴撻偖浠跺ご: {summary.get('new_email_headers', 0)} 灏乗n"
+            f"- 鍒ゅ畾涓哄彂绁ㄥ€欓€? {summary.get('classified_invoice', 0)} 灏乗n"
+            f"- 鎴愬姛澶勭悊閭欢: {summary.get('downloaded_emails', 0)} 灏乗n"
+            f"- 鏂板璁板綍锛堝彂绁ㄦ垨寰呰ˉ鍏ㄦ潗鏂欙級: {summary.get('new', 0)} 鏉n"
+            f"- 鎭㈠杞垹闄? {summary.get('restored', 0)} 鏉n"
+            f"- 閲嶅宸插瓨鍦? {summary.get('duplicates', 0)} 鏉n"
+            f"- 瑙勫垯鎺掗櫎鍘嗗彶璇垎绫? {summary.get('rule_excluded', 0)} 灏乗n"
+            f"- 鏈壘鍒板€欓€夐摼鎺? {summary.get('no_candidate_link', 0)} 灏乗n"
+            f"- 閾炬帴涓嬭浇澶辫触: {summary.get('download_failed', 0)} 灏乗n"
+            f"- 闇€浜哄伐纭鏉愭枡: {summary.get('manual_review_required', 0)} 鏉n"
+            f"- 涓嬭浇鍐呭瑙ｆ瀽澶辫触: {summary.get('parse_failed', 0)} 灏乗n"
+            f"- 寰呴噸璇? {summary.get('pending_retry', 0)} 灏乗n"
+            f"- 澶勭悊澶辫触: {summary.get('failed', 0)} 灏乗n"
             f"{ai_text}"
-            f"失败摘要:\n{failure_text}\n\n"
-            "说明：新入库邮件头不等于新增发票；需人工确认材料不是处理失败。\n"
-            "如果没有看到预期发票，请清空筛选，或用发票号、购买方、金额搜索。"
+            f"澶辫触鎽樿:\n{failure_text}\n\n"
+            "璇存槑锛氭柊鍏ュ簱閭欢澶翠笉绛変簬鏂板鍙戠エ锛涢渶浜哄伐纭鏉愭枡涓嶆槸澶勭悊澶辫触銆俓n"
+            "濡傛灉娌℃湁鐪嬪埌棰勬湡鍙戠エ锛岃娓呯┖绛涢€夛紝鎴栫敤鍙戠エ鍙枫€佽喘涔版柟銆侀噾棰濇悳绱€?
         )
 
     def _scan_email_error(self, err_msg: str):
-        self._clear_action_busy(self.btn_scan_email, "同步")
-        self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
-        self.statusBar().showMessage("邮箱扫描处理失败！", 4000)
-        QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")
+        self._clear_action_busy(self.btn_scan_email, "鍚屾")
+        self.write_log(f"鉂?[閭鎵弿] 澶辫触: {err_msg}")
+        self.statusBar().showMessage("閭鎵弿澶勭悊澶辫触锛?, 4000)
+        QMessageBox.critical(self, "閿欒", f"閭鎵弿鎵ц鍑洪敊: {err_msg}")
 
 class StartupSplash(QWidget):
     def __init__(self):
@@ -6523,7 +6560,7 @@ class StartupSplash(QWidget):
         container_layout.addWidget(line)
 
         # Subtitle / status
-        self.status_label = QLabel("正在启动 Invoice Hub...", self)
+        self.status_label = QLabel("姝ｅ湪鍚姩 Invoice Hub...", self)
         self.status_label.setFont(QFont("Segoe UI", 10))
         self.status_label.setStyleSheet("color: #9CA3AF; border: none; background: transparent;")
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -6591,7 +6628,7 @@ def start_gui_app(db_path: Path, startup_probe: bool = False, app_init_ms: int =
     if not is_probe:
         splash = StartupSplash()
         splash.show()
-        splash.show_message("正在启动 Invoice Hub...", 15)
+        splash.show_message("姝ｅ湪鍚姩 Invoice Hub...", 15)
 
     window = InvoiceReviewApp(db_path, splash=splash, startup_probe=is_probe)
 

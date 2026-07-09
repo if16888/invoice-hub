@@ -283,7 +283,7 @@ class TestMailboxV5UI(unittest.TestCase):
         button_texts = [button.text() for button in mailbox_tab.findChildren(QPushButton)]
         self.assertNotIn("保存设置", button_texts)
         self.assertNotIn("取消", button_texts)
-        self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑配置")
+        self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑")
         self.assertEqual(window.btn_settings_mailbox_add_credential.text(), "补授权码")
 
         mailbox_detail_spins = mailbox_tab.findChildren(QSpinBox)
