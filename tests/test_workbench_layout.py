@@ -6,6 +6,7 @@ No Qt or database required; all assertions are plain Python.
 """
 
 import unittest
+from pathlib import Path
 
 from scripts.invoice_fetch.gui.workbench_layout import (
     WorkbenchMetrics,
@@ -575,6 +576,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.close()
                 window.deleteLater()
                 QApplication.processEvents()
+
+    def test_app_ui_copy_does_not_contain_common_mojibake_markers(self):
+        text = Path("scripts/invoice_fetch/gui/app.py").read_text(encoding="utf-8")
+        for marker in ["浠", "瀵", "閰", "鈥", "�", "涓", "鏃", "鍏", "绠"]:
+            self.assertNotIn(marker, text)
 
     def test_review_table_shows_at_least_seven_dense_rows_at_1366(self):
         with tempfile.TemporaryDirectory() as td:
