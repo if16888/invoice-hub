@@ -2353,7 +2353,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_mailbox_list.blockSignals(False)
 
         if hasattr(self, "lbl_settings_mailbox_empty"):
-            self.lbl_settings_mailbox_empty.setVisible(self.settings_mailbox_list.count() == 0)
+            self.lbl_settings_mailbox_empty.setVisible(False)
+        if hasattr(self, "settings_mailbox_empty_state"):
+            self.settings_mailbox_empty_state.setVisible(self.settings_mailbox_list.count() == 0)
 
         if self.settings_mailbox_list.count() == 0:
             self._settings_mailbox_current_key = ""
@@ -2575,7 +2577,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
         self.settings_ai_profile_list.blockSignals(False)
 
-        self.lbl_settings_ai_empty.setVisible(self.settings_ai_profile_list.count() == 0)
+        self.lbl_settings_ai_empty.setVisible(False)
+        if hasattr(self, "settings_ai_empty_state"):
+            self.settings_ai_empty_state.setVisible(self.settings_ai_profile_list.count() == 0)
         if self.settings_ai_profile_list.count() == 0:
             self._settings_ai_current_profile_id = ""
             self.lbl_settings_ai_provider.setText("—")
@@ -3214,9 +3218,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_mailbox_scan_result.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_settings_mailbox_empty = QLabel("尚未配置任何邮箱账号。")
         self.lbl_settings_mailbox_empty.setStyleSheet("color: #667085; font-size: 12px;")
+        self.settings_mailbox_empty_state = EmptyStateCard(
+            "还没有邮箱账号",
+            "添加一个邮箱账号后即可扫描发票。",
+        )
+        self.settings_mailbox_empty_state.setVisible(False)
+        self.lbl_settings_mailbox_empty.setVisible(False)
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_test_status)
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_scan_result)
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_empty)
+        mailbox_editor_layout.addWidget(self.settings_mailbox_empty_state)
         mailbox_editor_layout.addStretch(1)
         mailbox_shell.addWidget(mailbox_editor, 1)
         mailbox_layout.addLayout(mailbox_shell, 1)
@@ -3291,8 +3302,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_failure_status.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_settings_ai_empty = QLabel("尚未配置任何 AI Profile。")
         self.lbl_settings_ai_empty.setStyleSheet("color: #667085; font-size: 12px;")
+        self.settings_ai_empty_state = EmptyStateCard(
+            "还没有 AI Profile",
+            "配置 Provider 后即可查看 AI 提取与分类状态。",
+        )
+        self.settings_ai_empty_state.setVisible(False)
+        self.lbl_settings_ai_empty.setVisible(False)
         ai_editor_layout.addWidget(self.lbl_settings_ai_failure_status)
         ai_editor_layout.addWidget(self.lbl_settings_ai_empty)
+        ai_editor_layout.addWidget(self.settings_ai_empty_state)
         ai_editor_layout.addStretch(1)
         ai_shell.addWidget(ai_editor, 1)
         ai_layout.addLayout(ai_shell, 1)
