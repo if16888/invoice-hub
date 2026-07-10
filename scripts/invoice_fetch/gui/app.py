@@ -39,7 +39,9 @@ from .ui_components import (
     CommandBar,
     CompactStatCard,
     EntityList,
+    EmptyStateCard,
     LogDrawer,
+    PageStateStack,
     MoreMenuButton,
     PageHeader,
     ReadOnlyDetailPanel,
@@ -1925,15 +1927,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if metrics is None or any(
             not isinstance(metrics.get(key), (int, float)) for key in numeric_keys
         ):
+            retry = make_button("重试", variant="secondary")
+            retry.clicked.connect(self._refresh_overview_page)
+            self.overview_state_stack.show_error("无法读取工作台数据", retry=retry)
             for label in self.overview_value_labels.values():
                 label.set_value("—")
-            self.lbl_overview_recent_imports.setText("暂无可用统计，等待数据库连接或首批导入完成。")
-            self.lbl_overview_health.setText("当前无法读取审核队列统计，导入后会自动刷新。")
-            if hasattr(self, "lbl_overview_next_actions"):
-                self.lbl_overview_next_actions.setText("建议顺序：先完成一次导入或加载数据库，再进入审核。")
-            if hasattr(self, "lbl_overview_export_hint"):
-                self.lbl_overview_export_hint.setText("报销组与导出会在有可导出分组后显示更明确的检查状态。")
             return
+
+        if metrics["total"] == 0:
+            action = make_button("开始导入", variant="primary")
+            action.clicked.connect(lambda: self._switch_main_page("imports"))
+            self.overview_state_stack.show_empty(
+                "还没有发票", "先从本地、邮箱或手机导入第一张发票。", action=action
+            )
+            return
+
+        self.overview_state_stack.show_content()
 
         self.overview_value_labels["today_imported"].set_value(f"{metrics['today_imported']} 张")
         self.overview_value_labels["to_review"].set_value(f"{metrics['to_review']} 张")
@@ -1966,6 +1975,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.txt_import_records.setPlainText(
                 "\n".join(log_lines) if log_lines else "暂无历史日志文件。完成本地导入、扫码上传或邮箱扫描后会显示最近记录。"
             )
+        if hasattr(self, "import_recent_state_stack"):
+            if log_lines:
+                self.import_recent_state_stack.show_content()
+            else:
+                self.import_recent_state_stack.show_empty(
+                    "最近还没有导入记录",
+                    "执行一次本地导入或邮箱扫描后，结果会显示在这里。",
+                )
 
         if hasattr(self, "lbl_import_qr_status"):
             self.lbl_import_qr_status.setText("扫码上传服务未启动。点击下方按钮可启动真实上传服务并显示二维码。")
@@ -2117,6 +2134,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_summary_strip.set_metric("missing", str(total_missing))
 
         if not claims:
+            self.export_empty_state.setVisible(True)
+            self.export_invoices_card.setVisible(False)
+            self.export_integrity_card.setVisible(False)
             self.export_summary_strip.set_metric("ready", "无报销组")
             self.lbl_export_integrity.setText("当前还没有报销组。先在审核页把发票关联到报销组，再回来导出。")
             self.lbl_export_blockers.setText("阻塞：没有可导出的报销组。")
@@ -2127,6 +2147,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.lbl_export_invoice_meta.setText("当前未选择报销组。")
             self.btn_run_export_page.setEnabled(False)
             return
+        self.export_empty_state.setVisible(False)
+        self.export_invoices_card.setVisible(True)
+        self.export_integrity_card.setVisible(True)
         target_row = 0
         if current_claim_id is not None:
             for row in range(self.export_group_list.count()):
@@ -2775,7 +2798,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         body_layout.addWidget(left_card, 1)
         body_layout.addWidget(right_card, 1)
-        layout.addWidget(body_frame, 0)
+        self.overview_state_stack = PageStateStack()
+        self.overview_state_stack.set_content(body_frame)
+        layout.addWidget(self.overview_state_stack, 0)
         layout.addStretch(1)
         self._refresh_overview_page()
         return page
@@ -2898,24 +2923,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shell.addWidget(self.import_mail_accounts_card, 1)
 
         self.import_mail_recent_card = SectionCard("最近结果", hint="看最近一次扫描摘要和失败明细，再决定是否继续补授权或重试。")
+        self.import_recent_content = QWidget()
+        self.import_recent_content_layout = QVBoxLayout(self.import_recent_content)
+        self.import_recent_content_layout.setContentsMargins(0, 0, 0, 0)
+        self.import_recent_state_stack = PageStateStack()
         self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
         self.lbl_mail_scan_summary.setWordWrap(True)
         self.lbl_mail_scan_summary.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
-        self.import_mail_recent_card.body_layout.addWidget(self.lbl_mail_scan_summary)
+        self.import_recent_content_layout.addWidget(self.lbl_mail_scan_summary)
         self.lbl_import_recent_status = QLabel("当前没有失败项，也没有待补授权提醒。")
         self.lbl_import_recent_status.setWordWrap(True)
         self.lbl_import_recent_status.setStyleSheet("color: #667085; font-size: 12px;")
-        self.import_mail_recent_card.body_layout.addWidget(self.lbl_import_recent_status)
+        self.import_recent_content_layout.addWidget(self.lbl_import_recent_status)
         self.txt_import_records = QPlainTextEdit()
         self.txt_import_records.setReadOnly(True)
         self.txt_import_records.setFont(QFont("Consolas", 9))
         self.txt_import_records.setMaximumHeight(140)
-        self.import_mail_recent_card.body_layout.addWidget(self.txt_import_records)
+        self.import_recent_content_layout.addWidget(self.txt_import_records)
         self.lbl_import_recent_hint = QLabel("如果失败数持续增加，优先去系统设置检查缺授权或连接异常。")
         self.lbl_import_recent_hint.setWordWrap(True)
         self.lbl_import_recent_hint.setStyleSheet("color: #667085; font-size: 12px;")
-        self.import_mail_recent_card.body_layout.addWidget(self.lbl_import_recent_hint)
-        self.import_mail_recent_card.body_layout.addStretch(1)
+        self.import_recent_content_layout.addWidget(self.lbl_import_recent_hint)
+        self.import_recent_content_layout.addStretch(1)
+        self.import_recent_state_stack.set_content(self.import_recent_content)
+        self.import_mail_recent_card.body_layout.addWidget(self.import_recent_state_stack)
         shell.addWidget(self.import_mail_recent_card, 1)
 
         layout.addLayout(shell, 1)
@@ -2947,6 +2978,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shell.setSpacing(12)
 
         self.export_group_card = SectionCard("报销组", hint="左侧按组查看发票数、金额和缺材料情况；完整性检查会随选择更新。")
+        self.export_empty_state = EmptyStateCard(
+            "还没有报销组",
+            "在审核页将发票加入报销组后，即可检查并导出。",
+        )
+        self.export_empty_state.setVisible(False)
+        self.export_group_card.body_layout.addWidget(self.export_empty_state)
         self.export_group_list = EntityList()
         self.export_group_list.currentRowChanged.connect(self._sync_export_claim_selection)
         self.export_group_card.body_layout.addWidget(self.export_group_list, 1)

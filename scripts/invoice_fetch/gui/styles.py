@@ -56,7 +56,7 @@ COLOR_TOKENS = {
     "info": "#2563EB",
 }
 
-APP_STYLESHEET = """
+_BASE_STYLESHEET = """
 QMainWindow {
     background-color: #F6F8FB;
 }
@@ -1818,6 +1818,15 @@ QLabel#InvoiceTableStatsLabel {
 }
 """ + MENU_STYLE + """
 """
+
+def build_app_stylesheet() -> str:
+    """Build core QSS from the shared token values."""
+    return _BASE_STYLESHEET.replace("#FFFFFF", COLOR_TOKENS["surface"]).replace(
+        "#667085", COLOR_TOKENS["muted"]
+    ).replace("#E4E7EC", COLOR_TOKENS["border"])
+
+
+APP_STYLESHEET = build_app_stylesheet()
 
 try:
     from .ui import build_qss

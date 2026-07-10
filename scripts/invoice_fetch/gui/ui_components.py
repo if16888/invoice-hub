@@ -281,6 +281,23 @@ if _HAS_QT:
             if action is not None:
                 layout.addWidget(action, 0, Qt.AlignCenter)
 
+        def set_content(self, title, description="", icon=None):
+            self.lbl_title.setText(title)
+            self.lbl_description.setText(description)
+            self.lbl_description.setVisible(bool(description))
+            self.lbl_icon.setText(str(icon) if icon else "")
+            self.lbl_icon.setVisible(bool(icon))
+
+        def set_action(self, button=None):
+            if hasattr(self, "_action") and self._action is not None:
+                self._action.hide()
+                self._action.setParent(self)
+            self._action = button
+            if button is not None:
+                button.setParent(self)
+                self.layout().addWidget(button, 0, Qt.AlignCenter)
+                button.show()
+
     class LoadingCard(QFrame):
         """Consistent in-page loading state without technical log copy."""
 
@@ -295,6 +312,10 @@ if _HAS_QT:
             layout.addWidget(self.lbl_text)
             layout.addStretch(1)
 
+        def set_text(self, text): self.lbl_text.setText(text)
+        def start(self): self.show()
+        def stop(self): self.hide()
+
     class InlineErrorCard(QFrame):
         """Consistent inline error with retry and optional secondary action."""
 
@@ -308,6 +329,63 @@ if _HAS_QT:
             layout.addWidget(self.lbl_text, 1)
             if retry is not None:
                 layout.addWidget(retry)
+
+        def set_error(self, text): self.lbl_text.setText(text)
+        def set_retry_action(self, button=None):
+            if hasattr(self, "_retry") and self._retry is not None:
+                self.layout().removeWidget(self._retry)
+                self._retry.hide()
+                self._retry.setParent(self)
+            self._retry = button
+            if button is not None:
+                button.setParent(self)
+                self.layout().addWidget(button)
+                button.show()
+        def clear(self): self.set_error(""); self.set_retry_action(None)
+
+    class PageStateStack(QFrame):
+        """Keep content, empty, loading, and error mutually exclusive."""
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.setObjectName("PageStateStack")
+            self.stack = QStackedWidget(self)
+            self.content = QWidget()
+            self.empty = EmptyStateCard("暂无内容")
+            self.loading = LoadingCard()
+            self.error = InlineErrorCard()
+            for widget in (self.content, self.empty, self.loading, self.error):
+                self.stack.addWidget(widget)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(self.stack)
+
+        def set_content(self, widget: QWidget):
+            old_layout = self.content.layout()
+            if old_layout is not None:
+                while old_layout.count():
+                    item = old_layout.takeAt(0)
+                    child = item.widget()
+                    if child is not None:
+                        child.setParent(None)
+            layout = QVBoxLayout(self.content)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(widget)
+            self.show_content()
+
+        def show_content(self): self.stack.setCurrentWidget(self.content)
+        def show_empty(self, title, description="", action=None, icon=None):
+            self.empty.set_content(title, description, icon)
+            self.empty.set_action(action)
+            self.stack.setCurrentWidget(self.empty)
+        def show_loading(self, text="正在加载…"):
+            self.loading.set_text(text)
+            self.loading.start()
+            self.stack.setCurrentWidget(self.loading)
+        def show_error(self, text, retry=None, details=None):
+            self.error.set_error(text)
+            self.error.set_retry_action(retry)
+            self.stack.setCurrentWidget(self.error)
 
     class SectionCard(QFrame):
         """Simple titled card for page sections."""
