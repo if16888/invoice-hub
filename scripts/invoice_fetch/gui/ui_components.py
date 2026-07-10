@@ -234,6 +234,10 @@ if _HAS_QT:
             self.lbl_status.style().polish(self.lbl_status)
 
         def set_action(self, button: QPushButton | None) -> None:
+            if button is self._action_widget:
+                if button is not None:
+                    button.show()
+                return
             self.clear_action()
             if button is not None:
                 self._action_widget = button
@@ -242,7 +246,6 @@ if _HAS_QT:
                 self.layout().addWidget(button)
 
         def replace_action(self, button: QPushButton | None) -> None:
-            self.clear_action()
             self.set_action(button)
 
         def clear_action(self) -> None:

@@ -939,6 +939,10 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.btn_retry_download.setVisible(False)
+        self.set_attachment_state()
+        self.set_claim_summary("")
+        if hasattr(self, "btn_claim_assignment"):
+            self.btn_claim_assignment.setText("选择")
 
 
 
@@ -1531,8 +1535,15 @@ class InvoiceDetailPanel(QWidget):
 
         self.txt_path.setStatusTip(f"双击{action}原件")
         if hasattr(self, "original_status_line"):
-            status = "正常" if has_file else ("需重下" if can_download and has_url else "缺失")
-            self.original_status_line.set_status(status, "success" if has_file else "warning")
+            if has_file:
+                status, state = "正常", "success"
+            elif can_download and has_url:
+                status, state = "需重下", "warning"
+            elif has_url:
+                status, state = "下载失败", "danger"
+            else:
+                status, state = "缺失", "warning"
+            self.original_status_line.set_status(status, state)
             action_button = self.btn_open_file if has_file else (
                 self.btn_retry_download if can_download and has_url else self.btn_add_attachment
             )
@@ -1776,7 +1787,11 @@ class InvoiceDetailPanel(QWidget):
             if not label or label.startswith("新建"):
                 continue
             action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(index == self.combo_claims.currentIndex())
             action.triggered.connect(lambda checked=False, i=index: self.combo_claims.setCurrentIndex(i))
+        if self.combo_claims.currentIndex() >= 0:
+            menu.addAction("移出报销组", lambda: self.combo_claims.setCurrentIndex(-1))
         menu.addSeparator()
         menu.addAction("新建报销组", self._toggle_new_claim_input)
         menu.exec(self.btn_claim_assignment.mapToGlobal(self.btn_claim_assignment.rect().bottomLeft()))
