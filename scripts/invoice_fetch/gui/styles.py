@@ -38,6 +38,24 @@ QMenu::separator {
 }
 """
 
+PAGE_MARGIN = 16
+SECTION_GAP = 12
+CARD_PADDING = 12
+CONTROL_HEIGHT = 34
+COMPACT_ROW_HEIGHT = 28
+CARD_RADIUS = 10
+
+COLOR_TOKENS = {
+    "text": "#111827",
+    "muted": "#667085",
+    "border": "#E4E7EC",
+    "surface": "#FFFFFF",
+    "success": "#059669",
+    "warning": "#B54708",
+    "danger": "#DC2626",
+    "info": "#2563EB",
+}
+
 APP_STYLESHEET = """
 QMainWindow {
     background-color: #F6F8FB;
@@ -192,6 +210,15 @@ QFrame#SummaryStrip {
     border: 1px solid #E5EAF2;
     border-radius: 12px;
 }
+
+QFrame#EmptyStateCard, QFrame#LoadingCard, QFrame#InlineErrorCard {
+    background: #F8FAFC;
+    border: 1px solid #E4E7EC;
+    border-radius: 10px;
+}
+QLabel#EmptyStateIcon { color: #98A2B3; font-size: 22px; }
+QLabel#EmptyStateTitle { color: #344054; font-size: 13px; font-weight: 600; }
+QLabel#EmptyStateDescription { color: #667085; font-size: 12px; }
 QFrame#PageHeader {
     background: transparent;
     border: none;

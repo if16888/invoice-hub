@@ -256,6 +256,59 @@ if _HAS_QT:
             self._action_widget.setParent(self)
             self._action_widget = None
 
+    class EmptyStateCard(QFrame):
+        """Consistent empty state with one optional next action."""
+
+        def __init__(self, title: str, description: str = "", action: QPushButton | None = None, parent=None):
+            super().__init__(parent)
+            self.setObjectName("EmptyStateCard")
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(14, 14, 14, 14)
+            layout.setSpacing(8)
+            self.lbl_icon = QLabel("○")
+            self.lbl_icon.setObjectName("EmptyStateIcon")
+            self.lbl_icon.setAlignment(Qt.AlignCenter)
+            self.lbl_title = QLabel(title)
+            self.lbl_title.setObjectName("EmptyStateTitle")
+            self.lbl_title.setAlignment(Qt.AlignCenter)
+            self.lbl_description = QLabel(description)
+            self.lbl_description.setObjectName("EmptyStateDescription")
+            self.lbl_description.setWordWrap(True)
+            self.lbl_description.setAlignment(Qt.AlignCenter)
+            layout.addWidget(self.lbl_icon)
+            layout.addWidget(self.lbl_title)
+            layout.addWidget(self.lbl_description)
+            if action is not None:
+                layout.addWidget(action, 0, Qt.AlignCenter)
+
+    class LoadingCard(QFrame):
+        """Consistent in-page loading state without technical log copy."""
+
+        def __init__(self, text: str = "正在加载…", parent=None):
+            super().__init__(parent)
+            self.setObjectName("LoadingCard")
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(14, 12, 14, 12)
+            self.lbl_text = QLabel(text)
+            self.lbl_text.setAlignment(Qt.AlignCenter)
+            layout.addStretch(1)
+            layout.addWidget(self.lbl_text)
+            layout.addStretch(1)
+
+    class InlineErrorCard(QFrame):
+        """Consistent inline error with retry and optional secondary action."""
+
+        def __init__(self, text: str = "暂时无法加载", retry: QPushButton | None = None, parent=None):
+            super().__init__(parent)
+            self.setObjectName("InlineErrorCard")
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(10, 8, 10, 8)
+            self.lbl_text = QLabel(text)
+            self.lbl_text.setWordWrap(True)
+            layout.addWidget(self.lbl_text, 1)
+            if retry is not None:
+                layout.addWidget(retry)
+
     class SectionCard(QFrame):
         """Simple titled card for page sections."""
 
