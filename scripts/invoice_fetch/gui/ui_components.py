@@ -223,6 +223,7 @@ if _HAS_QT:
             self.lbl_status = QLabel(status)
             self.lbl_status.setProperty("class", "StatusLineValue")
             self.lbl_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            self._action_widget = None
             layout.addWidget(self.lbl_label)
             layout.addWidget(self.lbl_status, 1)
 
@@ -233,7 +234,11 @@ if _HAS_QT:
             self.lbl_status.style().polish(self.lbl_status)
 
         def set_action(self, button: QPushButton | None) -> None:
+            self.clear_action()
             if button is not None:
+                self._action_widget = button
+                button.setParent(self)
+                button.show()
                 self.layout().addWidget(button)
 
         def replace_action(self, button: QPushButton | None) -> None:
@@ -241,12 +246,12 @@ if _HAS_QT:
             self.set_action(button)
 
         def clear_action(self) -> None:
-            layout = self.layout()
-            while layout.count() > 2:
-                item = layout.takeAt(2)
-                widget = item.widget()
-                if widget is not None:
-                    widget.setParent(None)
+            if self._action_widget is None:
+                return
+            self.layout().removeWidget(self._action_widget)
+            self._action_widget.hide()
+            self._action_widget.setParent(self)
+            self._action_widget = None
 
     class SectionCard(QFrame):
         """Simple titled card for page sections."""

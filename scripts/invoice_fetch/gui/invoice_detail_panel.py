@@ -1533,6 +1533,10 @@ class InvoiceDetailPanel(QWidget):
         if hasattr(self, "original_status_line"):
             status = "正常" if has_file else ("需重下" if can_download and has_url else "缺失")
             self.original_status_line.set_status(status, "success" if has_file else "warning")
+            action_button = self.btn_open_file if has_file else (
+                self.btn_retry_download if can_download and has_url else self.btn_add_attachment
+            )
+            self.original_status_line.replace_action(action_button)
 
 
 
@@ -1752,6 +1756,8 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_claim_total.setText(text)
         if hasattr(self, "lbl_claim_assignment"):
             self.lbl_claim_assignment.set_value(text or "未关联报销组")
+        if hasattr(self, "btn_claim_assignment"):
+            self.btn_claim_assignment.setText("更换" if text else "选择")
 
 
 
@@ -1762,6 +1768,18 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+
+    def _show_claim_assignment_menu(self):
+        menu = QMenu(self)
+        for index in range(self.combo_claims.count()):
+            label = self.combo_claims.itemText(index)
+            if not label or label.startswith("新建"):
+                continue
+            action = menu.addAction(label)
+            action.triggered.connect(lambda checked=False, i=index: self.combo_claims.setCurrentIndex(i))
+        menu.addSeparator()
+        menu.addAction("新建报销组", self._toggle_new_claim_input)
+        menu.exec(self.btn_claim_assignment.mapToGlobal(self.btn_claim_assignment.rect().bottomLeft()))
 
     def set_supporting_documents(self, items: list[dict]):
         """Populate the supporting-documents combo from extra_paths."""
@@ -1805,8 +1823,6 @@ class InvoiceDetailPanel(QWidget):
             self.btn_open_extra_files.setVisible(True)
             self.btn_add_evidence.setEnabled(True)
             self.btn_add_evidence.setVisible(True)
-        if hasattr(self, "evidence_status_line"):
-            self.evidence_status_line.set_status("正常" if has_doc else "缺失", "success" if has_doc else "warning")
         else:
             self.evidence_content_widget.setCurrentWidget(self.evidence_missing_page)
             self.lbl_evidence_name.setVisible(False)
@@ -1816,6 +1832,12 @@ class InvoiceDetailPanel(QWidget):
             self.btn_add_evidence.setText("补充")
             self.btn_add_evidence.setEnabled(True)
             self.btn_add_evidence.setVisible(True)
+        if hasattr(self, "evidence_status_line"):
+            status = f"正常 · {len(items)} 份" if has_doc else "缺失"
+            self.evidence_status_line.set_status(status, "success" if has_doc else "warning")
+            self.evidence_status_line.replace_action(
+                self.btn_open_extra_files if has_doc else self.btn_add_evidence
+            )
     def get_selected_supporting_document(self) -> dict | None:
 
 
@@ -3469,7 +3491,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.original_card = wrap_layout_in_card(self.original_row, "DetailOriginalRowCard")
-        detail_files_layout.addWidget(self.original_card)
+        self.original_card.hide()
         self.original_status_line = StatusLine("原件", "缺失")
         detail_files_layout.addWidget(self.original_status_line)
 
@@ -3705,7 +3727,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.evidence_card = wrap_layout_in_card(self.evidence_row, "DetailEvidenceRowCard")
-        detail_files_layout.addWidget(self.evidence_card)
+        self.evidence_card.hide()
         self.evidence_status_line = StatusLine("证明", "缺失")
         detail_files_layout.addWidget(self.evidence_status_line)
 
@@ -3792,6 +3814,9 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_claim_assignment.setProperty("class", "StatusLineValue")
         self.lbl_claim_assignment.setMinimumHeight(28)
         claim_setup_layout.addWidget(self.lbl_claim_assignment)
+        self.btn_claim_assignment = make_button("选择", variant="secondary", min_width=56)
+        self.btn_claim_assignment.clicked.connect(self._show_claim_assignment_menu)
+        claim_setup_layout.addWidget(self.btn_claim_assignment, 0, Qt.AlignRight)
         self.combo_claims.hide()
 
 
