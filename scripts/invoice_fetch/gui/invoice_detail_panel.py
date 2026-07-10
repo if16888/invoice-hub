@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 
 
 
-    QTabWidget, QMenu, QLayout,
+    QTabWidget, QMenu, QLayout, QDialog,
 
 
 
@@ -2963,6 +2963,11 @@ class InvoiceDetailPanel(QWidget):
 
         core_title_row.addWidget(self.lbl_dirty_hint)
 
+        self.btn_edit_fields = make_button("编辑", variant="secondary", min_width=64)
+        self.btn_edit_fields.setToolTip("在单任务弹窗中编辑当前发票字段")
+        self.btn_edit_fields.clicked.connect(self._open_edit_dialog)
+        core_title_row.addWidget(self.btn_edit_fields)
+
 
 
 
@@ -4635,3 +4640,63 @@ class InvoiceDetailPanel(QWidget):
 
         self.txt_note.setEnabled(False)
         self._finalize_fixed_header_and_tabs()
+
+    def _open_edit_dialog(self):
+        dialog = EditFieldsDialog(
+            self,
+            self.txt_number.text(),
+            self.txt_date.text(),
+            self.txt_amount.text(),
+            self.combo_category.currentText(),
+            self.txt_buyer.text(),
+            self.txt_seller.text(),
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.txt_number.setText(dialog.txt_number.text())
+        self.txt_date.setText(dialog.txt_date.text())
+        self.txt_amount.setText(dialog.txt_amount.text())
+        self.combo_category.setCurrentText(dialog.combo_category.currentText())
+        self.txt_buyer.setText(dialog.txt_buyer.text())
+        self.txt_seller.setText(dialog.txt_seller.text())
+        self._cb.on_save_fields()
+
+
+class EditFieldsDialog(QDialog):
+    def __init__(self, parent, number, date, amount, category, buyer, seller):
+        super().__init__(parent)
+        self.setWindowTitle("编辑发票字段")
+        self.resize(380, 280)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.txt_number = QLineEdit(number)
+        self.txt_date = QLineEdit(date)
+        self.txt_amount = QLineEdit(amount)
+        self.combo_category = QComboBox()
+        self.combo_category.setEditable(True)
+        categories = [
+            parent.combo_category.itemText(i)
+            for i in range(parent.combo_category.count())
+        ] or ["餐饮", "交通", "住宿", "办公", "通讯", "其他"]
+        self.combo_category.addItems(categories)
+        self.combo_category.setCurrentText(category)
+        self.txt_buyer = QLineEdit(buyer)
+        self.txt_seller = QLineEdit(seller)
+        form.addRow("发票号码", self.txt_number)
+        form.addRow("费用日期", self.txt_date)
+        form.addRow("金额", self.txt_amount)
+        form.addRow("消费类型", self.combo_category)
+        form.addRow("购买方", self.txt_buyer)
+        form.addRow("销售方", self.txt_seller)
+        layout.addLayout(form)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = make_button("取消", variant="secondary")
+        cancel.clicked.connect(self.reject)
+        confirm = make_button("确定", variant="primary")
+        confirm.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(confirm)
+        layout.addLayout(buttons)
