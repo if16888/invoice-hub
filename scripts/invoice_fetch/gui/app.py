@@ -4206,6 +4206,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_idx = self.combo_claims.currentIndex() if hasattr(self, "combo_claims") else -1
         if claim_idx < 0:
             self.lbl_claim_total.setText("0 条记录 · 合计 ¥0.00")
+            if hasattr(self._detail_panel, "lbl_claim_assignment"):
+                self._detail_panel.lbl_claim_assignment.set_value("未关联报销组")
+                self._detail_panel.btn_claim_assignment.setText("选择")
             if hasattr(self, "btn_add_to_claim"):
                 self.btn_add_to_claim.setText("加入")
                 self.btn_add_to_claim.setToolTip("请先选择报销组")
@@ -4219,6 +4222,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if claim_id == self._NEW_CLAIM_VALUE:
             self._detail_panel._set_new_claim_input_visible(True)
             self.lbl_claim_total.setText("输入名称并确认后即可加入发票")
+            if hasattr(self._detail_panel, "lbl_claim_assignment"):
+                self._detail_panel.lbl_claim_assignment.set_value("未关联报销组")
+                self._detail_panel.btn_claim_assignment.setText("选择")
             self.btn_add_to_claim.setText("加入")
             self.btn_add_to_claim.setEnabled(False)
             self.btn_export.setEnabled(False)
@@ -4240,6 +4246,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         count, total, has_missing = amount_total(invoices)
         suffix = "，部分金额缺失" if has_missing else ""
         self.lbl_claim_total.setText(f"{group_name}：{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
+        if hasattr(self._detail_panel, "lbl_claim_assignment"):
+            self._detail_panel.lbl_claim_assignment.set_value(group_name)
+            self._detail_panel.btn_claim_assignment.setText("更换")
 
         if hasattr(self, "btn_add_to_claim"):
             existing_group = ""

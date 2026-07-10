@@ -1784,13 +1784,15 @@ class InvoiceDetailPanel(QWidget):
         menu = QMenu(self)
         for index in range(self.combo_claims.count()):
             label = self.combo_claims.itemText(index)
-            if not label or label.startswith("新建"):
+            group_id = self.combo_claims.itemData(index)
+            if not label or not isinstance(group_id, int) or group_id <= 0:
                 continue
             action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(index == self.combo_claims.currentIndex())
             action.triggered.connect(lambda checked=False, i=index: self.combo_claims.setCurrentIndex(i))
-        if self.combo_claims.currentIndex() >= 0:
+        current_id = self.combo_claims.currentData()
+        if isinstance(current_id, int) and current_id > 0:
             menu.addAction("移出报销组", lambda: self.combo_claims.setCurrentIndex(-1))
         menu.addSeparator()
         menu.addAction("新建报销组", self._toggle_new_claim_input)
