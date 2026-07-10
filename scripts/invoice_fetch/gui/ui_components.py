@@ -267,6 +267,9 @@ if _HAS_QT:
             self.setObjectName("SelectableSourceCard")
             self.setProperty("selected", False)
             self.setCursor(Qt.PointingHandCursor)
+            self.setFocusPolicy(Qt.StrongFocus)
+            self.setAccessibleName(title)
+            self.setAccessibleDescription(description)
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(12, 10, 12, 10)
@@ -288,6 +291,13 @@ if _HAS_QT:
             if event.button() == Qt.LeftButton:
                 self.clicked.emit(self.key)
             super().mousePressEvent(event)
+
+        def keyPressEvent(self, event) -> None:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+                self.clicked.emit(self.key)
+                event.accept()
+                return
+            super().keyPressEvent(event)
 
     class CompactFieldRow(QFrame):
         """One compact read-only label/value/action row for settings surfaces."""

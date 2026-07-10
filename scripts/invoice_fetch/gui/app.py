@@ -9,6 +9,7 @@ import sys
 import logging
 import time
 from copy import deepcopy
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from datetime import datetime
@@ -111,6 +112,18 @@ REDOWNLOAD_BUCKETS = (
 )
 
 TABLE_BADGE_ROLE = int(Qt.UserRole) + 101
+
+
+@dataclass(frozen=True)
+class ImportActivity:
+    """Business-facing import outcome kept separate from diagnostic logs."""
+
+    occurred_at: datetime
+    source: str
+    scanned: int = 0
+    added: int = 0
+    duplicates: int = 0
+    failed: int = 0
 
 REVIEW_STATUS_BADGES = {
     "to_review": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
@@ -472,6 +485,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._deferred_init_done = False
         self._first_load_notice = None
         self._last_scan_summary = {}
+        self._import_activities: list[ImportActivity] = []
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
@@ -1942,9 +1956,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _refresh_overview_page(self) -> None:
         metrics = self._collect_overview_metrics()
-        numeric_keys = ("today_imported", "to_review", "error", "needs_fix", "month_total", "export_ready", "total")
-        if metrics is None or any(
-            not isinstance(metrics.get(key), (int, float)) for key in numeric_keys
+        integer_keys = ("today_imported", "to_review", "error", "needs_fix", "export_ready", "total")
+        if (
+            metrics is None
+            or any(not isinstance(metrics.get(key), int) for key in integer_keys)
+            or not isinstance(metrics.get("month_total"), Decimal)
         ):
             retry = make_button("重试", variant="secondary")
             retry.clicked.connect(self._refresh_overview_page)
@@ -1994,21 +2010,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.overview_timeline.add_entry("当前", "报销组", f"可导出 {metrics['export_ready']} 组 · 本月 ¥{metrics['month_total']:.2f}")
 
     def _select_import_source(self, source: str) -> None:
-        """Select one import source while keeping its action path explicit."""
+        """Select an import task; business actions stay inside that task."""
         self._set_import_source_selected(source)
-        if source == "local":
-            self._import_local_clicked()
-        elif source == "mobile":
-            self._mobile_upload_clicked()
 
     def _set_import_source_selected(self, source: str) -> None:
         self._selected_import_source = source
         for key, card in getattr(self, "import_source_cards", {}).items():
             card.set_selected(key == source)
-        if hasattr(self, "import_mail_accounts_card"):
-            is_mail = source == "mail"
-            self.import_mail_accounts_card.setVisible(is_mail)
-            self.import_mail_recent_card.setVisible(is_mail)
+        if hasattr(self, "import_task_stack"):
+            task_page = getattr(self, "_import_task_pages", {}).get(source)
+            if task_page is not None:
+                self.import_task_stack.setCurrentWidget(task_page)
 
     def _run_import_primary_action(self) -> None:
         """Keep the import page primary action truthful for the chosen account."""
@@ -2017,22 +2029,74 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         self._scan_selected_email_accounts()
 
+    def _record_import_activity(
+        self,
+        source: str,
+        *,
+        scanned: int = 0,
+        added: int = 0,
+        duplicates: int = 0,
+        failed: int = 0,
+    ) -> None:
+        """Record a structured import outcome for the in-session result surface."""
+        self._import_activities.insert(
+            0,
+            ImportActivity(
+                occurred_at=datetime.now(),
+                source=source,
+                scanned=max(0, int(scanned or 0)),
+                added=max(0, int(added or 0)),
+                duplicates=max(0, int(duplicates or 0)),
+                failed=max(0, int(failed or 0)),
+            ),
+        )
+        del self._import_activities[10:]
+
+    @staticmethod
+    def _format_import_activity(activity: ImportActivity) -> tuple[str, str, str]:
+        source_labels = {
+            "mail": "邮箱扫描",
+            "local": "本地导入",
+            "mobile": "手机扫码",
+        }
+        summary_parts = []
+        if activity.scanned:
+            summary_parts.append(f"扫描 {activity.scanned} 封")
+        summary_parts.append(f"新增 {activity.added} 条")
+        summary_parts.append(f"重复 {activity.duplicates} 条")
+        summary_parts.append(f"失败 {activity.failed} 条")
+        state = "danger" if activity.failed else "success"
+        return (
+            activity.occurred_at.strftime("%H:%M"),
+            source_labels.get(activity.source, "导入"),
+            " · ".join(summary_parts),
+        )
+
     def _refresh_imports_page(self) -> None:
         from ..config import get_email_accounts
 
-        log_lines = self._read_recent_runtime_logs()
         if hasattr(self, "txt_import_records"):
-            # Deprecated compatibility cache. Runtime logs belong to the drawer,
-            # not to the business-facing import result surface.
-            self.txt_import_records.setPlainText("\n".join(log_lines))
+            # Deprecated compatibility widget. Diagnostic logs stay in the drawer.
+            self.txt_import_records.clear()
         if hasattr(self, "import_recent_state_stack"):
-            if log_lines:
+            activities = list(getattr(self, "_import_activities", []))
+            if activities:
                 self.import_recent_state_stack.show_content()
             else:
                 self.import_recent_state_stack.show_empty(
                     "最近还没有导入记录",
                     "执行一次本地导入或邮箱扫描后，结果会显示在这里。",
                 )
+            if hasattr(self, "import_recent_timeline"):
+                self.import_recent_timeline.clear()
+                for activity in activities[:5]:
+                    when, title, summary = self._format_import_activity(activity)
+                    self.import_recent_timeline.add_entry(
+                        when,
+                        title,
+                        summary,
+                        state="danger" if activity.failed else "success",
+                    )
 
         if hasattr(self, "mail_checklist_layout"):
             while self.mail_checklist_layout.count():
@@ -2969,7 +3033,41 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             more_menu=self.import_mail_more,
         )
         self.import_mail_accounts_card.body_layout.addWidget(self.import_mail_command_bar)
-        shell.addWidget(self.import_mail_accounts_card, 1)
+
+        self.import_local_task_card = SectionCard(
+            "本地导入",
+            hint="选择文件或文件夹后，按当前规则完成导入。",
+        )
+        local_rules = ReadOnlyDetailPanel("导入规则", "本地文件会保留原路径，并自动识别重复发票。")
+        local_rules.add_row("支持类型", "PDF / OFD / XML / 图片 / 压缩包")
+        local_rules.add_row("重复处理", "按发票代码和号码自动去重")
+        self.import_local_task_card.body_layout.addWidget(local_rules)
+        self.btn_import_local_task = make_button("选择文件", variant="primary")
+        self.btn_import_local_task.clicked.connect(self._import_local_clicked)
+        self.import_local_task_card.body_layout.addWidget(self.btn_import_local_task)
+
+        self.import_mobile_task_card = SectionCard(
+            "手机扫码",
+            hint="启动上传服务后，可从手机提交原件或证明材料。",
+        )
+        mobile_rules = ReadOnlyDetailPanel("上传状态", "上传完成后会自动刷新审核队列。")
+        mobile_rules.add_row("服务状态", "准备就绪")
+        mobile_rules.add_row("支持材料", "发票原件与证明材料")
+        self.import_mobile_task_card.body_layout.addWidget(mobile_rules)
+        self.btn_import_mobile_task = make_button("启动上传", variant="primary")
+        self.btn_import_mobile_task.clicked.connect(self._mobile_upload_clicked)
+        self.import_mobile_task_card.body_layout.addWidget(self.btn_import_mobile_task)
+
+        self.import_task_stack = QStackedWidget()
+        self._import_task_pages = {
+            "mail": self.import_mail_accounts_card,
+            "local": self.import_local_task_card,
+            "mobile": self.import_mobile_task_card,
+        }
+        for task_page in self._import_task_pages.values():
+            self.import_task_stack.addWidget(task_page)
+        self.import_task_stack.setCurrentWidget(self.import_mail_accounts_card)
+        shell.addWidget(self.import_task_stack, 1)
 
         self.import_mail_recent_card = SectionCard("最近结果", hint="查看最近一次导入的结果。")
         self.import_mail_recent_card.setMinimumWidth(360)
@@ -2986,6 +3084,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_import_recent_status.setWordWrap(True)
         self.lbl_import_recent_status.setStyleSheet("color: #667085; font-size: 12px;")
         self.import_recent_content_layout.addWidget(self.lbl_import_recent_status)
+        self.import_recent_timeline = ActivityTimeline()
+        self.import_recent_content_layout.addWidget(self.import_recent_timeline)
         self.txt_import_records = QPlainTextEdit()
         self.txt_import_records.setReadOnly(True)
         self.txt_import_records.setVisible(False)
@@ -6393,6 +6493,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._clear_action_busy(btn, orig_text)
         summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
         self._last_scan_summary = summary
+        self._record_import_activity(
+            "mail",
+            scanned=summary.get("scanned") or summary.get("scanned_headers") or 0,
+            added=summary.get("new") or summary.get("new_email_headers") or 0,
+            duplicates=summary.get("duplicates") or 0,
+            failed=(
+                int(summary.get("download_failed", 0) or 0)
+                + int(summary.get("parse_failed", 0) or 0)
+                + int(summary.get("link_failed", 0) or 0)
+            ),
+        )
         self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
         self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
 
@@ -6559,6 +6670,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._clear_action_busy(self.btn_mobile_upload, "扫码上传")
 
     def _mobile_upload_finished(self):
+        self._record_import_activity("mobile")
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
         self._load_claims()
@@ -6583,6 +6695,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         conflicts = stats.get("conflicts", 0)
         pending_manual = stats.get("pending_manual", 0)
         failed = stats.get("failed", 0)
+        self._record_import_activity(
+            "local",
+            added=added,
+            duplicates=duplicates,
+            failed=failed,
+        )
         self.write_log(
             f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"
             f"冲突待确认 {conflicts} 条，需人工确认材料 {pending_manual} 条，真正失败 {failed} 条。"

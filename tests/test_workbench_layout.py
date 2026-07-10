@@ -6,6 +6,7 @@ No Qt or database required; all assertions are plain Python.
 """
 
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from scripts.invoice_fetch.gui.workbench_layout import (
@@ -602,10 +603,56 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             window = self._make_window(td)
             try:
                 window._switch_main_page("imports")
-                window._set_import_source_selected("local")
+                calls = []
+                window._import_local_clicked = lambda: calls.append("local")
+                window._select_import_source("local")
                 selected = [key for key, card in window.import_source_cards.items() if card.property("selected")]
                 self.assertEqual(selected, ["local"])
-                self.assertFalse(window.import_mail_accounts_card.isVisible())
+                self.assertIs(window.import_task_stack.currentWidget(), window.import_local_task_card)
+                self.assertFalse(window.import_mail_recent_card.isHidden())
+                self.assertEqual(calls, [])
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_dashboard_accepts_decimal_month_total(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                metrics = {
+                    "today_imported": 1,
+                    "to_review": 2,
+                    "error": 0,
+                    "needs_fix": 0,
+                    "month_total": Decimal("28.90"),
+                    "export_ready": 1,
+                    "total": 2,
+                }
+                window._collect_overview_metrics = lambda: metrics
+                window._refresh_overview_page()
+                self.assertIs(window.overview_state_stack.stack.currentWidget(), window.overview_state_stack.content)
+                self.assertEqual(window.overview_value_labels["to_review"].value(), "2 张")
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_import_results_use_structured_activities_not_runtime_logs(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window._read_recent_runtime_logs = lambda: ["unrelated diagnostic entry"]
+                window._import_activities = []
+                window._refresh_imports_page()
+                self.assertIs(window.import_recent_state_stack.stack.currentWidget(), window.import_recent_state_stack.empty)
+                window._record_import_activity("local", added=2, duplicates=1)
+                window._refresh_imports_page()
+                self.assertIs(window.import_recent_state_stack.stack.currentWidget(), window.import_recent_state_stack.content)
+                self.assertEqual(window.import_recent_timeline.layout().count(), 1)
+                self.assertEqual(window.txt_import_records.toPlainText(), "")
             finally:
                 window.db.close()
                 window.close()
