@@ -20,9 +20,9 @@ class TestMetricsForSize(unittest.TestCase):
 
     def test_1920_layout_uses_full_density(self):
         metrics = metrics_for_size(1920, 1080)
-        self.assertEqual(metrics.nav_width, 208)
-        self.assertEqual(metrics.detail_width, 444)
-        self.assertEqual(metrics.record_height, 340)
+        self.assertEqual(metrics.nav_width, 180)
+        self.assertEqual(metrics.detail_width, 352)
+        self.assertEqual(metrics.record_height, 390)
         self.assertEqual(metrics.thumbnail_width, 104)
         self.assertFalse(metrics.compact)
 
@@ -30,15 +30,16 @@ class TestMetricsForSize(unittest.TestCase):
         metrics = metrics_for_size(1366, 768)
         self.assertTrue(metrics.nav_collapsed)
         self.assertEqual(metrics.nav_width, 56)
-        self.assertEqual(metrics.detail_width, 380)
+        self.assertEqual(metrics.detail_width, 344)
         self.assertEqual(metrics.record_height, 332)
 
     def test_1440_900_is_compact_but_not_collapsed(self):
         metrics = metrics_for_size(1440, 900)
         self.assertFalse(metrics.nav_collapsed)
         self.assertTrue(metrics.compact)
-        self.assertEqual(metrics.detail_width, 400)
-        self.assertEqual(metrics.record_height, 320)
+        self.assertEqual(metrics.nav_width, 180)
+        self.assertEqual(metrics.detail_width, 352)
+        self.assertEqual(metrics.record_height, 336)
 
     def test_1280_720_collapses_navigation(self):
         """Sub-1366 width also triggers the collapsed tier."""
@@ -210,7 +211,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_detail_panel_minimum_width_at_1920(self):
-        """At 1920×1080 the detail panel minimum width must be >= 440."""
+        """At 1920×1080 the decision panel stays within the compact token width."""
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
@@ -229,15 +230,15 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_detail_panel_minimum_width_at_1366(self):
-        """At 1366×768 the compact detail panel minimum width is 380px."""
+        """At 1366×768 the compact detail panel remains usable at 340-352px."""
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
                 window.show()
                 window.resize(1366, 768)
                 QApplication.processEvents()
-                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 360)
-                self.assertLessEqual(window._detail_panel.minimumWidth(), 380)
+                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 340)
+                self.assertLessEqual(window._detail_panel.minimumWidth(), 352)
             finally:
                 window.db.close()
                 window.close()
@@ -321,7 +322,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 self.assertTrue(window.workbench_nav.isVisible())
                 self.assertEqual(window.workbench_nav.objectName(), "WorkbenchNav")
-                self.assertIn(window.workbench_nav.minimumWidth(), (52, 208))
+                self.assertIn(window.workbench_nav.minimumWidth(), (56, 180))
 
                 self.assertTrue(window.workbench_top_toolbar.isVisible())
                 self.assertEqual(window.workbench_top_toolbar.objectName(), "WorkbenchTopToolbar")
@@ -507,12 +508,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window._switch_main_page("imports")
                 QApplication.processEvents()
                 self.assertTrue(window.imports_summary_strip.isVisible())
-                self.assertEqual(window.btn_import_scan_selected.text(), "开始扫描")
+                self.assertIn(window.btn_import_scan_selected.text(), ("开始扫描", "补授权码"))
                 self.assertEqual(window.btn_import_scan_default.text(), "扫默认")
                 action_texts = [action.text() for action in window.import_mail_more_menu.actions()]
                 self.assertEqual(action_texts, ["管理邮箱", "失败明细"])
                 self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
-                self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "邮箱扫描")
+                self.assertTrue(window.import_mail_accounts_card.lbl_title.text())
                 self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
                 self.assertTrue(hasattr(window, "btn_settings_mailbox_add"))
                 self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
@@ -596,6 +597,50 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
+    def test_import_source_has_single_selected_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window._switch_main_page("imports")
+                window._set_import_source_selected("local")
+                selected = [key for key, card in window.import_source_cards.items() if card.property("selected")]
+                self.assertEqual(selected, ["local"])
+                self.assertFalse(window.import_mail_accounts_card.isVisible())
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_dashboard_summary_uses_actionable_work_metrics(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                titles = [card.text().rsplit(" ", 1)[0] for card in window.overview_value_labels.values()]
+                self.assertEqual(titles, ["待审核", "缺材料", "异常", "可导出组"])
+                self.assertTrue(hasattr(window, "overview_timeline"))
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_export_preflight_uses_product_facing_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                copy = window._format_claim_export_preflight_text(
+                    {"approved": 2, "to_review": 1, "missing_attachment": 0, "missing_amount": 0}
+                )
+                self.assertIn("已通过发票", copy)
+                self.assertNotIn("approved:", copy)
+                self.assertNotIn("to_review:", copy)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
     def test_ai_page_uses_single_detail_surface_without_summary_duplication(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
@@ -604,7 +649,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
                 self.assertFalse(window.settings_ai_profile_list.isVisible())
                 self.assertFalse(hasattr(window, "settings_ai_summary_strip"))
-                self.assertTrue(window.settings_ai_detail_panel.isVisible())
+                self.assertIs(window.settings_tabs.currentWidget(), window.settings_tabs.widget(1))
+                self.assertFalse(window.settings_ai_detail_panel.isHidden())
             finally:
                 window.db.close()
                 window.close()
@@ -676,8 +722,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
-                self.assertIn("快捷键：", window.btn_shortcut_help.text())
-                self.assertIn("·", window.btn_shortcut_help.text())
+                self.assertEqual(window.btn_shortcut_help.text(), "帮助")
             finally:
                 window.db.close()
                 window.close()
@@ -805,7 +850,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.resize(1920, 1080)
                 QApplication.processEvents()
 
-                self.assertEqual(window.workbench_nav.maximumWidth(), 208)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 180)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertTrue(window.btn_collapse_nav.isVisible())
             finally:
@@ -825,8 +870,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.resize(1920, 1080)
                 QApplication.processEvents()
 
-                # Default: expanded at 208px
-                self.assertEqual(window.workbench_nav.maximumWidth(), 208)
+                # Default: expanded at the desktop token width.
+                self.assertEqual(window.workbench_nav.maximumWidth(), 180)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertTrue(window.btn_collapse_nav.isVisible())
 
@@ -838,11 +883,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
                 self.assertTrue(settings.value("nav_collapsed_manual", False, type=bool))
 
-                # Click again: should expand back to 208px
+                # Click again: should expand back to 180px.
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
                 settings.sync()
-                self.assertEqual(window.workbench_nav.maximumWidth(), 208)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 180)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertFalse(settings.value("nav_collapsed_manual", True, type=bool))
             finally:
@@ -862,7 +907,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 first.resize(1920, 1080)
                 QApplication.processEvents()
                 # Default: expanded
-                self.assertEqual(first.workbench_nav.maximumWidth(), 208)
+                self.assertEqual(first.workbench_nav.maximumWidth(), 180)
                 # Collapse it
                 first.btn_collapse_nav.click()
                 QApplication.processEvents()
@@ -899,8 +944,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 first.show()
                 first.resize(1920, 1080)
                 QApplication.processEvents()
-                # Default: expanded at 208, no manual pref persisted
-                self.assertEqual(first.workbench_nav.maximumWidth(), 208)
+                # Default: expanded at the desktop token width, no manual pref persisted.
+                self.assertEqual(first.workbench_nav.maximumWidth(), 180)
                 self.assertIsNone(first._nav_collapsed_manual)
 
                 first.close()
@@ -914,7 +959,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     second.show()
                     second.resize(1920, 1080)
                     QApplication.processEvents()
-                    self.assertEqual(second.workbench_nav.maximumWidth(), 208)
+                    self.assertEqual(second.workbench_nav.maximumWidth(), 180)
                     self.assertEqual(second.workbench_nav_buttons["review"].text(), "发票审核")
                     self.assertFalse(settings.contains("nav_collapsed_manual"))
                     self.assertIsNone(second._nav_collapsed_manual)

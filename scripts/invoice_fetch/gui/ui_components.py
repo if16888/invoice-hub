@@ -256,6 +256,115 @@ if _HAS_QT:
             self._action_widget.setParent(self)
             self._action_widget = None
 
+    class SelectableSourceCard(QFrame):
+        """Selectable import source card without page-specific styling logic."""
+
+        clicked = Signal(str)
+
+        def __init__(self, key: str, title: str, description: str, parent=None):
+            super().__init__(parent)
+            self.key = key
+            self.setObjectName("SelectableSourceCard")
+            self.setProperty("selected", False)
+            self.setCursor(Qt.PointingHandCursor)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(12, 10, 12, 10)
+            layout.setSpacing(3)
+            self.lbl_title = QLabel(title, self)
+            self.lbl_title.setProperty("class", "SourceCardTitle")
+            self.lbl_description = QLabel(description, self)
+            self.lbl_description.setProperty("class", "SourceCardDescription")
+            self.lbl_description.setWordWrap(True)
+            layout.addWidget(self.lbl_title)
+            layout.addWidget(self.lbl_description)
+
+        def set_selected(self, selected: bool) -> None:
+            self.setProperty("selected", bool(selected))
+            self.style().unpolish(self)
+            self.style().polish(self)
+
+        def mousePressEvent(self, event) -> None:
+            if event.button() == Qt.LeftButton:
+                self.clicked.emit(self.key)
+            super().mousePressEvent(event)
+
+    class CompactFieldRow(QFrame):
+        """One compact read-only label/value/action row for settings surfaces."""
+
+        def __init__(self, label: str, value: str = "—", action: QWidget | None = None, parent=None):
+            super().__init__(parent)
+            self.setObjectName("CompactFieldRow")
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(0, 6, 0, 6)
+            layout.setSpacing(12)
+            self.lbl_label = QLabel(label, self)
+            self.lbl_label.setProperty("class", "DetailFieldKey")
+            self.lbl_label.setMinimumWidth(92)
+            self.lbl_value = ElidedValueLabel(value, self)
+            layout.addWidget(self.lbl_label)
+            layout.addWidget(self.lbl_value, 1)
+            if action is not None:
+                action.setParent(self)
+                layout.addWidget(action)
+
+        def set_value(self, value: str) -> None:
+            self.lbl_value.set_value(value)
+
+    class ActivityTimeline(QFrame):
+        """Product-facing activity list; entries are summaries, never raw logs."""
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.setObjectName("ActivityTimeline")
+            self._layout = QVBoxLayout(self)
+            self._layout.setContentsMargins(0, 0, 0, 0)
+            self._layout.setSpacing(0)
+
+        def clear(self) -> None:
+            while self._layout.count():
+                item = self._layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        def add_entry(self, when: str, title: str, summary: str, state: str = "muted") -> QWidget:
+            row = QFrame(self)
+            row.setProperty("class", "ActivityTimelineRow")
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 8, 0, 8)
+            layout.setSpacing(12)
+            lbl_when = QLabel(when, row)
+            lbl_when.setProperty("class", "ActivityTimelineWhen")
+            lbl_when.setMinimumWidth(72)
+            lbl_title = QLabel(title, row)
+            lbl_title.setProperty("class", "ActivityTimelineTitle")
+            lbl_summary = QLabel(summary, row)
+            lbl_summary.setProperty("class", "ActivityTimelineSummary")
+            lbl_summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            layout.addWidget(lbl_when)
+            layout.addWidget(lbl_title, 1)
+            layout.addWidget(lbl_summary, 1)
+            self._layout.addWidget(row)
+            return row
+
+    class DangerZone(QFrame):
+        """Explicitly separated container for destructive settings actions."""
+
+        def __init__(self, title: str = "危险操作", hint: str = "这些操作可能影响本地数据。", parent=None):
+            super().__init__(parent)
+            self.setObjectName("DangerZone")
+            self.body_layout = QVBoxLayout(self)
+            self.body_layout.setContentsMargins(12, 10, 12, 10)
+            self.body_layout.setSpacing(8)
+            self.lbl_title = QLabel(title, self)
+            self.lbl_title.setProperty("class", "SectionTitle")
+            self.lbl_hint = QLabel(hint, self)
+            self.lbl_hint.setProperty("class", "SectionHint")
+            self.lbl_hint.setWordWrap(True)
+            self.body_layout.addWidget(self.lbl_title)
+            self.body_layout.addWidget(self.lbl_hint)
+
     class EmptyStateCard(QFrame):
         """Consistent empty state with one optional next action."""
 

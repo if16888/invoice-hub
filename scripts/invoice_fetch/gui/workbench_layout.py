@@ -33,25 +33,25 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
         return WorkbenchMetrics(
             nav_width=56,
             nav_collapsed=True,
-            detail_width=380,
+            detail_width=344,
             record_height=332,
             thumbnail_width=96,
             compact=True,
         )
     if width <= 1440:
         return WorkbenchMetrics(
-            nav_width=208,
+            nav_width=180,
             nav_collapsed=False,
-            detail_width=400,
-            record_height=320,
+            detail_width=352,
+            record_height=336,
             thumbnail_width=96,
             compact=True,
         )
     return WorkbenchMetrics(
-        nav_width=208,
+        nav_width=180,
         nav_collapsed=False,
-        detail_width=444,
-        record_height=340,
+        detail_width=352,
+        record_height=390,
         thumbnail_width=104,
         compact=False,
     )

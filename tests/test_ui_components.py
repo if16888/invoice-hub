@@ -122,6 +122,55 @@ class TestSummaryStrip(unittest.TestCase):
         self.assertEqual(set(strip.metrics().keys()), {"all", "error"})
 
 
+class TestIHDSReferenceComponents(unittest.TestCase):
+    """Shared components introduced by the reference-led desktop surface."""
+
+    def setUp(self):
+        if not _HAS_PYSIDE6:
+            self.skipTest("PySide6 not available")
+        _get_app()
+
+    def test_selectable_source_has_one_explicit_selection_state(self):
+        from scripts.invoice_fetch.gui.ui_components import SelectableSourceCard
+
+        source = SelectableSourceCard("mail", "邮箱", "扫描已配置的发票邮箱。")
+        self.assertIs(source.property("selected"), False)
+        source.set_selected(True)
+        self.assertIs(source.property("selected"), True)
+        self.assertEqual(source.key, "mail")
+
+    def test_compact_field_row_elides_and_keeps_full_tooltip(self):
+        from scripts.invoice_fetch.gui.ui_components import CompactFieldRow
+
+        value = "D:/very/long/runtime/path/that/must/not/force/the/settings/layout/to/grow/invoices.db"
+        row = CompactFieldRow("数据库路径", value)
+        self.assertEqual(row.lbl_value.toolTip(), value)
+        self.assertEqual(row.lbl_label.text(), "数据库路径")
+
+    def test_activity_timeline_contains_product_facing_entries(self):
+        from scripts.invoice_fetch.gui.ui_components import ActivityTimeline
+
+        timeline = ActivityTimeline()
+        timeline.add_entry("今天 17:30", "邮箱扫描", "扫描 12 封 · 新增 10 · 失败 0")
+        self.assertEqual(timeline.layout().count(), 1)
+        timeline.clear()
+        self.assertEqual(timeline.layout().count(), 0)
+
+    def test_danger_zone_is_a_separate_surface(self):
+        from scripts.invoice_fetch.gui.ui_components import DangerZone
+
+        zone = DangerZone()
+        self.assertEqual(zone.objectName(), "DangerZone")
+        self.assertIn("危险", zone.lbl_title.text())
+
+    def test_reference_tokens_feed_generated_stylesheet(self):
+        from scripts.invoice_fetch.gui.styles import COLOR_TOKENS, build_app_stylesheet
+
+        stylesheet = build_app_stylesheet()
+        self.assertIn(COLOR_TOKENS["app_background"], stylesheet)
+        self.assertIn(COLOR_TOKENS["accent"], stylesheet)
+
+
 class TestShortcutDisclosure(unittest.TestCase):
     """Contract tests for ShortcutDisclosure."""
 

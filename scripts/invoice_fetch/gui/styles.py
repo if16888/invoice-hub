@@ -38,18 +38,53 @@ QMenu::separator {
 }
 """
 
+SIDEBAR_EXPANDED_WIDTH = 180
+SIDEBAR_COLLAPSED_WIDTH = 56
 PAGE_MARGIN = 16
+PAGE_HEADER_HEIGHT = 54
 SECTION_GAP = 12
+CARD_GAP = 12
 CARD_PADDING = 12
-CONTROL_HEIGHT = 34
+DETAIL_PANEL_WIDTH = 352
+CONTEXT_PANEL_WIDTH = 380
+
+SPACE_2 = 2
+SPACE_4 = 4
+SPACE_8 = 8
+SPACE_12 = 12
+SPACE_16 = 16
+SPACE_20 = 20
+SPACE_24 = 24
+SPACE_32 = 32
+
+CONTROL_HEIGHT_SM = 28
+CONTROL_HEIGHT_MD = 34
+ICON_BUTTON_SIZE = 34
 COMPACT_ROW_HEIGHT = 28
-CARD_RADIUS = 10
+LIST_ROW_HEIGHT = 56
+
+RADIUS_SM = 6
+RADIUS_MD = 8
+RADIUS_LG = 10
+CARD_RADIUS = RADIUS_LG
+
+TYPE_PAGE_TITLE = 20
+TYPE_SECTION_TITLE = 13
+TYPE_BODY = 13
+TYPE_SECONDARY = 12
+TYPE_CAPTION = 11
+TYPE_METRIC = 18
+TYPE_BADGE = 12
 
 COLOR_TOKENS = {
-    "text": "#111827",
-    "muted": "#667085",
-    "border": "#E4E7EC",
-    "surface": "#FFFFFF",
+    "app_background": "#F7F8FA",
+    "surface_primary": "#FFFFFF",
+    "surface_secondary": "#F8FAFC",
+    "text_primary": "#172033",
+    "text_secondary": "#475467",
+    "text_muted": "#667085",
+    "border_subtle": "#E4E7EC",
+    "accent": "#1599BD",
     "success": "#059669",
     "warning": "#B54708",
     "danger": "#DC2626",
@@ -242,6 +277,48 @@ QFrame#SectionCard {
     background-color: #FFFFFF;
     border: 1px solid #E5EAF2;
     border-radius: 12px;
+}
+QFrame#SelectableSourceCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5EAF2;
+    border-radius: 10px;
+}
+QFrame#SelectableSourceCard:hover {
+    background-color: #F8FAFC;
+    border-color: #B8D9E3;
+}
+QFrame#SelectableSourceCard[selected="true"] {
+    background-color: #EFFBFE;
+    border: 1.5px solid #1599BD;
+}
+QLabel[class="SourceCardTitle"] {
+    color: #172033;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel[class="SourceCardDescription"] {
+    color: #667085;
+    font-size: 12px;
+}
+QFrame#CompactFieldRow {
+    background: transparent;
+    border-bottom: 1px solid #F1F5F9;
+}
+QFrame#ActivityTimeline {
+    background: transparent;
+    border: none;
+}
+QFrame.ActivityTimelineRow {
+    border-bottom: 1px solid #F1F5F9;
+    background: transparent;
+}
+QLabel[class="ActivityTimelineWhen"] { color: #667085; font-size: 11px; }
+QLabel[class="ActivityTimelineTitle"] { color: #172033; font-size: 12px; font-weight: 600; }
+QLabel[class="ActivityTimelineSummary"] { color: #667085; font-size: 11px; }
+QFrame#DangerZone {
+    background: #FFF8F8;
+    border: 1px solid #FECACA;
+    border-radius: 10px;
 }
 QFrame#ReadOnlyDetailPanel {
     background-color: #FFFFFF;
@@ -1821,9 +1898,21 @@ QLabel#InvoiceTableStatsLabel {
 
 def build_app_stylesheet() -> str:
     """Build core QSS from the shared token values."""
-    return _BASE_STYLESHEET.replace("#FFFFFF", COLOR_TOKENS["surface"]).replace(
-        "#667085", COLOR_TOKENS["muted"]
-    ).replace("#E4E7EC", COLOR_TOKENS["border"])
+    return (
+        _BASE_STYLESHEET
+        .replace("#F6F8FB", COLOR_TOKENS["app_background"])
+        .replace("#FFFFFF", COLOR_TOKENS["surface_primary"])
+        .replace("#F8FAFC", COLOR_TOKENS["surface_secondary"])
+        .replace("#172033", COLOR_TOKENS["text_primary"])
+        .replace("#475467", COLOR_TOKENS["text_secondary"])
+        .replace("#667085", COLOR_TOKENS["text_muted"])
+        .replace("#E4E7EC", COLOR_TOKENS["border_subtle"])
+        .replace("#2563EB", COLOR_TOKENS["accent"])
+        .replace("border-radius: 12px", f"border-radius: {RADIUS_LG}px")
+        .replace("border-radius: 10px", f"border-radius: {RADIUS_LG}px")
+        .replace("min-height: 34px", f"min-height: {CONTROL_HEIGHT_MD}px")
+        .replace("max-height: 34px", f"max-height: {CONTROL_HEIGHT_MD}px")
+    )
 
 
 APP_STYLESHEET = build_app_stylesheet()

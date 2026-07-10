@@ -19,6 +19,19 @@
 - `LoadingCard`: compact non-technical loading state.
 - `InlineErrorCard`: inline failure message with optional retry action.
 
+## Reference-led primitives
+
+- `SelectableSourceCard`: one selected import source with a title and one-line explanation.
+- `CompactFieldRow`: compact read-only label/value/action row for bounded settings pages.
+- `ActivityTimeline`: product-facing activity summaries; never raw runtime log lines.
+- `DangerZone`: explicit surface for destructive operations and their confirmation path.
+
+## Tokens
+
+`scripts/invoice_fetch/gui/styles.py` owns layout, spacing, control, radius,
+typography, and color tokens. New shared components and core surfaces use those
+tokens instead of page-local color values or arbitrary dimensions.
+
 ## Review Rules
 
 - Pages must use `PageHeader`, `SectionCard`, and shared command components instead of one-off frames.
