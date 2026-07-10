@@ -509,12 +509,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertTrue(window.imports_summary_strip.isVisible())
                 self.assertEqual(window.btn_import_scan_selected.text(), "开始扫描")
                 self.assertEqual(window.btn_import_scan_default.text(), "扫默认")
-                self.assertEqual(window.btn_import_manage_mailbox.text(), "管理邮箱")
-                self.assertEqual(window.btn_view_failed_details.text(), "失败明细")
+                action_texts = [action.text() for action in window.import_mail_more_menu.actions()]
+                self.assertEqual(action_texts, ["管理邮箱", "失败明细"])
                 self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
                 self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "邮箱扫描")
                 self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
-                self.assertFalse(hasattr(window, "btn_settings_mailbox_add"))
+                self.assertTrue(hasattr(window, "btn_settings_mailbox_add"))
                 self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
             finally:
                 window.db.close()
@@ -553,6 +553,58 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 button_texts = [button.text() for button in current.findChildren(QPushButton)]
                 self.assertNotIn("保存设置", button_texts)
                 self.assertEqual(window.btn_settings_ai_edit.text(), "编辑配置")
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_settings_has_single_full_surface_and_no_placeholder_pages(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window._switch_main_page("settings")
+                labels = [window.settings_tabs.tabText(i) for i in range(window.settings_tabs.count())]
+                self.assertEqual(
+                    labels,
+                    ["邮箱账户", "AI 配置", "运行状态", "安全与隐私", "数据与备份", "关于"],
+                )
+                window._open_settings_dialog(1)
+                self.assertIs(window.center_stack.currentWidget(), window.settings_page)
+                self.assertEqual(window.settings_tabs.currentIndex(), 0)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_import_page_hides_raw_runtime_log_and_uses_purpose_widths(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1366, 768)
+                window._switch_main_page("imports")
+                QApplication.processEvents()
+                self.assertFalse(window.txt_import_records.isVisible())
+                self.assertLessEqual(window.import_source_card.maximumWidth(), 300)
+                self.assertGreaterEqual(window.import_mail_recent_card.minimumWidth(), 360)
+                self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_ai_page_uses_single_detail_surface_without_summary_duplication(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window._switch_main_page("settings", sub_tab=2)
+                QApplication.processEvents()
+                self.assertFalse(window.settings_ai_profile_list.isVisible())
+                self.assertFalse(hasattr(window, "settings_ai_summary_strip"))
+                self.assertTrue(window.settings_ai_detail_panel.isVisible())
             finally:
                 window.db.close()
                 window.close()

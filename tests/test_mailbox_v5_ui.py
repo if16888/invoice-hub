@@ -75,14 +75,17 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(dialog.txt_email.text().strip(), "test_163@163.com")
         self.assertEqual(dialog.txt_mailbox_name.text().strip(), "163 网易邮箱")
 
-    def test_v5_import_center_rules_block_and_failed_details(self):
-        """V5 Requirement 4: Import Center includes scan rules block and failed details button."""
+    def test_import_center_uses_more_menu_for_low_frequency_actions(self):
+        """IHDS-06: low-frequency account and failure actions are not duplicated."""
         window = InvoiceReviewApp(db_path=TEST_DB_PATH)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
-        self.assertTrue(hasattr(window, "btn_view_failed_details"))
         self.assertTrue(hasattr(window, "mail_account_checkboxes"))
+        action_texts = [action.text() for action in window.import_mail_more_menu.actions()]
+        self.assertIn("管理邮箱", action_texts)
+        self.assertIn("失败明细", action_texts)
+        self.assertFalse(hasattr(window, "btn_view_failed_details"))
 
     def test_v5_ai_config_details_and_privacy_banner(self):
         """V5 Requirement 5: AI Config page includes active details block and privacy banner."""
@@ -247,22 +250,23 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertIn("启用", window.lbl_v11_stat_enabled.text())
         self.assertIn("2", window.lbl_v11_stat_enabled.text())
 
-    def test_mailbox_saved_accounts_separated_from_provider_presets(self):
-        """V11 Test 4: Presets bar is separate and saved accounts list contains only saved accounts."""
+    def test_mailbox_saved_accounts_use_single_add_menu(self):
+        """IHDS-06: provider presets only exist inside the add-account menu."""
         window = InvoiceReviewApp(db_path=TEST_DB_PATH)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
 
-        self.assertTrue(hasattr(window, "v11_preset_buttons"))
-        self.assertIn("qq", window.v11_preset_buttons)
+        self.assertFalse(hasattr(window, "v11_preset_buttons"))
+        self.assertTrue(hasattr(window, "btn_settings_mailbox_add"))
+        self.assertEqual(len(window.btn_settings_mailbox_add.menu().actions()), 5)
         self.assertEqual(window.settings_mailbox_list.count(), 2)
 
     def test_mailbox_detail_is_read_only_by_default(self):
         window = InvoiceReviewApp(db_path=TEST_DB_PATH)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
-        mailbox_tab = window.settings_tabs.widget(1)
-        self.assertEqual(window.settings_tabs.tabText(1), "邮箱账户")
+        mailbox_tab = window.settings_tabs.widget(0)
+        self.assertEqual(window.settings_tabs.tabText(0), "邮箱账户")
 
         mailbox_detail_inputs = [
             child for child in mailbox_tab.findChildren(QLineEdit)

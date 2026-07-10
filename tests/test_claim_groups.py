@@ -1463,8 +1463,12 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertEqual(stats["missing_attachment"], 1)
                 self.assertEqual(stats["missing_amount"], 1)
                 text = window._format_claim_export_preflight_text(stats)
-                self.assertIn("导出已通过 + 待审核发票", text)
-                self.assertIn("ignored/error 永远跳过", text)
+                self.assertIn("导出检查", text)
+                self.assertIn("已通过发票：1 张", text)
+                self.assertIn("待处理：1 张", text)
+                self.assertIn("已忽略和异常发票不会进入报销包", text)
+                self.assertNotIn("approved:", text)
+                self.assertNotIn("to_review:", text)
                 self.assertNotIn("所有已关联文件", text)
             finally:
                 if hasattr(window, "db") and window.db is not None:
@@ -5221,8 +5225,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     about_text = window._about_text()
                     self.assertIn("Invoice Hub", about_text)
                     self.assertIn(f"Version: {APP_VERSION}", about_text)
-                    self.assertIn("Data directory:", about_text)
-                    self.assertIn("Log directory:", about_text)
+                    self.assertIn("本地优先的个人报销工作台", about_text)
+                    self.assertIn("本地数据目录：", about_text)
+                    self.assertNotIn("Build:", about_text)
+                    self.assertNotIn("Mode:", about_text)
                     self.assertEqual(window.btn_import_local.property("variant"), "toolbar")
                     self.assertEqual(window.btn_scan_email.property("variant"), "toolbar")
                     self.assertEqual(window.btn_mobile_upload.property("variant"), "toolbar")
@@ -5334,7 +5340,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window._switch_main_page("imports", sub_tab=2)
                     app.processEvents()
 
-                    self.assertIn("最近批次完成", window.txt_import_records.toPlainText())
+                    self.assertFalse(window.txt_import_records.isVisible())
                     self.assertIn("报销邮箱", window.lst_mail_accounts.toPlainText())
                     self.assertIn("最近 6 个月", window.lst_mail_accounts.toPlainText())
                     self.assertIn("新增 3 条", window.lbl_mail_scan_summary.text())
@@ -5342,10 +5348,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
                     self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "邮箱扫描")
                     self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
-                    window.btn_import_manage_mailbox.click()
+                    next(action for action in window.import_mail_more_menu.actions() if action.text() == "管理邮箱").trigger()
                     app.processEvents()
                     self.assertIs(window.center_stack.currentWidget(), window.settings_page)
-                    self.assertEqual(window.settings_tabs.currentIndex(), 1)
+                    self.assertEqual(window.settings_tabs.currentIndex(), 0)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -5381,7 +5387,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window._switch_main_page("settings", sub_tab=2)
                     app.processEvents()
 
-                    expected_tabs = ["常规", "邮箱账户", "AI 配置", "导入与识别", "分类与规则", "运行状态", "安全与隐私", "数据与备份", "关于"]
+                    expected_tabs = ["邮箱账户", "AI 配置", "运行状态", "安全与隐私", "数据与备份", "关于"]
                     self.assertEqual(
                         [window.settings_tabs.tabText(i) for i in range(window.settings_tabs.count())],
                         expected_tabs,
@@ -5394,10 +5400,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIsNotNone(window.lbl_settings_ai_key_status)
                     self.assertIsNotNone(window.btn_settings_ai_test)
                     self.assertIsNotNone(window.btn_settings_ai_edit)
-                    self.assertIn("餐饮", window.lbl_settings_rules.text())
-                    self.assertIn("差旅", window.lbl_settings_rules.text())
                     self.assertIn("数据目录：", window.lbl_settings_data.text())
-                    self.assertIn(f"Version: {APP_VERSION}", window.lbl_settings_about.text())
+                    self.assertIn(APP_VERSION, window.lbl_settings_about.text())
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()

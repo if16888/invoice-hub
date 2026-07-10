@@ -196,15 +196,13 @@ class LogDiagnosticsMixin:
         return payload
 
     def _about_text(self) -> str:
-        info = collect_app_info()
         runtime_dir = _runtime_dir_compat()
         return "\n".join([
             "Invoice Hub",
             f"Version: {APP_VERSION}",
-            f"Build: {info.get('build_commit') or 'unavailable'}",
-            f"Mode: {info.get('build_mode') or info.get('mode') or 'unknown'}",
-            f"Data directory: {runtime_dir}",
-            f"Log directory: {runtime_dir / 'logs'}",
+            "本地优先的个人报销工作台。",
+            f"本地数据目录：{runtime_dir}",
+            "发票、附件和凭据默认保存在本机；诊断包会先脱敏。",
         ])
 
     def _show_about_dialog(self):

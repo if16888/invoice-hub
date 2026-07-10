@@ -110,16 +110,17 @@ class TestMailboxV4UI(unittest.TestCase):
         net_chk.setChecked(True)
         self.assertTrue(net_chk.isChecked())
 
-    def test_manage_mailbox_button_navigates_to_settings(self):
-        """Directive 9: Manage mailbox button in Import Center switches to System Settings email accounts page."""
+    def test_manage_mailbox_more_action_navigates_to_settings(self):
+        """IHDS-06: account management is a low-frequency More action."""
         window = InvoiceReviewApp(db_path=TEST_DB_PATH)
         window.config = deepcopy(self.cfg)
 
-        self.assertTrue(hasattr(window, "btn_import_manage_mailbox"))
-        window.btn_import_manage_mailbox.click()
+        action = next(action for action in window.import_mail_more_menu.actions() if action.text() == "管理邮箱")
+        action.trigger()
 
         # Should switch main center_stack widget to settings page (index 5)
         self.assertEqual(window.center_stack.currentIndex(), 5)
+        self.assertEqual(window.settings_tabs.currentIndex(), 0)
 
 
 if __name__ == "__main__":
