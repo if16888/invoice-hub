@@ -902,7 +902,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_layout.addWidget(self.txt_search, 2)
 
         self.btn_import_local = make_button("导入", variant="toolbar")
-        self.btn_import_local.setProperty("emphasis", "primary")
         self.import_menu = QMenu(self)
         self.action_import_local = self._make_menu_action(
             "本地文件导入", QStyle.SP_DialogOpenButton, self._import_local_clicked, "选择本地文件夹导入 PDF/ZIP/OFD 发票"
@@ -2832,7 +2831,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         source_layout.addStretch(1)
         shell.addWidget(self.import_source_card, 1)
 
-        self.import_mail_accounts_card = SectionCard("导入规则", hint="中间区域集中处理邮箱选择、扫描规则和扫描触发。")
+        self.import_mail_accounts_card = SectionCard("邮箱扫描", hint="选择来源、查看当前规则并执行扫描。")
         self.mail_accounts_checklist = QWidget()
         self.mail_checklist_layout = QVBoxLayout(self.mail_accounts_checklist)
         self.mail_checklist_layout.setContentsMargins(4, 4, 4, 4)
@@ -2852,7 +2851,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lst_mail_accounts.setVisible(False)
         self.import_mail_accounts_card.body_layout.addWidget(self.lst_mail_accounts)
 
-        self.import_mail_rules_card = SectionCard("导入规则", hint="这里只读展示当前扫描规则；账号配置和详细规则维护统一在系统设置。")
+        self.import_mail_rules_card = SectionCard("规则摘要", hint="这里只读展示当前扫描规则；账号配置统一在系统设置。")
         self.import_rules_detail = ReadOnlyDetailPanel("规则摘要", "不在导入中心直接编辑规则，只展示当前生效策略。")
         self.lbl_import_rule_time_range = self.import_rules_detail.add_row("时间范围", "最近 3 个月增量抓取")
         self.lbl_import_rule_attachment_types = self.import_rules_detail.add_row("附件类型", "PDF / OFD / XML / 常用图片")
@@ -2889,8 +2888,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             primary_action=self.btn_import_scan_selected,
             secondary_actions=[
                 self.btn_import_scan_default,
-                self.btn_import_manage_mailbox,
-                self.btn_view_failed_details,
             ],
             more_menu=self.import_mail_more,
         )

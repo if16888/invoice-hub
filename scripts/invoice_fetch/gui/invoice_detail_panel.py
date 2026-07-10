@@ -2986,11 +2986,9 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        core_title_row.addWidget(self.btn_save_draft)
-
-
-
         detail_core_layout.addLayout(core_title_row)
+        self.btn_save_draft.setVisible(False)
+        self.btn_save_draft.setParent(None)
 
 
 
@@ -3160,11 +3158,33 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        def core_value():
+            value = QLabel("—")
+            value.setProperty("class", "DetailFieldValue")
+            value.setWordWrap(True)
+            return value
+
+        self.lbl_core_number = core_value()
+        self.lbl_core_date = core_value()
+        self.lbl_core_amount = core_value()
+        self.lbl_core_category = core_value()
+        self.lbl_core_buyer = core_value()
+        self.lbl_core_seller = core_value()
+        for widget in (
+            self.txt_number,
+            self.txt_date,
+            self.txt_amount,
+            self.combo_category,
+            self.txt_buyer,
+            self.txt_seller,
+        ):
+            widget.hide()
+
         self.invoice_core_grid.addWidget(core_label("发票号码:"), 0, 0)
 
 
 
-        self.invoice_core_grid.addWidget(self.txt_number, 0, 1)
+        self.invoice_core_grid.addWidget(self.lbl_core_number, 0, 1)
 
 
 
@@ -3172,7 +3192,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.addWidget(self.txt_date, 0, 3)
+        self.invoice_core_grid.addWidget(self.lbl_core_date, 0, 3)
 
 
 
@@ -3188,7 +3208,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.addWidget(self.txt_amount, 1, 1)
+        self.invoice_core_grid.addWidget(self.lbl_core_amount, 1, 1)
 
 
 
@@ -3196,7 +3216,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.addWidget(self.combo_category, 1, 3)
+        self.invoice_core_grid.addWidget(self.lbl_core_category, 1, 3)
 
 
 
@@ -3212,7 +3232,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.addWidget(self.txt_buyer, 2, 1)
+        self.invoice_core_grid.addWidget(self.lbl_core_buyer, 2, 1)
 
 
 
@@ -3220,7 +3240,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.invoice_core_grid.addWidget(self.txt_seller, 2, 3)
+        self.invoice_core_grid.addWidget(self.lbl_core_seller, 2, 3)
 
 
 
@@ -3240,12 +3260,12 @@ class InvoiceDetailPanel(QWidget):
         buyer_label = self.invoice_core_grid.itemAtPosition(2, 0).widget()
         seller_label = self.invoice_core_grid.itemAtPosition(2, 2).widget()
         stacked_rows = (
-            (0, self.invoice_core_grid.itemAtPosition(0, 0).widget(), self.txt_number),
-            (1, date_label, self.txt_date),
-            (2, amount_label, self.txt_amount),
-            (3, category_label, self.combo_category),
-            (4, buyer_label, self.txt_buyer),
-            (5, seller_label, self.txt_seller),
+            (0, self.invoice_core_grid.itemAtPosition(0, 0).widget(), self.lbl_core_number),
+            (1, date_label, self.lbl_core_date),
+            (2, amount_label, self.lbl_core_amount),
+            (3, category_label, self.lbl_core_category),
+            (4, buyer_label, self.lbl_core_buyer),
+            (5, seller_label, self.lbl_core_seller),
         )
         for row_index, label_widget, field_widget in stacked_rows:
             self.invoice_core_grid.addWidget(label_widget, row_index, 0)
@@ -4681,6 +4701,12 @@ class EditFieldsDialog(QDialog):
         ] or ["餐饮", "交通", "住宿", "办公", "通讯", "其他"]
         self.combo_category.addItems(categories)
         self.combo_category.setCurrentText(category)
+        self.lbl_core_number.setText(number or "—")
+        self.lbl_core_date.setText(date or "—")
+        self.lbl_core_amount.setText(amount or "—")
+        self.lbl_core_category.setText(category or "—")
+        self.lbl_core_buyer.setText(buyer or "—")
+        self.lbl_core_seller.setText(seller or "—")
         self.txt_buyer = QLineEdit(buyer)
         self.txt_seller = QLineEdit(seller)
         form.addRow("发票号码", self.txt_number)

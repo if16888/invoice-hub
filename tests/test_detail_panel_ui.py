@@ -268,23 +268,23 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.show()
         self.app.processEvents()
 
-        number_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
-        date_x = self.panel.txt_date.mapTo(self.panel, self.panel.txt_date.rect().topLeft()).x()
-        amount_x = self.panel.txt_amount.mapTo(self.panel, self.panel.txt_amount.rect().topLeft()).x()
-        buyer_x = self.panel.txt_buyer.mapTo(self.panel, self.panel.txt_buyer.rect().topLeft()).x()
-        seller_x = self.panel.txt_seller.mapTo(self.panel, self.panel.txt_seller.rect().topLeft()).x()
+        number_x = self.panel.lbl_core_number.mapTo(self.panel, self.panel.lbl_core_number.rect().topLeft()).x()
+        date_x = self.panel.lbl_core_date.mapTo(self.panel, self.panel.lbl_core_date.rect().topLeft()).x()
+        amount_x = self.panel.lbl_core_amount.mapTo(self.panel, self.panel.lbl_core_amount.rect().topLeft()).x()
+        buyer_x = self.panel.lbl_core_buyer.mapTo(self.panel, self.panel.lbl_core_buyer.rect().topLeft()).x()
+        seller_x = self.panel.lbl_core_seller.mapTo(self.panel, self.panel.lbl_core_seller.rect().topLeft()).x()
 
         self.assertLessEqual(abs(number_x - date_x), 4)
         self.assertLessEqual(abs(number_x - amount_x), 4)
         self.assertLessEqual(abs(number_x - buyer_x), 4)
         self.assertLessEqual(abs(number_x - seller_x), 4)
         self.assertLess(
-            self.panel.txt_date.mapTo(self.panel, self.panel.txt_date.rect().topLeft()).y(),
-            self.panel.txt_amount.mapTo(self.panel, self.panel.txt_amount.rect().topLeft()).y(),
+            self.panel.lbl_core_date.mapTo(self.panel, self.panel.lbl_core_date.rect().topLeft()).y(),
+            self.panel.lbl_core_amount.mapTo(self.panel, self.panel.lbl_core_amount.rect().topLeft()).y(),
         )
         self.assertLess(
-            self.panel.txt_buyer.mapTo(self.panel, self.panel.txt_buyer.rect().topLeft()).y(),
-            self.panel.txt_seller.mapTo(self.panel, self.panel.txt_seller.rect().topLeft()).y(),
+            self.panel.lbl_core_buyer.mapTo(self.panel, self.panel.lbl_core_buyer.rect().topLeft()).y(),
+            self.panel.lbl_core_seller.mapTo(self.panel, self.panel.lbl_core_seller.rect().topLeft()).y(),
         )
 
     def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
@@ -411,7 +411,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.show()
         self.app.processEvents()
         material_x = self.panel.txt_path.mapTo(self.panel, self.panel.txt_path.rect().topLeft()).x()
-        core_x = self.panel.txt_number.mapTo(self.panel, self.panel.txt_number.rect().topLeft()).x()
+        core_x = self.panel.lbl_core_number.mapTo(self.panel, self.panel.lbl_core_number.rect().topLeft()).x()
         self.assertLessEqual(abs(material_x - core_x), 2)
 
     def test_material_row_cards_and_actions_are_visible(self):
