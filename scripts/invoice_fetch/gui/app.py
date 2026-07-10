@@ -1921,7 +1921,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _refresh_overview_page(self) -> None:
         metrics = self._collect_overview_metrics()
-        if metrics is None:
+        numeric_keys = ("today_imported", "to_review", "error", "needs_fix", "month_total", "total")
+        if metrics is None or any(
+            not isinstance(metrics.get(key), (int, float)) for key in numeric_keys
+        ):
             for label in self.overview_value_labels.values():
                 label.set_value("—")
             self.lbl_overview_recent_imports.setText("暂无可用统计，等待数据库连接或首批导入完成。")
@@ -2035,8 +2038,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     + int(last_scan_summary.get("link_failed", 0) or 0)
                 )
                 self.lbl_mail_scan_summary.setText(
-                    f"最近扫描：扫描 {scanned} 封，新增 {new_items} 条，恢复 {restored} 条，失败 {failed_total} 条。"
-                    f" 详细计数：new={new_items} / restored={restored} / duplicates={duplicates} / failed={failed_total}"
+                    f"扫描 {scanned} 封 · 新增 {new_items} 条 · 重复 {duplicates} 条 · 失败 {failed_total} 条"
                 )
                 if hasattr(self, "lbl_import_recent_status"):
                     if failed_total > 0:

@@ -11,6 +11,8 @@
 
 
 from dataclasses import dataclass
+from datetime import date as date_type
+from decimal import Decimal, InvalidOperation
 
 
 
@@ -42,7 +44,7 @@ from PySide6.QtWidgets import (
 
 
 
-    QTabWidget, QMenu, QLayout, QDialog,
+    QTabWidget, QMenu, QLayout, QDialog, QMessageBox,
 
 
 
@@ -488,8 +490,6 @@ class InvoiceDetailPanel(QWidget):
 
         self._suspend_dirty_tracking = False
 
-
-
         self._invoice_snapshot = None
 
 
@@ -589,6 +589,31 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+
+    def _set_core_field_values(
+        self, *, number="", date="", amount="", category="", buyer="", seller="", mark_dirty=False
+    ):
+        """Update compatibility inputs and read-only labels in one place."""
+        values = {name: str(value or "").strip() for name, value in {
+            "number": number, "date": date, "amount": amount,
+            "category": category, "buyer": buyer, "seller": seller,
+        }.items()}
+        self.suspend_dirty_tracking()
+        try:
+            self.txt_number.setText(values["number"])
+            self.txt_date.setText(values["date"])
+            self.txt_amount.setText(values["amount"])
+            self.combo_category.setCurrentText(values["category"])
+            self.txt_buyer.setText(values["buyer"])
+            self.txt_seller.setText(values["seller"])
+        finally:
+            self.resume_dirty_tracking()
+        for name, value in values.items():
+            getattr(self, f"lbl_core_{name}").setText(value or "—")
+        for name in ("number", "buyer", "seller"):
+            getattr(self, f"lbl_core_{name}").setToolTip(values[name])
+        if mark_dirty:
+            self.set_dirty_state(True)
 
     # ── internal helpers ──────────────────────────────────────────
 
@@ -874,11 +899,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_number.clear()
-
-
-
-        self.txt_date.clear()
+        self._set_core_field_values()
 
 
 
@@ -890,19 +911,6 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_seller.clear()
-
-
-
-        self.txt_buyer.clear()
-
-
-
-        self.txt_amount.clear()
-
-
-
-        self.combo_category.setCurrentText("")
 
 
 
@@ -1403,11 +1411,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_number.setText(number)
-
-
-
-        self.txt_date.setText(date)
+        self._set_core_field_values(
+            number=number, date=date, amount=amount, category=category,
+            buyer=buyer, seller=seller,
+        )
 
 
 
@@ -1419,19 +1426,6 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.txt_seller.setText(seller)
-
-
-
-        self.txt_buyer.setText(buyer)
-
-
-
-        self.txt_amount.setText(amount)
-
-
-
-        self.combo_category.setCurrentText(category)
 
 
 
@@ -2988,7 +2982,7 @@ class InvoiceDetailPanel(QWidget):
 
         detail_core_layout.addLayout(core_title_row)
         self.btn_save_draft.setVisible(False)
-        self.btn_save_draft.setParent(None)
+        self.btn_save_draft.setParent(self.detail_core_section)
 
 
 
@@ -4662,6 +4656,7 @@ class InvoiceDetailPanel(QWidget):
         self._finalize_fixed_header_and_tabs()
 
     def _open_edit_dialog(self):
+        before = self.get_form_values()
         dialog = EditFieldsDialog(
             self,
             self.txt_number.text(),
@@ -4673,20 +4668,27 @@ class InvoiceDetailPanel(QWidget):
         )
         if dialog.exec() != QDialog.Accepted:
             return
-        self.txt_number.setText(dialog.txt_number.text())
-        self.txt_date.setText(dialog.txt_date.text())
-        self.txt_amount.setText(dialog.txt_amount.text())
-        self.combo_category.setCurrentText(dialog.combo_category.currentText())
-        self.txt_buyer.setText(dialog.txt_buyer.text())
-        self.txt_seller.setText(dialog.txt_seller.text())
-        self._cb.on_save_fields()
+        values = dialog.values()
+        try:
+            self._set_core_field_values(**values)
+            self._cb.on_save_fields()
+        except Exception as exc:
+            self._set_core_field_values(
+                number=before.get("invoice_number", ""),
+                date=before.get("expense_date", ""),
+                amount=before.get("total_amount", ""),
+                category=before.get("category", ""),
+                buyer=before.get("buyer_name", ""),
+                seller=before.get("seller_name", ""),
+            )
+            QMessageBox.warning(self, "保存失败", f"发票字段未保存：{exc}")
 
 
 class EditFieldsDialog(QDialog):
     def __init__(self, parent, number, date, amount, category, buyer, seller):
         super().__init__(parent)
         self.setWindowTitle("编辑发票字段")
-        self.resize(380, 280)
+        self.resize(480, 360)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -4701,12 +4703,6 @@ class EditFieldsDialog(QDialog):
         ] or ["餐饮", "交通", "住宿", "办公", "通讯", "其他"]
         self.combo_category.addItems(categories)
         self.combo_category.setCurrentText(category)
-        self.lbl_core_number.setText(number or "—")
-        self.lbl_core_date.setText(date or "—")
-        self.lbl_core_amount.setText(amount or "—")
-        self.lbl_core_category.setText(category or "—")
-        self.lbl_core_buyer.setText(buyer or "—")
-        self.lbl_core_seller.setText(seller or "—")
         self.txt_buyer = QLineEdit(buyer)
         self.txt_seller = QLineEdit(seller)
         form.addRow("发票号码", self.txt_number)
@@ -4722,7 +4718,44 @@ class EditFieldsDialog(QDialog):
         cancel = make_button("取消", variant="secondary")
         cancel.clicked.connect(self.reject)
         confirm = make_button("确定", variant="primary")
-        confirm.clicked.connect(self.accept)
+        confirm.clicked.connect(self._accept_if_valid)
         buttons.addWidget(cancel)
         buttons.addWidget(confirm)
         layout.addLayout(buttons)
+
+        self.txt_buyer.setToolTip(buyer)
+        self.txt_seller.setToolTip(seller)
+
+    def values(self):
+        number = self.txt_number.text().strip()
+        expense_date = self.txt_date.text().strip()
+        amount = self.txt_amount.text().strip()
+        if not amount:
+            self.txt_amount.setFocus()
+            QMessageBox.warning(self, "字段校验", "金额不能为空。")
+            return None
+        try:
+            Decimal(amount)
+        except InvalidOperation:
+            self.txt_amount.setFocus()
+            QMessageBox.warning(self, "字段校验", "金额格式不正确。")
+            return None
+        if expense_date:
+            try:
+                date_type.fromisoformat(expense_date)
+            except ValueError:
+                self.txt_date.setFocus()
+                QMessageBox.warning(self, "字段校验", "费用日期必须是 YYYY-MM-DD。")
+                return None
+        return {
+            "number": number,
+            "date": expense_date,
+            "amount": amount,
+            "category": self.combo_category.currentText().strip(),
+            "buyer": self.txt_buyer.text().strip(),
+            "seller": self.txt_seller.text().strip(),
+        }
+
+    def _accept_if_valid(self):
+        if self.values() is not None:
+            self.accept()
