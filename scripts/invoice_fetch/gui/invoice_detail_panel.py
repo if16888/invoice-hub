@@ -60,7 +60,7 @@ from PySide6.QtGui import QFont
 
 
 
-from .ui_components import make_button, make_badge, build_action_cluster
+from .ui_components import ElidedValueLabel, make_button, make_badge, build_action_cluster
 
 
 
@@ -2927,7 +2927,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        core_title = QLabel("基本信息")
+        core_title = QLabel("核验字段")
 
 
 
@@ -3153,9 +3153,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         def core_value():
-            value = QLabel("—")
-            value.setProperty("class", "DetailFieldValue")
-            value.setWordWrap(True)
+            value = ElidedValueLabel("—")
             return value
 
         self.lbl_core_number = core_value()

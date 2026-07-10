@@ -187,6 +187,48 @@ if _HAS_QT:
         def metrics(self) -> dict[str, CompactStatCard]:
             return dict(self._items)
 
+    class ElidedValueLabel(QLabel):
+        """Single-line value label with a full-value tooltip."""
+
+        def __init__(self, text: str = "", parent: QWidget | None = None):
+            super().__init__(parent)
+            self.setProperty("class", "ElidedValue")
+            self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            self.set_value(text)
+
+        def set_value(self, text: str = "") -> None:
+            value = str(text or "—")
+            self.setText(value)
+            self.setToolTip("" if value == "—" else value)
+
+    class StatusLine(QFrame):
+        """Compact task row: label, status and one relevant primary action."""
+
+        def __init__(self, label: str, status: str = "—", parent: QWidget | None = None):
+            super().__init__(parent)
+            self.setProperty("class", "StatusLine")
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(8, 6, 8, 6)
+            layout.setSpacing(8)
+            self.lbl_label = QLabel(label)
+            self.lbl_label.setProperty("class", "DetailFieldKey")
+            self.lbl_status = QLabel(status)
+            self.lbl_status.setProperty("class", "StatusLineValue")
+            self.lbl_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            layout.addWidget(self.lbl_label)
+            layout.addWidget(self.lbl_status, 1)
+
+        def set_status(self, status: str, state: str = "muted") -> None:
+            self.lbl_status.setText(status)
+            self.lbl_status.setProperty("variant", state)
+            self.lbl_status.style().unpolish(self.lbl_status)
+            self.lbl_status.style().polish(self.lbl_status)
+
+        def set_action(self, button: QPushButton | None) -> None:
+            if button is not None:
+                self.layout().addWidget(button)
+
     class SectionCard(QFrame):
         """Simple titled card for page sections."""
 
