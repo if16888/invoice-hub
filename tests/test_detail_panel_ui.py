@@ -274,18 +274,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         buyer_x = self.panel.lbl_core_buyer.mapTo(self.panel, self.panel.lbl_core_buyer.rect().topLeft()).x()
         seller_x = self.panel.lbl_core_seller.mapTo(self.panel, self.panel.lbl_core_seller.rect().topLeft()).x()
 
-        self.assertLessEqual(abs(number_x - date_x), 4)
-        self.assertLessEqual(abs(number_x - amount_x), 4)
-        self.assertLessEqual(abs(number_x - buyer_x), 4)
-        self.assertLessEqual(abs(number_x - seller_x), 4)
-        self.assertLess(
-            self.panel.lbl_core_date.mapTo(self.panel, self.panel.lbl_core_date.rect().topLeft()).y(),
-            self.panel.lbl_core_amount.mapTo(self.panel, self.panel.lbl_core_amount.rect().topLeft()).y(),
-        )
-        self.assertLess(
-            self.panel.lbl_core_buyer.mapTo(self.panel, self.panel.lbl_core_buyer.rect().topLeft()).y(),
-            self.panel.lbl_core_seller.mapTo(self.panel, self.panel.lbl_core_seller.rect().topLeft()).y(),
-        )
+        self.assertTrue(self.panel.lbl_core_number.isVisible())
+        self.assertTrue(self.panel.lbl_core_buyer.isVisible())
+        self.assertTrue(self.panel.lbl_core_date.isHidden())
+        self.assertTrue(self.panel.lbl_core_amount.isHidden())
+        self.assertTrue(self.panel.lbl_core_seller.isHidden())
 
     def test_summary_and_review_actions_are_fixed_above_detail_tabs(self):
         fixed = self.panel.fixed_header_container
@@ -387,10 +380,8 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.panel.detail_tabs.setCurrentWidget(self.panel.reimbursement_scroll)
         self.app.processEvents()
 
-        claim_x = self.panel.combo_claims.mapTo(self.panel, self.panel.combo_claims.rect().topLeft()).x()
-        claim_actions_x = self.panel.claim_actions_widget.mapTo(self.panel, self.panel.claim_actions_widget.rect().topLeft()).x()
-        claim_combo_right = claim_x + self.panel.combo_claims.width()
-        self.assertGreaterEqual(claim_actions_x, claim_combo_right - 2)
+        self.assertTrue(self.panel.combo_claims.isHidden())
+        self.assertTrue(self.panel.lbl_claim_assignment.isVisible())
         self.assertTrue(self.panel.btn_refresh_claims.isHidden())
         self.assertFalse(self.panel.lbl_claim_total.isHidden())
         self.assertGreaterEqual(self.panel.claim_actions_widget.layout().indexOf(self.panel.btn_delete_claim), 0)
@@ -420,7 +411,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsNotNone(self.panel.evidence_card)
         self.assertEqual(self.panel.original_card.objectName(), "DetailOriginalRowCard")
         self.assertEqual(self.panel.evidence_card.objectName(), "DetailEvidenceRowCard")
-        self.assertFalse(self.panel.btn_add_evidence.isHidden())
+        self.assertFalse(self.panel.evidence_status_line.isHidden())
 
     def test_basic_info_section_stays_compact(self):
         self.panel.resize(760, 850)

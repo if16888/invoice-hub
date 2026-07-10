@@ -60,7 +60,7 @@ from PySide6.QtGui import QFont
 
 
 
-from .ui_components import ElidedValueLabel, make_button, make_badge, build_action_cluster
+from .ui_components import ElidedValueLabel, StatusLine, make_button, make_badge, build_action_cluster
 
 
 
@@ -1530,6 +1530,9 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_path.setStatusTip(f"双击{action}原件")
+        if hasattr(self, "original_status_line"):
+            status = "正常" if has_file else ("需重下" if can_download and has_url else "缺失")
+            self.original_status_line.set_status(status, "success" if has_file else "warning")
 
 
 
@@ -1747,6 +1750,8 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.lbl_claim_total.setText(text)
+        if hasattr(self, "lbl_claim_assignment"):
+            self.lbl_claim_assignment.set_value(text or "未关联报销组")
 
 
 
@@ -1800,6 +1805,8 @@ class InvoiceDetailPanel(QWidget):
             self.btn_open_extra_files.setVisible(True)
             self.btn_add_evidence.setEnabled(True)
             self.btn_add_evidence.setVisible(True)
+        if hasattr(self, "evidence_status_line"):
+            self.evidence_status_line.set_status("正常" if has_doc else "缺失", "success" if has_doc else "warning")
         else:
             self.evidence_content_widget.setCurrentWidget(self.evidence_missing_page)
             self.lbl_evidence_name.setVisible(False)
@@ -3162,6 +3169,8 @@ class InvoiceDetailPanel(QWidget):
         self.lbl_core_category = core_value()
         self.lbl_core_buyer = core_value()
         self.lbl_core_seller = core_value()
+        for value_label in (self.lbl_core_date, self.lbl_core_amount, self.lbl_core_seller):
+            value_label.hide()
         for widget in (
             self.txt_number,
             self.txt_date,
@@ -3461,6 +3470,8 @@ class InvoiceDetailPanel(QWidget):
 
         self.original_card = wrap_layout_in_card(self.original_row, "DetailOriginalRowCard")
         detail_files_layout.addWidget(self.original_card)
+        self.original_status_line = StatusLine("原件", "缺失")
+        detail_files_layout.addWidget(self.original_status_line)
 
 
 
@@ -3695,6 +3706,8 @@ class InvoiceDetailPanel(QWidget):
 
         self.evidence_card = wrap_layout_in_card(self.evidence_row, "DetailEvidenceRowCard")
         detail_files_layout.addWidget(self.evidence_card)
+        self.evidence_status_line = StatusLine("证明", "缺失")
+        detail_files_layout.addWidget(self.evidence_status_line)
 
 
 
@@ -3775,6 +3788,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.combo_claims.currentIndexChanged.connect(self._cb.on_claim_combo_changed)
+        self.lbl_claim_assignment = ElidedValueLabel("未关联报销组")
+        self.lbl_claim_assignment.setProperty("class", "StatusLineValue")
+        self.lbl_claim_assignment.setMinimumHeight(28)
+        claim_setup_layout.addWidget(self.lbl_claim_assignment)
+        self.combo_claims.hide()
 
 
 

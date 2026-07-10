@@ -28,7 +28,7 @@ SECONDARY_SHORTCUTS: tuple[tuple[str, str], ...] = (
 
 try:
     from PySide6.QtCore import Qt, Signal
-    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtGui import QKeyEvent, QPainter
     from PySide6.QtWidgets import (
         QFrame,
         QFormLayout,
@@ -188,7 +188,7 @@ if _HAS_QT:
             return dict(self._items)
 
     class ElidedValueLabel(QLabel):
-        """Single-line value label with a full-value tooltip."""
+        """Single-line value label that paints a DPI-safe ellipsis."""
 
         def __init__(self, text: str = "", parent: QWidget | None = None):
             super().__init__(parent)
@@ -201,6 +201,13 @@ if _HAS_QT:
             value = str(text or "—")
             self.setText(value)
             self.setToolTip("" if value == "—" else value)
+
+        def paintEvent(self, event):
+            painter = QPainter(self)
+            painter.setFont(self.font())
+            painter.setPen(self.palette().color(self.foregroundRole()))
+            text = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, max(0, self.width()))
+            painter.drawText(self.rect(), self.alignment() or (Qt.AlignLeft | Qt.AlignVCenter), text)
 
     class StatusLine(QFrame):
         """Compact task row: label, status and one relevant primary action."""
@@ -228,6 +235,18 @@ if _HAS_QT:
         def set_action(self, button: QPushButton | None) -> None:
             if button is not None:
                 self.layout().addWidget(button)
+
+        def replace_action(self, button: QPushButton | None) -> None:
+            self.clear_action()
+            self.set_action(button)
+
+        def clear_action(self) -> None:
+            layout = self.layout()
+            while layout.count() > 2:
+                item = layout.takeAt(2)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(None)
 
     class SectionCard(QFrame):
         """Simple titled card for page sections."""
