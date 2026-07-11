@@ -345,7 +345,7 @@ class GenericImapConfigTests(unittest.TestCase):
 
             app = QApplication.instance() or QApplication(sys.argv)
 
-            from scripts.invoice_fetch.gui.app import SettingsDialog
+            from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
             parent = QWidget()
             parent.write_log = MagicMock()
@@ -410,7 +410,7 @@ class GenericImapConfigTests(unittest.TestCase):
             from unittest.mock import MagicMock, patch
 
             app = QApplication.instance() or QApplication(sys.argv)
-            from scripts.invoice_fetch.gui.app import SettingsDialog
+            from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
             parent = QWidget()
             parent.write_log = MagicMock()
@@ -492,7 +492,7 @@ class GenericImapConfigTests(unittest.TestCase):
             from unittest.mock import MagicMock, patch
 
             app = QApplication.instance() or QApplication(sys.argv)
-            from scripts.invoice_fetch.gui.app import SettingsDialog
+            from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
             parent = QWidget()
             parent.write_log = MagicMock()
@@ -550,7 +550,7 @@ class GenericImapConfigTests(unittest.TestCase):
             from unittest.mock import MagicMock, patch
 
             app = QApplication.instance() or QApplication(sys.argv)
-            from scripts.invoice_fetch.gui.app import SettingsDialog
+            from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
             parent = QWidget()
             parent.write_log = MagicMock()
@@ -621,7 +621,7 @@ class GenericImapConfigTests(unittest.TestCase):
             from unittest.mock import MagicMock, patch
 
             app = QApplication.instance() or QApplication(sys.argv)
-            from scripts.invoice_fetch.gui.app import SettingsDialog
+            from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
             parent = QWidget()
             parent.write_log = MagicMock()
@@ -696,7 +696,7 @@ class GenericImapConfigTests(unittest.TestCase):
 
             app = QApplication.instance() or QApplication(sys.argv)
 
-            from scripts.invoice_fetch.gui.app import SettingsDialog
+            from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
             parent = QWidget()
             parent.write_log = MagicMock()

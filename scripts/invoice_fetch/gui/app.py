@@ -69,7 +69,6 @@ from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
 from .mobile_upload_dialog import MobileUploadDialog
 from .mobile_upload_session import MobileUploadSessionController, MobileUploadSessionPanel
-from .settings_dialog import SettingsDialog
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
@@ -575,6 +574,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage(status_msg, 4000)
 
     def closeEvent(self, event):
+        controller = getattr(self, "mobile_upload_controller", None)
+        if controller is not None:
+            controller.shutdown()
         self._save_splitter_prefs()
         self.db.close()
         event.accept()
@@ -655,12 +657,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "imports_shell_layout"):
             if w < 1200:
                 self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+                self.import_task_stack.setMaximumWidth(16777215)
+                self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
                 self.import_source_card.setMinimumWidth(0)
                 self.import_source_card.setMaximumWidth(16777215)
                 self.import_mail_recent_card.setMinimumWidth(0)
                 self.import_mail_recent_card.setMaximumWidth(16777215)
             else:
                 self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_task_stack.setMaximumWidth(900)
+                self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
                 source_width = 250 if w >= 1440 else 220
                 recent_width = 350 if w >= 1440 else 300
                 self.import_source_card.setFixedWidth(source_width)
@@ -930,6 +938,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_shortcut_help = QPushButton("帮助")
         self.btn_shortcut_help.setObjectName("WorkbenchShortcutEntry")
         self.btn_shortcut_help.setProperty("class", "WorkbenchNavButton")
+        self.btn_shortcut_help.setIcon(self.style().standardIcon(QStyle.SP_DialogHelpButton))
         self.btn_shortcut_help.setMinimumHeight(32)
         self.btn_shortcut_help.setFlat(True)
         self.btn_shortcut_help.setStyleSheet("text-align: left; padding-left: 6px; font-size: 11px; color: #667085;")
@@ -2104,9 +2113,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _refresh_imports_page(self) -> None:
         from ..config import get_email_accounts
 
-        if hasattr(self, "txt_import_records"):
-            # Deprecated compatibility widget. Diagnostic logs stay in the drawer.
-            self.txt_import_records.clear()
         if hasattr(self, "import_recent_state_stack"):
             activities = list(getattr(self, "_import_activities", []))
             if activities:
@@ -2118,7 +2124,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 )
             if hasattr(self, "import_recent_timeline"):
                 self.import_recent_timeline.clear()
-                for activity in activities[:5]:
+                for activity in activities[:3]:
                     when, title, summary = self._format_import_activity(activity)
                     self.import_recent_timeline.add_entry(
                         when,
@@ -2170,18 +2176,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self.mail_checklist_layout.addWidget(row_widget)
                     self.mail_account_checkboxes.append(chk)
 
-        if hasattr(self, "lst_mail_accounts"):
-            cfg = getattr(self, "config", None) or load_config_safe()
-            lines = []
-            for account in get_email_accounts(cfg):
-                months = int((account.get("search") or {}).get("months_back", 3))
-                display_name = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
-                provider = str(account.get("provider") or "imap").strip()
-                lines.append(f"{display_name} · {provider} · 最近 {months} 个月")
-            self.lst_mail_accounts.setPlainText(
-                "\n".join(lines) if lines else "暂无已启用邮箱账号。请先在系统设置中完成邮箱配置。"
-            )
-
         if hasattr(self, "lbl_mail_scan_summary"):
             last_scan_summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
             if isinstance(last_scan_summary, dict) and last_scan_summary:
@@ -2207,14 +2201,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if hasattr(self, "lbl_import_recent_status"):
                     self.lbl_import_recent_status.setText("当前没有失败项，也没有待补授权提醒。")
 
-        if hasattr(self, "imports_summary_strip"):
+        if hasattr(self, "btn_import_scan_selected"):
             cfg = getattr(self, "config", None) or load_config_safe()
             accounts = get_email_accounts(cfg)
             from ..credentials import has_auth_code
 
             default_acc = next((acc for acc in accounts if acc.get("is_default")), None)
-            default_name = str(default_acc.get("name") or default_acc.get("address") or "无").strip() if default_acc else "无"
-            missing_cnt = sum(1 for acc in accounts if acc.get("enabled", True) and not has_auth_code(acc.get("address", "")))
             default_requires_auth = bool(default_acc and not has_auth_code(default_acc.get("address", "")))
             if hasattr(self, "btn_import_scan_selected"):
                 self.btn_import_scan_selected.setText("补授权码" if default_requires_auth else "开始扫描")
@@ -2225,24 +2217,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.import_mail_accounts_card.set_hint(
                     "默认账号需要授权码" if default_requires_auth else "默认账号已就绪，可直接开始扫描。"
                 )
-            last_scan_summary = getattr(self, "_last_scan_summary", {}) if hasattr(self, "_last_scan_summary") else {}
-            recent_text = "暂无"
-            failed_text = "0"
-            if isinstance(last_scan_summary, dict) and last_scan_summary:
-                scanned = last_scan_summary.get("scanned") or last_scan_summary.get("scanned_headers") or 0
-                recent_text = str(scanned)
-                failed_total = (
-                    int(last_scan_summary.get("download_failed", 0) or 0)
-                    + int(last_scan_summary.get("parse_failed", 0) or 0)
-                    + int(last_scan_summary.get("link_failed", 0) or 0)
-                )
-                failed_text = str(failed_total)
-            self.imports_summary_strip.set_metric("accounts", str(len(accounts)))
-            self.imports_summary_strip.set_metric("default", default_name)
-            self.imports_summary_strip.set_metric("missing", str(missing_cnt))
-            self.imports_summary_strip.set_metric("recent", recent_text)
-            self.imports_summary_strip.set_metric("failed", failed_text)
-
     @staticmethod
     def _format_scan_result_for_people(summary: dict) -> str:
         """Turn internal scan counters into one product-facing summary line."""
@@ -2980,17 +2954,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         layout.addWidget(self.imports_header)
 
-        self.imports_summary_strip = SummaryStrip()
-        self.imports_summary_strip.add_metric("accounts", "邮箱账号", "0", state="info")
-        self.imports_summary_strip.add_metric("default", "默认账号", "无", state="success")
-        self.imports_summary_strip.add_metric("missing", "缺授权", "0", state="warning")
-        self.imports_summary_strip.add_metric("recent", "最近扫描", "暂无", state="muted")
-        self.imports_summary_strip.add_metric("failed", "失败数", "0", state="danger")
-        layout.addWidget(self.imports_summary_strip)
-        # Compatibility object only: mailbox metrics belong to the mail task.
-        self.imports_summary_strip.hide()
-        self.imports_summary_strip.setMaximumHeight(0)
-
         shell = QHBoxLayout()
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(12)
@@ -3029,13 +2992,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         scroll_accounts.setMaximumHeight(140)
         scroll_accounts.setWidget(self.mail_accounts_checklist)
         self.import_mail_accounts_card.body_layout.addWidget(scroll_accounts)
-
-        # Legacy PlainTextEdit retained for backwards compatibility
-        self.lst_mail_accounts = QPlainTextEdit()
-        self.lst_mail_accounts.setReadOnly(True)
-        self.lst_mail_accounts.setMaximumHeight(1)
-        self.lst_mail_accounts.setVisible(False)
-        self.import_mail_accounts_card.body_layout.addWidget(self.lst_mail_accounts)
 
         self.import_rules_detail = ReadOnlyDetailPanel("当前规则", "当前生效的扫描范围和去重策略。")
         self.lbl_import_rule_time_range = self.import_rules_detail.add_row("时间范围", "最近 3 个月增量抓取")
@@ -3089,18 +3045,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             hint="启动上传服务后，可从手机提交原件或证明材料。",
         )
         self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        mobile_rules = ReadOnlyDetailPanel("上传状态", "上传完成后会自动刷新审核队列。")
-        mobile_rules.add_row("服务状态", "准备就绪")
-        mobile_rules.add_row("支持材料", "发票原件与证明材料")
-        self.import_mobile_task_card.body_layout.addWidget(mobile_rules)
-        mobile_rules.hide()
-        self.btn_import_mobile_task = make_button("启动上传", variant="primary")
-        self.btn_import_mobile_task.clicked.connect(self._mobile_upload_clicked)
-        self.import_mobile_task_card.body_layout.addWidget(self.btn_import_mobile_task)
-
-        # The main workflow owns an embedded session; the legacy dialog is no
-        # longer involved in source selection or service startup.
-        self.btn_import_mobile_task.hide()
         self.mobile_upload_controller = MobileUploadSessionController(self.db_path, self)
         self.mobile_upload_panel = MobileUploadSessionPanel(self.mobile_upload_controller)
         self.mobile_upload_panel.upload_finished.connect(self._mobile_upload_finished)
@@ -3108,7 +3052,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.import_task_stack = QStackedWidget()
         self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        self.import_task_stack.setMaximumWidth(760)
+        self.import_task_stack.setMaximumWidth(900)
         self._import_task_pages = {
             "mail": self.import_mail_accounts_card,
             "local": self.import_local_task_card,
@@ -3120,7 +3064,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shell.addWidget(self.import_task_stack, 1)
         shell.setAlignment(self.import_task_stack, Qt.AlignTop)
 
-        self.import_mail_recent_card = SectionCard("最近结果", hint="查看最近一次导入的结果。")
+        self.import_mail_recent_card = SectionCard("本次运行", hint="显示本次启动应用后的最近 3 个导入批次。")
         self.import_mail_recent_card.setMinimumWidth(360)
         self.import_mail_recent_card.setMaximumWidth(420)
         self.import_mail_recent_card.setMaximumHeight(320)
@@ -3130,7 +3074,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_recent_content_layout.setContentsMargins(0, 0, 0, 0)
         self.import_recent_state_stack = PageStateStack()
         self.import_recent_state_stack.setMaximumHeight(180)
-        self.import_recent_state_stack.empty.setObjectName("ImportRecentEmptyState")
+        self.import_recent_state_stack.set_empty_object_name("ImportRecentEmptyState")
         self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
         self.lbl_mail_scan_summary.setWordWrap(True)
         self.lbl_mail_scan_summary.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
@@ -3141,10 +3085,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_recent_content_layout.addWidget(self.lbl_import_recent_status)
         self.import_recent_timeline = ActivityTimeline()
         self.import_recent_content_layout.addWidget(self.import_recent_timeline)
-        self.txt_import_records = QPlainTextEdit()
-        self.txt_import_records.setReadOnly(True)
-        self.txt_import_records.setVisible(False)
-        self.import_recent_content_layout.addWidget(self.txt_import_records)
         self.lbl_import_recent_hint = QLabel("失败项可从更多操作中查看。")
         self.lbl_import_recent_hint.setWordWrap(True)
         self.lbl_import_recent_hint.setStyleSheet("color: #667085; font-size: 12px;")
@@ -3154,7 +3094,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shell.addWidget(self.import_mail_recent_card, 0)
         shell.setAlignment(self.import_mail_recent_card, Qt.AlignTop)
 
-        layout.addLayout(shell, 0)
+        self.imports_workspace_host = QWidget()
+        self.imports_workspace_host.setMaximumWidth(1440)
+        self.imports_workspace_host.setLayout(shell)
+        workspace_row = QHBoxLayout()
+        workspace_row.setContentsMargins(0, 0, 0, 0)
+        workspace_row.addStretch(1)
+        workspace_row.addWidget(self.imports_workspace_host, 1)
+        workspace_row.addStretch(1)
+        layout.addLayout(workspace_row, 0)
         layout.addStretch(1)
         self.imports_shell_layout = shell
         self._refresh_imports_page()
@@ -6727,8 +6675,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         finally:
             self._clear_action_busy(self.btn_mobile_upload, "扫码上传")
 
-    def _mobile_upload_finished(self):
-        self._record_import_activity("mobile")
+    def _mobile_upload_finished(self, result: dict):
+        added = int(result.get("imported", result.get("added", 0)) or 0)
+        duplicates = int(result.get("duplicate", result.get("duplicates", 0)) or 0)
+        failed = int(result.get("failed", 0) or 0)
+        scanned = int(result.get("accepted", 0) or 0) + duplicates + failed
+        if added or duplicates or failed:
+            self._record_import_activity(
+                "mobile", scanned=scanned, added=added,
+                duplicates=duplicates, failed=failed,
+            )
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
         self._load_claims()

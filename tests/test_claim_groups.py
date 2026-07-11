@@ -5341,14 +5341,13 @@ class ClaimGroupsTests(unittest.TestCase):
                         window._switch_main_page("imports", sub_tab=2)
                     app.processEvents()
 
-                    self.assertFalse(window.txt_import_records.isVisible())
-                    self.assertIn("报销邮箱", window.lst_mail_accounts.toPlainText())
-                    self.assertIn("最近 6 个月", window.lst_mail_accounts.toPlainText())
+                    self.assertFalse(hasattr(window, "txt_import_records"))
+                    self.assertFalse(hasattr(window, "lst_mail_accounts"))
                     self.assertIn("新增 3 条", window.lbl_mail_scan_summary.text())
                     self.assertIn("重复 1 条", window.lbl_mail_scan_summary.text())
                     self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
                     self.assertTrue(window.import_mail_accounts_card.lbl_title.text())
-                    self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
+                    self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
                     next(action for action in window.import_mail_more_menu.actions() if action.text() == "管理邮箱").trigger()
                     app.processEvents()
                     self.assertIs(window.center_stack.currentWidget(), window.settings_page)
@@ -5545,7 +5544,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as td:
                 db_path = Path(td) / "test_settings_visual_hierarchy.db"
-                from scripts.invoice_fetch.gui.app import InvoiceReviewApp, SettingsDialog
+                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 
                 window = InvoiceReviewApp(db_path, splash=None)
                 dialog = None

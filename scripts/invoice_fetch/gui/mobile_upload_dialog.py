@@ -24,7 +24,7 @@ from .mobile_upload_session import MobileUploadSessionController
 
 
 class MobileUploadDialog(QDialog):
-    upload_finished = Signal()
+    upload_finished = Signal(dict)
 
     def __init__(self, parent, db_path: Path):
         super().__init__(parent)
@@ -32,7 +32,9 @@ class MobileUploadDialog(QDialog):
         self.resize(420, 560)
         self.setProperty("class", "WorkflowDialog")
         self.db_path = db_path
-        self.controller = getattr(parent, "mobile_upload_controller", None) or MobileUploadSessionController(db_path, self)
+        shared_controller = getattr(parent, "mobile_upload_controller", None)
+        self._owns_controller = shared_controller is None
+        self.controller = shared_controller or MobileUploadSessionController(db_path, self)
         self.server = None
         self.session = None
         self._last_status_total = 0
@@ -100,24 +102,40 @@ class MobileUploadDialog(QDialog):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._refresh_status)
 
+        self.controller.started.connect(self._controller_started)
+        self.controller.stats_changed.connect(self._apply_status)
+        self.controller.upload_received.connect(self.upload_finished.emit)
+        self.controller.failed.connect(self._controller_failed)
+        self.controller.stopped.connect(self._controller_stopped)
+
         self._start_server()
 
     def _start_server(self):
-        try:
-            self.session = self.controller.start()
-            if self.session is None:
-                raise RuntimeError("mobile upload service did not start")
-            self.server = self.controller.server
-            self.host_options = self.controller.host_options
-            self._populate_upload_hosts()
-            self.txt_url.setText(self.session.upload_url)
-            self.lbl_batch.setText(self.session.batch_id)
-            self.lbl_status.setText("请用手机扫描二维码。微信扫码后如文件不好选择，请点击右上角 … 在浏览器打开。\n手机打不开时，确认电脑和手机在同一 Wi-Fi，或切换网络地址。")
-            self._render_qr(self.session.upload_url)
-            self.timer.start()
-        except Exception as exc:
-            self.lbl_status.setText(f"上传服务启动失败: {exc}")
-            self.btn_stop.setEnabled(False)
+        if self.controller.session is not None:
+            self._controller_started(self.controller.session)
+        else:
+            self.controller.start()
+
+    def _controller_started(self, session):
+        self.session = session
+        self.server = self.controller.server
+        self.host_options = self.controller.host_options
+        self._populate_upload_hosts()
+        self.txt_url.setText(session.upload_url)
+        self.lbl_batch.setText(session.batch_id)
+        self.lbl_status.setText("请用手机扫描二维码。微信扫码后如文件不好选择，请点击右上角 … 在浏览器打开。\n手机打不开时，确认电脑和手机在同一 Wi-Fi，或切换网络地址。")
+        self._render_qr(session.upload_url)
+        self.btn_stop.setEnabled(True)
+
+    def _controller_failed(self, message: str):
+        self.lbl_status.setText(f"上传服务启动失败: {message}")
+        self.btn_stop.setEnabled(False)
+
+    def _controller_stopped(self):
+        self.server = None
+        self.session = None
+        self.lbl_status.setText("上传服务已停止，二维码和链接已失效。")
+        self.btn_stop.setEnabled(False)
 
     def _populate_upload_hosts(self):
         self.combo_upload_host.blockSignals(True)
@@ -163,7 +181,9 @@ class MobileUploadDialog(QDialog):
     def _refresh_status(self):
         if not self.server:
             return
-        status = self.server.status()
+        self._apply_status(self.server.status())
+
+    def _apply_status(self, status):
         self.lbl_accepted.setText(str(status.get("accepted", 0)))
         self.lbl_duplicate.setText(str(status.get("duplicate", 0)))
         self.lbl_failed.setText(str(status.get("failed", 0)))
@@ -171,16 +191,15 @@ class MobileUploadDialog(QDialog):
         total = sum(int(status.get(k, 0) or 0) for k in ("accepted", "duplicate", "failed", "imported"))
         if total and total != self._last_status_total:
             self._last_status_total = total
-            self.upload_finished.emit()
+            self.upload_finished.emit(dict(status))
 
     def _stop_server(self):
-        if self.server:
+        if self.controller.server is not None or self.controller.is_starting:
             self.controller.stop()
-            self.server = None
         self.timer.stop()
-        self.lbl_status.setText("上传服务已停止，二维码和链接已失效。")
-        self.btn_stop.setEnabled(False)
 
     def closeEvent(self, event):
-        self._stop_server()
+        self.timer.stop()
+        if self._owns_controller:
+            self.controller.shutdown()
         event.accept()

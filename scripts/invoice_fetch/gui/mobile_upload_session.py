@@ -4,7 +4,7 @@
 from io import BytesIO
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal, QTimer
+from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, QThread, QTimer, Slot
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel,
@@ -13,6 +13,33 @@ from PySide6.QtWidgets import (
 
 from ..config import RUNTIME_DIR
 from .ui_components import make_badge, make_button
+
+
+class _MobileUploadStartWorker(QObject):
+    def __init__(self, runtime_dir: Path, db_path: Path, host: str | None):
+        super().__init__()
+        self.runtime_dir = runtime_dir
+        self.db_path = db_path
+        self.host = host
+        self.result = None
+        self.error = ""
+
+    @Slot()
+    def run(self):
+        try:
+            from ..mobile_upload import MobileUploadServer, enumerate_upload_hosts
+            options = enumerate_upload_hosts()
+            selected = self.host or (options[0].host if options else None)
+            server = MobileUploadServer(
+                runtime_dir=self.runtime_dir, db_path=self.db_path, host=selected,
+                port=0, import_on_upload=True,
+            )
+            session = server.start()
+            self.result = (server, session, options)
+        except Exception as exc:
+            self.error = str(exc)
+        finally:
+            QThread.currentThread().quit()
 
 
 class MobileUploadSessionController(QObject):
@@ -31,6 +58,10 @@ class MobileUploadSessionController(QObject):
         self.session = None
         self.host_options = []
         self._last_total = 0
+        self._starting = False
+        self._stop_requested = False
+        self._start_thread = None
+        self._start_worker = None
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_status)
@@ -40,28 +71,64 @@ class MobileUploadSessionController(QObject):
         self.host_options = enumerate_upload_hosts()
         return self.host_options
 
+    @property
+    def is_starting(self) -> bool:
+        return self._starting
+
     def start(self, host: str | None = None):
-        if self.server is not None:
+        if self.server is not None or self._starting:
             return self.session
+        self._starting = True
+        self._stop_requested = False
         self.starting.emit()
-        try:
-            from ..mobile_upload import MobileUploadServer
-            options = self.enumerate_hosts()
-            selected = host or (options[0].host if options else None)
-            self.server = MobileUploadServer(
-                runtime_dir=self.runtime_dir, db_path=self.db_path, host=selected,
-                port=0, import_on_upload=True,
-            )
-            self.session = self.server.start()
-            self._last_total = 0
-            self.timer.start()
-            self.started.emit(self.session)
-            return self.session
-        except Exception as exc:
-            self.server = None
-            self.session = None
-            self.failed.emit(str(exc))
-            return None
+        thread = QThread(self)
+        worker = _MobileUploadStartWorker(self.runtime_dir, self.db_path, host)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        thread.finished.connect(self._finish_start)
+        self._start_thread = thread
+        self._start_worker = worker
+        thread.start()
+        return None
+
+    @Slot()
+    def _finish_start(self):
+        worker = self._start_worker
+        if worker is None:
+            return
+        if worker.error:
+            self._start_failed(worker.error)
+        elif worker.result is not None:
+            self._start_succeeded(*worker.result)
+        worker.deleteLater()
+        self._clear_start_worker()
+
+    @Slot(object, object, list)
+    def _start_succeeded(self, server, session, options):
+        self._starting = False
+        if self._stop_requested:
+            server.stop()
+            self._stop_requested = False
+            self.stopped.emit()
+            return
+        self.server = server
+        self.session = session
+        self.host_options = list(options)
+        self._last_total = 0
+        self.timer.start()
+        self.started.emit(session)
+
+    @Slot(str)
+    def _start_failed(self, message: str):
+        self._starting = False
+        self.server = None
+        self.session = None
+        self.failed.emit(message)
+
+    @Slot()
+    def _clear_start_worker(self):
+        self._start_thread = None
+        self._start_worker = None
 
     def set_public_host(self, host: str):
         if self.server is None:
@@ -85,12 +152,23 @@ class MobileUploadSessionController(QObject):
             self.upload_received.emit(status)
 
     def stop(self):
+        if self._starting:
+            self._stop_requested = True
         if self.server is not None:
             self.server.stop()
         self.server = None
         self.session = None
         self.timer.stop()
         self.stopped.emit()
+
+    def shutdown(self, timeout_ms: int = 5000):
+        """Release the owned service before the application closes its DB."""
+        self._stop_requested = True
+        thread = self._start_thread
+        if thread is not None and thread.isRunning():
+            thread.wait(timeout_ms)
+            QCoreApplication.processEvents()
+        self.stop()
 
     @staticmethod
     def qr_png(url: str) -> bytes:
@@ -102,7 +180,7 @@ class MobileUploadSessionController(QObject):
 
 
 class MobileUploadSessionPanel(QFrame):
-    upload_finished = Signal()
+    upload_finished = Signal(dict)
 
     def __init__(self, controller: MobileUploadSessionController, parent=None):
         super().__init__(parent)
@@ -121,7 +199,7 @@ class MobileUploadSessionPanel(QFrame):
         controller.starting.connect(lambda: self.btn_start.setEnabled(False))
         controller.started.connect(self._show_active)
         controller.stats_changed.connect(self._set_stats)
-        controller.upload_received.connect(lambda _stats: self.upload_finished.emit())
+        controller.upload_received.connect(self.upload_finished.emit)
         controller.failed.connect(self._show_error)
         controller.stopped.connect(self.show_idle)
 

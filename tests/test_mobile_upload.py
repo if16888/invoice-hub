@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -562,7 +563,20 @@ class MobileUploadTests(unittest.TestCase):
                 self.assertTrue(hasattr(window, "btn_mobile_upload"))
                 self.assertEqual(window.btn_mobile_upload.text(), "扫码")
 
-                dialog = MobileUploadDialog(window, db_path)
+                from PySide6.QtTest import QSignalSpy
+                from scripts.invoice_fetch.mobile_upload import UploadHostOption
+                started = QSignalSpy(window.mobile_upload_controller.started)
+                with patch(
+                    "scripts.invoice_fetch.mobile_upload.enumerate_upload_hosts",
+                    return_value=[UploadHostOption("127.0.0.1", "loopback", "Local", False, 0)],
+                ):
+                    dialog = MobileUploadDialog(window, db_path)
+                    deadline = time.monotonic() + 10
+                    while window.mobile_upload_controller.session is None and time.monotonic() < deadline:
+                        app.processEvents()
+                        time.sleep(0.05)
+                    self.assertIsNotNone(window.mobile_upload_controller.session)
+                app.processEvents()
                 self.assertIn("/u/", dialog.txt_url.text())
                 self.assertTrue(dialog.btn_stop.isEnabled())
                 self.assertEqual(dialog.property("class"), "WorkflowDialog")

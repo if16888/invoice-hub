@@ -493,6 +493,8 @@ if _HAS_QT:
             self.show_content()
 
         def show_content(self): self.stack.setCurrentWidget(self.content)
+        def set_empty_object_name(self, object_name: str):
+            self.empty.setObjectName(object_name)
         def show_empty(self, title, description="", action=None, icon=None):
             self.empty.set_content(title, description, icon)
             self.empty.set_action(action)
