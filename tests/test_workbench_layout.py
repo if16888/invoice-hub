@@ -152,10 +152,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         return window
 
     def _visible_primary_buttons(self, root):
+        from scripts.invoice_fetch.gui.ui_components import is_visual_primary
         return [
             button
             for button in root.findChildren(QPushButton)
-            if button.isVisible() and button.property("variant") == "primary"
+            if button.isVisible() and is_visual_primary(button)
         ]
 
     # ------------------------------------------------------------------
@@ -531,7 +532,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window._switch_main_page("settings", sub_tab=1)
                 QApplication.processEvents()
-                self.assertTrue(window.stat_box_overview.isVisible())
+                self.assertFalse(hasattr(window, "stat_box_overview"))
+                self.assertEqual(window.settings_mailbox_list.width(), 280)
+                self.assertTrue(hasattr(window, "lbl_detail_email"))
                 self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
                 self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑")
                 self.assertEqual(window.btn_settings_mailbox_scan.text(), "立即扫描")

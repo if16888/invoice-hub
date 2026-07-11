@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QBoxLayout, QPushButton
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
+from scripts.invoice_fetch.gui.ui_components import is_visual_primary
 
 
 class IHDS08Tests(unittest.TestCase):
@@ -100,7 +101,7 @@ class IHDS08Tests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 primaries = [b for b in window.mobile_upload_panel.findChildren(QPushButton)
-                             if b.isVisible() and b.property("class") == "PrimaryBtn"]
+                             if b.isVisible() and is_visual_primary(b)]
                 self.assertLessEqual(len(primaries), 1)
             finally: window.close()
 
@@ -111,7 +112,7 @@ class IHDS08Tests(unittest.TestCase):
             real_close = window.db.close
             try:
                 window.mobile_upload_controller.timer.start()
-                with patch.object(window.mobile_upload_controller, "shutdown", side_effect=lambda: order.append("mobile")), \
+                with patch.object(window.mobile_upload_controller, "shutdown", side_effect=lambda: (order.append("mobile"), True)[1]), \
                      patch.object(window.db, "close", side_effect=lambda: (order.append("database"), real_close())[1]):
                     window.close(); self.app.processEvents()
                 self.assertEqual(order, ["mobile", "database"])

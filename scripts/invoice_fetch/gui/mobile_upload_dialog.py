@@ -4,7 +4,7 @@
 from io import BytesIO
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,7 +24,6 @@ from .mobile_upload_session import MobileUploadSessionController
 
 
 class MobileUploadDialog(QDialog):
-    upload_finished = Signal(dict)
 
     def __init__(self, parent, db_path: Path):
         super().__init__(parent)
@@ -104,7 +103,6 @@ class MobileUploadDialog(QDialog):
 
         self.controller.started.connect(self._controller_started)
         self.controller.stats_changed.connect(self._apply_status)
-        self.controller.upload_received.connect(self.upload_finished.emit)
         self.controller.failed.connect(self._controller_failed)
         self.controller.stopped.connect(self._controller_stopped)
 
@@ -191,7 +189,6 @@ class MobileUploadDialog(QDialog):
         total = sum(int(status.get(k, 0) or 0) for k in ("accepted", "duplicate", "failed", "imported"))
         if total and total != self._last_status_total:
             self._last_status_total = total
-            self.upload_finished.emit(dict(status))
 
     def _stop_server(self):
         if self.controller.server is not None or self.controller.is_starting:

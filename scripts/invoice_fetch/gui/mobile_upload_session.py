@@ -86,6 +86,8 @@ class MobileUploadSessionController(QObject):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         thread.finished.connect(self._finish_start)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
         self._start_thread = thread
         self._start_worker = worker
         thread.start()
@@ -100,7 +102,6 @@ class MobileUploadSessionController(QObject):
             self._start_failed(worker.error)
         elif worker.result is not None:
             self._start_succeeded(*worker.result)
-        worker.deleteLater()
         self._clear_start_worker()
 
     @Slot(object, object, list)
@@ -164,11 +165,15 @@ class MobileUploadSessionController(QObject):
     def shutdown(self, timeout_ms: int = 5000):
         """Release the owned service before the application closes its DB."""
         self._stop_requested = True
+        self.timer.stop()
         thread = self._start_thread
         if thread is not None and thread.isRunning():
-            thread.wait(timeout_ms)
+            if not thread.wait(timeout_ms):
+                return False
             QCoreApplication.processEvents()
         self.stop()
+        thread = self._start_thread
+        return not (thread is not None and thread.isRunning()) and self.server is None and not self.timer.isActive()
 
     @staticmethod
     def qr_png(url: str) -> bytes:
@@ -180,8 +185,6 @@ class MobileUploadSessionController(QObject):
 
 
 class MobileUploadSessionPanel(QFrame):
-    upload_finished = Signal(dict)
-
     def __init__(self, controller: MobileUploadSessionController, parent=None):
         super().__init__(parent)
         self.setObjectName("MobileUploadSessionPanel")
@@ -193,13 +196,16 @@ class MobileUploadSessionPanel(QFrame):
         self.stack = QStackedWidget(self)
         root.addWidget(self.stack, 0, Qt.AlignTop)
         self.idle_page = self._build_idle()
+        self.starting_page = self._build_starting()
         self.active_page = self._build_active()
+        self.error_page = self._build_error()
         self.stack.addWidget(self.idle_page)
+        self.stack.addWidget(self.starting_page)
         self.stack.addWidget(self.active_page)
-        controller.starting.connect(lambda: self.btn_start.setEnabled(False))
+        self.stack.addWidget(self.error_page)
+        controller.starting.connect(self.show_starting)
         controller.started.connect(self._show_active)
         controller.stats_changed.connect(self._set_stats)
-        controller.upload_received.connect(self.upload_finished.emit)
         controller.failed.connect(self._show_error)
         controller.stopped.connect(self.show_idle)
 
@@ -216,6 +222,15 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_start.clicked.connect(self.controller.start)
         layout.addWidget(title); layout.addWidget(desc); layout.addWidget(self.lbl_idle_network)
         layout.addWidget(self.btn_start, 0, Qt.AlignLeft); layout.addStretch(1)
+        return page
+
+    def _build_starting(self):
+        page = QWidget(self)
+        layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(8)
+        title = QLabel("正在启动手机上传…"); title.setProperty("class", "SectionTitle")
+        description = QLabel("正在检测局域网并创建临时上传地址。")
+        description.setProperty("class", "SectionHint")
+        layout.addWidget(title); layout.addWidget(description); layout.addStretch(1)
         return page
 
     def _build_active(self):
@@ -240,18 +255,39 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_change_network = make_button("更换网络", variant="ghost"); self.btn_change_network.clicked.connect(self.combo_upload_host.showPopup)
         self.btn_stop = make_button("停止服务", variant="secondary"); self.btn_stop.setProperty("danger", True); self.btn_stop.clicked.connect(self.controller.stop)
         footer.addWidget(self.btn_copy_url); footer.addWidget(self.btn_change_network); footer.addStretch(1); footer.addWidget(self.btn_stop)
-        self.lbl_error = QLabel(); self.lbl_error.setWordWrap(True); self.lbl_error.hide()
-        layout.addLayout(header); layout.addLayout(body); layout.addWidget(self.lbl_error); layout.addLayout(footer)
+        layout.addLayout(header); layout.addLayout(body); layout.addLayout(footer)
+        return page
+
+    def _build_error(self):
+        page = QWidget(self)
+        layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(8)
+        title = QLabel("无法启动手机上传"); title.setProperty("class", "SectionTitle")
+        self.lbl_error = QLabel("未找到可用网络，或端口启动失败。")
+        self.lbl_error.setWordWrap(True); self.lbl_error.setProperty("class", "SectionHint")
+        actions = QHBoxLayout()
+        self.btn_retry = make_button("重试", variant="primary")
+        self.btn_retry.clicked.connect(self.controller.start)
+        self.btn_network_settings = make_button("网络设置", variant="secondary")
+        self.btn_network_settings.clicked.connect(self.show_idle)
+        actions.addWidget(self.btn_retry); actions.addWidget(self.btn_network_settings); actions.addStretch(1)
+        layout.addWidget(title); layout.addWidget(self.lbl_error); layout.addLayout(actions); layout.addStretch(1)
         return page
 
     def show_idle(self):
         self.btn_start.setEnabled(True)
         self.stack.setCurrentWidget(self.idle_page)
 
+    def show_starting(self):
+        self.btn_start.setEnabled(False)
+        self.stack.setCurrentWidget(self.starting_page)
+
     def _show_active(self, session):
         self.combo_upload_host.blockSignals(True); self.combo_upload_host.clear()
         for option in self.controller.host_options:
             self.combo_upload_host.addItem(option.label, option.host)
+        selected_index = self.combo_upload_host.findData(session.host)
+        if selected_index >= 0:
+            self.combo_upload_host.setCurrentIndex(selected_index)
         self.combo_upload_host.blockSignals(False)
         self.txt_url.setText(session.upload_url); self.lbl_service_address.setText(f"{session.host}:{session.port}")
         try:
@@ -259,7 +295,7 @@ class MobileUploadSessionPanel(QFrame):
             self.lbl_qr.setPixmap(pixmap.scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except Exception:
             self.lbl_qr.setText("二维码不可用\n请复制上传链接")
-        self.lbl_error.hide(); self.stack.setCurrentWidget(self.active_page)
+        self.stack.setCurrentWidget(self.active_page)
 
     def _set_stats(self, stats):
         self.lbl_stats.setText("成功 {accepted} · 重复 {duplicate} · 失败 {failed} · 入库 {imported}".format(
@@ -267,7 +303,9 @@ class MobileUploadSessionPanel(QFrame):
             failed=stats.get("failed", 0), imported=stats.get("imported", 0)))
 
     def _show_error(self, message):
-        self.btn_start.setEnabled(True); self.lbl_error.setText(f"上传服务启动失败：{message}"); self.lbl_error.show()
+        self.btn_start.setEnabled(True)
+        self.lbl_error.setText(message or "未找到可用网络，或端口启动失败。")
+        self.stack.setCurrentWidget(self.error_page)
 
     def _copy_url(self):
         QApplication.clipboard().setText(self.txt_url.text())

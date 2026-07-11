@@ -238,17 +238,15 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertIsNotNone(window.settings_tabs)
         self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
 
-    def test_mailbox_overview_shows_total_enabled_default_missing_counts(self):
-        """V11 Test 3: Mailbox overview shows total, enabled, default, missing auth code, and disabled counts."""
+    def test_mailbox_overview_uses_master_detail_without_summary_duplication(self):
+        """IHDS-09: account identity and status live in the master-detail surface."""
         window = InvoiceReviewApp(db_path=TEST_DB_PATH)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
 
-        self.assertTrue(hasattr(window, "lbl_v11_stat_total"))
-        self.assertIn("总账号", window.lbl_v11_stat_total.text())
-        self.assertIn("2", window.lbl_v11_stat_total.text())
-        self.assertIn("启用", window.lbl_v11_stat_enabled.text())
-        self.assertIn("2", window.lbl_v11_stat_enabled.text())
+        self.assertFalse(hasattr(window, "stat_box_overview"))
+        self.assertEqual(window.settings_mailbox_list.count(), 2)
+        self.assertTrue(hasattr(window, "lbl_detail_email"))
 
     def test_mailbox_saved_accounts_use_single_add_menu(self):
         """IHDS-06: provider presets only exist inside the add-account menu."""

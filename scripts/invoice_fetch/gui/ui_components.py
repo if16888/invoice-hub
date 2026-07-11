@@ -52,6 +52,16 @@ except ImportError:
 
 if _HAS_QT:
 
+    def is_visual_primary(button) -> bool:
+        """Single primary-action contract shared by product code and tests."""
+        return bool(
+            button is not None
+            and (
+                button.property("variant") == "primary"
+                or button.property("emphasis") == "primary"
+            )
+        )
+
     def make_button(
         text: str,
         variant: str = "secondary",
@@ -81,11 +91,26 @@ if _HAS_QT:
         requested_min_width = int(min_width or 0)
         actual_min_width = max(text_width + 24, size_hint_width, requested_min_width)
         btn.setMinimumWidth(actual_min_width)
+        if variant == "primary":
+            btn.setMaximumWidth(max(actual_min_width, 220))
 
         if tooltip:
             btn.setToolTip(tooltip)
 
         return btn
+
+    class AdaptiveButton(QPushButton):
+        """Text button whose minimum width follows font metrics at any DPI."""
+
+        def __init__(self, text: str, variant: str = "secondary", parent=None):
+            super().__init__(text, parent)
+            self.setProperty("variant", variant)
+            self.setFixedHeight(34)
+            self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            self.refresh_adaptive_width()
+
+        def refresh_adaptive_width(self):
+            self.setMinimumWidth(max(self.fontMetrics().horizontalAdvance(self.text()) + 28, self.sizeHint().width()))
 
     def make_badge(
         text: str,
@@ -208,6 +233,12 @@ if _HAS_QT:
             painter.setPen(self.palette().color(self.foregroundRole()))
             text = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, max(0, self.width()))
             painter.drawText(self.rect(), self.alignment() or (Qt.AlignLeft | Qt.AlignVCenter), text)
+
+    class ElidedTextLabel(ElidedValueLabel):
+        """Semantic alias for long product text such as paths, names and IDs."""
+
+    class CredentialValueLabel(ElidedValueLabel):
+        """Never displays a secret; only a credential presence/status value."""
 
     class StatusLine(QFrame):
         """Compact task row: label, status and one relevant primary action."""

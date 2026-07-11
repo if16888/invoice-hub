@@ -5175,6 +5175,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     window.btn_logs_clear.click()
                     app.processEvents()
+                    app.processEvents()
+                    window.btn_logs_clear.click()
                     self.assertEqual(window.txt_log.toPlainText().strip(), "")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -5343,8 +5345,9 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     self.assertFalse(hasattr(window, "txt_import_records"))
                     self.assertFalse(hasattr(window, "lst_mail_accounts"))
-                    self.assertIn("新增 3 条", window.lbl_mail_scan_summary.text())
-                    self.assertIn("重复 1 条", window.lbl_mail_scan_summary.text())
+                    self.assertFalse(hasattr(window, "lbl_mail_scan_summary"))
+                    self.assertFalse(hasattr(window, "lbl_import_recent_status"))
+                    self.assertTrue(hasattr(window, "import_recent_timeline"))
                     self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
                     self.assertTrue(window.import_mail_accounts_card.lbl_title.text())
                     self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
