@@ -1,4 +1,7 @@
 import os
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,10 +14,11 @@ from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
 
 from scripts.invoice_fetch.gui.api_key_dialog import ApiKeyDialog
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.icon_provider import IconProvider, _ASSETS_ICONS
 from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary, make_button
-from scripts.invoice_fetch.gui.ui_components import AdaptiveButton, ElidedTextLabel
+from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel
 
 
 class IHDS09Tests(unittest.TestCase):
@@ -297,18 +301,6 @@ class IHDS09Tests(unittest.TestCase):
         label = ElidedTextLabel(value)
         self.assertEqual(label.toolTip(), value)
 
-    def _assert_adaptive_button_at_scale(self, scale):
-        button = AdaptiveButton("保存并测试")
-        font = button.font(); font.setPointSizeF(max(9.0, font.pointSizeF()) * scale); button.setFont(font)
-        button.refresh_adaptive_width()
-        self.assertGreaterEqual(button.minimumWidth(), button.fontMetrics().horizontalAdvance(button.text()) + 28)
-
-    def test_controls_do_not_clip_at_125_percent(self):
-        self._assert_adaptive_button_at_scale(1.25)
-
-    def test_controls_do_not_clip_at_150_percent(self):
-        self._assert_adaptive_button_at_scale(1.5)
-
     def test_export_checklist_is_top_aligned(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
@@ -334,6 +326,98 @@ class IHDS09Tests(unittest.TestCase):
                     self.assertLessEqual(page.height(), 830,
                         f"{page_key} page.height() {page.height()} too tall at 1366x768")
             finally: window.close()
+
+    def test_api_key_local_validation_copy_is_truthful(self):
+        dialog = ApiKeyDialog("DeepSeek")
+        try:
+            texts = "\n".join(button.text() for button in dialog.findChildren(QPushButton))
+            self.assertIn("保存并校验配置", texts)
+            self.assertNotIn("连接成功", texts)
+            self.assertNotIn("测试通过", texts)
+            self.assertNotIn("已连接", texts)
+        finally:
+            dialog.close()
+
+    def test_navigation_icons_are_svg_backed(self):
+        expected = ("dashboard", "review", "import", "export", "settings")
+        for semantic in expected:
+            asset = _ASSETS_ICONS / f"{semantic}.svg"
+            self.assertTrue(asset.is_file(), f"missing SVG asset: {asset}")
+            content = asset.read_text(encoding="utf-8")
+            self.assertIn("<svg", content)
+            self.assertIn('viewBox="0 0 18 18"', content)
+            self.assertFalse(IconProvider.icon(semantic).isNull())
+
+    def test_ai_profile_list_visibility_follows_count(self):
+        profiles = [
+            {"profile_id": "one", "name": "One", "provider": "A", "model": "a", "enabled": True},
+            {"profile_id": "two", "name": "Two", "provider": "B", "model": "b", "enabled": True},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._switch_main_page("settings")
+                window.settings_tabs.setCurrentIndex(1)
+                self.app.processEvents()
+                with patch.object(window, "_ai_profiles_for_settings", return_value=[]):
+                    window._refresh_settings_ai_page()
+                    self.assertTrue(window.settings_ai_empty_state.isVisible())
+                    self.assertFalse(window.settings_ai_profile_list.isVisible())
+                with patch.object(window, "_ai_profiles_for_settings", return_value=profiles[:1]):
+                    window._refresh_settings_ai_page()
+                    self.assertFalse(window.settings_ai_empty_state.isVisible())
+                    self.assertFalse(window.settings_ai_profile_list.isVisible())
+                with patch.object(window, "_ai_profiles_for_settings", return_value=profiles):
+                    window._refresh_settings_ai_page()
+                    self.assertTrue(window.settings_ai_profile_list.isVisible())
+                    self.assertEqual(window.settings_ai_profile_list.count(), 2)
+            finally:
+                window.close()
+
+    def _assert_real_window_controls_fit(self, scale: float):
+        """Use an isolated QApplication so a native Qt crash cannot kill the suite."""
+        probe = r'''
+import json, tempfile
+from pathlib import Path
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton
+from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+app = QApplication([])
+failures = []
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    window = InvoiceReviewApp(Path(td) / "geometry.db")
+    window.resize(1366, 768); window.show(); app.processEvents(); app.processEvents()
+    for page_key in ("overview", "imports", "export", "settings"):
+        window._switch_main_page(page_key); app.processEvents(); app.processEvents()
+        controls = []
+        for kind in (QPushButton, QLineEdit, QComboBox):
+            controls.extend(window.center_stack.currentWidget().findChildren(kind))
+        for control in controls:
+            if not control.isVisible() or control.width() <= 0 or control.height() <= 0:
+                continue
+            origin = control.mapTo(window, QPoint(0, 0))
+            if origin.x() < 0 or origin.y() < 0 or origin.x() + control.width() > window.width() or origin.y() + control.height() > window.height():
+                failures.append({"page": page_key, "name": control.objectName(), "rect": [origin.x(), origin.y(), control.width(), control.height()]})
+    window.close(); app.processEvents()
+print(json.dumps(failures, ensure_ascii=False))
+'''
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR=str(scale))
+        completed = subprocess.run(
+            [sys.executable, "-c", probe], cwd=Path(__file__).resolve().parents[1],
+            env=env, capture_output=True, text=True, timeout=45,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        failures = json.loads(completed.stdout.strip().splitlines()[-1])
+        self.assertEqual(failures, [], failures)
+
+    def test_real_window_1366_has_no_clipped_controls(self):
+        self._assert_real_window_controls_fit(1.0)
+
+    def test_real_window_125_percent_has_no_clipped_controls(self):
+        self._assert_real_window_controls_fit(1.25)
+
+    def test_real_window_150_percent_has_no_clipped_controls(self):
+        self._assert_real_window_controls_fit(1.5)
 
 
 if __name__ == "__main__":
