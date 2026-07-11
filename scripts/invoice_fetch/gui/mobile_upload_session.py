@@ -125,6 +125,12 @@ class MobileUploadSessionController(QObject):
         self.server = None
         self.session = None
         self.failed.emit(message)
+        # If shutdown() timed out and set _stop_requested while the thread was
+        # still running, the closeEvent is stuck with _close_pending=True waiting
+        # for `stopped`.  Emit it now so the window can finish closing.
+        if self._stop_requested:
+            self._stop_requested = False
+            self.stopped.emit()
 
     @Slot()
     def _clear_start_worker(self):

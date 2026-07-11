@@ -10,7 +10,8 @@ class ApiKeyDialog(QDialog):
     def __init__(self, provider: str, parent=None, has_existing_key: bool = False):
         super().__init__(parent)
         self.provider = str(provider or "AI").strip()
-        self.save_and_test = False
+        self.save_and_verify = False
+        self.save_and_test = False  # backward-compat alias
         self.setWindowTitle(f"配置 {self.provider} API Key")
         self.setModal(True)
         self.setFixedWidth(560)
@@ -52,7 +53,7 @@ class ApiKeyDialog(QDialog):
         footer.addStretch(1)
         self.btn_cancel = make_button("取消", variant="secondary")
         self.btn_save = make_button("保存", variant="secondary")
-        self.btn_save_and_test = make_button("保存并测试", variant="primary")
+        self.btn_save_and_test = make_button("保存并校验配置", variant="primary")
         self.btn_cancel.clicked.connect(self.reject)
         self.btn_save.clicked.connect(self._accept_save)
         self.btn_save_and_test.clicked.connect(self._accept_save_and_test)
@@ -81,7 +82,8 @@ class ApiKeyDialog(QDialog):
 
     def _accept_save_and_test(self):
         if self._validate():
-            self.save_and_test = True
+            self.save_and_verify = True
+            self.save_and_test = True  # backward-compat alias
             self.accept()
 
     def key_text(self) -> str:

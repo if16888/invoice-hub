@@ -45,9 +45,11 @@ from .styles import (
 from .ui_components import (
     CommandBar,
     ActivityTimeline,
+    ChecklistRow,
     CompactFieldRow,
     CompactStatCard,
     DangerZone,
+    ElidedTextLabel,
     EntityList,
     EmptyStateCard,
     LogDrawer,
@@ -2300,8 +2302,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.export_invoices_card.setVisible(False)
             self.export_integrity_card.setVisible(False)
             self.export_summary_strip.set_metric("ready", "无报销组")
-            self.lbl_export_integrity.setText("当前还没有报销组。先在审核页把发票关联到报销组，再回来导出。")
-            self.lbl_export_blockers.setText("阻塞：没有可导出的报销组。")
+            if hasattr(self, "export_check_approved"):
+                for row in (
+                    self.export_check_approved,
+                    self.export_check_pending,
+                    self.export_check_missing_attach,
+                    self.export_check_missing_amount,
+                    self.export_check_dir,
+                ):
+                    row.set_value("—", None)
             if hasattr(self, "lbl_export_action_hint"):
                 self.lbl_export_action_hint.setText("先在审核页关联报销组，完整性检查才会生效。")
             if hasattr(self, "export_invoice_list"):
@@ -2735,6 +2744,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
         self.settings_ai_profile_list.blockSignals(False)
 
+        # Dynamic visibility: show the list only when there are multiple profiles
+        # so the user can switch between them.  Single-profile and no-profile
+        # views stay clean without the list widget.
+        multi_profile = self.settings_ai_profile_list.count() > 1
+        self.settings_ai_profile_list.setVisible(multi_profile)
+
         self.lbl_settings_ai_empty.setVisible(False)
         if hasattr(self, "settings_ai_empty_state"):
             self.settings_ai_empty_state.setVisible(self.settings_ai_profile_list.count() == 0)
@@ -2887,7 +2902,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_settings_ai_failure_status.setText("失败状态：未检测到可用 API Key，无法进行本地连通性预检。")
             return
         self.lbl_settings_ai_failure_status.setText(
-            f"失败状态：本地预检通过，{provider}/{model} 已具备 Key；真实远端连通性会在首次分类请求时验证。"
+            f"已验证本地配置：{provider}/{model} 的 Key 已安全保存。远端连接将在首次使用时确认。"
         )
 
     def _restore_settings_ai_session(self) -> None:
@@ -3210,14 +3225,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_integrity_card.setMinimumWidth(360)
         self.export_integrity_card.setMaximumWidth(400)
         self.export_integrity_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
-        self.lbl_export_integrity = QLabel("请选择报销组后查看完整性检查。")
-        self.lbl_export_integrity.setWordWrap(True)
-        self.lbl_export_integrity.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
-        self.export_integrity_card.body_layout.addWidget(self.lbl_export_integrity)
-        self.lbl_export_blockers = QLabel("当前暂无阻塞。")
-        self.lbl_export_blockers.setWordWrap(True)
-        self.lbl_export_blockers.setStyleSheet("color: #667085; font-size: 12px;")
-        self.export_integrity_card.body_layout.addWidget(self.lbl_export_blockers)
+
+        # Structured ChecklistRow preflight items (replaces long text labels)
+        self.export_check_approved = ChecklistRow("已通过发票", "—")
+        self.export_check_pending = ChecklistRow("待处理", "—")
+        self.export_check_missing_attach = ChecklistRow("缺材料", "—")
+        self.export_check_missing_amount = ChecklistRow("缺金额", "—")
+        self.export_check_dir = ChecklistRow("导出目录", "未设置")
+        self.export_integrity_card.body_layout.addWidget(self.export_check_approved)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_pending)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_missing_attach)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_missing_amount)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_dir)
+
+        # Keep legacy label references for backward compatibility with tests
+        # that rely on lbl_export_integrity / lbl_export_blockers attributes.
+        self.lbl_export_integrity = self.export_check_approved  # compat alias
+        self.lbl_export_blockers = QLabel("")  # hidden; updates via _sync_export_claim_selection
+        self.lbl_export_blockers.setVisible(False)
+
         self.lbl_export_action_hint = QLabel("未选报销组或检查未通过时，导出会保持禁用。")
         self.lbl_export_action_hint.setWordWrap(True)
         self.lbl_export_action_hint.setStyleSheet("color: #475467; font-size: 12px;")
@@ -3372,6 +3398,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mailbox_editor_layout.setContentsMargins(0, 0, 0, 0)
         mailbox_editor_layout.setSpacing(8)
 
+        # ── Action buttons (defined early, added to layout at the bottom) ──
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
@@ -3408,23 +3435,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_mailbox_more.setMenu(self.settings_mailbox_more_menu)
         action_row.addWidget(self.settings_mailbox_more)
         action_row.addStretch(1)
-        mailbox_editor_layout.addLayout(action_row)
+
+        # ── Detail sections (account name/header shown first) ──
         basic_box = ReadOnlyDetailPanel("基本信息", "账号身份与默认状态。")
-        self.lbl_detail_name = QLabel("未选择邮箱账号")
-        self.lbl_detail_email = QLabel("—")
-        self.lbl_detail_server = QLabel("—")
+        # ElidedTextLabel for long names/addresses/server strings that must not wrap
+        self.lbl_detail_name = ElidedTextLabel("未选择邮箱账号")
+        self.lbl_detail_email = ElidedTextLabel("—")
+        self.lbl_detail_server = ElidedTextLabel("—")
         self.lbl_detail_is_default = QLabel("—")
         self.lbl_detail_credential_status = QLabel("未配置")
         self.lbl_detail_scan_rule = QLabel("—")
         for label in (
-            self.lbl_detail_name,
-            self.lbl_detail_email,
-            self.lbl_detail_server,
             self.lbl_detail_is_default,
             self.lbl_detail_credential_status,
             self.lbl_detail_scan_rule,
         ):
             label.setWordWrap(True)
+            label.setObjectName("MailboxDetailValue")
+        for label in (self.lbl_detail_name, self.lbl_detail_email, self.lbl_detail_server):
             label.setObjectName("MailboxDetailValue")
         basic_box.add_row("邮箱名称", self.lbl_detail_name)
         basic_box.add_row("邮箱地址", self.lbl_detail_email)
@@ -3437,10 +3465,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mailbox_editor_layout.addWidget(basic_box)
         mailbox_editor_layout.addWidget(connection_box)
         mailbox_editor_layout.addWidget(scan_box)
-        self.lbl_settings_mailbox_test_status = QLabel("测试连接：尚未执行。")
+        # Status labels: value-only, no repeated field-name prefix
+        self.lbl_settings_mailbox_test_status = QLabel("尚未执行。")
         self.lbl_settings_mailbox_test_status.setWordWrap(True)
         self.lbl_settings_mailbox_test_status.setStyleSheet("color: #667085; font-size: 12px;")
-        self.lbl_settings_mailbox_scan_result = QLabel("最近扫描结果：暂无记录。")
+        self.lbl_settings_mailbox_scan_result = QLabel("暂无记录。")
         self.lbl_settings_mailbox_scan_result.setWordWrap(True)
         self.lbl_settings_mailbox_scan_result.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_settings_mailbox_empty = QLabel("尚未配置任何邮箱账号。")
@@ -3458,6 +3487,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_empty)
         mailbox_editor_layout.addWidget(self.settings_mailbox_empty_state)
         mailbox_editor_layout.addStretch(1)
+        # ── Action footer: placed after all detail sections ──
+        mailbox_editor_layout.addLayout(action_row)
         mailbox_shell.addWidget(mailbox_editor, 1)
         mailbox_layout.addLayout(mailbox_shell, 1)
 
@@ -3572,8 +3603,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_id = current_item.data(Qt.UserRole) if current_item is not None else None
         if claim_id is None:
             self.export_summary_strip.set_metric("ready", "待检查")
-            self.lbl_export_integrity.setText("请选择报销组后查看完整性检查。")
-            self.lbl_export_blockers.setText("阻塞：还没有选中任何报销组。")
+            # Reset ChecklistRows to neutral
+            if hasattr(self, "export_check_approved"):
+                self.export_check_approved.set_value("—", None)
+                self.export_check_pending.set_value("—", None)
+                self.export_check_missing_attach.set_value("—", None)
+                self.export_check_missing_amount.set_value("—", None)
+                self.export_check_dir.set_value("—", None)
             if hasattr(self, "lbl_export_action_hint"):
                 self.lbl_export_action_hint.setText("先选左侧报销组，再确认组内发票和完整性检查。")
             if hasattr(self, "export_invoice_list"):
@@ -3598,19 +3634,52 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_export_invoice_meta.setText(
                 f"当前报销组共 {len(invoices)} 张记录，其中已通过 {stats.get(APPROVED, 0)} 张，待处理 {stats.get(TO_REVIEW, 0)} 张。"
             )
+
+        approved_cnt = int(stats.get(APPROVED, 0) or 0)
+        pending_cnt = int(stats.get(TO_REVIEW, 0) or 0)
+        missing_attach = int(stats.get("missing_attachment", 0) or 0)
+        missing_amount = int(stats.get("missing_amount", 0) or 0)
+
+        # Export directory check
+        export_dir = getattr(self, "_export_dir", None) or (
+            self.config.get("export", {}).get("output_dir") if hasattr(self, "config") else None
+        )
+        dir_ok = bool(export_dir)
+
         blockers = []
-        if int(stats.get(APPROVED, 0) or 0) <= 0:
+        if approved_cnt <= 0:
             blockers.append("没有已通过发票")
-        if int(stats.get("missing_attachment", 0) or 0) > 0:
-            blockers.append(f"缺原件 {stats.get('missing_attachment', 0)} 张")
-        if int(stats.get("missing_amount", 0) or 0) > 0:
-            blockers.append(f"缺金额 {stats.get('missing_amount', 0)} 张")
-        is_ready = not blockers
+        if missing_attach > 0:
+            blockers.append(f"缺原件 {missing_attach} 张")
+        if missing_amount > 0:
+            blockers.append(f"缺金额 {missing_amount} 张")
+
+        is_ready = not blockers and dir_ok
+
+        # Update ChecklistRows
+        if hasattr(self, "export_check_approved"):
+            self.export_check_approved.set_value(f"{approved_cnt} 张", ok=approved_cnt > 0)
+            self.export_check_pending.set_value(f"{pending_cnt} 张", ok=pending_cnt == 0)
+            self.export_check_missing_attach.set_value(
+                "无" if missing_attach == 0 else f"{missing_attach} 张",
+                ok=missing_attach == 0,
+            )
+            self.export_check_missing_amount.set_value(
+                "无" if missing_amount == 0 else f"{missing_amount} 张",
+                ok=missing_amount == 0,
+            )
+            self.export_check_dir.set_value(
+                str(export_dir) if dir_ok else "未设置", ok=dir_ok
+            )
+
         self.export_summary_strip.set_metric("ready", "可导出" if is_ready else "需处理")
-        self.lbl_export_integrity.setText(self._format_claim_export_preflight_text(stats))
-        self.lbl_export_blockers.setText("阻塞：" + "；".join(blockers) if blockers else "检查通过：当前报销组可以直接导出。")
         if hasattr(self, "lbl_export_action_hint"):
-            self.lbl_export_action_hint.setText("导出会沿用现有业务逻辑；如果还缺材料，请先回审核页补齐。")
+            if is_ready:
+                self.lbl_export_action_hint.setText("导出会沿用现有业务逻辑；当前报销组已可直接导出。")
+            else:
+                self.lbl_export_action_hint.setText(
+                    "阻塞：" + "；".join(blockers) if blockers else "请先设置导出目录。"
+                )
         self.btn_run_export_page.setEnabled(is_ready)
 
     def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:

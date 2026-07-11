@@ -287,6 +287,71 @@ if _HAS_QT:
             self._action_widget.setParent(self)
             self._action_widget = None
 
+    class ChecklistRow(QFrame):
+        """Single preflight checklist row: icon + label + value.
+
+        Used on the export page to show the status of each prerequisite
+        (e.g. approved invoices, missing attachments, export directory).
+
+        Parameters
+        ----------
+        label:
+            Human-readable requirement description, e.g. ``"已通过发票"``.
+        value:
+            Initial display value, e.g. ``"—"``.
+        ok:
+            ``True`` → green check, ``False`` → red warning, ``None`` → neutral.
+        """
+
+        def __init__(
+            self,
+            label: str,
+            value: str = "—",
+            ok: bool | None = None,
+            parent: QWidget | None = None,
+        ):
+            super().__init__(parent)
+            self.setProperty("class", "ChecklistRow")
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(8, 5, 8, 5)
+            layout.setSpacing(8)
+
+            self.lbl_icon = QLabel("·")
+            self.lbl_icon.setFixedWidth(16)
+            self.lbl_icon.setAlignment(Qt.AlignCenter)
+            self.lbl_icon.setProperty("class", "ChecklistIcon")
+
+            self.lbl_label = QLabel(label)
+            self.lbl_label.setProperty("class", "ChecklistLabel")
+            self.lbl_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+            self.lbl_value = QLabel(value)
+            self.lbl_value.setProperty("class", "ChecklistValue")
+            self.lbl_value.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            layout.addWidget(self.lbl_icon)
+            layout.addWidget(self.lbl_label)
+            layout.addWidget(self.lbl_value, 1)
+
+            self.set_value(value, ok)
+
+        def set_value(self, value: str, ok: bool | None = None) -> None:
+            """Update the displayed value and status icon."""
+            self.lbl_value.setText(str(value))
+            if ok is True:
+                self.lbl_icon.setText("✓")
+                self.lbl_icon.setStyleSheet("color: #12b76a; font-weight: bold;")
+                self.lbl_value.setStyleSheet("color: #12b76a;")
+            elif ok is False:
+                self.lbl_icon.setText("✗")
+                self.lbl_icon.setStyleSheet("color: #f04438; font-weight: bold;")
+                self.lbl_value.setStyleSheet("color: #f04438;")
+            else:
+                self.lbl_icon.setText("·")
+                self.lbl_icon.setStyleSheet("color: #98a2b3;")
+                self.lbl_value.setStyleSheet("color: #667085;")
+
     class SelectableSourceCard(QFrame):
         """Selectable import source card without page-specific styling logic."""
 

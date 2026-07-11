@@ -202,11 +202,19 @@ class IHDS09Tests(unittest.TestCase):
             finally: window.close()
 
     def test_mailbox_identity_is_not_repeated(self):
+        """Mailbox name and email must be different label widgets with different texts."""
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                detail_values = [window.lbl_detail_name, window.lbl_detail_email]
-                self.assertEqual(len({id(label) for label in detail_values}), 2)
+                # Both must be distinct widget objects
+                self.assertIsNot(window.lbl_detail_name, window.lbl_detail_email)
+                # When a mailbox is selected, name text and email text must differ
+                # (they represent different fields, not the same value twice).
+                # Even in empty state, the placeholder texts differ.
+                name_text = window.lbl_detail_name.text()
+                email_text = window.lbl_detail_email.text()
+                self.assertNotEqual(name_text, email_text,
+                    "lbl_detail_name and lbl_detail_email must not show the same text")
             finally: window.close()
 
     def test_mailbox_has_one_contextual_primary(self):
@@ -250,9 +258,14 @@ class IHDS09Tests(unittest.TestCase):
         dialog.close()
 
     def test_api_key_dialog_has_save_and_test(self):
+        """The verify/test button must be the unique primary action and have honest text."""
         dialog = ApiKeyDialog("DeepSeek")
-        self.assertEqual(dialog.btn_save_and_test.text(), "保存并测试")
+        # Text updated to be honest: local verification only, not real network test
+        self.assertEqual(dialog.btn_save_and_test.text(), "保存并校验配置")
         self.assertTrue(is_visual_primary(dialog.btn_save_and_test))
+        # save_and_verify attribute must exist; save_and_test is kept as backward-compat alias
+        self.assertFalse(dialog.save_and_verify)
+        self.assertFalse(dialog.save_and_test)
         dialog.close()
 
     def test_wide_page_primary_is_not_full_width(self):
@@ -301,6 +314,25 @@ class IHDS09Tests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertTrue(window.export_integrity_card.sizePolicy().verticalPolicy().name in {"Maximum", "Preferred"})
+            finally: window.close()
+
+    def test_page_geometry_at_1366x768(self):
+        """Key UI pages must fit within 1366x768 without overflowing."""
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.resize(1366, 768)
+                self.app.processEvents()
+                for page_key in ("overview", "imports", "export", "settings"):
+                    window._switch_main_page(page_key)
+                    self.app.processEvents()
+                    page = window.center_stack.currentWidget()
+                    # Page should not overflow the window width
+                    self.assertLessEqual(page.width(), 1366,
+                        f"{page_key} page.width() {page.width()} > 1366")
+                    # Page height must fit; allow small tolerance for header bars
+                    self.assertLessEqual(page.height(), 830,
+                        f"{page_key} page.height() {page.height()} too tall at 1366x768")
             finally: window.close()
 
 
