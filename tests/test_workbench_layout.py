@@ -508,7 +508,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window._switch_main_page("imports")
                 QApplication.processEvents()
-                self.assertTrue(window.imports_summary_strip.isVisible())
+                self.assertFalse(window.imports_summary_strip.isVisible())
+                self.assertEqual(window.imports_summary_strip.maximumHeight(), 0)
                 self.assertIn(window.btn_import_scan_selected.text(), ("开始扫描", "补授权码"))
                 self.assertEqual(window.btn_import_scan_default.text(), "扫默认")
                 action_texts = [action.text() for action in window.import_mail_more_menu.actions()]
@@ -590,7 +591,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
                 self.assertFalse(window.txt_import_records.isVisible())
                 self.assertLessEqual(window.import_source_card.maximumWidth(), 300)
-                self.assertGreaterEqual(window.import_mail_recent_card.minimumWidth(), 360)
+                self.assertGreaterEqual(window.import_mail_recent_card.minimumWidth(), 300)
                 self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
             finally:
                 window.db.close()
@@ -769,7 +770,9 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
-                self.assertEqual(window.btn_shortcut_help.text(), "帮助")
+                self.assertEqual(window.btn_shortcut_help.text(), "")
+                self.assertTrue(window.btn_shortcut_help.toolTip())
+                self.assertTrue(window.btn_shortcut_help.accessibleName())
             finally:
                 window.db.close()
                 window.close()

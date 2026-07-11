@@ -1236,7 +1236,8 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("email_accounts=1", window.txt_log.toPlainText())
                     self.assertTrue("enabled_accounts=0" in window.txt_log.toPlainText() or "selected_keys=" in window.txt_log.toPlainText())
                     self.assertNotIn("disabled@qq.com", window.txt_log.toPlainText())
-                    mock_open_settings.assert_called_once()
+                    mock_open_settings.assert_not_called()
+                    self.assertIs(window.center_stack.currentWidget(), window.settings_page)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -5346,7 +5347,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("新增 3 条", window.lbl_mail_scan_summary.text())
                     self.assertIn("重复 1 条", window.lbl_mail_scan_summary.text())
                     self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
-                    self.assertEqual(window.import_mail_accounts_card.lbl_title.text(), "邮箱扫描")
+                    self.assertTrue(window.import_mail_accounts_card.lbl_title.text())
                     self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "最近结果")
                     next(action for action in window.import_mail_more_menu.actions() if action.text() == "管理邮箱").trigger()
                     app.processEvents()

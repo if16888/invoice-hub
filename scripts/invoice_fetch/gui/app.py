@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QLabel, QMessageBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QWidgetAction, QSizePolicy,
-    QButtonGroup, QGridLayout, QStyle, QLayout, QToolButton,
+    QButtonGroup, QGridLayout, QStyle, QLayout, QBoxLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
     QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog
 )
@@ -68,6 +68,8 @@ from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
 from .mobile_upload_dialog import MobileUploadDialog
+from .mobile_upload_session import MobileUploadSessionController, MobileUploadSessionPanel
+from .settings_dialog import SettingsDialog
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
@@ -634,8 +636,35 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
         self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
         self.btn_collapse_nav.setVisible(True)
+        help_text = self.btn_shortcut_help.accessibleName() or self.btn_shortcut_help.text()
+        collapse_tip = self.btn_collapse_nav.toolTip()
+        self.btn_shortcut_help.setAccessibleName(help_text)
+        self.btn_shortcut_help.setToolTip(help_text)
+        self.btn_shortcut_help.setText("" if nav_collapsed else help_text)
+        self.btn_collapse_nav.setAccessibleName(collapse_tip)
+        if nav_collapsed:
+            self.btn_shortcut_help.setFixedSize(40, 40)
+            self.btn_collapse_nav.setFixedSize(40, 40)
+        else:
+            self.btn_shortcut_help.setMinimumSize(0, 32)
+            self.btn_shortcut_help.setMaximumSize(16777215, 16777215)
+            self.btn_collapse_nav.setMinimumSize(0, 32)
+            self.btn_collapse_nav.setMaximumSize(16777215, 16777215)
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
+        if hasattr(self, "imports_shell_layout"):
+            if w < 1200:
+                self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+                self.import_source_card.setMinimumWidth(0)
+                self.import_source_card.setMaximumWidth(16777215)
+                self.import_mail_recent_card.setMinimumWidth(0)
+                self.import_mail_recent_card.setMaximumWidth(16777215)
+            else:
+                self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+                source_width = 250 if w >= 1440 else 220
+                recent_width = 350 if w >= 1440 else 300
+                self.import_source_card.setFixedWidth(source_width)
+                self.import_mail_recent_card.setFixedWidth(recent_width)
         if not self._left_splitter_sizes_initialized:
             self._left_splitter_sizes_initialized = True
 
@@ -2958,14 +2987,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.imports_summary_strip.add_metric("recent", "最近扫描", "暂无", state="muted")
         self.imports_summary_strip.add_metric("failed", "失败数", "0", state="danger")
         layout.addWidget(self.imports_summary_strip)
+        # Compatibility object only: mailbox metrics belong to the mail task.
+        self.imports_summary_strip.hide()
+        self.imports_summary_strip.setMaximumHeight(0)
 
         shell = QHBoxLayout()
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(12)
+        shell.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         self.import_source_card = SectionCard("来源选择", hint="选择这次导入的来源。")
         self.import_source_card.setMinimumWidth(260)
         self.import_source_card.setMaximumWidth(300)
+        self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
         source_layout = self.import_source_card.body_layout
         self.import_source_cards = {
             "mail": SelectableSourceCard("mail", "邮箱", "扫描已配置的发票邮箱。"),
@@ -2979,8 +3013,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._set_import_source_selected("mail")
         source_layout.addStretch(1)
         shell.addWidget(self.import_source_card, 0)
+        shell.setAlignment(self.import_source_card, Qt.AlignTop)
 
         self.import_mail_accounts_card = SectionCard("邮箱扫描", hint="选择来源、查看当前规则并执行扫描。")
+        self.import_mail_accounts_card.lbl_title.setText("邮箱扫描")
+        self.import_mail_accounts_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.mail_accounts_checklist = QWidget()
         self.mail_checklist_layout = QVBoxLayout(self.mail_accounts_checklist)
         self.mail_checklist_layout.setContentsMargins(4, 4, 4, 4)
@@ -3038,6 +3075,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "本地导入",
             hint="选择文件或文件夹后，按当前规则完成导入。",
         )
+        self.import_local_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         local_rules = ReadOnlyDetailPanel("导入规则", "本地文件会保留原路径，并自动识别重复发票。")
         local_rules.add_row("支持类型", "PDF / OFD / XML / 图片 / 压缩包")
         local_rules.add_row("重复处理", "按发票代码和号码自动去重")
@@ -3050,15 +3088,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "手机扫码",
             hint="启动上传服务后，可从手机提交原件或证明材料。",
         )
+        self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         mobile_rules = ReadOnlyDetailPanel("上传状态", "上传完成后会自动刷新审核队列。")
         mobile_rules.add_row("服务状态", "准备就绪")
         mobile_rules.add_row("支持材料", "发票原件与证明材料")
         self.import_mobile_task_card.body_layout.addWidget(mobile_rules)
+        mobile_rules.hide()
         self.btn_import_mobile_task = make_button("启动上传", variant="primary")
         self.btn_import_mobile_task.clicked.connect(self._mobile_upload_clicked)
         self.import_mobile_task_card.body_layout.addWidget(self.btn_import_mobile_task)
 
+        # The main workflow owns an embedded session; the legacy dialog is no
+        # longer involved in source selection or service startup.
+        self.btn_import_mobile_task.hide()
+        self.mobile_upload_controller = MobileUploadSessionController(self.db_path, self)
+        self.mobile_upload_panel = MobileUploadSessionPanel(self.mobile_upload_controller)
+        self.mobile_upload_panel.upload_finished.connect(self._mobile_upload_finished)
+        self.import_mobile_task_card.body_layout.addWidget(self.mobile_upload_panel)
+
         self.import_task_stack = QStackedWidget()
+        self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.import_task_stack.setMaximumWidth(760)
         self._import_task_pages = {
             "mail": self.import_mail_accounts_card,
             "local": self.import_local_task_card,
@@ -3068,14 +3118,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.import_task_stack.addWidget(task_page)
         self.import_task_stack.setCurrentWidget(self.import_mail_accounts_card)
         shell.addWidget(self.import_task_stack, 1)
+        shell.setAlignment(self.import_task_stack, Qt.AlignTop)
 
         self.import_mail_recent_card = SectionCard("最近结果", hint="查看最近一次导入的结果。")
         self.import_mail_recent_card.setMinimumWidth(360)
         self.import_mail_recent_card.setMaximumWidth(420)
+        self.import_mail_recent_card.setMaximumHeight(320)
+        self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
         self.import_recent_content = QWidget()
         self.import_recent_content_layout = QVBoxLayout(self.import_recent_content)
         self.import_recent_content_layout.setContentsMargins(0, 0, 0, 0)
         self.import_recent_state_stack = PageStateStack()
+        self.import_recent_state_stack.setMaximumHeight(180)
+        self.import_recent_state_stack.empty.setObjectName("ImportRecentEmptyState")
         self.lbl_mail_scan_summary = QLabel("最近扫描结果：暂无记录。点击“开始扫描”开始拉取。")
         self.lbl_mail_scan_summary.setWordWrap(True)
         self.lbl_mail_scan_summary.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
@@ -3097,8 +3152,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_recent_state_stack.set_content(self.import_recent_content)
         self.import_mail_recent_card.body_layout.addWidget(self.import_recent_state_stack)
         shell.addWidget(self.import_mail_recent_card, 0)
+        shell.setAlignment(self.import_mail_recent_card, Qt.AlignTop)
 
-        layout.addLayout(shell, 1)
+        layout.addLayout(shell, 0)
+        layout.addStretch(1)
+        self.imports_shell_layout = shell
         self._refresh_imports_page()
         return page
 

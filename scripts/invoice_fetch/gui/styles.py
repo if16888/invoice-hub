@@ -251,6 +251,11 @@ QFrame#EmptyStateCard, QFrame#LoadingCard, QFrame#InlineErrorCard {
     border: 1px solid #E4E7EC;
     border-radius: 10px;
 }
+QFrame#ImportRecentEmptyState {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
 QLabel#EmptyStateIcon { color: #98A2B3; font-size: 22px; }
 QLabel#EmptyStateTitle { color: #344054; font-size: 13px; font-weight: 600; }
 QLabel#EmptyStateDescription { color: #667085; font-size: 12px; }

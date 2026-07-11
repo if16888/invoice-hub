@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import RUNTIME_DIR
+from .mobile_upload_session import MobileUploadSessionController
 
 
 class MobileUploadDialog(QDialog):
@@ -31,6 +32,7 @@ class MobileUploadDialog(QDialog):
         self.resize(420, 560)
         self.setProperty("class", "WorkflowDialog")
         self.db_path = db_path
+        self.controller = getattr(parent, "mobile_upload_controller", None) or MobileUploadSessionController(db_path, self)
         self.server = None
         self.session = None
         self._last_status_total = 0
@@ -102,18 +104,11 @@ class MobileUploadDialog(QDialog):
 
     def _start_server(self):
         try:
-            from ..mobile_upload import MobileUploadServer, enumerate_upload_hosts
-
-            self.host_options = enumerate_upload_hosts()
-            selected_host = self.host_options[0].host if self.host_options else None
-            self.server = MobileUploadServer(
-                runtime_dir=RUNTIME_DIR,
-                db_path=self.db_path,
-                host=selected_host,
-                port=0,
-                import_on_upload=True,
-            )
-            self.session = self.server.start()
+            self.session = self.controller.start()
+            if self.session is None:
+                raise RuntimeError("mobile upload service did not start")
+            self.server = self.controller.server
+            self.host_options = self.controller.host_options
             self._populate_upload_hosts()
             self.txt_url.setText(self.session.upload_url)
             self.lbl_batch.setText(self.session.batch_id)
@@ -141,7 +136,7 @@ class MobileUploadDialog(QDialog):
         if not host:
             return
         try:
-            self.session = self.server.set_public_host(str(host))
+            self.session = self.controller.set_public_host(str(host))
             self.txt_url.setText(self.session.upload_url)
             self._render_qr(self.session.upload_url)
             self.lbl_status.setText("二维码地址已更新。手机打不开时请确认同一 Wi-Fi，或继续切换网络地址。")
@@ -180,7 +175,7 @@ class MobileUploadDialog(QDialog):
 
     def _stop_server(self):
         if self.server:
-            self.server.stop()
+            self.controller.stop()
             self.server = None
         self.timer.stop()
         self.lbl_status.setText("上传服务已停止，二维码和链接已失效。")
