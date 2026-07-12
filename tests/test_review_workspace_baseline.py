@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -69,7 +70,7 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                self.assertEqual(window.table.textElideMode(), window.table.textElideMode().ElideRight)
+                self.assertEqual(window.table.textElideMode(), Qt.ElideRight)
                 self.assertGreaterEqual(window.txt_search.minimumWidth(), 260)
                 self.assertEqual(window.txt_search.accessibleName(), "搜索发票")
                 self.assertEqual(window.btn_advanced_filter.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
