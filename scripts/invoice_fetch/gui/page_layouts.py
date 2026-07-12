@@ -12,6 +12,8 @@ from .ui_visibility_contracts import install_settings_visibility_contract
 
 BASELINE_PAGE_MARGIN = 24
 BASELINE_SECTION_GAP = 16
+WORKSPACE_HORIZONTAL_MARGIN = 12
+WORKSPACE_SECTION_GAP = 8
 
 
 class _PageLayoutContract:
@@ -29,7 +31,10 @@ class _PageLayoutContract:
         )
         layout.setSpacing(BASELINE_SECTION_GAP)
         layout.setAlignment(Qt.AlignTop)
-        apply_global_design_baseline(page)
+        # Pages are constructed before they are parented into InvoiceReviewApp.
+        # Defer the global QSS/property assignment so page.window() resolves to
+        # the actual main window instead of the temporary top-level page.
+        QTimer.singleShot(0, lambda p=page: apply_global_design_baseline(p))
         return layout
 
     @classmethod
@@ -63,6 +68,16 @@ class WorkspacePageLayout(_PageLayoutContract):
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
+        # The review workspace is the deliberately dense archetype. It fills
+        # the available height and must not inherit the 24px content margins
+        # used by centered Dashboard/Task/Settings pages.
+        layout.setContentsMargins(
+            WORKSPACE_HORIZONTAL_MARGIN,
+            0,
+            WORKSPACE_HORIZONTAL_MARGIN,
+            0,
+        )
+        layout.setSpacing(WORKSPACE_SECTION_GAP)
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         QTimer.singleShot(0, lambda p=page: apply_review_workspace_baseline(p))
         return layout
