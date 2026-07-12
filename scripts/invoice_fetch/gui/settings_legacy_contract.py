@@ -1,20 +1,19 @@
 """Compatibility bridge for app-owned Settings refresh objects.
 
-The Golden Page migration replaces the visible AI tree, but ``app.py`` still
-updates two legacy presentation objects during refresh.  Keep lightweight,
-hidden live objects behind those references until the refresh logic is moved
-into the final AI component.  This avoids retaining the old visible UI tree.
+The Golden Page migration removes the old AI summary surface. ``app.py`` still
+addresses the old empty label directly, so keep one hidden live label until the
+refresh logic is moved into the final AI component. The obsolete summary
+attribute is removed so guarded refresh code skips it and the old UI does not
+remain part of the product tree.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QWidget
 
-from .ui_components import SummaryStrip
-
 
 def install_ai_refresh_compatibility(page: QWidget) -> None:
-    """Replace deleted legacy AI references with hidden live adapters."""
+    """Keep the direct empty-label reference alive and remove the old summary."""
     if page is None or page.property("aiRefreshCompatibilityInstalled"):
         return
     window = page.window()
@@ -32,18 +31,8 @@ def install_ai_refresh_compatibility(page: QWidget) -> None:
     empty_label.hide()
     window.lbl_settings_ai_empty = empty_label
 
-    summary = SummaryStrip(ai_page)
-    summary.setObjectName("LegacyAiSummaryAdapter")
-    for key, title in (
-        ("enabled", "AI 状态"),
-        ("provider", "Provider"),
-        ("model", "模型"),
-        ("key", "API Key"),
-        ("paused", "会话状态"),
-    ):
-        summary.add_metric(key, title, "—", state="muted")
-    summary.hide()
-    window.settings_ai_summary_strip = summary
+    if hasattr(window, "settings_ai_summary_strip"):
+        delattr(window, "settings_ai_summary_strip")
 
 
 __all__ = ["install_ai_refresh_compatibility"]
