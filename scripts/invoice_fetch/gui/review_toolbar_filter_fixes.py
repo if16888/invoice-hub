@@ -1,6 +1,6 @@
 """Targeted physical-review fixes for the review toolbar and invoice table.
 
-The review page owns reviewing invoices, not importing infrastructure.  This
+The review page owns reviewing invoices, not importing infrastructure. This
 module keeps existing callbacks but clarifies their labels, removes the
 ambiguous duplicate mailbox action, makes the already-supported Excel-style
 column filters discoverable, caps the seller column, and provides a direct
@@ -17,11 +17,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -198,7 +198,8 @@ def _compact_status_filters(window) -> None:
         card.setMinimumWidth(width)
         card.setMaximumWidth(width)
         card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        card.setToolTip(f"快速筛选：{card.text()}")
+        title = getattr(card, "_lbl_title", None)
+        card.setToolTip(f"快速筛选：{title.text() if title is not None else status}")
         card_layout = card.layout()
         if card_layout is not None:
             card_layout.setContentsMargins(9, 3, 9, 3)
@@ -280,7 +281,7 @@ def _apply_table_column_widths(window) -> None:
     header = table.horizontalHeader()
     header.setStretchLastSection(False)
     for column, width in COLUMN_WIDTHS.items():
-        header.setSectionResizeMode(column, header.Interactive)
+        header.setSectionResizeMode(column, QHeaderView.Interactive)
         table.setColumnWidth(column, width)
     if hasattr(window, "_min_column_widths"):
         window._min_column_widths.update(COLUMN_WIDTHS)
