@@ -61,3 +61,10 @@ Therefore this review does **not** recommend UI Freeze yet.
 - AI settings now calls the action `校验配置` and describes local-only validation; the old method name remains only as a compatibility alias.
 
 The source-matched PyInstaller build was produced in a disposable TEMP directory from the PR worktree tip; executable SHA256 was recorded locally as `CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`. The build emitted non-fatal warnings for unavailable Playwright hidden imports and was not copied into Git or an installed application directory.
+
+## PR50-03 review-state and mailbox follow-up
+
+- Review header, table row count, selection status, and bottom status now derive from `ReviewViewState`; viewport capacity is no longer presented as the number of matching records.
+- Empty/filtered results switch the detail panel to one empty state and clear material/status placeholders; record actions are not presented as if an invoice were selected.
+- Mailbox entity rows use two single-line elided values with tooltips and a 64px row contract. Detail labels have a fixed 104px label column and a flexible value column; the detail editor has a 560px minimum usable width.
+- Added regression coverage for zero-result review state, detail clearing, mailbox width, row height, and AI local-validation copy.

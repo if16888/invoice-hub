@@ -49,3 +49,10 @@ They require a fresh package built from this source and an explicitly selected d
 - The package executable SHA256 was `CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`.
 - The existing installed app remained `v0.1.3`; it was not used as evidence for this source revision. Clean install, upgrade, persistence, and uninstall therefore remain pending.
 - No production database, real invoice, credential, authorization code, API key, or `email_report.html` was read or staged.
+
+## PR50-03 follow-up
+
+- Review state now has one `ReviewViewState` source for query, loaded, table-visible, selected, filter, search, and current-record flags.
+- Filtered zero-result and no-selection paths use one empty detail state; stale material placeholders are cleared.
+- Mailbox Golden Page density was tightened with a fixed 280px account list, 64px two-line entity rows, 104px field-label grid, and 560px minimum detail width.
+- Focused UI, workbench, mailbox, and component regression suites were rerun after the change; repository privacy/public-export checks remained green.

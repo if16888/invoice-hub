@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
 
 from scripts.invoice_fetch.gui.api_key_dialog import ApiKeyDialog
-from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.app import InvoiceReviewApp, ReviewViewState
 from scripts.invoice_fetch.gui.icon_provider import IconProvider, _ASSETS_ICONS
 from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
@@ -331,6 +331,43 @@ class IHDS09Tests(unittest.TestCase):
                     self.assertLessEqual(page.height(), 830,
                         f"{page_key} page.height() {page.height()} too tall at 1366x768")
             finally: window.close()
+
+    def test_review_view_state_uses_table_row_count_and_clears_detail(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.invoices_list = []
+                window.table.setRowCount(0)
+                window.current_filter_status = "to_review"
+                window.txt_search.setText("not-found")
+                window._update_record_header_summary(total_matching=0, selected_count=0)
+                state = window._review_view_state()
+                self.assertIsInstance(state, ReviewViewState)
+                self.assertEqual(state.visible_count, window.table.rowCount())
+                self.assertEqual(state.visible_count, 0)
+                self.assertTrue(state.is_empty_result)
+                self.assertEqual(window.lbl_record_count.text(), "当前筛选 0 张")
+                window._clear_detail_form()
+                self.assertIs(window.right_stack.currentWidget(), window.right_empty_widget)
+            finally:
+                window.close()
+
+    def test_mailbox_golden_page_has_usable_detail_width_and_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._switch_main_page("settings")
+                window.settings_tabs.setCurrentIndex(0)
+                window.resize(1366, 768)
+                self.app.processEvents()
+                self.assertEqual(window.settings_mailbox_list.width(), 280)
+                self.assertGreaterEqual(window.settings_tabs.width(), 900)
+                self.assertGreaterEqual(window.lbl_detail_name.minimumWidth(), 0)
+                window.settings_mailbox_list.clear()
+                window.settings_mailbox_list.add_entity_row("Synthetic mailbox", "synthetic@example.invalid", "正常", "已安全保存")
+                self.assertGreaterEqual(window.settings_mailbox_list.item(0).sizeHint().height(), 64)
+            finally:
+                window.close()
 
     def test_api_key_local_validation_copy_is_truthful(self):
         dialog = ApiKeyDialog("DeepSeek")

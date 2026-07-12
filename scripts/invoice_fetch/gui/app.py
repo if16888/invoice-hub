@@ -120,6 +120,20 @@ REDOWNLOAD_BUCKETS = (
 TABLE_BADGE_ROLE = int(Qt.UserRole) + 101
 
 
+@dataclass(frozen=True)
+class ReviewViewState:
+    """Single source of truth for review counts and selection state."""
+
+    query_total: int
+    loaded_count: int
+    visible_count: int
+    selected_count: int
+    has_current_invoice: bool
+    is_empty_result: bool
+    active_filter: str
+    search_text: str
+
+
 @dataclass
 class ImportActivity:
     """Business-facing import outcome kept separate from diagnostic logs."""
@@ -1672,6 +1686,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         widgets_in_stack = [self.right_stack.widget(i) for i in range(self.right_stack.count())]
         if target in widgets_in_stack and self.right_stack.currentWidget() != target:
             self.right_stack.setCurrentWidget(target)
+
+    def _review_view_state(self, total_matching: int | None = None, selected_count: int | None = None) -> ReviewViewState:
+        loaded = len(getattr(self, "invoices_list", []) or [])
+        visible = self.table.rowCount() if hasattr(self, "table") else loaded
+        query_total = max(visible, int(total_matching if total_matching is not None else getattr(self, "_record_total_matching", loaded) or loaded))
+        if selected_count is None:
+            selected_count = len(self.table.selectionModel().selectedRows()) if hasattr(self, "table") and self.table.selectionModel() else 0
+        search_text = self.txt_search.text().strip() if hasattr(self, "txt_search") else ""
+        active_filter = str(getattr(self, "current_filter_status", None) or "all")
+        return ReviewViewState(query_total, loaded, visible, int(selected_count), bool(getattr(self, "current_invoice", None)), visible == 0, active_filter, search_text)
 
     def _schedule_invoice_reload(self, *_args):
         # Debounce invoice reloads when search/filter controls change.
@@ -3387,7 +3411,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         mailbox_shell = QHBoxLayout()
         mailbox_shell.setContentsMargins(0, 0, 0, 0)
-        mailbox_shell.setSpacing(12)
+        mailbox_shell.setSpacing(16)
 
         # Saved Accounts List ONLY (Requirement 4)
         self.settings_mailbox_list = EntityList()
@@ -3398,6 +3422,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Read-Only Details Panel (Requirement 5 & 6)
         mailbox_editor = QWidget()
+        mailbox_editor.setMinimumWidth(560)
+        mailbox_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         mailbox_editor_layout = QVBoxLayout(mailbox_editor)
         mailbox_editor_layout.setContentsMargins(0, 0, 0, 0)
         mailbox_editor_layout.setSpacing(8)
@@ -3925,21 +3951,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _update_record_header_summary(self, total_matching: int | None = None, selected_count: int | None = None):
         if total_matching is not None:
             self._record_total_matching = max(0, int(total_matching))
-        shown = len(getattr(self, "invoices_list", []) or [])
-        total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
-        visible_rows = 7
-        if hasattr(self, "table") and self.table is not None and self.table.viewport():
-            vh = self.table.viewport().height()
-            rh = self.table.verticalHeader().defaultSectionSize() or 30
-            if vh > 0:
-                visible_rows = max(1, vh // rh)
+        state = self._review_view_state(total_matching=total_matching, selected_count=selected_count)
         if hasattr(self, "lbl_record_count"):
-            if shown >= total and total > 0:
-                self.lbl_record_count.setText(f"已加载全部 {total} 张，当前可见 {visible_rows} 张")
+            if state.visible_count == 0 and (state.search_text or state.active_filter != "all"):
+                count_text = "当前筛选 0 张"
+            elif state.loaded_count < state.query_total:
+                count_text = f"已加载 {state.loaded_count} / {state.query_total} 张"
             else:
-                self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
+                count_text = f"当前筛选 {state.visible_count} 张"
+            self.lbl_record_count.setText(count_text)
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
-            self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
+            self.lbl_record_selection.setText("未选" if state.selected_count <= 0 else f"已选 {state.selected_count} 张")
 
     def _on_chk_needs_fix_changed(self, state):
         if state == Qt.Checked or state == 2:
@@ -4476,7 +4498,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._update_document_preview()
             self._clear_detail_form()
             self._set_selection_total_status([])
-            self._set_right_panel_state(total_in_db > 0)
+            self._set_right_panel_state(False)
         else:
             self.left_stack.setCurrentWidget(self.table)
             target_row = -1
@@ -4521,6 +4543,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # because _on_table_selection_changed uses QTimer.singleShot(0) which may not
         # fire until the next event loop iteration.
         selected = self.table.selectionModel().selectedRows() if hasattr(self, "table") else []
+        self._update_record_header_summary(total_matching=total_matching)
         self._set_selection_total_status(selected)
 
         self.write_log(
@@ -4664,6 +4687,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.current_invoice = None
         self._invoice_snapshot = None
         self._detail_panel.clear_detail()
+        self._set_right_panel_state(False)
         if hasattr(self, "action_copy_number"):
             self.action_copy_number.setEnabled(False)
             self.action_locate_file.setEnabled(False)

@@ -27,7 +27,7 @@ SECONDARY_SHORTCUTS: tuple[tuple[str, str], ...] = (
 
 
 try:
-    from PySide6.QtCore import Qt, Signal
+    from PySide6.QtCore import Qt, Signal, QSize
     from PySide6.QtGui import QKeyEvent, QPainter
     from PySide6.QtWidgets import (
         QFrame,
@@ -742,23 +742,23 @@ if _HAS_QT:
             text_col.setContentsMargins(0, 0, 0, 0)
             text_col.setSpacing(2)
 
-            lbl_title = QLabel(title, row)
+            lbl_title = ElidedTextLabel(title, row)
             lbl_title.setProperty("class", "EntityListTitle")
-            lbl_title.setWordWrap(True)
+            lbl_title.setToolTip(title)
             text_col.addWidget(lbl_title)
 
             if subtitle:
-                lbl_subtitle = QLabel(subtitle, row)
+                lbl_subtitle = ElidedTextLabel(subtitle, row)
                 lbl_subtitle.setProperty("class", "EntityListSubtitle")
-                lbl_subtitle.setWordWrap(True)
+                lbl_subtitle.setToolTip(subtitle)
                 text_col.addWidget(lbl_subtitle)
 
             layout.addLayout(text_col, 1)
 
             if meta:
-                lbl_meta = QLabel(meta, row)
+                lbl_meta = ElidedTextLabel(meta, row)
                 lbl_meta.setProperty("class", "EntityListMeta")
-                lbl_meta.setWordWrap(True)
+                lbl_meta.setToolTip(meta)
                 lbl_meta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 layout.addWidget(lbl_meta, 0, Qt.AlignRight | Qt.AlignVCenter)
 
@@ -766,7 +766,8 @@ if _HAS_QT:
                 badge = make_badge(status_badge)
                 layout.addWidget(badge, 0, Qt.AlignRight | Qt.AlignVCenter)
 
-            item.setSizeHint(row.sizeHint())
+            row.setMinimumHeight(64)
+            item.setSizeHint(QSize(0, max(64, row.sizeHint().height())))
             self.addItem(item)
             self.setItemWidget(item, row)
             return item
@@ -780,6 +781,8 @@ if _HAS_QT:
             self.rows_layout = QFormLayout()
             self.rows_layout.setContentsMargins(0, 0, 0, 0)
             self.rows_layout.setSpacing(8)
+            self.rows_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            self.rows_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self.body_layout.addLayout(self.rows_layout)
 
         def add_row(self, key: str, value: str | QWidget) -> QWidget:
@@ -790,6 +793,10 @@ if _HAS_QT:
                 widget.setWordWrap(True)
                 widget.setProperty("class", "DetailValue")
             self.rows_layout.addRow(key, widget)
+            label = self.rows_layout.labelForField(widget)
+            if label is not None:
+                label.setMinimumWidth(104)
+                label.setProperty("class", "DetailFieldKey")
             return widget
 
     class MoreMenuButton(QToolButton):
