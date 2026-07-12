@@ -7,6 +7,7 @@ from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_b
 from .design_baseline_styles import apply_global_design_baseline
 from .review_workspace_baseline import apply_review_workspace_baseline
 from .settings_baseline import apply_settings_baseline
+from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .ui_visibility_contracts import install_settings_visibility_contract
 
@@ -31,9 +32,6 @@ class _PageLayoutContract:
         )
         layout.setSpacing(BASELINE_SECTION_GAP)
         layout.setAlignment(Qt.AlignTop)
-        # Pages are constructed before they are parented into InvoiceReviewApp.
-        # Defer the global QSS/property assignment so page.window() resolves to
-        # the actual main window instead of the temporary top-level page.
         QTimer.singleShot(0, lambda p=page: apply_global_design_baseline(p))
         return layout
 
@@ -68,9 +66,6 @@ class WorkspacePageLayout(_PageLayoutContract):
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
-        # The review workspace is the deliberately dense archetype. It fills
-        # the available height and must not inherit the 24px content margins
-        # used by centered Dashboard/Task/Settings pages.
         layout.setContentsMargins(
             WORKSPACE_HORIZONTAL_MARGIN,
             0,
@@ -103,5 +98,6 @@ class SettingsPageLayout(_PageLayoutContract):
         super().apply(page, layout)
         QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
         QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
+        QTimer.singleShot(0, lambda p=page: install_ai_refresh_compatibility(p))
         QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
         return layout
