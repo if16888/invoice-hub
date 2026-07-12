@@ -3,6 +3,7 @@
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
+from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .settings_baseline import apply_settings_baseline
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .styles import PAGE_MARGIN, SECTION_GAP
@@ -39,6 +40,12 @@ class DashboardPageLayout(_PageLayoutContract):
     archetype = "dashboard"
     maximum_width = 1360
 
+    @classmethod
+    def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
+        super().apply(page, layout)
+        QTimer.singleShot(0, lambda p=page: apply_dashboard_baseline(p))
+        return layout
+
 
 class WorkspacePageLayout(_PageLayoutContract):
     archetype = "workspace"
@@ -54,6 +61,12 @@ class TaskFlowPageLayout(_PageLayoutContract):
     archetype = "task_flow"
     maximum_width = 1440
 
+    @classmethod
+    def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
+        super().apply(page, layout)
+        QTimer.singleShot(0, lambda p=page: apply_task_flow_baseline(p))
+        return layout
+
 
 class SettingsPageLayout(_PageLayoutContract):
     archetype = "settings"
@@ -62,9 +75,6 @@ class SettingsPageLayout(_PageLayoutContract):
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
-        # InvoiceReviewApp assembles Settings incrementally. Apply the Mailbox
-        # Golden Page first, then migrate the remaining pages to the same
-        # information hierarchy, and finally install state visibility guards.
         QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
         QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
         QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
