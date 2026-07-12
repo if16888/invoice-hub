@@ -4,11 +4,14 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
+from .design_baseline_styles import apply_global_design_baseline
 from .review_workspace_baseline import apply_review_workspace_baseline
 from .settings_baseline import apply_settings_baseline
 from .settings_pages_baseline import apply_remaining_settings_baseline
-from .styles import PAGE_MARGIN, SECTION_GAP
 from .ui_visibility_contracts import install_settings_visibility_contract
+
+BASELINE_PAGE_MARGIN = 24
+BASELINE_SECTION_GAP = 16
 
 
 class _PageLayoutContract:
@@ -18,9 +21,15 @@ class _PageLayoutContract:
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         page.setProperty("pageArchetype", cls.archetype)
-        layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
-        layout.setSpacing(SECTION_GAP)
+        layout.setContentsMargins(
+            BASELINE_PAGE_MARGIN,
+            BASELINE_PAGE_MARGIN,
+            BASELINE_PAGE_MARGIN,
+            BASELINE_PAGE_MARGIN,
+        )
+        layout.setSpacing(BASELINE_SECTION_GAP)
         layout.setAlignment(Qt.AlignTop)
+        apply_global_design_baseline(page)
         return layout
 
     @classmethod
