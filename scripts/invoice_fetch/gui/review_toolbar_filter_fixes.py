@@ -168,8 +168,7 @@ def _clarify_review_toolbar(window) -> None:
         _set_compact_button(scan_button, 88, 108)
     scan_action = getattr(window, "action_scan_email", None)
     if scan_action is not None:
-        # Preserve the established More-menu text contract while making the
-        # operation explicit through the visible toolbar and tooltip.
+        scan_action.setText("扫描邮箱")
         scan_action.setToolTip("扫描已配置邮箱中的新发票")
 
     export_button = getattr(window, "btn_toolbar_export", None)
@@ -201,7 +200,7 @@ def _compact_status_filters(window) -> None:
         card.setFixedHeight(30)
         card.setMinimumWidth(width)
         card.setMaximumWidth(width)
-        card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         title = getattr(card, "_lbl_title", None)
         card.setToolTip(f"快速筛选：{title.text() if title is not None else status}")
         card_layout = card.layout()
@@ -290,7 +289,7 @@ def _apply_table_column_widths(window) -> None:
     if hasattr(window, "_min_column_widths"):
         window._min_column_widths.update(COLUMN_WIDTHS)
         window._min_column_widths[SELLER_COLUMN] = 180
-        window._min_column_widths[INVOICE_NUMBER_COLUMN] = 160
+        window._min_column_widths[INVOICE_NUMBER_COLUMN] = 178
     table.setToolTip("点击列标题右侧筛选；销售方等长文本可悬停查看完整内容")
 
 
