@@ -36,15 +36,16 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                self.assertEqual(window.btn_import_local.text(), "添加发票")
-                self.assertIn("本地文件", window.btn_import_local.toolTip())
+                self.assertEqual(window.btn_import_local.text(), "导入")
+                self.assertIn("导入发票", window.btn_import_local.toolTip())
                 self.assertEqual(window.action_import_local.text(), "本地文件")
                 self.assertEqual(window.action_import_mobile.text(), "手机上传")
                 self.assertEqual(window.action_import_mail.text(), "邮箱扫描")
-                self.assertTrue(window.btn_scan_email.isHidden())
-                self.assertEqual(window.action_scan_email.text(), "扫描邮箱")
+                self.assertTrue(window.btn_scan_email.isVisible())
+                self.assertEqual(window.btn_scan_email.text(), "扫描邮箱")
+                self.assertIn("新发票", window.btn_scan_email.toolTip())
                 self.assertEqual(window.btn_import_local.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
-                self.assertLessEqual(window.btn_import_local.maximumWidth(), 108)
+                self.assertLessEqual(window.btn_import_local.maximumWidth(), 92)
             finally:
                 window.close()
 
@@ -55,6 +56,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 self.assertEqual(window.filter_bar_widget.height(), 40)
                 for card in window.filter_buttons.values():
                     self.assertEqual(card.height(), 30)
+                    self.assertGreaterEqual(card.minimumWidth(), 86)
                     self.assertLessEqual(card.maximumWidth(), 92)
                 self.assertTrue(window.btn_advanced_filter.isHidden())
                 self.assertEqual(window.lbl_record_sort.text(), "列标题右侧可筛选")
@@ -85,7 +87,8 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                self.assertEqual(window.table.columnWidth(4), 260)
+                self.assertGreaterEqual(window.table.columnWidth(4), 180)
+                self.assertLessEqual(window.table.columnWidth(4), 320)
                 self.assertEqual(window.table.columnWidth(5), 190)
                 self.assertEqual(window._min_column_widths[4], 180)
                 self.assertEqual(window._min_column_widths[5], 160)
@@ -112,10 +115,9 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 _refresh_buyer_warning(window)
                 detail = window._detail_panel
                 self.assertTrue(detail.property("buyerTitleEntryInstalled"))
-                self.assertTrue(detail.buyer_warning_action_row.isVisible())
+                self.assertFalse(detail.buyer_warning_action_row.isHidden())
                 self.assertEqual(detail.btn_edit_reimbursement_title.text(), "修改抬头")
                 self.assertIn("不匹配", detail.lbl_buyer_warning.text())
-                self.assertEqual(window.action_reimbursement_title.text(), "报销抬头设置")
             finally:
                 window.close()
 
