@@ -1,7 +1,7 @@
 """Visibility contracts for stateful desktop surfaces.
 
 These helpers keep visibility changes co-located with the state transitions that
-own them.  They are intentionally small and idempotent so legacy construction
+own them. They are intentionally small and idempotent so legacy construction
 order cannot leave a correctly populated child hidden behind an empty-state
 ancestor.
 """
@@ -30,6 +30,29 @@ def install_invoice_detail_visibility_contract() -> None:
         result = original(self)
         if hasattr(self, "right_stack") and hasattr(self, "right_content_widget"):
             self.right_stack.setCurrentWidget(self.right_content_widget)
+
+        # Attachment state is populated before the selection state is applied.
+        # Reassert the one active StatusLine action after revealing the content;
+        # otherwise a button that was reparented while the empty surface was
+        # active can remain effectively hidden on Windows/Qt.
+        status_line = getattr(self, "original_status_line", None)
+        retry = getattr(self, "btn_retry_download", None)
+        add_attachment = getattr(self, "btn_add_attachment", None)
+        open_file = getattr(self, "btn_open_file", None)
+        detail_files = getattr(self, "detail_files_section", None)
+        if detail_files is not None:
+            detail_files.show()
+        if status_line is not None:
+            status_line.show()
+            if retry is not None and retry.isEnabled():
+                status_line.replace_action(retry)
+                retry.show()
+            elif open_file is not None and open_file.isEnabled():
+                status_line.replace_action(open_file)
+                open_file.show()
+            elif add_attachment is not None and add_attachment.isEnabled():
+                status_line.replace_action(add_attachment)
+                add_attachment.show()
         return result
 
     InvoiceDetailPanel.set_single_selection_state = set_single_selection_state
