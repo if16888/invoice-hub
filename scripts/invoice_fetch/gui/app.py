@@ -2814,12 +2814,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "settings_ai_empty_state"):
             self.settings_ai_empty_state.setVisible(self.settings_ai_profile_list.count() == 0)
         if self.settings_ai_profile_list.count() == 0:
+            self.settings_ai_detail_panel.setVisible(False)
+            self.btn_settings_ai_edit.setVisible(True)
+            self.btn_settings_ai_edit.setProperty("variant", "primary")
+            self.btn_settings_ai_configure_key.setVisible(False)
+            self.btn_settings_ai_test.setVisible(False)
+            self.settings_ai_more.setVisible(False)
             self._settings_ai_current_profile_id = ""
             self.lbl_settings_ai_provider.setText("—")
             self.lbl_settings_ai_model.setText("—")
             self.lbl_settings_ai_enabled.setText("关闭")
             self.lbl_settings_ai_session_state.setText("无可用会话")
             self.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
+            self.lbl_settings_ai_validation_status.setText("尚未校验本地配置")
             self.lbl_settings_ai_failure_status.setText("失败状态：暂无 AI 配置。")
             if hasattr(self, "settings_ai_summary_strip"):
                 self.settings_ai_summary_strip.set_metric("enabled", "关闭")
@@ -2828,6 +2835,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.settings_ai_summary_strip.set_metric("key", "未配置")
                 self.settings_ai_summary_strip.set_metric("paused", "正常")
             return
+
+        self.settings_ai_detail_panel.setVisible(True)
+        self.btn_settings_ai_edit.setVisible(True)
+        self.btn_settings_ai_edit.setProperty("variant", "secondary")
+        self.btn_settings_ai_configure_key.setVisible(True)
+        self.btn_settings_ai_test.setVisible(True)
+        self.btn_settings_ai_test.setProperty("variant", "primary")
+        self.settings_ai_more.setVisible(True)
 
         target_row = 0
         if current_profile_id:
@@ -2856,6 +2871,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         model = str(profile.get("model") or "—")
         key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
         self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
+        self.lbl_settings_ai_validation_status.setText("已配置，尚未重新校验")
         paused = is_provider_session_paused(profile.get("provider", ""))
         self.lbl_settings_ai_provider.setText(provider)
         self.lbl_settings_ai_model.setText(model)
@@ -2961,6 +2977,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not has_ai_api_key(provider, profile_id=profile_id):
             self.lbl_settings_ai_failure_status.setText("失败状态：未检测到可用 API Key，无法进行本地连通性预检。")
             return
+        self.lbl_settings_ai_validation_status.setText("已验证本地配置；远端连接将在首次使用时确认")
         self.lbl_settings_ai_failure_status.setText(
             f"已验证本地配置：{provider}/{model} 的 Key 已安全保存。远端连接将在首次使用时确认。"
         )
@@ -3620,6 +3637,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_enabled = self.settings_ai_detail_panel.add_row("启用状态", "关闭")
         self.lbl_settings_ai_session_state = self.settings_ai_detail_panel.add_row("会话状态", "无可用会话")
         self.lbl_settings_ai_key_status = self.settings_ai_detail_panel.add_row("Key 来源", "API Key 状态：未配置")
+        self.lbl_settings_ai_validation_status = self.settings_ai_detail_panel.add_row("最近校验", "尚未校验本地配置")
         self.lbl_settings_ai_send_boundary = self.settings_ai_detail_panel.add_row(
             "隐私边界",
             "仅发送脱敏邮件头与最小分类元数据，不发送正文、附件、PDF、图片和本地路径。",
