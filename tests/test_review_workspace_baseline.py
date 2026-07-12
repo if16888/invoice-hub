@@ -46,8 +46,8 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
                     self.assertTrue(card.property("decorativeIconRemoved"))
                     self.assertEqual(card.icon_text(), "")
                     self.assertFalse(card._lbl_icon.isVisible())
-                    self.assertGreaterEqual(card.minimumWidth(), 108)
-                    self.assertLessEqual(card.maximumWidth(), 156)
+                    self.assertGreaterEqual(card.minimumWidth(), 86)
+                    self.assertLessEqual(card.maximumWidth(), 92)
                     self.assertTrue(card.accessibleName())
             finally:
                 window.close()
