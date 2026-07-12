@@ -55,6 +55,9 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
+                # No-selection is distinct from an empty query: keep one table
+                # row visible but clear the current/selected invoice.
+                window.table.setRowCount(1)
                 window.current_invoice = None
                 window.table.clearSelection()
                 window._on_table_selection_changed()
@@ -63,6 +66,20 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
                 self.assertEqual(window.lbl_right_empty_title.text(), "未选择发票")
                 self.assertIn("选择一张发票", window.lbl_right_empty_desc.text())
                 self.assertIs(window.right_stack.currentWidget(), window.right_empty_widget)
+            finally:
+                window.close()
+
+    def test_empty_query_copy_is_truthful(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.table.setRowCount(0)
+                window.current_invoice = None
+                window._on_table_selection_changed()
+                for _ in range(2):
+                    self.app.processEvents()
+                self.assertEqual(window.lbl_right_empty_title.text(), "当前没有发票记录")
+                self.assertIn("导入发票后", window.lbl_right_empty_desc.text())
             finally:
                 window.close()
 
