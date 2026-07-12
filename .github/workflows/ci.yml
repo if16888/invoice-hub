@@ -39,19 +39,7 @@ jobs:
         run: python -m scripts.invoice_fetch --help
 
       - name: Run unit tests
-        shell: pwsh
-        run: |
-          python -m unittest discover -v -s tests -p "test_*.py" 2>&1 | Tee-Object -FilePath ci-test-output.txt
-          exit $LASTEXITCODE
-
-      - name: Upload unit test output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-unit-test-output
-          path: ci-test-output.txt
-          if-no-files-found: error
-          retention-days: 3
+        run: python -m unittest discover -v -s tests -p "test_*.py"
 
       - name: Run repository privacy gate
         run: python scripts/check_repo_privacy.py
