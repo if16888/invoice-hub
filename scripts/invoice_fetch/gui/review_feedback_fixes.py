@@ -273,7 +273,9 @@ def _sync_seller_tooltips(window) -> None:
     for row in range(table.rowCount()):
         item = table.item(row, 4)
         if item is not None:
-            item.setToolTip(item.text())
+            full_text = item.text()
+            if item.toolTip() != full_text:
+                item.setToolTip(full_text)
 
 
 def _install_seller_tooltip_sync(window) -> None:
