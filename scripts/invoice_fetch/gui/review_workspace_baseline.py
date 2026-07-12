@@ -15,6 +15,7 @@ FILTER_CARD_MIN_WIDTH = 108
 FILTER_CARD_MAX_WIDTH = 156
 DETAIL_MIN_WIDTH = 352
 DETAIL_MAX_WIDTH = 520
+REVIEW_ROW_HEIGHT = 28
 
 
 def _normalize_filter_cards(window) -> None:
@@ -53,6 +54,8 @@ def _normalize_workspace_geometry(window) -> None:
         table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         table.setAlternatingRowColors(True)
+        table.verticalHeader().setMinimumSectionSize(24)
+        table.verticalHeader().setDefaultSectionSize(REVIEW_ROW_HEIGHT)
 
     search = getattr(window, "txt_search", None)
     if search is not None:
