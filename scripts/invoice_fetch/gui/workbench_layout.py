@@ -3,9 +3,8 @@
 Workbench Layout Metrics.
 
 Pure functions for calculating responsive layout breakpoints and clamping
-vertical splitter sizes.  No Qt or database imports; fully unit-testable.
+vertical splitter sizes. No Qt or database imports; fully unit-testable.
 """
-
 from dataclasses import dataclass
 
 
@@ -26,14 +25,19 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
 
     Breakpoints (width × height, inclusive upper bound):
       <= 1366 × 768  -> compact, collapsed navigation (laptop / small monitor)
-      <= 1440 × 900  -> compact, collapsed navigation (medium monitor)
+      <= 1440 × 900  -> compact, expanded navigation (medium monitor)
       > 1440 × 900   -> full density (1920×1080 target)
+
+    The detail rail is deliberately wider than the legacy 344–352px range.
+    Physical Windows review showed that amount/date, long parties, the primary
+    review action and reimbursement controls cannot remain legible in that
+    width. The preview keeps the remaining flexible space.
     """
     if width <= 1366 or (width <= 1440 and height <= 768):
         return WorkbenchMetrics(
             nav_width=56,
             nav_collapsed=True,
-            detail_width=344,
+            detail_width=360,
             record_height=332,
             thumbnail_width=96,
             compact=True,
@@ -42,7 +46,7 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
         return WorkbenchMetrics(
             nav_width=180,
             nav_collapsed=False,
-            detail_width=352,
+            detail_width=380,
             record_height=336,
             thumbnail_width=96,
             compact=True,
@@ -50,7 +54,7 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
     return WorkbenchMetrics(
         nav_width=180,
         nav_collapsed=False,
-        detail_width=352,
+        detail_width=400,
         record_height=390,
         thumbnail_width=104,
         compact=False,
