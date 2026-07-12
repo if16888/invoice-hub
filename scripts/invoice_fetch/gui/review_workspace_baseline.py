@@ -15,7 +15,7 @@ from .review_feedback_fixes import apply_review_feedback_fixes, sync_review_feed
 
 FILTER_CARD_MIN_WIDTH = 108
 FILTER_CARD_MAX_WIDTH = 156
-DETAIL_MIN_WIDTH = 360
+DETAIL_MIN_WIDTH = 352
 DETAIL_MAX_WIDTH = 560
 REVIEW_ROW_HEIGHT = 24
 
