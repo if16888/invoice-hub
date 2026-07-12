@@ -97,7 +97,9 @@ class SettingsPageLayout(_PageLayoutContract):
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
         QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
-        QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
+        # The migration refreshes AI immediately. Install the one direct legacy
+        # label adapter first so no deleted Qt wrapper is touched mid-migration.
         QTimer.singleShot(0, lambda p=page: install_ai_refresh_compatibility(p))
+        QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
         QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
         return layout
