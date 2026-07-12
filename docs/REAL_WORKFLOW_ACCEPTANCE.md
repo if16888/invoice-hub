@@ -1,66 +1,65 @@
 # Real workflow acceptance record
 
-Target source revision: `4e14d0246d7a5acf8df6fb9aa7a768c8621594d9`.
+Target: current head of PR #50 on `agent/ui-stabilization-real-workflow`.
 
 ## Safety boundary
 
-This repository checkout contains local runtime and database paths that may hold personal invoice data. This record intentionally does not open, copy, export, or describe those records. The installed desktop application currently reports `v0.1.3`, so it is not a valid executable for accepting the current `4e14d02` source.
+Automated acceptance uses temporary SQLite databases, synthetic accounts and
+synthetic UI state only. It does not open, copy, export, or describe production
+invoices, credentials, API keys, authorization codes, or user databases.
 
-The automated portions below use temporary SQLite databases and synthetic UI state only.
+Runtime screenshots, disposable packages and temporary databases remain outside
+Git. `email_report.html` is not part of the acceptance evidence.
 
-## Completed automated acceptance
+## Completed automated workflow acceptance
 
 | Workflow checkpoint | Evidence | Result |
 | --- | --- | --- |
-| Open dashboard and switch to import, export, and settings | Isolated `InvoiceReviewApp` geometry tests switch all four pages. | Pass |
-| Select mobile upload and render active state | Screenshot matrix injects a synthetic mobile session, URL, QR code, and statistics. | Pass |
-| Stop/close controller before database close | Mobile shutdown and close-order tests pass. | Pass |
-| Display import/export blockers and checklist | Export page uses structured checklist rows; synthetic blocked capture disables export. | Pass |
-| Refresh cross-page import activity | Existing focused mobile/import tests verify a batch updates one activity rather than accumulating snapshots. | Pass |
+| App Shell and five primary pages | Isolated `InvoiceReviewApp` tests navigate Dashboard, Review, Import, Export and Settings | Pass |
+| Review count and selection truthfulness | `ReviewViewState`, zero-result, no-record and no-selection tests | Pass |
+| Mailbox account states | Normal, missing credential, disabled, empty and long-text tests | Pass |
+| AI configuration states | Zero, one and multiple profiles; local-only configuration validation copy | Pass |
+| Embedded mobile upload | Idle, starting, active, error, network switch and shutdown ordering tests | Pass |
+| Import activity ownership | One controller event updates one business activity batch | Pass |
+| Export preflight | Approved/pending/evidence/file/directory/naming checklist and blocked state | Pass |
+| DPI/geometry | Isolated 100%, 125% and 150% Qt-scale control-bound and text-fit checks | Pass |
+| Privacy/public source | Repository privacy and public-export gates | Pass |
 
-## Deferred manual acceptance
+## Source-matched build evidence
 
-The following operations remain deliberately unperformed:
+A disposable PyInstaller onedir build was produced from the PR worktree in a
+TEMP directory. It was not installed over the user's existing application and
+was not committed. The earlier recorded test executable SHA256 was:
 
-1. Importing a real local file or scanning a real mailbox account.
-2. Editing a record in the local production database.
-3. Adding a production record to a reimbursement group and exporting a package.
-4. Closing/restarting a source-matched installed package to verify persistence.
-5. Clean install, in-place upgrade, and uninstall validation.
+`CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`
 
-They require a fresh package built from this source and an explicitly selected disposable validation profile. Running them against the visible installed `v0.1.3` application or an unknown local production database would not validate this revision and would mutate user state.
+That build proves packaging can complete; it does not prove installer, upgrade,
+persistence, uninstall or final Windows typography behavior for the current
+head after all Design Baseline changes.
 
-## Proposed next controlled run
+## Required controlled manual run
 
-1. Build the package from this revision.
-2. Install it in a disposable per-user test profile with a fresh `%APPDATA%` root.
-3. Use a non-sensitive synthetic invoice fixture to complete import, review, grouping, export, close, and restart.
-4. Perform clean-install, in-place-upgrade, and uninstall checks in that same disposable profile.
-5. Record only counts, actions, and pass/fail outcomes; never document invoice fields, addresses, tokens, keys, or local paths.
+Use a new disposable validation profile and synthetic fixtures only:
+
+1. Build a fresh source-matched package from the final PR head.
+2. Clean-install it without replacing the production profile.
+3. Start with an empty database and verify Dashboard/Settings empty states.
+4. Import a synthetic invoice file.
+5. Review and edit one synthetic field.
+6. Attach synthetic proof material.
+7. Create a synthetic reimbursement group and add the invoice.
+8. Verify export preflight and export a synthetic reimbursement package.
+9. Close and restart; verify records, group, settings and layout persist.
+10. Upgrade from the previous installed release in a disposable profile.
+11. Uninstall and reinstall; verify the documented user-data policy.
+12. Review Chinese typography at physical Windows 100%, 125% and 150% scaling.
+
+Record only pass/fail, counts and interaction findings. Do not record real
+addresses, invoice fields, keys, tokens or private local paths.
 
 ## Acceptance decision
 
-**Not ready for Freeze.** Automated source checks are green, but the source-matched Windows package workflow and installer/upgrade acceptance are still P0 release gates.
-
-## PR50-02 follow-up evidence
-
-- Source commit under test: the PR worktree tip used for the disposable build; the capture manifest records the exact revision for each screenshot run.
-- PyInstaller 6.20.0 package output was built in `%TEMP%\invoice-hub-pr50-build2\dist\InvoiceHub`; the executable was not installed over the user's existing application.
-- The package executable SHA256 was `CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`.
-- The existing installed app remained `v0.1.3`; it was not used as evidence for this source revision. Clean install, upgrade, persistence, and uninstall therefore remain pending.
-- No production database, real invoice, credential, authorization code, API key, or `email_report.html` was read or staged.
-
-## PR50-03 follow-up
-
-- Review state now has one `ReviewViewState` source for query, loaded, table-visible, selected, filter, search, and current-record flags.
-- Filtered zero-result and no-selection paths use one empty detail state; stale material placeholders are cleared.
-- Mailbox Golden Page density was tightened with a fixed 280px account list, 64px two-line entity rows, 104px field-label grid, and 560px minimum detail width.
-- Focused UI, workbench, mailbox, and component regression suites were rerun after the change; repository privacy/public-export checks remained green.
-
-## PR50-04 mailbox-only acceptance
-
-- Normal synthetic account: repair action hidden; scan, test, edit, and More are visible; scan is the only primary action.
-- Missing synthetic credential: scan/test hidden; `补授权码` is the only primary action.
-- Disabled synthetic account: scan/test hidden; `启用` is the only primary action.
-- Mailbox detail contains one outer `MailboxDetailSurface`; nested `ReadOnlyDetailPanel` cards were removed. Server/port-security, folder/range, and attachment type are separate fields.
-- Windows-mode captures completed for the requested state set. The 1920x1080/150% request was clamped by the available physical desktop to 1283x707 and is explicitly recorded as such.
+- **Design Baseline source implementation:** complete.
+- **Automated workflow acceptance:** complete when the final PR CI is green.
+- **Physical Windows and installer acceptance:** pending.
+- **Release/UI Freeze:** not approved until the controlled manual run passes.
