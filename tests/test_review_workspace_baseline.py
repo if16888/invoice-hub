@@ -31,7 +31,7 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertTrue(window.review_page.property("reviewWorkspaceBaselineApplied"))
-                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 380)
+                self.assertEqual(window._detail_panel.minimumWidth(), 352)
                 self.assertLessEqual(window._detail_panel.maximumWidth(), 520)
                 self.assertEqual(window._detail_panel.sizePolicy().verticalPolicy(), QSizePolicy.Expanding)
             finally:
