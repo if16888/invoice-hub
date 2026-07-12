@@ -10,11 +10,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QSizePolicy, QWidget
 
+from .review_feedback_fixes import apply_review_feedback_fixes, sync_review_feedback_state
+
 
 FILTER_CARD_MIN_WIDTH = 108
 FILTER_CARD_MAX_WIDTH = 156
-DETAIL_MIN_WIDTH = 352
-DETAIL_MAX_WIDTH = 520
+DETAIL_MIN_WIDTH = 360
+DETAIL_MAX_WIDTH = 560
 REVIEW_ROW_HEIGHT = 24
 
 
@@ -99,6 +101,8 @@ def _sync_selection_contract(window) -> None:
     if state.visible_count == 0 or (not state.has_current_invoice and state.selected_count <= 0):
         window._set_right_panel_state(False)
 
+    sync_review_feedback_state(window)
+
 
 def _install_selection_refresh(window, page: QWidget) -> None:
     if page.property("reviewBaselineSelectionContractInstalled"):
@@ -124,6 +128,7 @@ def apply_review_workspace_baseline(page: QWidget) -> None:
     page.setProperty("reviewWorkspaceBaselineApplied", True)
     _normalize_filter_cards(window)
     _normalize_workspace_geometry(window)
+    apply_review_feedback_fixes(window)
     _install_selection_refresh(window, page)
     _sync_selection_contract(window)
 
