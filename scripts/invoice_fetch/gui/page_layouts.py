@@ -55,7 +55,7 @@ class TaskFlowPageLayout(_PageLayoutContract):
 
 class SettingsPageLayout(_PageLayoutContract):
     archetype = "settings"
-    maximum_width = 1240
+    maximum_width = 1120
 
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
