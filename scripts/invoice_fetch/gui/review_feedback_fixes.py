@@ -109,12 +109,18 @@ def _replace_summary_parties(window) -> None:
     detail.lbl_sum_buyer = buyer_value
     window.lbl_sum_buyer = buyer_value
 
+    date_layout = _find_layout_containing(summary_layout, detail.lbl_sum_date)
+    if date_layout is not None:
+        date_index = date_layout.indexOf(detail.lbl_sum_date)
+        date_layout.insertWidget(max(0, date_index), _field_key("费用日期", detail.summary_card))
+        detail.lbl_sum_date.setAccessibleName("费用日期")
+
     # The number already belongs to the complete field grid below. Keeping it in
     # the summary duplicates information and consumes the narrow header height.
     detail.lbl_sum_number.hide()
     detail.lbl_sum_number.setProperty("summaryDuplicateHidden", True)
 
-    detail.summary_card.layout().setSpacing(8)
+    detail.summary_card.layout().setSpacing(6)
     detail.fixed_header_container.setMaximumHeight(360)
 
 
@@ -140,7 +146,7 @@ def _rebuild_review_actions(window) -> None:
 
     detail.btn_app.setMinimumWidth(PRIMARY_ACTION_MIN_WIDTH)
     detail.btn_app.setMaximumWidth(16777215)
-    detail.btn_app.setFixedHeight(42)
+    detail.btn_app.setFixedHeight(36)
     detail.btn_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     font = detail.btn_app.font()
     font.setBold(True)
@@ -193,9 +199,7 @@ def _rebuild_claim_section(window) -> None:
         detail.lbl_claim_assignment,
         detail.btn_claim_assignment,
         detail.combo_claims,
-        detail.btn_add_to_claim,
-        detail.btn_export,
-        detail.btn_delete_claim,
+        detail.claim_actions_widget,
         detail.new_claim_widget,
         detail.btn_refresh_claims,
         detail.lbl_claim_total,
@@ -228,8 +232,17 @@ def _rebuild_claim_section(window) -> None:
     detail.lbl_claim_total.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
     layout.addWidget(detail.lbl_claim_total)
 
-    actions = QHBoxLayout()
-    actions.setObjectName("ClaimActionRow")
+    actions_widget = detail.claim_actions_widget
+    actions_widget.setParent(section)
+    actions_widget.setObjectName("ClaimActionRow")
+    actions_widget.setProperty("class", "ClaimActionRow")
+    actions_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    actions = actions_widget.layout()
+    while actions.count():
+        item = actions.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(actions_widget)
     actions.setContentsMargins(0, 0, 0, 0)
     actions.setSpacing(8)
     for button, minimum in (
@@ -237,12 +250,12 @@ def _rebuild_claim_section(window) -> None:
         (detail.btn_export, 64),
         (detail.btn_delete_claim, 82),
     ):
-        button.setParent(section)
+        button.setParent(actions_widget)
         button.setMinimumWidth(minimum)
         button.setMaximumWidth(120)
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         actions.addWidget(button, 1)
-    layout.addLayout(actions)
+    layout.addWidget(actions_widget)
 
     detail.new_claim_widget.setParent(section)
     layout.addWidget(detail.new_claim_widget)
@@ -395,7 +408,7 @@ def sync_review_feedback_state(window) -> None:
         detail.lbl_sum_buyer.set_value(buyer or "—")
     detail.lbl_sum_category.setText(category or "未分类")
     detail.lbl_sum_category.setToolTip(category)
-    detail.lbl_sum_date.setText(f"费用日期 {expense_date}" if expense_date else "费用日期 —")
+    detail.lbl_sum_date.setText(expense_date or "—")
     detail.lbl_sum_date.setToolTip(expense_date)
 
     detail.lbl_core_date.set_value(expense_date or "—")
@@ -405,10 +418,7 @@ def sync_review_feedback_state(window) -> None:
 
     claim_text = detail.lbl_claim_total.text().strip()
     detail.lbl_claim_total.setToolTip(claim_text)
-    if detail.btn_add_to_claim.text().startswith("加入 "):
-        detail.btn_add_to_claim.setText("加入本组")
-    elif detail.btn_add_to_claim.text().startswith("已在 "):
-        detail.btn_add_to_claim.setText("已归组")
+    detail.btn_add_to_claim.setToolTip(detail.btn_add_to_claim.text())
     valid_claims = any(
         isinstance(detail.combo_claims.itemData(index), int)
         and detail.combo_claims.itemData(index) > 0
