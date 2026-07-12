@@ -1,13 +1,7 @@
 """Capture reproducible, local-only Invoice Hub UI review screenshots.
 
-The utility deliberately creates an isolated database and writes only below
-``runtime/ui-review`` (which is ignored by Git).  It is intended for visual
-review of the current source tree, not for capturing a user's live data.
-
-Examples
---------
-python scripts/dev/capture_ui_matrix.py --page imports-mobile --state mobile-active
-python scripts/dev/capture_ui_matrix.py --page all --size 1366x768 --scale 1
+The utility creates an isolated database and writes only below
+``runtime/ui-review``. It never captures a user's live data.
 """
 
 from __future__ import annotations
@@ -33,16 +27,22 @@ from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 
 PAGES = (
     "dashboard", "review", "imports-email", "imports-local", "imports-mobile",
-    "export", "settings-mailbox", "settings-ai", "runtime", "data", "about", "api-key",
+    "export", "settings-mailbox", "settings-ai", "runtime", "privacy", "data",
+    "about", "api-key",
 )
 SUPPORTED_STATES = {
-    "dashboard": {"normal", "empty", "error"}, "review": {"normal"},
-    "imports-email": {"normal"}, "imports-local": {"normal"},
+    "dashboard": {"normal", "empty", "error"},
+    "review": {"normal", "empty", "no-selection"},
+    "imports-email": {"normal"},
+    "imports-local": {"normal"},
     "imports-mobile": {"normal", "error", "mobile-active"},
     "export": {"normal", "empty", "export-blocked"},
     "settings-mailbox": {"normal", "empty", "long-text", "missing-authorization", "disabled"},
-    "settings-ai": {"normal", "empty", "multi-ai"}, "runtime": {"normal"},
-    "data": {"normal", "empty"}, "about": {"normal"},
+    "settings-ai": {"normal", "empty", "multi-ai"},
+    "runtime": {"normal"},
+    "privacy": {"normal"},
+    "data": {"normal", "empty"},
+    "about": {"normal"},
     "api-key": {"normal", "empty", "error", "long-text"},
 }
 STATES = tuple(sorted({state for states in SUPPORTED_STATES.values() for state in states}))
@@ -71,9 +71,9 @@ def set_page(window: InvoiceReviewApp, page: str) -> ApiKeyDialog | None:
     elif page.startswith("settings-"):
         window._switch_main_page("settings")
         window.settings_tabs.setCurrentIndex({"settings-mailbox": 0, "settings-ai": 1}[page])
-    elif page in {"runtime", "data", "about"}:
+    elif page in {"runtime", "privacy", "data", "about"}:
         window._switch_main_page("settings")
-        window.settings_tabs.setCurrentIndex({"runtime": 2, "data": 4, "about": 5}[page])
+        window.settings_tabs.setCurrentIndex({"runtime": 2, "privacy": 3, "data": 4, "about": 5}[page])
     elif page == "api-key":
         dialog = ApiKeyDialog("DeepSeek", window, has_existing_key=True)
         dialog.show()
@@ -87,6 +87,16 @@ def apply_state(window: InvoiceReviewApp, page: str, state: str) -> None:
     elif page == "dashboard" and state == "error":
         from PySide6.QtWidgets import QPushButton
         window.overview_state_stack.show_error("无法读取工作台数据", retry=QPushButton("重试"))
+    elif page == "review" and state == "empty":
+        window.invoices_list = []
+        window.current_invoice = None
+        window.table.setRowCount(0)
+        window._update_record_header_summary(total_matching=0, selected_count=0)
+        window._clear_detail_form()
+    elif page == "review" and state == "no-selection":
+        window.current_invoice = None
+        window.table.clearSelection()
+        window._clear_detail_form()
     elif page == "settings-mailbox" and state == "missing-authorization":
         window.lbl_detail_credential_status.setText("需要授权")
         window.lbl_settings_mailbox_test_status.setText("请补充授权码后再测试连接。")
@@ -104,7 +114,7 @@ def apply_state(window: InvoiceReviewApp, page: str, state: str) -> None:
         long_value = "long-synthetic-value-" * 12
         window.lbl_detail_name.setText(long_value)
         window.lbl_detail_email.setText(f"{long_value}@example.invalid")
-        window.lbl_detail_server.setText(f"{long_value}.imap.example.invalid:993 (SSL/TLS)")
+        window.lbl_detail_server.setText(f"{long_value}.imap.example.invalid")
         for label in (window.lbl_detail_name, window.lbl_detail_email, window.lbl_detail_server):
             label.setToolTip(label.text())
     elif state == "multi-ai" and page == "settings-ai":
@@ -126,6 +136,12 @@ def validate_applied_state(window: InvoiceReviewApp, page: str, state: str) -> N
         expected = window.overview_state_stack.empty if state == "empty" else window.overview_state_stack.error
         if window.overview_state_stack.stack.currentWidget() is not expected:
             raise RuntimeError(f"state validation failed: {page}/{state}")
+    elif page == "review" and state == "empty":
+        if window.table.rowCount() != 0 or window.right_stack.currentWidget() is not window.right_empty_widget:
+            raise RuntimeError(f"state validation failed: {page}/{state}")
+    elif page == "review" and state == "no-selection":
+        if window.current_invoice is not None or window.right_stack.currentWidget() is not window.right_empty_widget:
+            raise RuntimeError(f"state validation failed: {page}/{state}")
     elif page == "imports-mobile" and state == "mobile-active":
         panel = window.mobile_upload_panel
         if panel.stack.currentWidget() is not panel.active_page or not panel.txt_url.text() or panel.lbl_qr.pixmap() is None:
@@ -138,7 +154,6 @@ def validate_applied_state(window: InvoiceReviewApp, page: str, state: str) -> N
 def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int], scale: float, output: Path, mode: str, source_commit: str) -> dict:
     restore_config = restore_credentials = None
     if page == "settings-mailbox":
-        # Screenshots must never load the user's saved mailbox configuration.
         from copy import deepcopy
         from scripts.invoice_fetch.gui import app as app_module
         from scripts.invoice_fetch import credentials as credentials_module
@@ -153,7 +168,7 @@ def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int],
         restore_config = app_module.load_config_safe
         restore_credentials = credentials_module.has_auth_code
         app_module.load_config_safe = lambda: deepcopy(synthetic_config)
-        credentials_module.has_auth_code = lambda _address: state not in {"missing-authorization"}
+        credentials_module.has_auth_code = lambda _address: state != "missing-authorization"
     with tempfile.TemporaryDirectory(prefix="invoice-hub-ui-", ignore_cleanup_errors=True) as td:
         window = InvoiceReviewApp(Path(td) / "review.db")
         window.resize(*size)
@@ -207,8 +222,6 @@ def main() -> int:
     scales = args.scale or [1.0]
     if len(scales) != 1:
         parser.error("run once per --scale so Qt can apply it before QApplication starts")
-    # Qt only reads this at QApplication creation.  Requiring one scale per
-    # invocation avoids silently producing an incorrectly labelled matrix.
     if args.mode == "offscreen":
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
     else:
