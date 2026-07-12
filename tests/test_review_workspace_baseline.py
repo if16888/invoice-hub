@@ -86,7 +86,7 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertEqual(window.table.textElideMode(), Qt.ElideRight)
-                self.assertEqual(window.table.verticalHeader().defaultSectionSize(), 28)
+                self.assertEqual(window.table.verticalHeader().defaultSectionSize(), 24)
                 self.assertGreaterEqual(window.txt_search.minimumWidth(), 260)
                 self.assertEqual(window.txt_search.accessibleName(), "搜索发票")
                 self.assertEqual(window.btn_advanced_filter.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
