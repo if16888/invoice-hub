@@ -68,3 +68,10 @@ The source-matched PyInstaller build was produced in a disposable TEMP directory
 - Empty/filtered results switch the detail panel to one empty state and clear material/status placeholders; record actions are not presented as if an invoice were selected.
 - Mailbox entity rows use two single-line elided values with tooltips and a 64px row contract. Detail labels have a fixed 104px label column and a flexible value column; the detail editor has a 560px minimum usable width.
 - Added regression coverage for zero-result review state, detail clearing, mailbox width, row height, and AI local-validation copy.
+
+## PR50-04 mailbox Golden Page evidence
+
+- Review state and mailbox-only changes were validated with 50 focused `test_ihds09` tests and 20 mailbox UI tests.
+- Windows Qt-mode synthetic screenshots were generated under `runtime/ui-review/` for normal, missing-authorization, disabled, long-text, and 150% normal states. The manifest records `mode: "windows"`, effective device-pixel ratio, and `state_validation: "passed"`.
+- The current physical desktop is smaller than the requested 1920x1080 at 150%; Windows Qt clamped that run to an actual 1283x707 window. This is recorded in the manifest and is not reported as a full-size 1920x1080 acceptance.
+- The inspected Windows screenshot shows one outer mailbox detail surface, separate IMAP/port-security/folder/range fields, single-line values, and a single blue primary `立即扫描` footer action. All mailbox screenshot state is synthetic and uses `example.invalid` data.

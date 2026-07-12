@@ -56,3 +56,11 @@ They require a fresh package built from this source and an explicitly selected d
 - Filtered zero-result and no-selection paths use one empty detail state; stale material placeholders are cleared.
 - Mailbox Golden Page density was tightened with a fixed 280px account list, 64px two-line entity rows, 104px field-label grid, and 560px minimum detail width.
 - Focused UI, workbench, mailbox, and component regression suites were rerun after the change; repository privacy/public-export checks remained green.
+
+## PR50-04 mailbox-only acceptance
+
+- Normal synthetic account: repair action hidden; scan, test, edit, and More are visible; scan is the only primary action.
+- Missing synthetic credential: scan/test hidden; `补授权码` is the only primary action.
+- Disabled synthetic account: scan/test hidden; `启用` is the only primary action.
+- Mailbox detail contains one outer `MailboxDetailSurface`; nested `ReadOnlyDetailPanel` cards were removed. Server/port-security, folder/range, and attachment type are separate fields.
+- Windows-mode captures completed for the requested state set. The 1920x1080/150% request was clamped by the available physical desktop to 1283x707 and is explicitly recorded as such.

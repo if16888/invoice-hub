@@ -40,7 +40,7 @@ SUPPORTED_STATES = {
     "imports-email": {"normal"}, "imports-local": {"normal"},
     "imports-mobile": {"normal", "error", "mobile-active"},
     "export": {"normal", "empty", "export-blocked"},
-    "settings-mailbox": {"normal", "empty", "long-text", "missing-authorization"},
+    "settings-mailbox": {"normal", "empty", "long-text", "missing-authorization", "disabled"},
     "settings-ai": {"normal", "empty", "multi-ai"}, "runtime": {"normal"},
     "data": {"normal", "empty"}, "about": {"normal"},
     "api-key": {"normal", "empty", "error", "long-text"},
@@ -136,6 +136,24 @@ def validate_applied_state(window: InvoiceReviewApp, page: str, state: str) -> N
 
 
 def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int], scale: float, output: Path, mode: str, source_commit: str) -> dict:
+    restore_config = restore_credentials = None
+    if page == "settings-mailbox":
+        # Screenshots must never load the user's saved mailbox configuration.
+        from copy import deepcopy
+        from scripts.invoice_fetch.gui import app as app_module
+        from scripts.invoice_fetch import credentials as credentials_module
+        synthetic_account = {
+            "mailbox_key": "synthetic-mailbox", "name": "Synthetic Mailbox",
+            "address": "synthetic@example.invalid", "provider": "custom",
+            "enabled": state != "disabled", "is_default": True,
+            "imap": {"server": "imap.example.invalid", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+        }
+        synthetic_config = {"email_accounts": [synthetic_account], "email": {}, "imap": {}, "search": {}, "ai_profiles": [], "ai": {}}
+        restore_config = app_module.load_config_safe
+        restore_credentials = credentials_module.has_auth_code
+        app_module.load_config_safe = lambda: deepcopy(synthetic_config)
+        credentials_module.has_auth_code = lambda _address: state not in {"missing-authorization"}
     with tempfile.TemporaryDirectory(prefix="invoice-hub-ui-", ignore_cleanup_errors=True) as td:
         window = InvoiceReviewApp(Path(td) / "review.db")
         window.resize(*size)
@@ -164,6 +182,11 @@ def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int],
             dialog.close()
         window.close()
         app.processEvents()
+        if restore_config is not None:
+            from scripts.invoice_fetch.gui import app as app_module
+            from scripts.invoice_fetch import credentials as credentials_module
+            app_module.load_config_safe = restore_config
+            credentials_module.has_auth_code = restore_credentials
         return entry
 
 

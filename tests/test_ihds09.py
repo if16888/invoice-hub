@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QFrame, QLineEdit, QPushButton
 
 from scripts.invoice_fetch.gui.api_key_dialog import ApiKeyDialog
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp, ReviewViewState
@@ -18,7 +18,7 @@ from scripts.invoice_fetch.gui.icon_provider import IconProvider, _ASSETS_ICONS
 from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary, make_button
-from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel
+from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel, ReadOnlyDetailPanel
 from tests.gui_geometry_helpers import collect_visible_geometry_failures
 
 
@@ -368,6 +368,120 @@ class IHDS09Tests(unittest.TestCase):
                 self.assertGreaterEqual(window.settings_mailbox_list.item(0).sizeHint().height(), 64)
             finally:
                 window.close()
+
+    def _mailbox_state_window(self, account, credential=False):
+        td = tempfile.TemporaryDirectory()
+        window = self.make_window(td.name)
+        window._switch_main_page("settings")
+        window.settings_tabs.setCurrentIndex(0)
+        window.show()
+        self.app.processEvents()
+        window._mailbox_accounts_for_settings = lambda: [dict(account)]
+        patcher = patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=credential)
+        patcher.start()
+        window._load_settings_mailbox_form(0)
+        window._test_mailbox_patcher = patcher
+        window._test_mailbox_td = td
+        return window
+
+    def _close_mailbox_state_window(self, window):
+        window._test_mailbox_patcher.stop()
+        window.close()
+        window._test_mailbox_td.cleanup()
+
+    def test_mailbox_normal_account_hides_repair_credential(self):
+        window = self._mailbox_state_window({"mailbox_key": "normal", "address": "normal@example.invalid", "enabled": True}, credential=True)
+        try:
+            self.assertFalse(window.btn_settings_mailbox_add_credential.isVisible())
+            self.assertTrue(window.btn_settings_mailbox_scan.isVisible())
+            self.assertTrue(window.btn_settings_mailbox_test.isVisible())
+            self.assertTrue(window.settings_mailbox_more_update_credential.isVisible())
+        finally:
+            self._close_mailbox_state_window(window)
+
+    def test_mailbox_normal_account_has_scan_as_only_primary(self):
+        window = self._mailbox_state_window({"mailbox_key": "normal", "address": "normal@example.invalid", "enabled": True}, credential=True)
+        try:
+            self.assertTrue(is_visual_primary(window.btn_settings_mailbox_scan))
+            self.assertFalse(is_visual_primary(window.btn_settings_mailbox_test))
+            self.assertFalse(is_visual_primary(window.btn_settings_mailbox_edit_config))
+        finally:
+            self._close_mailbox_state_window(window)
+
+    def test_mailbox_missing_credential_hides_scan(self):
+        window = self._mailbox_state_window({"mailbox_key": "missing", "address": "missing@example.invalid", "enabled": True})
+        try:
+            self.assertTrue(window.btn_settings_mailbox_add_credential.isVisible())
+            self.assertFalse(window.btn_settings_mailbox_scan.isVisible())
+            self.assertFalse(window.btn_settings_mailbox_test.isVisible())
+            self.assertTrue(is_visual_primary(window.btn_settings_mailbox_add_credential))
+        finally:
+            self._close_mailbox_state_window(window)
+
+    def test_mailbox_disabled_account_has_enable_as_primary(self):
+        window = self._mailbox_state_window({"mailbox_key": "disabled", "address": "disabled@example.invalid", "enabled": False}, credential=True)
+        try:
+            self.assertTrue(window.btn_settings_mailbox_toggle.isVisible())
+            self.assertEqual(window.btn_settings_mailbox_toggle.text(), "启用")
+            self.assertFalse(window.btn_settings_mailbox_scan.isVisible())
+            self.assertFalse(window.btn_settings_mailbox_test.isVisible())
+            self.assertTrue(is_visual_primary(window.btn_settings_mailbox_toggle))
+        finally:
+            self._close_mailbox_state_window(window)
+
+    def test_mailbox_detail_has_one_outer_surface(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                surfaces = window.findChildren(QFrame, "MailboxDetailSurface")
+                self.assertEqual(len(surfaces), 1)
+            finally:
+                window.close()
+
+    def test_mailbox_detail_has_no_nested_readonly_cards(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                self.assertEqual(window.mailbox_detail_surface.findChildren(ReadOnlyDetailPanel), [])
+            finally:
+                window.close()
+
+    def test_mailbox_server_and_port_are_separate_fields(self):
+        window = self._mailbox_state_window({"mailbox_key": "split", "address": "split@example.invalid", "enabled": True, "imap": {"server": "imap.example.invalid", "port": 993, "ssl": True}})
+        try:
+            self.assertEqual(window.lbl_detail_server.text(), "imap.example.invalid")
+            self.assertIn("993", window.lbl_detail_port_security.text())
+            self.assertNotIn(":993", window.lbl_detail_server.text())
+        finally:
+            self._close_mailbox_state_window(window)
+
+    def test_mailbox_folder_and_range_are_separate_fields(self):
+        window = self._mailbox_state_window({"mailbox_key": "rules", "address": "rules@example.invalid", "enabled": True, "search": {"folder": "Receipts", "months_back": 6}})
+        try:
+            self.assertEqual(window.lbl_detail_scan_folder.text(), "Receipts")
+            self.assertIn("6", window.lbl_detail_scan_range.text())
+            self.assertNotEqual(window.lbl_detail_scan_folder.text(), window.lbl_detail_scan_range.text())
+        finally:
+            self._close_mailbox_state_window(window)
+
+    def _assert_mailbox_footer_fits(self, scale):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._switch_main_page("settings"); window.settings_tabs.setCurrentIndex(0)
+                font = window.font(); font.setPointSizeF(max(9.0, font.pointSizeF()) * scale); window.setFont(font)
+                self.app.processEvents()
+                buttons = [window.btn_settings_mailbox_scan, window.btn_settings_mailbox_test, window.btn_settings_mailbox_edit_config, window.settings_mailbox_more]
+                visible = [button for button in buttons if button.isVisible()]
+                self.assertLessEqual(sum(button.sizeHint().width() for button in visible) + 32, window.settings_tabs.width())
+            finally:
+                window.close()
+
+    def test_mailbox_footer_fits_at_125_percent(self):
+        self._assert_mailbox_footer_fits(1.25)
+
+    def test_mailbox_footer_fits_at_150_percent(self):
+        self._assert_mailbox_footer_fits(1.5)
 
     def test_api_key_local_validation_copy_is_truthful(self):
         dialog = ApiKeyDialog("DeepSeek")
