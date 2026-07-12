@@ -57,16 +57,17 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                     self.assertEqual(card.height(), 30)
                     self.assertLessEqual(card.maximumWidth(), 92)
                 self.assertTrue(window.btn_advanced_filter.isHidden())
-                self.assertEqual(window.lbl_record_sort.text(), "列标题可筛选")
+                self.assertEqual(window.lbl_record_sort.text(), "列标题右侧可筛选")
                 self.assertTrue(window.btn_reset_filters.isHidden())
+                self.assertIn("筛选", window.table.horizontalHeader().toolTip())
                 for column in range(window.table.columnCount()):
                     item = window.table.horizontalHeaderItem(column)
-                    self.assertTrue(item.text().endswith("▾"), item.text())
-                    self.assertIn("点击筛选", item.toolTip())
+                    self.assertFalse(item.icon().isNull())
+                    self.assertIn("筛选", item.toolTip())
             finally:
                 window.close()
 
-    def test_active_column_filter_marks_header_and_reveals_clear_action(self):
+    def test_active_column_filter_keeps_existing_header_semantics_and_reveals_clear_action(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
@@ -74,7 +75,8 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 window._refresh_column_filter_headers()
                 self.app.processEvents()
                 seller_header = window.table.horizontalHeaderItem(4)
-                self.assertTrue(seller_header.text().endswith("●"), seller_header.text())
+                self.assertIn("已筛选", seller_header.text())
+                self.assertFalse(seller_header.icon().isNull())
                 self.assertFalse(window.btn_reset_filters.isHidden())
             finally:
                 window.close()
@@ -88,6 +90,9 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 self.assertEqual(window._min_column_widths[4], 180)
                 self.assertEqual(window._min_column_widths[5], 160)
                 window.table.setColumnWidth(4, 220)
+                self.assertEqual(window.table.columnWidth(4), 220)
+                window.resize(1500, 850)
+                self.app.processEvents()
                 self.assertEqual(window.table.columnWidth(4), 220)
             finally:
                 window.close()
