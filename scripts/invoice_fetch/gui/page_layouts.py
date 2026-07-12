@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .settings_baseline import apply_settings_baseline
+from .settings_pages_baseline import apply_remaining_settings_baseline
 from .styles import PAGE_MARGIN, SECTION_GAP
 from .ui_visibility_contracts import install_settings_visibility_contract
 
@@ -61,8 +62,10 @@ class SettingsPageLayout(_PageLayoutContract):
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
-        # InvoiceReviewApp assembles Settings incrementally. Apply both the
-        # visual baseline and state visibility contract after the tree exists.
+        # InvoiceReviewApp assembles Settings incrementally. Apply the Mailbox
+        # Golden Page first, then migrate the remaining pages to the same
+        # information hierarchy, and finally install state visibility guards.
         QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
+        QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
         QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
         return layout
