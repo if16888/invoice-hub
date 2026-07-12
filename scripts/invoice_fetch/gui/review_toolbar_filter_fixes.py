@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -29,7 +29,8 @@ from PySide6.QtWidgets import (
 
 from ..config import save_config
 from ..reimbursement import buyer_warning
-from .column_filters import VISIBLE_COLUMN_DEFINITIONS, has_active_filters, is_filter_active
+from .column_filters import has_active_filters
+from .icon_provider import IconProvider
 from .ui_components import make_button
 
 
@@ -186,7 +187,7 @@ def _compact_status_filters(window) -> None:
     if bar is None:
         return
     bar.setFixedHeight(40)
-    bar.setToolTip("快速按审核状态筛选；字段筛选请点击表格列标题")
+    bar.setToolTip("快速按审核状态筛选；字段筛选请点击表格列标题右侧")
     layout = bar.layout()
     if layout is not None:
         layout.setContentsMargins(8, 4, 8, 4)
@@ -218,24 +219,24 @@ def _compact_status_filters(window) -> None:
 
     sort_hint = getattr(window, "lbl_record_sort", None)
     if sort_hint is not None:
-        sort_hint.setText("列标题可筛选")
-        sort_hint.setToolTip("点击任一列标题筛选；拖动列边界调整宽度")
+        sort_hint.setText("列标题右侧可筛选")
+        sort_hint.setToolTip("点击列标题右侧的筛选图标；拖动列边界调整宽度")
 
 
 def _decorate_column_headers(window) -> None:
+    """Add a visible filter affordance without replacing established header copy."""
     table = getattr(window, "table", None)
     if table is None:
         return
-    table.horizontalHeader().setSectionsClickable(True)
-    table.horizontalHeader().setToolTip("点击列标题筛选；拖动边界调整列宽")
-    filters = getattr(window, "column_filters", {}) or {}
-    for column, (key, label) in enumerate(VISIBLE_COLUMN_DEFINITIONS):
+    header = table.horizontalHeader()
+    header.setSectionsClickable(True)
+    header.setIconSize(QSize(12, 12))
+    header.setToolTip("点击列标题右侧筛选；拖动边界调整列宽")
+    filter_icon = IconProvider.icon("filter")
+    for column in range(table.columnCount()):
         item = table.horizontalHeaderItem(column)
-        if item is None:
-            continue
-        marker = " ●" if is_filter_active(filters.get(key)) else " ▾"
-        item.setText(f"{label}{marker}")
-        item.setToolTip(f"{label}：点击筛选；拖动列边界调整宽度")
+        if item is not None:
+            item.setIcon(filter_icon)
 
 
 def _sync_reset_visibility(window) -> None:
@@ -287,25 +288,12 @@ def _apply_table_column_widths(window) -> None:
         window._min_column_widths.update(COLUMN_WIDTHS)
         window._min_column_widths[SELLER_COLUMN] = 180
         window._min_column_widths[INVOICE_NUMBER_COLUMN] = 160
-    table.setToolTip("点击列标题筛选；销售方等长文本可悬停查看完整内容")
-
-
-class _ReviewColumnResizeFilter(QObject):
-    def __init__(self, window) -> None:
-        super().__init__(window)
-        self.window = window
-
-    def eventFilter(self, watched, event):
-        if watched is self.window and event.type() == QEvent.Resize:
-            QTimer.singleShot(0, lambda: _apply_table_column_widths(self.window))
-        return False
+    table.setToolTip("点击列标题右侧筛选；销售方等长文本可悬停查看完整内容")
 
 
 def _install_column_width_contract(window) -> None:
-    if not hasattr(window, "_review_column_resize_filter"):
-        resize_filter = _ReviewColumnResizeFilter(window)
-        window.installEventFilter(resize_filter)
-        window._review_column_resize_filter = resize_filter
+    # Apply sensible defaults once. User-adjusted column widths remain intact
+    # when the main window is resized.
     _apply_table_column_widths(window)
 
 
