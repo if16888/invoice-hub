@@ -61,19 +61,19 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             try:
                 detail = window._detail_panel
                 window.current_invoice = {
-                    "expense_date": "2026-07-03",
-                    "invoice_date": "2026-07-03",
-                    "total_amount": "23.00",
-                    "category": "餐饮",
-                    "buyer_name": "上海远景科创智能科技有限公司",
-                    "seller_name": "南京市秦淮区福瑞得餐饮管理合伙企业（有限合伙）",
+                    "expense_date": "2099-12-31",
+                    "invoice_date": "2099-12-31",
+                    "total_amount": "123.45",
+                    "category": "示例分类",
+                    "buyer_name": "示例科技有限公司",
+                    "seller_name": "示例市示例区超长餐饮管理合伙企业（有限合伙）",
                 }
                 sync_review_feedback_state(window)
                 self.assertFalse(detail.lbl_core_date.isHidden())
                 self.assertFalse(detail.lbl_core_amount.isHidden())
                 self.assertFalse(detail.lbl_core_seller.isHidden())
-                self.assertEqual(detail.lbl_core_date.text(), "2026-07-03")
-                self.assertEqual(detail.lbl_core_amount.text(), "¥23.00")
+                self.assertEqual(detail.lbl_core_date.text(), "2099-12-31")
+                self.assertEqual(detail.lbl_core_amount.text(), "¥123.45")
                 self.assertEqual(detail.lbl_sum_seller.toolTip(), window.current_invoice["seller_name"])
                 self.assertEqual(detail.lbl_sum_buyer.toolTip(), window.current_invoice["buyer_name"])
                 self.assertIn("费用日期", detail.lbl_sum_date.text())
@@ -84,7 +84,7 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                seller = "南京市秦淮区福瑞得餐饮管理合伙企业（有限合伙）"
+                seller = "示例市示例区超长餐饮管理合伙企业（有限合伙）"
                 window.table.setRowCount(1)
                 window.table.setItem(0, 4, QTableWidgetItem(seller))
                 for _ in range(2):
@@ -102,7 +102,7 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 self.assertEqual(detail.claim_section_title.text(), "当前报销组")
                 self.assertEqual(detail.claim_action_row.count(), 3)
                 self.assertIs(detail.claim_action_row.itemAt(0).widget(), detail.btn_add_to_claim)
-                detail.btn_add_to_claim.setText("加入 202601-06")
+                detail.btn_add_to_claim.setText("加入 示例报销组")
                 sync_review_feedback_state(window)
                 self.assertEqual(detail.btn_add_to_claim.text(), "加入本组")
             finally:
