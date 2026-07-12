@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFrame, QLabel
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -27,14 +26,18 @@ class SettingsBaselineTests(unittest.TestCase):
         self.app.processEvents()
         return window
 
-    def test_settings_contract_uses_desktop_widths(self):
+    def test_settings_contract_matches_design_baseline_v1(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                self.assertEqual(window.settings_tabs.maximumWidth(), 1240)
-                self.assertEqual(window.settings_tabs.nav_list.width(), 176)
+                margins = window.settings_page.layout().contentsMargins()
+                self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (24, 24, 24, 24))
+                self.assertEqual(window.settings_page.layout().spacing(), 20)
+                self.assertEqual(window.settings_tabs.maximumWidth(), 1120)
+                self.assertEqual(window.settings_tabs.nav_list.width(), 168)
                 self.assertEqual(window.settings_mailbox_list.width(), 280)
-                self.assertGreaterEqual(window.mailbox_detail_surface.minimumWidth(), 600)
+                self.assertEqual(window.mailbox_detail_surface.minimumWidth(), 560)
+                self.assertEqual(window.mailbox_detail_surface.maximumWidth(), 760)
             finally:
                 window.close()
 
@@ -46,6 +49,7 @@ class SettingsBaselineTests(unittest.TestCase):
                 self.assertEqual(surface.objectName(), "MailboxDetailSurface")
                 footer = surface.findChild(QFrame, "MailboxActionFooter")
                 self.assertIsNotNone(footer)
+                self.assertGreaterEqual(footer.minimumHeight(), 52)
                 self.assertIs(window.btn_settings_mailbox_scan.parentWidget(), footer)
                 self.assertIs(window.btn_settings_mailbox_test.parentWidget(), footer)
                 self.assertIs(window.btn_settings_mailbox_edit_config.parentWidget(), footer)
