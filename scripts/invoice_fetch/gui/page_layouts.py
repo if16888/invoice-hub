@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .design_baseline_styles import apply_global_design_baseline
+from .review_table_width_contract import apply_review_table_width_contract
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
 from .settings_baseline import apply_settings_baseline
@@ -78,6 +79,7 @@ class WorkspacePageLayout(_PageLayoutContract):
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         QTimer.singleShot(0, lambda p=page: apply_review_workspace_baseline(p))
         QTimer.singleShot(0, lambda p=page: apply_review_toolbar_filter_fixes(p))
+        QTimer.singleShot(0, lambda p=page: apply_review_table_width_contract(p))
         return layout
 
 
