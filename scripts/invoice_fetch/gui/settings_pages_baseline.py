@@ -1,7 +1,7 @@
 """Design Baseline v1.0 migration for Settings pages after Mailbox Accounts.
 
 The module changes presentation only. Existing buttons keep their signal
-connections and the app's existing refresh methods continue to own data.
+connections and the app's refresh methods continue to own data.
 """
 
 from __future__ import annotations
@@ -35,6 +35,11 @@ FIELD_LABEL_WIDTH = 104
 DETAIL_MIN_WIDTH = 560
 DETAIL_MAX_WIDTH = 760
 PROFILE_LIST_WIDTH = 240
+FIELD_ALIASES = {
+    "Version": "版本与构建",
+    "版本": "版本与构建",
+    "本地数据目录": "数据目录",
+}
 
 
 def _repolish(widget: QWidget) -> None:
@@ -164,17 +169,26 @@ class StructuredSettingsSurface(QFrame):
             line = raw_line.strip()
             if not line:
                 continue
-            if "：" in line:
-                key, value = line.split("：", 1)
-                parsed[key.strip()] = value.strip() or "—"
+            separator = "：" if "：" in line else (":" if ":" in line else "")
+            if separator:
+                key, value = line.split(separator, 1)
+                key = FIELD_ALIASES.get(key.strip(), key.strip())
+                parsed[key] = value.strip() or "—"
+            elif line == "Invoice Hub" and "产品" in self.values:
+                parsed["产品"] = line
+            elif "本地优先" in line and "产品定位" in self.values:
+                parsed["产品定位"] = line.rstrip("。")
+            elif "凭据" in line and "凭据存储" in self.values:
+                parsed["凭据存储"] = "Windows 凭据管理器"
+            elif "脱敏" in line and "配置与日志" in self.values:
+                parsed["配置与日志"] = "仅保留脱敏内容"
             else:
                 free_lines.append(line)
         for key, value in parsed.items():
             self.set_value(key, value)
-        if free_lines:
-            self.set_status(" · ".join(free_lines))
-        elif not parsed:
-            self.set_status("")
+        # Only surface genuinely unowned information. Known product/privacy copy
+        # belongs to the field grid and must not be repeated below it.
+        self.set_status(" · ".join(free_lines))
 
     def text(self) -> str:
         return self._raw_text
@@ -359,6 +373,9 @@ def _migrate_ai_page(window) -> None:
     window.settings_ai_detail_panel = surface
     window.lbl_settings_ai_status_badge = badge
     window.btn_settings_ai_empty_add = empty_action
+    summary = getattr(window, "settings_ai_summary_strip", None)
+    if summary is not None:
+        summary.hide()
 
 
 def _normalize_ai(window) -> None:
@@ -383,8 +400,9 @@ def _normalize_ai(window) -> None:
     failure = window.lbl_settings_ai_failure_status.text().strip()
     if failure.startswith("失败状态："):
         failure = failure[len("失败状态："):].strip()
+    benign = {"", "暂无异常", "暂无异常。", "当前会话可用"}
     window.lbl_settings_ai_failure_status.setText(failure)
-    window.lbl_settings_ai_failure_status.setVisible(bool(failure and failure not in {"暂无异常", "暂无异常。"}))
+    window.lbl_settings_ai_failure_status.setVisible(failure not in benign)
     count = window.settings_ai_profile_list.count()
     window.settings_ai_profile_list.setVisible(count > 1)
     window.settings_ai_detail_panel.setVisible(count > 0)
