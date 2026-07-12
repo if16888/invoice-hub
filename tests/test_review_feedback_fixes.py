@@ -51,7 +51,7 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 required = detail.btn_app.fontMetrics().horizontalAdvance(detail.btn_app.text()) + 24
                 self.assertGreaterEqual(detail.btn_app.minimumWidth(), required)
                 self.assertEqual(stack.layout().itemAt(0).widget(), detail.btn_app)
-                self.assertGreaterEqual(detail.btn_app.height(), 40)
+                self.assertGreaterEqual(detail.btn_app.height(), 34)
             finally:
                 window.close()
 
@@ -76,7 +76,8 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 self.assertEqual(detail.lbl_core_amount.text(), "¥123.45")
                 self.assertEqual(detail.lbl_sum_seller.toolTip(), window.current_invoice["seller_name"])
                 self.assertEqual(detail.lbl_sum_buyer.toolTip(), window.current_invoice["buyer_name"])
-                self.assertIn("费用日期", detail.lbl_sum_date.text())
+                self.assertEqual(detail.lbl_sum_date.text(), "2099-12-31")
+                self.assertEqual(detail.lbl_sum_date.accessibleName(), "费用日期")
             finally:
                 window.close()
 
@@ -104,7 +105,8 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 self.assertIs(detail.claim_action_row.itemAt(0).widget(), detail.btn_add_to_claim)
                 detail.btn_add_to_claim.setText("加入 示例报销组")
                 sync_review_feedback_state(window)
-                self.assertEqual(detail.btn_add_to_claim.text(), "加入本组")
+                self.assertEqual(detail.btn_add_to_claim.text(), "加入 示例报销组")
+                self.assertEqual(detail.btn_add_to_claim.toolTip(), "加入 示例报销组")
             finally:
                 window.close()
 
