@@ -1,10 +1,10 @@
 """Targeted physical-review fixes for the review toolbar and invoice table.
 
 The review page owns reviewing invoices, not importing infrastructure. This
-module keeps existing callbacks but clarifies their labels, removes the
-ambiguous duplicate mailbox action, makes the already-supported Excel-style
-column filters discoverable, caps the seller column, and provides a direct
-place to configure the expected reimbursement buyer title.
+module keeps existing callbacks but clarifies their labels, makes the
+already-supported Excel-style column filters discoverable, caps the seller
+column, and provides a direct place to configure the expected reimbursement
+buyer title.
 """
 
 from __future__ import annotations
@@ -39,17 +39,17 @@ INVOICE_NUMBER_COLUMN = 5
 COLUMN_WIDTHS = {
     0: 68,
     1: 62,
-    2: 88,
-    3: 82,
+    2: 86,
+    3: 84,
     SELLER_COLUMN: 260,
     INVOICE_NUMBER_COLUMN: 190,
 }
 STATUS_FILTER_WIDTHS = {
-    "all": 82,
+    "all": 86,
     "to_review": 92,
     "approved": 92,
-    "ignored": 84,
-    "error": 76,
+    "ignored": 86,
+    "error": 86,
 }
 
 
@@ -140,13 +140,13 @@ def _set_compact_button(button: QWidget | None, minimum: int, maximum: int) -> N
 
 
 def _clarify_review_toolbar(window) -> None:
-    add_button = getattr(window, "btn_import_local", None)
+    import_button = getattr(window, "btn_import_local", None)
     scan_button = getattr(window, "btn_scan_email", None)
-    if add_button is not None:
-        add_button.setText("添加发票")
-        add_button.setToolTip("添加发票：本地文件、手机上传或扫描邮箱")
-        add_button.setAccessibleName("添加发票")
-        _set_compact_button(add_button, 88, 108)
+    if import_button is not None:
+        import_button.setText("导入")
+        import_button.setToolTip("导入发票：本地文件、手机上传或邮箱扫描")
+        import_button.setAccessibleName("导入发票")
+        _set_compact_button(import_button, 76, 92)
 
     for attr, text, tooltip in (
         ("action_import_local", "本地文件", "选择 PDF、OFD、XML 或压缩包导入"),
@@ -158,15 +158,18 @@ def _clarify_review_toolbar(window) -> None:
             action.setText(text)
             action.setToolTip(tooltip)
 
-    # “同步”实际只扫描邮箱，并不是双向同步。保留回调和 More 菜单入口，
-    # 但从审核页工具栏移除这个重复且容易误解的按钮。
+    # The old “同步” label was misleading: this action only scans configured
+    # mailboxes. Keep the button visible but rename it to its exact operation.
     if scan_button is not None:
         scan_button.setText("扫描邮箱")
         scan_button.setToolTip("扫描已配置邮箱中的新发票")
-        scan_button.hide()
+        scan_button.setAccessibleName("扫描邮箱")
+        scan_button.show()
+        _set_compact_button(scan_button, 88, 108)
     scan_action = getattr(window, "action_scan_email", None)
     if scan_action is not None:
-        scan_action.setText("扫描邮箱")
+        # Preserve the established More-menu text contract while making the
+        # operation explicit through the visible toolbar and tooltip.
         scan_action.setToolTip("扫描已配置邮箱中的新发票")
 
     export_button = getattr(window, "btn_toolbar_export", None)
@@ -194,7 +197,7 @@ def _compact_status_filters(window) -> None:
         layout.setSpacing(6)
 
     for status, card in getattr(window, "filter_buttons", {}).items():
-        width = STATUS_FILTER_WIDTHS.get(status, 84)
+        width = STATUS_FILTER_WIDTHS.get(status, 86)
         card.setFixedHeight(30)
         card.setMinimumWidth(width)
         card.setMaximumWidth(width)
@@ -292,8 +295,6 @@ def _apply_table_column_widths(window) -> None:
 
 
 def _install_column_width_contract(window) -> None:
-    # Apply sensible defaults once. User-adjusted column widths remain intact
-    # when the main window is resized.
     _apply_table_column_widths(window)
 
 
@@ -376,13 +377,6 @@ def _install_buyer_title_entry(window) -> None:
         detail.buyer_warning_action_row = row
         detail.btn_edit_reimbursement_title = edit_button
         window.btn_edit_reimbursement_title = edit_button
-
-    more_menu = getattr(window, "more_menu", None)
-    if more_menu is not None and not hasattr(window, "action_reimbursement_title"):
-        action = more_menu.addAction("报销抬头设置")
-        action.setToolTip("设置购买方单位名称和抬头核对规则")
-        action.triggered.connect(lambda _checked=False: _open_reimbursement_title_dialog(window))
-        window.action_reimbursement_title = action
 
     table = getattr(window, "table", None)
     if table is not None:
