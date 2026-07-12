@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
+from .review_workspace_baseline import apply_review_workspace_baseline
 from .settings_baseline import apply_settings_baseline
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .styles import PAGE_MARGIN, SECTION_GAP
@@ -54,6 +55,7 @@ class WorkspacePageLayout(_PageLayoutContract):
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        QTimer.singleShot(0, lambda p=page: apply_review_workspace_baseline(p))
         return layout
 
 
