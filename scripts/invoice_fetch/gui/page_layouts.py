@@ -1,8 +1,9 @@
 """Shared page archetype contracts for the desktop product surfaces."""
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
+from .settings_baseline import apply_settings_baseline
 from .styles import PAGE_MARGIN, SECTION_GAP
 
 
@@ -54,5 +55,12 @@ class TaskFlowPageLayout(_PageLayoutContract):
 
 class SettingsPageLayout(_PageLayoutContract):
     archetype = "settings"
-    maximum_width = 1120
+    maximum_width = 1240
 
+    @classmethod
+    def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
+        super().apply(page, layout)
+        # The settings page is assembled incrementally by InvoiceReviewApp.
+        # Run the visual baseline after the event loop sees the completed tree.
+        QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
+        return layout
