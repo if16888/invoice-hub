@@ -64,18 +64,26 @@ def _normalize_workspace_geometry(window) -> None:
         advanced.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
 
-def _normalize_empty_copy(window) -> None:
+def _set_empty_copy(window, *, has_records: bool) -> None:
     title = getattr(window, "lbl_right_empty_title", None)
     desc = getattr(window, "lbl_right_empty_desc", None)
+    if has_records:
+        title_text = "未选择发票"
+        desc_text = "选择一张发票后，可查看字段、原件、证明材料和报销信息。"
+    else:
+        title_text = "当前没有发票记录"
+        desc_text = "导入发票后，可在这里审核字段、材料和报销信息。"
     if title is not None:
-        title.setText("未选择发票")
+        title.setText(title_text)
     if desc is not None:
-        desc.setText("选择一张发票后，可查看字段、原件、证明材料和报销信息。")
+        desc.setText(desc_text)
 
 
 def _sync_selection_contract(window) -> None:
     state = window._review_view_state()
     has_selection = state.has_current_invoice and state.selected_count == 1
+    _set_empty_copy(window, has_records=state.visible_count > 0)
+
     detail = getattr(window, "_detail_panel", None)
     if detail is not None:
         if has_selection:
@@ -113,7 +121,6 @@ def apply_review_workspace_baseline(page: QWidget) -> None:
     page.setProperty("reviewWorkspaceBaselineApplied", True)
     _normalize_filter_cards(window)
     _normalize_workspace_geometry(window)
-    _normalize_empty_copy(window)
     _install_selection_refresh(window, page)
     _sync_selection_contract(window)
 
