@@ -6,12 +6,15 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.review_toolbar_filter_fixes import (
     ReimbursementTitleDialog,
     _refresh_buyer_warning,
+    _repair_material_rows,
     _save_reimbursement_title,
 )
 
@@ -60,13 +63,43 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                     self.assertGreaterEqual(card.minimumWidth(), 86)
                     self.assertLessEqual(card.maximumWidth(), 92)
                 self.assertTrue(window.btn_advanced_filter.isHidden())
-                self.assertEqual(window.lbl_record_sort.text(), "列标题右侧可筛选")
+                self.assertEqual(window.lbl_record_sort.text(), "点击列标题可筛选")
                 self.assertTrue(window.btn_reset_filters.isHidden())
                 self.assertIn("筛选", window.table.horizontalHeader().toolTip())
                 for column in range(window.table.columnCount()):
                     item = window.table.horizontalHeaderItem(column)
                     self.assertFalse(item.icon().isNull())
                     self.assertIn("筛选", item.toolTip())
+            finally:
+                window.close()
+
+    def test_clicking_header_center_opens_filter_for_any_visible_column(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                header = window.table.horizontalHeader()
+                for section, key in ((2, "expense_date"), (4, "seller_name"), (5, "invoice_number")):
+                    popup = getattr(window, "_column_filter_popup", None)
+                    if popup is not None:
+                        popup.close()
+                        window._column_filter_popup = None
+                    center_x = (
+                        header.sectionViewportPosition(section)
+                        + header.sectionSize(section) // 2
+                    )
+                    QTest.mouseClick(
+                        header.viewport(),
+                        Qt.LeftButton,
+                        Qt.NoModifier,
+                        QPoint(center_x, header.height() // 2),
+                    )
+                    for _ in range(4):
+                        self.app.processEvents()
+                    popup = window._column_filter_popup
+                    self.assertIsNotNone(popup)
+                    self.assertEqual(popup.key, key)
+                    popup.close()
+                    window._column_filter_popup = None
             finally:
                 window.close()
 
@@ -98,6 +131,46 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 window.resize(1500, 850)
                 self.app.processEvents()
                 self.assertEqual(window.table.columnWidth(4), 220)
+            finally:
+                window.close()
+
+    def test_material_rows_keep_label_status_and_action_visible_in_narrow_panel(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                detail = window._detail_panel
+                detail.btn_add_attachment.setText("替换")
+                detail.original_status_line.replace_action(detail.btn_add_attachment)
+                detail.btn_add_evidence.setText("替换/管理")
+                detail.evidence_status_line.replace_action(detail.btn_add_evidence)
+
+                _repair_material_rows(window)
+                self.app.processEvents()
+
+                self.assertTrue(detail.original_card.isHidden())
+                self.assertTrue(detail.evidence_card.isHidden())
+                self.assertTrue(detail.combo_supporting_docs.isHidden())
+
+                for line, expected_label, maximum in (
+                    (detail.original_status_line, "原件", 72),
+                    (detail.evidence_status_line, "证明", 96),
+                ):
+                    self.assertEqual(line.lbl_label.text(), expected_label)
+                    self.assertEqual(line.lbl_label.minimumWidth(), 40)
+                    self.assertEqual(line.lbl_label.maximumWidth(), 40)
+                    self.assertEqual(
+                        line.lbl_status.sizePolicy().horizontalPolicy(),
+                        QSizePolicy.Expanding,
+                    )
+                    action = line._action_widget
+                    self.assertIsNotNone(action)
+                    self.assertTrue(action.isVisible())
+                    self.assertEqual(action.minimumWidth(), action.maximumWidth())
+                    self.assertLessEqual(action.maximumWidth(), maximum)
+                    self.assertGreaterEqual(
+                        action.minimumWidth(),
+                        action.fontMetrics().horizontalAdvance(action.text()) + 18,
+                    )
             finally:
                 window.close()
 
