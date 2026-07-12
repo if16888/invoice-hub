@@ -3,15 +3,15 @@
 The review page owns reviewing invoices, not importing infrastructure. This
 module keeps existing callbacks but clarifies their labels, makes the
 already-supported Excel-style column filters discoverable, caps the seller
-column, and provides a direct place to configure the expected reimbursement
-buyer title.
+column, repairs the narrow material rows, and provides a direct place to
+configure the expected reimbursement buyer title.
 """
 
 from __future__ import annotations
 
 from functools import wraps
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -51,6 +51,8 @@ STATUS_FILTER_WIDTHS = {
     "ignored": 86,
     "error": 86,
 }
+_HEADER_RESIZE_MARGIN = 5
+_HEADER_CLICK_DRAG_THRESHOLD = 4
 
 
 class ReimbursementTitleDialog(QDialog):
@@ -116,6 +118,99 @@ class ReimbursementTitleDialog(QDialog):
         )
 
 
+class _HeaderFilterClickRouter(QObject):
+    """Turn the full header cell into the filter target without breaking resize."""
+
+    def __init__(self, window, header):
+        super().__init__(header)
+        self.window = window
+        self.header = header
+        self._pressed_section = -1
+        self._press_pos = QPoint()
+        self._dragged = False
+
+    @staticmethod
+    def _event_pos(event) -> QPoint:
+        position = getattr(event, "position", None)
+        if callable(position):
+            return position().toPoint()
+        pos = getattr(event, "pos", None)
+        return pos() if callable(pos) else QPoint()
+
+    def _is_resize_zone(self, section: int, x: int) -> bool:
+        if section < 0:
+            return True
+        left = self.header.sectionViewportPosition(section)
+        right = left + self.header.sectionSize(section)
+        if section > 0 and abs(x - left) <= _HEADER_RESIZE_MARGIN:
+            return True
+        return abs(x - right) <= _HEADER_RESIZE_MARGIN
+
+    def _reset(self) -> None:
+        self._pressed_section = -1
+        self._press_pos = QPoint()
+        self._dragged = False
+
+    def eventFilter(self, watched, event):
+        if watched is not self.header.viewport():
+            return False
+
+        event_type = event.type()
+        if event_type == QEvent.Type.MouseButtonPress:
+            if event.button() != Qt.LeftButton:
+                self._reset()
+                return False
+            pos = self._event_pos(event)
+            section = self.header.logicalIndexAt(pos.x())
+            if section < 0 or self._is_resize_zone(section, pos.x()):
+                self._reset()
+                return False
+            self._pressed_section = section
+            self._press_pos = pos
+            self._dragged = False
+            return False
+
+        if event_type == QEvent.Type.MouseMove and self._pressed_section >= 0:
+            pos = self._event_pos(event)
+            if (pos - self._press_pos).manhattanLength() > _HEADER_CLICK_DRAG_THRESHOLD:
+                self._dragged = True
+            return False
+
+        if event_type == QEvent.Type.MouseButtonRelease:
+            if event.button() != Qt.LeftButton or self._pressed_section < 0:
+                self._reset()
+                return False
+            pos = self._event_pos(event)
+            section = self.header.logicalIndexAt(pos.x())
+            pressed_section = self._pressed_section
+            should_open = (
+                not self._dragged
+                and section == pressed_section
+                and not self._is_resize_zone(section, pos.x())
+            )
+            self._reset()
+            if not should_open:
+                return False
+
+            marker_x = (
+                self.header.sectionViewportPosition(pressed_section)
+                + self.header.sectionSize(pressed_section)
+                - 8
+            )
+            self.window._column_filter_header_press_pos = QPoint(
+                marker_x,
+                max(0, min(pos.y(), self.header.height() - 1)),
+            )
+            QTimer.singleShot(
+                0,
+                lambda section=pressed_section: self.window._show_column_filter_popup(section),
+            )
+            event.accept()
+            return True
+
+        return False
+
+
 def _find_layout_containing(layout, widget: QWidget):
     if layout is None:
         return None
@@ -137,6 +232,105 @@ def _set_compact_button(button: QWidget | None, minimum: int, maximum: int) -> N
     button.setMinimumWidth(minimum)
     button.setMaximumWidth(maximum)
     button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+
+def _fit_material_action(button: QWidget | None, maximum: int = 96) -> None:
+    if button is None:
+        return
+    button.ensurePolished()
+    text = str(getattr(button, "text", lambda: "")() or "")
+    required = button.fontMetrics().horizontalAdvance(text) + 24
+    width = max(56, min(maximum, required))
+    button.setMinimumWidth(width)
+    button.setMaximumWidth(width)
+    button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+
+def _normalize_material_status_line(status_line, *, action_maximum: int = 96) -> None:
+    if status_line is None:
+        return
+    status_line.setMinimumWidth(0)
+    status_line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    layout = status_line.layout()
+    if layout is not None:
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(8)
+
+    label = getattr(status_line, "lbl_label", None)
+    if label is not None:
+        label.setMinimumWidth(40)
+        label.setMaximumWidth(40)
+        label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    value = getattr(status_line, "lbl_status", None)
+    if value is not None:
+        value.setMinimumWidth(32)
+        value.setMaximumWidth(16777215)
+        value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        value.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        value.setToolTip(value.text())
+
+    action = getattr(status_line, "_action_widget", None)
+    _fit_material_action(action, action_maximum)
+    if layout is not None:
+        layout.setStretch(0, 0)
+        layout.setStretch(1, 1)
+        if action is not None:
+            layout.setStretch(layout.indexOf(action), 0)
+
+
+def _repair_material_rows(window) -> None:
+    """Keep material labels, states and actions visible in the narrow detail pane."""
+    detail = getattr(window, "_detail_panel", None)
+    if detail is None:
+        return
+
+    # The card-based rows are compatibility remnants. A runtime visibility
+    # change must not reintroduce a second/clipped row above the status lines.
+    for attr in ("original_card", "evidence_card", "combo_supporting_docs"):
+        widget = getattr(detail, attr, None)
+        if widget is not None:
+            widget.hide()
+
+    _normalize_material_status_line(
+        getattr(detail, "original_status_line", None),
+        action_maximum=72,
+    )
+    _normalize_material_status_line(
+        getattr(detail, "evidence_status_line", None),
+        action_maximum=96,
+    )
+
+
+def _install_material_row_repair(window) -> None:
+    detail = getattr(window, "_detail_panel", None)
+    if detail is None:
+        return
+    if detail.property("materialRowsRepairInstalled"):
+        _repair_material_rows(window)
+        return
+    detail.setProperty("materialRowsRepairInstalled", True)
+
+    for method_name in ("set_attachment_state", "update_evidence_row"):
+        original = getattr(detail, method_name, None)
+        if original is None:
+            continue
+
+        @wraps(original)
+        def wrapped(*args, _original=original, **kwargs):
+            result = _original(*args, **kwargs)
+            _repair_material_rows(window)
+            return result
+
+        setattr(detail, method_name, wrapped)
+
+    table = getattr(window, "table", None)
+    if table is not None:
+        table.itemSelectionChanged.connect(
+            lambda: QTimer.singleShot(0, lambda: _repair_material_rows(window))
+        )
+    _repair_material_rows(window)
 
 
 def _clarify_review_toolbar(window) -> None:
@@ -189,7 +383,7 @@ def _compact_status_filters(window) -> None:
     if bar is None:
         return
     bar.setFixedHeight(40)
-    bar.setToolTip("快速按审核状态筛选；字段筛选请点击表格列标题右侧")
+    bar.setToolTip("快速按审核状态筛选；字段筛选可直接点击表格列标题")
     layout = bar.layout()
     if layout is not None:
         layout.setContentsMargins(8, 4, 8, 4)
@@ -221,8 +415,8 @@ def _compact_status_filters(window) -> None:
 
     sort_hint = getattr(window, "lbl_record_sort", None)
     if sort_hint is not None:
-        sort_hint.setText("列标题右侧可筛选")
-        sort_hint.setToolTip("点击列标题右侧的筛选图标；拖动列边界调整宽度")
+        sort_hint.setText("点击列标题可筛选")
+        sort_hint.setToolTip("点击任意列标题筛选；拖动列边界调整宽度")
 
 
 def _decorate_column_headers(window) -> None:
@@ -233,7 +427,7 @@ def _decorate_column_headers(window) -> None:
     header = table.horizontalHeader()
     header.setSectionsClickable(True)
     header.setIconSize(QSize(12, 12))
-    header.setToolTip("点击列标题右侧筛选；拖动边界调整列宽")
+    header.setToolTip("点击任意列标题筛选；拖动列边界调整宽度")
     filter_icon = IconProvider.icon("filter")
     for column in range(table.columnCount()):
         item = table.horizontalHeaderItem(column)
@@ -273,6 +467,12 @@ def _install_header_filter_decoration(window) -> None:
     for card in getattr(window, "filter_buttons", {}).values():
         card.clicked.connect(lambda: QTimer.singleShot(0, lambda: _sync_reset_visibility(window)))
     window.txt_search.textChanged.connect(lambda _text: _sync_reset_visibility(window))
+
+    header = window.table.horizontalHeader()
+    router = _HeaderFilterClickRouter(window, header)
+    header.viewport().installEventFilter(router)
+    window._column_header_click_router = router
+
     _decorate_column_headers(window)
     _sync_reset_visibility(window)
 
@@ -290,7 +490,7 @@ def _apply_table_column_widths(window) -> None:
         window._min_column_widths.update(COLUMN_WIDTHS)
         window._min_column_widths[SELLER_COLUMN] = 180
         window._min_column_widths[INVOICE_NUMBER_COLUMN] = 178
-    table.setToolTip("点击列标题右侧筛选；销售方等长文本可悬停查看完整内容")
+    table.setToolTip("点击列标题筛选；销售方等长文本可悬停查看完整内容")
 
 
 def _install_column_width_contract(window) -> None:
@@ -397,6 +597,7 @@ def apply_review_toolbar_filter_fixes(page: QWidget) -> None:
     _compact_status_filters(window)
     _install_header_filter_decoration(window)
     _install_column_width_contract(window)
+    _install_material_row_repair(window)
     _install_buyer_title_entry(window)
 
 
@@ -404,5 +605,6 @@ __all__ = [
     "ReimbursementTitleDialog",
     "apply_review_toolbar_filter_fixes",
     "_refresh_buyer_warning",
+    "_repair_material_rows",
     "_save_reimbursement_title",
 ]
