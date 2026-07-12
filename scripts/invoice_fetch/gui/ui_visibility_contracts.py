@@ -10,10 +10,29 @@ from __future__ import annotations
 
 from functools import wraps
 
+from PySide6.QtWidgets import QStackedWidget
+
 from .invoice_detail_panel import InvoiceDetailPanel
 
 
 _INVOICE_DETAIL_PATCHED = False
+
+
+def _reveal_widget(widget, boundary=None) -> None:
+    """Reveal *widget* and select every stacked page on its ancestor path."""
+    if widget is None:
+        return
+    child = widget
+    child.show()
+    parent = child.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QStackedWidget):
+            parent.setCurrentWidget(child)
+        parent.show()
+        if parent is boundary:
+            break
+        child = parent
+        parent = parent.parentWidget()
 
 
 def install_invoice_detail_visibility_contract() -> None:
@@ -32,9 +51,8 @@ def install_invoice_detail_visibility_contract() -> None:
             self.right_stack.setCurrentWidget(self.right_content_widget)
 
         # Attachment state is populated before the selection state is applied.
-        # Reassert the one active StatusLine action after revealing the content;
-        # otherwise a button that was reparented while the empty surface was
-        # active can remain effectively hidden on Windows/Qt.
+        # Reassert the one active StatusLine action and its stacked ancestor path
+        # after switching from the no-selection surface.
         status_line = getattr(self, "original_status_line", None)
         retry = getattr(self, "btn_retry_download", None)
         add_attachment = getattr(self, "btn_add_attachment", None)
@@ -44,15 +62,16 @@ def install_invoice_detail_visibility_contract() -> None:
             detail_files.show()
         if status_line is not None:
             status_line.show()
+            active_action = None
             if retry is not None and retry.isEnabled():
-                status_line.replace_action(retry)
-                retry.show()
+                active_action = retry
             elif open_file is not None and open_file.isEnabled():
-                status_line.replace_action(open_file)
-                open_file.show()
+                active_action = open_file
             elif add_attachment is not None and add_attachment.isEnabled():
-                status_line.replace_action(add_attachment)
-                add_attachment.show()
+                active_action = add_attachment
+            if active_action is not None:
+                status_line.replace_action(active_action)
+                _reveal_widget(active_action, boundary=self)
         return result
 
     InvoiceDetailPanel.set_single_selection_state = set_single_selection_state
