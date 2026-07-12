@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.review_workspace_baseline import _sync_selection_contract
 
 
 class ReviewWorkspaceBaselineTests(unittest.TestCase):
@@ -55,14 +56,11 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                # No-selection is distinct from an empty query: keep one table
-                # row visible but clear the current/selected invoice.
                 window.table.setRowCount(1)
                 window.current_invoice = None
                 window.table.clearSelection()
-                window._on_table_selection_changed()
-                for _ in range(2):
-                    self.app.processEvents()
+                _sync_selection_contract(window)
+                self.app.processEvents()
                 self.assertEqual(window.lbl_right_empty_title.text(), "未选择发票")
                 self.assertIn("选择一张发票", window.lbl_right_empty_desc.text())
                 self.assertIs(window.right_stack.currentWidget(), window.right_empty_widget)
@@ -75,9 +73,9 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
             try:
                 window.table.setRowCount(0)
                 window.current_invoice = None
-                window._on_table_selection_changed()
-                for _ in range(2):
-                    self.app.processEvents()
+                window.table.clearSelection()
+                _sync_selection_contract(window)
+                self.app.processEvents()
                 self.assertEqual(window.lbl_right_empty_title.text(), "当前没有发票记录")
                 self.assertIn("导入发票后", window.lbl_right_empty_desc.text())
             finally:
@@ -88,6 +86,7 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertEqual(window.table.textElideMode(), Qt.ElideRight)
+                self.assertEqual(window.table.verticalHeader().defaultSectionSize(), 28)
                 self.assertGreaterEqual(window.txt_search.minimumWidth(), 260)
                 self.assertEqual(window.txt_search.accessibleName(), "搜索发票")
                 self.assertEqual(window.btn_advanced_filter.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
