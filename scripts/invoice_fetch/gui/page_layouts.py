@@ -7,6 +7,7 @@ from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_b
 from .design_baseline_styles import apply_global_design_baseline
 from .review_workspace_baseline import apply_review_workspace_baseline
 from .settings_baseline import apply_settings_baseline
+from .settings_feedback_fixes import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .ui_visibility_contracts import install_settings_visibility_contract
@@ -101,5 +102,6 @@ class SettingsPageLayout(_PageLayoutContract):
         # label adapter first so no deleted Qt wrapper is touched mid-migration.
         QTimer.singleShot(0, lambda p=page: install_ai_refresh_compatibility(p))
         QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
+        QTimer.singleShot(0, lambda p=page: apply_settings_feedback_fixes(p))
         QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
         return layout
