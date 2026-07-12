@@ -1,7 +1,7 @@
 """Targeted review-workspace fixes from physical Windows visual review.
 
 The module keeps the existing review/business callbacks intact and only
-rearranges already-created widgets.  It addresses the concrete UI defects seen
+rearranges already-created widgets. It addresses the concrete UI defects seen
 in the v0.1.4 review screenshots: clipped seller names, a cramped primary
 review action, hidden amount/date fields, compressed reimbursement controls,
 and an inconsistent sidebar help target.
@@ -9,7 +9,7 @@ and an inconsistent sidebar help target.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
@@ -125,7 +125,6 @@ def _rebuild_review_actions(window) -> None:
     detail.setProperty("reviewActionsReflowed", True)
 
     old_layout = detail.inline_review_layout
-    buttons = (detail.btn_app, detail.btn_ign, detail.btn_err, detail.btn_inline_more)
     while old_layout.count():
         item = old_layout.takeAt(0)
         widget = item.widget()
@@ -335,6 +334,47 @@ def _normalize_help_entry(window) -> None:
     window._show_shortcut_help_popup = lambda: _show_shortcut_popup(window)
 
 
+def _target_detail_width(window) -> int:
+    width = max(0, window.width())
+    if width <= 1366:
+        return 352
+    if width <= 1440:
+        return 380
+    return 400
+
+
+def _apply_responsive_detail_width(window) -> None:
+    detail = getattr(window, "_detail_panel", None)
+    if detail is None:
+        return
+    target = _target_detail_width(window)
+    detail.setMinimumWidth(target)
+    detail.setMaximumWidth(target)
+
+
+class _ReviewResizeFilter(QObject):
+    def __init__(self, window) -> None:
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, watched, event):
+        if watched is self.window and event.type() == QEvent.Resize:
+            # InvoiceReviewApp applies its legacy metrics in resizeEvent. Run
+            # once more afterwards so the physical-review width wins.
+            QTimer.singleShot(0, lambda: _apply_responsive_detail_width(self.window))
+        return False
+
+
+def _install_responsive_detail_width(window) -> None:
+    if hasattr(window, "_review_feedback_resize_filter"):
+        _apply_responsive_detail_width(window)
+        return
+    resize_filter = _ReviewResizeFilter(window)
+    window.installEventFilter(resize_filter)
+    window._review_feedback_resize_filter = resize_filter
+    _apply_responsive_detail_width(window)
+
+
 def sync_review_feedback_state(window) -> None:
     """Refresh visual values after the app has populated the selected invoice."""
     detail = getattr(window, "_detail_panel", None)
@@ -388,6 +428,7 @@ def apply_review_feedback_fixes(window) -> None:
     _rebuild_claim_section(window)
     _install_seller_tooltip_sync(window)
     _normalize_help_entry(window)
+    _install_responsive_detail_width(window)
     window._detail_panel.combo_claims.currentIndexChanged.connect(
         lambda _index: QTimer.singleShot(0, lambda: sync_review_feedback_state(window))
     )
