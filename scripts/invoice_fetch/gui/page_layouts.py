@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .design_baseline_styles import apply_global_design_baseline
+from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
 from .settings_baseline import apply_settings_baseline
 from .settings_feedback_fixes import apply_settings_feedback_fixes
@@ -76,6 +77,7 @@ class WorkspacePageLayout(_PageLayoutContract):
         layout.setSpacing(WORKSPACE_SECTION_GAP)
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         QTimer.singleShot(0, lambda p=page: apply_review_workspace_baseline(p))
+        QTimer.singleShot(0, lambda p=page: apply_review_toolbar_filter_fixes(p))
         return layout
 
 
@@ -98,8 +100,6 @@ class SettingsPageLayout(_PageLayoutContract):
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
         QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
-        # The migration refreshes AI immediately. Install the one direct legacy
-        # label adapter first so no deleted Qt wrapper is touched mid-migration.
         QTimer.singleShot(0, lambda p=page: install_ai_refresh_compatibility(p))
         QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
         QTimer.singleShot(0, lambda p=page: apply_settings_feedback_fixes(p))
