@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .settings_baseline import apply_settings_baseline
 from .styles import PAGE_MARGIN, SECTION_GAP
+from .ui_visibility_contracts import install_settings_visibility_contract
 
 
 class _PageLayoutContract:
@@ -60,7 +61,8 @@ class SettingsPageLayout(_PageLayoutContract):
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
-        # The settings page is assembled incrementally by InvoiceReviewApp.
-        # Run the visual baseline after the event loop sees the completed tree.
+        # InvoiceReviewApp assembles Settings incrementally. Apply both the
+        # visual baseline and state visibility contract after the tree exists.
         QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
+        QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
         return layout
