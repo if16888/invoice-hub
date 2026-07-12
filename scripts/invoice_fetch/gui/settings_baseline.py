@@ -1,8 +1,8 @@
-"""Golden-page visual normalization for the desktop settings center.
+"""Invoice Hub Design Baseline v1.0 for the desktop settings center.
 
-The settings center is still assembled by :mod:`app`; this module owns the
-shared visual contract applied after the page tree exists.  It deliberately
-contains no database or mailbox business logic.
+The settings center is still assembled by :mod:`app`; this module applies the
+approved Golden Page contract after the page tree exists.  It deliberately
+contains no database, scanning, or credential business logic.
 """
 
 from __future__ import annotations
@@ -13,28 +13,39 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
-    QPushButton,
     QSizePolicy,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..credentials import has_auth_code
 from ..log_privacy import mask_email
-from .styles import COLOR_TOKENS
 from .ui_components import ElidedTextLabel, make_badge, make_button
 
 
-_SETTINGS_MAX_WIDTH = 1240
-_SETTINGS_NAV_WIDTH = 176
+# Invoice Hub Design Baseline v1.0: settings Golden Page geometry.
+_SETTINGS_MAX_WIDTH = 1120
+_SETTINGS_NAV_WIDTH = 168
+_PAGE_MARGIN = 24
+_HEADER_CONTENT_GAP = 20
 _MAILBOX_LIST_WIDTH = 280
 _MAILBOX_ROW_HEIGHT = 68
-_MAILBOX_DETAIL_MIN_WIDTH = 600
+_MAILBOX_DETAIL_MIN_WIDTH = 560
+_MAILBOX_DETAIL_MAX_WIDTH = 760
+_FIELD_LABEL_WIDTH = 104
+
+# Semantic palette from Design Baseline v1.0.
+_BG_SURFACE = "#FFFFFF"
+_BG_SURFACE_SECONDARY = "#F8FAFC"
+_BG_SELECTED = "#EFF6FF"
+_BORDER_SUBTLE = "#E5E7EB"
+_TEXT_PRIMARY = "#182230"
+_TEXT_SECONDARY = "#667085"
+_ACCENT = "#2563EB"
 
 
 def apply_settings_baseline(page: QWidget) -> None:
-    """Apply the Settings Golden Page contract once the full widget tree exists."""
+    """Apply the approved Settings Golden Page contract once per page tree."""
     if page is None or page.property("settingsBaselineApplied"):
         return
 
@@ -44,11 +55,17 @@ def apply_settings_baseline(page: QWidget) -> None:
         return
 
     page.setProperty("settingsBaselineApplied", True)
+    page_layout = page.layout()
+    if page_layout is not None:
+        page_layout.setContentsMargins(_PAGE_MARGIN, _PAGE_MARGIN, _PAGE_MARGIN, _PAGE_MARGIN)
+        page_layout.setSpacing(_HEADER_CONTENT_GAP)
+
     settings_tabs.setMaximumWidth(_SETTINGS_MAX_WIDTH)
     settings_tabs.setMinimumWidth(900)
     if hasattr(settings_tabs, "nav_list"):
         settings_tabs.nav_list.setFixedWidth(_SETTINGS_NAV_WIDTH)
 
+    _polish_page_header(window)
     _install_settings_styles(settings_tabs)
     _polish_mailbox_title(window)
     _polish_mailbox_structure(window)
@@ -57,64 +74,88 @@ def apply_settings_baseline(page: QWidget) -> None:
     _refresh_mailbox_visuals(window)
 
 
+def _polish_page_header(window) -> None:
+    header = getattr(window, "settings_header", None)
+    if header is None:
+        return
+    if hasattr(header, "lbl_title"):
+        header.lbl_title.setStyleSheet(
+            f"color: {_TEXT_PRIMARY}; font-size: 22px; font-weight: 600;"
+        )
+    if hasattr(header, "lbl_hint"):
+        header.lbl_hint.setStyleSheet(
+            f"color: {_TEXT_SECONDARY}; font-size: 13px; font-weight: 400;"
+        )
+
+
 def _install_settings_styles(settings_tabs: QWidget) -> None:
-    colors = COLOR_TOKENS
     settings_tabs.setStyleSheet(
         f"""
         QFrame#SecondaryNavStack {{
-            background: {colors['surface_primary']};
-            border: 1px solid {colors['border_subtle']};
-            border-radius: 10px;
+            background: {_BG_SURFACE};
+            border: 1px solid {_BORDER_SUBTLE};
+            border-radius: 8px;
         }}
         QListWidget#SecondaryNavList {{
-            background: {colors['surface_secondary']};
+            background: {_BG_SURFACE_SECONDARY};
             border: none;
-            border-right: 1px solid {colors['border_subtle']};
+            border-right: 1px solid {_BORDER_SUBTLE};
             padding: 10px 8px;
         }}
+        QListWidget#SecondaryNavList::item {{
+            min-height: 34px;
+            border-radius: 6px;
+            padding: 7px 10px;
+            color: {_TEXT_SECONDARY};
+        }}
+        QListWidget#SecondaryNavList::item:selected {{
+            background: {_BG_SELECTED};
+            color: {_ACCENT};
+            font-weight: 600;
+        }}
         QLabel#SettingsSubpageTitle {{
-            color: {colors['text_primary']};
+            color: {_TEXT_PRIMARY};
             font-size: 15px;
-            font-weight: 700;
+            font-weight: 600;
         }}
         QLabel#SettingsSubpageHint {{
-            color: {colors['text_muted']};
+            color: {_TEXT_SECONDARY};
             font-size: 12px;
             font-weight: 400;
         }}
         QListWidget#MailboxAccountList {{
-            background: {colors['surface_primary']};
-            border: 1px solid {colors['border_subtle']};
-            border-radius: 10px;
+            background: {_BG_SURFACE};
+            border: 1px solid {_BORDER_SUBTLE};
+            border-radius: 8px;
             padding: 4px;
         }}
         QListWidget#MailboxAccountList::item {{
             min-height: {_MAILBOX_ROW_HEIGHT}px;
-            border-radius: 8px;
+            border-radius: 6px;
             padding: 0;
         }}
         QListWidget#MailboxAccountList::item:selected {{
-            background: #EFF6FF;
-            color: #1D4ED8;
+            background: {_BG_SELECTED};
+            color: {_ACCENT};
         }}
         QFrame#MailboxAccountRow {{
             background: transparent;
             border: none;
         }}
         QLabel[class="MailboxAccountTitle"] {{
-            color: {colors['text_primary']};
+            color: {_TEXT_PRIMARY};
             font-size: 13px;
-            font-weight: 650;
+            font-weight: 600;
         }}
         QLabel[class="MailboxAccountAddress"] {{
-            color: {colors['text_muted']};
+            color: {_TEXT_SECONDARY};
             font-size: 12px;
             font-weight: 400;
         }}
         QFrame#MailboxDetailSurface {{
-            background: {colors['surface_primary']};
-            border: 1px solid {colors['border_subtle']};
-            border-radius: 10px;
+            background: {_BG_SURFACE};
+            border: 1px solid {_BORDER_SUBTLE};
+            border-radius: 8px;
         }}
         QFrame#MailboxDetailHeader,
         QFrame#MailboxActionFooter {{
@@ -122,28 +163,32 @@ def _install_settings_styles(settings_tabs: QWidget) -> None:
             border: none;
         }}
         QLabel#MailboxDetailTitle {{
-            color: {colors['text_primary']};
+            color: {_TEXT_PRIMARY};
             font-size: 16px;
-            font-weight: 700;
+            font-weight: 600;
         }}
         QLabel#MailboxDetailSubtitle {{
-            color: {colors['text_muted']};
+            color: {_TEXT_SECONDARY};
             font-size: 12px;
             font-weight: 400;
         }}
+        QLabel#MailboxDetailStatus {{
+            border-radius: 9px;
+            padding: 2px 8px;
+        }}
         QFrame[class="SectionDivider"] {{
-            background: {colors['border_subtle']};
+            background: {_BORDER_SUBTLE};
             border: none;
             min-height: 1px;
             max-height: 1px;
         }}
         QFrame#MailboxDetailSurface QLabel[class="SectionTitle"] {{
-            color: {colors['text_primary']};
-            font-size: 13px;
-            font-weight: 650;
+            color: {_TEXT_PRIMARY};
+            font-size: 14px;
+            font-weight: 600;
         }}
         QFrame#MailboxDetailSurface QLabel[class="DetailFieldKey"] {{
-            color: {colors['text_muted']};
+            color: {_TEXT_SECONDARY};
             font-size: 12px;
             font-weight: 500;
         }}
@@ -188,10 +233,15 @@ def _polish_mailbox_structure(window) -> None:
     account_list.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     surface.setMinimumWidth(_MAILBOX_DETAIL_MIN_WIDTH)
+    surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
     surface.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
     surface_layout.setContentsMargins(20, 18, 20, 14)
     surface_layout.setSpacing(12)
     surface_layout.setAlignment(Qt.AlignTop)
+
+    for label in surface.findChildren(QLabel):
+        if label.property("class") == "DetailFieldKey":
+            label.setFixedWidth(_FIELD_LABEL_WIDTH)
 
     _replace_mailbox_header(window, surface, surface_layout)
     _move_action_footer_into_surface(window, surface, surface_layout)
@@ -284,13 +334,13 @@ def _move_action_footer_into_surface(window, surface: QFrame, surface_layout: QV
 
     footer = QFrame(surface)
     footer.setObjectName("MailboxActionFooter")
-    footer.setMinimumHeight(48)
+    footer.setMinimumHeight(52)
     footer_layout = QHBoxLayout(footer)
     footer_layout.setContentsMargins(0, 4, 0, 0)
     footer_layout.setSpacing(8)
 
-    # The first three actions are mutually exclusive primaries.  Keeping them
-    # first guarantees a stable left-to-right hierarchy at every mailbox state.
+    # The mutually exclusive primary actions stay first, then contextual
+    # secondary actions, then More. Hidden actions do not reserve space.
     for name in (
         "btn_settings_mailbox_toggle",
         "btn_settings_mailbox_add_credential",
@@ -494,13 +544,13 @@ def _sync_mailbox_detail_state(window) -> None:
         if label is not None:
             label.setToolTip("" if label.text() in {"", "—"} else label.text())
 
-    enabled = getattr(window, "btn_settings_mailbox_toggle", None)
+    toggle = getattr(window, "btn_settings_mailbox_toggle", None)
     repair = getattr(window, "btn_settings_mailbox_add_credential", None)
     scan = getattr(window, "btn_settings_mailbox_scan", None)
     more_update = getattr(window, "settings_mailbox_more_update_credential", None)
     more_toggle = getattr(window, "settings_mailbox_more_toggle", None)
-    if enabled is not None and repair is not None and scan is not None:
-        account_enabled = enabled.text() != "启用"
+    if toggle is not None and repair is not None and scan is not None:
+        account_enabled = toggle.text() != "启用"
         credential_missing = repair.isVisible()
         if more_update is not None:
             more_update.setVisible(account_enabled and not credential_missing)
