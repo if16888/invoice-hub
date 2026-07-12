@@ -102,6 +102,12 @@ def _sync_selection_contract(window) -> None:
         window._set_right_panel_state(False)
 
     sync_review_feedback_state(window)
+    if detail is not None:
+        # InvoiceDetailPanel's legacy compact cap is recalculated whenever its
+        # summary changes. The physical-review header adds one party row and a
+        # two-level action cluster, so restore the truthful expanded cap after
+        # every selection transition.
+        detail.fixed_header_container.setMaximumHeight(360)
 
 
 def _install_selection_refresh(window, page: QWidget) -> None:
