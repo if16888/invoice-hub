@@ -41,3 +41,11 @@ They require a fresh package built from this source and an explicitly selected d
 ## Acceptance decision
 
 **Not ready for Freeze.** Automated source checks are green, but the source-matched Windows package workflow and installer/upgrade acceptance are still P0 release gates.
+
+## PR50-02 follow-up evidence
+
+- Source commit under test: the PR worktree tip used for the disposable build; the capture manifest records the exact revision for each screenshot run.
+- PyInstaller 6.20.0 package output was built in `%TEMP%\invoice-hub-pr50-build2\dist\InvoiceHub`; the executable was not installed over the user's existing application.
+- The package executable SHA256 was `CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`.
+- The existing installed app remained `v0.1.3`; it was not used as evidence for this source revision. Clean install, upgrade, persistence, and uninstall therefore remain pending.
+- No production database, real invoice, credential, authorization code, API key, or `email_report.html` was read or staged.

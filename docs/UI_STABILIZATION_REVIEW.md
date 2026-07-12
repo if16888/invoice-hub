@@ -52,3 +52,12 @@ No remaining duplicated mailbox summary strip was found in the current settings 
 3. Clean install, in-place upgrade, uninstall, and a user-data workflow have not been executed in this review because they require a source-matched package and would alter local application state.
 
 Therefore this review does **not** recommend UI Freeze yet.
+
+## PR50-02 follow-up
+
+- The capture utility now has an explicit page/state support matrix and rejects unsupported combinations before creating a screenshot or manifest.
+- Every accepted capture validates the constructed state and records requested/actual size, mode (`offscreen` or `windows`), Qt platform, scale, source commit, and UTC timestamp.
+- The geometry helper checks visible button, tool-button, combo, line-edit, and elided-value contracts. Offscreen runs explicitly skip non-ASCII glyph-width assertions when the host lacks a CJK font; the `windows` mode is reserved for physical Windows font/DPI evidence.
+- AI settings now calls the action `校验配置` and describes local-only validation; the old method name remains only as a compatibility alias.
+
+The source-matched PyInstaller build was produced in a disposable TEMP directory from the PR worktree tip; executable SHA256 was recorded locally as `CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`. The build emitted non-fatal warnings for unavailable Playwright hidden imports and was not copied into Git or an installed application directory.

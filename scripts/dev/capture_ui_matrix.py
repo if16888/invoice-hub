@@ -20,8 +20,6 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -37,10 +35,17 @@ PAGES = (
     "dashboard", "review", "imports-email", "imports-local", "imports-mobile",
     "export", "settings-mailbox", "settings-ai", "runtime", "data", "about", "api-key",
 )
-STATES = (
-    "normal", "empty", "error", "long-text", "missing-authorization", "multi-ai",
-    "export-blocked", "mobile-active",
-)
+SUPPORTED_STATES = {
+    "dashboard": {"normal", "empty", "error"}, "review": {"normal"},
+    "imports-email": {"normal"}, "imports-local": {"normal"},
+    "imports-mobile": {"normal", "error", "mobile-active"},
+    "export": {"normal", "empty", "export-blocked"},
+    "settings-mailbox": {"normal", "empty", "long-text", "missing-authorization"},
+    "settings-ai": {"normal", "empty", "multi-ai"}, "runtime": {"normal"},
+    "data": {"normal", "empty"}, "about": {"normal"},
+    "api-key": {"normal", "empty", "error", "long-text"},
+}
+STATES = tuple(sorted({state for states in SUPPORTED_STATES.values() for state in states}))
 
 
 def parse_size(value: str) -> tuple[int, int]:
@@ -77,7 +82,15 @@ def set_page(window: InvoiceReviewApp, page: str) -> ApiKeyDialog | None:
 
 
 def apply_state(window: InvoiceReviewApp, page: str, state: str) -> None:
-    if state == "mobile-active" and page == "imports-mobile":
+    if page == "dashboard" and state == "empty":
+        window.overview_state_stack.show_empty("本次运行还没有导入记录", "完成一次导入后，结果会显示在这里。")
+    elif page == "dashboard" and state == "error":
+        from PySide6.QtWidgets import QPushButton
+        window.overview_state_stack.show_error("无法读取工作台数据", retry=QPushButton("重试"))
+    elif page == "settings-mailbox" and state == "missing-authorization":
+        window.lbl_detail_credential_status.setText("需要授权")
+        window.lbl_settings_mailbox_test_status.setText("请补充授权码后再测试连接。")
+    elif state == "mobile-active" and page == "imports-mobile":
         controller = window.mobile_upload_controller
         controller.host_options = [SimpleNamespace(label="WLAN - 192.168.31.251", host="192.168.31.251")]
         controller.started.emit(SimpleNamespace(
@@ -94,9 +107,6 @@ def apply_state(window: InvoiceReviewApp, page: str, state: str) -> None:
         window.lbl_detail_server.setText(f"{long_value}.imap.example.invalid:993 (SSL/TLS)")
         for label in (window.lbl_detail_name, window.lbl_detail_email, window.lbl_detail_server):
             label.setToolTip(label.text())
-    elif state == "missing-authorization" and page == "settings-mailbox":
-        window.lbl_detail_credential_status.setText("需要授权")
-        window.lbl_settings_mailbox_test_status.setText("请补充授权码后再测试连接。")
     elif state == "multi-ai" and page == "settings-ai":
         profiles = [
             {"profile_id": "synthetic-a", "name": "Synthetic A", "provider": "Provider A", "model": "model-a", "enabled": True},
@@ -111,12 +121,27 @@ def apply_state(window: InvoiceReviewApp, page: str, state: str) -> None:
         window.btn_run_export_page.setEnabled(False)
 
 
-def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int], scale: float, output: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="invoice-hub-ui-") as td:
+def validate_applied_state(window: InvoiceReviewApp, page: str, state: str) -> None:
+    if page == "dashboard" and state in {"empty", "error"}:
+        expected = window.overview_state_stack.empty if state == "empty" else window.overview_state_stack.error
+        if window.overview_state_stack.stack.currentWidget() is not expected:
+            raise RuntimeError(f"state validation failed: {page}/{state}")
+    elif page == "imports-mobile" and state == "mobile-active":
+        panel = window.mobile_upload_panel
+        if panel.stack.currentWidget() is not panel.active_page or not panel.txt_url.text() or panel.lbl_qr.pixmap() is None:
+            raise RuntimeError(f"state validation failed: {page}/{state}")
+    elif page == "settings-ai" and state == "multi-ai":
+        if window.settings_ai_profile_list.isHidden() or window.settings_ai_profile_list.count() < 2:
+            raise RuntimeError(f"state validation failed: {page}/{state}")
+
+
+def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int], scale: float, output: Path, mode: str, source_commit: str) -> dict:
+    with tempfile.TemporaryDirectory(prefix="invoice-hub-ui-", ignore_cleanup_errors=True) as td:
         window = InvoiceReviewApp(Path(td) / "review.db")
         window.resize(*size)
         dialog = set_page(window, page)
         apply_state(window, page, state)
+        validate_applied_state(window, page, state)
         window.show()
         app.processEvents(); app.processEvents()
         target = dialog or window
@@ -126,10 +151,14 @@ def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int],
             raise RuntimeError(f"failed to write {path}")
         screen = QGuiApplication.primaryScreen()
         entry = {
-            "file": str(path), "page": page, "state": state, "size": list(size),
+            "file": str(path), "page": page, "state": state, "requested_size": list(size),
+            "actual_window_size": [target.width(), target.height()],
             "requested_scale": scale,
             "device_pixel_ratio": screen.devicePixelRatio() if screen else None,
             "logical_dpi": screen.logicalDotsPerInch() if screen else None,
+            "platform": os.name, "qt_platform": os.environ.get("QT_QPA_PLATFORM", "windows"),
+            "mode": mode, "state_validation": "passed", "source_commit": source_commit,
+            "generated_at_utc": QDateTime.currentDateTimeUtc().toString("yyyy-MM-ddTHH:mm:ssZ"),
         }
         if dialog:
             dialog.close()
@@ -142,21 +171,30 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--page", choices=(*PAGES, "all"), action="append", default=[])
     parser.add_argument("--state", choices=STATES, default="normal")
+    parser.add_argument("--mode", choices=("offscreen", "windows"), default="offscreen")
     parser.add_argument("--size", type=parse_size, action="append", default=[])
     parser.add_argument("--scale", type=float, action="append", default=[])
     parser.add_argument("--output", type=Path, default=ROOT / "runtime" / "ui-review")
     args = parser.parse_args()
     pages = list(PAGES if "all" in args.page else (args.page or PAGES))
+    if args.state not in SUPPORTED_STATES[pages[0]] or any(args.state not in SUPPORTED_STATES[page] for page in pages):
+        requested = ", ".join(sorted(SUPPORTED_STATES[pages[0]])) if len(pages) == 1 else "use one page when selecting a non-normal state"
+        parser.error(f"Unsupported state '{args.state}' for selected page(s). Supported states: {requested}")
     sizes = args.size or [(1366, 768), (1920, 1080), (2560, 1440)]
     scales = args.scale or [1.0]
     if len(scales) != 1:
         parser.error("run once per --scale so Qt can apply it before QApplication starts")
     # Qt only reads this at QApplication creation.  Requiring one scale per
     # invocation avoids silently producing an incorrectly labelled matrix.
+    if args.mode == "offscreen":
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    else:
+        os.environ.pop("QT_QPA_PLATFORM", None)
     os.environ["QT_SCALE_FACTOR"] = str(scales[0])
+    source_commit = __import__("subprocess").check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=True)
     app = QApplication.instance() or QApplication([])
-    entries = [capture_one(app, page, args.state, size, scale, output)
+    entries = [capture_one(app, page, args.state, size, scale, output, args.mode, source_commit)
                for page in pages for size in sizes for scale in scales]
     manifest = output / f"matrix-{QDateTime.currentDateTimeUtc().toString('yyyyMMdd-hhmmss')}.json"
     manifest.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")

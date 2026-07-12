@@ -2888,7 +2888,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         delete_ai_api_key(provider, profile_id=profile_id)
         self._refresh_settings_ai_page()
 
-    def _test_settings_ai_connection(self) -> None:
+    def _validate_settings_ai_configuration(self) -> None:
         from ..credentials import has_ai_api_key
 
         current = self._current_settings_ai_profile() or {}
@@ -2904,6 +2904,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_failure_status.setText(
             f"已验证本地配置：{provider}/{model} 的 Key 已安全保存。远端连接将在首次使用时确认。"
         )
+
+    def _test_settings_ai_connection(self) -> None:
+        """Backward-compatible alias for local-only AI configuration validation."""
+        self._validate_settings_ai_configuration()
 
     def _restore_settings_ai_session(self) -> None:
         from ..ai_classifier import clear_provider_session_paused
@@ -3530,8 +3534,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_settings_ai_edit.clicked.connect(self._open_edit_ai_profile_dialog)
         self.btn_settings_ai_configure_key = make_button("更新 Key", variant="secondary")
         self.btn_settings_ai_configure_key.clicked.connect(self._configure_settings_ai_key)
-        self.btn_settings_ai_test = make_button("测试连接", variant="secondary")
-        self.btn_settings_ai_test.clicked.connect(self._test_settings_ai_connection)
+        self.btn_settings_ai_test = make_button("校验配置", variant="secondary")
+        self.btn_settings_ai_test.setToolTip("仅校验本地 Provider、模型和 API Key 配置；远端连接将在首次使用时确认。")
+        self.btn_settings_ai_test.clicked.connect(self._validate_settings_ai_configuration)
         self.btn_settings_ai_clear_key = make_button("清除 Key", variant="secondary")
         self.btn_settings_ai_clear_key.setParent(ai_editor)
         self.btn_settings_ai_clear_key.setVisible(False)

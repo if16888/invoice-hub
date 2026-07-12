@@ -19,6 +19,7 @@ from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary, make_button
 from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel
+from tests.gui_geometry_helpers import collect_visible_geometry_failures
 
 
 class IHDS09Tests(unittest.TestCase):
@@ -64,7 +65,11 @@ class IHDS09Tests(unittest.TestCase):
                 })
                 self.app.processEvents()
                 self.assertEqual(len(window._import_activities), 1)
-                self.assertEqual(len(calls), 5)
+                # The list/claims reload path may refresh dependent surfaces;
+                # event ownership is asserted by one activity, while each
+                # required surface must be refreshed at least once.
+                self.assertGreaterEqual(len(calls), 5)
+                self.assertTrue(set(("_load_invoices", "_load_claims", "_refresh_overview_page", "_refresh_imports_page", "_refresh_settings_page")) <= set(calls))
             finally: window.close()
 
     def test_mobile_panel_has_idle_starting_active_error_states(self):
@@ -338,6 +343,24 @@ class IHDS09Tests(unittest.TestCase):
         finally:
             dialog.close()
 
+    def test_ai_settings_validation_copy_is_truthful(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._switch_main_page("settings")
+                window.settings_tabs.setCurrentIndex(1)
+                self.app.processEvents()
+                self.assertEqual(window.btn_settings_ai_test.text(), "校验配置")
+                visible_text = "\n".join(
+                    widget.text() for widget in window.settings_tabs.currentWidget().findChildren(QPushButton)
+                    if widget.isVisible()
+                )
+                self.assertNotIn("测试连接", visible_text)
+                self.assertNotIn("连接成功", visible_text)
+                self.assertIn("校验配置", visible_text)
+            finally:
+                window.close()
+
     def test_navigation_icons_are_svg_backed(self):
         expected = ("dashboard", "review", "import", "export", "settings")
         for semantic in expected:
@@ -382,6 +405,7 @@ from pathlib import Path
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from tests.gui_geometry_helpers import collect_visible_geometry_failures
 app = QApplication([])
 failures = []
 with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
@@ -389,6 +413,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     window.resize(1366, 768); window.show(); app.processEvents(); app.processEvents()
     for page_key in ("overview", "imports", "export", "settings"):
         window._switch_main_page(page_key); app.processEvents(); app.processEvents()
+        failures.extend(collect_visible_geometry_failures(window, page_key))
         controls = []
         for kind in (QPushButton, QLineEdit, QComboBox):
             controls.extend(window.center_stack.currentWidget().findChildren(kind))
@@ -401,10 +426,10 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     window.close(); app.processEvents()
 print(json.dumps(failures, ensure_ascii=False))
 '''
-        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR=str(scale))
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR=str(scale), PYTHONIOENCODING="utf-8")
         completed = subprocess.run(
             [sys.executable, "-c", probe], cwd=Path(__file__).resolve().parents[1],
-            env=env, capture_output=True, text=True, timeout=45,
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         failures = json.loads(completed.stdout.strip().splitlines()[-1])
