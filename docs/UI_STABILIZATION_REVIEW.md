@@ -1,77 +1,71 @@
-# v0.1.5 UI stabilization review
+# Invoice Hub Design Baseline v1.0 — implementation review
 
-Review target: source tree at `4e14d0246d7a5acf8df6fb9aa7a768c8621594d9`.
+Review target: current head of PR #50 (`agent/ui-stabilization-real-workflow`).
 
-## Evidence and scope
+## Decision
 
-- Reproducible source screenshots are produced by `scripts/dev/capture_ui_matrix.py`.
-- This review used an isolated temporary SQLite database and synthetic UI state only. It did not read, copy, or export user invoices, credentials, or runtime data.
-- Captures are written to `runtime/ui-review/`, which is Git-ignored. The local matrix includes dashboard, import/mobile, export, mailbox, AI, and API-key surfaces at 1366x768, 1920x1080, and a 2560x1440 / 150% Qt-scale run.
-- The headless capture host has no CJK font, so its screenshot glyphs are square placeholders. Geometry, control bounds, visual hierarchy, and image placement remain useful; Chinese typography needs final inspection on a source-matched Windows build.
+**Source implementation complete; manual release acceptance still pending.**
 
-## 4e14d02 claim verification
+The Design Baseline is now applied to the App Shell, Dashboard, Review Workspace,
+Import Center, reimbursement/export flow, and every Settings subpage. This is a
+source/UI milestone, not a release or physical-Windows freeze claim.
 
-| Claim | Code and automated evidence | Result |
+## Implemented baseline
+
+| Area | Implemented contract | Automated status |
 | --- | --- | --- |
-| API-key action is local validation, not a remote connection test | `ApiKeyDialog` labels the primary action `保存并校验配置`; `test_api_key_local_validation_copy_is_truthful` rejects success/test/connected copy. | Pass |
-| Mobile upload has visible idle / starting / active / error states and safe close ordering | `MobileUploadSessionPanel` has four pages; `closeEvent` requires `shutdown()` before `db.close()`; focused lifecycle tests pass. | Automated pass; physical Windows lifecycle still pending |
-| Navigation uses bundled SVG icons | `IconProvider` resolves `assets/icons/<semantic>.svg` first; all primary navigation SVGs share `viewBox="0 0 18 18"`; fallback is only for missing assets. | Pass |
-| AI profiles adapt to zero, one, and many profiles | `test_ai_profile_list_visibility_follows_count` verifies empty state, hidden single-profile list, and visible two-profile list. | Pass |
-| Mailbox detail is a master-detail surface with long-value support | Long name/address/server fields use `ElidedTextLabel` plus tooltip; actions are after read-only details. | Automated pass; physical 150% typography pending |
-| Export preflight is structured and compact | Checklist uses `ChecklistRow`, top-aligned cards, and a content-width primary export button. | Pass |
-| DPI checks use real page containers instead of font-only buttons | Three isolated `QApplication` subprocess checks create an `InvoiceReviewApp`, switch pages, and verify visible button/line-edit/combo geometry at 100%, 125%, and 150% Qt scale. | Pass in offscreen Qt; Windows-display confirmation pending |
+| Global visual tokens | Semantic page/surface/selected/border/text/accent/success/warning/danger palette; 22px page title; 8px surfaces; 6px controls | Pass |
+| Page archetypes | Dashboard 1360px, dense Workspace, Task Flow 1440px, Settings 1120px/168px nav | Pass |
+| Mailbox Golden Page | 280px two-line account list, one 560–760px detail surface, 104px field grid, contextual footer, actionable empty state | Pass |
+| AI configuration | Zero/one/many profile states, one integration surface, truthful local validation copy, credential storage and privacy boundary | Pass |
+| Runtime/privacy/data/About | One bounded surface per page, field ownership, content-height footer, no raw technical-log page layout | Pass |
+| Dashboard | Desktop-width content host, one content-width `继续审核` primary, compact activity surface | Pass |
+| Import Center | Source/task/result responsibility widths, compact local/mail actions, embedded mobile upload retained | Pass |
+| Export | 280px group list, flexible invoices, 360px preflight, structured naming check, content-width export action | Pass |
+| Review Workspace | Unified `ReviewViewState`, truthful empty/no-selection states, compact filters without Unicode decoration, 24px dense rows, bounded detail width | Pass |
+| Screenshot evidence | Explicit page/state matrix, unsupported-state rejection, source SHA/DPI/scale/actual-size manifest | Pass |
 
-## Screenshot matrix
+## Evidence boundary
 
-The current local output directory is `runtime/ui-review/`. Each invocation records page, state, requested scale, effective device-pixel ratio, logical DPI, and output filename in a JSON manifest.
+- Automated tests create temporary SQLite databases and synthetic UI state.
+- Screenshot output is written only to the ignored `runtime/ui-review/` tree.
+- No production invoice, mailbox, credential, API key, authorization code, or
+  `email_report.html` is read or committed as acceptance evidence.
+- The source-matched disposable PyInstaller build remains test evidence only; it
+  is not a formal release installer.
 
-Useful commands:
+## Supported screenshot matrix
 
-```powershell
-python scripts/dev/capture_ui_matrix.py --page all --state normal --size 1366x768 --scale 1
-python scripts/dev/capture_ui_matrix.py --page imports-mobile --state mobile-active --size 2560x1440 --scale 1.5
-python scripts/dev/capture_ui_matrix.py --page settings-mailbox --state long-text --size 1920x1080 --scale 1.25
-```
+The capture utility covers:
 
-Qt applies scale at `QApplication` creation, so the tool intentionally accepts one `--scale` per invocation rather than producing incorrectly labelled screenshots.
+- Dashboard: normal / empty / error
+- Review: normal / empty / no-selection
+- Import: mail / local / mobile normal, mobile active and error
+- Export: normal / empty / blocked
+- Mailbox: normal / empty / missing authorization / disabled / long text
+- AI: normal / empty / multiple profiles
+- Runtime, privacy, data/backup and About
+- API Key dialog: normal / empty / error / long text
 
-## Findings
+Each accepted capture records requested and actual geometry, Qt mode, scale,
+device-pixel ratio, logical DPI, source commit, timestamp, and state validation.
 
-### Clipping
+## Manual gates still required
 
-No visible `QPushButton`, `QLineEdit`, or `QComboBox` exceeded the 1366x768 source window bounds in the isolated 100%, 125%, or 150% checks. Long mailbox values preserve a tooltip for the complete value.
+The following remain outside automated/source completion and block a formal UI
+or release freeze:
 
-### Information duplication
+1. Source-matched Windows installer clean install.
+2. Upgrade from the current installed release while retaining config and data.
+3. Uninstall and reinstall behavior.
+4. Physical Windows Chinese-font review at 100%, 125%, and 150% scaling.
+5. A disposable end-to-end workflow: import synthetic invoice → review → add
+   proof → reimbursement group → export → close → restart → verify persistence.
+6. Human screenshot review for visual balance, not only geometry correctness.
 
-No remaining duplicated mailbox summary strip was found in the current settings surface. The import sidebar presents the unified activity timeline rather than a separate persistent mailbox-only summary.
+## Freeze terminology
 
-### Remaining acceptance gaps
-
-1. The locally installed application window is `Invoice Hub v0.1.3`, not a build of `4e14d02`; it cannot prove the current source's Windows rendering.
-2. Headless Qt captures do not substitute for a physical Windows 125%/150% display with installed CJK fonts.
-3. Clean install, in-place upgrade, uninstall, and a user-data workflow have not been executed in this review because they require a source-matched package and would alter local application state.
-
-Therefore this review does **not** recommend UI Freeze yet.
-
-## PR50-02 follow-up
-
-- The capture utility now has an explicit page/state support matrix and rejects unsupported combinations before creating a screenshot or manifest.
-- Every accepted capture validates the constructed state and records requested/actual size, mode (`offscreen` or `windows`), Qt platform, scale, source commit, and UTC timestamp.
-- The geometry helper checks visible button, tool-button, combo, line-edit, and elided-value contracts. Offscreen runs explicitly skip non-ASCII glyph-width assertions when the host lacks a CJK font; the `windows` mode is reserved for physical Windows font/DPI evidence.
-- AI settings now calls the action `校验配置` and describes local-only validation; the old method name remains only as a compatibility alias.
-
-The source-matched PyInstaller build was produced in a disposable TEMP directory from the PR worktree tip; executable SHA256 was recorded locally as `CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`. The build emitted non-fatal warnings for unavailable Playwright hidden imports and was not copied into Git or an installed application directory.
-
-## PR50-03 review-state and mailbox follow-up
-
-- Review header, table row count, selection status, and bottom status now derive from `ReviewViewState`; viewport capacity is no longer presented as the number of matching records.
-- Empty/filtered results switch the detail panel to one empty state and clear material/status placeholders; record actions are not presented as if an invoice were selected.
-- Mailbox entity rows use two single-line elided values with tooltips and a 64px row contract. Detail labels have a fixed 104px label column and a flexible value column; the detail editor has a 560px minimum usable width.
-- Added regression coverage for zero-result review state, detail clearing, mailbox width, row height, and AI local-validation copy.
-
-## PR50-04 mailbox Golden Page evidence
-
-- Review state and mailbox-only changes were validated with 50 focused `test_ihds09` tests and 20 mailbox UI tests.
-- Windows Qt-mode synthetic screenshots were generated under `runtime/ui-review/` for normal, missing-authorization, disabled, long-text, and 150% normal states. The manifest records `mode: "windows"`, effective device-pixel ratio, and `state_validation: "passed"`.
-- The current physical desktop is smaller than the requested 1920x1080 at 150%; Windows Qt clamped that run to an actual 1283x707 window. This is recorded in the manifest and is not reported as a full-size 1920x1080 acceptance.
-- The inspected Windows screenshot shows one outer mailbox detail surface, separate IMAP/port-security/folder/range fields, single-line values, and a single blue primary `立即扫描` footer action. All mailbox screenshot state is synthetic and uses `example.invalid` data.
+- **Design Baseline source implementation:** complete.
+- **Automated regression gate:** green when PR CI succeeds.
+- **Manual Windows acceptance:** pending.
+- **Release/UI Freeze:** not yet approved.
