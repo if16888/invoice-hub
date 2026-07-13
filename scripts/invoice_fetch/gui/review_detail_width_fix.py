@@ -18,6 +18,7 @@ DETAIL_MAX_WIDTH = 520
 COLLAPSED_NAV_THRESHOLD = 96
 COLLAPSED_DETAIL_BONUS = 48
 MIN_WORKSPACE_WIDTH = 720
+COMPACT_DESKTOP_MAX_WIDTH = 1366
 
 
 def _nav_is_collapsed(window) -> bool:
@@ -28,7 +29,7 @@ def _nav_is_collapsed(window) -> bool:
 def _base_detail_width(window, available: int) -> int:
     """Return the normal detail width before applying the collapsed-rail bonus."""
     window_width = max(0, int(window.width()))
-    if window_width <= 1366 or available <= 1160:
+    if window_width <= COMPACT_DESKTOP_MAX_WIDTH or available <= 1160:
         return 352
     if window_width <= 1440 or available <= 1280:
         return 380
@@ -41,8 +42,13 @@ def _target_detail_width(window) -> int:
         return DETAIL_MIN_WIDTH
 
     available = max(0, int(splitter.width()))
+    window_width = max(0, int(window.width()))
     target = _base_detail_width(window, available)
-    if _nav_is_collapsed(window):
+
+    # A 1366-wide desktop is already space-constrained. Keep its historical
+    # 352 px detail contract even when the rail defaults to icon-only; only use
+    # reclaimed sidebar width on larger desktops.
+    if window_width > COMPACT_DESKTOP_MAX_WIDTH and _nav_is_collapsed(window):
         target += COLLAPSED_DETAIL_BONUS
 
     # Never let the detail pane crowd out the dense review workspace.
