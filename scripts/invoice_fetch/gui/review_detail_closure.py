@@ -100,7 +100,10 @@ def _deduplicate_summary(detail) -> None:
     detail.lbl_sum_date.setProperty("detailDuplicateHidden", True)
     detail.lbl_sum_buyer.setProperty("detailDuplicateHidden", True)
     detail.lbl_sum_number.setProperty("detailDuplicateHidden", True)
-    detail.summary_card.setProperty("variant", "flat")
+    # Keep the long-standing embedded-header surface contract. Information
+    # ownership is now deduplicated without changing the surrounding workbench
+    # hierarchy expected by the detail-section integration tests.
+    detail.summary_card.setProperty("variant", "embedded")
     detail.summary_card.layout().setSpacing(6)
     detail.fixed_header_container.setMaximumHeight(310)
 
