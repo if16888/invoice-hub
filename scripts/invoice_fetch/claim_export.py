@@ -142,6 +142,7 @@ def export_claim_package(
     runtime_dir: Path,
     include_to_review: bool = False,
     reimbursement_config: dict | None = None,
+    export_root: Path | None = None,
 ) -> Path:
     """Export all invoices in a claim group to exports/<sanitized-claim-name>_<timestamp>/
 
@@ -197,7 +198,8 @@ def export_claim_package(
     # 1. Setup export directory with timestamp to avoid stale files from repeated exports
     sanitized_name = _sanitize_dirname(claim["name"])
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    export_dir = project_root / "exports" / f"{sanitized_name}_{timestamp}"
+    export_base = Path(export_root) if export_root is not None else project_root / "exports"
+    export_dir = export_base / f"{sanitized_name}_{timestamp}"
     export_dir.mkdir(parents=True, exist_ok=True)
 
     attachments_dir = export_dir / "attachments"

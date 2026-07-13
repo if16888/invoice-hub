@@ -118,6 +118,50 @@ class TestExcelSorting(unittest.TestCase):
 
 
 class TestGUIFixes(unittest.TestCase):
+    def test_manual_attachment_refresh_does_not_call_removed_detail_method(self):
+        """Manual original/evidence updates must refresh through the live selection contract."""
+        import inspect
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        for method_name in (
+            "_add_attachment_manually",
+            "_add_evidence_manually",
+            "_retry_download_link",
+        ):
+            source = inspect.getsource(getattr(InvoiceReviewApp, method_name))
+            self.assertNotIn("_update_detail_fields", source)
+            self.assertIn("_on_table_selection_changed", source)
+
+    def test_manual_evidence_persists_paths_and_flags_through_db_api(self):
+        import inspect
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        source = inspect.getsource(InvoiceReviewApp._add_evidence_manually)
+
+        self.assertIn("update_invoice_file_paths(inv_id, extra_paths=extra_paths)", source)
+        self.assertNotIn("update_invoice_file_paths(inv_id, extra_paths=extra_paths_str)", source)
+        self.assertIn("update_invoice_extra_flags", source)
+        self.assertIn("has_extra=True", source)
+        self.assertIn("missing_extra=False", source)
+
+    def test_supporting_document_refresh_updates_baseline_status_row(self):
+        import inspect
+
+        from scripts.invoice_fetch.gui.preview_mixin import PreviewMixin
+
+        source = inspect.getsource(PreviewMixin._update_supporting_docs_selector)
+        self.assertIn("update_evidence_row(self.supporting_doc_items)", source)
+
+    def test_gui_export_passes_preflight_output_directory_to_exporter(self):
+        import inspect
+
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        source = inspect.getsource(InvoiceReviewApp._export_claim_package)
+        self.assertIn("export_root=Path(configured_export_dir)", source)
+
     """Tests for Fix 1 (toolbar busy transitions) and Fix 2 (multi-row delete selection & de-dup)."""
 
     def setUp(self):

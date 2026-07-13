@@ -1853,7 +1853,7 @@ class InvoiceDetailPanel(QWidget):
             status = f"正常 · {len(items)} 份" if has_doc else "缺失"
             self.evidence_status_line.set_status(status, "success" if has_doc else "warning")
             self.evidence_status_line.replace_action(
-                self.btn_open_extra_files if has_doc else self.btn_add_evidence
+                self.btn_add_evidence
             )
     def get_selected_supporting_document(self) -> dict | None:
 
@@ -3746,6 +3746,7 @@ class InvoiceDetailPanel(QWidget):
         self.evidence_card = wrap_layout_in_card(self.evidence_row, "DetailEvidenceRowCard")
         self.evidence_card.hide()
         self.evidence_status_line = StatusLine("证明", "缺失")
+        self.evidence_status_line.replace_action(self.btn_add_evidence)
         detail_files_layout.addWidget(self.evidence_status_line)
 
 

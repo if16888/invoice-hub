@@ -413,6 +413,11 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertEqual(self.panel.original_card.objectName(), "DetailOriginalRowCard")
         self.assertEqual(self.panel.evidence_card.objectName(), "DetailEvidenceRowCard")
         self.assertFalse(self.panel.evidence_status_line.isHidden())
+        self.assertFalse(self.panel.btn_add_evidence.isHidden())
+        self.assertGreaterEqual(
+            self.panel.evidence_status_line.layout().indexOf(self.panel.btn_add_evidence),
+            0,
+        )
 
     def test_basic_info_section_stays_compact(self):
         self.panel.resize(760, 850)
@@ -479,7 +484,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertTrue(panel.btn_open_file.isHidden())
         self.assertTrue(panel.btn_add_attachment.isHidden())
         self.assertTrue(panel.btn_retry_download.isHidden())
-        self.assertFalse(panel.btn_open_extra_files.isHidden())  # visible as "打开"
+        self.assertFalse(panel.btn_open_extra_files.isHidden())
         self.assertFalse(panel.btn_add_evidence.isHidden())  # visible as "替换/管理"
 
         QTest.mouseDClick(panel.txt_path, Qt.LeftButton)

@@ -1215,6 +1215,8 @@ class PreviewMixin:
             self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
 
         self.combo_supporting_docs.blockSignals(False)
+        if hasattr(self, "update_evidence_row"):
+            self.update_evidence_row(self.supporting_doc_items)
 
     def _link_current_evidence_to_invoice(self):
         """Link the currently previewed evidence document to the current invoice."""

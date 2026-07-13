@@ -5798,7 +5798,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.current_invoice["file_hash"] = file_hash_val
 
             # Refresh GUI and preview
-            self._update_detail_fields(self.current_invoice)
+            self._on_table_selection_changed()
             self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
             self.current_preview_index = 0
             self._update_document_preview()
@@ -5892,8 +5892,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if norm_rel_path not in seen_normalized:
                 extra_paths.append(rel_path)
 
+            self.db.update_invoice_file_paths(inv_id, extra_paths=extra_paths)
+            self.db.update_invoice_extra_flags(
+                inv_id,
+                has_extra=True,
+                missing_extra=False,
+            )
+
             extra_paths_str = json.dumps(extra_paths, ensure_ascii=False)
-            self.db.update_invoice_file_paths(inv_id, extra_paths=extra_paths_str)
 
             # Update memory state
             self.current_invoice["extra_paths"] = extra_paths_str
@@ -5901,7 +5907,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.current_invoice["missing_extra"] = 0
 
             # Refresh GUI and preview
-            self._update_detail_fields(self.current_invoice)
+            self._on_table_selection_changed()
             from .helpers import resolve_invoice_documents_with_evidence
             self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
             self.current_preview_index = 0
@@ -6008,7 +6014,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if success:
             QMessageBox.information(self, "成功", "发票原件下载并关联成功！")
-            self._update_detail_fields(self.current_invoice)
+            self._on_table_selection_changed()
             self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
             self.current_preview_index = 0
             self._update_document_preview()
@@ -6565,6 +6571,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # Trigger standard package exporter
             from ..claim_export import export_claim_package
             cfg = load_config_safe()
+            configured_export_dir = getattr(self, "_export_dir", None) or cfg.get("export", {}).get("output_dir")
             export_dir = export_claim_package(
                 db=self.db,
                 claim_id=claim_id,
@@ -6572,6 +6579,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 runtime_dir=RUNTIME_DIR,
                 include_to_review=include_to_review,
                 reimbursement_config=cfg.get("reimbursement", {}),
+                export_root=Path(configured_export_dir) if configured_export_dir else None,
             )
 
             # Read manifest.json to get item count and skipped counts
