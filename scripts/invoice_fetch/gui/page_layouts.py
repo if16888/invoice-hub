@@ -9,6 +9,7 @@ from .review_detail_width_fix import apply_review_detail_width_fix
 from .review_table_width_contract import apply_review_table_width_contract
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
+from .review_workspace_closure import apply_review_workspace_closure
 from .settings_baseline import apply_settings_baseline
 from .settings_feedback_fixes import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
@@ -82,6 +83,9 @@ class WorkspacePageLayout(_PageLayoutContract):
         QTimer.singleShot(0, lambda p=page: apply_review_toolbar_filter_fixes(p))
         QTimer.singleShot(0, lambda p=page: apply_review_table_width_contract(p))
         QTimer.singleShot(0, lambda p=page: apply_review_detail_width_fix(p))
+        # Run last: this converts compatibility-only geometry into the final
+        # interactive Review workspace after all legacy/baseline fixes settle.
+        QTimer.singleShot(0, lambda p=page: apply_review_workspace_closure(p))
         return layout
 
 
