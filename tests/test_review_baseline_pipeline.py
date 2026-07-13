@@ -46,6 +46,7 @@ class ReviewBaselinePipelineTests(unittest.TestCase):
         finally:
             page.close()
             page.deleteLater()
+            self.app.processEvents()
 
     def test_scheduler_coalesces_to_one_deferred_callback(self):
         page = QWidget()
@@ -72,6 +73,7 @@ class ReviewBaselinePipelineTests(unittest.TestCase):
         finally:
             page.close()
             page.deleteLater()
+            self.app.processEvents()
 
     def test_workspace_layout_delegates_to_pipeline_scheduler(self):
         page = QWidget()
@@ -79,13 +81,17 @@ class ReviewBaselinePipelineTests(unittest.TestCase):
         try:
             with patch(
                 "scripts.invoice_fetch.gui.page_layouts.schedule_review_baseline_pipeline"
-            ) as schedule:
+            ) as schedule, patch(
+                "scripts.invoice_fetch.gui.page_layouts.QTimer.singleShot"
+            ) as global_style_timer:
                 WorkspacePageLayout.apply(page, layout)
             schedule.assert_called_once_with(page)
+            global_style_timer.assert_called_once()
             self.assertEqual(page.property("pageArchetype"), "workspace")
         finally:
             page.close()
             page.deleteLater()
+            self.app.processEvents()
 
 
 if __name__ == "__main__":
