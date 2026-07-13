@@ -28,14 +28,18 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_summary_concentrates_parties_and_hides_duplicate_number(self):
+    def test_summary_keeps_decision_fields_and_hides_detail_duplicates(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
                 detail = window._detail_panel
                 self.assertTrue(window.review_page.property("reviewFeedbackFixesApplied"))
+                self.assertTrue(window.review_page.property("reviewDetailClosureApplied"))
                 self.assertIsInstance(detail.lbl_sum_seller, ElidedTextLabel)
                 self.assertIsInstance(detail.lbl_sum_buyer, ElidedTextLabel)
+                self.assertFalse(detail.lbl_sum_seller.isHidden())
+                self.assertTrue(detail.lbl_sum_buyer.isHidden())
+                self.assertTrue(detail.lbl_sum_date.isHidden())
                 self.assertTrue(detail.lbl_sum_number.isHidden())
                 self.assertTrue(detail.lbl_sum_number.property("summaryDuplicateHidden"))
             finally:
@@ -55,7 +59,7 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_amount_date_and_long_parties_are_visible_in_basic_info(self):
+    def test_summary_and_basic_info_values_follow_single_ownership(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
@@ -70,14 +74,15 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 }
                 sync_review_feedback_state(window)
                 self.assertFalse(detail.lbl_core_date.isHidden())
-                self.assertFalse(detail.lbl_core_amount.isHidden())
-                self.assertFalse(detail.lbl_core_seller.isHidden())
+                self.assertFalse(detail.lbl_core_buyer.isHidden())
+                self.assertTrue(detail.lbl_core_amount.isHidden())
+                self.assertTrue(detail.lbl_core_seller.isHidden())
                 self.assertEqual(detail.lbl_core_date.text(), "2099-12-31")
-                self.assertEqual(detail.lbl_core_amount.text(), "¥123.45")
+                self.assertEqual(detail.lbl_core_buyer.text(), window.current_invoice["buyer_name"])
                 self.assertEqual(detail.lbl_sum_seller.toolTip(), window.current_invoice["seller_name"])
                 self.assertEqual(detail.lbl_sum_buyer.toolTip(), window.current_invoice["buyer_name"])
+                self.assertTrue(detail.lbl_sum_date.isHidden())
                 self.assertEqual(detail.lbl_sum_date.text(), "2099-12-31")
-                self.assertEqual(detail.lbl_sum_date.accessibleName(), "费用日期")
             finally:
                 window.close()
 

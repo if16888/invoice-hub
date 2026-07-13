@@ -5,20 +5,18 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .design_baseline_styles import apply_global_design_baseline
-from .review_detail_width_fix import apply_review_detail_width_fix
-from .review_table_width_contract import apply_review_table_width_contract
-from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
-from .review_workspace_baseline import apply_review_workspace_baseline
+from .design_tokens import DESIGN_V1_METRICS
+from .review_baseline_pipeline import schedule_review_baseline_pipeline
 from .settings_baseline import apply_settings_baseline
 from .settings_feedback_fixes import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .ui_visibility_contracts import install_settings_visibility_contract
 
-BASELINE_PAGE_MARGIN = 24
-BASELINE_SECTION_GAP = 16
-WORKSPACE_HORIZONTAL_MARGIN = 12
-WORKSPACE_SECTION_GAP = 8
+BASELINE_PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
+BASELINE_SECTION_GAP = DESIGN_V1_METRICS["section_gap"]
+WORKSPACE_HORIZONTAL_MARGIN = DESIGN_V1_METRICS["workspace_horizontal_margin"]
+WORKSPACE_SECTION_GAP = DESIGN_V1_METRICS["workspace_gap"]
 
 
 class _PageLayoutContract:
@@ -78,10 +76,7 @@ class WorkspacePageLayout(_PageLayoutContract):
         )
         layout.setSpacing(WORKSPACE_SECTION_GAP)
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        QTimer.singleShot(0, lambda p=page: apply_review_workspace_baseline(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_toolbar_filter_fixes(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_table_width_contract(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_detail_width_fix(p))
+        schedule_review_baseline_pipeline(page)
         return layout
 
 

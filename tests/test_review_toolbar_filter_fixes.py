@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QSizePolicy
+from PySide6.QtWidgets import QApplication, QHeaderView, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.review_toolbar_filter_fixes import (
@@ -117,20 +117,26 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_seller_column_is_capped_and_user_resizable(self):
+    def test_seller_column_is_capped_and_invoice_column_fills_remainder(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
+                header = window.table.horizontalHeader()
                 self.assertGreaterEqual(window.table.columnWidth(4), 180)
                 self.assertLessEqual(window.table.columnWidth(4), 320)
-                self.assertEqual(window.table.columnWidth(5), 190)
+                self.assertGreaterEqual(window.table.columnWidth(5), 178)
+                self.assertEqual(
+                    header.sectionResizeMode(5),
+                    QHeaderView.Interactive,
+                )
                 self.assertEqual(window._min_column_widths[4], 180)
-                self.assertEqual(window._min_column_widths[5], 178)
+                self.assertGreaterEqual(window._min_column_widths[5], 178)
                 window.table.setColumnWidth(4, 220)
                 self.assertEqual(window.table.columnWidth(4), 220)
                 window.resize(1500, 850)
                 self.app.processEvents()
                 self.assertEqual(window.table.columnWidth(4), 220)
+                self.assertGreaterEqual(header.length(), window.table.viewport().width() - 4)
             finally:
                 window.close()
 
@@ -147,9 +153,10 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 _repair_material_rows(window)
                 self.app.processEvents()
 
-                self.assertTrue(detail.original_card.isHidden())
-                self.assertTrue(detail.evidence_card.isHidden())
+                self.assertIsNone(detail.original_card)
+                self.assertIsNone(detail.evidence_card)
                 self.assertTrue(detail.combo_supporting_docs.isHidden())
+                self.assertTrue(detail.combo_supporting_docs.property("compatibilityModelOnly"))
 
                 for line, expected_label, maximum in (
                     (detail.original_status_line, "原件", 72),
