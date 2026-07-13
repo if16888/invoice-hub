@@ -55,10 +55,9 @@ class ReviewWorkspaceClosureTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 button = window.btn_load_all
-                parent_layout = button.parentWidget().layout()
                 self.assertTrue(button.property("designBaselineRemoved"))
-                self.assertEqual(parent_layout.indexOf(button), -1)
                 self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen))
+                self.assertEqual(window.status_actions_container.layout().indexOf(button), -1)
             finally:
                 window.close()
 
@@ -71,12 +70,13 @@ class ReviewWorkspaceClosureTests(unittest.TestCase):
                 self.assertTrue(table.property("reviewRemainderFillApplied"))
                 self.assertEqual(
                     header.sectionResizeMode(5),
-                    QHeaderView.Stretch,
+                    QHeaderView.Interactive,
                 )
                 # The header now covers the viewport instead of ending after the
                 # invoice-number text and leaving a large empty band.
                 self.assertGreaterEqual(header.length(), table.viewport().width() - 4)
                 self.assertGreaterEqual(table.columnWidth(4), 180)
+                self.assertLessEqual(table.columnWidth(4), 320)
                 self.assertGreaterEqual(table.columnWidth(5), 178)
             finally:
                 window.close()
