@@ -133,12 +133,10 @@ def _remove_load_all_from_product_surface(window) -> None:
     parent = button.parentWidget()
     _remove_widget_from_layout(parent.layout() if parent is not None else None, button)
     button.setProperty("designBaselineRemoved", True)
-    button.setEnabled(False)
-    button.setVisible(False)
-    button.setFixedSize(0, 0)
-    button.setToolTip("")
-    # Keep the compatibility object alive for older callbacks/tests, but make it
-    # impossible for a later legacy setVisible(True) call to put it on screen.
+    # Keep the compatibility object alive because legacy loading code and tests
+    # still update its text/visibility. WA_DontShowOnScreen prevents that object
+    # from becoming a product-surface control after it has been removed from the
+    # status-bar layout.
     button.setAttribute(Qt.WA_DontShowOnScreen, True)
 
 
