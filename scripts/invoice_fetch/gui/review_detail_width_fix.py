@@ -135,6 +135,9 @@ def apply_review_detail_width_fix(page: QWidget) -> None:
 
     window._review_detail_width_controller = controller
     _reflow_review_detail(window)
+    # A legacy single-shot resize callback may already have been queued before
+    # its event filter was removed. Queue one final reflow so this contract wins.
+    controller.schedule()
 
 
 __all__ = [
