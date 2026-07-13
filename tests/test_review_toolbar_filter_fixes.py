@@ -164,7 +164,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                     )
                     action = line._action_widget
                     self.assertIsNotNone(action)
-                    self.assertTrue(action.isVisible())
+                    self.assertFalse(action.isHidden())
                     self.assertEqual(action.minimumWidth(), action.maximumWidth())
                     self.assertLessEqual(action.maximumWidth(), maximum)
                     self.assertGreaterEqual(
