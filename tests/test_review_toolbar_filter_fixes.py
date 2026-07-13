@@ -127,7 +127,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 self.assertGreaterEqual(window.table.columnWidth(5), 178)
                 self.assertEqual(
                     header.sectionResizeMode(5),
-                    QHeaderView.Stretch,
+                    QHeaderView.Interactive,
                 )
                 self.assertEqual(window._min_column_widths[4], 180)
                 self.assertGreaterEqual(window._min_column_widths[5], 178)
