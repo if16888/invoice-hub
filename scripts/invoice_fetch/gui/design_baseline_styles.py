@@ -17,6 +17,13 @@ from .design_tokens import (
 # authoritative Design v1 dictionary, not a second independently maintained set.
 BASELINE_COLORS = DESIGN_V1_COLORS
 
+# A small number of older selectors embedded the former brand accent directly
+# instead of reading ``styles.COLOR_TOKENS``.  Canonical stylesheet assembly is
+# the migration boundary: purge only the known obsolete brand literal here,
+# while leaving semantic status colors untouched until their components are
+# reviewed individually.
+_OBSOLETE_BRAND_LITERALS = ("#1599BD", "#1599bd")
+
 BASELINE_QSS = f"""
 QMainWindow {{ background-color: {BASELINE_COLORS['page']}; }}
 QLabel[class="PageTitle"] {{
@@ -99,6 +106,14 @@ QTableWidget {{
 """
 
 
+def _purge_obsolete_brand_literals(stylesheet: str) -> str:
+    """Replace known pre-Baseline brand literals in the assembled QSS."""
+    canonical_accent = DESIGN_V1_COLORS["accent"]
+    for literal in _OBSOLETE_BRAND_LITERALS:
+        stylesheet = stylesheet.replace(literal, canonical_accent)
+    return stylesheet
+
+
 def build_canonical_application_stylesheet() -> str:
     """Build the full application QSS from the Design v1 token authority."""
     from . import styles as legacy_styles
@@ -111,6 +126,8 @@ def build_canonical_application_stylesheet() -> str:
         core_qss += "\n" + build_qss()
     except ImportError:
         pass
+
+    core_qss = _purge_obsolete_brand_literals(core_qss)
 
     # Keep late imports of styles.APP_STYLESHEET aligned with the same authority.
     legacy_styles.APP_STYLESHEET = core_qss
