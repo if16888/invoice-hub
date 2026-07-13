@@ -153,9 +153,10 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 _repair_material_rows(window)
                 self.app.processEvents()
 
-                self.assertTrue(detail.original_card.isHidden())
-                self.assertTrue(detail.evidence_card.isHidden())
+                self.assertIsNone(detail.original_card)
+                self.assertIsNone(detail.evidence_card)
                 self.assertTrue(detail.combo_supporting_docs.isHidden())
+                self.assertTrue(detail.combo_supporting_docs.property("compatibilityModelOnly"))
 
                 for line, expected_label, maximum in (
                     (detail.original_status_line, "原件", 72),
