@@ -28,6 +28,7 @@ _FALLBACK = {
     "copy": QStyle.SP_FileDialogNewFolder,
     "show": QStyle.SP_DialogYesButton,
     "hide": QStyle.SP_DialogNoButton,
+    "filter": QStyle.SP_ArrowDown,
     "success": QStyle.SP_DialogApplyButton,
     "warning": QStyle.SP_MessageBoxWarning,
     "danger": QStyle.SP_MessageBoxCritical,
@@ -39,7 +40,7 @@ class IconProvider:
     """Return a QIcon for a semantic name.
 
     Looks up a built-in SVG first so that all navigation icons are visually
-    uniform regardless of OS theme, DPI, or Qt style.  Falls back to the
+    uniform regardless of OS theme, DPI, or Qt style. Falls back to the
     system's standard pixmap when an SVG is not available.
     """
 
@@ -48,10 +49,7 @@ class IconProvider:
         svg_path = _ASSETS_ICONS / f"{semantic}.svg"
         if svg_path.exists():
             return QIcon(str(svg_path))
-        # System fallback
         app = QApplication.instance()
         style = app.style() if app is not None else None
         sp = _FALLBACK.get(semantic, QStyle.SP_FileIcon)
         return style.standardIcon(sp) if style else QIcon()
-
-

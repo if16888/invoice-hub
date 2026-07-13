@@ -341,7 +341,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 ]
                 self.assertGreaterEqual(len(visible_nav_buttons), 1)
                 self.assertFalse(window.workbench_nav_buttons["review"].icon().isNull())
-                self.assertEqual(window.btn_scan_email.text(), "同步")
+                self.assertEqual(window.btn_scan_email.text(), "扫描邮箱")
                 self.assertEqual(window.btn_toolbar_export.text(), "导出")
                 self.assertFalse(window.btn_toolbar_help.isVisible())
                 self.assertFalse(window.btn_toolbar_notify.isVisible())

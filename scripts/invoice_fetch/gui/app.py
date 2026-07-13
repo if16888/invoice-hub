@@ -120,6 +120,20 @@ REDOWNLOAD_BUCKETS = (
 TABLE_BADGE_ROLE = int(Qt.UserRole) + 101
 
 
+@dataclass(frozen=True)
+class ReviewViewState:
+    """Single source of truth for review counts and selection state."""
+
+    query_total: int
+    loaded_count: int
+    visible_count: int
+    selected_count: int
+    has_current_invoice: bool
+    is_empty_result: bool
+    active_filter: str
+    search_text: str
+
+
 @dataclass
 class ImportActivity:
     """Business-facing import outcome kept separate from diagnostic logs."""
@@ -1673,6 +1687,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if target in widgets_in_stack and self.right_stack.currentWidget() != target:
             self.right_stack.setCurrentWidget(target)
 
+    def _review_view_state(self, total_matching: int | None = None, selected_count: int | None = None) -> ReviewViewState:
+        loaded = len(getattr(self, "invoices_list", []) or [])
+        visible = self.table.rowCount() if hasattr(self, "table") else loaded
+        query_total = max(visible, int(total_matching if total_matching is not None else getattr(self, "_record_total_matching", loaded) or loaded))
+        if selected_count is None:
+            selected_count = len(self.table.selectionModel().selectedRows()) if hasattr(self, "table") and self.table.selectionModel() else 0
+        search_text = self.txt_search.text().strip() if hasattr(self, "txt_search") else ""
+        active_filter = str(getattr(self, "current_filter_status", None) or "all")
+        return ReviewViewState(query_total, loaded, visible, int(selected_count), bool(getattr(self, "current_invoice", None)), visible == 0, active_filter, search_text)
+
     def _schedule_invoice_reload(self, *_args):
         # Debounce invoice reloads when search/filter controls change.
         self._column_filters_load_all = False
@@ -2508,10 +2532,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if hasattr(self, "lbl_settings_mailbox_empty"):
             self.lbl_settings_mailbox_empty.setVisible(False)
+        has_accounts = self.settings_mailbox_list.count() > 0
+        if hasattr(self, "mailbox_detail_surface"):
+            self.mailbox_detail_surface.setVisible(has_accounts)
         if hasattr(self, "settings_mailbox_empty_state"):
-            self.settings_mailbox_empty_state.setVisible(self.settings_mailbox_list.count() == 0)
+            self.settings_mailbox_empty_state.setVisible(not has_accounts)
 
-        if self.settings_mailbox_list.count() == 0:
+        if not has_accounts:
             self._settings_mailbox_current_key = ""
             self._clear_settings_mailbox_form()
             return
@@ -2567,11 +2594,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_detail_email.setText(addr)
             self.lbl_detail_name.setToolTip(name)
             self.lbl_detail_email.setToolTip(addr)
-            self.lbl_detail_server.setText(f"{server}:{port} ({ssl})")
+            self.lbl_detail_server.setText(server or "—")
+            self.lbl_detail_port_security.setText(f"{port} · {ssl}")
             self.lbl_detail_is_default.setText("是 (默认扫描账号)" if account.get("is_default") else "否")
             self.lbl_detail_credential_status.setText("已安全保存" if cred_ok else "需要授权")
             self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
-            self.lbl_detail_scan_rule.setText(f"最近 {months} 个月 INBOX")
+            self.lbl_detail_scan_folder.setText(str(search_cfg.get("folder") or "INBOX"))
+            self.lbl_detail_scan_range.setText(f"最近 {months} 个月")
+            self.lbl_detail_attachment_types.setText("PDF / OFD / XML / 图片")
+            self.lbl_detail_header_name.setText(name)
+            self.lbl_detail_header_email.setText(mask_email(addr))
+            self.lbl_detail_header_name.setToolTip(name)
+            self.lbl_detail_header_email.setToolTip(addr)
+            self.lbl_detail_header_status.setText("已停用" if not account.get("enabled", True) else ("需要授权" if not cred_ok else "正常"))
+
+        enabled = bool(account.get("enabled", True))
+        self.btn_settings_mailbox_add_credential.setVisible(enabled and not cred_ok)
+        self.btn_settings_mailbox_test.setVisible(enabled and cred_ok)
+        self.btn_settings_mailbox_scan.setVisible(enabled and cred_ok)
+        self.btn_settings_mailbox_edit_config.setVisible(True)
+        self.btn_settings_mailbox_toggle.setVisible(not enabled)
+        self.settings_mailbox_more.setVisible(True)
+        self.settings_mailbox_more_update_credential.setVisible(enabled)
+        self.settings_mailbox_more_toggle.setVisible(enabled or not enabled)
+        self.settings_mailbox_more_delete.setVisible(True)
 
         for attr in (
             "btn_settings_mailbox_edit_config",
@@ -2587,7 +2633,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "btn_settings_mailbox_toggle"):
             self.btn_settings_mailbox_toggle.setText("停用" if account.get("enabled", True) else "启用")
             self.btn_settings_mailbox_delete.setEnabled(True)
-            self.settings_mailbox_more_menu.actions()[0].setText(self.btn_settings_mailbox_toggle.text())
+            self.settings_mailbox_more_toggle.setText(self.btn_settings_mailbox_toggle.text())
 
         # There is one contextual primary action: repair credentials first,
         # otherwise scan the selected account.
@@ -2595,7 +2641,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button.setProperty("variant", "secondary")
             button.style().unpolish(button)
             button.style().polish(button)
-        primary = self.btn_settings_mailbox_add_credential if not cred_ok else self.btn_settings_mailbox_scan
+        primary = self.btn_settings_mailbox_toggle if not enabled else (self.btn_settings_mailbox_add_credential if not cred_ok else self.btn_settings_mailbox_scan)
         primary.setProperty("variant", "primary")
         primary.style().unpolish(primary)
         primary.style().polish(primary)
@@ -2610,6 +2656,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_detail_credential_status.setText("未配置")
             self.lbl_detail_credential_status.setStyleSheet("color: #64748B; font-weight: 600;")
             self.lbl_detail_scan_rule.setText("—")
+            self.lbl_detail_port_security.setText("—")
+            self.lbl_detail_scan_folder.setText("—")
+            self.lbl_detail_scan_range.setText("—")
+            self.lbl_detail_attachment_types.setText("—")
+            self.lbl_detail_header_name.setText("未选择邮箱账号")
+            self.lbl_detail_header_email.setText("—")
+            self.lbl_detail_header_status.setText("未配置")
+        if hasattr(self, "mailbox_detail_surface"):
+            self.mailbox_detail_surface.setVisible(False)
+        if hasattr(self, "settings_mailbox_empty_state"):
+            self.settings_mailbox_empty_state.setVisible(True)
         if hasattr(self, "btn_settings_mailbox_toggle"):
             self.btn_settings_mailbox_toggle.setText("停用")
         for attr in (
@@ -2622,6 +2679,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ):
             if hasattr(self, attr):
                 getattr(self, attr).setEnabled(False)
+        for button in (self.btn_settings_mailbox_add_credential, self.btn_settings_mailbox_test, self.btn_settings_mailbox_scan, self.btn_settings_mailbox_edit_config, self.btn_settings_mailbox_toggle):
+            button.setVisible(False)
+        self.settings_mailbox_more.setVisible(False)
 
     def _add_settings_mailbox(self) -> None:
         self._open_add_mailbox_dialog()
@@ -2754,12 +2814,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "settings_ai_empty_state"):
             self.settings_ai_empty_state.setVisible(self.settings_ai_profile_list.count() == 0)
         if self.settings_ai_profile_list.count() == 0:
+            self.settings_ai_detail_panel.setVisible(False)
+            self.btn_settings_ai_edit.setVisible(True)
+            self.btn_settings_ai_edit.setProperty("variant", "primary")
+            self.btn_settings_ai_configure_key.setVisible(False)
+            self.btn_settings_ai_test.setVisible(False)
+            self.settings_ai_more.setVisible(False)
             self._settings_ai_current_profile_id = ""
             self.lbl_settings_ai_provider.setText("—")
             self.lbl_settings_ai_model.setText("—")
             self.lbl_settings_ai_enabled.setText("关闭")
             self.lbl_settings_ai_session_state.setText("无可用会话")
             self.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
+            self.lbl_settings_ai_validation_status.setText("尚未校验本地配置")
             self.lbl_settings_ai_failure_status.setText("失败状态：暂无 AI 配置。")
             if hasattr(self, "settings_ai_summary_strip"):
                 self.settings_ai_summary_strip.set_metric("enabled", "关闭")
@@ -2768,6 +2835,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.settings_ai_summary_strip.set_metric("key", "未配置")
                 self.settings_ai_summary_strip.set_metric("paused", "正常")
             return
+
+        self.settings_ai_detail_panel.setVisible(True)
+        self.btn_settings_ai_edit.setVisible(True)
+        self.btn_settings_ai_edit.setProperty("variant", "secondary")
+        self.btn_settings_ai_configure_key.setVisible(True)
+        self.btn_settings_ai_test.setVisible(True)
+        self.btn_settings_ai_test.setProperty("variant", "primary")
+        self.settings_ai_more.setVisible(True)
 
         target_row = 0
         if current_profile_id:
@@ -2796,6 +2871,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         model = str(profile.get("model") or "—")
         key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
         self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
+        self.lbl_settings_ai_validation_status.setText("已配置，尚未重新校验")
         paused = is_provider_session_paused(profile.get("provider", ""))
         self.lbl_settings_ai_provider.setText(provider)
         self.lbl_settings_ai_model.setText(model)
@@ -2888,7 +2964,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         delete_ai_api_key(provider, profile_id=profile_id)
         self._refresh_settings_ai_page()
 
-    def _test_settings_ai_connection(self) -> None:
+    def _validate_settings_ai_configuration(self) -> None:
         from ..credentials import has_ai_api_key
 
         current = self._current_settings_ai_profile() or {}
@@ -2901,9 +2977,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not has_ai_api_key(provider, profile_id=profile_id):
             self.lbl_settings_ai_failure_status.setText("失败状态：未检测到可用 API Key，无法进行本地连通性预检。")
             return
+        self.lbl_settings_ai_validation_status.setText("已验证本地配置；远端连接将在首次使用时确认")
         self.lbl_settings_ai_failure_status.setText(
             f"已验证本地配置：{provider}/{model} 的 Key 已安全保存。远端连接将在首次使用时确认。"
         )
+
+    def _test_settings_ai_connection(self) -> None:
+        """Backward-compatible alias for local-only AI configuration validation."""
+        self._validate_settings_ai_configuration()
 
     def _restore_settings_ai_session(self) -> None:
         from ..ai_classifier import clear_provider_session_paused
@@ -3383,7 +3464,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         mailbox_shell = QHBoxLayout()
         mailbox_shell.setContentsMargins(0, 0, 0, 0)
-        mailbox_shell.setSpacing(12)
+        mailbox_shell.setSpacing(16)
 
         # Saved Accounts List ONLY (Requirement 4)
         self.settings_mailbox_list = EntityList()
@@ -3394,6 +3475,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Read-Only Details Panel (Requirement 5 & 6)
         mailbox_editor = QWidget()
+        mailbox_editor.setMinimumWidth(560)
+        mailbox_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         mailbox_editor_layout = QVBoxLayout(mailbox_editor)
         mailbox_editor_layout.setContentsMargins(0, 0, 0, 0)
         mailbox_editor_layout.setSpacing(8)
@@ -3426,25 +3509,76 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_row.addWidget(self.btn_settings_mailbox_test)
         action_row.addWidget(self.btn_settings_mailbox_scan)
         action_row.addWidget(self.btn_settings_mailbox_edit_config)
+        action_row.addWidget(self.btn_settings_mailbox_toggle)
         self.settings_mailbox_more = MoreMenuButton(parent=mailbox_editor)
         self.settings_mailbox_more.setToolTip("更多账号操作")
         self.settings_mailbox_more_menu = QMenu(self.settings_mailbox_more)
-        self.settings_mailbox_more_menu.addAction(self.btn_settings_mailbox_toggle.text(), self._toggle_settings_mailbox_enabled)
+        self.settings_mailbox_more_update_credential = self.settings_mailbox_more_menu.addAction("更新授权码", self._add_mailbox_credential_dialog)
         self.settings_mailbox_more_menu.addSeparator()
-        self.settings_mailbox_more_menu.addAction("删除", self._delete_settings_mailbox)
+        self.settings_mailbox_more_toggle = self.settings_mailbox_more_menu.addAction(self.btn_settings_mailbox_toggle.text(), self._toggle_settings_mailbox_enabled)
+        self.settings_mailbox_more_menu.addSeparator()
+        self.settings_mailbox_more_delete = self.settings_mailbox_more_menu.addAction("删除", self._delete_settings_mailbox)
         self.settings_mailbox_more.setMenu(self.settings_mailbox_more_menu)
         action_row.addWidget(self.settings_mailbox_more)
         action_row.addStretch(1)
 
-        # ── Detail sections (account name/header shown first) ──
-        basic_box = ReadOnlyDetailPanel("基本信息", "账号身份与默认状态。")
+        # ── Single detail surface: sections are headings + field rows, not nested cards ──
+        self.mailbox_detail_surface = QFrame(mailbox_editor)
+        self.mailbox_detail_surface.setObjectName("MailboxDetailSurface")
+        self.mailbox_detail_surface.setProperty("class", "MailboxDetailSurface")
+        surface_layout = QVBoxLayout(self.mailbox_detail_surface)
+        surface_layout.setContentsMargins(16, 14, 16, 14)
+        surface_layout.setSpacing(10)
+
+        def add_detail_section(title: str, rows: list[tuple[str, QWidget]]):
+            if surface_layout.count():
+                divider = QFrame(self.mailbox_detail_surface)
+                divider.setFrameShape(QFrame.HLine)
+                divider.setProperty("class", "SectionDivider")
+                surface_layout.addWidget(divider)
+            heading = QLabel(title, self.mailbox_detail_surface)
+            heading.setProperty("class", "SectionTitle")
+            surface_layout.addWidget(heading)
+            form = QFormLayout()
+            form.setContentsMargins(0, 0, 0, 0)
+            form.setSpacing(8)
+            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            for key, value in rows:
+                form.addRow(key, value)
+                label = form.labelForField(value)
+                if label is not None:
+                    label.setMinimumWidth(104)
+                    label.setProperty("class", "DetailFieldKey")
+            surface_layout.addLayout(form)
+
+        self.mailbox_detail_surface_layout = surface_layout
+
+        # Account header
+        self.lbl_detail_header_name = ElidedTextLabel("未选择邮箱账号", self.mailbox_detail_surface)
+        self.lbl_detail_header_email = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_header_status = QLabel("未配置", self.mailbox_detail_surface)
+        for label in (self.lbl_detail_header_name, self.lbl_detail_header_email):
+            label.setToolTip(label.text())
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(2)
+        header_layout.addWidget(self.lbl_detail_header_name)
+        header_layout.addWidget(self.lbl_detail_header_email)
+        header_layout.addWidget(self.lbl_detail_header_status)
+        surface_layout.addLayout(header_layout)
+
+        self.lbl_detail_name = ElidedTextLabel("未选择邮箱账号", self.mailbox_detail_surface)
         # ElidedTextLabel for long names/addresses/server strings that must not wrap
-        self.lbl_detail_name = ElidedTextLabel("未选择邮箱账号")
-        self.lbl_detail_email = ElidedTextLabel("—")
-        self.lbl_detail_server = ElidedTextLabel("—")
-        self.lbl_detail_is_default = QLabel("—")
-        self.lbl_detail_credential_status = QLabel("未配置")
-        self.lbl_detail_scan_rule = QLabel("—")
+        self.lbl_detail_email = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_server = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_port_security = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_is_default = QLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_credential_status = QLabel("未配置", self.mailbox_detail_surface)
+        self.lbl_detail_scan_folder = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_scan_range = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_attachment_types = ElidedTextLabel("PDF / OFD / XML / 图片", self.mailbox_detail_surface)
+        self.lbl_detail_scan_rule = self.lbl_detail_scan_range  # compatibility alias
         for label in (
             self.lbl_detail_is_default,
             self.lbl_detail_credential_status,
@@ -3454,17 +3588,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             label.setObjectName("MailboxDetailValue")
         for label in (self.lbl_detail_name, self.lbl_detail_email, self.lbl_detail_server):
             label.setObjectName("MailboxDetailValue")
-        basic_box.add_row("邮箱名称", self.lbl_detail_name)
-        basic_box.add_row("邮箱地址", self.lbl_detail_email)
-        basic_box.add_row("默认账号", self.lbl_detail_is_default)
-        connection_box = ReadOnlyDetailPanel("连接与授权", "IMAP 连接与安全凭据状态。")
-        connection_box.add_row("IMAP / 端口 / SSL", self.lbl_detail_server)
-        connection_box.add_row("授权状态", self.lbl_detail_credential_status)
-        scan_box = ReadOnlyDetailPanel("扫描规则", "当前账号使用的扫描范围。")
-        scan_box.add_row("文件夹 / 时间范围", self.lbl_detail_scan_rule)
-        mailbox_editor_layout.addWidget(basic_box)
-        mailbox_editor_layout.addWidget(connection_box)
-        mailbox_editor_layout.addWidget(scan_box)
+        add_detail_section("基本信息", [("邮箱名称", self.lbl_detail_name), ("邮箱地址", self.lbl_detail_email), ("默认账号", self.lbl_detail_is_default)])
+        add_detail_section("连接与授权", [("IMAP", self.lbl_detail_server), ("端口与安全", self.lbl_detail_port_security), ("授权状态", self.lbl_detail_credential_status)])
+        add_detail_section("扫描规则", [("文件夹", self.lbl_detail_scan_folder), ("时间范围", self.lbl_detail_scan_range), ("附件类型", self.lbl_detail_attachment_types)])
         # Status labels: value-only, no repeated field-name prefix
         self.lbl_settings_mailbox_test_status = QLabel("尚未执行。")
         self.lbl_settings_mailbox_test_status.setWordWrap(True)
@@ -3480,13 +3606,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self.settings_mailbox_empty_state.setVisible(False)
         self.lbl_settings_mailbox_empty.setVisible(False)
-        recent_box = ReadOnlyDetailPanel("最近运行", "连接测试与最近扫描结果。")
-        recent_box.add_row("连接测试", self.lbl_settings_mailbox_test_status)
-        recent_box.add_row("最近结果", self.lbl_settings_mailbox_scan_result)
-        mailbox_editor_layout.addWidget(recent_box)
+        add_detail_section("最近运行", [("连接测试", self.lbl_settings_mailbox_test_status), ("最近扫描", self.lbl_settings_mailbox_scan_result)])
         mailbox_editor_layout.addWidget(self.lbl_settings_mailbox_empty)
         mailbox_editor_layout.addWidget(self.settings_mailbox_empty_state)
-        mailbox_editor_layout.addStretch(1)
+        mailbox_editor_layout.addWidget(self.mailbox_detail_surface, 1)
         # ── Action footer: placed after all detail sections ──
         mailbox_editor_layout.addLayout(action_row)
         mailbox_shell.addWidget(mailbox_editor, 1)
@@ -3514,6 +3637,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_enabled = self.settings_ai_detail_panel.add_row("启用状态", "关闭")
         self.lbl_settings_ai_session_state = self.settings_ai_detail_panel.add_row("会话状态", "无可用会话")
         self.lbl_settings_ai_key_status = self.settings_ai_detail_panel.add_row("Key 来源", "API Key 状态：未配置")
+        self.lbl_settings_ai_validation_status = self.settings_ai_detail_panel.add_row("最近校验", "尚未校验本地配置")
         self.lbl_settings_ai_send_boundary = self.settings_ai_detail_panel.add_row(
             "隐私边界",
             "仅发送脱敏邮件头与最小分类元数据，不发送正文、附件、PDF、图片和本地路径。",
@@ -3530,8 +3654,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_settings_ai_edit.clicked.connect(self._open_edit_ai_profile_dialog)
         self.btn_settings_ai_configure_key = make_button("更新 Key", variant="secondary")
         self.btn_settings_ai_configure_key.clicked.connect(self._configure_settings_ai_key)
-        self.btn_settings_ai_test = make_button("测试连接", variant="secondary")
-        self.btn_settings_ai_test.clicked.connect(self._test_settings_ai_connection)
+        self.btn_settings_ai_test = make_button("校验配置", variant="secondary")
+        self.btn_settings_ai_test.setToolTip("仅校验本地 Provider、模型和 API Key 配置；远端连接将在首次使用时确认。")
+        self.btn_settings_ai_test.clicked.connect(self._validate_settings_ai_configuration)
         self.btn_settings_ai_clear_key = make_button("清除 Key", variant="secondary")
         self.btn_settings_ai_clear_key.setParent(ai_editor)
         self.btn_settings_ai_clear_key.setVisible(False)
@@ -3920,21 +4045,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _update_record_header_summary(self, total_matching: int | None = None, selected_count: int | None = None):
         if total_matching is not None:
             self._record_total_matching = max(0, int(total_matching))
-        shown = len(getattr(self, "invoices_list", []) or [])
-        total = max(shown, int(getattr(self, "_record_total_matching", shown) or shown))
-        visible_rows = 7
-        if hasattr(self, "table") and self.table is not None and self.table.viewport():
-            vh = self.table.viewport().height()
-            rh = self.table.verticalHeader().defaultSectionSize() or 30
-            if vh > 0:
-                visible_rows = max(1, vh // rh)
+        state = self._review_view_state(total_matching=total_matching, selected_count=selected_count)
         if hasattr(self, "lbl_record_count"):
-            if shown >= total and total > 0:
-                self.lbl_record_count.setText(f"已加载全部 {total} 张，当前可见 {visible_rows} 张")
+            if state.visible_count == 0 and (state.search_text or state.active_filter != "all"):
+                count_text = "当前筛选 0 张"
+            elif state.loaded_count < state.query_total:
+                count_text = f"已加载 {state.loaded_count} / {state.query_total} 张"
             else:
-                self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，当前可见 {visible_rows} 张")
+                count_text = f"当前筛选 {state.visible_count} 张"
+            self.lbl_record_count.setText(count_text)
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
-            self.lbl_record_selection.setText("未选" if selected_count <= 0 else f"已选 {selected_count} 张")
+            self.lbl_record_selection.setText("未选" if state.selected_count <= 0 else f"已选 {state.selected_count} 张")
 
     def _on_chk_needs_fix_changed(self, state):
         if state == Qt.Checked or state == 2:
@@ -4471,7 +4592,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._update_document_preview()
             self._clear_detail_form()
             self._set_selection_total_status([])
-            self._set_right_panel_state(total_in_db > 0)
+            self._set_right_panel_state(False)
         else:
             self.left_stack.setCurrentWidget(self.table)
             target_row = -1
@@ -4516,6 +4637,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # because _on_table_selection_changed uses QTimer.singleShot(0) which may not
         # fire until the next event loop iteration.
         selected = self.table.selectionModel().selectedRows() if hasattr(self, "table") else []
+        self._update_record_header_summary(total_matching=total_matching)
         self._set_selection_total_status(selected)
 
         self.write_log(
@@ -4659,6 +4781,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.current_invoice = None
         self._invoice_snapshot = None
         self._detail_panel.clear_detail()
+        self._set_right_panel_state(False)
         if hasattr(self, "action_copy_number"):
             self.action_copy_number.setEnabled(False)
             self.action_locate_file.setEnabled(False)

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import io
 import shutil
 import sqlite3
@@ -5208,7 +5208,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     expected = [
                         "刷新数据",
                         "扫码上传",
-                        "邮箱同步",
+                        "扫描邮箱",
                         "导出当前视图",
                         "打开数据目录",
                         "打开导出目录",
@@ -5241,7 +5241,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIsNotNone(window.btn_import_local.menu())
                     self.assertEqual(
                         [action.text() for action in window.btn_import_local.menu().actions()],
-                        ["本地文件导入", "扫码上传", "邮箱导入"],
+                        ["本地文件", "手机上传", "邮箱扫描"],
                     )
                 finally:
                     if hasattr(window, "db") and window.db is not None:
