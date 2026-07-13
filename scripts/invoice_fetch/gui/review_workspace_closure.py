@@ -7,8 +7,8 @@ business logic:
   splitter between the invoice list and document preview;
 * remove the legacy ``Load all`` control from the visible product surface while
   preserving the existing incremental-loading callbacks;
-* make the final invoice-number column consume otherwise-unused table width so
-  the record surface does not end in a large blank band.
+* distribute otherwise-unused table width to the long-text columns without
+  turning either column into a non-resizable ``Stretch`` section.
 """
 
 from __future__ import annotations
@@ -24,6 +24,9 @@ RECORD_MAX_HEIGHT = 480
 PREVIEW_MIN_HEIGHT = 240
 SELLER_COLUMN = 4
 INVOICE_NUMBER_COLUMN = 5
+SELLER_MIN_WIDTH = 180
+SELLER_MAX_WIDTH = 320
+INVOICE_NUMBER_MIN_WIDTH = 178
 
 
 def _remove_widget_from_layout(layout: QLayout | None, widget: QWidget) -> bool:
@@ -140,26 +143,106 @@ def _remove_load_all_from_product_surface(window) -> None:
     button.setAttribute(Qt.WA_DontShowOnScreen, True)
 
 
-def _fill_table_remainder(window) -> None:
+def _install_table_remainder_contract(window) -> None:
+    """Fill the table viewport while retaining interactive minimum-width rules.
+
+    ``QHeaderView.Stretch`` made the last column ignore the existing 178 px
+    minimum-width regression contract: after a user drag to a narrow width Qt
+    immediately stretched it again.  Keep every section Interactive instead and
+    reuse the app's existing ``_adjust_column_4_width`` resize hook to allocate
+    spare viewport width to the invoice-number column.  Seller width remains
+    user-controlled within its established 180-320 px range.
+    """
     table = getattr(window, "table", None)
     if table is None or table.columnCount() <= INVOICE_NUMBER_COLUMN:
         return
 
     header = table.horizontalHeader()
     header.setStretchLastSection(False)
-    for column in range(INVOICE_NUMBER_COLUMN):
+    for column in range(table.columnCount()):
         header.setSectionResizeMode(column, QHeaderView.Interactive)
-    header.setSectionResizeMode(INVOICE_NUMBER_COLUMN, QHeaderView.Stretch)
 
     min_widths = getattr(window, "_min_column_widths", None)
     if isinstance(min_widths, dict):
-        min_widths[SELLER_COLUMN] = max(180, int(min_widths.get(SELLER_COLUMN, 180)))
-        min_widths[INVOICE_NUMBER_COLUMN] = max(178, int(min_widths.get(INVOICE_NUMBER_COLUMN, 178)))
+        min_widths[SELLER_COLUMN] = SELLER_MIN_WIDTH
+        min_widths[INVOICE_NUMBER_COLUMN] = INVOICE_NUMBER_MIN_WIDTH
 
-    if table.columnWidth(SELLER_COLUMN) < 220:
+    if table.columnWidth(SELLER_COLUMN) < SELLER_MIN_WIDTH:
         table.setColumnWidth(SELLER_COLUMN, 260)
-    if table.columnWidth(INVOICE_NUMBER_COLUMN) < 178:
+    if table.columnWidth(INVOICE_NUMBER_COLUMN) < INVOICE_NUMBER_MIN_WIDTH:
         table.setColumnWidth(INVOICE_NUMBER_COLUMN, 190)
+
+    applying = False
+
+    def fill_remainder() -> None:
+        nonlocal applying
+        if applying:
+            return
+        applying = True
+        try:
+            seller_width = max(
+                SELLER_MIN_WIDTH,
+                min(SELLER_MAX_WIDTH, table.columnWidth(SELLER_COLUMN)),
+            )
+            invoice_width = max(
+                INVOICE_NUMBER_MIN_WIDTH,
+                table.columnWidth(INVOICE_NUMBER_COLUMN),
+            )
+            if seller_width != table.columnWidth(SELLER_COLUMN):
+                table.setColumnWidth(SELLER_COLUMN, seller_width)
+            if invoice_width != table.columnWidth(INVOICE_NUMBER_COLUMN):
+                table.setColumnWidth(INVOICE_NUMBER_COLUMN, invoice_width)
+
+            viewport_width = max(0, table.viewport().width())
+            total_width = sum(table.columnWidth(index) for index in range(table.columnCount()))
+            delta = viewport_width - total_width
+
+            if delta > 0:
+                # When the invoice column has just been clamped to its minimum,
+                # first spend the small remainder on the seller column. This
+                # preserves the exact 178 px minimum-width contract used by the
+                # column-resize tests and by narrow desktop layouts.
+                if invoice_width <= INVOICE_NUMBER_MIN_WIDTH:
+                    seller_growth = min(delta, SELLER_MAX_WIDTH - seller_width)
+                    if seller_growth > 0:
+                        table.setColumnWidth(SELLER_COLUMN, seller_width + seller_growth)
+                        delta -= seller_growth
+                if delta > 0:
+                    table.setColumnWidth(
+                        INVOICE_NUMBER_COLUMN,
+                        table.columnWidth(INVOICE_NUMBER_COLUMN) + delta,
+                    )
+            elif delta < 0:
+                excess = -delta
+                shrink_invoice = min(
+                    excess,
+                    max(0, table.columnWidth(INVOICE_NUMBER_COLUMN) - INVOICE_NUMBER_MIN_WIDTH),
+                )
+                if shrink_invoice:
+                    table.setColumnWidth(
+                        INVOICE_NUMBER_COLUMN,
+                        table.columnWidth(INVOICE_NUMBER_COLUMN) - shrink_invoice,
+                    )
+                    excess -= shrink_invoice
+                if excess:
+                    shrink_seller = min(
+                        excess,
+                        max(0, table.columnWidth(SELLER_COLUMN) - SELLER_MIN_WIDTH),
+                    )
+                    if shrink_seller:
+                        table.setColumnWidth(
+                            SELLER_COLUMN,
+                            table.columnWidth(SELLER_COLUMN) - shrink_seller,
+                        )
+        finally:
+            applying = False
+
+    # app.eventFilter and _on_header_section_resized resolve this hook at call
+    # time, so the adaptive contract runs for viewport resizes and user drags
+    # without installing another native event filter.
+    window._adjust_column_4_width = fill_remainder
+    fill_remainder()
+    QTimer.singleShot(0, fill_remainder)
 
     table.setProperty("reviewRemainderFillApplied", True)
     table.setToolTip("点击列标题筛选；销售方可拖动调整，发票号自动利用剩余宽度")
@@ -178,14 +261,17 @@ def apply_review_workspace_closure(page: QWidget) -> None:
     page.setProperty("reviewWorkspaceClosureApplied", True)
     _install_real_vertical_splitter(window)
     _remove_load_all_from_product_surface(window)
-    _fill_table_remainder(window)
+    _install_table_remainder_contract(window)
 
 
 __all__ = [
     "INVOICE_NUMBER_COLUMN",
+    "INVOICE_NUMBER_MIN_WIDTH",
     "PREVIEW_MIN_HEIGHT",
     "RECORD_MAX_HEIGHT",
     "RECORD_MIN_HEIGHT",
     "SELLER_COLUMN",
+    "SELLER_MAX_WIDTH",
+    "SELLER_MIN_WIDTH",
     "apply_review_workspace_closure",
 ]
