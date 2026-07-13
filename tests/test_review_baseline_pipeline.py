@@ -43,6 +43,35 @@ class ReviewBaselinePipelineTests(unittest.TestCase):
                 tuple(page.property("reviewBaselinePipelineStages")),
                 ("one", "two", "three"),
             )
+            self.assertEqual(page.property("reviewBaselinePipelineActiveStage"), "")
+            self.assertEqual(page.property("reviewBaselinePipelineFailedStage"), "")
+        finally:
+            page.close()
+            page.deleteLater()
+            self.app.processEvents()
+
+    def test_pipeline_records_the_failing_stage_and_can_be_retried(self):
+        page = QWidget()
+        calls = []
+
+        def fail(_page):
+            calls.append("broken")
+            raise RuntimeError("synthetic stage failure")
+
+        stages = (
+            ("ready", lambda _page: calls.append("ready")),
+            ("broken", fail),
+            ("never", lambda _page: calls.append("never")),
+        )
+        try:
+            with patch.object(pipeline, "REVIEW_BASELINE_STAGES", stages):
+                with self.assertRaisesRegex(RuntimeError, "synthetic stage failure"):
+                    pipeline.apply_review_baseline_pipeline(page)
+
+            self.assertEqual(calls, ["ready", "broken"])
+            self.assertFalse(page.property("reviewBaselinePipelineApplied"))
+            self.assertEqual(page.property("reviewBaselinePipelineActiveStage"), "broken")
+            self.assertEqual(page.property("reviewBaselinePipelineFailedStage"), "broken")
         finally:
             page.close()
             page.deleteLater()
