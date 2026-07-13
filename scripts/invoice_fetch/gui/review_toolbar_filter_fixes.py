@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -51,8 +51,6 @@ STATUS_FILTER_WIDTHS = {
     "ignored": 86,
     "error": 86,
 }
-_HEADER_RESIZE_MARGIN = 5
-_HEADER_CLICK_DRAG_THRESHOLD = 4
 
 
 class ReimbursementTitleDialog(QDialog):
@@ -118,99 +116,6 @@ class ReimbursementTitleDialog(QDialog):
         )
 
 
-class _HeaderFilterClickRouter(QObject):
-    """Turn the full header cell into the filter target without breaking resize."""
-
-    def __init__(self, window, header):
-        super().__init__(header)
-        self.window = window
-        self.header = header
-        self._pressed_section = -1
-        self._press_pos = QPoint()
-        self._dragged = False
-
-    @staticmethod
-    def _event_pos(event) -> QPoint:
-        position = getattr(event, "position", None)
-        if callable(position):
-            return position().toPoint()
-        pos = getattr(event, "pos", None)
-        return pos() if callable(pos) else QPoint()
-
-    def _is_resize_zone(self, section: int, x: int) -> bool:
-        if section < 0:
-            return True
-        left = self.header.sectionViewportPosition(section)
-        right = left + self.header.sectionSize(section)
-        if section > 0 and abs(x - left) <= _HEADER_RESIZE_MARGIN:
-            return True
-        return abs(x - right) <= _HEADER_RESIZE_MARGIN
-
-    def _reset(self) -> None:
-        self._pressed_section = -1
-        self._press_pos = QPoint()
-        self._dragged = False
-
-    def eventFilter(self, watched, event):
-        if watched is not self.header.viewport():
-            return False
-
-        event_type = event.type()
-        if event_type == QEvent.Type.MouseButtonPress:
-            if event.button() != Qt.LeftButton:
-                self._reset()
-                return False
-            pos = self._event_pos(event)
-            section = self.header.logicalIndexAt(pos.x())
-            if section < 0 or self._is_resize_zone(section, pos.x()):
-                self._reset()
-                return False
-            self._pressed_section = section
-            self._press_pos = pos
-            self._dragged = False
-            return False
-
-        if event_type == QEvent.Type.MouseMove and self._pressed_section >= 0:
-            pos = self._event_pos(event)
-            if (pos - self._press_pos).manhattanLength() > _HEADER_CLICK_DRAG_THRESHOLD:
-                self._dragged = True
-            return False
-
-        if event_type == QEvent.Type.MouseButtonRelease:
-            if event.button() != Qt.LeftButton or self._pressed_section < 0:
-                self._reset()
-                return False
-            pos = self._event_pos(event)
-            section = self.header.logicalIndexAt(pos.x())
-            pressed_section = self._pressed_section
-            should_open = (
-                not self._dragged
-                and section == pressed_section
-                and not self._is_resize_zone(section, pos.x())
-            )
-            self._reset()
-            if not should_open:
-                return False
-
-            marker_x = (
-                self.header.sectionViewportPosition(pressed_section)
-                + self.header.sectionSize(pressed_section)
-                - 8
-            )
-            self.window._column_filter_header_press_pos = QPoint(
-                marker_x,
-                max(0, min(pos.y(), self.header.height() - 1)),
-            )
-            QTimer.singleShot(
-                0,
-                lambda section=pressed_section: self.window._show_column_filter_popup(section),
-            )
-            event.accept()
-            return True
-
-        return False
-
-
 def _find_layout_containing(layout, widget: QWidget):
     if layout is None:
         return None
@@ -273,11 +178,15 @@ def _normalize_material_status_line(status_line, *, action_maximum: int = 96) ->
 
     action = getattr(status_line, "_action_widget", None)
     _fit_material_action(action, action_maximum)
+    if action is not None:
+        action.show()
     if layout is not None:
         layout.setStretch(0, 0)
         layout.setStretch(1, 1)
         if action is not None:
-            layout.setStretch(layout.indexOf(action), 0)
+            action_index = layout.indexOf(action)
+            if action_index >= 0:
+                layout.setStretch(action_index, 0)
 
 
 def _repair_material_rows(window) -> None:
@@ -286,12 +195,20 @@ def _repair_material_rows(window) -> None:
     if detail is None:
         return
 
-    # The card-based rows are compatibility remnants. A runtime visibility
-    # change must not reintroduce a second/clipped row above the status lines.
     for attr in ("original_card", "evidence_card", "combo_supporting_docs"):
         widget = getattr(detail, attr, None)
         if widget is not None:
             widget.hide()
+
+    for attr, maximum in (
+        ("btn_open_file", 72),
+        ("btn_locate_file", 72),
+        ("btn_add_attachment", 72),
+        ("btn_retry_download", 72),
+        ("btn_open_extra_files", 72),
+        ("btn_add_evidence", 96),
+    ):
+        _fit_material_action(getattr(detail, attr, None), maximum)
 
     _normalize_material_status_line(
         getattr(detail, "original_status_line", None),
@@ -301,36 +218,6 @@ def _repair_material_rows(window) -> None:
         getattr(detail, "evidence_status_line", None),
         action_maximum=96,
     )
-
-
-def _install_material_row_repair(window) -> None:
-    detail = getattr(window, "_detail_panel", None)
-    if detail is None:
-        return
-    if detail.property("materialRowsRepairInstalled"):
-        _repair_material_rows(window)
-        return
-    detail.setProperty("materialRowsRepairInstalled", True)
-
-    for method_name in ("set_attachment_state", "update_evidence_row"):
-        original = getattr(detail, method_name, None)
-        if original is None:
-            continue
-
-        @wraps(original)
-        def wrapped(*args, _original=original, **kwargs):
-            result = _original(*args, **kwargs)
-            _repair_material_rows(window)
-            return result
-
-        setattr(detail, method_name, wrapped)
-
-    table = getattr(window, "table", None)
-    if table is not None:
-        table.itemSelectionChanged.connect(
-            lambda: QTimer.singleShot(0, lambda: _repair_material_rows(window))
-        )
-    _repair_material_rows(window)
 
 
 def _clarify_review_toolbar(window) -> None:
@@ -352,8 +239,6 @@ def _clarify_review_toolbar(window) -> None:
             action.setText(text)
             action.setToolTip(tooltip)
 
-    # The old “同步” label was misleading: this action only scans configured
-    # mailboxes. Keep the button visible but rename it to its exact operation.
     if scan_button is not None:
         scan_button.setText("扫描邮箱")
         scan_button.setToolTip("扫描已配置邮箱中的新发票")
@@ -447,6 +332,27 @@ def _sync_reset_visibility(window) -> None:
     reset.setVisible(active)
 
 
+def _open_filter_from_header_click(window, section: int) -> None:
+    """Open the existing popup for a full-cell header click.
+
+    QHeaderView emits sectionClicked only for a click, not for a resize drag, so
+    this keeps column resizing intact without installing a native event filter.
+    """
+    if section < 0:
+        return
+    popup = getattr(window, "_column_filter_popup", None)
+    try:
+        if popup is not None and popup.isVisible():
+            return
+    except RuntimeError:
+        pass
+
+    header = window.table.horizontalHeader()
+    marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 8
+    window._column_filter_header_press_pos = QPoint(marker_x, max(0, header.height() // 2))
+    window._show_column_filter_popup(section)
+
+
 def _install_header_filter_decoration(window) -> None:
     if getattr(window, "_column_header_decoration_installed", False):
         _decorate_column_headers(window)
@@ -469,9 +375,9 @@ def _install_header_filter_decoration(window) -> None:
     window.txt_search.textChanged.connect(lambda _text: _sync_reset_visibility(window))
 
     header = window.table.horizontalHeader()
-    router = _HeaderFilterClickRouter(window, header)
-    header.viewport().installEventFilter(router)
-    window._column_header_click_router = router
+    header.sectionClicked.connect(
+        lambda section, target=window: _open_filter_from_header_click(target, section)
+    )
 
     _decorate_column_headers(window)
     _sync_reset_visibility(window)
@@ -527,7 +433,9 @@ def _refresh_buyer_warning(window) -> None:
         row.setVisible(bool(warning))
     button = getattr(detail, "btn_edit_reimbursement_title", None)
     if button is not None:
-        expected = str((getattr(window, "config", {}) or {}).get("reimbursement", {}).get("buyer_name") or "").strip()
+        expected = str(
+            (getattr(window, "config", {}) or {}).get("reimbursement", {}).get("buyer_name") or ""
+        ).strip()
         button.setText("修改抬头" if expected else "设置抬头")
         button.setToolTip("设置用于报销核对的购买方单位名称")
 
@@ -579,7 +487,9 @@ def _install_buyer_title_entry(window) -> None:
 
     table = getattr(window, "table", None)
     if table is not None:
-        table.itemSelectionChanged.connect(lambda: QTimer.singleShot(0, lambda: _refresh_buyer_warning(window)))
+        table.itemSelectionChanged.connect(
+            lambda: QTimer.singleShot(0, lambda: _refresh_buyer_warning(window))
+        )
     _refresh_buyer_warning(window)
 
 
@@ -597,7 +507,7 @@ def apply_review_toolbar_filter_fixes(page: QWidget) -> None:
     _compact_status_filters(window)
     _install_header_filter_decoration(window)
     _install_column_width_contract(window)
-    _install_material_row_repair(window)
+    _repair_material_rows(window)
     _install_buyer_title_entry(window)
 
 
