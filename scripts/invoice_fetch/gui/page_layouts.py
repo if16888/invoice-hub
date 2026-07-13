@@ -5,12 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .design_baseline_styles import apply_global_design_baseline
-from .review_detail_closure import apply_review_detail_closure
-from .review_detail_width_fix import apply_review_detail_width_fix
-from .review_table_width_contract import apply_review_table_width_contract
-from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
-from .review_workspace_baseline import apply_review_workspace_baseline
-from .review_workspace_closure import apply_review_workspace_closure
+from .review_baseline_pipeline import schedule_review_baseline_pipeline
 from .settings_baseline import apply_settings_baseline
 from .settings_feedback_fixes import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
@@ -80,14 +75,7 @@ class WorkspacePageLayout(_PageLayoutContract):
         )
         layout.setSpacing(WORKSPACE_SECTION_GAP)
         page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        QTimer.singleShot(0, lambda p=page: apply_review_workspace_baseline(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_toolbar_filter_fixes(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_table_width_contract(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_detail_width_fix(p))
-        # Run last: convert compatibility-only geometry and duplicate detail
-        # ownership into the final interactive Review workspace.
-        QTimer.singleShot(0, lambda p=page: apply_review_workspace_closure(p))
-        QTimer.singleShot(0, lambda p=page: apply_review_detail_closure(p))
+        schedule_review_baseline_pipeline(page)
         return layout
 
 
