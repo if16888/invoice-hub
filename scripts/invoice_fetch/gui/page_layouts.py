@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .design_baseline_styles import apply_global_design_baseline
+from .review_detail_closure import apply_review_detail_closure
 from .review_detail_width_fix import apply_review_detail_width_fix
 from .review_table_width_contract import apply_review_table_width_contract
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
@@ -83,9 +84,10 @@ class WorkspacePageLayout(_PageLayoutContract):
         QTimer.singleShot(0, lambda p=page: apply_review_toolbar_filter_fixes(p))
         QTimer.singleShot(0, lambda p=page: apply_review_table_width_contract(p))
         QTimer.singleShot(0, lambda p=page: apply_review_detail_width_fix(p))
-        # Run last: this converts compatibility-only geometry into the final
-        # interactive Review workspace after all legacy/baseline fixes settle.
+        # Run last: convert compatibility-only geometry and duplicate detail
+        # ownership into the final interactive Review workspace.
         QTimer.singleShot(0, lambda p=page: apply_review_workspace_closure(p))
+        QTimer.singleShot(0, lambda p=page: apply_review_detail_closure(p))
         return layout
 
 
