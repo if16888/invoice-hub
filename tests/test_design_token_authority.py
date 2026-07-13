@@ -72,7 +72,7 @@ class DesignTokenAuthorityTests(unittest.TestCase):
         self.assertEqual(styles.COLOR_TOKENS["danger"], "#B42318")
         self.assertIn("#2563EB", stylesheet)
         self.assertNotIn("#1599BD", stylesheet)
-        self.assertEqual(styles.APP_STYLESHEET + "\n" + stylesheet.split("\n", 1)[-1] != "", True)
+        self.assertTrue(stylesheet.startswith(styles.APP_STYLESHEET))
 
     def test_global_baseline_replaces_stale_window_qss_once(self):
         page = QWidget()
