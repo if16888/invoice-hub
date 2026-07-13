@@ -9,6 +9,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.review_detail_width_fix import (
+    COLLAPSED_DETAIL_BONUS,
+    DETAIL_MAX_WIDTH,
+    _reflow_review_detail,
+)
 from scripts.invoice_fetch.gui.review_workspace_baseline import _sync_selection_contract
 
 
@@ -32,9 +37,48 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertTrue(window.review_page.property("reviewWorkspaceBaselineApplied"))
+                self.assertTrue(window.review_page.property("reviewDetailWidthFixApplied"))
+                self.assertTrue(hasattr(window, "_review_detail_width_controller"))
+                self.assertFalse(hasattr(window, "_review_feedback_resize_filter"))
                 self.assertEqual(window._detail_panel.minimumWidth(), 352)
-                self.assertLessEqual(window._detail_panel.maximumWidth(), 520)
+                self.assertLessEqual(window._detail_panel.maximumWidth(), DETAIL_MAX_WIDTH)
+                self.assertEqual(window._detail_panel.sizePolicy().horizontalPolicy(), QSizePolicy.Expanding)
                 self.assertEqual(window._detail_panel.sizePolicy().verticalPolicy(), QSizePolicy.Expanding)
+            finally:
+                window.close()
+
+    def test_collapsed_sidebar_reclaims_width_for_review_detail(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.resize(1700, 900)
+                window.workbench_nav.setMinimumWidth(180)
+                window.workbench_nav.setMaximumWidth(180)
+                for _ in range(3):
+                    self.app.processEvents()
+                _reflow_review_detail(window)
+                self.app.processEvents()
+                expanded_detail_width = window.main_splitter.sizes()[1]
+
+                window.workbench_nav.setMinimumWidth(56)
+                window.workbench_nav.setMaximumWidth(56)
+                for _ in range(3):
+                    self.app.processEvents()
+                _reflow_review_detail(window)
+                self.app.processEvents()
+                collapsed_sizes = window.main_splitter.sizes()
+                collapsed_detail_width = collapsed_sizes[1]
+
+                self.assertGreaterEqual(
+                    collapsed_detail_width,
+                    expanded_detail_width + COLLAPSED_DETAIL_BONUS - 2,
+                )
+                usable_width = (
+                    window.main_splitter.width()
+                    - window.main_splitter.handleWidth() * (window.main_splitter.count() - 1)
+                )
+                self.assertLessEqual(abs(sum(collapsed_sizes) - usable_width), 2)
+                self.assertLessEqual(collapsed_detail_width, DETAIL_MAX_WIDTH)
             finally:
                 window.close()
 
