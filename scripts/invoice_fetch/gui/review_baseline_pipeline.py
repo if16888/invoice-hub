@@ -1,7 +1,7 @@
 """Deterministic Design Baseline v1.0 pipeline for the Review workspace.
 
 The Review page is assembled from legacy-compatible widgets and then normalized
-by a small set of focused migrations.  These migrations used to be queued as
+by a small set of focused migrations. These migrations used to be queued as
 independent zero-delay callbacks, which made the final result depend on event
 queue ordering and left several callbacks alive while windows were closing.
 
@@ -45,11 +45,18 @@ def apply_review_baseline_pipeline(page: QWidget | None) -> None:
     if page.property("reviewBaselinePipelineApplied"):
         return
 
+    page.setProperty("reviewBaselinePipelineFailedStage", "")
     completed: list[str] = []
     for name, stage in REVIEW_BASELINE_STAGES:
-        stage(page)
+        page.setProperty("reviewBaselinePipelineActiveStage", name)
+        try:
+            stage(page)
+        except Exception:
+            page.setProperty("reviewBaselinePipelineFailedStage", name)
+            raise
         completed.append(name)
 
+    page.setProperty("reviewBaselinePipelineActiveStage", "")
     page.setProperty("reviewBaselinePipelineStages", tuple(completed))
     page.setProperty("reviewBaselinePipelineApplied", True)
 
