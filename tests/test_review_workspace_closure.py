@@ -55,11 +55,9 @@ class ReviewWorkspaceClosureTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 button = window.btn_load_all
+                parent_layout = button.parentWidget().layout()
                 self.assertTrue(button.property("designBaselineRemoved"))
-                self.assertTrue(button.isHidden())
-                self.assertFalse(button.isEnabled())
-                self.assertEqual(button.width(), 0)
-                self.assertEqual(button.height(), 0)
+                self.assertEqual(parent_layout.indexOf(button), -1)
                 self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen))
             finally:
                 window.close()
