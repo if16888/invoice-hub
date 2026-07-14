@@ -9,16 +9,33 @@ from __future__ import annotations
 
 from functools import wraps
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QDialog, QLayout, QMessageBox, QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QListWidgetItem,
+    QMessageBox,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .company_tax_profile import (
     CompanyTaxProfileDialog,
+    format_company_tax_info,
     normalize_company_tax_profile,
     refresh_company_tax_profile_status,
     save_company_tax_profile,
 )
-from .ui_components import make_button
+from .ui_components import ElidedTextLabel, make_button
+
+
+_COMPANY_NAV_ROLE = "company_tax_profile"
 
 
 def _repolish(widget: QWidget | None) -> None:
@@ -100,6 +117,40 @@ def _company_profile(window) -> dict:
     return normalize_company_tax_profile(config.get("reimbursement", {}))
 
 
+def _refresh_company_settings_page(window, status_text: str = "") -> None:
+    values = getattr(window, "settings_company_profile_values", None)
+    if not isinstance(values, dict):
+        return
+
+    profile = _company_profile(window)
+    values["单位名称"].set_value(profile["buyer_name"] or "未设置")
+    values["纳税人识别号"].set_value(profile["buyer_tax_id"] or "未设置")
+    values["注册地址"].set_value(profile["registered_address"] or "未设置")
+    values["注册电话"].set_value(profile["registered_phone"] or "未设置")
+    values["开户行"].set_value(profile["bank_name"] or "未设置")
+    values["银行账号"].set_value(profile["bank_account"] or "未设置")
+
+    checks: list[str] = []
+    if profile["strict_buyer_check"]:
+        checks.append("购买方名称")
+    if profile["strict_buyer_tax_check"]:
+        checks.append("纳税人识别号")
+    values["审核核对"].set_value("、".join(checks) if checks else "未启用")
+
+    status = getattr(window, "lbl_settings_company_profile_status", None)
+    if status is not None:
+        status.setText(status_text)
+        status.setVisible(bool(status_text))
+
+    edit = getattr(window, "btn_settings_company_profile_edit", None)
+    copy = getattr(window, "btn_settings_company_profile_copy", None)
+    configured = bool(profile["buyer_name"] or profile["buyer_tax_id"])
+    if edit is not None:
+        edit.setText("编辑开票信息" if configured else "设置开票信息")
+    if copy is not None:
+        copy.setEnabled(bool(format_company_tax_info(profile)))
+
+
 def _edit_company_profile(window) -> None:
     dialog = CompanyTaxProfileDialog(_company_profile(window), window)
     if dialog.exec() != QDialog.Accepted:
@@ -110,76 +161,230 @@ def _edit_company_profile(window) -> None:
         QMessageBox.critical(window, "保存失败", f"无法保存公司开票信息：{exc}")
         return
     refresh_company_tax_profile_status(window)
+    _refresh_company_settings_page(window, "公司开票信息已保存到本机。")
 
 
-def _find_layout_containing(layout: QLayout | None, target: QWidget):
-    if layout is None:
-        return None, -1
-    for index in range(layout.count()):
-        item = layout.itemAt(index)
-        if item.widget() is target:
-            return layout, index
-        nested = item.layout()
-        if nested is not None:
-            found, found_index = _find_layout_containing(nested, target)
-            if found is not None:
-                return found, found_index
-    return None, -1
+def _copy_company_profile(window) -> None:
+    text = format_company_tax_info(_company_profile(window))
+    if not text:
+        _refresh_company_settings_page(window, "尚未填写可复制的公司开票信息。")
+        return
+    QApplication.clipboard().setText(text)
+    _refresh_company_settings_page(window, "开票信息已复制到剪贴板。")
 
 
-def _install_company_settings_action(window) -> None:
-    """Expose company invoice information from the existing Settings page.
+def _build_company_settings_page(window) -> QWidget:
+    page = QWidget()
+    page.setObjectName("CompanyTaxProfileSettingsPage")
+    page_layout = QVBoxLayout(page)
+    page_layout.setContentsMargins(0, 0, 0, 0)
+    page_layout.setSpacing(16)
+    page_layout.setAlignment(Qt.AlignTop)
 
-    The action is placed next to “添加邮箱账号” and opens the established local
-    company-profile editor. Keeping the existing six settings tabs stable avoids
-    breaking tab-index contracts while making the feature discoverable in
-    Settings rather than only from an invoice warning.
+    header = QFrame(page)
+    header.setObjectName("SettingsSubpageHeader")
+    header_layout = QVBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+    header_layout.setSpacing(4)
+    title = QLabel("开票信息", header)
+    title.setProperty("class", "SettingsSubpageTitle")
+    hint = QLabel(
+        "维护公司开票资料，并用于审核发票购买方名称和纳税人识别号。",
+        header,
+    )
+    hint.setProperty("class", "SettingsSubpageHint")
+    hint.setWordWrap(True)
+    header_layout.addWidget(title)
+    header_layout.addWidget(hint)
+    page_layout.addWidget(header)
+
+    surface = QFrame(page)
+    surface.setObjectName("CompanyTaxProfileSurface")
+    surface.setProperty("class", "SettingsDetailSurface")
+    surface.setMinimumWidth(560)
+    surface.setMaximumWidth(760)
+    surface.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+    surface_layout = QVBoxLayout(surface)
+    surface_layout.setContentsMargins(20, 18, 20, 14)
+    surface_layout.setSpacing(12)
+
+    surface_title = QLabel("开票与报销主体", surface)
+    surface_title.setProperty("class", "SettingsSurfaceTitle")
+    surface_hint = QLabel(
+        "信息仅保存在本机；可以复制给商户开票，也可作为发票审核的期望主体。",
+        surface,
+    )
+    surface_hint.setProperty("class", "SettingsSurfaceHint")
+    surface_hint.setWordWrap(True)
+    surface_layout.addWidget(surface_title)
+    surface_layout.addWidget(surface_hint)
+
+    divider = QFrame(surface)
+    divider.setFrameShape(QFrame.HLine)
+    divider.setProperty("class", "SettingsSectionDivider")
+    divider.setFixedHeight(1)
+    surface_layout.addWidget(divider)
+
+    form = QFormLayout()
+    form.setContentsMargins(0, 0, 0, 0)
+    form.setHorizontalSpacing(16)
+    form.setVerticalSpacing(10)
+    form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    values: dict[str, ElidedTextLabel] = {}
+    for key in (
+        "单位名称",
+        "纳税人识别号",
+        "注册地址",
+        "注册电话",
+        "开户行",
+        "银行账号",
+        "审核核对",
+    ):
+        value = ElidedTextLabel("未设置", surface)
+        value.setProperty("class", "SettingsFieldValue")
+        values[key] = value
+        form.addRow(key, value)
+        label = form.labelForField(value)
+        if label is not None:
+            label.setFixedWidth(104)
+            label.setProperty("class", "SettingsFieldKey")
+    surface_layout.addLayout(form)
+
+    status = QLabel("", surface)
+    status.setProperty("class", "SettingsInlineStatus")
+    status.setWordWrap(True)
+    status.hide()
+    surface_layout.addWidget(status)
+
+    footer_divider = QFrame(surface)
+    footer_divider.setFrameShape(QFrame.HLine)
+    footer_divider.setProperty("class", "SettingsSectionDivider")
+    footer_divider.setFixedHeight(1)
+    surface_layout.addWidget(footer_divider)
+
+    footer = QFrame(surface)
+    footer.setObjectName("SettingsActionFooter")
+    footer.setMinimumHeight(52)
+    footer_layout = QHBoxLayout(footer)
+    footer_layout.setContentsMargins(0, 4, 0, 0)
+    footer_layout.setSpacing(8)
+    edit = make_button("设置开票信息", variant="primary", min_width=112)
+    edit.clicked.connect(lambda _checked=False: _edit_company_profile(window))
+    copy = make_button("复制开票信息", variant="secondary", min_width=112)
+    copy.clicked.connect(lambda _checked=False: _copy_company_profile(window))
+    footer_layout.addWidget(edit)
+    footer_layout.addWidget(copy)
+    footer_layout.addStretch(1)
+    surface_layout.addWidget(footer)
+
+    page_layout.addWidget(surface, 0, Qt.AlignTop)
+    page_layout.addStretch(1)
+
+    window.settings_company_profile_page = page
+    window.settings_company_profile_surface = surface
+    window.settings_company_profile_values = values
+    window.lbl_settings_company_profile_status = status
+    window.btn_settings_company_profile_edit = edit
+    window.btn_settings_company_profile_copy = copy
+    _refresh_company_settings_page(window)
+    return page
+
+
+def _remove_legacy_company_header_action(window) -> None:
+    button = getattr(window, "btn_settings_company_profile", None)
+    if button is None:
+        return
+    _remove_from_layout(button)
+    button.hide()
+    button.setParent(window)
+    button.setProperty("legacyCompanyHeaderActionRemoved", True)
+
+
+def _insert_company_settings_page(window) -> None:
+    """Insert an actual Settings navigation page below Mailbox Accounts."""
+    settings_tabs = getattr(window, "settings_tabs", None)
+    nav_list = getattr(settings_tabs, "nav_list", None)
+    stack = getattr(settings_tabs, "stack", None)
+    if settings_tabs is None or nav_list is None or stack is None:
+        return
+
+    for row in range(nav_list.count()):
+        item = nav_list.item(row)
+        if item is not None and item.data(Qt.UserRole) == _COMPANY_NAV_ROLE:
+            return
+
+    current_widget = stack.currentWidget()
+    company_page = _build_company_settings_page(window)
+    stack.insertWidget(1, company_page)
+    item = QListWidgetItem("开票信息")
+    item.setData(Qt.UserRole, _COMPANY_NAV_ROLE)
+    item.setToolTip("维护公司开票与报销主体")
+    nav_list.insertItem(1, item)
+
+    if current_widget is not None:
+        stack.setCurrentWidget(current_widget)
+        nav_list.setCurrentRow(stack.indexOf(current_widget))
+    elif nav_list.count():
+        nav_list.setCurrentRow(0)
+
+
+def _install_settings_subtab_compatibility(window, page: QWidget) -> None:
+    """Keep legacy one-based Settings routes pointing at their original pages."""
+    if page.property("companySettingsSubtabCompatInstalled"):
+        return
+    original = getattr(window, "_switch_main_page", None)
+    if not callable(original):
+        return
+    page.setProperty("companySettingsSubtabCompatInstalled", True)
+
+    @wraps(original)
+    def switch_main_page(page_name, sub_tab=None):
+        if page_name == "settings" and isinstance(sub_tab, int) and 2 <= sub_tab <= 6:
+            sub_tab += 1
+        return original(page_name, sub_tab=sub_tab)
+
+    window._switch_main_page = switch_main_page
+
+
+def _remove_review_company_action(detail) -> None:
+    """Keep buyer mismatch information but remove the Settings shortcut button."""
+    button = getattr(detail, "btn_edit_reimbursement_title", None)
+    if button is None:
+        return
+    try:
+        button.clicked.disconnect()
+    except (RuntimeError, TypeError):
+        pass
+    _remove_from_layout(button)
+    button.hide()
+    button.setParent(detail)
+    button.setProperty("reviewCompanyActionRemoved", True)
+
+
+def _remove_status_bar_version(window) -> None:
+    """Remove the clipped version chip from the review footer.
+
+    Version information remains available from Settings / About. Keeping it in
+    the narrow review status action container created the white clickable block
+    seen at the bottom-right edge on some DPI scales.
     """
-    if getattr(window, "btn_settings_company_profile", None) is not None:
-        return
-    add_mailbox = getattr(window, "btn_settings_mailbox_add", None)
-    settings_tabs = getattr(window, "settings_tabs", None)
-    if add_mailbox is None or settings_tabs is None:
-        return
+    label = getattr(window, "lbl_version", None)
+    if label is not None:
+        _remove_from_layout(label)
+        label.hide()
+        label.setParent(window)
+        label.setProperty("reviewFooterVersionRemoved", True)
 
-    company_button = make_button("公司开票信息", variant="secondary", min_width=104)
-    company_button.setAccessibleName("公司开票信息")
-    company_button.setToolTip("维护、复制公司开票与报销主体；信息仅保存在本机")
-    company_button.clicked.connect(lambda _checked=False: _edit_company_profile(window))
-
-    owner_layout, index = _find_layout_containing(settings_tabs.layout(), add_mailbox)
-    if owner_layout is None:
-        owner_layout, index = _find_layout_containing(
-            add_mailbox.parentWidget().layout() if add_mailbox.parentWidget() else None,
-            add_mailbox,
-        )
-    if owner_layout is not None and hasattr(owner_layout, "insertWidget"):
-        owner_layout.insertWidget(max(0, index), company_button)
-    else:
-        company_button.setParent(add_mailbox.parentWidget())
-        company_button.move(max(0, add_mailbox.x() - company_button.sizeHint().width() - 8), add_mailbox.y())
-        company_button.show()
-
-    window.btn_settings_company_profile = company_button
-
-
-def _open_company_settings(window) -> None:
-    """Open the company editor from the Settings context."""
-    settings_button = (getattr(window, "workbench_nav_buttons", {}) or {}).get("settings")
-    settings_tabs = getattr(window, "settings_tabs", None)
-    if settings_button is not None:
-        settings_button.click()
-    if settings_tabs is not None:
-        settings_tabs.setCurrentIndex(0)
-    action = getattr(window, "btn_settings_company_profile", None)
-    if action is not None:
-        QTimer.singleShot(0, action.click)
-    else:
-        QTimer.singleShot(0, lambda: _edit_company_profile(window))
+    container = getattr(window, "status_actions_container", None)
+    if container is not None:
+        container.setMinimumWidth(0)
+        container.setStyleSheet("background: transparent; border: none;")
+        container.adjustSize()
 
 
 def apply_review_attachment_action_fix(page: QWidget | None) -> None:
-    """Fix escaped attachment controls and route company info to Settings."""
+    """Fix escaped attachment controls and remove the company Settings shortcut."""
     if page is None or page.property("reviewAttachmentActionFixApplied"):
         return
     window = page.window()
@@ -212,18 +417,8 @@ def apply_review_attachment_action_fix(page: QWidget | None) -> None:
         return result
 
     detail.set_attachment_state = set_attachment_state
-
-    company_button = getattr(detail, "btn_edit_reimbursement_title", None)
-    if company_button is not None:
-        try:
-            company_button.clicked.disconnect()
-        except (RuntimeError, TypeError):
-            pass
-        company_button.setText("公司开票信息")
-        company_button.setToolTip("前往系统设置维护、复制公司开票与报销主体")
-        company_button.clicked.connect(
-            lambda _checked=False, target=window: _open_company_settings(target)
-        )
+    _remove_review_company_action(detail)
+    _remove_status_bar_version(window)
 
 
 def _credential_is_missing(window) -> bool:
@@ -296,10 +491,12 @@ def _install_settings_refresh(window, page: QWidget) -> None:
     page.setProperty("settingsActionClarityRefreshInstalled", True)
     original = getattr(window, "_refresh_settings_page", None)
     if callable(original):
+
         @wraps(original)
         def refresh(*args, **kwargs):
             result = original(*args, **kwargs)
             QTimer.singleShot(0, lambda: _polish_mailbox_actions(window))
+            QTimer.singleShot(0, lambda: _refresh_company_settings_page(window))
             return result
 
         window._refresh_settings_page = refresh
@@ -312,16 +509,19 @@ def _install_settings_refresh(window, page: QWidget) -> None:
 
 
 def apply_settings_action_clarity(page: QWidget | None) -> None:
-    """Expose company settings and clarify contextual mailbox actions."""
+    """Add the company Settings page and clarify contextual mailbox actions."""
     if page is None or page.property("settingsActionClarityApplied"):
         return
     window = page.window()
     if not hasattr(window, "settings_tabs"):
         return
     page.setProperty("settingsActionClarityApplied", True)
-    _install_company_settings_action(window)
+    _remove_legacy_company_header_action(window)
+    _insert_company_settings_page(window)
+    _install_settings_subtab_compatibility(window, page)
     _polish_mailbox_actions(window)
     _install_settings_refresh(window, page)
+    _remove_status_bar_version(window)
 
 
 __all__ = [
