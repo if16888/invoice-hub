@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.db import InvoiceDB
@@ -131,8 +132,10 @@ class BusinessPagesBaselineTests(unittest.TestCase):
     def test_existing_claim_keeps_real_states_and_pending_is_nonblocking(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "prepopulated-export.db"
-            attachment = Path(td) / "synthetic.pdf"
-            attachment.write_bytes(b"%PDF-1.4 synthetic")
+            # Use XML so the test exercises a real attachment without leaving a
+            # QPdfDocument file handle open on Windows during temp cleanup.
+            attachment = Path(td) / "synthetic.xml"
+            attachment.write_text("<invoice>synthetic</invoice>", encoding="utf-8")
 
             with InvoiceDB(db_path) as db:
                 claim_id = db.create_claim_group("2026-07 Synthetic")
@@ -173,7 +176,10 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                 )
                 self.assertTrue(window.btn_run_export_page.isEnabled())
             finally:
-                window.close()
+                window.hide()
+                window.deleteLater()
+                QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+                self.app.processEvents()
 
 
 if __name__ == "__main__":
