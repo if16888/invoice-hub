@@ -63,8 +63,18 @@ class ReviewListPagingFixTests(unittest.TestCase):
             try:
                 self.assertEqual(len(window.invoices_list), 50)
                 self.assertEqual(window.lbl_record_count.text(), "已加载 50 / 共 125 张")
-                self.assertEqual(window.lbl_status_left.text(), "已加载 50 / 共 125 张")
-                self.assertTrue(window.btn_load_all.isHidden())
+                self.assertTrue(window.lbl_status_left.isHidden())
+                self.assertEqual(
+                    window.lbl_status_left.text(),
+                    "当前显示 50 / 125 张｜首屏限量加载",
+                )
+                self.assertFalse(window.btn_load_all.isHidden())
+                self.assertTrue(window.btn_load_all.property("legacyPagingCompatibilityProxy"))
+                self.assertFalse(
+                    window.btn_load_all.parentWidget().rect().intersects(
+                        window.btn_load_all.geometry()
+                    )
+                )
                 self.assertIn("向下滚动", window.lbl_record_count.toolTip())
                 self.assertIn("↓", window.lbl_record_count.toolTip())
 
@@ -82,20 +92,28 @@ class ReviewListPagingFixTests(unittest.TestCase):
                 self._drain_events()
 
                 self.assertEqual(len(window.invoices_list), 125)
-                self.assertEqual(window.lbl_record_count.text(), "共 125 张")
+                self.assertEqual(window.lbl_record_count.text(), "已加载全部，共 125 张")
                 self.assertEqual(window.lbl_status_left.text(), "共 125 张")
+                self.assertTrue(window.btn_load_all.isHidden())
                 self.assertIn("全部加载", window.lbl_record_count.toolTip())
             finally:
                 window.close()
                 window.deleteLater()
                 self._drain_events()
 
-    def test_filtered_scope_uses_filtered_count_not_loaded_copy(self):
+    def test_filtered_scope_pages_then_shows_filtered_total(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window_with_invoices(td, count=60)
             try:
                 window.current_filter_status = TO_REVIEW
                 window._load_invoices()
+                self._drain_events()
+
+                self.assertEqual(len(window.invoices_list), 50)
+                self.assertEqual(window.lbl_record_count.text(), "已加载 50 / 共 60 张")
+                self.assertEqual(window._limited_first_load_total, 60)
+
+                window._load_next_invoice_page()
                 self._drain_events()
 
                 self.assertEqual(len(window.invoices_list), 60)
