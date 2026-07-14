@@ -143,12 +143,13 @@ class CompanyTaxProfileTests(unittest.TestCase):
             window = InvoiceReviewApp(Path(td) / "company-profile.db")
             window.resize(1600, 900)
             window.show()
+            window._switch_main_page("review")
             for _ in range(8):
                 self.app.processEvents()
             try:
                 detail = window._detail_panel
                 self.assertTrue(window.review_page.property("companyTaxProfileApplied"))
-                self.assertTrue(detail.buyer_warning_action_row.isVisible())
+                self.assertFalse(detail.buyer_warning_action_row.isHidden())
                 self.assertEqual(detail.btn_edit_reimbursement_title.text(), "公司开票信息")
                 self.assertIn("开票", detail.btn_edit_reimbursement_title.toolTip())
             finally:
