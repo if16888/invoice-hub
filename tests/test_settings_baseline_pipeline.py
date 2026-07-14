@@ -12,7 +12,7 @@ from shiboken6 import isValid
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS
 from scripts.invoice_fetch.gui.settings_baseline_pipeline import SETTINGS_BASELINE_STAGES
-from scripts.invoice_fetch.gui import settings_pages_baseline
+from scripts.invoice_fetch.gui import settings_baseline, settings_pages_baseline
 
 
 class SettingsBaselinePipelineTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_deferred_settings_normalization_is_safe_after_window_deletion(self):
+    def test_deferred_settings_refreshes_are_safe_after_window_deletion(self):
         with tempfile.TemporaryDirectory() as td:
             window = InvoiceReviewApp(Path(td) / "settings-close.db")
             window.show()
@@ -59,18 +59,23 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
                 self.app.processEvents()
 
             guarded_normalize = settings_pages_baseline._normalize_ai
-            self.assertTrue(
-                bool(getattr(guarded_normalize, "_settings_lifecycle_guard", False))
-            )
+            guarded_mailbox_refresh = settings_baseline._refresh_mailbox_visuals
+            for guarded in (guarded_normalize, guarded_mailbox_refresh):
+                self.assertTrue(
+                    bool(getattr(guarded, "_settings_lifecycle_guard", False))
+                )
 
-            window.close()
+            window.db.close()
+            window.hide()
             window.deleteLater()
             QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
             self.app.processEvents()
             self.assertFalse(isValid(window))
 
-            # Must be a no-op rather than raising "Internal C++ object deleted".
+            # Both queued callback targets must be no-ops rather than raising
+            # "Internal C++ object already deleted" during shutdown.
             guarded_normalize(window)
+            guarded_mailbox_refresh(window)
 
 
 if __name__ == "__main__":
