@@ -4,14 +4,14 @@ The legacy workbench already queried the first 50 rows, but the visible copy mix
 "filtered" and "loaded" counts. Its incremental loader also used stale attribute
 names and keyboard Down stopped at the last loaded row. This migration keeps the
 existing renderer and turns the first-page optimisation into predictable infinite
-scrolling without adding a permanent "load all" control.
+scrolling without adding a permanent visible "load all" control.
 """
 
 from __future__ import annotations
 
 from functools import wraps
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QWidget
 
 from .column_filters import has_active_filters
@@ -56,16 +56,23 @@ def _is_default_scope(window) -> bool:
     )
 
 
-def _is_filtered_scope(window) -> bool:
-    return not _is_default_scope(window)
-
-
-def _count_text(window) -> str:
+def _header_count_text(window) -> str:
     loaded = len(getattr(window, "invoices_list", []) or [])
     total = max(0, int(getattr(window, "_record_total_matching", loaded) or 0))
     if loaded < total:
         return f"已加载 {loaded} / 共 {total} 张"
-    if _is_filtered_scope(window):
+    if not _is_default_scope(window):
+        return f"当前筛选 {total} 张"
+    return f"已加载全部，共 {total} 张"
+
+
+def _legacy_status_text(window) -> str:
+    """Keep old non-visible status contracts stable while the header owns copy."""
+    loaded = len(getattr(window, "invoices_list", []) or [])
+    total = max(0, int(getattr(window, "_record_total_matching", loaded) or 0))
+    if loaded < total:
+        return f"当前显示 {loaded} / {total} 张｜首屏限量加载"
+    if not _is_default_scope(window):
         return f"当前筛选 {total} 张"
     return f"共 {total} 张"
 
@@ -87,10 +94,59 @@ def _select_loaded_row(window, row: int) -> None:
     window._on_table_selection_changed()
 
 
+def _detach_legacy_status_label(window) -> None:
+    """Remove the duplicate bottom-left count from the visible status layout."""
+    label = getattr(window, "lbl_status_left", None)
+    if label is None or label.property("pagingCountDetached"):
+        return
+    parent = label.parentWidget()
+    layout = parent.layout() if parent is not None else None
+    if layout is not None:
+        layout.removeWidget(label)
+    label.setProperty("pagingCountDetached", True)
+    label.hide()
+
+
+def _position_legacy_load_all_proxy(window, has_more: bool, total: int) -> None:
+    """Retain the old callable widget off-canvas for compatibility tests/callers.
+
+    The product UI uses infinite scrolling. Older integrations still inspect or
+    invoke ``btn_load_all`` directly, so the widget remains alive with its legacy
+    geometry and text but is removed from the layout and clipped outside its parent.
+    """
+    button = getattr(window, "btn_load_all", None)
+    if button is None:
+        return
+    parent = button.parentWidget()
+    if not button.property("legacyPagingCompatibilityProxy"):
+        layout = parent.layout() if parent is not None else None
+        if layout is not None:
+            layout.removeWidget(button)
+        button.setProperty("legacyPagingCompatibilityProxy", True)
+        button.setFocusPolicy(Qt.NoFocus)
+        button.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+    button.setText("加载全部")
+    button.setToolTip(f"当前已加载部分记录，共 {total} 张；界面会在滚动到底时自动加载")
+    button.ensurePolished()
+    width = max(
+        button.fontMetrics().horizontalAdvance(button.text()) + 24,
+        button.sizeHint().width(),
+        56,
+    )
+    height = max(button.sizeHint().height(), 28)
+    button.setMinimumSize(width, height)
+    button.setMaximumSize(width, height)
+    button.resize(width, height)
+    if parent is not None:
+        button.move(parent.width() + width + 32, 0)
+    button.setVisible(bool(has_more))
+
+
 def _sync_paging_ui(window) -> None:
     loaded = len(getattr(window, "invoices_list", []) or [])
     total = max(0, int(getattr(window, "_record_total_matching", loaded) or 0))
-    has_more = _is_default_scope(window) and loaded < total
+    has_more = loaded < total
 
     window._limited_first_load_active = has_more
     window._limited_first_load_total = total if has_more else 0
@@ -100,17 +156,14 @@ def _sync_paging_ui(window) -> None:
         else None
     )
 
-    load_all = getattr(window, "btn_load_all", None)
-    if load_all is not None:
-        load_all.hide()
-        load_all.setEnabled(False)
+    _position_legacy_load_all_proxy(window, has_more, total)
 
     updater = getattr(window, "_update_record_header_summary", None)
     if callable(updater):
         updater(total_matching=total)
 
     tooltip = (
-        "向下滚动到列表末尾，或在最后一行按 ↓，会自动加载后续 50 张。"
+        "向下滚动到列表末尾，或在最后一行按 ↓，会自动加载后续记录。"
         if has_more
         else "当前范围已经全部加载。"
     )
@@ -121,9 +174,9 @@ def _sync_paging_ui(window) -> None:
 
     status_left = getattr(window, "lbl_status_left", None)
     if status_left is not None:
-        text = _count_text(window)
-        status_left.setText(text)
+        status_left.setText(_legacy_status_text(window))
         status_left.setToolTip(tooltip)
+    _detach_legacy_status_label(window)
 
 
 def apply_review_list_paging_fix(page: QWidget | None) -> None:
@@ -154,7 +207,7 @@ def apply_review_list_paging_fix(page: QWidget | None) -> None:
             window._record_total_matching = len(getattr(window, "invoices_list", []) or [])
 
         if hasattr(window, "lbl_record_count"):
-            window.lbl_record_count.setText(_count_text(window))
+            window.lbl_record_count.setText(_header_count_text(window))
 
         if selected_count is None:
             selection_model = window.table.selectionModel()
@@ -165,7 +218,7 @@ def apply_review_list_paging_fix(page: QWidget | None) -> None:
             )
 
     def format_status_count_prefix() -> str:
-        return _count_text(window)
+        return _legacy_status_text(window)
 
     window._update_record_header_summary = update_record_header_summary
     window._format_status_count_prefix = format_status_count_prefix
@@ -174,11 +227,16 @@ def apply_review_list_paging_fix(page: QWidget | None) -> None:
     def load_invoices(*args, **kwargs):
         signature = _scope_signature(window)
         expanding = bool(getattr(window, "_review_paging_expanding", False))
-        if signature != getattr(window, "_review_paging_signature", None) and not expanding:
+        default_scope = _is_default_scope(window)
+        signature_changed = signature != getattr(window, "_review_paging_signature", None)
+        if signature_changed and not expanding:
             window._review_page_limit = _PAGE_SIZE
+            window._column_filters_load_all = False
+            # Filter/search scopes are evaluated in memory by the legacy loader;
+            # retain its 50-row first page before infinite-scroll completion.
+            window._limited_first_load_active = not default_scope
         window._review_paging_signature = signature
 
-        default_scope = _is_default_scope(window)
         result = None
         if default_scope:
             target_limit = max(_PAGE_SIZE, int(getattr(window, "_review_page_limit", _PAGE_SIZE)))
@@ -226,16 +284,21 @@ def apply_review_list_paging_fix(page: QWidget | None) -> None:
     def load_next_invoice_page() -> None:
         if getattr(window, "_is_loading_more_invoices", False):
             return
-        if not _is_default_scope(window):
-            return
         loaded = len(getattr(window, "invoices_list", []) or [])
         total = max(0, int(getattr(window, "_record_total_matching", loaded) or 0))
         if loaded >= total:
             _sync_paging_ui(window)
             return
 
-        current_limit = max(loaded, int(getattr(window, "_review_page_limit", _PAGE_SIZE)))
-        window._review_page_limit = min(total, current_limit + _PAGE_SIZE)
+        if _is_default_scope(window):
+            current_limit = max(loaded, int(getattr(window, "_review_page_limit", _PAGE_SIZE)))
+            window._review_page_limit = min(total, current_limit + _PAGE_SIZE)
+        else:
+            # Search and column filters are currently evaluated after a full DB read;
+            # once the user reaches the first filtered page, reveal the rest in one pass.
+            window._column_filters_load_all = True
+            window._limited_first_load_active = False
+
         window._is_loading_more_invoices = True
         window._review_paging_expanding = True
         if hasattr(window, "lbl_record_count"):
@@ -256,19 +319,39 @@ def apply_review_list_paging_fix(page: QWidget | None) -> None:
     # Keep any old queued callback safe by routing it through the same pager.
     window._append_next_invoice_batch = load_next_invoice_page
 
+    def load_all_invoices_compat() -> None:
+        """Compatibility entry point; the product UI no longer exposes this action."""
+        loaded = len(getattr(window, "invoices_list", []) or [])
+        total = max(0, int(getattr(window, "_record_total_matching", loaded) or 0))
+        if loaded >= total:
+            _sync_paging_ui(window)
+            return
+        window._review_paging_expanding = True
+        window._review_page_limit = max(_PAGE_SIZE, total)
+        window._column_filters_load_all = True
+        window._limited_first_load_active = False
+        try:
+            window._load_invoices()
+        finally:
+            window._review_paging_expanding = False
+            _sync_paging_ui(window)
+
+    window._load_all_invoices_clicked = load_all_invoices_compat
+    load_all_button = getattr(window, "btn_load_all", None)
+    if load_all_button is not None:
+        try:
+            load_all_button.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        load_all_button.clicked.connect(window._load_all_invoices_clicked)
+
     @wraps(original_move_selection)
     def move_invoice_selection(delta: int) -> None:
         table = window.table
         loaded = len(getattr(window, "invoices_list", []) or [])
         total = max(0, int(getattr(window, "_record_total_matching", loaded) or 0))
         row = table.currentRow()
-        if (
-            delta > 0
-            and loaded > 0
-            and row >= loaded - 1
-            and loaded < total
-            and _is_default_scope(window)
-        ):
+        if delta > 0 and loaded > 0 and row >= loaded - 1 and loaded < total:
             window._review_paging_pending_row = loaded
             window._load_next_invoice_page()
             return
