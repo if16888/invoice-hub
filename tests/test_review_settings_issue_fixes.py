@@ -4,8 +4,12 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QPushButton,
     QToolButton,
@@ -30,6 +34,15 @@ def _app():
     return _QAPP
 
 
+def _install_version_footer(window, parent):
+    container = QFrame(parent)
+    layout = QHBoxLayout(container)
+    window.status_actions_container = container
+    window.lbl_version = QLabel("v0.1.4", container)
+    layout.addWidget(window.lbl_version)
+    return container
+
+
 class ReviewAttachmentActionFixTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -40,7 +53,10 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
         page = QWidget(window)
         layout = QVBoxLayout(page)
         detail = InvoiceDetailPanel(parent=page)
+        detail.btn_edit_reimbursement_title = QPushButton("公司开票信息", detail)
+        detail.layout().addWidget(detail.btn_edit_reimbursement_title)
         layout.addWidget(detail)
+        layout.addWidget(_install_version_footer(window, page))
         window.setCentralWidget(page)
         window.review_page = page
         window._detail_panel = detail
@@ -122,6 +138,24 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
+    def test_review_removes_company_button_and_footer_version_chip(self):
+        window, page, detail = self._make_window()
+        company_button = detail.btn_edit_reimbursement_title
+        version = window.lbl_version
+        try:
+            apply_review_attachment_action_fix(page)
+
+            self.assertTrue(company_button.isHidden())
+            self.assertTrue(company_button.property("reviewCompanyActionRemoved"))
+            self.assertIs(company_button.parentWidget(), detail)
+            self.assertTrue(version.isHidden())
+            self.assertTrue(version.property("reviewFooterVersionRemoved"))
+            self.assertIs(version.parentWidget(), window)
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
 
 class SettingsActionClarityTests(unittest.TestCase):
     @classmethod
@@ -143,6 +177,7 @@ class SettingsActionClarityTests(unittest.TestCase):
         ):
             tabs.addTab(QWidget(), title)
         page_layout.addWidget(tabs)
+        page_layout.addWidget(_install_version_footer(window, page))
         window.setCentralWidget(page)
         window.settings_tabs = tabs
         window.config = {
@@ -169,18 +204,58 @@ class SettingsActionClarityTests(unittest.TestCase):
         window._refresh_settings_page = lambda: None
         return window, page
 
-    def test_settings_keeps_existing_tabs_and_adds_company_profile_action(self):
+    def test_settings_adds_company_profile_as_second_navigation_page(self):
         window, page = self._make_window()
         try:
+            ai_page = window.settings_tabs.widget(1)
             apply_settings_action_clarity(page)
 
             self.assertEqual(window.settings_tabs.count(), 6)
-            self.assertEqual(window.btn_settings_company_profile.text(), "公司开票信息")
-            self.assertEqual(window.btn_settings_company_profile.property("variant"), "secondary")
-            self.assertTrue(window.btn_settings_company_profile.toolTip())
+            self.assertEqual(window.settings_tabs.nav_list.count(), 7)
+            self.assertEqual(
+                [
+                    window.settings_tabs.nav_list.item(i).text()
+                    for i in range(window.settings_tabs.nav_list.count())
+                ],
+                [
+                    "邮箱账户",
+                    "开票信息",
+                    "AI 配置",
+                    "运行状态",
+                    "安全与隐私",
+                    "数据与备份",
+                    "关于",
+                ],
+            )
+            self.assertIs(window.settings_tabs.widget(1), ai_page)
+            company_item = window.settings_tabs.nav_list.item(1)
+            self.assertEqual(company_item.data(Qt.UserRole), "company_tax_profile")
+            window.settings_tabs.nav_list.setCurrentRow(1)
+            self.assertIs(window.settings_tabs.currentWidget(), window.settings_company_profile_page)
+            self.assertEqual(
+                window.settings_company_profile_values["单位名称"].text(),
+                "示例科技有限公司",
+            )
             self.assertEqual(window.btn_settings_mailbox_add.text(), "＋ 添加邮箱账号")
             self.assertGreaterEqual(window.btn_settings_mailbox_add.minimumWidth(), 132)
             self.assertEqual(window.btn_settings_mailbox_add.property("variant"), "primary")
+            self.assertTrue(window.lbl_version.isHidden())
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_compatibility_index_one_still_selects_ai_page(self):
+        window, page = self._make_window()
+        try:
+            ai_page = window.settings_tabs.widget(1)
+            apply_settings_action_clarity(page)
+            window.settings_tabs.setCurrentIndex(1)
+
+            self.assertIs(window.settings_tabs.currentWidget(), ai_page)
+            self.assertEqual(window.settings_tabs.currentIndex(), 1)
+            self.assertEqual(window.settings_tabs.nav_list.currentRow(), 2)
+            self.assertEqual(window.settings_tabs.tabText(1), "AI 配置")
         finally:
             window.close()
             window.deleteLater()
