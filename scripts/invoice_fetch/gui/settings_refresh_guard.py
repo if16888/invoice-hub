@@ -1,4 +1,4 @@
-"""Lifecycle-safe coalescing guards for deferred Settings refreshes."""
+"""Lifecycle-safe coalescing guards for deferred UI refreshes."""
 
 from __future__ import annotations
 
@@ -62,17 +62,18 @@ def _install_function_guard(
 
 
 def install_settings_refresh_guard(page: QWidget | None) -> None:
-    """Make existing zero-delay Settings callbacks safe and coalesced.
+    """Make existing zero-delay UI callbacks safe and coalesced.
 
-    The existing signal lambdas resolve their module-level refresh functions
-    only when they run. Replacing those functions after migration therefore
-    protects callbacks that are already queued, without reconnecting anonymous
-    signals. Multiple callbacks for one surface in the same event-loop turn are
-    collapsed into one refresh.
+    Existing signal lambdas resolve their module-level refresh functions only
+    when they run. Replacing those functions after page migration protects
+    callbacks that are already queued, without reconnecting anonymous signals.
+    Multiple callbacks for one surface in the same event-loop turn collapse into
+    one refresh.
     """
     if page is None or not isValid(page):
         return
 
+    from . import review_feedback_fixes
     from . import settings_baseline
     from . import settings_pages_baseline
 
@@ -85,6 +86,11 @@ def install_settings_refresh_guard(page: QWidget | None) -> None:
         settings_baseline,
         "_refresh_mailbox_visuals",
         "settingsMailboxRefreshInFlight",
+    )
+    _install_function_guard(
+        review_feedback_fixes,
+        "_sync_seller_tooltips",
+        "reviewSellerTooltipSyncInFlight",
     )
     page.setProperty("settingsRefreshGuardInstalled", True)
 
