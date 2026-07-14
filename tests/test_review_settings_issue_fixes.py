@@ -36,7 +36,7 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _app()
 
-    def test_existing_original_uses_stable_materials_action_cluster(self):
+    def _make_window(self):
         window = QMainWindow()
         page = QWidget(window)
         layout = QVBoxLayout(page)
@@ -45,7 +45,10 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
         window.setCentralWidget(page)
         window.review_page = page
         window._detail_panel = detail
+        return window, page, detail
 
+    def test_existing_original_keeps_open_primary_and_replace_in_material_row(self):
+        window, page, detail = self._make_window()
         try:
             apply_review_attachment_action_fix(page)
             detail.set_attachment_state(
@@ -56,14 +59,13 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
                 can_download=False,
             )
 
+            self.assertIs(detail.original_status_line._action_widget, detail.btn_open_file)
             self.assertEqual(detail.btn_add_attachment.text(), "替换原件")
-            self.assertIs(
-                detail.btn_add_attachment.parentWidget(),
-                detail.original_status_actions,
-            )
-            self.assertIs(
-                detail.original_status_line._action_widget,
-                detail.original_status_actions,
+            self.assertIs(detail.btn_open_file.parentWidget(), detail.original_status_line)
+            self.assertIs(detail.btn_add_attachment.parentWidget(), detail.original_status_line)
+            self.assertGreaterEqual(
+                detail.original_status_line.layout().indexOf(detail.btn_add_attachment),
+                0,
             )
             self.assertFalse(detail.btn_open_file.isHidden())
             self.assertFalse(detail.btn_add_attachment.isHidden())
@@ -74,16 +76,8 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
-    def test_missing_original_uses_explicit_supplement_or_download_actions(self):
-        window = QMainWindow()
-        page = QWidget(window)
-        layout = QVBoxLayout(page)
-        detail = InvoiceDetailPanel(parent=page)
-        layout.addWidget(detail)
-        window.setCentralWidget(page)
-        window.review_page = page
-        window._detail_panel = detail
-
+    def test_downloadable_missing_original_keeps_download_primary_and_supplement_secondary(self):
+        window, page, detail = self._make_window()
         try:
             apply_review_attachment_action_fix(page)
             detail.set_attachment_state(
@@ -94,15 +88,36 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
                 can_download=True,
             )
 
+            self.assertIs(
+                detail.original_status_line._action_widget,
+                detail.btn_retry_download,
+            )
             self.assertEqual(detail.btn_add_attachment.text(), "补充原件")
             self.assertEqual(detail.btn_retry_download.text(), "重新下载")
             self.assertTrue(detail.btn_open_file.isHidden())
             self.assertFalse(detail.btn_add_attachment.isHidden())
             self.assertFalse(detail.btn_retry_download.isHidden())
+            self.assertIs(detail.btn_retry_download.parentWidget(), detail.original_status_line)
+            self.assertIs(detail.btn_add_attachment.parentWidget(), detail.original_status_line)
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_missing_original_without_download_keeps_supplement_as_primary(self):
+        window, page, detail = self._make_window()
+        try:
+            apply_review_attachment_action_fix(page)
+            detail.set_attachment_state(has_file=False, has_url=False)
+
             self.assertIs(
-                detail.btn_retry_download.parentWidget(),
-                detail.original_status_actions,
+                detail.original_status_line._action_widget,
+                detail.btn_add_attachment,
             )
+            self.assertEqual(detail.btn_add_attachment.text(), "补充原件")
+            self.assertFalse(detail.btn_add_attachment.isHidden())
+            self.assertTrue(detail.btn_open_file.isHidden())
+            self.assertTrue(detail.btn_retry_download.isHidden())
         finally:
             window.close()
             window.deleteLater()
@@ -155,14 +170,16 @@ class SettingsActionClarityTests(unittest.TestCase):
         window._refresh_settings_page = lambda: None
         return window, page
 
-    def test_settings_adds_company_profile_page_and_prominent_mailbox_action(self):
+    def test_settings_appends_company_profile_without_changing_existing_indexes(self):
         window, page = self._make_window()
         try:
             apply_settings_action_clarity(page)
 
-            self.assertEqual(window.settings_tabs.nav_list.item(1).text(), "开票信息")
+            self.assertEqual(window.settings_tabs.widget(1).objectName(), "")
+            last = window.settings_tabs.count() - 1
+            self.assertEqual(window.settings_tabs.nav_list.item(last).text(), "开票信息")
             self.assertEqual(
-                window.settings_tabs.nav_list.item(1).data(Qt.UserRole),
+                window.settings_tabs.nav_list.item(last).data(Qt.UserRole),
                 "company_tax_profile",
             )
             self.assertEqual(
@@ -187,7 +204,7 @@ class SettingsActionClarityTests(unittest.TestCase):
                 window.btn_settings_mailbox_add_credential.text(),
                 "设置授权码",
             )
-            self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑配置")
+            self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑")
             self.assertFalse(window.btn_settings_mailbox_add_credential.isHidden())
             self.assertFalse(window.btn_settings_mailbox_edit_config.isHidden())
             self.assertFalse(window.settings_mailbox_more.isHidden())
