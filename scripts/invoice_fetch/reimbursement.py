@@ -2,32 +2,53 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 
 
 BUYER_MISSING_WARNING = "购方抬头待核对"
 BUYER_MISMATCH_WARNING = "购方抬头不匹配，可能导致退单"
+BUYER_TAX_MISSING_WARNING = "购方税号待核对"
+BUYER_TAX_MISMATCH_WARNING = "购方税号不匹配，可能导致退单"
 
 
 def _norm_text(value: str) -> str:
     return "".join(str(value or "").split()).lower()
 
 
+def normalize_tax_id(value: str | None) -> str:
+    """Normalize a taxpayer ID for storage and comparison."""
+    return re.sub(r"[^0-9A-Za-z]", "", str(value or "")).upper()
+
+
 def buyer_warning(invoice: dict, cfg: dict | None) -> str:
-    """Return a non-blocking reimbursement warning for buyer title mismatch."""
+    """Return non-blocking buyer name/tax-ID warnings for invoice review."""
     reimbursement_cfg = (cfg or {}).get("reimbursement", cfg or {})
-    if not reimbursement_cfg.get("strict_buyer_check", False):
-        return ""
+    warnings: list[str] = []
 
-    expected = str(reimbursement_cfg.get("buyer_name") or "").strip()
-    actual = str(invoice.get("buyer_name") or "").strip()
-    if not actual:
-        return BUYER_MISSING_WARNING
+    if reimbursement_cfg.get("strict_buyer_check", False):
+        expected = str(reimbursement_cfg.get("buyer_name") or "").strip()
+        actual = str(invoice.get("buyer_name") or "").strip()
+        if not actual:
+            warnings.append(BUYER_MISSING_WARNING)
+        elif expected and _norm_text(actual) != _norm_text(expected):
+            warnings.append(f"购买方抬头不匹配：当前：{actual}；期望：{expected}")
 
-    if expected and _norm_text(actual) != _norm_text(expected):
-        return f"购买方抬头不匹配：当前：{actual}；期望：{expected}"
+    # Legacy rows do not yet contain buyer_tax_id. Only evaluate the missing
+    # value when an importer explicitly supplied the field, avoiding a permanent
+    # warning on historical invoices.
+    if reimbursement_cfg.get("strict_buyer_tax_check", False):
+        expected_tax = normalize_tax_id(reimbursement_cfg.get("buyer_tax_id"))
+        if expected_tax and "buyer_tax_id" in invoice:
+            actual_tax = normalize_tax_id(invoice.get("buyer_tax_id"))
+            if not actual_tax:
+                warnings.append(BUYER_TAX_MISSING_WARNING)
+            elif actual_tax != expected_tax:
+                warnings.append(
+                    f"购买方税号不匹配：当前：{actual_tax}；期望：{expected_tax}"
+                )
 
-    return ""
+    return "；".join(warnings)
 
 
 def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:
@@ -57,7 +78,6 @@ def _is_railway_or_travel_ticket(invoice: dict) -> bool:
     seller_name = str(invoice.get("seller_name") or "").strip()
     category = str(invoice.get("category") or "").strip()
 
-    # 1. 铁路电子客票
     if inv_type == "铁路电子客票" or seller_name == "中国国家铁路集团有限公司":
         return True
     if "铁路" in inv_type or "铁路" in seller_name:
@@ -65,7 +85,6 @@ def _is_railway_or_travel_ticket(invoice: dict) -> bool:
     if "12306" in inv_type or "12306" in seller_name:
         return True
 
-    # 2. 交通类且 seller_name/票据类型明显属于行程票据
     is_transport = category in ("交通", "过路费") or "交通" in category
     if is_transport:
         travel_kws = [

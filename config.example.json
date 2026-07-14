@@ -72,7 +72,12 @@
   "reimbursement": {
     "buyer_name": "示例科技有限公司",
     "buyer_tax_id": "911100000000000000",
-    "strict_buyer_check": true
+    "registered_address": "示例市示例区示例路 1 号",
+    "registered_phone": "010-00000000",
+    "bank_name": "示例银行示例支行",
+    "bank_account": "0000000000000000000",
+    "strict_buyer_check": true,
+    "strict_buyer_tax_check": false
   },
   "playwright": {
     "channel": "auto"
