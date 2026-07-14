@@ -176,6 +176,7 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                 )
                 self.assertTrue(window.btn_run_export_page.isEnabled())
             finally:
+                window.db.close()
                 window.hide()
                 window.deleteLater()
                 QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
