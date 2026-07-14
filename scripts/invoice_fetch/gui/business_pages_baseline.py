@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import weakref
 from functools import wraps
-from types import MethodType
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QSizePolicy, QWidget
 from shiboken6 import isValid
 
+from ..claim_export import _normalize_export_date_prefix
 from ..review_status import APPROVED
-from .icon_provider import IconProvider
+from .semantic_checklist import install_semantic_checklist_contract
 from .ui_components import ChecklistRow
+
+
+# Install the shared component contract before InvoiceReviewApp constructs any
+# ChecklistRow instances.  This avoids per-instance monkey patches and prevents
+# a transient Unicode/inline-color state during page construction.
+install_semantic_checklist_contract(ChecklistRow)
 
 
 DASHBOARD_MIN_WIDTH = 960
@@ -107,58 +114,13 @@ def apply_import_baseline(page: QWidget) -> None:
     _content_width_button(getattr(window, "btn_import_local_task", None), minimum=112)
 
 
-def _set_semantic_checklist_value(
-    row: ChecklistRow,
-    value: str,
-    ok: bool | None = None,
-    *,
-    state: str | None = None,
-) -> None:
-    """Render checklist state with semantic icons instead of Unicode glyphs."""
-    if state is None:
-        state = "success" if ok is True else ("danger" if ok is False else "muted")
-    if state not in {"success", "warning", "danger", "muted"}:
-        state = "muted"
-
-    row.lbl_value.setText(str(value))
-    row.lbl_value.setProperty("state", state)
-    row.setProperty("state", state)
-
-    semantic = {
-        "success": "success",
-        "warning": "warning",
-        "danger": "danger",
-        "muted": "info",
-    }[state]
-    row.lbl_icon.setText("")
-    row.lbl_icon.setStyleSheet("")
-    row.lbl_value.setStyleSheet("")
-    row.lbl_icon.setPixmap(IconProvider.icon(semantic).pixmap(QSize(14, 14)))
-    row.lbl_icon.setToolTip(
-        {
-            "success": "检查通过",
-            "warning": "可继续，但会使用默认值",
-            "danger": "检查未通过",
-            "muted": "等待检查",
-        }[state]
-    )
-    for widget in (row, row.lbl_value):
-        widget.style().unpolish(widget)
-        widget.style().polish(widget)
-        widget.update()
-
-
-def _apply_semantic_checklist_row(row: ChecklistRow | None) -> None:
-    if row is None or row.property("semanticChecklistApplied"):
-        return
-    row.setProperty("semanticChecklistApplied", True)
-    current = row.lbl_value.text()
-    row.set_value = MethodType(_set_semantic_checklist_value, row)
-    row.set_value(current, state="muted")
-
-
 def _export_naming_state(invoices: list[dict]) -> tuple[str, str]:
-    """Return truthful export-filename readiness for approved invoices."""
+    """Return filename readiness using the same date rule as the exporter.
+
+    Real export names are ``date-prefix + original filename``.  Seller is not a
+    naming input, and the exporter resolves dates in this order:
+    invoice_date, expense_date, mail_date, then ``unknown-date``.
+    """
     approved = [
         invoice
         for invoice in invoices
@@ -169,16 +131,18 @@ def _export_naming_state(invoices: list[dict]) -> tuple[str, str]:
 
     fallback_count = 0
     for invoice in approved:
-        expense_date = str(
-            invoice.get("expense_date") or invoice.get("invoice_date") or ""
-        ).strip()
-        seller = str(invoice.get("seller_name") or "").strip()
-        if not expense_date or not seller:
+        raw_date = (
+            invoice.get("invoice_date")
+            or invoice.get("expense_date")
+            or invoice.get("mail_date")
+            or ""
+        )
+        if _normalize_export_date_prefix(raw_date) == "unknown-date":
             fallback_count += 1
 
     if fallback_count:
-        return f"{fallback_count} 张将使用默认名称", "warning"
-    return f"{len(approved)} 张可按日期与商户命名", "success"
+        return f"{fallback_count} 张将使用 unknown-date 前缀", "warning"
+    return f"{len(approved)} 张使用日期前缀 + 原文件名", "success"
 
 
 def _sync_export_naming_check(window) -> None:
@@ -205,10 +169,14 @@ def _sync_export_naming_check(window) -> None:
 
 
 def _schedule_export_naming_check(window) -> None:
-    QTimer.singleShot(
-        0,
-        lambda: _sync_export_naming_check(window) if isValid(window) else None,
-    )
+    window_ref = weakref.ref(window)
+
+    def run() -> None:
+        target = window_ref()
+        if target is not None and isValid(target):
+            _sync_export_naming_check(target)
+
+    QTimer.singleShot(0, run)
 
 
 def _install_export_naming_refresh(window, page: QWidget) -> None:
@@ -256,6 +224,12 @@ def apply_export_baseline(page: QWidget) -> None:
         integrity.setFixedWidth(EXPORT_CHECK_WIDTH)
         integrity.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
 
+    # Pending invoices are excluded by default rather than blocking an export.
+    # Preserve the existing boolean call site but render false as a warning.
+    pending = getattr(window, "export_check_pending", None)
+    if pending is not None:
+        pending.setProperty("falseState", "warning")
+
     if integrity is not None and not hasattr(window, "export_check_naming"):
         naming = ChecklistRow("文件命名", "等待选择报销组", ok=None)
         naming.setObjectName("ExportNamingChecklistRow")
@@ -267,18 +241,17 @@ def apply_export_baseline(page: QWidget) -> None:
             integrity.body_layout.addWidget(naming)
         window.export_check_naming = naming
 
-    for name in (
-        "export_check_approved",
-        "export_check_pending",
-        "export_check_missing_attach",
-        "export_check_missing_amount",
-        "export_check_dir",
-        "export_check_naming",
-    ):
-        _apply_semantic_checklist_row(getattr(window, name, None))
-
     _install_export_naming_refresh(window, page)
-    _sync_export_naming_check(window)
+
+    # The page may have refreshed before this zero-delay baseline ran.  Re-run
+    # the complete preflight now so no previously calculated row is reset to a
+    # neutral state and the pending-row warning contract takes effect.
+    sync = getattr(window, "_sync_export_claim_selection", None)
+    if callable(sync):
+        sync()
+    else:
+        _sync_export_naming_check(window)
+
     _content_width_button(getattr(window, "btn_run_export_page", None), minimum=128)
 
 
@@ -292,7 +265,6 @@ def apply_task_flow_baseline(page: QWidget) -> None:
 
 
 __all__ = [
-    "_apply_semantic_checklist_row",
     "_export_naming_state",
     "apply_dashboard_baseline",
     "apply_import_baseline",
