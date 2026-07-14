@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QSizePolicy, QWidget
+from functools import wraps
+from types import MethodType
 
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtWidgets import QFrame, QSizePolicy, QWidget
+from shiboken6 import isValid
+
+from ..review_status import APPROVED
+from .icon_provider import IconProvider
 from .ui_components import ChecklistRow
 
 
@@ -101,6 +107,133 @@ def apply_import_baseline(page: QWidget) -> None:
     _content_width_button(getattr(window, "btn_import_local_task", None), minimum=112)
 
 
+def _set_semantic_checklist_value(
+    row: ChecklistRow,
+    value: str,
+    ok: bool | None = None,
+    *,
+    state: str | None = None,
+) -> None:
+    """Render checklist state with semantic icons instead of Unicode glyphs."""
+    if state is None:
+        state = "success" if ok is True else ("danger" if ok is False else "muted")
+    if state not in {"success", "warning", "danger", "muted"}:
+        state = "muted"
+
+    row.lbl_value.setText(str(value))
+    row.lbl_value.setProperty("state", state)
+    row.setProperty("state", state)
+
+    semantic = {
+        "success": "success",
+        "warning": "warning",
+        "danger": "danger",
+        "muted": "info",
+    }[state]
+    row.lbl_icon.setText("")
+    row.lbl_icon.setPixmap(IconProvider.icon(semantic).pixmap(QSize(14, 14)))
+    row.lbl_icon.setToolTip(
+        {
+            "success": "检查通过",
+            "warning": "可继续，但会使用默认值",
+            "danger": "检查未通过",
+            "muted": "等待检查",
+        }[state]
+    )
+    for widget in (row, row.lbl_value):
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+
+def _apply_semantic_checklist_row(row: ChecklistRow | None) -> None:
+    if row is None or row.property("semanticChecklistApplied"):
+        return
+    row.setProperty("semanticChecklistApplied", True)
+    current = row.lbl_value.text()
+    row.set_value = MethodType(_set_semantic_checklist_value, row)
+    row.set_value(current, state="muted")
+
+
+def _export_naming_state(invoices: list[dict]) -> tuple[str, str]:
+    """Return truthful export-filename readiness for approved invoices."""
+    approved = [
+        invoice
+        for invoice in invoices
+        if str(invoice.get("review_status") or "").strip() == APPROVED
+    ]
+    if not approved:
+        return "等待可导出发票", "muted"
+
+    fallback_count = 0
+    for invoice in approved:
+        expense_date = str(
+            invoice.get("expense_date") or invoice.get("invoice_date") or ""
+        ).strip()
+        seller = str(invoice.get("seller_name") or "").strip()
+        if not expense_date or not seller:
+            fallback_count += 1
+
+    if fallback_count:
+        return f"{fallback_count} 张将使用默认名称", "warning"
+    return f"{len(approved)} 张可按日期与商户命名", "success"
+
+
+def _sync_export_naming_check(window) -> None:
+    row = getattr(window, "export_check_naming", None)
+    group_list = getattr(window, "export_group_list", None)
+    db = getattr(window, "db", None)
+    if row is None or group_list is None or db is None or not getattr(db, "is_open", False):
+        return
+
+    current_item = group_list.currentItem()
+    claim_id = current_item.data(Qt.UserRole) if current_item is not None else None
+    if claim_id is None:
+        row.set_value("等待选择报销组", state="muted")
+        return
+
+    try:
+        invoices = db.get_claim_invoices(claim_id)
+    except Exception:
+        row.set_value("暂时无法检查", state="warning")
+        return
+
+    text, state = _export_naming_state(list(invoices or []))
+    row.set_value(text, state=state)
+
+
+def _schedule_export_naming_check(window) -> None:
+    QTimer.singleShot(
+        0,
+        lambda: _sync_export_naming_check(window) if isValid(window) else None,
+    )
+
+
+def _install_export_naming_refresh(window, page: QWidget) -> None:
+    if page.property("exportNamingRefreshInstalled"):
+        return
+    page.setProperty("exportNamingRefreshInstalled", True)
+
+    group_list = getattr(window, "export_group_list", None)
+    if group_list is not None:
+        group_list.currentRowChanged.connect(
+            lambda _row: _schedule_export_naming_check(window)
+        )
+
+    for method_name in ("_sync_export_claim_selection", "_refresh_export_page"):
+        original = getattr(window, method_name, None)
+        if original is None:
+            continue
+
+        @wraps(original)
+        def wrapped(*args, __original=original, **kwargs):
+            result = __original(*args, **kwargs)
+            _schedule_export_naming_check(window)
+            return result
+
+        setattr(window, method_name, wrapped)
+
+
 def apply_export_baseline(page: QWidget) -> None:
     if page is None or page.property("exportBaselineApplied"):
         return
@@ -122,7 +255,7 @@ def apply_export_baseline(page: QWidget) -> None:
         integrity.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
 
     if integrity is not None and not hasattr(window, "export_check_naming"):
-        naming = ChecklistRow("文件命名", "按日期与商户", ok=True)
+        naming = ChecklistRow("文件命名", "等待选择报销组", ok=None)
         naming.setObjectName("ExportNamingChecklistRow")
         hint = getattr(window, "lbl_export_action_hint", None)
         index = integrity.body_layout.indexOf(hint) if hint is not None else -1
@@ -132,6 +265,18 @@ def apply_export_baseline(page: QWidget) -> None:
             integrity.body_layout.addWidget(naming)
         window.export_check_naming = naming
 
+    for name in (
+        "export_check_approved",
+        "export_check_pending",
+        "export_check_missing_attach",
+        "export_check_missing_amount",
+        "export_check_dir",
+        "export_check_naming",
+    ):
+        _apply_semantic_checklist_row(getattr(window, name, None))
+
+    _install_export_naming_refresh(window, page)
+    _sync_export_naming_check(window)
     _content_width_button(getattr(window, "btn_run_export_page", None), minimum=128)
 
 
@@ -145,6 +290,8 @@ def apply_task_flow_baseline(page: QWidget) -> None:
 
 
 __all__ = [
+    "_apply_semantic_checklist_row",
+    "_export_naming_state",
     "apply_dashboard_baseline",
     "apply_import_baseline",
     "apply_export_baseline",
