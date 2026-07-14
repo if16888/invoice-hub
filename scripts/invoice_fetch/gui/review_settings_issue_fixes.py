@@ -1,24 +1,22 @@
 """Focused UI fixes for review attachment actions and settings clarity.
 
-This module is deliberately installed from the deterministic Review and Settings
-pipelines.  It changes presentation and routing only; existing callbacks continue
-to own attachment, mailbox, credential, and configuration business logic.
+The functions in this module are installed by the deterministic Review and
+Settings pipelines. They only adjust presentation and navigation; existing
+callbacks continue to own attachment, credential, and configuration logic.
 """
 
 from __future__ import annotations
 
 from functools import wraps
-from inspect import signature
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QListWidgetItem,
     QMessageBox,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -46,75 +44,78 @@ def _repolish(widget: QWidget | None) -> None:
     widget.update()
 
 
-def _remove_from_current_layout(widget: QWidget) -> None:
+def _remove_from_layout(widget: QWidget) -> None:
     parent = widget.parentWidget()
     layout = parent.layout() if parent is not None else None
     if layout is not None:
         layout.removeWidget(widget)
 
 
-def _restore_attachment_action_cluster(
-    detail,
-    *,
-    has_file: bool,
-    has_url: bool,
-    show_add: bool = True,
-) -> None:
-    """Keep all original-file actions in the Materials row.
+def _place_secondary_action(status_line, button: QWidget) -> None:
+    """Place a non-primary action in the final material row without floating."""
+    _remove_from_layout(button)
+    button.setParent(status_line)
+    if status_line.layout().indexOf(button) < 0:
+        status_line.layout().addWidget(button)
+    button.show()
 
-    The legacy implementation repeatedly reparented a single action button into
-    ``StatusLine``.  On some DPI/layout combinations that button escaped into the
-    summary card.  A stable action container avoids cross-layout reparenting.
+
+def _hide_non_primary_action(status_line, button: QWidget) -> None:
+    if status_line._action_widget is button:
+        return
+    _remove_from_layout(button)
+    button.hide()
+    button.setParent(status_line)
+
+
+def _stabilize_original_file_actions(detail, *, has_file: bool, has_url: bool) -> None:
+    """Keep original-file controls inside the Materials / Original row.
+
+    The final detail migration deletes the legacy material card. Buttons that
+    were not the current ``StatusLine`` action were then reparented to the detail
+    panel for compatibility. A later refresh could make one of those unmanaged
+    buttons visible at coordinate (0, 0), which is the escaped “替换” control seen
+    over the summary amount. This function keeps the primary-action contract and
+    explicitly manages the one useful secondary action in the final row.
     """
     status_line = detail.original_status_line
-    cluster = detail.original_status_actions
-    cluster_layout = cluster.layout()
-
-    status_line.clear_action()
-    for button in (
-        detail.btn_open_file,
-        detail.btn_add_attachment,
-        detail.btn_retry_download,
-    ):
-        _remove_from_current_layout(button)
-        button.setParent(cluster)
-        if cluster_layout.indexOf(button) < 0:
-            cluster_layout.addWidget(button)
+    primary = status_line._action_widget
 
     detail.btn_open_file.setText("打开")
     detail.btn_open_file.setToolTip("打开当前发票原件")
-    detail.btn_open_file.setVisible(has_file)
-
     detail.btn_add_attachment.setText("替换原件" if has_file else "补充原件")
     detail.btn_add_attachment.setToolTip(
         "选择本地文件替换当前发票原件" if has_file else "选择本地文件补充发票原件"
     )
     detail.btn_add_attachment.setMinimumWidth(84)
-    detail.btn_add_attachment.setVisible(show_add)
-
     detail.btn_retry_download.setText("重新下载")
     detail.btn_retry_download.setToolTip("重新从原始来源下载发票原件")
     detail.btn_retry_download.setMinimumWidth(80)
-    detail.btn_retry_download.setVisible((not has_file) and has_url)
 
-    # “定位”仍可从发票更多菜单进入，不占用窄详情栏的高频操作区。
-    detail.btn_locate_file.setVisible(False)
+    # “定位”是低频操作，继续由更多菜单承载；它不能作为无布局子控件显示。
+    _hide_non_primary_action(status_line, detail.btn_locate_file)
 
-    status_line.set_action(cluster)
-    cluster.setVisible(
-        any(
-            not button.isHidden()
-            for button in (
-                detail.btn_open_file,
-                detail.btn_add_attachment,
-                detail.btn_retry_download,
-            )
-        )
-    )
+    # Existing primary-action behaviour remains intact:
+    #   existing file -> 打开
+    #   downloadable missing file -> 重新下载
+    #   otherwise -> 补充原件
+    if primary in (detail.btn_open_file, detail.btn_retry_download):
+        _place_secondary_action(status_line, detail.btn_add_attachment)
+    else:
+        # When 补充原件 itself is primary, ensure it is not duplicated.
+        _hide_non_primary_action(status_line, detail.btn_open_file)
+        _hide_non_primary_action(status_line, detail.btn_retry_download)
+
+    # Defensive cleanup for controls made visible by the legacy refresh while
+    # they were no longer owned by a layout.
+    if primary is not detail.btn_open_file:
+        _hide_non_primary_action(status_line, detail.btn_open_file)
+    if primary is not detail.btn_retry_download:
+        _hide_non_primary_action(status_line, detail.btn_retry_download)
 
 
 def _open_company_settings_or_dialog(window) -> None:
-    """Route the review warning action to Settings, with a safe dialog fallback."""
+    """Route the review entry to Settings, with the existing dialog as fallback."""
     tabs = getattr(window, "settings_tabs", None)
     nav_list = getattr(tabs, "nav_list", None)
     stack = getattr(tabs, "stack", None)
@@ -127,8 +128,7 @@ def _open_company_settings_or_dialog(window) -> None:
                 break
 
     if target_row >= 0 and stack is not None:
-        workbench_buttons = getattr(window, "workbench_nav_buttons", {}) or {}
-        settings_button = workbench_buttons.get("settings")
+        settings_button = (getattr(window, "workbench_nav_buttons", {}) or {}).get("settings")
         if settings_button is not None:
             settings_button.click()
         nav_list.setCurrentRow(target_row)
@@ -139,7 +139,7 @@ def _open_company_settings_or_dialog(window) -> None:
 
 
 def apply_review_attachment_action_fix(page: QWidget | None) -> None:
-    """Stabilize the review Materials actions and route company info to Settings."""
+    """Fix escaped attachment controls and route company info to Settings."""
     if page is None or page.property("reviewAttachmentActionFixApplied"):
         return
     window = page.window()
@@ -150,46 +150,32 @@ def apply_review_attachment_action_fix(page: QWidget | None) -> None:
         return
 
     page.setProperty("reviewAttachmentActionFixApplied", True)
-
-    cluster = QFrame(detail.original_status_line)
-    cluster.setObjectName("OriginalFileActionCluster")
-    cluster.setProperty("class", "ActionCluster")
-    cluster.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-    cluster_layout = QHBoxLayout(cluster)
-    cluster_layout.setContentsMargins(0, 0, 0, 0)
-    cluster_layout.setSpacing(6)
-    detail.original_status_actions = cluster
-
     original_set_attachment_state = detail.set_attachment_state
-    set_attachment_signature = signature(original_set_attachment_state)
 
     @wraps(original_set_attachment_state)
-    def set_attachment_state(*args, **kwargs):
-        result = original_set_attachment_state(*args, **kwargs)
-        bound = set_attachment_signature.bind_partial(*args, **kwargs)
-        bound.apply_defaults()
-        has_file = bool(bound.arguments.get("has_file", False))
-        has_url = bool(bound.arguments.get("has_url", False))
-        _restore_attachment_action_cluster(
-            detail,
+    def set_attachment_state(
+        *,
+        has_file: bool = False,
+        has_url: bool = False,
+        file_name: str = "",
+        file_path: str = "",
+        can_download: bool = False,
+    ):
+        result = original_set_attachment_state(
             has_file=has_file,
             has_url=has_url,
-            show_add=True,
+            file_name=file_name,
+            file_path=file_path,
+            can_download=can_download,
+        )
+        _stabilize_original_file_actions(
+            detail,
+            has_file=bool(has_file),
+            has_url=bool(has_url),
         )
         return result
 
     detail.set_attachment_state = set_attachment_state
-
-    # Preserve the initial empty-selection visibility until the first invoice is loaded.
-    initial_has_file = not detail.btn_open_file.isHidden()
-    initial_has_url = not detail.btn_retry_download.isHidden()
-    initial_show_add = not detail.btn_add_attachment.isHidden()
-    _restore_attachment_action_cluster(
-        detail,
-        has_file=initial_has_file,
-        has_url=initial_has_url,
-        show_add=initial_show_add,
-    )
 
     company_button = getattr(detail, "btn_edit_reimbursement_title", None)
     if company_button is not None:
@@ -197,11 +183,9 @@ def apply_review_attachment_action_fix(page: QWidget | None) -> None:
             company_button.clicked.disconnect()
         except (RuntimeError, TypeError):
             pass
-        company_button.setText("管理开票信息")
-        company_button.setToolTip("前往系统设置维护公司开票与报销主体")
-        company_button.setAccessibleName("管理开票信息")
-        company_button.setMinimumWidth(104)
-        company_button.setMaximumWidth(128)
+        # Preserve the established product label while changing its destination.
+        company_button.setText("公司开票信息")
+        company_button.setToolTip("前往系统设置维护、复制公司开票与报销主体")
         company_button.clicked.connect(
             lambda _checked=False, target=window: _open_company_settings_or_dialog(target)
         )
@@ -230,12 +214,12 @@ def _refresh_company_settings_page(window, status_text: str = "") -> None:
     )
     surface.set_value("开户行与账号", bank or "未设置")
 
-    rules = []
+    checks = []
     if profile["strict_buyer_check"]:
-        rules.append("核对购买方名称")
+        checks.append("核对购买方名称")
     if profile["strict_buyer_tax_check"]:
-        rules.append("核对纳税人识别号")
-    surface.set_value("审核核对", "、".join(rules) if rules else "未启用")
+        checks.append("核对纳税人识别号")
+    surface.set_value("审核核对", "、".join(checks) if checks else "未启用")
     surface.set_status(status_text)
 
     edit = getattr(window, "btn_settings_company_profile_edit", None)
@@ -249,7 +233,7 @@ def _refresh_company_settings_page(window, status_text: str = "") -> None:
 
 def _edit_company_profile(window) -> None:
     dialog = CompanyTaxProfileDialog(_company_profile(window), window)
-    if dialog.exec() != dialog.Accepted:
+    if dialog.exec() != QDialog.Accepted:
         return
     try:
         save_company_tax_profile(window, dialog.values())
@@ -269,7 +253,8 @@ def _copy_company_profile(window) -> None:
     _refresh_company_settings_page(window, "开票信息已复制到剪贴板。")
 
 
-def _insert_company_settings_page(window) -> None:
+def _append_company_settings_page(window) -> None:
+    """Append the new page so all established settings indexes stay stable."""
     tabs = getattr(window, "settings_tabs", None)
     nav_list = getattr(tabs, "nav_list", None)
     stack = getattr(tabs, "stack", None)
@@ -317,25 +302,18 @@ def _insert_company_settings_page(window) -> None:
         company_page,
     )
     edit = make_button("设置开票信息", variant="primary", min_width=112)
-    edit.setAccessibleName("设置开票信息")
     edit.clicked.connect(lambda _checked=False: _edit_company_profile(window))
     copy = make_button("复制开票信息", variant="secondary", min_width=112)
-    copy.setAccessibleName("复制开票信息")
     copy.clicked.connect(lambda _checked=False: _copy_company_profile(window))
     surface.set_actions([edit, copy])
     page_layout.addWidget(surface, 0, Qt.AlignTop)
     page_layout.addStretch(1)
 
-    current_widget = stack.currentWidget()
     item = QListWidgetItem("开票信息")
     item.setData(Qt.UserRole, _COMPANY_NAV_ROLE)
     item.setToolTip("维护公司开票与报销主体")
-    nav_list.insertItem(1, item)
-    stack.insertWidget(1, company_page)
-    if current_widget is not None:
-        current_index = stack.indexOf(current_widget)
-        stack.setCurrentWidget(current_widget)
-        nav_list.setCurrentRow(current_index)
+    stack.addWidget(company_page)
+    nav_list.addItem(item)
 
     window.settings_company_profile_page = company_page
     window.settings_company_profile_surface = surface
@@ -376,7 +354,7 @@ def _polish_mailbox_actions(window) -> None:
     repair.setText("设置授权码")
     repair.setToolTip("授权码只保存到系统凭据管理器")
     repair.setMinimumWidth(96)
-    edit.setText("编辑配置")
+    edit.setText("编辑")
     edit.setToolTip("修改邮箱地址、服务器和扫描范围")
     edit.setVisible(True)
     if more is not None:
@@ -437,14 +415,14 @@ def _install_settings_refresh(window, page: QWidget) -> None:
 
 
 def apply_settings_action_clarity(page: QWidget | None) -> None:
-    """Add the company-profile settings page and clarify mailbox actions."""
+    """Add company-profile settings and clarify contextual mailbox actions."""
     if page is None or page.property("settingsActionClarityApplied"):
         return
     window = page.window()
     if not hasattr(window, "settings_tabs"):
         return
     page.setProperty("settingsActionClarityApplied", True)
-    _insert_company_settings_page(window)
+    _append_company_settings_page(window)
     _polish_mailbox_actions(window)
     _install_settings_refresh(window, page)
 
