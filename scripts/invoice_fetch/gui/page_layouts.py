@@ -7,11 +7,7 @@ from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_b
 from .design_baseline_styles import apply_global_design_baseline
 from .design_tokens import DESIGN_V1_METRICS
 from .review_baseline_pipeline import schedule_review_baseline_pipeline
-from .settings_baseline import apply_settings_baseline
-from .settings_feedback_fixes import apply_settings_feedback_fixes
-from .settings_legacy_contract import install_ai_refresh_compatibility
-from .settings_pages_baseline import apply_remaining_settings_baseline
-from .ui_visibility_contracts import install_settings_visibility_contract
+from .settings_baseline_pipeline import schedule_settings_baseline_pipeline
 
 BASELINE_PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
 BASELINE_SECTION_GAP = DESIGN_V1_METRICS["section_gap"]
@@ -98,9 +94,5 @@ class SettingsPageLayout(_PageLayoutContract):
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
         super().apply(page, layout)
-        QTimer.singleShot(0, lambda p=page: apply_settings_baseline(p))
-        QTimer.singleShot(0, lambda p=page: install_ai_refresh_compatibility(p))
-        QTimer.singleShot(0, lambda p=page: apply_remaining_settings_baseline(p))
-        QTimer.singleShot(0, lambda p=page: apply_settings_feedback_fixes(p))
-        QTimer.singleShot(0, lambda p=page: install_settings_visibility_contract(p))
+        schedule_settings_baseline_pipeline(page)
         return layout

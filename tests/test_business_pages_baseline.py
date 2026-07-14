@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.business_pages_baseline import _export_naming_state
 
 
 class BusinessPagesBaselineTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class BusinessPagesBaselineTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_export_task_flow_is_compact_and_has_naming_check(self):
+    def test_export_task_flow_is_compact_and_has_truthful_naming_check(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
@@ -59,10 +60,54 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                 self.assertEqual(window.export_integrity_card.width(), 360)
                 self.assertTrue(hasattr(window, "export_check_naming"))
                 self.assertEqual(window.export_check_naming.objectName(), "ExportNamingChecklistRow")
+                self.assertEqual(window.export_check_naming.lbl_icon.text(), "")
+                self.assertEqual(window.export_check_naming.property("state"), "muted")
+                self.assertEqual(window.export_check_naming.lbl_value.text(), "等待选择报销组")
                 self.assertEqual(window.btn_run_export_page.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
                 self.assertLessEqual(window.btn_run_export_page.maximumWidth(), 180)
             finally:
                 window.close()
+
+    def test_export_naming_state_requires_approved_invoices(self):
+        self.assertEqual(
+            _export_naming_state([
+                {
+                    "review_status": "to_review",
+                    "invoice_date": "2026-07-01",
+                    "seller_name": "Synthetic Seller",
+                }
+            ]),
+            ("等待可导出发票", "muted"),
+        )
+
+    def test_export_naming_state_warns_when_fallback_names_are_required(self):
+        self.assertEqual(
+            _export_naming_state([
+                {
+                    "review_status": "approved",
+                    "invoice_date": "",
+                    "seller_name": "Synthetic Seller",
+                },
+                {
+                    "review_status": "approved",
+                    "invoice_date": "2026-07-02",
+                    "seller_name": "",
+                },
+            ]),
+            ("2 张将使用默认名称", "warning"),
+        )
+
+    def test_export_naming_state_passes_only_with_date_and_seller(self):
+        self.assertEqual(
+            _export_naming_state([
+                {
+                    "review_status": "approved",
+                    "expense_date": "2026-07-01",
+                    "seller_name": "Synthetic Seller",
+                }
+            ]),
+            ("1 张可按日期与商户命名", "success"),
+        )
 
 
 if __name__ == "__main__":
