@@ -131,6 +131,8 @@ def _set_semantic_checklist_value(
         "muted": "info",
     }[state]
     row.lbl_icon.setText("")
+    row.lbl_icon.setStyleSheet("")
+    row.lbl_value.setStyleSheet("")
     row.lbl_icon.setPixmap(IconProvider.icon(semantic).pixmap(QSize(14, 14)))
     row.lbl_icon.setToolTip(
         {
