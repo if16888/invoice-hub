@@ -53,6 +53,8 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
         page = QWidget(window)
         layout = QVBoxLayout(page)
         detail = InvoiceDetailPanel(parent=page)
+        detail.btn_edit_reimbursement_title = QPushButton("公司开票信息", detail)
+        detail.layout().addWidget(detail.btn_edit_reimbursement_title)
         layout.addWidget(detail)
         layout.addWidget(_install_version_footer(window, page))
         window.setCentralWidget(page)
@@ -200,20 +202,21 @@ class SettingsActionClarityTests(unittest.TestCase):
         window.settings_mailbox_more_toggle = window.settings_mailbox_more.addAction("停用")
         window.settings_mailbox_list = tabs.nav_list
         window._refresh_settings_page = lambda: None
-        window._switch_calls = []
-        window._switch_main_page = (
-            lambda page_name, sub_tab=None: window._switch_calls.append((page_name, sub_tab))
-        )
         return window, page
 
     def test_settings_adds_company_profile_as_second_navigation_page(self):
         window, page = self._make_window()
         try:
+            ai_page = window.settings_tabs.widget(1)
             apply_settings_action_clarity(page)
 
-            self.assertEqual(window.settings_tabs.count(), 7)
+            self.assertEqual(window.settings_tabs.count(), 6)
+            self.assertEqual(window.settings_tabs.nav_list.count(), 7)
             self.assertEqual(
-                [window.settings_tabs.tabText(i) for i in range(window.settings_tabs.count())],
+                [
+                    window.settings_tabs.nav_list.item(i).text()
+                    for i in range(window.settings_tabs.nav_list.count())
+                ],
                 [
                     "邮箱账户",
                     "开票信息",
@@ -224,9 +227,11 @@ class SettingsActionClarityTests(unittest.TestCase):
                     "关于",
                 ],
             )
+            self.assertIs(window.settings_tabs.widget(1), ai_page)
             company_item = window.settings_tabs.nav_list.item(1)
             self.assertEqual(company_item.data(Qt.UserRole), "company_tax_profile")
-            self.assertIs(window.settings_tabs.widget(1), window.settings_company_profile_page)
+            window.settings_tabs.nav_list.setCurrentRow(1)
+            self.assertIs(window.settings_tabs.currentWidget(), window.settings_company_profile_page)
             self.assertEqual(
                 window.settings_company_profile_values["单位名称"].text(),
                 "示例科技有限公司",
@@ -240,18 +245,17 @@ class SettingsActionClarityTests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
-    def test_legacy_settings_subtab_routes_shift_after_company_page(self):
+    def test_compatibility_index_one_still_selects_ai_page(self):
         window, page = self._make_window()
         try:
+            ai_page = window.settings_tabs.widget(1)
             apply_settings_action_clarity(page)
-            window._switch_main_page("settings", sub_tab=2)
-            window._switch_main_page("settings", sub_tab=5)
-            window._switch_main_page("settings", sub_tab=6)
+            window.settings_tabs.setCurrentIndex(1)
 
-            self.assertEqual(
-                window._switch_calls,
-                [("settings", 3), ("settings", 6), ("settings", 7)],
-            )
+            self.assertIs(window.settings_tabs.currentWidget(), ai_page)
+            self.assertEqual(window.settings_tabs.currentIndex(), 1)
+            self.assertEqual(window.settings_tabs.nav_list.currentRow(), 2)
+            self.assertEqual(window.settings_tabs.tabText(1), "AI 配置")
         finally:
             window.close()
             window.deleteLater()
