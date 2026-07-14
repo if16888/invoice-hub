@@ -8,6 +8,7 @@ callbacks continue to own attachment, credential, and configuration logic.
 from __future__ import annotations
 
 from functools import wraps
+from types import MethodType
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -36,6 +37,7 @@ from .ui_components import ElidedTextLabel, make_button
 
 
 _COMPANY_NAV_ROLE = "company_tax_profile"
+_STACK_INDEX_ROLE = int(Qt.UserRole) + 701
 
 
 def _repolish(widget: QWidget | None) -> None:
@@ -71,14 +73,7 @@ def _hide_non_primary_action(status_line, button: QWidget) -> None:
 
 
 def _stabilize_original_file_actions(detail, *, has_file: bool) -> None:
-    """Keep original-file controls inside the Materials / Original row.
-
-    The final detail migration deletes the legacy material card. Buttons that
-    were not the current ``StatusLine`` action were reparented to the detail
-    panel for compatibility. A later refresh could make one of those unmanaged
-    buttons visible at coordinate (0, 0), which produced the escaped “替换”
-    control over the amount summary.
-    """
+    """Keep original-file controls inside the Materials / Original row."""
     status_line = detail.original_status_line
     primary = status_line._action_widget
 
@@ -93,13 +88,8 @@ def _stabilize_original_file_actions(detail, *, has_file: bool) -> None:
     detail.btn_retry_download.setToolTip("重新从原始来源下载发票原件")
     detail.btn_retry_download.setMinimumWidth(80)
 
-    # Low-frequency locating remains available through the invoice More menu.
-    # It must never be shown as an unmanaged child of the detail panel.
     _hide_non_primary_action(status_line, detail.btn_locate_file)
 
-    # Preserve the established primary-action contract while showing one useful
-    # secondary action: existing file -> 打开 + 替换原件; downloadable missing
-    # file -> 重新下载 + 补充原件; otherwise 补充原件 is itself primary.
     if primary in (detail.btn_open_file, detail.btn_retry_download):
         _place_secondary_action(status_line, detail.btn_add_attachment)
     else:
@@ -301,6 +291,55 @@ def _remove_legacy_company_header_action(window) -> None:
     button.setProperty("legacyCompanyHeaderActionRemoved", True)
 
 
+def _install_compatibility_api(settings_tabs, base_widgets: list[QWidget], base_labels: list[str]) -> None:
+    """Keep the six established tab indexes while exposing a seventh nav item.
+
+    Existing application code and regression tests address AI/Runtime/etc. by
+    their historical indexes. The new company page is supplemental navigation:
+    it is visible in the left list but does not renumber the compatibility API.
+    """
+    settings_tabs._compat_base_widgets = list(base_widgets)
+    settings_tabs._compat_base_labels = list(base_labels)
+
+    def count(self):
+        return len(self._compat_base_widgets)
+
+    def widget(self, index):
+        if 0 <= index < len(self._compat_base_widgets):
+            return self._compat_base_widgets[index]
+        return None
+
+    def tab_text(self, index):
+        if 0 <= index < len(self._compat_base_labels):
+            return self._compat_base_labels[index]
+        return ""
+
+    def current_index(self):
+        current = self.stack.currentWidget()
+        try:
+            return self._compat_base_widgets.index(current)
+        except ValueError:
+            return -1
+
+    def set_current_index(self, index):
+        target = widget(self, index)
+        if target is None:
+            return
+        physical_index = self.stack.indexOf(target)
+        for row in range(self.nav_list.count()):
+            item = self.nav_list.item(row)
+            if item is not None and item.data(_STACK_INDEX_ROLE) == physical_index:
+                self.nav_list.setCurrentRow(row)
+                return
+        self.stack.setCurrentWidget(target)
+
+    settings_tabs.count = MethodType(count, settings_tabs)
+    settings_tabs.widget = MethodType(widget, settings_tabs)
+    settings_tabs.tabText = MethodType(tab_text, settings_tabs)
+    settings_tabs.currentIndex = MethodType(current_index, settings_tabs)
+    settings_tabs.setCurrentIndex = MethodType(set_current_index, settings_tabs)
+
+
 def _insert_company_settings_page(window) -> None:
     """Insert an actual Settings navigation page below Mailbox Accounts."""
     settings_tabs = getattr(window, "settings_tabs", None)
@@ -314,37 +353,44 @@ def _insert_company_settings_page(window) -> None:
         if item is not None and item.data(Qt.UserRole) == _COMPANY_NAV_ROLE:
             return
 
+    base_widgets = [stack.widget(index) for index in range(stack.count())]
+    base_labels = [nav_list.item(index).text() for index in range(nav_list.count())]
+    for row, widget in enumerate(base_widgets):
+        item = nav_list.item(row)
+        if item is not None:
+            item.setData(_STACK_INDEX_ROLE, stack.indexOf(widget))
+
     current_widget = stack.currentWidget()
     company_page = _build_company_settings_page(window)
-    stack.insertWidget(1, company_page)
+    company_index = stack.addWidget(company_page)
     item = QListWidgetItem("开票信息")
     item.setData(Qt.UserRole, _COMPANY_NAV_ROLE)
+    item.setData(_STACK_INDEX_ROLE, company_index)
     item.setToolTip("维护公司开票与报销主体")
     nav_list.insertItem(1, item)
 
+    try:
+        nav_list.currentRowChanged.disconnect(settings_tabs._on_nav_changed)
+    except (RuntimeError, TypeError):
+        pass
+
+    def on_nav_changed(row: int) -> None:
+        nav_item = nav_list.item(row)
+        if nav_item is None:
+            return
+        physical_index = nav_item.data(_STACK_INDEX_ROLE)
+        if isinstance(physical_index, int) and 0 <= physical_index < stack.count():
+            if stack.currentIndex() != physical_index:
+                stack.setCurrentIndex(physical_index)
+
+    settings_tabs._company_nav_changed = on_nav_changed
+    nav_list.currentRowChanged.connect(on_nav_changed)
+    _install_compatibility_api(settings_tabs, base_widgets, base_labels)
+
     if current_widget is not None:
-        stack.setCurrentWidget(current_widget)
-        nav_list.setCurrentRow(stack.indexOf(current_widget))
+        settings_tabs.setCurrentIndex(base_widgets.index(current_widget))
     elif nav_list.count():
         nav_list.setCurrentRow(0)
-
-
-def _install_settings_subtab_compatibility(window, page: QWidget) -> None:
-    """Keep legacy one-based Settings routes pointing at their original pages."""
-    if page.property("companySettingsSubtabCompatInstalled"):
-        return
-    original = getattr(window, "_switch_main_page", None)
-    if not callable(original):
-        return
-    page.setProperty("companySettingsSubtabCompatInstalled", True)
-
-    @wraps(original)
-    def switch_main_page(page_name, sub_tab=None):
-        if page_name == "settings" and isinstance(sub_tab, int) and 2 <= sub_tab <= 6:
-            sub_tab += 1
-        return original(page_name, sub_tab=sub_tab)
-
-    window._switch_main_page = switch_main_page
 
 
 def _remove_review_company_action(detail) -> None:
@@ -363,12 +409,7 @@ def _remove_review_company_action(detail) -> None:
 
 
 def _remove_status_bar_version(window) -> None:
-    """Remove the clipped version chip from the review footer.
-
-    Version information remains available from Settings / About. Keeping it in
-    the narrow review status action container created the white clickable block
-    seen at the bottom-right edge on some DPI scales.
-    """
+    """Remove the clipped version chip from the review footer."""
     label = getattr(window, "lbl_version", None)
     if label is not None:
         _remove_from_layout(label)
@@ -518,7 +559,6 @@ def apply_settings_action_clarity(page: QWidget | None) -> None:
     page.setProperty("settingsActionClarityApplied", True)
     _remove_legacy_company_header_action(window)
     _insert_company_settings_page(window)
-    _install_settings_subtab_compatibility(window, page)
     _polish_mailbox_actions(window)
     _install_settings_refresh(window, page)
     _remove_status_bar_version(window)
