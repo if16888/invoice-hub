@@ -17,12 +17,21 @@ from .design_tokens import (
 # authoritative Design v1 dictionary, not a second independently maintained set.
 BASELINE_COLORS = DESIGN_V1_COLORS
 
-# A small number of older selectors embedded the former brand accent directly
-# instead of reading ``styles.COLOR_TOKENS``.  Canonical stylesheet assembly is
-# the migration boundary: purge only the known obsolete brand literal here,
-# while leaving semantic status colors untouched until their components are
-# reviewed individually.
-_OBSOLETE_BRAND_LITERALS = ("#1599BD", "#1599bd")
+# Canonical stylesheet assembly is the migration boundary for older literals
+# embedded in the legacy QSS. Keep this map deliberately narrow and semantic:
+# brand and status colors are safe to normalize globally, while page-specific
+# geometry remains owned by the page archetype migrations.
+_OBSOLETE_LITERAL_MAP = {
+    "#1599BD": DESIGN_V1_COLORS["accent"],
+    "#1599bd": DESIGN_V1_COLORS["accent"],
+    "#059669": DESIGN_V1_COLORS["success"],
+    "#12b76a": DESIGN_V1_COLORS["success"],
+    "#12B76A": DESIGN_V1_COLORS["success"],
+    "#DC2626": DESIGN_V1_COLORS["danger"],
+    "#dc2626": DESIGN_V1_COLORS["danger"],
+    "#f04438": DESIGN_V1_COLORS["danger"],
+    "#F04438": DESIGN_V1_COLORS["danger"],
+}
 
 BASELINE_QSS = f"""
 QMainWindow {{ background-color: {BASELINE_COLORS['page']}; }}
@@ -35,6 +44,11 @@ QLabel[class="PageHint"] {{
     color: {BASELINE_COLORS['muted']};
     font-size: {DESIGN_V1_TYPE['body']}px;
     font-weight: 400;
+}}
+QLabel[class="SectionTitle"] {{
+    color: {BASELINE_COLORS['text']};
+    font-size: {DESIGN_V1_TYPE['section_title']}px;
+    font-weight: 600;
 }}
 QFrame#SectionCard,
 QFrame#SummaryStrip,
@@ -103,14 +117,25 @@ QTableWidget {{
     selection-background-color: {BASELINE_COLORS['selected']};
     selection-color: {BASELINE_COLORS['accent']};
 }}
+QFrame[class="ChecklistRow"] QLabel[class="ChecklistValue"][state="success"] {{
+    color: {BASELINE_COLORS['success']};
+}}
+QFrame[class="ChecklistRow"] QLabel[class="ChecklistValue"][state="warning"] {{
+    color: {BASELINE_COLORS['warning']};
+}}
+QFrame[class="ChecklistRow"] QLabel[class="ChecklistValue"][state="danger"] {{
+    color: {BASELINE_COLORS['danger']};
+}}
+QFrame[class="ChecklistRow"] QLabel[class="ChecklistValue"][state="muted"] {{
+    color: {BASELINE_COLORS['muted']};
+}}
 """
 
 
-def _purge_obsolete_brand_literals(stylesheet: str) -> str:
-    """Replace known pre-Baseline brand literals in the assembled QSS."""
-    canonical_accent = DESIGN_V1_COLORS["accent"]
-    for literal in _OBSOLETE_BRAND_LITERALS:
-        stylesheet = stylesheet.replace(literal, canonical_accent)
+def _purge_obsolete_literals(stylesheet: str) -> str:
+    """Replace known pre-Baseline brand and status literals."""
+    for literal, canonical in _OBSOLETE_LITERAL_MAP.items():
+        stylesheet = stylesheet.replace(literal, canonical)
     return stylesheet
 
 
@@ -127,7 +152,7 @@ def build_canonical_application_stylesheet() -> str:
     except ImportError:
         pass
 
-    core_qss = _purge_obsolete_brand_literals(core_qss)
+    core_qss = _purge_obsolete_literals(core_qss)
 
     # Keep late imports of styles.APP_STYLESHEET aligned with the same authority.
     legacy_styles.APP_STYLESHEET = core_qss
