@@ -21,6 +21,7 @@ from shiboken6 import isValid
 from .company_tax_profile import apply_company_tax_profile
 from .review_detail_closure import apply_review_detail_closure
 from .review_detail_width_fix import apply_review_detail_width_fix
+from .review_list_paging_fix import apply_review_list_paging_fix
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_table_width_contract import apply_review_table_width_contract
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
@@ -39,6 +40,9 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("detail_width", apply_review_detail_width_fix),
     ("workspace_closure", apply_review_workspace_closure),
     ("detail_closure", apply_review_detail_closure),
+    # Paging is last because it owns the final record-count copy and reconnects
+    # the search debounce timer after all review widgets have been normalized.
+    ("list_paging", apply_review_list_paging_fix),
 )
 
 
