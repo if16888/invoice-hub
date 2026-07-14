@@ -25,14 +25,20 @@ DESIGN_V1_COLORS = {
     "accent": "#2563EB",
     "accent_hover": "#1D4ED8",
     "success": "#16803C",
+    "success_surface": "#ECFDF3",
     "warning": "#B54708",
+    "warning_surface": "#FFFAEB",
     "danger": "#B42318",
+    "danger_surface": "#FEF3F2",
+    "muted_surface": "#F2F4F7",
     "info": "#2563EB",
 }
 
 DESIGN_V1_TYPE = {
     "page_title": 22,
-    "section_title": 13,
+    "surface_title": 16,
+    "subpage_title": 15,
+    "section_title": 14,
     "body": 13,
     "secondary": 12,
     "caption": 11,
