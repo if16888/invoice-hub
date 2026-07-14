@@ -12,7 +12,11 @@ from shiboken6 import isValid
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS
 from scripts.invoice_fetch.gui.settings_baseline_pipeline import SETTINGS_BASELINE_STAGES
-from scripts.invoice_fetch.gui import settings_baseline, settings_pages_baseline
+from scripts.invoice_fetch.gui import (
+    review_feedback_fixes,
+    settings_baseline,
+    settings_pages_baseline,
+)
 
 
 class SettingsBaselinePipelineTests(unittest.TestCase):
@@ -51,16 +55,19 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_deferred_settings_refreshes_are_safe_after_window_deletion(self):
+    def test_deferred_ui_refreshes_are_safe_after_window_deletion(self):
         with tempfile.TemporaryDirectory() as td:
             window = InvoiceReviewApp(Path(td) / "settings-close.db")
             window.show()
             for _ in range(8):
                 self.app.processEvents()
 
-            guarded_normalize = settings_pages_baseline._normalize_ai
-            guarded_mailbox_refresh = settings_baseline._refresh_mailbox_visuals
-            for guarded in (guarded_normalize, guarded_mailbox_refresh):
+            guarded_callbacks = (
+                settings_pages_baseline._normalize_ai,
+                settings_baseline._refresh_mailbox_visuals,
+                review_feedback_fixes._sync_seller_tooltips,
+            )
+            for guarded in guarded_callbacks:
                 self.assertTrue(
                     bool(getattr(guarded, "_settings_lifecycle_guard", False))
                 )
@@ -72,10 +79,10 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
             self.app.processEvents()
             self.assertFalse(isValid(window))
 
-            # Both queued callback targets must be no-ops rather than raising
+            # Every queued callback target must be a no-op rather than raising
             # "Internal C++ object already deleted" during shutdown.
-            guarded_normalize(window)
-            guarded_mailbox_refresh(window)
+            for guarded in guarded_callbacks:
+                guarded(window)
 
 
 if __name__ == "__main__":
