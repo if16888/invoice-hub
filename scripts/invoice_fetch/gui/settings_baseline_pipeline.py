@@ -15,6 +15,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
+from .review_settings_issue_fixes import apply_settings_action_clarity
 from .settings_baseline import apply_settings_baseline
 from .settings_feedback_fixes import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
@@ -34,9 +35,11 @@ SETTINGS_BASELINE_STAGES: tuple[SettingsStage, ...] = (
     # when they run, so install the lifecycle guard before returning to Qt.
     ("refresh_guard", install_settings_refresh_guard),
     ("feedback_closure", apply_settings_feedback_fixes),
-    # Token QSS is last among visual stages and therefore owns final rendering.
+    # Token QSS is last among the baseline visual stages and therefore owns
+    # final rendering before the focused action-clarity migration is applied.
     ("token_contract", apply_settings_token_contract),
     ("visibility_contract", install_settings_visibility_contract),
+    ("action_clarity", apply_settings_action_clarity),
 )
 
 

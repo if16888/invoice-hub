@@ -21,6 +21,7 @@ from shiboken6 import isValid
 from .company_tax_profile import apply_company_tax_profile
 from .review_detail_closure import apply_review_detail_closure
 from .review_detail_width_fix import apply_review_detail_width_fix
+from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_table_width_contract import apply_review_table_width_contract
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
@@ -33,6 +34,7 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("workspace_baseline", apply_review_workspace_baseline),
     ("toolbar_and_filters", apply_review_toolbar_filter_fixes),
     ("company_tax_profile", apply_company_tax_profile),
+    ("attachment_action_clarity", apply_review_attachment_action_fix),
     ("table_width", apply_review_table_width_contract),
     ("detail_width", apply_review_detail_width_fix),
     ("workspace_closure", apply_review_workspace_closure),
