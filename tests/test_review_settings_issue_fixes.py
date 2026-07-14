@@ -4,7 +4,6 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -170,22 +169,15 @@ class SettingsActionClarityTests(unittest.TestCase):
         window._refresh_settings_page = lambda: None
         return window, page
 
-    def test_settings_appends_company_profile_without_changing_existing_indexes(self):
+    def test_settings_keeps_existing_tabs_and_adds_company_profile_action(self):
         window, page = self._make_window()
         try:
             apply_settings_action_clarity(page)
 
-            self.assertEqual(window.settings_tabs.widget(1).objectName(), "")
-            last = window.settings_tabs.count() - 1
-            self.assertEqual(window.settings_tabs.nav_list.item(last).text(), "开票信息")
-            self.assertEqual(
-                window.settings_tabs.nav_list.item(last).data(Qt.UserRole),
-                "company_tax_profile",
-            )
-            self.assertEqual(
-                window.settings_company_profile_surface.values["单位名称"].text(),
-                "示例科技有限公司",
-            )
+            self.assertEqual(window.settings_tabs.count(), 6)
+            self.assertEqual(window.btn_settings_company_profile.text(), "公司开票信息")
+            self.assertEqual(window.btn_settings_company_profile.property("variant"), "secondary")
+            self.assertTrue(window.btn_settings_company_profile.toolTip())
             self.assertEqual(window.btn_settings_mailbox_add.text(), "＋ 添加邮箱账号")
             self.assertGreaterEqual(window.btn_settings_mailbox_add.minimumWidth(), 132)
             self.assertEqual(window.btn_settings_mailbox_add.property("variant"), "primary")
