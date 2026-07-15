@@ -56,7 +56,7 @@ class ReviewWorkspaceClosureTests(unittest.TestCase):
             try:
                 button = window.btn_load_all
                 self.assertTrue(button.property("designBaselineRemoved"))
-                self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen))
+                self.assertFalse(button.testAttribute(Qt.WA_DontShowOnScreen))
                 self.assertEqual(window.status_actions_container.layout().indexOf(button), -1)
             finally:
                 window.close()

@@ -43,9 +43,9 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                 ):
                     button = getattr(window, attr)
                     self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"), attr)
-                    self.assertTrue(button.property("reviewCompatibilityControl"), attr)
-                    self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen), attr)
-                    self.assertIs(button.parentWidget(), window)
+                    self.assertIsNone(button.property("reviewCompatibilityControl"), attr)
+                    self.assertFalse(button.testAttribute(Qt.WA_DontShowOnScreen), attr)
+                    self.assertIsNot(button.parentWidget(), window)
                     self.assertEqual(toolbar.layout().indexOf(button), -1)
 
                 self.assertEqual(window.btn_more.text(), "更多")

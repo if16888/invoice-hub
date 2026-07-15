@@ -1928,6 +1928,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not self.invoices_list:
             return
         row = self.table.currentRow()
+        paging = getattr(self, "review_paging", None)
+        if delta > 0 and row == len(self.invoices_list) - 1 and paging is not None and paging.has_more() and not paging.loading:
+            paging.pending_row = row + 1
+            paging.load_next_page()
+            if row + 1 < len(self.invoices_list):
+                self._select_invoice_by_id(self.invoices_list[row + 1].get("id"))
+            paging.pending_row = -1
+            return
         if row < 0:
             row = 0 if delta >= 0 else len(self.invoices_list) - 1
         else:
@@ -4032,26 +4040,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if not hasattr(self, "db") or self.db is None:
                 return
             current_count = len(getattr(self, "invoices_list", []) or [])
-            status_filter = getattr(self, "current_filter", "all")
-            status_val = None if status_filter == "all" else status_filter
-            batch = self.db.list_invoices(
-                status=status_val,
-                limit=50,
-                include_deleted=getattr(self, "show_deleted", False),
-                offset=current_count,
-            )
-            if batch:
-                self.invoices_list.extend(batch)
-                self._update_table_view()
-                if advance_to_next_row and selected_row + 1 < len(self.invoices_list):
-                    self.table.selectRow(selected_row + 1)
-                    self.table.setCurrentCell(selected_row + 1, 0)
-                elif selected_id is not None:
-                    for row, invoice in enumerate(self.invoices_list):
-                        if invoice.get("id") == selected_id:
-                            self.table.selectRow(row)
-                            self.table.setCurrentCell(row, 0)
-                            break
+            total = int(getattr(self, "_record_total_matching", current_count) or current_count)
+            self._review_page_limit = min(total, max(50, current_count + 50))
+            self._limited_first_load_active = False
+            self._is_first_load = False
+            self._load_invoices()
+            target_row = selected_row + 1 if advance_to_next_row else -1
+            if target_row < 0 and selected_id is not None:
+                target_row = next((row for row, invoice in enumerate(self.invoices_list) if invoice.get("id") == selected_id), -1)
+            if 0 <= target_row < len(self.invoices_list):
+                self.table.selectRow(target_row)
+                self.table.setCurrentCell(target_row, 0)
         finally:
             self._is_loading_more_invoices = False
             self._update_record_header_summary()
@@ -4064,7 +4063,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if state.visible_count == 0 and (state.search_text or state.active_filter != "all"):
                 count_text = "当前筛选 0 张"
             elif state.loaded_count < state.query_total:
-                count_text = f"已加载 {state.loaded_count} / {state.query_total} 张"
+                count_text = f"已加载 {state.loaded_count} / 共 {state.query_total} 张"
             else:
                 count_text = f"当前筛选 {state.visible_count} 张"
             self.lbl_record_count.setText(count_text)
@@ -4327,8 +4326,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         is_default_view = not needle and not column_filters_active
 
         limit_val = None
-        if self._is_first_load and is_default_view and self.current_filter_status is None:
-            limit_val = 50
+        if is_default_view and self.current_filter_status is None:
+            limit_val = max(50, int(getattr(self, "_review_page_limit", 50))) if hasattr(self, "_review_page_limit") else (50 if self._is_first_load else None)
 
         counts = None
         try:
@@ -4424,7 +4423,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             total_matching = counts.get("all") if self.current_filter_status is None else counts.get(self.current_filter_status, 0)
 
         first_load_limited = False
-        if self._limited_first_load_active and total_matching > 50:
+        if (self._limited_first_load_active or (self._is_first_load and total_matching > 50 and not getattr(self, "_column_filters_load_all", False))) and total_matching > 50:
             displayed_invoices = displayed_invoices[:50]
             first_load_limited = True
         elif limit_val is not None and total_matching > 50:

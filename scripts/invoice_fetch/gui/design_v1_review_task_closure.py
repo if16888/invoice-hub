@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
 from shiboken6 import isValid
 
 from ..reimbursement import buyer_warning
+from .ui_components import fit_button_to_content
 
 
 _CROSS_WORKFLOW_BUTTONS = (
@@ -42,23 +43,6 @@ def _remove_widget_from_layout(layout: QLayout | None, widget: QWidget) -> bool:
     return False
 
 
-def _park_compatibility_button(window, button: QWidget) -> None:
-    """Keep an old API object alive without leaving it on the product surface.
-
-    Several integration tests and third-party adapters still resolve these named
-    buttons. Reparenting them to the window preserves that API while
-    ``WA_DontShowOnScreen`` and an off-canvas position guarantee that users only
-    see the dedicated Import and Export pages.
-    """
-    button.setParent(window)
-    button.setFocusPolicy(Qt.NoFocus)
-    button.setAttribute(Qt.WA_DontShowOnScreen, True)
-    button.move(window.width() + max(128, button.width()), -max(128, button.height()))
-    button.show()
-    button.setProperty("reviewCrossWorkflowActionRemoved", True)
-    button.setProperty("reviewCompatibilityControl", True)
-
-
 def _remove_cross_workflow_actions(window) -> None:
     """Remove Import/Scan/Export controls from the visible Review command bar."""
     toolbar = getattr(window, "workbench_top_toolbar", None)
@@ -72,7 +56,15 @@ def _remove_cross_workflow_actions(window) -> None:
         parent = button.parentWidget()
         if parent is not None:
             _remove_widget_from_layout(parent.layout(), button)
-        _park_compatibility_button(window, button)
+        # These controls belong to their dedicated first-level pages. Keep the
+        # existing callback object available to legacy command code, but never
+        # leave a review compatibility widget off-canvas or clickable.
+        target_page = getattr(window, "imports_page", None) if attr != "btn_toolbar_export" else getattr(window, "export_page", None)
+        if target_page is not None:
+            button.setParent(target_page)
+        button.hide()
+        button.setProperty("reviewCrossWorkflowActionRemoved", True)
+        button.setProperty("reviewCompatibilityControl", None)
 
     more = getattr(window, "btn_more", None)
     if more is not None:
@@ -81,8 +73,7 @@ def _remove_cross_workflow_actions(window) -> None:
         more.setAccessibleName("更多审核操作")
         # Keep the compact label but leave enough room for its styled size hint
         # at all supported Windows scale factors.
-        more.setMinimumWidth(98)
-        more.setMaximumWidth(104)
+        fit_button_to_content(more, minimum=72, horizontal_padding=24)
         more.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     search = getattr(window, "txt_search", None)
@@ -141,7 +132,6 @@ def _refresh_compact_buyer_warning(window) -> None:
             _remove_widget_from_layout(parent.layout(), button)
         button.hide()
         button.setFocusPolicy(Qt.NoFocus)
-        button.setAttribute(Qt.WA_DontShowOnScreen, True)
         button.setProperty("reviewCompanyActionRemoved", True)
 
     label.style().unpolish(label)
