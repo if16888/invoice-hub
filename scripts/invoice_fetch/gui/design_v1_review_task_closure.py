@@ -42,6 +42,23 @@ def _remove_widget_from_layout(layout: QLayout | None, widget: QWidget) -> bool:
     return False
 
 
+def _park_compatibility_button(window, button: QWidget) -> None:
+    """Keep an old API object alive without leaving it on the product surface.
+
+    Several integration tests and third-party adapters still resolve these named
+    buttons. Reparenting them to the window preserves that API while
+    ``WA_DontShowOnScreen`` and an off-canvas position guarantee that users only
+    see the dedicated Import and Export pages.
+    """
+    button.setParent(window)
+    button.setFocusPolicy(Qt.NoFocus)
+    button.setAttribute(Qt.WA_DontShowOnScreen, True)
+    button.move(window.width() + max(128, button.width()), -max(128, button.height()))
+    button.show()
+    button.setProperty("reviewCrossWorkflowActionRemoved", True)
+    button.setProperty("reviewCompatibilityControl", True)
+
+
 def _remove_cross_workflow_actions(window) -> None:
     """Remove Import/Scan/Export controls from the visible Review command bar."""
     toolbar = getattr(window, "workbench_top_toolbar", None)
@@ -55,10 +72,7 @@ def _remove_cross_workflow_actions(window) -> None:
         parent = button.parentWidget()
         if parent is not None:
             _remove_widget_from_layout(parent.layout(), button)
-        button.hide()
-        button.setFocusPolicy(Qt.NoFocus)
-        button.setAttribute(Qt.WA_DontShowOnScreen, True)
-        button.setProperty("reviewCrossWorkflowActionRemoved", True)
+        _park_compatibility_button(window, button)
 
     more = getattr(window, "btn_more", None)
     if more is not None:
