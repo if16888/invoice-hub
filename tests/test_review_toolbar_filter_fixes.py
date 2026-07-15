@@ -41,15 +41,18 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
+                toolbar_layout = window.workbench_top_toolbar.layout()
                 for attr in (
                     "btn_import_local",
                     "btn_scan_email",
                     "btn_toolbar_export",
                 ):
                     button = getattr(window, attr)
-                    self.assertTrue(button.isHidden())
                     self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"))
+                    self.assertTrue(button.property("reviewCompatibilityControl"))
                     self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen))
+                    self.assertEqual(toolbar_layout.indexOf(button), -1)
+                    self.assertIs(button.parentWidget(), window)
 
                 # The underlying commands remain named and callable from their
                 # dedicated pages/global shortcuts; only Review presentation changes.
