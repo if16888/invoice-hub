@@ -71,8 +71,10 @@ def _remove_cross_workflow_actions(window) -> None:
 
     search = getattr(window, "txt_search", None)
     if search is not None:
-        search.setPlaceholderText("搜索发票号、销售方、购买方、金额或邮件主题")
-        search.setAccessibleName("搜索发票记录")
+        search.setPlaceholderText(
+            "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
+        )
+        search.setAccessibleName("搜索发票")
 
     if toolbar_layout is not None:
         toolbar_layout.setSpacing(8)
