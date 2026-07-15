@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
 from .company_tax_profile import apply_company_tax_profile
+from .design_v1_review_task_closure import apply_design_v1_review_task_closure
 from .review_detail_closure import apply_review_detail_closure
 from .review_detail_width_fix import apply_review_detail_width_fix
 from .review_list_paging_fix import apply_review_list_paging_fix
@@ -40,9 +41,11 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("detail_width", apply_review_detail_width_fix),
     ("workspace_closure", apply_review_workspace_closure),
     ("detail_closure", apply_review_detail_closure),
-    # Paging is last because it owns the final record-count copy and reconnects
-    # the search debounce timer after all review widgets have been normalized.
+    # Paging owns the final count copy and reconnects the search debounce timer.
     ("list_paging", apply_review_list_paging_fix),
+    # Task ownership runs last so no earlier compatibility stage can restore
+    # cross-workflow buttons or expand the buyer warning again.
+    ("task_ownership", apply_design_v1_review_task_closure),
 )
 
 
