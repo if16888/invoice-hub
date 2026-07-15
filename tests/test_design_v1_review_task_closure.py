@@ -50,6 +50,10 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
 
                 self.assertEqual(window.btn_more.text(), "更多")
                 self.assertEqual(window.btn_more.toolTip(), "更多审核操作")
+                self.assertGreaterEqual(
+                    window.btn_more.minimumWidth(),
+                    window.btn_more.sizeHint().width(),
+                )
                 self.assertIn("购买方", window.txt_search.placeholderText())
                 self.assertNotIn("邮件主题", window.txt_search.placeholderText())
                 self.assertIn("发票审核", window.workbench_top_toolbar.toolTip())

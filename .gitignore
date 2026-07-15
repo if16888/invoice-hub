@@ -41,6 +41,7 @@ business_blueprint*.md
 *.jpg
 *.jpeg
 *.png
+.codex-artifacts/
 *.webp
 *.bmp
 *.heic

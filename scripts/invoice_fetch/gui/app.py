@@ -4023,6 +4023,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         QTimer.singleShot(100, self._append_next_invoice_batch)
 
     def _append_next_invoice_batch(self):
+        selected_id = None
+        selected_row = self.table.currentRow() if hasattr(self, "table") else -1
+        advance_to_next_row = selected_row == len(getattr(self, "invoices_list", []) or []) - 1
+        if 0 <= selected_row < len(getattr(self, "invoices_list", []) or []):
+            selected_id = self.invoices_list[selected_row].get("id")
         try:
             if not hasattr(self, "db") or self.db is None:
                 return
@@ -4038,6 +4043,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if batch:
                 self.invoices_list.extend(batch)
                 self._update_table_view()
+                if advance_to_next_row and selected_row + 1 < len(self.invoices_list):
+                    self.table.selectRow(selected_row + 1)
+                    self.table.setCurrentCell(selected_row + 1, 0)
+                elif selected_id is not None:
+                    for row, invoice in enumerate(self.invoices_list):
+                        if invoice.get("id") == selected_id:
+                            self.table.selectRow(row)
+                            self.table.setCurrentCell(row, 0)
+                            break
         finally:
             self._is_loading_more_invoices = False
             self._update_record_header_summary()
