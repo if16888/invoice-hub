@@ -35,19 +35,23 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
             window = self._make_window(td)
             try:
                 self.assertTrue(window.review_page.property("designV1ReviewTaskClosureApplied"))
+                toolbar = window.workbench_top_toolbar
                 for attr in (
                     "btn_import_local",
                     "btn_scan_email",
                     "btn_toolbar_export",
                 ):
                     button = getattr(window, attr)
-                    self.assertTrue(button.isHidden(), attr)
                     self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"), attr)
+                    self.assertTrue(button.property("reviewCompatibilityControl"), attr)
                     self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen), attr)
+                    self.assertIs(button.parentWidget(), window)
+                    self.assertEqual(toolbar.layout().indexOf(button), -1)
 
                 self.assertEqual(window.btn_more.text(), "更多")
                 self.assertEqual(window.btn_more.toolTip(), "更多审核操作")
                 self.assertIn("购买方", window.txt_search.placeholderText())
+                self.assertNotIn("邮件主题", window.txt_search.placeholderText())
                 self.assertIn("发票审核", window.workbench_top_toolbar.toolTip())
             finally:
                 window.close()
