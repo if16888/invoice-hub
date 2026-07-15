@@ -12,8 +12,11 @@ export callbacks remain available from their dedicated pages and global shortcut
 
 from __future__ import annotations
 
+import weakref
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
+from shiboken6 import isValid
 
 from ..reimbursement import buyer_warning
 
@@ -89,9 +92,13 @@ def _buyer_warning_summary(full_text: str) -> str:
 
 
 def _refresh_compact_buyer_warning(window) -> None:
+    if window is None or not isValid(window):
+        return
     detail = getattr(window, "_detail_panel", None)
-    label = getattr(detail, "lbl_buyer_warning", None) if detail is not None else None
-    if label is None:
+    if detail is None or not isValid(detail):
+        return
+    label = getattr(detail, "lbl_buyer_warning", None)
+    if label is None or not isValid(label):
         return
 
     invoice = getattr(window, "current_invoice", None) or {}
@@ -107,12 +114,12 @@ def _refresh_compact_buyer_warning(window) -> None:
     label.setVisible(bool(summary))
 
     row = getattr(detail, "buyer_warning_action_row", None)
-    if row is not None:
+    if row is not None and isValid(row):
         row.setVisible(bool(summary))
         row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
     button = getattr(detail, "btn_edit_reimbursement_title", None)
-    if button is not None:
+    if button is not None and isValid(button):
         parent = button.parentWidget()
         if parent is not None:
             _remove_widget_from_layout(parent.layout(), button)
@@ -126,30 +133,57 @@ def _refresh_compact_buyer_warning(window) -> None:
     label.update()
 
 
+def _refresh_from_ref(window_ref: weakref.ReferenceType) -> None:
+    target = window_ref()
+    if target is not None and isValid(target):
+        _refresh_compact_buyer_warning(target)
+
+
+def _refresh_visible_review_from_refs(
+    window_ref: weakref.ReferenceType,
+    page_ref: weakref.ReferenceType,
+    stack_ref: weakref.ReferenceType,
+) -> None:
+    target = window_ref()
+    review_page = page_ref()
+    stack = stack_ref()
+    if (
+        target is None
+        or review_page is None
+        or stack is None
+        or not isValid(target)
+        or not isValid(review_page)
+        or not isValid(stack)
+    ):
+        return
+    if stack.currentWidget() is review_page:
+        _refresh_compact_buyer_warning(target)
+
+
 def _install_warning_refresh(window, page: QWidget) -> None:
     if page.property("designV1BuyerWarningRefreshInstalled"):
         _refresh_compact_buyer_warning(window)
         return
     page.setProperty("designV1BuyerWarningRefreshInstalled", True)
 
+    window_ref = weakref.ref(window)
+    page_ref = weakref.ref(page)
+
     table = getattr(window, "table", None)
     if table is not None:
         table.itemSelectionChanged.connect(
-            lambda target=window: QTimer.singleShot(
-                0, lambda: _refresh_compact_buyer_warning(target)
+            lambda ref=window_ref: QTimer.singleShot(
+                0, lambda target_ref=ref: _refresh_from_ref(target_ref)
             )
         )
 
     center_stack = getattr(window, "center_stack", None)
     if center_stack is not None:
+        stack_ref = weakref.ref(center_stack)
         center_stack.currentChanged.connect(
-            lambda _index, target=window, review_page=page: QTimer.singleShot(
+            lambda _index, wref=window_ref, pref=page_ref, sref=stack_ref: QTimer.singleShot(
                 0,
-                lambda: (
-                    _refresh_compact_buyer_warning(target)
-                    if center_stack.currentWidget() is review_page
-                    else None
-                ),
+                lambda: _refresh_visible_review_from_refs(wref, pref, sref),
             )
         )
 
@@ -158,9 +192,11 @@ def _install_warning_refresh(window, page: QWidget) -> None:
 
 def apply_design_v1_review_task_closure(page: QWidget | None) -> None:
     """Enforce final Review task ownership and compact warning disclosure."""
-    if page is None or page.property("designV1ReviewTaskClosureApplied"):
+    if page is None or not isValid(page) or page.property("designV1ReviewTaskClosureApplied"):
         return
     window = page.window()
+    if window is None or not isValid(window):
+        return
     if page is not getattr(window, "review_page", None):
         return
     if not hasattr(window, "table"):
