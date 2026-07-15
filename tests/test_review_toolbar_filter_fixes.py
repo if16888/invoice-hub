@@ -11,9 +11,11 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHeaderView, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
+    _refresh_compact_buyer_warning,
+)
 from scripts.invoice_fetch.gui.review_toolbar_filter_fixes import (
     ReimbursementTitleDialog,
-    _refresh_buyer_warning,
     _repair_material_rows,
     _save_reimbursement_title,
 )
@@ -35,21 +37,31 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_review_toolbar_uses_clear_import_language(self):
+    def test_review_toolbar_removes_cross_workflow_buttons(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                self.assertEqual(window.btn_import_local.text(), "导入")
-                self.assertIn("导入发票", window.btn_import_local.toolTip())
+                toolbar_layout = window.workbench_top_toolbar.layout()
+                for attr in (
+                    "btn_import_local",
+                    "btn_scan_email",
+                    "btn_toolbar_export",
+                ):
+                    button = getattr(window, attr)
+                    self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"))
+                    self.assertTrue(button.property("reviewCompatibilityControl"))
+                    self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen))
+                    self.assertEqual(toolbar_layout.indexOf(button), -1)
+                    self.assertIs(button.parentWidget(), window)
+
+                # The underlying commands remain named and callable from their
+                # dedicated pages/global shortcuts; only Review presentation changes.
                 self.assertEqual(window.action_import_local.text(), "本地文件")
                 self.assertEqual(window.action_import_mobile.text(), "手机上传")
                 self.assertEqual(window.action_import_mail.text(), "邮箱扫描")
-                self.assertTrue(window.btn_scan_email.isVisible())
-                self.assertEqual(window.btn_scan_email.text(), "扫描邮箱")
                 self.assertEqual(window.action_scan_email.text(), "扫描邮箱")
-                self.assertIn("新发票", window.btn_scan_email.toolTip())
-                self.assertEqual(window.btn_import_local.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
-                self.assertLessEqual(window.btn_import_local.maximumWidth(), 92)
+                self.assertEqual(window.btn_more.text(), "更多")
+                self.assertEqual(window.btn_more.toolTip(), "更多审核操作")
             finally:
                 window.close()
 
@@ -181,7 +193,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_buyer_mismatch_has_direct_title_configuration_entry(self):
+    def test_buyer_mismatch_is_compact_without_direct_settings_entry(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
@@ -193,12 +205,16 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                     }
                 }
                 window.current_invoice = {"buyer_name": "Actual Company"}
-                _refresh_buyer_warning(window)
+                _refresh_compact_buyer_warning(window)
                 detail = window._detail_panel
-                self.assertTrue(detail.property("buyerTitleEntryInstalled"))
                 self.assertFalse(detail.buyer_warning_action_row.isHidden())
-                self.assertEqual(detail.btn_edit_reimbursement_title.text(), "修改抬头")
-                self.assertIn("不匹配", detail.lbl_buyer_warning.text())
+                self.assertEqual(
+                    detail.lbl_buyer_warning.text(),
+                    "购买方与默认开票主体不一致",
+                )
+                self.assertIn("Actual Company", detail.lbl_buyer_warning.toolTip())
+                self.assertIn("Expected Company", detail.lbl_buyer_warning.toolTip())
+                self.assertTrue(detail.btn_edit_reimbursement_title.isHidden())
             finally:
                 window.close()
 

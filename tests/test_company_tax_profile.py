@@ -138,7 +138,7 @@ class CompanyTaxProfileTests(unittest.TestCase):
         self.assertEqual(window.config["email_accounts"][0]["address"], "synthetic@example.com")
         save.assert_called_once_with(window.config)
 
-    def test_review_pipeline_keeps_company_profile_entry_visible(self):
+    def test_review_pipeline_keeps_profile_check_without_settings_shortcut(self):
         with tempfile.TemporaryDirectory() as td:
             window = InvoiceReviewApp(Path(td) / "company-profile.db")
             window.resize(1600, 900)
@@ -149,9 +149,16 @@ class CompanyTaxProfileTests(unittest.TestCase):
             try:
                 detail = window._detail_panel
                 self.assertTrue(window.review_page.property("companyTaxProfileApplied"))
-                self.assertFalse(detail.buyer_warning_action_row.isHidden())
-                self.assertEqual(detail.btn_edit_reimbursement_title.text(), "公司开票信息")
-                self.assertIn("开票", detail.btn_edit_reimbursement_title.toolTip())
+                self.assertTrue(
+                    window.review_page.property("designV1ReviewTaskClosureApplied")
+                )
+                self.assertTrue(detail.buyer_warning_action_row.isHidden())
+                self.assertTrue(detail.btn_edit_reimbursement_title.isHidden())
+                self.assertTrue(
+                    detail.btn_edit_reimbursement_title.property(
+                        "reviewCompanyActionRemoved"
+                    )
+                )
             finally:
                 window.db.close()
                 window.hide()
