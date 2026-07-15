@@ -108,7 +108,6 @@ class ReviewListPagingFixTests(unittest.TestCase):
                 window.current_filter_status = TO_REVIEW
                 window._load_invoices()
                 self._drain_events()
-
                 self.assertEqual(len(window.invoices_list), 50)
                 self.assertEqual(window.lbl_record_count.text(), "已加载 50 / 共 60 张")
                 self.assertEqual(window._limited_first_load_total, 60)
@@ -118,6 +117,25 @@ class ReviewListPagingFixTests(unittest.TestCase):
 
                 self.assertEqual(len(window.invoices_list), 60)
                 self.assertEqual(window.lbl_record_count.text(), "当前筛选 60 张")
+            finally:
+                window.close()
+                window.deleteLater()
+                self._drain_events()
+
+    def test_appending_page_preserves_current_record_and_preview_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window_with_invoices(td)
+            try:
+                window.table.selectRow(25)
+                window._on_table_selection_changed()
+                selected_id = window.current_invoice["id"]
+
+                window._append_next_invoice_batch()
+                self._drain_events()
+
+                self.assertEqual(len(window.invoices_list), 100)
+                self.assertEqual(window.current_invoice["id"], selected_id)
+                self.assertEqual(window.invoices_list[window.table.currentRow()]["id"], selected_id)
             finally:
                 window.close()
                 window.deleteLater()

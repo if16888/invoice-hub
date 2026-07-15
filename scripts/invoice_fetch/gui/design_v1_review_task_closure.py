@@ -79,8 +79,10 @@ def _remove_cross_workflow_actions(window) -> None:
         more.setText("更多")
         more.setToolTip("更多审核操作")
         more.setAccessibleName("更多审核操作")
-        more.setMinimumWidth(72)
-        more.setMaximumWidth(88)
+        # Keep the compact label but leave enough room for its styled size hint
+        # at all supported Windows scale factors.
+        more.setMinimumWidth(98)
+        more.setMaximumWidth(104)
         more.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     search = getattr(window, "txt_search", None)
