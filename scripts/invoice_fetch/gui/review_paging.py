@@ -43,7 +43,8 @@ class ReviewPagingController:
             return
         self.loading = True
         try:
-            self.window._append_next_invoice_batch()
+            append = getattr(self.window, "_append_next_invoice_batch_impl", None)
+            (append or self.window._append_next_invoice_batch)()
         finally:
             self.loading = False
 
@@ -57,7 +58,19 @@ class ReviewPagingController:
                 self.window._select_invoice_by_id(self.window.invoices_list[self.pending_row].get("id"))
                 self.pending_row = -1
             return
-        self.window._move_invoice_selection(delta)
+        self._move_local(delta)
+
+    def _move_local(self, delta: int) -> None:
+        if not getattr(self.window, "invoices_list", None):
+            return
+        row = self.window.table.currentRow()
+        if row < 0:
+            row = 0 if delta >= 0 else len(self.window.invoices_list) - 1
+        row = max(0, min(len(self.window.invoices_list) - 1, row + delta))
+        self.window._select_invoice_by_id(self.window.invoices_list[row].get("id"))
+
+    def append_next_batch(self) -> None:
+        self.load_next_page()
 
 
 __all__ = ["ReviewPagingController"]

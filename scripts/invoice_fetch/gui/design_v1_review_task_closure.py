@@ -59,12 +59,9 @@ def _remove_cross_workflow_actions(window) -> None:
         # These controls belong to their dedicated first-level pages. Keep the
         # existing callback object available to legacy command code, but never
         # leave a review compatibility widget off-canvas or clickable.
-        target_page = getattr(window, "imports_page", None) if attr != "btn_toolbar_export" else getattr(window, "export_page", None)
-        if target_page is not None:
-            button.setParent(target_page)
-        button.hide()
         button.setProperty("reviewCrossWorkflowActionRemoved", True)
-        button.setProperty("reviewCompatibilityControl", None)
+        button.deleteLater()
+        setattr(window, attr, None)
 
     more = getattr(window, "btn_more", None)
     if more is not None:

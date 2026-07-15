@@ -243,7 +243,11 @@ def _classify_geometry_widget(widget: QWidget) -> tuple[str, str]:
     child_rect = widget.geometry()
     visible_rect = parent.rect()
     if _is_scroll_descendant(widget):
-        return "IGNORED", "scrollable content may exceed viewport"
+        # Content may exceed the viewport, but a child clipped by its own
+        # immediate layout parent is still a real defect.
+        if not visible_rect.intersects(child_rect) and parent.metaObject().className() not in {"QWidget", "QScrollArea", "QAbstractScrollArea"}:
+            return "FAIL", "scroll content child is outside its immediate parent"
+        return "INFO", "scroll content may exceed viewport"
     if visible_rect.contains(child_rect):
         if isinstance(widget, QAbstractButton) and widget.isEnabled() and not widget.text().strip() and widget.icon().isNull():
             return "FAIL", "blank enabled clickable button"
@@ -333,6 +337,10 @@ def _geometry(window, args: argparse.Namespace) -> dict:
         failures.append(f"detail panel below 340px: {window._detail_panel.width()}")
     if args.page == "review" and window.preview_panel.height() < 240:
         failures.append(f"preview below 240px: {window.preview_panel.height()}")
+    evaluated = [item for item in window.findChildren(QWidget) if isinstance(item, (QAbstractButton, QLineEdit, QLabel)) and item.isVisible()]
+    scroll_content = [item for item in evaluated if _is_scroll_descendant(item)]
+    clipped_key = [item for item in overflow if item["class"] in {"QPushButton", "QLineEdit"}]
+    text_overflow = [item for item in overflow if "text" in item["reason"]]
     return {
         "case": {"page": args.page, "state": args.state, "width": args.width, "height": args.height, "scale": args.scale},
         "main_window_logical_size": [window.width(), window.height()],
@@ -347,6 +355,8 @@ def _geometry(window, args: argparse.Namespace) -> dict:
         "key_text_metrics": text_metrics, "has_horizontal_scrollbar": window.table.horizontalScrollBar().isVisible(),
         "outside_parent_controls": overflow, "transparent_clickables": transparent_clickables,
         "total_widgets": len(window.findChildren(QWidget)), "scanned_widgets": scanned_widgets,
+        "evaluated_widgets": len(evaluated), "scroll_content_widgets": len(scroll_content),
+        "clipped_key_controls": clipped_key, "text_overflow_controls": text_overflow,
         "ignored_widgets": ignored,
         "ignored_widget_count": len(ignored),
         "fail_count": len(failures),

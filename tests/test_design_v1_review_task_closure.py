@@ -41,12 +41,10 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                     "btn_scan_email",
                     "btn_toolbar_export",
                 ):
-                    button = getattr(window, attr)
-                    self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"), attr)
-                    self.assertIsNone(button.property("reviewCompatibilityControl"), attr)
-                    self.assertFalse(button.testAttribute(Qt.WA_DontShowOnScreen), attr)
-                    self.assertIsNot(button.parentWidget(), window)
-                    self.assertEqual(toolbar.layout().indexOf(button), -1)
+                    self.assertIsNone(getattr(window, attr), attr)
+                self.assertIsNotNone(window.action_import_local)
+                self.assertIsNotNone(window.action_scan_email)
+                self.assertIsNotNone(window.action_toolbar_export)
 
                 self.assertEqual(window.btn_more.text(), "更多")
                 self.assertEqual(window.btn_more.toolTip(), "更多审核操作")

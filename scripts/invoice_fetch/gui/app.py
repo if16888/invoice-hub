@@ -4031,6 +4031,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         QTimer.singleShot(100, self._append_next_invoice_batch)
 
     def _append_next_invoice_batch(self):
+        paging = getattr(self, "review_paging", None)
+        if paging is not None and not getattr(self, "_paging_append_in_progress", False):
+            self._paging_append_in_progress = True
+            try:
+                return paging.append_next_batch()
+            finally:
+                self._paging_append_in_progress = False
+        return self._append_next_invoice_batch_impl()
+
+    def _append_next_invoice_batch_impl(self):
         selected_id = None
         selected_row = self.table.currentRow() if hasattr(self, "table") else -1
         advance_to_next_row = selected_row == len(getattr(self, "invoices_list", []) or []) - 1

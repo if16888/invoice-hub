@@ -45,12 +45,12 @@ class CaptureGeometryTests(unittest.TestCase):
         parent.show(); self.app.processEvents()
         self.assertEqual(_classify_geometry_widget(button)[0], "FAIL")
 
-    def test_scroll_content_is_ignored(self):
+    def test_scroll_content_is_non_failing_info(self):
         scroll = QScrollArea(); scroll.resize(200, 100)
         content = QWidget(); content.resize(500, 500)
         button = QPushButton("OK", content); button.setGeometry(400, 400, 80, 30)
         scroll.setWidget(content); scroll.show(); self.app.processEvents()
-        self.assertEqual(_classify_geometry_widget(button)[0], "IGNORED")
+        self.assertIn(_classify_geometry_widget(button)[0], {"INFO", "PASS"})
 
     def test_popup_is_ignored(self):
         menu = QMenu(); menu.addAction("Action"); menu.show(); self.app.processEvents()
