@@ -54,10 +54,8 @@ class ReviewWorkspaceClosureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                button = window.btn_load_all
-                self.assertTrue(button.property("designBaselineRemoved"))
-                self.assertFalse(button.testAttribute(Qt.WA_DontShowOnScreen))
-                self.assertEqual(window.status_actions_container.layout().indexOf(button), -1)
+                self.assertIsNone(window.btn_load_all)
+                self.assertNotIn("加载全部", window.lbl_record_count.toolTip())
             finally:
                 window.close()
 

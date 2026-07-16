@@ -4461,7 +4461,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._update_record_header_summary(total_matching=total_matching)
 
         # Show/hide the load-all button
-        if hasattr(self, "btn_load_all"):
+        if getattr(self, "btn_load_all", None) is not None:
             if self._limited_first_load_active:
                 shown = len(self.invoices_list) if self.invoices_list else 50
                 self.btn_load_all.setText("加载全部")
