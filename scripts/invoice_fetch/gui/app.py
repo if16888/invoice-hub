@@ -6912,6 +6912,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _clear_action_busy(self, active_btn, original_text: str):
         """Restore all toolbar buttons to their normal enabled state."""
+        if active_btn is None or not hasattr(active_btn, "property"):
+            return
         stored = active_btn.property("_original_text")
         active_btn.setText(stored if stored else original_text)
         active_btn.setProperty("busy", "false")

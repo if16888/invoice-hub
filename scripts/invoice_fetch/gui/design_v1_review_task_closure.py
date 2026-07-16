@@ -29,6 +29,41 @@ _CROSS_WORKFLOW_BUTTONS = (
 )
 
 
+class _CommandCompatibility:
+    """Non-widget compatibility surface for legacy callers."""
+    def __init__(self, action, legacy_text=None):
+        self._action = action
+        self._legacy_text = legacy_text
+        self._props = {"reviewCrossWorkflowActionRemoved": True, "reviewCompatibilityControl": None}
+    def property(self, name):
+        return self._props.get(name, self._action.property(name))
+    def setProperty(self, name, value):
+        self._props[name] = value
+    def text(self):
+        return self._legacy_text or self._action.text()
+    def setText(self, value):
+        self._legacy_text = value
+    def style(self):
+        return _NullStyle()
+    def isEnabled(self):
+        return self._action.isEnabled()
+    def setEnabled(self, value):
+        self._action.setEnabled(value)
+    def clearFocus(self): pass
+    def setFocus(self, *_args): pass
+    def isVisible(self):
+        return False
+    def isHidden(self):
+        return True
+    def menu(self):
+        return None
+
+
+class _NullStyle:
+    def unpolish(self, *_args): pass
+    def polish(self, *_args): pass
+
+
 def _remove_widget_from_layout(layout: QLayout | None, widget: QWidget) -> bool:
     if layout is None:
         return False
@@ -60,8 +95,10 @@ def _remove_cross_workflow_actions(window) -> None:
         # existing callback object available to legacy command code, but never
         # leave a review compatibility widget off-canvas or clickable.
         button.setProperty("reviewCrossWorkflowActionRemoved", True)
+        action_name = {"btn_import_local": "action_import_local", "btn_scan_email": "action_scan_email", "btn_toolbar_export": "action_toolbar_export"}[attr]
         button.deleteLater()
-        setattr(window, attr, None)
+        legacy_text = {"btn_import_local": "导入", "btn_scan_email": "扫描邮箱", "btn_toolbar_export": "导出"}[attr]
+        setattr(window, attr, _CommandCompatibility(getattr(window, action_name), legacy_text))
 
     more = getattr(window, "btn_more", None)
     if more is not None:

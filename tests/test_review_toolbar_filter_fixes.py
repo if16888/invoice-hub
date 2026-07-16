@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QHeaderView, QSizePolicy
+from PySide6.QtWidgets import QApplication, QHeaderView, QSizePolicy, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
@@ -50,9 +50,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                     button = getattr(window, attr)
                     self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"))
                     self.assertIsNone(button.property("reviewCompatibilityControl"))
-                    self.assertFalse(button.testAttribute(Qt.WA_DontShowOnScreen))
-                    self.assertEqual(toolbar_layout.indexOf(button), -1)
-                    self.assertIsNot(button.parentWidget(), window.workbench_top_toolbar)
+                    self.assertNotIsInstance(button, QWidget)
 
                 # The underlying commands remain named and callable from their
                 # dedicated pages/global shortcuts; only Review presentation changes.
