@@ -487,6 +487,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("replaced by ReviewPagingController boundary paging tests")
     def test_lazy_loading_and_first_load_limits(self):
         try:
             from PySide6.QtWidgets import QApplication
@@ -555,6 +556,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("load-all button removed; paging is automatic")
     def test_first_load_limit_shows_load_all_button(self):
         """Test 1: First load with >100 invoices shows 'load all' button with correct count."""
         try:
@@ -605,6 +607,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("load-all button removed; paging is automatic")
     def test_status_bar_load_all_button_not_clipped(self):
         try:
             from PySide6.QtWidgets import QApplication
@@ -659,6 +662,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("load-all button removed; paging is automatic")
     def test_load_all_click_shows_all_records(self):
         """Test 2: Clicking 'load all' loads all records and hides the button."""
         try:
@@ -757,6 +761,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("load-all button removed; paging is automatic")
     def test_search_bypasses_first_load_limit(self):
         """Test 4: Search is not affected by first-load limit and hides load-all button."""
         try:
@@ -810,6 +815,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("load-all button removed; paging is automatic")
     def test_load_all_selection_reset(self):
         """Test: Selection reset behavior for first load and load all."""
         try:

@@ -332,8 +332,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertIn("Ctrl + F", window.txt_search.placeholderText())
                 self.assertNotEqual(window.btn_import_local.property("emphasis"), "primary")
                 self.assertFalse(window.btn_mobile_upload.isVisible())
-                self.assertTrue(window.btn_scan_email.isVisible())
-                self.assertTrue(window.btn_toolbar_export.isVisible())
+                self.assertFalse(window.btn_scan_email.isVisible())
+                self.assertFalse(window.btn_toolbar_export.isVisible())
 
                 visible_nav_buttons = [
                     button for button in window.workbench_nav_buttons.values()

@@ -6,7 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
@@ -41,12 +41,10 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                     "btn_scan_email",
                     "btn_toolbar_export",
                 ):
-                    button = getattr(window, attr)
-                    self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"), attr)
-                    self.assertTrue(button.property("reviewCompatibilityControl"), attr)
-                    self.assertTrue(button.testAttribute(Qt.WA_DontShowOnScreen), attr)
-                    self.assertIs(button.parentWidget(), window)
-                    self.assertEqual(toolbar.layout().indexOf(button), -1)
+                    self.assertNotIsInstance(getattr(window, attr), QWidget)
+                self.assertIsNotNone(window.action_import_local)
+                self.assertIsNotNone(window.action_scan_email)
+                self.assertIsNotNone(window.action_toolbar_export)
 
                 self.assertEqual(window.btn_more.text(), "更多")
                 self.assertEqual(window.btn_more.toolTip(), "更多审核操作")

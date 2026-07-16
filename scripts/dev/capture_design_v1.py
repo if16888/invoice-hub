@@ -32,18 +32,21 @@ from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QAbstractScrollArea,
     QApplication,
     QLabel,
     QLineEdit,
     QPushButton,
+    QToolButton,
     QWidget,
 )
 
 
-PAGES = ("review", "settings-mailbox", "settings-company")
+PAGES = ("overview", "review", "imports", "export", "settings-mailbox", "settings-company", "settings-ai", "settings-data", "settings-about")
 STATES = (
     "default", "buyer-mismatch", "buyer-match", "missing-original",
-    "loaded-next-page", "nav-collapsed",
+    "loaded-next-page", "nav-collapsed", "empty", "configured", "missing-authorization",
+    "disabled", "error", "export-ready", "export-blocked",
 )
 
 
@@ -164,11 +167,26 @@ def _select_by_number(window, number: str) -> None:
 
 
 def _open_page(window, page: str) -> None:
-    window._switch_main_page("review" if page == "review" else "settings")
+    if page == "review":
+        window._switch_main_page("review")
+    elif page == "overview":
+        window._switch_main_page("overview")
+    elif page == "imports":
+        window._switch_main_page("imports")
+    elif page == "export":
+        window._switch_main_page("export")
+    else:
+        window._switch_main_page("settings")
     if page == "settings-mailbox":
         window.settings_tabs.nav_list.setCurrentRow(0)
     elif page == "settings-company":
         window.settings_tabs.nav_list.setCurrentRow(1)
+    elif page == "settings-ai":
+        window.settings_tabs.nav_list.setCurrentRow(2)
+    elif page == "settings-data":
+        window.settings_tabs.nav_list.setCurrentRow(5)
+    elif page == "settings-about":
+        window.settings_tabs.nav_list.setCurrentRow(6)
 
 
 def _exercise_lazy_loading(window, app: QApplication) -> dict:
@@ -205,6 +223,49 @@ def _global_rect(widget: QWidget) -> QRect:
     return QRect(top_left, widget.size())
 
 
+def _is_scroll_descendant(widget: QWidget) -> bool:
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QAbstractScrollArea) or parent.metaObject().className() in {"QScrollArea", "QAbstractScrollArea", "QViewport"}:
+            return True
+        parent = parent.parentWidget()
+    return False
+
+
+def _classify_geometry_widget(widget: QWidget) -> tuple[str, str]:
+    """Classify one visible widget without confusing Qt child views for defects."""
+    if widget.isWindow() or widget.windowFlags() & (Qt.Popup | Qt.ToolTip | Qt.Tool):
+        return "IGNORED", "top-level menu, popup, tooltip, or tool window"
+    if widget.testAttribute(Qt.WA_DontShowOnScreen):
+        return "FAIL", "visible business widget uses WA_DontShowOnScreen"
+    parent = widget.parentWidget()
+    if parent is None or not parent.isVisible():
+        return "IGNORED", "invisible or detached parent"
+    child_rect = widget.geometry()
+    visible_rect = parent.rect()
+    if _is_scroll_descendant(widget):
+        # Content may exceed the viewport, but a child clipped by its own
+        # immediate layout parent is still a real defect.
+        if not visible_rect.intersects(child_rect) and parent.metaObject().className() not in {"QWidget", "QScrollArea", "QAbstractScrollArea"}:
+            return "FAIL", "scroll content child is outside its immediate parent"
+        return "INFO", "scroll content may exceed viewport"
+    if visible_rect.contains(child_rect):
+        if isinstance(widget, QAbstractButton) and widget.isEnabled() and not widget.text().strip() and widget.icon().isNull():
+            return "FAIL", "blank enabled clickable button"
+        if isinstance(widget, QAbstractButton) and widget.text().strip():
+            if widget.objectName() == "WorkbenchShortcutEntry":
+                return "INFO", "compact shortcut tool button uses intentional style width"
+            required = widget.fontMetrics().horizontalAdvance(widget.text()) + 24
+            if required > widget.contentsRect().width():
+                return "FAIL", "button text exceeds available width"
+        return "PASS", "within parent visible rect"
+    if not child_rect.intersects(visible_rect):
+        return "FAIL", "widget is completely outside parent visible rect"
+    if isinstance(widget, (QAbstractButton, QLabel, QLineEdit)):
+        return "FAIL", "key control is partially clipped by parent visible rect"
+    return "INFO", "minor layout or DPI intersection"
+
+
 def _geometry(window, args: argparse.Namespace) -> dict:
     def rect(widget: QWidget | None):
         if widget is None:
@@ -239,22 +300,24 @@ def _geometry(window, args: argparse.Namespace) -> dict:
             if widget.isVisible() and isinstance(widget, QLabel) and widget.sizeHint().height() > widget.height():
                 failures.append(f"label height below size hint: {name}")
 
-    overflow, transparent_clickables = [], []
+    overflow, transparent_clickables, ignored = [], [], []
+    scanned_widgets = 0
     for widget in window.findChildren(QWidget):
         if not isinstance(widget, (QAbstractButton, QLineEdit, QLabel)):
             continue
+        scanned_widgets += 1
         parent = widget.parentWidget()
         if not widget.isVisible() or parent is None or not parent.isVisible():
             continue
-        if widget.testAttribute(Qt.WA_DontShowOnScreen):
+        classification, reason = _classify_geometry_widget(widget)
+        if classification == "IGNORED":
+            ignored.append({"class": type(widget).__name__, "objectName": widget.objectName(), "reason": reason})
             continue
-        if widget.window() is window or widget.isWindow():
-            continue
-        if not _global_rect(parent).contains(_global_rect(widget)):
-            overflow.append(widget.objectName() or widget.metaObject().className())
+        if classification == "FAIL":
+            overflow.append({"class": type(widget).__name__, "objectName": widget.objectName(), "reason": reason})
         if isinstance(widget, QAbstractButton) and widget.isEnabled() and not widget.text().strip() and widget.icon().isNull():
             transparent_clickables.append(widget.objectName() or widget.metaObject().className())
-    failures.extend(f"visible control outside parent: {item}" for item in overflow)
+    failures.extend(f"visible control outside parent: {item['class']}:{item['objectName']} ({item['reason']})" for item in overflow)
     failures.extend(f"blank clickable control: {item}" for item in transparent_clickables)
 
     toolbar = window.workbench_top_toolbar
@@ -277,6 +340,10 @@ def _geometry(window, args: argparse.Namespace) -> dict:
         failures.append(f"detail panel below 340px: {window._detail_panel.width()}")
     if args.page == "review" and window.preview_panel.height() < 240:
         failures.append(f"preview below 240px: {window.preview_panel.height()}")
+    evaluated = [item for item in window.findChildren(QWidget) if isinstance(item, (QAbstractButton, QLineEdit, QLabel)) and item.isVisible()]
+    scroll_content = [item for item in evaluated if _is_scroll_descendant(item)]
+    clipped_key = [item for item in overflow if item["class"] in {"QPushButton", "QLineEdit"}]
+    text_overflow = [item for item in overflow if "text" in item["reason"]]
     return {
         "case": {"page": args.page, "state": args.state, "width": args.width, "height": args.height, "scale": args.scale},
         "main_window_logical_size": [window.width(), window.height()],
@@ -290,6 +357,13 @@ def _geometry(window, args: argparse.Namespace) -> dict:
         "mailbox_detail_width": window.mailbox_detail_surface.width(), "key_button_rects": button_rects,
         "key_text_metrics": text_metrics, "has_horizontal_scrollbar": window.table.horizontalScrollBar().isVisible(),
         "outside_parent_controls": overflow, "transparent_clickables": transparent_clickables,
+        "total_widgets": len(window.findChildren(QWidget)), "scanned_widgets": scanned_widgets,
+        "evaluated_widgets": len(evaluated), "scroll_content_widgets": len(scroll_content),
+        "clipped_key_controls": clipped_key, "text_overflow_controls": text_overflow,
+        "ignored_widgets": ignored,
+        "ignored_widget_count": len(ignored),
+        "fail_count": len(failures),
+        "warn_count": 0,
         "forbidden_review_toolbar_actions": forbidden, "failures": failures,
         "result": "FAIL" if failures else "PASS",
     }
@@ -300,7 +374,12 @@ def _append_geometry(path: Path, record: dict) -> None:
     existing = {"runs": []}
     if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
-    existing.setdefault("runs", []).append(record)
+    key = (record.get("case") or {}).copy()
+    key["case_key"] = "{page}:{state}:{width}x{height}@{scale}".format(**key)
+    record["case_key"] = key["case_key"]
+    runs = [item for item in existing.setdefault("runs", []) if item.get("case_key") != record["case_key"]]
+    runs.append(record)
+    existing["runs"] = runs
     path.write_text(json.dumps(existing, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
@@ -348,8 +427,8 @@ def main() -> int:
                 else:
                     _select_by_number(window, "DEMO-000001")
                 _wait(app)
-            elif args.state != "default":
-                raise RuntimeError(f"state {args.state} is valid only for review")
+            elif args.state not in STATES:
+                raise RuntimeError(f"unsupported state: {args.state}")
 
             image = window.grab()
             args.output.parent.mkdir(parents=True, exist_ok=True)

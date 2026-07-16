@@ -52,6 +52,17 @@ except ImportError:
 
 if _HAS_QT:
 
+    def fit_button_to_content(button, minimum: int = 72, horizontal_padding: int = 24) -> int:
+        """Size a button from its current polished content without a fixed cap."""
+        button.ensurePolished()
+        hint = button.sizeHint()
+        text_width = button.fontMetrics().horizontalAdvance(button.text()) if hasattr(button, "text") else 0
+        width = max(int(minimum), hint.width(), text_width + int(horizontal_padding), button.minimumSizeHint().width())
+        button.setMinimumWidth(width)
+        if button.maximumWidth() < width:
+            button.setMaximumWidth(width)
+        return width
+
     def is_visual_primary(button) -> bool:
         """Single primary-action contract shared by product code and tests."""
         return bool(
