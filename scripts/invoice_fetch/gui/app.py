@@ -4449,7 +4449,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             shown = len(displayed_invoices)
             notice = (
                 f"当前范围全部 {total_matching} 张 (首屏已加载最近 {shown} 张)。"
-                f"点击\"加载全部\"查看完整列表，或使用搜索/筛选缩小范围。"
+                f"滚动到底部或在最后一行按 ↓ 自动加载下一批，也可使用搜索/筛选缩小范围。"
             )
             self._first_load_notice = notice
             self.write_log(f"ℹ️ [首屏提示] {notice}")

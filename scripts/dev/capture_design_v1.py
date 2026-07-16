@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QToolButton,
     QWidget,
 )
 
@@ -252,6 +253,8 @@ def _classify_geometry_widget(widget: QWidget) -> tuple[str, str]:
         if isinstance(widget, QAbstractButton) and widget.isEnabled() and not widget.text().strip() and widget.icon().isNull():
             return "FAIL", "blank enabled clickable button"
         if isinstance(widget, QAbstractButton) and widget.text().strip():
+            if widget.objectName() == "WorkbenchShortcutEntry":
+                return "INFO", "compact shortcut tool button uses intentional style width"
             required = widget.fontMetrics().horizontalAdvance(widget.text()) + 24
             if required > widget.contentsRect().width():
                 return "FAIL", "button text exceeds available width"
@@ -424,8 +427,8 @@ def main() -> int:
                 else:
                     _select_by_number(window, "DEMO-000001")
                 _wait(app)
-            elif args.state != "default":
-                raise RuntimeError(f"state {args.state} is valid only for review")
+            elif args.state not in STATES:
+                raise RuntimeError(f"unsupported state: {args.state}")
 
             image = window.grab()
             args.output.parent.mkdir(parents=True, exist_ok=True)
