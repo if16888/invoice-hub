@@ -44,6 +44,9 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
                 )
                 self.assertTrue(window.settings_page.property("settingsRefreshGuardInstalled"))
                 self.assertTrue(window.settings_page.property("settingsTokenContractApplied"))
+                self.assertTrue(
+                    window.settings_page.property("settingsSemanticStatusContractApplied")
+                )
                 self.assertEqual(
                     window.settings_page.property("settingsTokenContractVersion"),
                     DESIGN_TOKEN_VERSION,
@@ -51,6 +54,8 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
                 stylesheet = window.settings_tabs.styleSheet()
                 self.assertIn(DESIGN_V1_COLORS["success_surface"], stylesheet)
                 self.assertIn(DESIGN_V1_COLORS["warning_surface"], stylesheet)
+                self.assertIn(DESIGN_V1_COLORS["danger_surface"], stylesheet)
+                self.assertIn(DESIGN_V1_COLORS["selected"], stylesheet)
                 self.assertIn(DESIGN_V1_COLORS["muted_surface"], stylesheet)
             finally:
                 window.close()
