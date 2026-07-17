@@ -37,6 +37,12 @@ def build_qss() -> str:
         font-size: {Theme.TYPE_CAPTION}px;
         font-weight: 400;
     }}
+    QLabel[role="status"], QLabel[role="secondary"] {{ color: {Theme.TEXT_SUB}; }}
+    QLabel[role="caption"] {{ color: {Theme.TEXT_HINT}; font-size: {Theme.TYPE_CAPTION}px; }}
+    QLabel[role="emphasis"], QLabel[role="strong"] {{ color: {Theme.TEXT_MAIN}; font-weight: 600; }}
+    QLabel[role="guide"] {{ color: {Theme.TEXT_SUB}; padding: 15px; border: 1px dashed {Theme.BORDER_STRONG}; border-radius: {Theme.RADIUS_SM}px; background: {Theme.BG_SUBTLE}; }}
+    QLabel[role="guidePlain"] {{ color: {Theme.TEXT_SUB}; }}
+    QTextEdit#LogView {{ background: {Theme.BG_SUBTLE}; border: 1px solid {Theme.BORDER}; color: {Theme.TEXT_SUB}; }}
 
     /* --------------------------------------------------------------------- */
     /* Card containers                                                       */

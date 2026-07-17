@@ -2267,7 +2267,7 @@ class SettingsDialog(QDialog):
                 self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             else:
                 self.lbl_ai_wizard_key_status.setText(
-                    f"API Key 状态：<font color='#EF4444'><b>未配置</b></font>（{source_label}）"
+                    f"API Key 状态：<font color='#B42318'><b>未配置</b></font>（{source_label}）"
                 )
                 self.txt_ai_key.setPlaceholderText("请输入 API Key")
 
@@ -2938,7 +2938,7 @@ class SettingsDialog(QDialog):
             self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
         else:
-            self.lbl_cred_status.setText("🔒 授权状态：<font color='#EF4444'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
+            self.lbl_cred_status.setText("🔒 授权状态：<font color='#B42318'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
 
 

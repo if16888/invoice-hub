@@ -71,6 +71,7 @@ from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
 from .mobile_upload_dialog import MobileUploadDialog
 from .mobile_upload_session import MobileUploadSessionController, MobileUploadSessionPanel
+from .design_tokens import DESIGN_V1_COLORS
 from .api_key_dialog import ApiKeyDialog
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
@@ -146,19 +147,25 @@ class ImportActivity:
     duplicates: int = 0
     failed: int = 0
 
+def _v1_badge(kind: str) -> dict[str, str]:
+    c = DESIGN_V1_COLORS
+    return {
+        "warning": {"fill": c["warning_surface"], "stroke": c["warning_border"], "text": c["warning_text"]},
+        "success": {"fill": c["success_surface"], "stroke": c["success_border"], "text": c["success_text"]},
+        "muted": {"fill": c["muted_surface"], "stroke": c["muted_border"], "text": c["muted_text"]},
+        "danger": {"fill": c["danger_surface"], "stroke": c["danger_border"], "text": c["danger_text"]},
+    }[kind]
+
+
 REVIEW_STATUS_BADGES = {
-    "to_review": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
-    "approved": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
-    "ignored": {"fill": "#F1F5F9", "stroke": "#CBD5E1", "text": "#64748B"},
-    "error": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+    "to_review": _v1_badge("warning"), "approved": _v1_badge("success"),
+    "ignored": _v1_badge("muted"), "error": _v1_badge("danger"),
 }
 
 DATA_STATUS_BADGES = {
-    "正常": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
-    "待补全": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
-    "缺原件": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
-    "缺证明": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
-    "未识别": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+    "正常": _v1_badge("success"), "待补全": _v1_badge("warning"),
+    "缺原件": _v1_badge("warning"), "缺证明": _v1_badge("danger"),
+    "未识别": _v1_badge("danger"),
 }
 
 
@@ -267,7 +274,7 @@ class SingleTaskMailboxDialog(QDialog):
 
         hint = QLabel("仅处理当前邮箱账号的新增或编辑，保存后返回桌面系统设置页。")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #667085; font-size: 12px;")
+        hint.setProperty("role", "hint")
         layout.addWidget(hint)
 
         form = QFormLayout()
@@ -405,7 +412,7 @@ class SingleTaskAiProfileDialog(QDialog):
 
         hint = QLabel("默认页面只读展示 Provider、模型、Key 和会话状态；需要修改时通过这个弹窗单独编辑。")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #667085; font-size: 12px;")
+        hint.setProperty("role", "hint")
         layout.addWidget(hint)
 
         form = QFormLayout()
@@ -794,9 +801,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.txt_log = QTextEdit()
             self.txt_log.setReadOnly(True)
             self.txt_log.setFont(QFont("Consolas", 9))
-            self.txt_log.setStyleSheet(
-                "background-color: #F8FAFC; border: 1px solid #E5E7EB; color: #374151;"
-            )
+            self.txt_log.setObjectName("LogView")
         return self.txt_log
 
     def _mount_log_widget(self, host: str) -> None:
@@ -1176,7 +1181,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.lbl_chips_title = QLabel("已启用:")
         self.lbl_chips_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        self.lbl_chips_title.setStyleSheet("color: #4B5563;")
+        self.lbl_chips_title.setProperty("role", "status")
         self.filter_chips_layout.addWidget(self.lbl_chips_title)
 
         self.chips_container_layout = QHBoxLayout()
@@ -1270,7 +1275,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.lbl_empty_title = QLabel("当前没有发票记录")
         self.lbl_empty_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        self.lbl_empty_title.setStyleSheet("color: #4B5563;")
+        self.lbl_empty_title.setProperty("role", "emphasis")
         empty_layout.addWidget(self.lbl_empty_title)
 
         self.lbl_guide = QLabel(
@@ -1280,7 +1285,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
         )
         self.lbl_guide.setFont(QFont("Segoe UI", 10))
-        self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
+        self.lbl_guide.setProperty("role", "guide")
         self.lbl_guide.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         empty_layout.addWidget(self.lbl_guide)
 
@@ -1433,14 +1438,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.lbl_status_left = QLabel("当前筛选 0 张")
         self.lbl_status_left.setFont(QFont("Segoe UI", 9))
-        self.lbl_status_left.setStyleSheet("color: #4B5563;")
+        self.lbl_status_left.setProperty("role", "status")
         self.lbl_status_left.setToolTip("当前发票筛选状态")
         self.lbl_status_left.setMinimumWidth(120)
         status_layout.addWidget(self.lbl_status_left, 1)
 
         self.lbl_status_middle = QLabel("未选择发票")
         self.lbl_status_middle.setFont(QFont("Segoe UI", 9))
-        self.lbl_status_middle.setStyleSheet("color: #4B5563;")
+        self.lbl_status_middle.setProperty("role", "status")
         self.lbl_status_middle.setToolTip("选中发票及金额合计")
         self.lbl_status_middle.setAlignment(Qt.AlignCenter)
         self.lbl_status_middle.setMinimumWidth(180)
@@ -1458,7 +1463,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.lbl_version = QLabel(APP_VERSION)
         self.lbl_version.setFont(QFont("Segoe UI", 8))
-        self.lbl_version.setStyleSheet("color: #6B7280;")
+        self.lbl_version.setProperty("role", "caption")
         self.lbl_version.setToolTip("当前 Invoice Hub 版本")
         right_layout.addWidget(self.lbl_version)
 
@@ -1499,7 +1504,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         lbl_log_title = QLabel("系统运行日志")
         lbl_log_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        lbl_log_title.setStyleSheet("color: #111827;")
+        lbl_log_title.setProperty("role", "strong")
 
         self.btn_clear_log = QPushButton("清空")
         self.btn_clear_log.setProperty("class", "SecondaryBtn")
