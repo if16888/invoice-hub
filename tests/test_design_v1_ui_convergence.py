@@ -8,6 +8,7 @@ from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_COLORS, DESIGN_V1_
 from scripts.invoice_fetch.gui.ui import Theme, build_qss
 from scripts.invoice_fetch.gui.ui.components.form_field import FormField
 from scripts.invoice_fetch.gui.ui.components.section_header import SectionHeader
+from scripts.invoice_fetch.gui import app as app_module
 
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
@@ -51,6 +52,24 @@ class DesignV1UIConvergenceTests(unittest.TestCase):
         checked_rule = qss.split("QPushButton.WorkbenchNavButton:checked {", 1)[1].split("}", 1)[0]
         self.assertIn("border-left: 3px", checked_rule)
         self.assertIn("padding-left: 9px", checked_rule)
+
+    def test_application_status_badges_derive_from_design_tokens(self):
+        self.assertEqual(app_module.REVIEW_STATUS_BADGES["approved"]["fill"], DESIGN_V1_COLORS["success_surface"])
+        self.assertEqual(app_module.REVIEW_STATUS_BADGES["error"]["text"], DESIGN_V1_COLORS["danger_text"])
+        self.assertEqual(app_module.DATA_STATUS_BADGES["正常"]["fill"], DESIGN_V1_COLORS["success_surface"])
+
+    def test_application_semantic_roles_and_settings_contrast_are_present(self):
+        source = inspect.getsource(app_module.InvoiceReviewApp)
+        self.assertIn('setObjectName("LogView")', source)
+        self.assertIn('setProperty("role", "guide")', source)
+        settings_source = inspect.getsource(__import__("scripts.invoice_fetch.gui.settings_dialog", fromlist=["SettingsDialog"]))
+        self.assertIn("#B42318", settings_source)
+
+    def test_qss_contains_application_semantic_roles(self):
+        qss = build_qss()
+        for role in ("status", "caption", "emphasis", "strong", "guide", "guidePlain"):
+            self.assertIn(f'QLabel[role="{role}"]', qss)
+        self.assertIn("QTextEdit#LogView", qss)
 
 
 if __name__ == "__main__":

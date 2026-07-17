@@ -147,17 +147,17 @@ class PreviewMixin:
         self.overlay_toolbar.setStyleSheet("""
             QWidget#OverlayToolbar {
                 background-color: #FFFFFF;
-                border-bottom: 1px solid #E5EAF2;
+                border-bottom: 1px solid #E5E7EB;
                 border-top-left-radius: 12px;
                 border-top-right-radius: 12px;
             }
             QPushButton, QToolButton {
                 background-color: #F8FAFC;
-                border: 1px solid #E5EAF2;
+                border: 1px solid #E5E7EB;
                 border-radius: 6px;
                 padding: 4px 10px;
                 font-size: 12px;
-                color: #334155;
+                color: #475467;
                 font-weight: 500;
             }
             QPushButton:hover, QToolButton:hover {
@@ -166,7 +166,7 @@ class PreviewMixin:
                 color: #1D4ED8;
             }
             QPushButton:disabled, QToolButton:disabled {
-                color: #94A3B8;
+                color: #667085;
                 background-color: #F8FAFC;
                 border-color: #E2E8F0;
             }
