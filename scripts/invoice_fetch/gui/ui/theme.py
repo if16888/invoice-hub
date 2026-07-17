@@ -20,6 +20,7 @@ class Theme:
     BORDER_STRONG = DESIGN_V1_COLORS["border_strong"]
     BORDER_FOCUS = DESIGN_V1_COLORS["accent"]
     FOCUS_RING = DESIGN_V1_COLORS["focus_ring"]
+    FOCUS_RING_INVERSE = DESIGN_V1_COLORS["focus_ring_inverse"]
 
     # Typography and text colors
     TEXT_MAIN = DESIGN_V1_COLORS["text"]
