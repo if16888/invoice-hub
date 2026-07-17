@@ -85,6 +85,34 @@ QLabel#AISettingsStatusBadge[tone="muted"] {{
     color: {colors['muted']};
     background: {colors['muted_surface']};
 }}
+QLabel[semanticStatus="true"] {{
+    color: {colors['muted']};
+    background: {colors['surface_secondary']};
+    border: 1px solid {colors['border']};
+    border-radius: {metrics['radius_small']}px;
+    padding: 5px 8px;
+    font-size: {type_scale['secondary']}px;
+}}
+QLabel[semanticStatus="true"][status="success"] {{
+    color: {colors['success_text']};
+    background: {colors['success_surface']};
+    border-color: {colors['success_border']};
+}}
+QLabel[semanticStatus="true"][status="warning"] {{
+    color: {colors['warning_text']};
+    background: {colors['warning_surface']};
+    border-color: {colors['warning_border']};
+}}
+QLabel[semanticStatus="true"][status="danger"] {{
+    color: {colors['danger_text']};
+    background: {colors['danger_surface']};
+    border-color: {colors['danger_border']};
+}}
+QLabel[semanticStatus="true"][status="info"] {{
+    color: {colors['accent']};
+    background: {colors['selected']};
+    border-color: {colors['accent_border']};
+}}
 """
 
 
