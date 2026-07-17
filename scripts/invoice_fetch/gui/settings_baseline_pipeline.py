@@ -21,6 +21,7 @@ from .settings_feedback_fixes import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .settings_refresh_guard import install_settings_refresh_guard
+from .settings_semantic_status_contract import install_settings_semantic_status_contract
 from .settings_token_contract import apply_settings_token_contract
 from .ui_visibility_contracts import install_settings_visibility_contract
 
@@ -36,8 +37,9 @@ SETTINGS_BASELINE_STAGES: tuple[SettingsStage, ...] = (
     ("refresh_guard", install_settings_refresh_guard),
     ("feedback_closure", apply_settings_feedback_fixes),
     # Token QSS is last among the baseline visual stages and therefore owns
-    # final rendering before the focused action-clarity migration is applied.
+    # final rendering before semantic status labels are normalized.
     ("token_contract", apply_settings_token_contract),
+    ("semantic_status", install_settings_semantic_status_contract),
     ("visibility_contract", install_settings_visibility_contract),
     ("action_clarity", apply_settings_action_clarity),
 )
