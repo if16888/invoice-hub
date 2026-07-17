@@ -126,6 +126,7 @@ def _build_gallery() -> tuple[QWidget, dict[str, QWidget]]:
     tabs.addTab(QLabel("邮箱账户内容"), "邮箱账户")
     tabs.addTab(QLabel("开票信息内容"), "开票信息")
     tabs.setCurrentIndex(1)
+    tabs.tabBar().setFocusPolicy(Qt.StrongFocus)
     tab_layout.addWidget(tabs)
     controls["tab"] = tabs.tabBar()
 
@@ -153,7 +154,15 @@ def _build_gallery() -> tuple[QWidget, dict[str, QWidget]]:
 
 
 def _apply_state(state: str, controls: dict[str, QWidget], app: QApplication) -> QWidget:
-    target = controls[state.split("-", 1)[0]] if state != "table-selected-hover" else controls["table"]
+    target_names = {
+        "button-focus": "primary",
+        "nav-focus": "nav",
+        "stat-focus": "stat",
+        "input-focus": "input",
+        "tab-focus": "tab",
+        "table-selected-hover": "table",
+    }
+    target = controls[target_names[state]]
     if state == "table-selected-hover":
         table = controls["table"]
         item = table.item(1, 1)
