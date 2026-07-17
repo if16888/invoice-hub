@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import MutableMapping
 
 
-DESIGN_TOKEN_VERSION = "design-v1.1-accessibility"
+DESIGN_TOKEN_VERSION = "design-v1.2-focus-closure"
 
 DESIGN_V1_COLORS = {
     "page": "#F7F8FA",
@@ -28,7 +28,10 @@ DESIGN_V1_COLORS = {
     "accent": "#2563EB",
     "accent_hover": "#1D4ED8",
     "accent_border": "#BFDBFE",
-    "focus_ring": "#93C5FD",
+    # Focus indicators must remain visible on white, page, and selected surfaces.
+    "focus_ring": "#2563EB",
+    # Filled accent controls use an inverse inner border for the focused state.
+    "focus_ring_inverse": "#FFFFFF",
     "success": "#16803C",
     "success_hover": "#15803D",
     "success_surface": "#ECFDF3",
