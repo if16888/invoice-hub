@@ -2,18 +2,19 @@
 """Invoice Hub UI Kit - Central QSS Stylesheet Builder."""
 
 from __future__ import annotations
+
 from .theme import Theme
 
 
 def build_qss() -> str:
-    """Build and return the complete application stylesheet using Theme tokens."""
+    """Build the application UI Kit stylesheet from Design v1 aliases."""
     return f"""
     /* --------------------------------------------------------------------- */
-    /* Global Base Rules                                                     */
+    /* Global base and semantic typography                                   */
     /* --------------------------------------------------------------------- */
     QWidget {{
         font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
-        font-size: 13px;
+        font-size: {Theme.TYPE_BODY}px;
         color: {Theme.TEXT_MAIN};
     }}
 
@@ -21,8 +22,24 @@ def build_qss() -> str:
         background-color: {Theme.BG_PAGE};
     }}
 
+    QLabel[role="section-title"] {{
+        color: {Theme.TEXT_MAIN};
+        font-size: {Theme.TYPE_SECTION_TITLE}px;
+        font-weight: 600;
+    }}
+    QLabel[role="secondary"], QLabel[role="field-label"] {{
+        color: {Theme.TEXT_SUB};
+        font-size: {Theme.TYPE_SECONDARY}px;
+        font-weight: 500;
+    }}
+    QLabel[role="hint"] {{
+        color: {Theme.TEXT_HINT};
+        font-size: {Theme.TYPE_CAPTION}px;
+        font-weight: 400;
+    }}
+
     /* --------------------------------------------------------------------- */
-    /* Card Container (Card component)                                       */
+    /* Card containers                                                       */
     /* --------------------------------------------------------------------- */
     QFrame#Card, QWidget#Card, .WorkbenchCard {{
         background-color: {Theme.BG_CARD};
@@ -31,7 +48,7 @@ def build_qss() -> str:
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Buttons (AppButton component)                                         */
+    /* Buttons                                                               */
     /* --------------------------------------------------------------------- */
     QPushButton {{
         min-height: {Theme.CONTROL_HEIGHT}px;
@@ -41,13 +58,15 @@ def build_qss() -> str:
         border: 1px solid {Theme.BORDER_STRONG};
         background-color: {Theme.BG_CARD};
         color: {Theme.TEXT_MAIN};
-        font-size: 13px;
+        font-size: {Theme.TYPE_BODY}px;
         font-weight: 500;
-        outline: none;
     }}
     QPushButton:hover {{
         background-color: {Theme.BG_SUBTLE};
         border-color: {Theme.BLUE};
+    }}
+    QPushButton:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
     }}
     QPushButton:disabled {{
         background-color: {Theme.BG_SUBTLE};
@@ -55,16 +74,18 @@ def build_qss() -> str:
         color: {Theme.TEXT_MUTED};
     }}
 
-    /* Button Variants */
     QPushButton[variant="primary"] {{
         background-color: {Theme.BLUE};
         border-color: {Theme.BLUE};
-        color: #FFFFFF;
+        color: {Theme.TEXT_ON_ACCENT};
         font-weight: 600;
     }}
     QPushButton[variant="primary"]:hover {{
         background-color: {Theme.BLUE_HOVER};
         border-color: {Theme.BLUE_HOVER};
+    }}
+    QPushButton[variant="primary"]:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
     }}
 
     QPushButton[variant="danger"] {{
@@ -74,30 +95,33 @@ def build_qss() -> str:
         font-weight: 600;
     }}
     QPushButton[variant="danger"]:hover {{
-        background-color: #FEE2E2;
+        background-color: {Theme.RED_BG};
         border-color: {Theme.RED};
     }}
 
     QPushButton[variant="ghost"] {{
         background-color: transparent;
-        border: none;
+        border: 1px solid transparent;
         color: {Theme.TEXT_SUB};
     }}
     QPushButton[variant="ghost"]:hover {{
         background-color: {Theme.BLUE_BG};
         color: {Theme.BLUE};
     }}
+    QPushButton[variant="ghost"]:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
+    }}
 
     QPushButton[variant="toolbar"] {{
-        min-height: 32px;
-        max-height: 32px;
+        min-height: {Theme.TOOLBAR_CONTROL_HEIGHT}px;
+        max-height: {Theme.TOOLBAR_CONTROL_HEIGHT}px;
         border-radius: {Theme.RADIUS_SM}px;
         padding: 0 12px;
-        font-size: 12px;
+        font-size: {Theme.TYPE_SECONDARY}px;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Side Navigation                                                       */
+    /* Side navigation                                                       */
     /* --------------------------------------------------------------------- */
     QFrame#WorkbenchNav {{
         background-color: {Theme.BG_CARD};
@@ -107,28 +131,40 @@ def build_qss() -> str:
     QPushButton.WorkbenchNavButton {{
         background-color: transparent;
         color: {Theme.TEXT_SUB};
-        border: none;
+        border: 1px solid transparent;
         border-radius: {Theme.RADIUS_CONTROL}px;
         padding: 0 12px;
         text-align: left;
-        font-size: 13px;
+        font-size: {Theme.TYPE_BODY}px;
         font-weight: 500;
-        min-height: 40px;
-        max-height: 40px;
+        min-height: {Theme.NAV_ITEM_HEIGHT}px;
+        max-height: {Theme.NAV_ITEM_HEIGHT}px;
     }}
     QPushButton.WorkbenchNavButton:hover {{
         background-color: {Theme.BG_SUBTLE};
         color: {Theme.TEXT_MAIN};
+    }}
+    QPushButton.WorkbenchNavButton:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+        padding-left: 10px;
+        padding-right: 10px;
     }}
     QPushButton.WorkbenchNavButton:checked {{
         background-color: {Theme.BLUE_BG};
         border-left: 3px solid {Theme.BLUE};
         color: {Theme.BLUE};
         font-weight: 700;
+        padding-left: 9px;
+    }}
+    QPushButton.WorkbenchNavButton:checked:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+        border-left: 3px solid {Theme.BLUE};
+        padding-left: 9px;
+        padding-right: 10px;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Status Badges (StatusBadge component)                                 */
+    /* Status badges                                                         */
     /* --------------------------------------------------------------------- */
     QLabel[badge="pending"] {{
         background-color: {Theme.ORANGE_BG};
@@ -136,7 +172,7 @@ def build_qss() -> str:
         border: 1px solid {Theme.ORANGE_BORDER};
         border-radius: {Theme.RADIUS_BADGE}px;
         padding: 2px 10px;
-        font-size: 12px;
+        font-size: {Theme.TYPE_BADGE}px;
         font-weight: 600;
     }}
     QLabel[badge="passed"] {{
@@ -145,7 +181,7 @@ def build_qss() -> str:
         border: 1px solid {Theme.GREEN_BORDER};
         border-radius: {Theme.RADIUS_BADGE}px;
         padding: 2px 10px;
-        font-size: 12px;
+        font-size: {Theme.TYPE_BADGE}px;
         font-weight: 600;
     }}
     QLabel[badge="danger"] {{
@@ -154,7 +190,7 @@ def build_qss() -> str:
         border: 1px solid {Theme.RED_BORDER};
         border-radius: {Theme.RADIUS_BADGE}px;
         padding: 2px 10px;
-        font-size: 12px;
+        font-size: {Theme.TYPE_BADGE}px;
         font-weight: 600;
     }}
     QLabel[badge="muted"] {{
@@ -163,27 +199,33 @@ def build_qss() -> str:
         border: 1px solid {Theme.GRAY_BORDER};
         border-radius: {Theme.RADIUS_BADGE}px;
         padding: 2px 10px;
-        font-size: 12px;
+        font-size: {Theme.TYPE_BADGE}px;
         font-weight: 500;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* StatCard Component (Status Filter Chips)                              */
+    /* StatCard component                                                    */
     /* --------------------------------------------------------------------- */
     QFrame#CompactStatCard {{
         background-color: {Theme.BG_CARD};
         border: 1px solid {Theme.BORDER};
-        border-radius: 10px;
+        border-radius: {Theme.RADIUS_CARD}px;
         min-height: 44px;
-        max-height: 48px;
+        max-height: {Theme.STAT_CARD_HEIGHT}px;
     }}
     QFrame#CompactStatCard:hover {{
         border-color: {Theme.BORDER_STRONG};
         background-color: {Theme.BG_SUBTLE};
     }}
+    QFrame#CompactStatCard:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+    }}
     QFrame#CompactStatCard[selected="true"] {{
         background-color: {Theme.BLUE_BG};
-        border: 1.5px solid {Theme.BLUE};
+        border: 1px solid {Theme.BLUE};
+    }}
+    QFrame#CompactStatCard[selected="true"]:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
     }}
     QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle,
     QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {{
@@ -192,17 +234,17 @@ def build_qss() -> str:
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Form Inputs (FormField & DetailFieldInput)                            */
+    /* Form inputs                                                           */
     /* --------------------------------------------------------------------- */
     QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
-        min-height: 34px;
-        max-height: 34px;
+        min-height: {Theme.CONTROL_HEIGHT}px;
+        max-height: {Theme.CONTROL_HEIGHT}px;
         border: 1px solid {Theme.BORDER};
         border-radius: {Theme.RADIUS_CONTROL}px;
         background-color: {Theme.BG_CARD};
         padding: 0 10px;
         color: {Theme.TEXT_MAIN};
-        font-size: 13px;
+        font-size: {Theme.TYPE_BODY}px;
         selection-background-color: {Theme.BLUE_BG};
         selection-color: {Theme.BLUE};
     }}
@@ -212,12 +254,12 @@ def build_qss() -> str:
         background-color: {Theme.BG_CARD};
         padding: 6px 10px;
         color: {Theme.TEXT_MAIN};
-        font-size: 13px;
+        font-size: {Theme.TYPE_BODY}px;
     }}
     QLineEdit:focus, QComboBox:focus, QTextEdit:focus,
     QLineEdit.DetailFieldInput:focus, QComboBox.DetailFieldInput:focus {{
-        border: 1.5px solid {Theme.BLUE};
-        background-color: #FFFFFF;
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
+        background-color: {Theme.BG_CARD};
     }}
     QLineEdit:read-only, QLineEdit:disabled, QComboBox:disabled, QTextEdit:read-only, QTextEdit:disabled,
     QLineEdit.DetailFieldInput:read-only, QLineEdit.DetailFieldInput:disabled, QComboBox.DetailFieldInput:disabled {{
@@ -227,12 +269,12 @@ def build_qss() -> str:
     }}
     QLabel.FormFieldLabel {{
         color: {Theme.TEXT_SUB};
-        font-size: 12px;
+        font-size: {Theme.TYPE_SECONDARY}px;
         font-weight: 500;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* AlertBanner Component                                                 */
+    /* AlertBanner component                                                 */
     /* --------------------------------------------------------------------- */
     QFrame#AlertBanner {{
         border-radius: {Theme.RADIUS_CONTROL}px;
@@ -244,63 +286,63 @@ def build_qss() -> str:
     }}
     QLabel#AlertBannerText[tone="warning"] {{
         color: {Theme.ORANGE_TEXT};
-        font-size: 12px;
+        font-size: {Theme.TYPE_SECONDARY}px;
         font-weight: 500;
     }}
-
     QFrame#AlertBanner[tone="danger"] {{
         background-color: {Theme.RED_BG};
         border: 1px solid {Theme.RED_BORDER};
     }}
     QLabel#AlertBannerText[tone="danger"] {{
         color: {Theme.RED_TEXT};
-        font-size: 12px;
+        font-size: {Theme.TYPE_SECONDARY}px;
         font-weight: 500;
     }}
-
     QFrame#AlertBanner[tone="info"] {{
         background-color: {Theme.BLUE_BG};
         border: 1px solid {Theme.BLUE_BORDER};
     }}
     QLabel#AlertBannerText[tone="info"] {{
         color: {Theme.BLUE};
-        font-size: 12px;
+        font-size: {Theme.TYPE_SECONDARY}px;
         font-weight: 500;
     }}
-
     QFrame#AlertBanner[tone="success"] {{
         background-color: {Theme.GREEN_BG};
         border: 1px solid {Theme.GREEN_BORDER};
     }}
     QLabel#AlertBannerText[tone="success"] {{
         color: {Theme.GREEN_TEXT};
-        font-size: 12px;
+        font-size: {Theme.TYPE_SECONDARY}px;
         font-weight: 500;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Data Tables                                                           */
+    /* Data tables                                                           */
     /* --------------------------------------------------------------------- */
     QTableView, QTableWidget {{
         background-color: {Theme.BG_CARD};
         border: none;
-        gridline-color: #F1F5F9;
+        gridline-color: {Theme.BG_CANVAS};
         selection-background-color: {Theme.BLUE_BG};
         selection-color: {Theme.BLUE};
+    }}
+    QTableView::item:hover, QTableWidget::item:hover {{
+        background-color: {Theme.BG_SUBTLE};
     }}
     QHeaderView::section {{
         background-color: {Theme.BG_SUBTLE};
         color: {Theme.TEXT_SUB};
         font-weight: 600;
-        font-size: 12px;
-        height: 34px;
+        font-size: {Theme.TYPE_SECONDARY}px;
+        height: {Theme.TABLE_HEADER_HEIGHT}px;
         border: none;
         border-bottom: 1px solid {Theme.BORDER};
         padding: 0 8px;
     }}
 
     /* --------------------------------------------------------------------- */
-    /* Tabs & ScrollBars                                                     */
+    /* Tabs and scrollbars                                                   */
     /* --------------------------------------------------------------------- */
     QTabWidget::pane {{
         border: none;
@@ -321,19 +363,25 @@ def build_qss() -> str:
     QTabBar::tab:hover:!selected {{
         color: {Theme.TEXT_MAIN};
     }}
+    QTabBar::tab:focus {{
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+    }}
 
     QScrollBar:vertical {{
         background: transparent;
-        width: 6px;
+        width: {Theme.SCROLLBAR_WIDTH}px;
         margin: 0px;
     }}
     QScrollBar::handle:vertical {{
-        background: #CBD5E1;
-        border-radius: 3px;
-        min-height: 20px;
+        background: {Theme.BORDER_STRONG};
+        border-radius: {Theme.SCROLLBAR_WIDTH // 2}px;
+        min-height: 24px;
     }}
     QScrollBar::handle:vertical:hover {{
-        background: #94A3B8;
+        background: {Theme.TEXT_MUTED};
+    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+        height: 0px;
     }}
 
     QSplitter::handle {{
