@@ -53,7 +53,13 @@ class ReviewDetailTabStateTests(unittest.TestCase):
             self.assertEqual(panel.detail_tabs.tabText(1), "报销信息")
 
             panel.detail_tabs.setCurrentIndex(1)
-            panel.set_attachment_state(path="", source_url="", can_download=False)
+            panel.set_attachment_state(
+                has_file=False,
+                has_url=False,
+                file_name="",
+                file_path="",
+                can_download=False,
+            )
             panel.set_single_selection_state()
             self.app.processEvents()
 
