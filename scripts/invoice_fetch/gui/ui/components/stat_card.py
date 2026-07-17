@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
-"""StatCard Component - Filter Bar Status Summary Card."""
+"""StatCard component - filter bar status summary card."""
 
 from __future__ import annotations
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget, QSizePolicy
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
+
 from ..theme import Theme
 
 
 class StatCard(QFrame):
-    """Compact status summary card for the workbench filter bar."""
+    """Compact keyboard-accessible status summary card."""
 
     clicked = Signal()
 
@@ -28,6 +30,8 @@ class StatCard(QFrame):
         self.setProperty("state", state)
         self.setProperty("selected", selected)
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName(f"{title} {value}")
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.setFixedHeight(Theme.STAT_CARD_HEIGHT)
         self.setMinimumWidth(140)
@@ -54,12 +58,14 @@ class StatCard(QFrame):
         layout.addStretch(1)
         layout.addWidget(self._lbl_value)
 
+        self._title = title
         self._value = str(value)
         self._icon_text = icon_text
 
     def set_value(self, value: str | int) -> None:
         self._value = str(value)
         self._lbl_value.setText(self._value)
+        self.setAccessibleName(f"{self._title} {self._value}")
 
     def value(self) -> str:
         return self._value
@@ -83,5 +89,4 @@ class StatCard(QFrame):
         super().keyPressEvent(event)
 
 
-# Alias for compatibility with legacy code
 CompactStatCard = StatCard
