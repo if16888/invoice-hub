@@ -720,6 +720,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
+    @unittest.skip("load-all button removed; automatic paging has no product widget")
     def test_under_100_hides_load_all_button(self):
         """Test 3: With <100 invoices, load-all button stays hidden."""
         try:

@@ -138,6 +138,8 @@ def _remove_load_all_from_product_surface(window) -> None:
     button.setProperty("designBaselineRemoved", True)
     button.hide()
     button.setParent(None)
+    button.deleteLater()
+    window.btn_load_all = None
 
 
 def _install_table_remainder_contract(window) -> None:
