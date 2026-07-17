@@ -1,6 +1,6 @@
 """Semantic status rendering for Settings labels.
 
-Legacy Settings code still emits a few rich-text status strings.  This contract
+Legacy Settings code still emits a few rich-text status strings. This contract
 normalizes the rendered labels to plain text and Design-token-backed semantic
 properties without changing the surrounding page structure.
 """
@@ -30,8 +30,6 @@ _SUCCESS_MARKERS = (
 )
 _WARNING_MARKERS = (
     "暂不支持",
-    "旧版 Provider",
-    "环境变量",
     "状态已变更",
 )
 _DANGER_MARKERS = (
@@ -41,6 +39,8 @@ _DANGER_MARKERS = (
     "需要输入",
 )
 _INFO_MARKERS = (
+    "旧版 Provider",
+    "环境变量",
     "授权状态",
     "API Key 状态",
     "已保存",
