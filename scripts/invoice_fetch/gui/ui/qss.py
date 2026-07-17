@@ -42,6 +42,10 @@ def build_qss() -> str:
     QLabel[role="emphasis"], QLabel[role="strong"] {{ color: {Theme.TEXT_MAIN}; font-weight: 600; }}
     QLabel[role="guide"] {{ color: {Theme.TEXT_SUB}; padding: 15px; border: 1px dashed {Theme.BORDER_STRONG}; border-radius: {Theme.RADIUS_SM}px; background: {Theme.BG_SUBTLE}; }}
     QLabel[role="guidePlain"] {{ color: {Theme.TEXT_SUB}; }}
+    QLabel[status="success"] {{ color: {Theme.GREEN_TEXT}; }}
+    QLabel[status="warning"] {{ color: {Theme.ORANGE_TEXT}; }}
+    QLabel[status="danger"] {{ color: {Theme.RED_TEXT}; }}
+    QLabel[status="info"] {{ color: {Theme.BLUE}; }}
     QTextEdit#LogView {{ background: {Theme.BG_SUBTLE}; border: 1px solid {Theme.BORDER}; color: {Theme.TEXT_SUB}; }}
 
     /* --------------------------------------------------------------------- */
@@ -55,13 +59,14 @@ def build_qss() -> str:
 
     /* --------------------------------------------------------------------- */
     /* Buttons                                                               */
+    /* Reserve the final focus-border width in every state to avoid jitter.  */
     /* --------------------------------------------------------------------- */
     QPushButton {{
         min-height: {Theme.CONTROL_HEIGHT}px;
         max-height: {Theme.CONTROL_HEIGHT}px;
         border-radius: {Theme.RADIUS_CONTROL}px;
-        padding: 0 14px;
-        border: 1px solid {Theme.BORDER_STRONG};
+        padding: 0 13px;
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER_STRONG};
         background-color: {Theme.BG_CARD};
         color: {Theme.TEXT_MAIN};
         font-size: {Theme.TYPE_BODY}px;
@@ -72,7 +77,7 @@ def build_qss() -> str:
         border-color: {Theme.BLUE};
     }}
     QPushButton:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
+        border-color: {Theme.FOCUS_RING};
     }}
     QPushButton:disabled {{
         background-color: {Theme.BG_SUBTLE};
@@ -91,7 +96,8 @@ def build_qss() -> str:
         border-color: {Theme.BLUE_HOVER};
     }}
     QPushButton[variant="primary"]:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+        background-color: {Theme.BLUE_HOVER};
+        border-color: {Theme.FOCUS_RING_INVERSE};
     }}
 
     QPushButton[variant="danger"] {{
@@ -104,10 +110,13 @@ def build_qss() -> str:
         background-color: {Theme.RED_BG};
         border-color: {Theme.RED};
     }}
+    QPushButton[variant="danger"]:focus {{
+        border-color: {Theme.FOCUS_RING};
+    }}
 
     QPushButton[variant="ghost"] {{
         background-color: transparent;
-        border: 1px solid transparent;
+        border-color: transparent;
         color: {Theme.TEXT_SUB};
     }}
     QPushButton[variant="ghost"]:hover {{
@@ -115,14 +124,14 @@ def build_qss() -> str:
         color: {Theme.BLUE};
     }}
     QPushButton[variant="ghost"]:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
+        border-color: {Theme.FOCUS_RING};
     }}
 
     QPushButton[variant="toolbar"] {{
         min-height: {Theme.TOOLBAR_CONTROL_HEIGHT}px;
         max-height: {Theme.TOOLBAR_CONTROL_HEIGHT}px;
         border-radius: {Theme.RADIUS_SM}px;
-        padding: 0 12px;
+        padding: 0 11px;
         font-size: {Theme.TYPE_SECONDARY}px;
     }}
 
@@ -137,9 +146,9 @@ def build_qss() -> str:
     QPushButton.WorkbenchNavButton {{
         background-color: transparent;
         color: {Theme.TEXT_SUB};
-        border: 1px solid transparent;
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid transparent;
         border-radius: {Theme.RADIUS_CONTROL}px;
-        padding: 0 12px;
+        padding: 0 11px;
         text-align: left;
         font-size: {Theme.TYPE_BODY}px;
         font-weight: 500;
@@ -151,22 +160,18 @@ def build_qss() -> str:
         color: {Theme.TEXT_MAIN};
     }}
     QPushButton.WorkbenchNavButton:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
-        padding-left: 10px;
-        padding-right: 10px;
+        border-color: {Theme.FOCUS_RING};
     }}
     QPushButton.WorkbenchNavButton:checked {{
         background-color: {Theme.BLUE_BG};
         border-left: 3px solid {Theme.BLUE};
         color: {Theme.BLUE};
         font-weight: 700;
-        padding-left: 9px;
+        padding-left: 10px;
     }}
     QPushButton.WorkbenchNavButton:checked:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
-        border-left: 3px solid {Theme.BLUE};
-        padding-left: 9px;
-        padding-right: 10px;
+        border-color: {Theme.FOCUS_RING};
+        border-left-color: {Theme.BLUE};
     }}
 
     /* --------------------------------------------------------------------- */
@@ -214,7 +219,7 @@ def build_qss() -> str:
     /* --------------------------------------------------------------------- */
     QFrame#CompactStatCard {{
         background-color: {Theme.BG_CARD};
-        border: 1px solid {Theme.BORDER};
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
         border-radius: {Theme.RADIUS_CARD}px;
         min-height: 44px;
         max-height: {Theme.STAT_CARD_HEIGHT}px;
@@ -224,14 +229,14 @@ def build_qss() -> str:
         background-color: {Theme.BG_SUBTLE};
     }}
     QFrame#CompactStatCard:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+        border-color: {Theme.FOCUS_RING};
     }}
     QFrame#CompactStatCard[selected="true"] {{
         background-color: {Theme.BLUE_BG};
-        border: 1px solid {Theme.BLUE};
+        border-color: {Theme.BLUE};
     }}
     QFrame#CompactStatCard[selected="true"]:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
+        border-color: {Theme.FOCUS_RING};
     }}
     QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle,
     QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {{
@@ -245,26 +250,26 @@ def build_qss() -> str:
     QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
         min-height: {Theme.CONTROL_HEIGHT}px;
         max-height: {Theme.CONTROL_HEIGHT}px;
-        border: 1px solid {Theme.BORDER};
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
         border-radius: {Theme.RADIUS_CONTROL}px;
         background-color: {Theme.BG_CARD};
-        padding: 0 10px;
+        padding: 0 9px;
         color: {Theme.TEXT_MAIN};
         font-size: {Theme.TYPE_BODY}px;
         selection-background-color: {Theme.BLUE_BG};
         selection-color: {Theme.BLUE};
     }}
     QTextEdit {{
-        border: 1px solid {Theme.BORDER};
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
         border-radius: {Theme.RADIUS_CONTROL}px;
         background-color: {Theme.BG_CARD};
-        padding: 6px 10px;
+        padding: 5px 9px;
         color: {Theme.TEXT_MAIN};
         font-size: {Theme.TYPE_BODY}px;
     }}
     QLineEdit:focus, QComboBox:focus, QTextEdit:focus,
     QLineEdit.DetailFieldInput:focus, QComboBox.DetailFieldInput:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BLUE};
+        border-color: {Theme.FOCUS_RING};
         background-color: {Theme.BG_CARD};
     }}
     QLineEdit:read-only, QLineEdit:disabled, QComboBox:disabled, QTextEdit:read-only, QTextEdit:disabled,
@@ -333,8 +338,16 @@ def build_qss() -> str:
         selection-background-color: {Theme.BLUE_BG};
         selection-color: {Theme.BLUE};
     }}
+    QTableView::item:selected, QTableWidget::item:selected {{
+        background-color: {Theme.BLUE_BG};
+        color: {Theme.BLUE};
+    }}
     QTableView::item:hover, QTableWidget::item:hover {{
         background-color: {Theme.BG_SUBTLE};
+    }}
+    QTableView::item:selected:hover, QTableWidget::item:selected:hover {{
+        background-color: {Theme.BLUE_BG};
+        color: {Theme.BLUE};
     }}
     QHeaderView::section {{
         background-color: {Theme.BG_SUBTLE};
@@ -357,20 +370,25 @@ def build_qss() -> str:
     QTabBar::tab {{
         background-color: transparent;
         color: {Theme.TEXT_SUB};
-        padding: 8px 16px;
+        padding: 6px 14px 8px 14px;
         font-weight: 500;
-        border-bottom: 2px solid transparent;
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid transparent;
     }}
     QTabBar::tab:selected {{
         color: {Theme.BLUE};
         font-weight: 700;
-        border-bottom: 2px solid {Theme.BLUE};
+        border-bottom-color: {Theme.BLUE};
     }}
     QTabBar::tab:hover:!selected {{
         color: {Theme.TEXT_MAIN};
     }}
     QTabBar::tab:focus {{
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.FOCUS_RING};
+        border-color: {Theme.FOCUS_RING};
+        border-bottom-color: transparent;
+    }}
+    QTabBar::tab:selected:focus {{
+        border-color: {Theme.FOCUS_RING};
+        border-bottom-color: {Theme.BLUE};
     }}
 
     QScrollBar:vertical {{
