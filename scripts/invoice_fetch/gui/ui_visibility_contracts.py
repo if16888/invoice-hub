@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from PySide6.QtWidgets import QStackedWidget
+from PySide6.QtWidgets import QStackedWidget, QTabWidget
 
 from .invoice_detail_panel import InvoiceDetailPanel
 
@@ -18,8 +18,27 @@ from .invoice_detail_panel import InvoiceDetailPanel
 _INVOICE_DETAIL_PATCHED = False
 
 
+def _stack_contains(stack: QStackedWidget, widget) -> bool:
+    """Return True only when *widget* is an actual page owned by *stack*."""
+    return widget is not None and stack.indexOf(widget) >= 0
+
+
+def _is_tab_internal_stack(stack: QStackedWidget) -> bool:
+    """Identify the private QStackedWidget managed by a QTabWidget.
+
+    Switching that internal stack directly bypasses QTabBar state updates and
+    can leave the highlighted tab label out of sync with the visible page.
+    """
+    return isinstance(stack.parentWidget(), QTabWidget)
+
+
 def _reveal_widget(widget, boundary=None) -> None:
-    """Reveal *widget* and select every stacked page on its ancestor path."""
+    """Reveal *widget* without changing the user's selected detail tab.
+
+    Only select pages that are actually owned by an application-level
+    QStackedWidget.  The private stack inside QTabWidget must be left alone;
+    QTabWidget is the sole owner of synchronising its tab bar and page index.
+    """
     if widget is None:
         return
     child = widget
@@ -27,7 +46,8 @@ def _reveal_widget(widget, boundary=None) -> None:
     parent = child.parentWidget()
     while parent is not None:
         if isinstance(parent, QStackedWidget):
-            parent.setCurrentWidget(child)
+            if not _is_tab_internal_stack(parent) and _stack_contains(parent, child):
+                parent.setCurrentWidget(child)
         parent.show()
         if parent is boundary:
             break
@@ -46,13 +66,22 @@ def install_invoice_detail_visibility_contract() -> None:
 
     @wraps(original)
     def set_single_selection_state(self: InvoiceDetailPanel):
+        detail_tabs = getattr(self, "detail_tabs", None)
+        selected_tab = detail_tabs.currentIndex() if detail_tabs is not None else -1
+
         result = original(self)
-        if hasattr(self, "right_stack") and hasattr(self, "right_content_widget"):
-            self.right_stack.setCurrentWidget(self.right_content_widget)
+
+        # right_content_widget is moved into detail_tabs during finalisation, so
+        # it is no longer a page of right_stack.  Select the real detail page
+        # and never call setCurrentWidget() with a foreign widget.
+        right_stack = getattr(self, "right_stack", None)
+        detail_page = getattr(self, "detail_page", None)
+        if isinstance(right_stack, QStackedWidget) and _stack_contains(right_stack, detail_page):
+            right_stack.setCurrentWidget(detail_page)
 
         # Attachment state is populated before the selection state is applied.
-        # Reassert the one active StatusLine action and its stacked ancestor path
-        # after switching from the no-selection surface.
+        # Reassert the one active StatusLine action, but do not force the Basic
+        # Info tab when the user is currently reviewing reimbursement details.
         status_line = getattr(self, "original_status_line", None)
         retry = getattr(self, "btn_retry_download", None)
         add_attachment = getattr(self, "btn_add_attachment", None)
@@ -72,6 +101,9 @@ def install_invoice_detail_visibility_contract() -> None:
             if active_action is not None:
                 status_line.replace_action(active_action)
                 _reveal_widget(active_action, boundary=self)
+
+        if detail_tabs is not None and 0 <= selected_tab < detail_tabs.count():
+            detail_tabs.setCurrentIndex(selected_tab)
         return result
 
     InvoiceDetailPanel.set_single_selection_state = set_single_selection_state
