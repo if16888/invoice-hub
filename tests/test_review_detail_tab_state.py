@@ -8,6 +8,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import qInstallMessageHandler
 from PySide6.QtWidgets import (
     QApplication,
     QPushButton,
@@ -36,6 +37,12 @@ class ReviewDetailTabStateTests(unittest.TestCase):
         cls.app = _app()
 
     def test_single_invoice_refresh_preserves_reimbursement_tab(self):
+        messages: list[str] = []
+
+        def capture_message(_kind, _context, message):
+            messages.append(str(message))
+
+        previous_handler = qInstallMessageHandler(capture_message)
         panel = InvoiceDetailPanel()
         try:
             panel.show()
@@ -53,10 +60,15 @@ class ReviewDetailTabStateTests(unittest.TestCase):
             self.assertEqual(panel.detail_tabs.currentIndex(), 1)
             self.assertIs(panel.detail_tabs.currentWidget(), panel.reimbursement_scroll)
             self.assertIs(panel.right_stack.currentWidget(), panel.detail_page)
+            self.assertFalse(
+                any("not contained in stack" in message for message in messages),
+                messages,
+            )
         finally:
             panel.close()
             panel.deleteLater()
             self.app.processEvents()
+            qInstallMessageHandler(previous_handler)
 
     def test_reveal_widget_does_not_desynchronise_qtabwidget(self):
         tabs = QTabWidget()
