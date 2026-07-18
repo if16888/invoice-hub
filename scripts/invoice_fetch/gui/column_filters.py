@@ -21,8 +21,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .selection_surface_contract import install_selection_surface_contracts
+
 
 ValueGetter = Callable[[dict], str]
+
 
 COLUMN_DEFINITIONS = (
     ("status", "完整性", "values"),
@@ -223,6 +226,7 @@ class ColumnFilterPopup(QDialog):
             self.select_all = QCheckBox("全选")
             layout.addWidget(self.select_all)
             self.value_list = QListWidget()
+            self.value_list.setObjectName("FilterValueList")
             self.value_list.setMaximumHeight(220)
             selected = set(self.current.get("values") or ())
             has_value_filter = "values" in self.current
@@ -234,6 +238,7 @@ class ColumnFilterPopup(QDialog):
             self.select_all.setChecked(not has_value_filter or len(selected) == len(self.values))
             self.search_edit.textChanged.connect(self._filter_visible_values)
             self.select_all.toggled.connect(self._toggle_all_values)
+            install_selection_surface_contracts(self.value_list)
             layout.addWidget(self.value_list)
 
         buttons = QHBoxLayout()
