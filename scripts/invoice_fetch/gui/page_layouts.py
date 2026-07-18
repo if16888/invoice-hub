@@ -48,8 +48,8 @@ class _PageLayoutContract:
 
 
 class DashboardPageLayout(_PageLayoutContract):
-    archetype = "standard"
-    maximum_width = 1280
+    archetype = "dashboard"
+    maximum_width = 1360
 
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
@@ -77,8 +77,8 @@ class WorkspacePageLayout(_PageLayoutContract):
 
 
 class TaskFlowPageLayout(_PageLayoutContract):
-    archetype = "standard"
-    maximum_width = 1280
+    archetype = "task_flow"
+    maximum_width = 1440
 
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:
@@ -88,8 +88,8 @@ class TaskFlowPageLayout(_PageLayoutContract):
 
 
 class SettingsPageLayout(_PageLayoutContract):
-    archetype = "standard"
-    maximum_width = 1280
+    archetype = "settings"
+    maximum_width = 1120
 
     @classmethod
     def apply(cls, page: QWidget, layout: QLayout) -> QLayout:

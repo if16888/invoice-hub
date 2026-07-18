@@ -668,7 +668,7 @@ if _HAS_QT:
     class PageHeader(QFrame):
         """Shared page title row with optional title and hint."""
 
-        def __init__(self, title: str, hint: str = "", actions: list[QWidget] | None = None, parent: QWidget | None = None) -> None:
+        def __init__(self, title: str, hint: str = "", parent: QWidget | None = None) -> None:
             super().__init__(parent)
             self.setObjectName("PageHeader")
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -676,15 +676,9 @@ if _HAS_QT:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(4)
 
-            title_row = QHBoxLayout()
-            title_row.setContentsMargins(0, 0, 0, 0)
             self.lbl_title = QLabel(title, self)
             self.lbl_title.setProperty("class", "PageTitle")
-            title_row.addWidget(self.lbl_title)
-            title_row.addStretch(1)
-            for action in actions or []:
-                title_row.addWidget(action)
-            layout.addLayout(title_row)
+            layout.addWidget(self.lbl_title)
 
             self.lbl_hint = QLabel(hint, self)
             self.lbl_hint.setProperty("class", "PageHint")
