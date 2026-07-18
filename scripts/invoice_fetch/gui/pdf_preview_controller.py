@@ -14,6 +14,26 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QStackedWidget
 
 
+def _is_qobject_alive(value) -> bool:
+    """Return whether a Qt wrapper still owns a live C++ object.
+
+    Qt may deliver a final PDF status notification after ``deleteLater`` has
+    destroyed the old view.  Calling a Qt API on that Python wrapper raises
+    ``RuntimeError: Internal C++ object ... already deleted``.  Non-Qt test
+    doubles are deliberately considered live here.
+    """
+    if value is None:
+        return False
+    if not isinstance(value, QObject):
+        return True
+    try:
+        from shiboken6 import isValid
+
+        return bool(isValid(value))
+    except RuntimeError:
+        return False
+
+
 class PdfPreviewController(QObject):
     ready = Signal()
     failed = Signal(str)
@@ -89,6 +109,13 @@ class PdfPreviewController(QObject):
         if generation != self._generation:
             self._dispose(view, document)
             return
+        # ``statusChanged(Ready)`` and the immediate post-load status read can
+        # both reach this method.  The second call must not retire the active
+        # pair merely because it is also the "old" pair.
+        if view is self._view and document is self._document:
+            return
+        if not _is_qobject_alive(view) or not _is_qobject_alive(document):
+            return
         old_view, old_document = self._view, self._document
         self._view, self._document = view, document
         if self._stack.indexOf(view) < 0:
@@ -111,11 +138,11 @@ class PdfPreviewController(QObject):
             self.page_changed.emit(page, document.pageCount())
 
     def _dispose(self, view, document) -> None:
-        if view is not None:
-            if self._stack.indexOf(view) >= 0:
+        if _is_qobject_alive(view):
+            if _is_qobject_alive(self._stack) and self._stack.indexOf(view) >= 0:
                 self._stack.removeWidget(view)
             view.deleteLater()
-        if document is not None:
+        if _is_qobject_alive(document):
             try:
                 document.close()
             except Exception:
