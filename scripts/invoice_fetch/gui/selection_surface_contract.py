@@ -1,8 +1,8 @@
 """Shared selection/focus contract for list-based desktop surfaces.
 
 Qt's native item-view delegate may paint a platform focus rectangle even when
-QSS already provides a product selection state.  With transparent custom row
-widgets this appears as a dark box around the selected item on Windows.  This
+QSS already provides a product selection state. With transparent custom row
+widgets this appears as a dark box around the selected item on Windows. This
 module keeps keyboard navigation intact while replacing that native rectangle
 with Design v1 selection surfaces.
 """
@@ -120,6 +120,39 @@ QListWidget#SecondaryNavList::item:selected:!active {{
 """
 
 
+def _filter_value_stylesheet() -> str:
+    colors = DESIGN_V1_COLORS
+    metrics = DESIGN_V1_METRICS
+    return f"""
+QListWidget#FilterValueList {{
+    background-color: {colors['surface']};
+    border: 1px solid {colors['border']};
+    border-radius: {metrics['radius_medium']}px;
+    padding: 4px;
+    outline: 0;
+}}
+QListWidget#FilterValueList::item {{
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 1px solid transparent;
+    border-radius: {metrics['radius_small']}px;
+    outline: 0;
+}}
+QListWidget#FilterValueList::item:hover {{
+    background-color: {colors['surface_secondary']};
+    border-color: {colors['border_subtle']};
+}}
+QListWidget#FilterValueList::item:selected,
+QListWidget#FilterValueList::item:selected:active,
+QListWidget#FilterValueList::item:selected:!active {{
+    background-color: {colors['selected']};
+    border-color: {colors['accent_border']};
+    color: {colors['text']};
+    outline: 0;
+}}
+"""
+
+
 def _decorate_entity_rows(view: QListWidget) -> None:
     if not isValid(view):
         return
@@ -183,6 +216,16 @@ def _install_secondary_nav(view: QListWidget) -> None:
     view.setStyleSheet(view.styleSheet() + _secondary_nav_stylesheet())
 
 
+def _install_filter_values(view: QListWidget) -> None:
+    if view.property("selectionSurfaceContract") == "filter-values":
+        return
+    view.setProperty("selectionSurfaceContract", "filter-values")
+    view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    view.setItemDelegate(SelectionSurfaceDelegate(view))
+    view.setStyleSheet(view.styleSheet() + _filter_value_stylesheet())
+
+
 def install_selection_surface_contracts(root: QWidget) -> None:
     """Install deterministic selection styling on list views below *root*."""
     if root is None or not isValid(root):
@@ -198,6 +241,8 @@ def install_selection_surface_contracts(root: QWidget) -> None:
             _install_entity_list(view)
         elif object_name == "SecondaryNavList":
             _install_secondary_nav(view)
+        elif object_name == "FilterValueList":
+            _install_filter_values(view)
 
 
 def schedule_selection_surface_contracts(root: QWidget) -> None:
