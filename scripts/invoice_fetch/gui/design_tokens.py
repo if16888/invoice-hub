@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import MutableMapping
 
 
-DESIGN_TOKEN_VERSION = "design-v1.2-focus-closure"
+DESIGN_TOKEN_VERSION = "design-v1.3-visual-language"
 
 DESIGN_V1_COLORS = {
     "page": "#F7F8FA",
@@ -83,6 +83,10 @@ DESIGN_V1_METRICS = {
     "table_header_height": 34,
     "scrollbar_width": 8,
     "focus_border_width": 2,
+    "icon_button_size": 32,
+    "segmented_control_height": 36,
+    "segmented_item_height": 30,
+    "segmented_item_gap": 4,
     "radius_small": 6,
     "radius_medium": 8,
     "radius_large": 10,
