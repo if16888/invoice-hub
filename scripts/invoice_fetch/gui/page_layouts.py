@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
 from .design_baseline_styles import apply_global_design_baseline
+from .design_system_v11 import apply_design_system_v11
 from .design_tokens import DESIGN_V1_METRICS
 from .review_baseline_pipeline import schedule_review_baseline_pipeline
 from .selection_surface_contract import schedule_selection_surface_contracts
@@ -33,6 +34,7 @@ class _PageLayoutContract:
         layout.setAlignment(Qt.AlignTop)
         QTimer.singleShot(0, lambda p=page: apply_global_design_baseline(p))
         schedule_selection_surface_contracts(page)
+        apply_design_system_v11(page)
         return layout
 
     @classmethod
