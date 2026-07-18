@@ -5,6 +5,9 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtWidgets import QApplication, QStackedWidget, QWidget
+
 from scripts.invoice_fetch.gui.pdf_preview_controller import PdfPreviewController
 from scripts.invoice_fetch.gui import preview_mixin
 
@@ -25,6 +28,33 @@ class PdfPreviewControllerContracts(unittest.TestCase):
     def test_generation_guard_prevents_stale_activation(self):
         source = inspect.getsource(PdfPreviewController._activate)
         self.assertIn("generation != self._generation", source)
+
+    def test_duplicate_ready_activation_keeps_active_view_alive(self):
+        app = QApplication.instance() or QApplication([])
+        stack = QStackedWidget()
+        controller = PdfPreviewController(stack)
+        view = QWidget(stack)
+        document = object()
+
+        controller._activate(0, view, document)
+        controller._activate(0, view, document)
+
+        self.assertIs(controller.active_view(), view)
+        self.assertGreaterEqual(stack.indexOf(view), 0)
+        app.processEvents()
+
+    def test_dispose_ignores_already_deleted_qt_view(self):
+        QApplication.instance() or QApplication([])
+        stack = QStackedWidget()
+        controller = PdfPreviewController(stack)
+        view = QWidget(stack)
+        stack.addWidget(view)
+        view.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+        # This is the Windows Qt failure mode: the wrapper is still reachable,
+        # but its C++ QWidget has already gone away.
+        controller._dispose(view, None)
 
 
 if __name__ == "__main__":
