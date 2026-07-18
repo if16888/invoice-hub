@@ -32,5 +32,10 @@ def start_gui(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
         print("=" * 60)
         sys.exit(1)
 
+    # Install optional Qt component contracts before importing the large app
+    # module so its preview mixin resolves the stable QPdfView implementation.
+    from .qt_pdf_lifecycle import install_qt_pdf_lifecycle_contract
+    install_qt_pdf_lifecycle_contract()
+
     from .app import start_gui_app
     start_gui_app(db_path, startup_probe=startup_probe, app_init_ms=app_init_ms)
