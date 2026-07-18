@@ -7,6 +7,7 @@ from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_b
 from .design_baseline_styles import apply_global_design_baseline
 from .design_tokens import DESIGN_V1_METRICS
 from .review_baseline_pipeline import schedule_review_baseline_pipeline
+from .selection_surface_contract import schedule_selection_surface_contracts
 from .settings_baseline_pipeline import schedule_settings_baseline_pipeline
 
 BASELINE_PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
@@ -31,6 +32,7 @@ class _PageLayoutContract:
         layout.setSpacing(BASELINE_SECTION_GAP)
         layout.setAlignment(Qt.AlignTop)
         QTimer.singleShot(0, lambda p=page: apply_global_design_baseline(p))
+        schedule_selection_surface_contracts(page)
         return layout
 
     @classmethod
