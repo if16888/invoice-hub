@@ -1,6 +1,6 @@
 """Design System v1.1 visual contracts for shared desktop interactions.
 
-The existing product already has authoritative color and geometry tokens.  This
+The existing product already has authoritative color and geometry tokens. This
 module gives those tokens semantic component roles so navigation controls and
 review filters do not look like unrelated bordered buttons.
 """
@@ -89,7 +89,7 @@ def _filter_bar_stylesheet() -> str:
     colors = DESIGN_V1_COLORS
     metrics = DESIGN_V1_METRICS
     return f"""
-QFrame#ReviewStatusSegmentedControl {{
+QFrame[visualRole="segmented-filter"] {{
     background-color: {colors['surface_secondary']};
     border: 1px solid {colors['border_subtle']};
     border-radius: {metrics['radius_large']}px;
@@ -201,7 +201,6 @@ def apply_review_status_segmented_control(window) -> None:
         return
 
     metrics = DESIGN_V1_METRICS
-    bar.setObjectName("ReviewStatusSegmentedControl")
     bar.setProperty("visualRole", "segmented-filter")
     bar.setFixedHeight(metrics["segmented_control_height"])
     bar.setStyleSheet(_filter_bar_stylesheet())
