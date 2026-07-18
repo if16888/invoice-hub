@@ -3860,6 +3860,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     if key != page_key and candidate.isCheckable():
                         candidate.setChecked(False)
                 btn.setChecked(True)
+                # A mouse click can leave focus on the button even when the
+                # navigation rail is collapsed. The checked state is the page
+                # indicator there, so clear the transient focus ring.
+                btn.clearFocus()
 
         if page_key == "overview":
             self._refresh_overview_page()
