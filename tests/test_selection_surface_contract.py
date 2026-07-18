@@ -45,13 +45,13 @@ class SelectionSurfaceContractTests(unittest.TestCase):
 
     def test_delegate_removes_only_native_focus_rect(self):
         option = QStyleOptionViewItem()
-        option.state |= QStyle.State_HasFocus
-        option.state |= QStyle.State_Selected
+        option.state |= QStyle.StateFlag.State_HasFocus
+        option.state |= QStyle.StateFlag.State_Selected
 
         normalized = SelectionSurfaceDelegate.normalized_option(option)
 
-        self.assertFalse(bool(normalized.state & QStyle.State_HasFocus))
-        self.assertTrue(bool(normalized.state & QStyle.State_Selected))
+        self.assertFalse(bool(normalized.state & QStyle.StateFlag.State_HasFocus))
+        self.assertTrue(bool(normalized.state & QStyle.StateFlag.State_Selected))
 
     def test_entity_list_uses_property_driven_selected_row(self):
         entity_list = EntityList()
