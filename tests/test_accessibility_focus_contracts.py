@@ -55,8 +55,10 @@ class AccessibilityFocusContractTests(unittest.TestCase):
         self.assertIn(f"border: {DESIGN_V1_METRICS['focus_border_width']}px", base)
         self.assertIn("border-color:", focus)
         self.assertNotIn("padding-left:", focus)
-        self.assertIn("border-left: 3px", checked)
-        self.assertIn("padding-left: 10px", checked)
+        self.assertIn("background-color:", checked)
+        self.assertIn("border-color:", checked)
+        self.assertNotIn("border-left:", checked)
+        self.assertNotIn("padding-left:", checked)
 
     def test_selected_hover_keeps_selection_semantics(self):
         qss = build_qss()

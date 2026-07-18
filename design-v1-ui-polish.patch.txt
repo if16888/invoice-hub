@@ -1,0 +1,1564 @@
+From aefcd593f8a47aaa3c4ae675c062e7928e604fe4 Mon Sep 17 00:00:00 2001
+From: agent <agent@localhost>
+Date: Fri, 17 Jul 2026 12:48:22 +0800
+Subject: [PATCH] refactor(ui): unify UI kit on Design v1 tokens and polish
+ accessibility
+
+- Derive ui/Theme core colors, type scale, radii and control height from
+  design_tokens.py (Design v1 authority) instead of competing literals
+- Align semantic status colors (success/warning/danger + surfaces) with
+  Design v1; align badge palettes and settings dialog status colors
+- Migrate app.py inline setStyleSheet colors onto semantic QSS label roles
+  (hint/secondary/caption/status/emphasis/strong/guide) and token f-strings
+- De-duplicate hardcoded fonts/colors in SectionHeader, FormField and
+  PreviewToolbar components
+- Add keyboard focus rings for buttons, nav, tabs, StatCard and preview
+  toolbar; StatCard is now focusable (StrongFocus) so Enter/Space works
+- Fix nav checked state 3px text shift via padding compensation
+- Unify StatCard radius with the card radius token; widen scrollbars to
+  8px; add table hover rows and alternate-row colors
+- Update token contract tests (test_ui_kit, test_gui_column_filters)
+---
+ scripts/invoice_fetch/gui/app.py              |  97 ++-
+ scripts/invoice_fetch/gui/preview_mixin.py    |   8 +-
+ .../gui/review_toolbar_filter_fixes.py        |   2 +-
+ scripts/invoice_fetch/gui/settings_dialog.py  |   4 +-
+ .../gui/ui/components/form_field.py           |  13 +-
+ .../gui/ui/components/preview_toolbar.py      |  47 +-
+ .../gui/ui/components/section_header.py       |  13 +-
+ .../gui/ui/components/stat_card.py            |   3 +
+ scripts/invoice_fetch/gui/ui/qss.py           | 823 ++++++++++--------
+ scripts/invoice_fetch/gui/ui/theme.py         |  98 ++-
+ tests/test_gui_column_filters.py              |   2 +-
+ tests/test_ui_kit.py                          |   4 +-
+ 12 files changed, 650 insertions(+), 464 deletions(-)
+
+diff --git a/scripts/invoice_fetch/gui/app.py b/scripts/invoice_fetch/gui/app.py
+index 8b9f371..b05ebf2 100644
+--- a/scripts/invoice_fetch/gui/app.py
++++ b/scripts/invoice_fetch/gui/app.py
+@@ -74,6 +74,7 @@ from .mobile_upload_session import MobileUploadSessionController, MobileUploadSe
+ from .api_key_dialog import ApiKeyDialog
+ from .icon_provider import IconProvider
+ from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
++from .design_tokens import DESIGN_V1_COLORS
+ from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
+ from .workers import EmailScanWorker, LocalImportWorker
+ from .workbench_layout import clamp_vertical_split, metrics_for_size
+@@ -146,19 +147,31 @@ class ImportActivity:
+     duplicates: int = 0
+     failed: int = 0
+ 
++def _v1_badge(kind: str) -> dict[str, str]:
++    """Badge palette derived from the Design v1 semantic colors."""
++    c = DESIGN_V1_COLORS
++    palettes = {
++        "warning": {"fill": c["warning_surface"], "stroke": "#FEDF89", "text": c["warning"]},
++        "success": {"fill": c["success_surface"], "stroke": "#ABEFC6", "text": "#067647"},
++        "muted": {"fill": c["muted_surface"], "stroke": "#E2E8F0", "text": c["text_secondary"]},
++        "danger": {"fill": c["danger_surface"], "stroke": "#FECDCA", "text": c["danger"]},
++    }
++    return palettes[kind]
++
++
+ REVIEW_STATUS_BADGES = {
+-    "to_review": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+-    "approved": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
+-    "ignored": {"fill": "#F1F5F9", "stroke": "#CBD5E1", "text": "#64748B"},
+-    "error": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
++    "to_review": _v1_badge("warning"),
++    "approved": _v1_badge("success"),
++    "ignored": _v1_badge("muted"),
++    "error": _v1_badge("danger"),
+ }
+ 
+ DATA_STATUS_BADGES = {
+-    "正常": {"fill": "#DCFCE7", "stroke": "#86EFAC", "text": "#166534"},
+-    "待补全": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+-    "缺原件": {"fill": "#FEF3C7", "stroke": "#FCD34D", "text": "#92400E"},
+-    "缺证明": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
+-    "未识别": {"fill": "#FEE2E2", "stroke": "#FCA5A5", "text": "#B91C1C"},
++    "正常": _v1_badge("success"),
++    "待补全": _v1_badge("warning"),
++    "缺原件": _v1_badge("warning"),
++    "缺证明": _v1_badge("danger"),
++    "未识别": _v1_badge("danger"),
+ }
+ 
+ 
+@@ -267,7 +280,7 @@ class SingleTaskMailboxDialog(QDialog):
+ 
+         hint = QLabel("仅处理当前邮箱账号的新增或编辑，保存后返回桌面系统设置页。")
+         hint.setWordWrap(True)
+-        hint.setStyleSheet("color: #667085; font-size: 12px;")
++        hint.setProperty("role", "hint")
+         layout.addWidget(hint)
+ 
+         form = QFormLayout()
+@@ -405,7 +418,7 @@ class SingleTaskAiProfileDialog(QDialog):
+ 
+         hint = QLabel("默认页面只读展示 Provider、模型、Key 和会话状态；需要修改时通过这个弹窗单独编辑。")
+         hint.setWordWrap(True)
+-        hint.setStyleSheet("color: #667085; font-size: 12px;")
++        hint.setProperty("role", "hint")
+         layout.addWidget(hint)
+ 
+         form = QFormLayout()
+@@ -794,9 +807,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+             self.txt_log = QTextEdit()
+             self.txt_log.setReadOnly(True)
+             self.txt_log.setFont(QFont("Consolas", 9))
+-            self.txt_log.setStyleSheet(
+-                "background-color: #F8FAFC; border: 1px solid #E5E7EB; color: #374151;"
+-            )
++            self.txt_log.setObjectName("LogView")
+         return self.txt_log
+ 
+     def _mount_log_widget(self, host: str) -> None:
+@@ -966,7 +977,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         self.btn_shortcut_help.setIcon(IconProvider.icon("help"))
+         self.btn_shortcut_help.setMinimumHeight(32)
+         self.btn_shortcut_help.setFlat(True)
+-        self.btn_shortcut_help.setStyleSheet("text-align: left; padding-left: 6px; font-size: 11px; color: #667085;")
+         self.btn_shortcut_help.clicked.connect(self._toggle_shortcut_disclosure)
+         nav_layout.addWidget(self.btn_shortcut_help)
+ 
+@@ -1176,7 +1186,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+         self.lbl_chips_title = QLabel("已启用:")
+         self.lbl_chips_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
+-        self.lbl_chips_title.setStyleSheet("color: #4B5563;")
++        self.lbl_chips_title.setProperty("role", "status")
+         self.filter_chips_layout.addWidget(self.lbl_chips_title)
+ 
+         self.chips_container_layout = QHBoxLayout()
+@@ -1270,7 +1280,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+         self.lbl_empty_title = QLabel("当前没有发票记录")
+         self.lbl_empty_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+-        self.lbl_empty_title.setStyleSheet("color: #4B5563;")
++        self.lbl_empty_title.setProperty("role", "emphasis")
+         empty_layout.addWidget(self.lbl_empty_title)
+ 
+         self.lbl_guide = QLabel(
+@@ -1280,7 +1290,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+             "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
+         )
+         self.lbl_guide.setFont(QFont("Segoe UI", 10))
+-        self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
++        self.lbl_guide.setProperty("role", "guide")
+         self.lbl_guide.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+         empty_layout.addWidget(self.lbl_guide)
+ 
+@@ -1433,14 +1443,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+         self.lbl_status_left = QLabel("当前筛选 0 张")
+         self.lbl_status_left.setFont(QFont("Segoe UI", 9))
+-        self.lbl_status_left.setStyleSheet("color: #4B5563;")
++        self.lbl_status_left.setProperty("role", "status")
+         self.lbl_status_left.setToolTip("当前发票筛选状态")
+         self.lbl_status_left.setMinimumWidth(120)
+         status_layout.addWidget(self.lbl_status_left, 1)
+ 
+         self.lbl_status_middle = QLabel("未选择发票")
+         self.lbl_status_middle.setFont(QFont("Segoe UI", 9))
+-        self.lbl_status_middle.setStyleSheet("color: #4B5563;")
++        self.lbl_status_middle.setProperty("role", "status")
+         self.lbl_status_middle.setToolTip("选中发票及金额合计")
+         self.lbl_status_middle.setAlignment(Qt.AlignCenter)
+         self.lbl_status_middle.setMinimumWidth(180)
+@@ -1458,7 +1468,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+         self.lbl_version = QLabel(APP_VERSION)
+         self.lbl_version.setFont(QFont("Segoe UI", 8))
+-        self.lbl_version.setStyleSheet("color: #6B7280;")
++        self.lbl_version.setProperty("role", "caption")
+         self.lbl_version.setToolTip("当前 Invoice Hub 版本")
+         right_layout.addWidget(self.lbl_version)
+ 
+@@ -1499,7 +1509,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+         lbl_log_title = QLabel("系统运行日志")
+         lbl_log_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
+-        lbl_log_title.setStyleSheet("color: #111827;")
++        lbl_log_title.setProperty("role", "strong")
+ 
+         self.btn_clear_log = QPushButton("清空")
+         self.btn_clear_log.setProperty("class", "SecondaryBtn")
+@@ -2205,7 +2215,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+             if not accounts:
+                 lbl_empty = QLabel("暂无已启用邮箱账号。点击“管理”进入系统设置完成配置。")
+-                lbl_empty.setStyleSheet("color: #94A3B8; font-size: 12px;")
++                lbl_empty.setProperty("role", "hint")
+                 self.mail_checklist_layout.addWidget(lbl_empty)
+             else:
+                 for acc in accounts:
+@@ -2606,7 +2616,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+             self.lbl_detail_port_security.setText(f"{port} · {ssl}")
+             self.lbl_detail_is_default.setText("是 (默认扫描账号)" if account.get("is_default") else "否")
+             self.lbl_detail_credential_status.setText("已安全保存" if cred_ok else "需要授权")
+-            self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
++            self.lbl_detail_credential_status.setStyleSheet(
++                f"color: {DESIGN_V1_COLORS['success']}; font-weight: 600;" if cred_ok
++                else f"color: {DESIGN_V1_COLORS['danger']}; font-weight: 600;"
++            )
+             self.lbl_detail_scan_folder.setText(str(search_cfg.get("folder") or "INBOX"))
+             self.lbl_detail_scan_range.setText(f"最近 {months} 个月")
+             self.lbl_detail_attachment_types.setText("PDF / OFD / XML / 图片")
+@@ -2662,7 +2675,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+             self.lbl_detail_server.setText("—")
+             self.lbl_detail_is_default.setText("—")
+             self.lbl_detail_credential_status.setText("未配置")
+-            self.lbl_detail_credential_status.setStyleSheet("color: #64748B; font-weight: 600;")
++            self.lbl_detail_credential_status.setStyleSheet(f"color: {DESIGN_V1_COLORS['muted']}; font-weight: 600;")
+             self.lbl_detail_scan_rule.setText("—")
+             self.lbl_detail_port_security.setText("—")
+             self.lbl_detail_scan_folder.setText("—")
+@@ -3068,11 +3081,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         left_card = SectionCard("下一步", eyebrow="今天最重要", hint="优先处理新导入和待审核发票。")
+         lc_layout = left_card.body_layout
+         self.lbl_overview_recent_imports = QLabel("继续审核待处理发票。")
+-        self.lbl_overview_recent_imports.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_overview_recent_imports.setProperty("role", "hint")
+         self.lbl_overview_recent_imports.setWordWrap(True)
+         lc_layout.addWidget(self.lbl_overview_recent_imports)
+         self.lbl_overview_next_actions = QLabel("系统会保留当前进度，并在处理完成后自动进入下一张。")
+-        self.lbl_overview_next_actions.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
++        self.lbl_overview_next_actions.setProperty("role", "secondary")
+         self.lbl_overview_next_actions.setWordWrap(True)
+         lc_layout.addWidget(self.lbl_overview_next_actions)
+         btn_jump_review = make_button("开始审核", variant="primary")
+@@ -3082,11 +3095,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         right_card = SectionCard("关注项", hint="只显示会阻塞审核或导出的事项。")
+         rc_layout = right_card.body_layout
+         self.lbl_overview_health = QLabel("当前无法读取审核队列统计，导入后会自动刷新。")
+-        self.lbl_overview_health.setStyleSheet("color: #4B5563; font-size: 12px; line-height: 1.5;")
++        self.lbl_overview_health.setProperty("role", "status")
+         self.lbl_overview_health.setWordWrap(True)
+         rc_layout.addWidget(self.lbl_overview_health)
+         self.lbl_overview_export_hint = QLabel("若今天已有报销组且检查通过，可直接去“报销组与导出”打包。")
+-        self.lbl_overview_export_hint.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_overview_export_hint.setProperty("role", "hint")
+         self.lbl_overview_export_hint.setWordWrap(True)
+         rc_layout.addWidget(self.lbl_overview_export_hint)
+ 
+@@ -3296,7 +3309,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         self.export_group_card.body_layout.addWidget(self.export_group_list, 1)
+         self.lbl_export_scope_hint = QLabel("默认导出已通过发票；待审核发票可在导出时按提示决定是否一并打包。")
+         self.lbl_export_scope_hint.setWordWrap(True)
+-        self.lbl_export_scope_hint.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_export_scope_hint.setProperty("role", "hint")
+         self.export_group_card.body_layout.addWidget(self.lbl_export_scope_hint)
+         shell.addWidget(self.export_group_card, 0)
+ 
+@@ -3306,7 +3319,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         self.export_invoices_card.body_layout.addWidget(self.export_invoice_list, 1)
+         self.lbl_export_invoice_meta = QLabel("当前未选择报销组。")
+         self.lbl_export_invoice_meta.setWordWrap(True)
+-        self.lbl_export_invoice_meta.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_export_invoice_meta.setProperty("role", "hint")
+         self.export_invoices_card.body_layout.addWidget(self.lbl_export_invoice_meta)
+         shell.addWidget(self.export_invoices_card, 1)
+ 
+@@ -3335,7 +3348,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+ 
+         self.lbl_export_action_hint = QLabel("未选报销组或检查未通过时，导出会保持禁用。")
+         self.lbl_export_action_hint.setWordWrap(True)
+-        self.lbl_export_action_hint.setStyleSheet("color: #475467; font-size: 12px;")
++        self.lbl_export_action_hint.setProperty("role", "secondary")
+         self.export_integrity_card.body_layout.addWidget(self.lbl_export_action_hint)
+         self.btn_run_export_page = make_button("导出报销包", variant="primary", min_width=120)
+         self.btn_run_export_page.clicked.connect(self._export_claim_package)
+@@ -3602,12 +3615,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         # Status labels: value-only, no repeated field-name prefix
+         self.lbl_settings_mailbox_test_status = QLabel("尚未执行。")
+         self.lbl_settings_mailbox_test_status.setWordWrap(True)
+-        self.lbl_settings_mailbox_test_status.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_settings_mailbox_test_status.setProperty("role", "hint")
+         self.lbl_settings_mailbox_scan_result = QLabel("暂无记录。")
+         self.lbl_settings_mailbox_scan_result.setWordWrap(True)
+-        self.lbl_settings_mailbox_scan_result.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_settings_mailbox_scan_result.setProperty("role", "hint")
+         self.lbl_settings_mailbox_empty = QLabel("尚未配置任何邮箱账号。")
+-        self.lbl_settings_mailbox_empty.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_settings_mailbox_empty.setProperty("role", "hint")
+         self.settings_mailbox_empty_state = EmptyStateCard(
+             "还没有邮箱账号",
+             "添加一个邮箱账号后即可扫描发票。",
+@@ -3690,9 +3703,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+         ai_editor_layout.addLayout(ai_btn_row)
+         self.lbl_settings_ai_failure_status = QLabel("失败状态：暂无异常。")
+         self.lbl_settings_ai_failure_status.setWordWrap(True)
+-        self.lbl_settings_ai_failure_status.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_settings_ai_failure_status.setProperty("role", "hint")
+         self.lbl_settings_ai_empty = QLabel("尚未配置任何 AI Profile。")
+-        self.lbl_settings_ai_empty.setStyleSheet("color: #667085; font-size: 12px;")
++        self.lbl_settings_ai_empty.setProperty("role", "hint")
+         self.settings_ai_empty_state = EmptyStateCard(
+             "还没有 AI Profile",
+             "配置 Provider 后即可查看 AI 提取与分类状态。",
+@@ -4556,7 +4569,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+                     elif col == 4 and seller:
+                         item.setToolTip(seller)
+                     elif col == 5 and inv_num:
+-                        item.setForeground(QColor("#94A3B8"))
++                        item.setForeground(QColor(DESIGN_V1_COLORS["muted"]))
+                         item.setToolTip(inv_num)
+ 
+                     if combined_warning:
+@@ -4585,7 +4598,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+                     "  2. 点击“配置邮箱”配置您的邮箱，然后点击“扫描邮箱”开始增量同步；\n"
+                     "  3. 点击“扫码上传”，用手机上传 PDF/OFD、相册图片或拍照材料。"
+                 )
+-                self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: 1px dashed #D1D5DB; padding: 15px; border-radius: 6px; background-color: #F9FAFB;")
++                self.lbl_guide.setProperty("role", "guide")
++                self.lbl_guide.style().unpolish(self.lbl_guide)
++                self.lbl_guide.style().polish(self.lbl_guide)
+                 self.lbl_guide.setVisible(True)
+ 
+                 self.empty_btn_import.setVisible(True)
+@@ -4597,7 +4612,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
+             else:
+                 self.lbl_empty_title.setText("没有符合条件的发票")
+                 self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
+-                self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
++                self.lbl_guide.setProperty("role", "guidePlain")
++                self.lbl_guide.style().unpolish(self.lbl_guide)
++                self.lbl_guide.style().polish(self.lbl_guide)
+                 self.lbl_guide.setVisible(True)
+ 
+                 self.empty_btn_import.setVisible(False)
+diff --git a/scripts/invoice_fetch/gui/preview_mixin.py b/scripts/invoice_fetch/gui/preview_mixin.py
+index 845146b..2ad263b 100644
+--- a/scripts/invoice_fetch/gui/preview_mixin.py
++++ b/scripts/invoice_fetch/gui/preview_mixin.py
+@@ -147,17 +147,17 @@ class PreviewMixin:
+         self.overlay_toolbar.setStyleSheet("""
+             QWidget#OverlayToolbar {
+                 background-color: #FFFFFF;
+-                border-bottom: 1px solid #E5EAF2;
++                border-bottom: 1px solid #E5E7EB;
+                 border-top-left-radius: 12px;
+                 border-top-right-radius: 12px;
+             }
+             QPushButton, QToolButton {
+                 background-color: #F8FAFC;
+-                border: 1px solid #E5EAF2;
++                border: 1px solid #E5E7EB;
+                 border-radius: 6px;
+                 padding: 4px 10px;
+                 font-size: 12px;
+-                color: #334155;
++                color: #475467;
+                 font-weight: 500;
+             }
+             QPushButton:hover, QToolButton:hover {
+@@ -166,7 +166,7 @@ class PreviewMixin:
+                 color: #1D4ED8;
+             }
+             QPushButton:disabled, QToolButton:disabled {
+-                color: #94A3B8;
++                color: #667085;
+                 background-color: #F8FAFC;
+                 border-color: #E2E8F0;
+             }
+diff --git a/scripts/invoice_fetch/gui/review_toolbar_filter_fixes.py b/scripts/invoice_fetch/gui/review_toolbar_filter_fixes.py
+index e2e36ac..2205327 100644
+--- a/scripts/invoice_fetch/gui/review_toolbar_filter_fixes.py
++++ b/scripts/invoice_fetch/gui/review_toolbar_filter_fixes.py
+@@ -72,7 +72,7 @@ class ReimbursementTitleDialog(QDialog):
+         root.addWidget(title)
+         hint = QLabel("用于核对发票购买方是否与实际报销单位一致。此设置只保存在本地。")
+         hint.setWordWrap(True)
+-        hint.setStyleSheet("color: #667085; font-size: 12px;")
++        hint.setProperty("role", "hint")
+         root.addWidget(hint)
+ 
+         form = QFormLayout()
+diff --git a/scripts/invoice_fetch/gui/settings_dialog.py b/scripts/invoice_fetch/gui/settings_dialog.py
+index b9f9527..5664b88 100644
+--- a/scripts/invoice_fetch/gui/settings_dialog.py
++++ b/scripts/invoice_fetch/gui/settings_dialog.py
+@@ -2267,7 +2267,7 @@ class SettingsDialog(QDialog):
+                 self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
+             else:
+                 self.lbl_ai_wizard_key_status.setText(
+-                    f"API Key 状态：<font color='#EF4444'><b>未配置</b></font>（{source_label}）"
++                    f"API Key 状态：<font color='#B42318'><b>未配置</b></font>（{source_label}）"
+                 )
+                 self.txt_ai_key.setPlaceholderText("请输入 API Key")
+ 
+@@ -2938,7 +2938,7 @@ class SettingsDialog(QDialog):
+             self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
+             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
+         else:
+-            self.lbl_cred_status.setText("🔒 授权状态：<font color='#EF4444'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
++            self.lbl_cred_status.setText("🔒 授权状态：<font color='#B42318'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
+             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
+ 
+ 
+diff --git a/scripts/invoice_fetch/gui/ui/components/form_field.py b/scripts/invoice_fetch/gui/ui/components/form_field.py
+index cdd8aae..14fe321 100644
+--- a/scripts/invoice_fetch/gui/ui/components/form_field.py
++++ b/scripts/invoice_fetch/gui/ui/components/form_field.py
+@@ -2,13 +2,15 @@
+ """FormField Component - Top-Label Form Field Wrapper."""
+ 
+ from __future__ import annotations
+-from PySide6.QtCore import Qt
+ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+-from ..theme import Theme
+ 
+ 
+ class FormField(QWidget):
+-    """Clean top-label form field wrapper to prevent field misalignment."""
++    """Clean top-label form field wrapper to prevent field misalignment.
++
++    Label and hint styling comes from the central QSS (FormFieldLabel /
++    FormFieldHint classes); required markers use the danger token color.
++    """
+ 
+     def __init__(
+         self,
+@@ -26,7 +28,7 @@ class FormField(QWidget):
+ 
+         lbl_text = f"{label} *" if required else label
+         self.lbl_field = QLabel(lbl_text)
+-        self.lbl_field.setStyleSheet(f"color: {Theme.TEXT_SUB}; font-size: 12px; font-weight: 500;")
++        self.lbl_field.setProperty("class", "FormFieldLabel")
+         layout.addWidget(self.lbl_field)
+ 
+         self.widget = widget
+@@ -34,5 +36,6 @@ class FormField(QWidget):
+ 
+         if hint:
+             self.lbl_hint = QLabel(hint)
+-            self.lbl_hint.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px;")
++            self.lbl_hint.setProperty("class", "FormFieldHint")
++            self.lbl_hint.setWordWrap(True)
+             layout.addWidget(self.lbl_hint)
+diff --git a/scripts/invoice_fetch/gui/ui/components/preview_toolbar.py b/scripts/invoice_fetch/gui/ui/components/preview_toolbar.py
+index 2b21e55..a959696 100644
+--- a/scripts/invoice_fetch/gui/ui/components/preview_toolbar.py
++++ b/scripts/invoice_fetch/gui/ui/components/preview_toolbar.py
+@@ -32,47 +32,52 @@ class PreviewToolbar(QFrame):
+         super().__init__(parent)
+         self.setObjectName("PreviewFloatingToolbar")
+         self.setFixedHeight(40)
+-        self.setStyleSheet("""
+-            QFrame#PreviewFloatingToolbar {
++        self.setStyleSheet(f"""
++            QFrame#PreviewFloatingToolbar {{
+                 background: rgba(255, 255, 255, 235);
+-                border: 1px solid #D9E2EF;
++                border: 1px solid {Theme.BORDER_STRONG};
+                 border-radius: 12px;
+-            }
+-            QToolButton.PreviewToolBtn {
++            }}
++            QToolButton.PreviewToolBtn {{
+                 min-height: 28px;
+                 max-height: 28px;
+                 padding: 0 8px;
+                 border-radius: 7px;
+                 border: none;
+-                color: #344054;
++                color: {Theme.TEXT_SUB};
+                 background: transparent;
+                 font-size: 12px;
+                 font-weight: 500;
+-            }
+-            QToolButton.PreviewToolBtn:hover {
+-                background: #EEF4FF;
+-                color: #2563EB;
+-            }
+-            QToolButton.PreviewToolBtn[iconOnly="true"] {
++            }}
++            QToolButton.PreviewToolBtn:hover {{
++                background: {Theme.BLUE_BG};
++                color: {Theme.BLUE};
++            }}
++            QToolButton.PreviewToolBtn:focus {{
++                background: {Theme.BLUE_BG};
++                color: {Theme.BLUE};
++                border: 1px solid {Theme.BORDER_FOCUS};
++            }}
++            QToolButton.PreviewToolBtn[iconOnly="true"] {{
+                 min-width: 30px;
+                 max-width: 30px;
+                 padding: 0;
+                 font-size: 16px;
+                 font-weight: 600;
+-            }
+-            QToolButton.PreviewToolBtn:disabled {
+-                color: #98A2B3;
++            }}
++            QToolButton.PreviewToolBtn:disabled {{
++                color: {Theme.TEXT_MUTED};
+                 background: transparent;
+-            }
+-            QToolButton.PreviewToolBtn::menu-indicator {
++            }}
++            QToolButton.PreviewToolBtn::menu-indicator {{
+                 image: none;
+                 width: 0px;
+-            }
+-            QLabel.ToolbarSep {
+-                color: #D0D5DD;
++            }}
++            QLabel.ToolbarSep {{
++                color: {Theme.BORDER_STRONG};
+                 font-size: 12px;
+                 margin: 0 4px;
+-            }
++            }}
+         """)
+ 
+         layout = QHBoxLayout(self)
+diff --git a/scripts/invoice_fetch/gui/ui/components/section_header.py b/scripts/invoice_fetch/gui/ui/components/section_header.py
+index 5ece080..7ecf8cc 100644
+--- a/scripts/invoice_fetch/gui/ui/components/section_header.py
++++ b/scripts/invoice_fetch/gui/ui/components/section_header.py
+@@ -2,13 +2,15 @@
+ """SectionHeader Component - Section Title Bar."""
+ 
+ from __future__ import annotations
+-from PySide6.QtCore import Qt
+-from PySide6.QtGui import QFont
+ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
+ 
+ 
+ class SectionHeader(QFrame):
+-    """Header bar with section title, optional subtitle/counter, and right-aligned actions."""
++    """Header bar with section title, optional subtitle/counter, and right-aligned actions.
++
++    Typography is driven by the central QSS (SectionHeaderTitle / SectionHeaderSubtitle
++    classes) so the component no longer hard-codes fonts or colors.
++    """
+ 
+     def __init__(
+         self,
+@@ -26,13 +28,12 @@ class SectionHeader(QFrame):
+         layout.setSpacing(8)
+ 
+         self.lbl_title = QLabel(title)
+-        self.lbl_title.setFont(QFont("Segoe UI", 10, QFont.Bold))
+-        self.lbl_title.setStyleSheet("color: #172033;")
++        self.lbl_title.setProperty("class", "SectionHeaderTitle")
+         layout.addWidget(self.lbl_title)
+ 
+         if subtitle:
+             self.lbl_subtitle = QLabel(subtitle)
+-            self.lbl_subtitle.setStyleSheet("color: #667085; font-size: 12px;")
++            self.lbl_subtitle.setProperty("class", "SectionHeaderSubtitle")
+             layout.addWidget(self.lbl_subtitle)
+ 
+         layout.addStretch(1)
+diff --git a/scripts/invoice_fetch/gui/ui/components/stat_card.py b/scripts/invoice_fetch/gui/ui/components/stat_card.py
+index ce19562..e66aa39 100644
+--- a/scripts/invoice_fetch/gui/ui/components/stat_card.py
++++ b/scripts/invoice_fetch/gui/ui/components/stat_card.py
+@@ -28,6 +28,9 @@ class StatCard(QFrame):
+         self.setProperty("state", state)
+         self.setProperty("selected", selected)
+         self.setCursor(Qt.PointingHandCursor)
++        # StrongFocus lets keyboard users Tab onto the card and activate it with
++        # Enter/Space; the :focus ring is defined in the central QSS.
++        self.setFocusPolicy(Qt.StrongFocus)
+         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+         self.setFixedHeight(Theme.STAT_CARD_HEIGHT)
+         self.setMinimumWidth(140)
+diff --git a/scripts/invoice_fetch/gui/ui/qss.py b/scripts/invoice_fetch/gui/ui/qss.py
+index f9fd338..ad82399 100644
+--- a/scripts/invoice_fetch/gui/ui/qss.py
++++ b/scripts/invoice_fetch/gui/ui/qss.py
+@@ -1,342 +1,481 @@
+-# -*- coding: utf-8 -*-
+-"""Invoice Hub UI Kit - Central QSS Stylesheet Builder."""
+-
+-from __future__ import annotations
+-from .theme import Theme
+-
+-
+-def build_qss() -> str:
+-    """Build and return the complete application stylesheet using Theme tokens."""
+-    return f"""
+-    /* --------------------------------------------------------------------- */
+-    /* Global Base Rules                                                     */
+-    /* --------------------------------------------------------------------- */
+-    QWidget {{
+-        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+-        font-size: 13px;
+-        color: {Theme.TEXT_MAIN};
+-    }}
+-
+-    QMainWindow, QWidget#PageRoot {{
+-        background-color: {Theme.BG_PAGE};
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Card Container (Card component)                                       */
+-    /* --------------------------------------------------------------------- */
+-    QFrame#Card, QWidget#Card, .WorkbenchCard {{
+-        background-color: {Theme.BG_CARD};
+-        border: 1px solid {Theme.BORDER};
+-        border-radius: {Theme.RADIUS_CARD}px;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Buttons (AppButton component)                                         */
+-    /* --------------------------------------------------------------------- */
+-    QPushButton {{
+-        min-height: {Theme.CONTROL_HEIGHT}px;
+-        max-height: {Theme.CONTROL_HEIGHT}px;
+-        border-radius: {Theme.RADIUS_CONTROL}px;
+-        padding: 0 14px;
+-        border: 1px solid {Theme.BORDER_STRONG};
+-        background-color: {Theme.BG_CARD};
+-        color: {Theme.TEXT_MAIN};
+-        font-size: 13px;
+-        font-weight: 500;
+-        outline: none;
+-    }}
+-    QPushButton:hover {{
+-        background-color: {Theme.BG_SUBTLE};
+-        border-color: {Theme.BLUE};
+-    }}
+-    QPushButton:disabled {{
+-        background-color: {Theme.BG_SUBTLE};
+-        border-color: {Theme.BORDER};
+-        color: {Theme.TEXT_MUTED};
+-    }}
+-
+-    /* Button Variants */
+-    QPushButton[variant="primary"] {{
+-        background-color: {Theme.BLUE};
+-        border-color: {Theme.BLUE};
+-        color: #FFFFFF;
+-        font-weight: 600;
+-    }}
+-    QPushButton[variant="primary"]:hover {{
+-        background-color: {Theme.BLUE_HOVER};
+-        border-color: {Theme.BLUE_HOVER};
+-    }}
+-
+-    QPushButton[variant="danger"] {{
+-        background-color: {Theme.RED_BG};
+-        border-color: {Theme.RED_BORDER};
+-        color: {Theme.RED_TEXT};
+-        font-weight: 600;
+-    }}
+-    QPushButton[variant="danger"]:hover {{
+-        background-color: #FEE2E2;
+-        border-color: {Theme.RED};
+-    }}
+-
+-    QPushButton[variant="ghost"] {{
+-        background-color: transparent;
+-        border: none;
+-        color: {Theme.TEXT_SUB};
+-    }}
+-    QPushButton[variant="ghost"]:hover {{
+-        background-color: {Theme.BLUE_BG};
+-        color: {Theme.BLUE};
+-    }}
+-
+-    QPushButton[variant="toolbar"] {{
+-        min-height: 32px;
+-        max-height: 32px;
+-        border-radius: {Theme.RADIUS_SM}px;
+-        padding: 0 12px;
+-        font-size: 12px;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Side Navigation                                                       */
+-    /* --------------------------------------------------------------------- */
+-    QFrame#WorkbenchNav {{
+-        background-color: {Theme.BG_CARD};
+-        border-right: 1px solid {Theme.BORDER};
+-    }}
+-
+-    QPushButton.WorkbenchNavButton {{
+-        background-color: transparent;
+-        color: {Theme.TEXT_SUB};
+-        border: none;
+-        border-radius: {Theme.RADIUS_CONTROL}px;
+-        padding: 0 12px;
+-        text-align: left;
+-        font-size: 13px;
+-        font-weight: 500;
+-        min-height: 40px;
+-        max-height: 40px;
+-    }}
+-    QPushButton.WorkbenchNavButton:hover {{
+-        background-color: {Theme.BG_SUBTLE};
+-        color: {Theme.TEXT_MAIN};
+-    }}
+-    QPushButton.WorkbenchNavButton:checked {{
+-        background-color: {Theme.BLUE_BG};
+-        border-left: 3px solid {Theme.BLUE};
+-        color: {Theme.BLUE};
+-        font-weight: 700;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Status Badges (StatusBadge component)                                 */
+-    /* --------------------------------------------------------------------- */
+-    QLabel[badge="pending"] {{
+-        background-color: {Theme.ORANGE_BG};
+-        color: {Theme.ORANGE_TEXT};
+-        border: 1px solid {Theme.ORANGE_BORDER};
+-        border-radius: {Theme.RADIUS_BADGE}px;
+-        padding: 2px 10px;
+-        font-size: 12px;
+-        font-weight: 600;
+-    }}
+-    QLabel[badge="passed"] {{
+-        background-color: {Theme.GREEN_BG};
+-        color: {Theme.GREEN_TEXT};
+-        border: 1px solid {Theme.GREEN_BORDER};
+-        border-radius: {Theme.RADIUS_BADGE}px;
+-        padding: 2px 10px;
+-        font-size: 12px;
+-        font-weight: 600;
+-    }}
+-    QLabel[badge="danger"] {{
+-        background-color: {Theme.RED_BG};
+-        color: {Theme.RED_TEXT};
+-        border: 1px solid {Theme.RED_BORDER};
+-        border-radius: {Theme.RADIUS_BADGE}px;
+-        padding: 2px 10px;
+-        font-size: 12px;
+-        font-weight: 600;
+-    }}
+-    QLabel[badge="muted"] {{
+-        background-color: {Theme.GRAY_BG};
+-        color: {Theme.GRAY_TEXT};
+-        border: 1px solid {Theme.GRAY_BORDER};
+-        border-radius: {Theme.RADIUS_BADGE}px;
+-        padding: 2px 10px;
+-        font-size: 12px;
+-        font-weight: 500;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* StatCard Component (Status Filter Chips)                              */
+-    /* --------------------------------------------------------------------- */
+-    QFrame#CompactStatCard {{
+-        background-color: {Theme.BG_CARD};
+-        border: 1px solid {Theme.BORDER};
+-        border-radius: 10px;
+-        min-height: 44px;
+-        max-height: 48px;
+-    }}
+-    QFrame#CompactStatCard:hover {{
+-        border-color: {Theme.BORDER_STRONG};
+-        background-color: {Theme.BG_SUBTLE};
+-    }}
+-    QFrame#CompactStatCard[selected="true"] {{
+-        background-color: {Theme.BLUE_BG};
+-        border: 1.5px solid {Theme.BLUE};
+-    }}
+-    QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle,
+-    QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {{
+-        color: {Theme.BLUE_HOVER};
+-        font-weight: 700;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Form Inputs (FormField & DetailFieldInput)                            */
+-    /* --------------------------------------------------------------------- */
+-    QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
+-        min-height: 34px;
+-        max-height: 34px;
+-        border: 1px solid {Theme.BORDER};
+-        border-radius: {Theme.RADIUS_CONTROL}px;
+-        background-color: {Theme.BG_CARD};
+-        padding: 0 10px;
+-        color: {Theme.TEXT_MAIN};
+-        font-size: 13px;
+-        selection-background-color: {Theme.BLUE_BG};
+-        selection-color: {Theme.BLUE};
+-    }}
+-    QTextEdit {{
+-        border: 1px solid {Theme.BORDER};
+-        border-radius: {Theme.RADIUS_CONTROL}px;
+-        background-color: {Theme.BG_CARD};
+-        padding: 6px 10px;
+-        color: {Theme.TEXT_MAIN};
+-        font-size: 13px;
+-    }}
+-    QLineEdit:focus, QComboBox:focus, QTextEdit:focus,
+-    QLineEdit.DetailFieldInput:focus, QComboBox.DetailFieldInput:focus {{
+-        border: 1.5px solid {Theme.BLUE};
+-        background-color: #FFFFFF;
+-    }}
+-    QLineEdit:read-only, QLineEdit:disabled, QComboBox:disabled, QTextEdit:read-only, QTextEdit:disabled,
+-    QLineEdit.DetailFieldInput:read-only, QLineEdit.DetailFieldInput:disabled, QComboBox.DetailFieldInput:disabled {{
+-        background-color: {Theme.BG_SUBTLE};
+-        color: {Theme.TEXT_SUB};
+-        border-color: {Theme.BORDER};
+-    }}
+-    QLabel.FormFieldLabel {{
+-        color: {Theme.TEXT_SUB};
+-        font-size: 12px;
+-        font-weight: 500;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* AlertBanner Component                                                 */
+-    /* --------------------------------------------------------------------- */
+-    QFrame#AlertBanner {{
+-        border-radius: {Theme.RADIUS_CONTROL}px;
+-        padding: 8px 12px;
+-    }}
+-    QFrame#AlertBanner[tone="warning"] {{
+-        background-color: {Theme.ORANGE_BG};
+-        border: 1px solid {Theme.ORANGE_BORDER};
+-    }}
+-    QLabel#AlertBannerText[tone="warning"] {{
+-        color: {Theme.ORANGE_TEXT};
+-        font-size: 12px;
+-        font-weight: 500;
+-    }}
+-
+-    QFrame#AlertBanner[tone="danger"] {{
+-        background-color: {Theme.RED_BG};
+-        border: 1px solid {Theme.RED_BORDER};
+-    }}
+-    QLabel#AlertBannerText[tone="danger"] {{
+-        color: {Theme.RED_TEXT};
+-        font-size: 12px;
+-        font-weight: 500;
+-    }}
+-
+-    QFrame#AlertBanner[tone="info"] {{
+-        background-color: {Theme.BLUE_BG};
+-        border: 1px solid {Theme.BLUE_BORDER};
+-    }}
+-    QLabel#AlertBannerText[tone="info"] {{
+-        color: {Theme.BLUE};
+-        font-size: 12px;
+-        font-weight: 500;
+-    }}
+-
+-    QFrame#AlertBanner[tone="success"] {{
+-        background-color: {Theme.GREEN_BG};
+-        border: 1px solid {Theme.GREEN_BORDER};
+-    }}
+-    QLabel#AlertBannerText[tone="success"] {{
+-        color: {Theme.GREEN_TEXT};
+-        font-size: 12px;
+-        font-weight: 500;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Data Tables                                                           */
+-    /* --------------------------------------------------------------------- */
+-    QTableView, QTableWidget {{
+-        background-color: {Theme.BG_CARD};
+-        border: none;
+-        gridline-color: #F1F5F9;
+-        selection-background-color: {Theme.BLUE_BG};
+-        selection-color: {Theme.BLUE};
+-    }}
+-    QHeaderView::section {{
+-        background-color: {Theme.BG_SUBTLE};
+-        color: {Theme.TEXT_SUB};
+-        font-weight: 600;
+-        font-size: 12px;
+-        height: 34px;
+-        border: none;
+-        border-bottom: 1px solid {Theme.BORDER};
+-        padding: 0 8px;
+-    }}
+-
+-    /* --------------------------------------------------------------------- */
+-    /* Tabs & ScrollBars                                                     */
+-    /* --------------------------------------------------------------------- */
+-    QTabWidget::pane {{
+-        border: none;
+-        background-color: transparent;
+-    }}
+-    QTabBar::tab {{
+-        background-color: transparent;
+-        color: {Theme.TEXT_SUB};
+-        padding: 8px 16px;
+-        font-weight: 500;
+-        border-bottom: 2px solid transparent;
+-    }}
+-    QTabBar::tab:selected {{
+-        color: {Theme.BLUE};
+-        font-weight: 700;
+-        border-bottom: 2px solid {Theme.BLUE};
+-    }}
+-    QTabBar::tab:hover:!selected {{
+-        color: {Theme.TEXT_MAIN};
+-    }}
+-
+-    QScrollBar:vertical {{
+-        background: transparent;
+-        width: 6px;
+-        margin: 0px;
+-    }}
+-    QScrollBar::handle:vertical {{
+-        background: #CBD5E1;
+-        border-radius: 3px;
+-        min-height: 20px;
+-    }}
+-    QScrollBar::handle:vertical:hover {{
+-        background: #94A3B8;
+-    }}
+-
+-    QSplitter::handle {{
+-        background: transparent;
+-    }}
+-    """
++# -*- coding: utf-8 -*-
++"""Invoice Hub UI Kit - Central QSS Stylesheet Builder."""
++
++from __future__ import annotations
++from .theme import Theme
++
++
++def build_qss() -> str:
++    """Build and return the complete application stylesheet using Theme tokens."""
++    return f"""
++    /* --------------------------------------------------------------------- */
++    /* Global Base Rules                                                     */
++    /* --------------------------------------------------------------------- */
++    QWidget {{
++        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
++        font-size: {Theme.TYPE_BODY}px;
++        color: {Theme.TEXT_MAIN};
++    }}
++
++    QMainWindow, QWidget#PageRoot {{
++        background-color: {Theme.BG_PAGE};
++    }}
++
++    /* Semantic label roles — migrate inline setStyleSheet() colors onto these */
++    QLabel[role="hint"] {{
++        color: {Theme.TEXT_MUTED};
++        font-size: {Theme.TYPE_SECONDARY}px;
++    }}
++    QLabel[role="secondary"] {{
++        color: {Theme.TEXT_SUB};
++        font-size: {Theme.TYPE_SECONDARY}px;
++    }}
++    QLabel[role="caption"] {{
++        color: {Theme.TEXT_MUTED};
++        font-size: {Theme.TYPE_CAPTION}px;
++    }}
++    QLabel[role="status"] {{
++        color: {Theme.GRAY_TEXT};
++        font-size: {Theme.TYPE_SECONDARY}px;
++    }}
++    QLabel[role="emphasis"] {{
++        color: {Theme.TEXT_SUB};
++    }}
++    QLabel[role="strong"] {{
++        color: {Theme.TEXT_MAIN};
++    }}
++    QLabel[role="guide"] {{
++        color: {Theme.TEXT_MUTED};
++        border: 1px dashed {Theme.BORDER_STRONG};
++        padding: 15px;
++        border-radius: {Theme.RADIUS_SM}px;
++        background-color: {Theme.BG_SUBTLE};
++    }}
++    QLabel[role="guidePlain"] {{
++        color: {Theme.TEXT_MUTED};
++    }}
++    QTextEdit#LogView {{
++        background-color: {Theme.BG_SUBTLE};
++        border: 1px solid {Theme.BORDER};
++        color: {Theme.TEXT_SUB};
++    }}
++    QPushButton#WorkbenchShortcutEntry {{
++        text-align: left;
++        padding-left: 6px;
++        font-size: {Theme.TYPE_CAPTION}px;
++        color: {Theme.TEXT_MUTED};
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Card Container (Card component)                                       */
++    /* --------------------------------------------------------------------- */
++    QFrame#Card, QWidget#Card, .WorkbenchCard {{
++        background-color: {Theme.BG_CARD};
++        border: 1px solid {Theme.BORDER};
++        border-radius: {Theme.RADIUS_CARD}px;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Buttons (AppButton component)                                         */
++    /* --------------------------------------------------------------------- */
++    QPushButton {{
++        min-height: {Theme.CONTROL_HEIGHT}px;
++        max-height: {Theme.CONTROL_HEIGHT}px;
++        border-radius: {Theme.RADIUS_CONTROL}px;
++        padding: 0 14px;
++        border: 1px solid {Theme.BORDER_STRONG};
++        background-color: {Theme.BG_CARD};
++        color: {Theme.TEXT_MAIN};
++        font-size: {Theme.TYPE_BODY}px;
++        font-weight: 500;
++        outline: none;
++    }}
++    QPushButton:hover {{
++        background-color: {Theme.BG_SUBTLE};
++        border-color: {Theme.BLUE};
++    }}
++    QPushButton:focus {{
++        border: 2px solid {Theme.BORDER_FOCUS};
++        padding: 0 13px;
++    }}
++    QPushButton:disabled {{
++        background-color: {Theme.BG_SUBTLE};
++        border-color: {Theme.BORDER};
++        color: {Theme.TEXT_MUTED};
++    }}
++
++    /* Button Variants */
++    QPushButton[variant="primary"] {{
++        background-color: {Theme.BLUE};
++        border-color: {Theme.BLUE};
++        color: #FFFFFF;
++        font-weight: 600;
++    }}
++    QPushButton[variant="primary"]:hover {{
++        background-color: {Theme.BLUE_HOVER};
++        border-color: {Theme.BLUE_HOVER};
++    }}
++    QPushButton[variant="primary"]:focus {{
++        border: 2px solid {Theme.BLUE_HOVER};
++        padding: 0 13px;
++    }}
++
++    QPushButton[variant="danger"] {{
++        background-color: {Theme.RED_BG};
++        border-color: {Theme.RED_BORDER};
++        color: {Theme.RED_TEXT};
++        font-weight: 600;
++    }}
++    QPushButton[variant="danger"]:hover {{
++        background-color: {Theme.RED_BG};
++        border-color: {Theme.RED};
++    }}
++    QPushButton[variant="danger"]:focus {{
++        border: 2px solid {Theme.RED};
++        padding: 0 13px;
++    }}
++
++    QPushButton[variant="ghost"] {{
++        background-color: transparent;
++        border: none;
++        color: {Theme.TEXT_SUB};
++    }}
++    QPushButton[variant="ghost"]:hover {{
++        background-color: {Theme.BLUE_BG};
++        color: {Theme.BLUE};
++    }}
++    QPushButton[variant="ghost"]:focus {{
++        background-color: {Theme.BLUE_BG};
++        color: {Theme.BLUE};
++        border: none;
++        padding: 0 14px;
++    }}
++
++    QPushButton[variant="toolbar"] {{
++        min-height: 32px;
++        max-height: 32px;
++        border-radius: {Theme.RADIUS_SM}px;
++        padding: 0 12px;
++        font-size: {Theme.TYPE_SECONDARY}px;
++    }}
++    QPushButton[variant="toolbar"]:focus {{
++        border: 2px solid {Theme.BORDER_FOCUS};
++        padding: 0 11px;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Side Navigation                                                       */
++    /* --------------------------------------------------------------------- */
++    QFrame#WorkbenchNav {{
++        background-color: {Theme.BG_CARD};
++        border-right: 1px solid {Theme.BORDER};
++    }}
++
++    QPushButton.WorkbenchNavButton {{
++        background-color: transparent;
++        color: {Theme.TEXT_SUB};
++        border: none;
++        border-radius: {Theme.RADIUS_CONTROL}px;
++        padding: 0 12px;
++        text-align: left;
++        font-size: {Theme.TYPE_BODY}px;
++        font-weight: 500;
++        min-height: 40px;
++        max-height: 40px;
++    }}
++    QPushButton.WorkbenchNavButton:hover {{
++        background-color: {Theme.BG_SUBTLE};
++        color: {Theme.TEXT_MAIN};
++    }}
++    QPushButton.WorkbenchNavButton:focus {{
++        background-color: {Theme.BG_SUBTLE};
++        color: {Theme.TEXT_MAIN};
++        border: 2px solid {Theme.BORDER_FOCUS};
++        padding: 0 10px;
++    }}
++    QPushButton.WorkbenchNavButton:checked {{
++        background-color: {Theme.BLUE_BG};
++        border-left: 3px solid {Theme.BLUE};
++        padding-left: 9px; /* compensate the 3px indicator so text never shifts */
++        color: {Theme.BLUE};
++        font-weight: 700;
++    }}
++    QPushButton.WorkbenchNavButton:checked:focus {{
++        border: 2px solid {Theme.BORDER_FOCUS};
++        border-left: 3px solid {Theme.BLUE};
++        padding-left: 8px;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Status Badges (StatusBadge component)                                 */
++    /* --------------------------------------------------------------------- */
++    QLabel[badge="pending"] {{
++        background-color: {Theme.ORANGE_BG};
++        color: {Theme.ORANGE_TEXT};
++        border: 1px solid {Theme.ORANGE_BORDER};
++        border-radius: {Theme.RADIUS_BADGE}px;
++        padding: 2px 10px;
++        font-size: {Theme.TYPE_BADGE}px;
++        font-weight: 600;
++    }}
++    QLabel[badge="passed"] {{
++        background-color: {Theme.GREEN_BG};
++        color: {Theme.GREEN_TEXT};
++        border: 1px solid {Theme.GREEN_BORDER};
++        border-radius: {Theme.RADIUS_BADGE}px;
++        padding: 2px 10px;
++        font-size: {Theme.TYPE_BADGE}px;
++        font-weight: 600;
++    }}
++    QLabel[badge="danger"] {{
++        background-color: {Theme.RED_BG};
++        color: {Theme.RED_TEXT};
++        border: 1px solid {Theme.RED_BORDER};
++        border-radius: {Theme.RADIUS_BADGE}px;
++        padding: 2px 10px;
++        font-size: {Theme.TYPE_BADGE}px;
++        font-weight: 600;
++    }}
++    QLabel[badge="muted"] {{
++        background-color: {Theme.GRAY_BG};
++        color: {Theme.GRAY_TEXT};
++        border: 1px solid {Theme.GRAY_BORDER};
++        border-radius: {Theme.RADIUS_BADGE}px;
++        padding: 2px 10px;
++        font-size: {Theme.TYPE_BADGE}px;
++        font-weight: 500;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* StatCard Component (Status Filter Chips)                              */
++    /* --------------------------------------------------------------------- */
++    QFrame#CompactStatCard {{
++        background-color: {Theme.BG_CARD};
++        border: 1px solid {Theme.BORDER};
++        border-radius: {Theme.RADIUS_CARD}px;
++        min-height: 44px;
++        max-height: 48px;
++    }}
++    QFrame#CompactStatCard:hover {{
++        border-color: {Theme.BORDER_STRONG};
++        background-color: {Theme.BG_SUBTLE};
++    }}
++    QFrame#CompactStatCard:focus {{
++        border: 2px solid {Theme.BORDER_FOCUS};
++    }}
++    QFrame#CompactStatCard[selected="true"] {{
++        background-color: {Theme.BLUE_BG};
++        border: 1.5px solid {Theme.BLUE};
++    }}
++    QLabel.CompactStatCardTitle {{
++        color: {Theme.TEXT_SUB};
++        font-size: {Theme.TYPE_SECONDARY}px;
++    }}
++    QLabel.CompactStatCardValue {{
++        color: {Theme.TEXT_MAIN};
++        font-size: {Theme.TYPE_SURFACE_TITLE}px;
++        font-weight: 700;
++    }}
++    QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardTitle,
++    QFrame#CompactStatCard[selected="true"] QLabel.CompactStatCardValue {{
++        color: {Theme.BLUE_HOVER};
++        font-weight: 700;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Section Header (SectionHeader component)                              */
++    /* --------------------------------------------------------------------- */
++    QLabel.SectionHeaderTitle {{
++        color: {Theme.TEXT_MAIN};
++        font-size: {Theme.TYPE_SECTION_TITLE}px;
++        font-weight: 700;
++    }}
++    QLabel.SectionHeaderSubtitle {{
++        color: {Theme.TEXT_MUTED};
++        font-size: {Theme.TYPE_SECONDARY}px;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Form Inputs (FormField & DetailFieldInput)                            */
++    /* --------------------------------------------------------------------- */
++    QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
++        min-height: {Theme.CONTROL_HEIGHT}px;
++        max-height: {Theme.CONTROL_HEIGHT}px;
++        border: 1px solid {Theme.BORDER};
++        border-radius: {Theme.RADIUS_CONTROL}px;
++        background-color: {Theme.BG_CARD};
++        padding: 0 10px;
++        color: {Theme.TEXT_MAIN};
++        font-size: {Theme.TYPE_BODY}px;
++        selection-background-color: {Theme.BLUE_BG};
++        selection-color: {Theme.BLUE};
++    }}
++    QTextEdit {{
++        border: 1px solid {Theme.BORDER};
++        border-radius: {Theme.RADIUS_CONTROL}px;
++        background-color: {Theme.BG_CARD};
++        padding: 6px 10px;
++        color: {Theme.TEXT_MAIN};
++        font-size: {Theme.TYPE_BODY}px;
++    }}
++    QLineEdit:focus, QComboBox:focus, QTextEdit:focus,
++    QLineEdit.DetailFieldInput:focus, QComboBox.DetailFieldInput:focus {{
++        border: 2px solid {Theme.BORDER_FOCUS};
++        padding: 0 9px;
++        background-color: #FFFFFF;
++    }}
++    QTextEdit:focus {{
++        padding: 5px 9px;
++    }}
++    QLineEdit:read-only, QLineEdit:disabled, QComboBox:disabled, QTextEdit:read-only, QTextEdit:disabled,
++    QLineEdit.DetailFieldInput:read-only, QLineEdit.DetailFieldInput:disabled, QComboBox.DetailFieldInput:disabled {{
++        background-color: {Theme.BG_SUBTLE};
++        color: {Theme.TEXT_SUB};
++        border-color: {Theme.BORDER};
++    }}
++    QLabel.FormFieldLabel {{
++        color: {Theme.TEXT_SUB};
++        font-size: {Theme.TYPE_SECONDARY}px;
++        font-weight: 500;
++    }}
++    QLabel.FormFieldHint {{
++        color: {Theme.TEXT_MUTED};
++        font-size: {Theme.TYPE_CAPTION}px;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* AlertBanner Component                                                 */
++    /* --------------------------------------------------------------------- */
++    QFrame#AlertBanner {{
++        border-radius: {Theme.RADIUS_CONTROL}px;
++        padding: 8px 12px;
++    }}
++    QFrame#AlertBanner[tone="warning"] {{
++        background-color: {Theme.ORANGE_BG};
++        border: 1px solid {Theme.ORANGE_BORDER};
++    }}
++    QLabel#AlertBannerText[tone="warning"] {{
++        color: {Theme.ORANGE_TEXT};
++        font-size: {Theme.TYPE_SECONDARY}px;
++        font-weight: 500;
++    }}
++
++    QFrame#AlertBanner[tone="danger"] {{
++        background-color: {Theme.RED_BG};
++        border: 1px solid {Theme.RED_BORDER};
++    }}
++    QLabel#AlertBannerText[tone="danger"] {{
++        color: {Theme.RED_TEXT};
++        font-size: {Theme.TYPE_SECONDARY}px;
++        font-weight: 500;
++    }}
++
++    QFrame#AlertBanner[tone="info"] {{
++        background-color: {Theme.BLUE_BG};
++        border: 1px solid {Theme.BLUE_BORDER};
++    }}
++    QLabel#AlertBannerText[tone="info"] {{
++        color: {Theme.BLUE};
++        font-size: {Theme.TYPE_SECONDARY}px;
++        font-weight: 500;
++    }}
++
++    QFrame#AlertBanner[tone="success"] {{
++        background-color: {Theme.GREEN_BG};
++        border: 1px solid {Theme.GREEN_BORDER};
++    }}
++    QLabel#AlertBannerText[tone="success"] {{
++        color: {Theme.GREEN_TEXT};
++        font-size: {Theme.TYPE_SECONDARY}px;
++        font-weight: 500;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Data Tables                                                           */
++    /* --------------------------------------------------------------------- */
++    QTableView, QTableWidget {{
++        background-color: {Theme.BG_CARD};
++        alternate-background-color: {Theme.BG_SUBTLE};
++        border: none;
++        gridline-color: {Theme.GRAY_BG};
++        selection-background-color: {Theme.BLUE_BG};
++        selection-color: {Theme.BLUE};
++    }}
++    QTableView::item:hover, QTableWidget::item:hover {{
++        background-color: {Theme.BLUE_BG};
++    }}
++    QHeaderView::section {{
++        background-color: {Theme.BG_SUBTLE};
++        color: {Theme.TEXT_SUB};
++        font-weight: 600;
++        font-size: {Theme.TYPE_SECONDARY}px;
++        height: 34px;
++        border: none;
++        border-bottom: 1px solid {Theme.BORDER};
++        padding: 0 8px;
++    }}
++
++    /* --------------------------------------------------------------------- */
++    /* Tabs & ScrollBars                                                     */
++    /* --------------------------------------------------------------------- */
++    QTabWidget::pane {{
++        border: none;
++        background-color: transparent;
++    }}
++    QTabBar::tab {{
++        background-color: transparent;
++        color: {Theme.TEXT_SUB};
++        padding: 8px 16px;
++        font-weight: 500;
++        border-bottom: 2px solid transparent;
++    }}
++    QTabBar::tab:selected {{
++        color: {Theme.BLUE};
++        font-weight: 700;
++        border-bottom: 2px solid {Theme.BLUE};
++    }}
++    QTabBar::tab:hover:!selected {{
++        color: {Theme.TEXT_MAIN};
++    }}
++    QTabBar::tab:focus {{
++        border-bottom: 2px solid {Theme.BORDER_FOCUS};
++    }}
++
++    QScrollBar:vertical {{
++        background: transparent;
++        width: 8px;
++        margin: 0px;
++    }}
++    QScrollBar::handle:vertical {{
++        background: #CBD5E1;
++        border-radius: 4px;
++        min-height: 24px;
++    }}
++    QScrollBar::handle:vertical:hover {{
++        background: {Theme.TEXT_MUTED};
++    }}
++    QScrollBar:horizontal {{
++        background: transparent;
++        height: 8px;
++        margin: 0px;
++    }}
++    QScrollBar::handle:horizontal {{
++        background: #CBD5E1;
++        border-radius: 4px;
++        min-width: 24px;
++    }}
++    QScrollBar::handle:horizontal:hover {{
++        background: {Theme.TEXT_MUTED};
++    }}
++    QScrollBar::add-line, QScrollBar::sub-line {{
++        height: 0px;
++        width: 0px;
++    }}
++
++    QSplitter::handle {{
++        background: transparent;
++    }}
++    QSplitter::handle:hover {{
++        background: {Theme.BORDER};
++    }}
++    """
+diff --git a/scripts/invoice_fetch/gui/ui/theme.py b/scripts/invoice_fetch/gui/ui/theme.py
+index 1224d59..f832d55 100644
+--- a/scripts/invoice_fetch/gui/ui/theme.py
++++ b/scripts/invoice_fetch/gui/ui/theme.py
+@@ -1,64 +1,82 @@
+ # -*- coding: utf-8 -*-
+-"""Invoice Hub UI Kit - Design Tokens."""
++"""Invoice Hub UI Kit - Design Tokens.
++
++Core product colors, typography and geometry are derived from the Design v1
++authority (:mod:`scripts.invoice_fetch.gui.design_tokens`). Only values that
++have no Design v1 counterpart (semantic hover shades, UI-kit-only surfaces and
++layout contracts) are defined locally.
++"""
+ 
+ from __future__ import annotations
+ 
++from ..design_tokens import DESIGN_V1_COLORS, DESIGN_V1_METRICS, DESIGN_V1_TYPE
++
+ 
+ class Theme:
+     """Centralized Theme design tokens for colors, sizes, and styling constants."""
+ 
+-    # Page and Surface Colors
+-    BG_PAGE = "#F6F8FB"       # Global application page background
+-    BG_CARD = "#FFFFFF"       # White card container background
+-    BG_SUBTLE = "#F8FAFC"     # Table headers & subtle control backgrounds
+-    BG_CANVAS = "#F1F5F9"     # PDF/Image preview canvas background
++    # Page and Surface Colors (Design v1 authority)
++    BG_PAGE = DESIGN_V1_COLORS["page"]                    # #F7F8FA global page background
++    BG_CARD = DESIGN_V1_COLORS["surface"]                 # #FFFFFF card background
++    BG_SUBTLE = DESIGN_V1_COLORS["surface_secondary"]     # #F8FAFC table headers & subtle fills
++    BG_CANVAS = DESIGN_V1_COLORS["muted_surface"]         # #F2F4F7 PDF/Image preview canvas
+ 
+     # Borders
+-    BORDER = "#E5EAF2"        # Standard card and container border
+-    BORDER_STRONG = "#D0D5DD" # Form field and control hover border
+-    BORDER_FOCUS = "#2563EB"  # Active control focus border
+-
+-    # Typography / Text Colors
+-    TEXT_MAIN = "#172033"     # Primary text
+-    TEXT_SUB = "#667085"      # Secondary text / labels / hints
+-    TEXT_MUTED = "#98A2B3"    # Disabled text / placeholders
+-
+-    # Brand & Semantic Status Colors
+-    BLUE = "#2563EB"
+-    BLUE_HOVER = "#1D4ED8"
+-    BLUE_BG = "#EFF6FF"
++    BORDER = DESIGN_V1_COLORS["border"]                   # #E5E7EB standard card border
++    BORDER_STRONG = "#D0D5DD"                             # Control hover border (UI-kit only)
++    BORDER_FOCUS = DESIGN_V1_COLORS["accent"]             # #2563EB active focus border
++
++    # Typography / Text Colors (Design v1 authority)
++    TEXT_MAIN = DESIGN_V1_COLORS["text"]                  # #182230 primary text
++    TEXT_SUB = DESIGN_V1_COLORS["text_secondary"]         # #475467 secondary text / labels
++    TEXT_MUTED = DESIGN_V1_COLORS["muted"]                # #667085 hints / disabled / placeholders
++
++    # Brand & Semantic Status Colors (aligned with Design v1 semantics)
++    BLUE = DESIGN_V1_COLORS["accent"]                     # #2563EB
++    BLUE_HOVER = DESIGN_V1_COLORS["accent_hover"]         # #1D4ED8
++    BLUE_BG = DESIGN_V1_COLORS["selected"]                # #EFF6FF
+     BLUE_BORDER = "#BFDBFE"
+ 
+-    GREEN = "#16A34A"
+-    GREEN_HOVER = "#15803D"
+-    GREEN_BG = "#ECFDF3"
++    GREEN = DESIGN_V1_COLORS["success"]                   # #16803C
++    GREEN_HOVER = "#126632"
++    GREEN_BG = DESIGN_V1_COLORS["success_surface"]        # #ECFDF3
+     GREEN_BORDER = "#ABEFC6"
+     GREEN_TEXT = "#067647"
+ 
+-    ORANGE = "#F59E0B"
+-    ORANGE_HOVER = "#D97706"
+-    ORANGE_BG = "#FFF7ED"
+-    ORANGE_BORDER = "#FED7AA"
+-    ORANGE_TEXT = "#C2410C"
++    ORANGE = DESIGN_V1_COLORS["warning"]                  # #B54708
++    ORANGE_HOVER = "#93370D"
++    ORANGE_BG = DESIGN_V1_COLORS["warning_surface"]       # #FFFAEB
++    ORANGE_BORDER = "#FEDF89"
++    ORANGE_TEXT = DESIGN_V1_COLORS["warning"]             # #B54708
+ 
+-    RED = "#EF4444"
+-    RED_HOVER = "#DC2626"
+-    RED_BG = "#FEF2F2"
+-    RED_BORDER = "#FCA5A5"
+-    RED_TEXT = "#B91C1C"
++    RED = DESIGN_V1_COLORS["danger"]                      # #B42318
++    RED_HOVER = "#912018"
++    RED_BG = DESIGN_V1_COLORS["danger_surface"]           # #FEF3F2
++    RED_BORDER = "#FECDCA"
++    RED_TEXT = DESIGN_V1_COLORS["danger"]                 # #B42318
+ 
+-    GRAY_BG = "#F1F5F9"
++    GRAY_BG = DESIGN_V1_COLORS["muted_surface"]           # #F2F4F7
+     GRAY_BORDER = "#E2E8F0"
+-    GRAY_TEXT = "#475569"
++    GRAY_TEXT = DESIGN_V1_COLORS["text_secondary"]        # #475467
++
++    # Border Radii (Design v1 authority where defined)
++    RADIUS_CARD = DESIGN_V1_METRICS["radius_large"]       # 10
++    RADIUS_CONTROL = DESIGN_V1_METRICS["radius_medium"]   # 8
++    RADIUS_BADGE = 12                                     # Pill-shaped status badge (UI-kit only)
++    RADIUS_SM = DESIGN_V1_METRICS["radius_small"]         # 6
+ 
+-    # Border Radii
+-    RADIUS_CARD = 12
+-    RADIUS_CONTROL = 8
+-    RADIUS_BADGE = 12
+-    RADIUS_SM = 6
++    # Type Scale (Design v1 authority, px)
++    TYPE_PAGE_TITLE = DESIGN_V1_TYPE["page_title"]        # 22
++    TYPE_SURFACE_TITLE = DESIGN_V1_TYPE["surface_title"]  # 16
++    TYPE_SECTION_TITLE = DESIGN_V1_TYPE["section_title"]  # 14
++    TYPE_BODY = DESIGN_V1_TYPE["body"]                    # 13
++    TYPE_SECONDARY = DESIGN_V1_TYPE["secondary"]          # 12
++    TYPE_CAPTION = DESIGN_V1_TYPE["caption"]              # 11
++    TYPE_METRIC = DESIGN_V1_TYPE["metric"]                # 18
++    TYPE_BADGE = DESIGN_V1_TYPE["badge"]                  # 12
+ 
+     # Layout Metrics & Dimensions
+-    CONTROL_HEIGHT = 36
++    CONTROL_HEIGHT = DESIGN_V1_METRICS["control_height"]  # 34
+     TOOLBAR_HEIGHT = 56
+     SIDEBAR_WIDTH = 208
+     REVIEW_WIDTH = 420
+diff --git a/tests/test_gui_column_filters.py b/tests/test_gui_column_filters.py
+index 69e1dbc..31a1931 100644
+--- a/tests/test_gui_column_filters.py
++++ b/tests/test_gui_column_filters.py
+@@ -360,7 +360,7 @@ class GuiColumnFilterTests(unittest.TestCase):
+         self.assertEqual(window.table.item(0, 2).textAlignment(), int(Qt.AlignCenter | Qt.AlignVCenter))
+         self.assertEqual(window.table.item(0, 3).textAlignment(), int(Qt.AlignRight | Qt.AlignVCenter))
+         self.assertEqual(window.table.item(0, 3).text(), "28.90")
+-        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#94a3b8")
++        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#667085")
+ 
+     def test_default_headers_are_clean_without_dropdown_arrows(self):
+         window = self._make_window([
+diff --git a/tests/test_ui_kit.py b/tests/test_ui_kit.py
+index 6322f1d..755f027 100644
+--- a/tests/test_ui_kit.py
++++ b/tests/test_ui_kit.py
+@@ -61,7 +61,7 @@ class TestUIKit(unittest.TestCase):
+         self.assertEqual(workbench.review_panel.maximumWidth(), 420)
+ 
+     def test_theme_tokens(self):
+-        self.assertEqual(Theme.BG_PAGE, "#F6F8FB")
++        self.assertEqual(Theme.BG_PAGE, "#F7F8FA")
+         self.assertEqual(Theme.BG_CARD, "#FFFFFF")
+         self.assertEqual(Theme.SIDEBAR_WIDTH, 208)
+         self.assertEqual(Theme.REVIEW_WIDTH, 420)
+@@ -69,7 +69,7 @@ class TestUIKit(unittest.TestCase):
+     def test_build_qss(self):
+         qss = build_qss()
+         self.assertIn("QMainWindow", qss)
+-        self.assertIn("#F6F8FB", qss)
++        self.assertIn("#F7F8FA", qss)
+         self.assertIn("#FFFFFF", qss)
+         self.assertIn("StatusBadge", qss)
+ 
+-- 
+2.39.5
+

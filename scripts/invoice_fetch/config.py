@@ -65,7 +65,7 @@ _DEFAULTS = {
     "email_accounts": [],
     "ai": {"provider": "none", "model": "", "batch_size": 20},
     "ai_profiles": [],
-    "reimbursement": {"buyer_name": "", "buyer_tax_id": "", "strict_buyer_check": False},
+    "reimbursement": {"buyer_name": "", "buyer_tax_id": "", "strict_buyer_check": True},
     "playwright": {"channel": "auto"},
     "categories": {},
 }

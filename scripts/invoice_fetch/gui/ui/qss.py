@@ -164,14 +164,12 @@ def build_qss() -> str:
     }}
     QPushButton.WorkbenchNavButton:checked {{
         background-color: {Theme.BLUE_BG};
-        border-left: 3px solid {Theme.BLUE};
+        border-color: {Theme.BLUE_BORDER};
         color: {Theme.BLUE};
-        font-weight: 700;
-        padding-left: 10px;
+        font-weight: 600;
     }}
     QPushButton.WorkbenchNavButton:checked:focus {{
         border-color: {Theme.FOCUS_RING};
-        border-left-color: {Theme.BLUE};
     }}
 
     /* --------------------------------------------------------------------- */

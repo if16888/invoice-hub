@@ -25,7 +25,6 @@ from .ui_components import ElidedTextLabel
 
 
 PARTY_LABEL_WIDTH = 48
-PRIMARY_ACTION_MIN_WIDTH = 172
 
 
 def _find_layout_containing(layout: QLayout | None, widget: QWidget):
@@ -137,38 +136,36 @@ def _rebuild_review_actions(window) -> None:
         if widget is not None:
             widget.setParent(detail.summary_card)
 
-    stack = QFrame(detail.summary_card)
-    stack.setObjectName("ReviewActionStack")
-    stack.setProperty("class", "ReviewActionStack")
-    stack_layout = QVBoxLayout(stack)
-    stack_layout.setContentsMargins(0, 0, 0, 0)
-    stack_layout.setSpacing(8)
+    row = QFrame(detail.summary_card)
+    row.setObjectName("ReviewActionRow")
+    row.setProperty("class", "ReviewActionRow")
+    row_layout = QHBoxLayout(row)
+    row_layout.setContentsMargins(0, 0, 0, 0)
+    row_layout.setSpacing(8)
 
-    detail.btn_app.setMinimumWidth(PRIMARY_ACTION_MIN_WIDTH)
+    # Decisions must be visible together. A stacked primary action wastes a
+    # full row and separates the three mutually-exclusive choices.
+    detail.btn_app.setMinimumWidth(0)
     detail.btn_app.setMaximumWidth(16777215)
     detail.btn_app.setFixedHeight(36)
     detail.btn_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     font = detail.btn_app.font()
     font.setBold(True)
     detail.btn_app.setFont(font)
-    stack_layout.addWidget(detail.btn_app)
+    row_layout.addWidget(detail.btn_app, 4)
 
-    secondary = QHBoxLayout()
-    secondary.setContentsMargins(0, 0, 0, 0)
-    secondary.setSpacing(8)
     for button in (detail.btn_ign, detail.btn_err):
-        button.setMinimumWidth(84)
-        button.setMaximumWidth(112)
+        button.setMinimumWidth(0)
+        button.setMaximumWidth(16777215)
         button.setFixedHeight(36)
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        secondary.addWidget(button, 1)
+        row_layout.addWidget(button, 3)
     detail.btn_inline_more.setFixedSize(40, 36)
-    secondary.addWidget(detail.btn_inline_more, 0)
-    stack_layout.addLayout(secondary)
+    row_layout.addWidget(detail.btn_inline_more, 0)
 
-    old_layout.addWidget(stack, 1)
-    detail.review_action_stack = stack
-    window.review_action_stack = stack
+    old_layout.addWidget(row, 1)
+    detail.review_action_row = row
+    window.review_action_row = row
 
 
 def _show_complete_core_fields(window) -> None:

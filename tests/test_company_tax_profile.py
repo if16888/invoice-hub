@@ -42,6 +42,10 @@ class CompanyTaxProfileTests(unittest.TestCase):
         self.assertTrue(profile["strict_buyer_check"])
         self.assertFalse(profile["strict_buyer_tax_check"])
 
+    def test_buyer_name_check_defaults_to_enabled_when_a_profile_is_created(self):
+        profile = normalize_company_tax_profile({"buyer_name": "Example Company"})
+        self.assertTrue(profile["strict_buyer_check"])
+
     def test_copy_text_omits_blank_optional_fields(self):
         text = format_company_tax_info(
             {

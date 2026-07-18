@@ -663,6 +663,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             full_text = self._workbench_nav_button_texts.get(key, "")
             button.setText("" if nav_collapsed else full_text)
             button.setToolTip(full_text if nav_collapsed else "")
+            # In the icon-only rail a focused inactive button is visually
+            # indistinguishable from a second selected page.  Keep collapsed
+            # navigation mouse-only and let the checked tile be the sole page
+            # indicator; expanded navigation remains available in the Tab
+            # focus chain with its normal focus treatment.
+            button.setFocusPolicy(Qt.NoFocus if nav_collapsed else Qt.TabFocus)
             button.setProperty("collapsed", nav_collapsed)
             button.setMinimumHeight(36 if not nav_collapsed else 44)
             button.style().unpolish(button)
@@ -895,6 +901,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button = QPushButton(text)
             button.setObjectName(f"workbench_nav_{key}")
             button.setProperty("class", "WorkbenchNavButton")
+            # Keep mouse navigation visually single-state.  With StrongFocus a
+            # previously clicked item retained Qt's focus ring while the newly
+            # selected page showed its checked state, which looked like two
+            # active sidebar entries.  TabFocus preserves keyboard navigation
+            # without assigning focus on a mouse click.
+            button.setFocusPolicy(Qt.TabFocus)
             button.setCheckable(selectable)
             button.setChecked(checked if selectable else False)
             button.setMinimumHeight(40)
@@ -4064,8 +4076,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if target_row < 0 and selected_id is not None:
                 target_row = next((row for row, invoice in enumerate(self.invoices_list) if invoice.get("id") == selected_id), -1)
             if 0 <= target_row < len(self.invoices_list):
-                self.table.selectRow(target_row)
-                self.table.setCurrentCell(target_row, 0)
+                self._ensure_single_row_selection(target_row)
         finally:
             self._is_loading_more_invoices = False
             self._update_record_header_summary()
@@ -4265,8 +4276,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.combo_category.blockSignals(False)
 
     def _buyer_warning(self, inv: dict) -> str:
-        cfg = load_config_safe()
-        return buyer_warning(inv, cfg.get("reimbursement", {}))
+        # Every review surface must evaluate against the same in-memory
+        # profile. Reloading from disk here made the table and detail warning
+        # disagree until an unrelated selection event refreshed the panel.
+        cfg = getattr(self, "config", None) or load_config_safe()
+        return buyer_warning(inv, cfg)
 
     def _update_save_button_state(self):
         if not self.current_invoice or self._invoice_snapshot is None:
@@ -6175,7 +6189,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._refresh_category_options(category)
             self._load_invoices()
             if current_row >= 0 and current_row < self.table.rowCount():
-                self.table.selectRow(current_row)
+                self._ensure_single_row_selection(current_row)
                 self._on_table_selection_changed()
             self._detail_panel.set_dirty_state(False)
             self.btn_save_draft.setEnabled(False)
@@ -6333,7 +6347,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     for candidate_row in range(max(0, next_select_row), num_rows):
                         candidate = self.invoices_list[candidate_row]
                         if (candidate.get("review_status") or TO_REVIEW) == TO_REVIEW:
-                            self.table.selectRow(candidate_row)
+                            self._ensure_single_row_selection(candidate_row)
                             self.current_invoice = candidate
                             self._invoice_snapshot = self._get_invoice_snapshot(candidate)
                             break
@@ -6342,7 +6356,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             next_select_row = 0
                         elif next_select_row >= num_rows:
                             next_select_row = num_rows - 1
-                        self.table.selectRow(next_select_row)
+                        self._ensure_single_row_selection(next_select_row)
                         self.current_invoice = self.invoices_list[next_select_row]
                         self._invoice_snapshot = self._get_invoice_snapshot(self.current_invoice)
                 else:
@@ -6350,7 +6364,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         next_select_row = 0
                     elif next_select_row >= num_rows:
                         next_select_row = num_rows - 1
-                    self.table.selectRow(next_select_row)
+                    self._ensure_single_row_selection(next_select_row)
                     self.current_invoice = self.invoices_list[next_select_row]
                     self._invoice_snapshot = self._get_invoice_snapshot(self.current_invoice)
             else:

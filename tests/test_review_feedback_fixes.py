@@ -45,16 +45,17 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_primary_review_action_has_its_own_readable_row(self):
+    def test_review_actions_share_one_readable_row(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
                 detail = window._detail_panel
-                stack = detail.findChild(QFrame, "ReviewActionStack")
-                self.assertIsNotNone(stack)
-                required = detail.btn_app.fontMetrics().horizontalAdvance(detail.btn_app.text()) + 24
-                self.assertGreaterEqual(detail.btn_app.minimumWidth(), required)
-                self.assertEqual(stack.layout().itemAt(0).widget(), detail.btn_app)
+                row = detail.findChild(QFrame, "ReviewActionRow")
+                self.assertIsNotNone(row)
+                self.assertEqual(row.layout().count(), 4)
+                self.assertEqual(row.layout().itemAt(0).widget(), detail.btn_app)
+                self.assertEqual(row.layout().itemAt(1).widget(), detail.btn_ign)
+                self.assertEqual(row.layout().itemAt(2).widget(), detail.btn_err)
                 self.assertGreaterEqual(detail.btn_app.height(), 34)
             finally:
                 window.close()
@@ -138,7 +139,10 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td, 1920, 1080)
             try:
-                self.assertEqual(window._detail_panel.width(), 400)
+                expected_desktop_width = (
+                    448 if window.workbench_nav.width() <= 96 else 400
+                )
+                self.assertEqual(window._detail_panel.width(), expected_desktop_width)
                 window.resize(1366, 768)
                 for _ in range(4):
                     self.app.processEvents()
