@@ -32,7 +32,7 @@ _PROFILE_DEFAULTS = {
     "registered_phone": "",
     "bank_name": "",
     "bank_account": "",
-    "strict_buyer_check": False,
+    "strict_buyer_check": True,
     "strict_buyer_tax_check": False,
 }
 

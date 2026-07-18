@@ -341,6 +341,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 ]
                 self.assertGreaterEqual(len(visible_nav_buttons), 1)
                 self.assertFalse(window.workbench_nav_buttons["review"].icon().isNull())
+                expected_nav_focus = Qt.NoFocus if window.workbench_nav.width() <= 72 else Qt.TabFocus
+                self.assertEqual(window.workbench_nav_buttons["overview"].focusPolicy(), expected_nav_focus)
                 self.assertEqual(window.btn_scan_email.text(), "扫描邮箱")
                 self.assertEqual(window.btn_toolbar_export.text(), "导出")
                 self.assertFalse(window.btn_toolbar_help.isVisible())
@@ -405,6 +407,60 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     self.assertEqual(button.text(), label)
                     self.assertIs(window.left_stack.currentWidget(), original_widget)
                 self.assertFalse(window.workbench_nav_buttons["logs"].isVisible())
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                QApplication.processEvents()
+
+    def test_navigation_keeps_exactly_one_checked_page_after_mouse_switch(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                window.resize(1920, 1080)
+                QApplication.processEvents()
+
+                window.workbench_nav_buttons["overview"].click()
+                QApplication.processEvents()
+                selectable = ("overview", "review", "imports", "export", "settings")
+                self.assertEqual(
+                    [key for key in selectable if window.workbench_nav_buttons[key].isChecked()],
+                    ["overview"],
+                )
+                if window.workbench_nav.width() <= 72:
+                    self.assertTrue(
+                        all(not window.workbench_nav_buttons[key].hasFocus() for key in selectable)
+                    )
+
+                window.workbench_nav_buttons["review"].click()
+                QApplication.processEvents()
+                self.assertEqual(
+                    [key for key in selectable if window.workbench_nav_buttons[key].isChecked()],
+                    ["review"],
+                )
+
+                window._nav_collapsed_manual = True
+                window._apply_workbench_metrics(1920, 1080)
+                window.workbench_nav_buttons["export"].click()
+                QApplication.processEvents()
+                self.assertEqual(window.workbench_nav.width(), 56)
+                self.assertEqual(
+                    [key for key in selectable if window.workbench_nav_buttons[key].isChecked()],
+                    ["export"],
+                )
+                self.assertTrue(
+                    all(window.workbench_nav_buttons[key].focusPolicy() == Qt.NoFocus for key in selectable)
+                )
+                self.assertTrue(
+                    all(not window.workbench_nav_buttons[key].hasFocus() for key in selectable)
+                )
+
+                window._nav_collapsed_manual = False
+                window._apply_workbench_metrics(1920, 1080)
+                self.assertTrue(
+                    all(window.workbench_nav_buttons[key].focusPolicy() == Qt.TabFocus for key in selectable)
+                )
             finally:
                 window.db.close()
                 window.close()

@@ -80,6 +80,15 @@ class ReviewActionRegressionTests(unittest.TestCase):
         self.assertTrue(app.btn_scan_email.isEnabled())
         self.assertTrue(app.btn_toolbar_export.isEnabled())
 
+    def test_single_row_selection_keeps_current_and_selected_rows_in_sync(self):
+        app = self.review_app
+        self.assertTrue(app._apply_single_row_selection(2))
+        self.app.processEvents()
+
+        selected = app.table.selectionModel().selectedRows()
+        self.assertEqual([index.row() for index in selected], [2])
+        self.assertEqual(app.table.currentRow(), 2)
+
         app._set_action_busy(app.btn_import_local, "导入中...")
         self.assertEqual(app.btn_import_local.text(), "导入中...")
         self.assertEqual(app.btn_import_local.property("busy"), "true")

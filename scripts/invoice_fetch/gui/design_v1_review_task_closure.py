@@ -149,15 +149,26 @@ def _refresh_compact_buyer_warning(window) -> None:
     label.setText(summary)
     label.setToolTip(full_text)
     label.setAccessibleDescription(full_text)
-    label.setWordWrap(True)
-    label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+    label.setObjectName("CompactBuyerWarning")
+    label.setWordWrap(False)
+    label.setMinimumWidth(0)
+    label.setMaximumWidth(272)
+    label.setFixedHeight(44)
+    label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
     label.setProperty("tone", "warning" if summary else "muted")
     label.setVisible(bool(summary))
 
     row = getattr(detail, "buyer_warning_action_row", None)
     if row is not None and isValid(row):
         row.setVisible(bool(summary))
-        row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        row.setMinimumWidth(0)
+        row.setMaximumWidth(272)
+        row.setFixedHeight(44)
+        row.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        row_layout = row.layout()
+        if row_layout is not None:
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setAlignment(label, Qt.AlignLeft | Qt.AlignVCenter)
 
     button = getattr(detail, "btn_edit_reimbursement_title", None)
     if button is not None and isValid(button):
@@ -170,6 +181,12 @@ def _refresh_compact_buyer_warning(window) -> None:
 
     label.style().unpolish(label)
     label.style().polish(label)
+    # The shared InlineWarning stylesheet has a taller default. Apply the
+    # compact geometry after polishing so the buyer check cannot expand back
+    # into an empty full-width banner.
+    label.setFixedHeight(44)
+    if row is not None and isValid(row):
+        row.setFixedHeight(44)
     label.update()
 
 

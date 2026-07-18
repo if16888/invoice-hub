@@ -47,11 +47,13 @@ class DesignV1UIConvergenceTests(unittest.TestCase):
         self.assertIn("QTableView::item:hover", qss)
         self.assertIn(f"width: {DESIGN_V1_METRICS['scrollbar_width']}px", qss)
 
-    def test_checked_navigation_compensates_indicator_width(self):
+    def test_checked_navigation_uses_a_shallow_block_without_geometry_shift(self):
         qss = build_qss()
         checked_rule = qss.split("QPushButton.WorkbenchNavButton:checked {", 1)[1].split("}", 1)[0]
-        self.assertIn("border-left: 3px", checked_rule)
-        self.assertIn("padding-left: 10px", checked_rule)
+        self.assertIn("background-color:", checked_rule)
+        self.assertIn("border-color:", checked_rule)
+        self.assertNotIn("border-left:", checked_rule)
+        self.assertNotIn("padding-left:", checked_rule)
 
     def test_application_status_badges_derive_from_design_tokens(self):
         self.assertEqual(app_module.REVIEW_STATUS_BADGES["approved"]["fill"], DESIGN_V1_COLORS["success_surface"])

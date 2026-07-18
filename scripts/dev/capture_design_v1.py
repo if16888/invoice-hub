@@ -412,6 +412,14 @@ def main() -> int:
             _wait(app)
             _open_page(window, args.page)
             _wait(app)
+            if args.state == "nav-collapsed":
+                # Exercise the manual icon-only rail at the requested viewport
+                # on every page.  Previously this state only collapsed the
+                # review page by shrinking the whole window, so export-page
+                # sidebar regressions could not be captured faithfully.
+                window._nav_collapsed_manual = True
+                window._apply_workbench_metrics(args.width, args.height)
+                _wait(app)
             if args.page == "review":
                 if args.state == "buyer-mismatch":
                     _select_by_number(window, "DEMO-000002")
@@ -422,8 +430,7 @@ def main() -> int:
                 elif args.state == "loaded-next-page":
                     _exercise_lazy_loading(window, app)
                 elif args.state == "nav-collapsed":
-                    window.resize(min(args.width, 1366), args.height)
-                    window._apply_workbench_metrics()
+                    pass
                 else:
                     _select_by_number(window, "DEMO-000001")
                 _wait(app)

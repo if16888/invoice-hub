@@ -132,9 +132,9 @@ QPushButton.WorkbenchNavButton[collapsed="true"] {
 }
 QPushButton.WorkbenchNavButton:checked {
     background-color: #EFF6FF;
-    border-left: 3px solid #2563EB;
+    border: 1px solid #BFDBFE;
     color: #2563EB;
-    font-weight: 700;
+    font-weight: 600;
 }
 QFrame#WorkbenchTopToolbar {
     background-color: #FFFFFF;
@@ -572,6 +572,15 @@ QLabel.InlineWarning {
     color: #C2410C;
     font-size: 12px;
     font-weight: 500;
+}
+QLabel#CompactBuyerWarning {
+    min-height: 0;
+    max-height: 44px;
+    padding: 4px 9px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    font-size: 12px;
 }
 QLabel.EvidenceMissing {
     background-color: #FFFBEB;
@@ -1501,6 +1510,15 @@ QLabel.InlineWarning {
     color: #C2410C;
     font-size: 12px;
     font-weight: 500;
+}
+QLabel#CompactBuyerWarning {
+    min-height: 0;
+    max-height: 44px;
+    padding: 4px 9px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    font-size: 12px;
 }
 QLabel.InlineHint {
     color: #D97706;
