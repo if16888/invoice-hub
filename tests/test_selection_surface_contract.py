@@ -61,23 +61,28 @@ class SelectionSurfaceContractTests(unittest.TestCase):
             status_badge="可导出",
             user_data=1,
         )
+        row = entity_list.itemWidget(item)
+        row.setObjectName("ClaimGroupRow")
         try:
             install_selection_surface_contracts(entity_list)
             entity_list.setCurrentItem(item)
             item.setSelected(True)
             self._flush()
 
-            row = entity_list.itemWidget(item)
             self.assertIsInstance(entity_list.itemDelegate(), SelectionSurfaceDelegate)
             self.assertFalse(entity_list.alternatingRowColors())
-            self.assertEqual(row.objectName(), "EntityListRow")
+            self.assertEqual(row.objectName(), "ClaimGroupRow")
+            self.assertEqual(row.property("selectionSurfaceRow"), "true")
             self.assertEqual(row.property("selected"), "true")
             self.assertGreaterEqual(row.minimumHeight(), 68)
             self.assertGreaterEqual(item.sizeHint().height(), 68)
             margins = row.layout().contentsMargins()
-            self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (8, 6, 8, 6))
+            self.assertEqual(
+                (margins.left(), margins.top(), margins.right(), margins.bottom()),
+                (8, 6, 8, 6),
+            )
             qss = entity_list.styleSheet()
-            self.assertIn('QWidget#EntityListRow[selected="true"]', qss)
+            self.assertIn('QWidget[selectionSurfaceRow="true"][selected="true"]', qss)
             self.assertIn("QListWidget#EntityList::item:selected:active", qss)
             self.assertIn("outline: 0", qss)
         finally:
@@ -90,12 +95,14 @@ class SelectionSurfaceContractTests(unittest.TestCase):
         try:
             install_selection_surface_contracts(entity_list)
             item = entity_list.add_entity_row("Late row", "Inserted after contract")
+            row = entity_list.itemWidget(item)
+            row.setObjectName("MailboxAccountRow")
             entity_list.setCurrentItem(item)
             item.setSelected(True)
             self._flush()
 
-            row = entity_list.itemWidget(item)
-            self.assertEqual(row.objectName(), "EntityListRow")
+            self.assertEqual(row.objectName(), "MailboxAccountRow")
+            self.assertEqual(row.property("selectionSurfaceRow"), "true")
             self.assertEqual(row.property("selected"), "true")
             self.assertGreaterEqual(item.sizeHint().height(), 68)
         finally:
@@ -156,7 +163,28 @@ class SelectionSurfaceContractTests(unittest.TestCase):
 
             row = entity_list.itemWidget(item)
             self.assertEqual(entity_list.property("selectionSurfaceContract"), "entity")
-            self.assertEqual(row.objectName(), "EntityListRow")
+            self.assertEqual(row.property("selectionSurfaceRow"), "true")
+            self.assertEqual(row.property("selected"), "true")
+        finally:
+            page.close()
+            page.deleteLater()
+            self._flush()
+
+    def test_page_watcher_handles_lists_created_after_layout_apply(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        try:
+            DashboardPageLayout.apply(page, layout)
+            entity_list = EntityList(page)
+            layout.addWidget(entity_list)
+            item = entity_list.add_entity_row("Deferred claim", "Ready")
+            entity_list.setCurrentItem(item)
+            item.setSelected(True)
+            self._flush()
+
+            row = entity_list.itemWidget(item)
+            self.assertEqual(entity_list.property("selectionSurfaceContract"), "entity")
+            self.assertEqual(row.property("selectionSurfaceRow"), "true")
             self.assertEqual(row.property("selected"), "true")
         finally:
             page.close()
