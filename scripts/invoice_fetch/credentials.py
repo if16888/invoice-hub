@@ -44,6 +44,7 @@ def _get_ai_key_from_environment(provider: str) -> str:
 
     env_map = {
         "deepseek": "DEEPSEEK_API_KEY",
+        "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",
     }
     env_var = env_map.get(str(provider or "").strip().lower())
@@ -66,6 +67,7 @@ def _get_ai_key_from_environment_if_any(provider: str) -> str:
 
     env_map = {
         "deepseek": "DEEPSEEK_API_KEY",
+        "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",
     }
     env_var = env_map.get(str(provider or "").strip().lower())

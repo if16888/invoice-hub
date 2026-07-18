@@ -5,15 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 
-VALID_AI_PROVIDERS = {"deepseek", "gemini"}
+VALID_AI_PROVIDERS = {"deepseek", "gemini", "openai"}
 
 _DEFAULT_AI_MODELS = {
     "deepseek": "deepseek-chat",
+    "openai": "gpt-4o-mini",
     "gemini": "gemini-2.5-flash",
 }
 
 _LEGACY_PROFILE_NAMES = {
     "deepseek": "旧 DeepSeek 配置",
+    "openai": "旧 OpenAI 配置",
     "gemini": "旧 Gemini 配置",
 }
 

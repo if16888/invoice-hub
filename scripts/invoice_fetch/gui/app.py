@@ -419,7 +419,7 @@ class SingleTaskAiProfileDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
         self.combo_provider = QComboBox()
-        self.combo_provider.addItems(["deepseek", "gemini"])
+        self.combo_provider.addItems(["deepseek", "gemini", "openai"])
         self.txt_model = QLineEdit()
         self.chk_enabled = QCheckBox("启用 AI 提取与分类")
         form.addRow("Provider", self.combo_provider)

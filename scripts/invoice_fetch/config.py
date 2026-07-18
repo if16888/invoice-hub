@@ -544,8 +544,8 @@ def validate_config_gui(cfg: dict) -> None:
             raise ValueError("搜索月份数必须在 1 到 24 之间。")
 
     ai_provider = cfg.get("ai", {}).get("provider", "none")
-    if not isinstance(ai_provider, str) or ai_provider.lower() not in {"none", "deepseek", "gemini"}:
-        raise ValueError("AI 服务提供商必须是 none, deepseek 或 gemini 之一。")
+    if not isinstance(ai_provider, str) or ai_provider.lower() not in {"none", "deepseek", "gemini", "openai"}:
+        raise ValueError("AI 服务提供商必须是 none, deepseek, gemini 或 openai 之一。")
 
 def save_config(cfg: dict, path: str | Path | None = None) -> None:
     """Save configuration to config.json safely, filtering out secret-like fields."""
