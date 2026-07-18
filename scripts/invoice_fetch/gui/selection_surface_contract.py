@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import weakref
 
-from PySide6.QtCore import QSize, QTimer, Qt
+from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListWidget,
@@ -74,24 +74,24 @@ QListWidget#EntityList::item:selected:!active {{
     border: none;
     outline: 0;
 }}
-QWidget#EntityListRow {{
+QWidget[selectionSurfaceRow="true"] {{
     background-color: {colors['surface']};
     border: 1px solid transparent;
     border-radius: {metrics['radius_medium']}px;
 }}
-QWidget#EntityListRow:hover {{
+QWidget[selectionSurfaceRow="true"]:hover {{
     background-color: {colors['surface_secondary']};
     border-color: {colors['border_subtle']};
 }}
-QWidget#EntityListRow[selected="true"] {{
+QWidget[selectionSurfaceRow="true"][selected="true"] {{
     background-color: {colors['selected']};
     border-color: {colors['accent_border']};
 }}
-QWidget#EntityListRow[selected="true"] QLabel[class="EntityListTitle"] {{
+QWidget[selectionSurfaceRow="true"][selected="true"] QLabel[class="EntityListTitle"] {{
     color: {colors['accent_hover']};
 }}
-QWidget#EntityListRow[selected="true"] QLabel[class="EntityListSubtitle"],
-QWidget#EntityListRow[selected="true"] QLabel[class="EntityListMeta"] {{
+QWidget[selectionSurfaceRow="true"][selected="true"] QLabel[class="EntityListSubtitle"],
+QWidget[selectionSurfaceRow="true"][selected="true"] QLabel[class="EntityListMeta"] {{
     color: {colors['text_secondary']};
 }}
 """
@@ -162,7 +162,9 @@ def _decorate_entity_rows(view: QListWidget) -> None:
         row = view.itemWidget(item)
         if row is None or not isValid(row):
             continue
-        row.setObjectName("EntityListRow")
+        # Do not overwrite semantic object names such as MailboxAccountRow.
+        # The reusable selection surface is identified by a dynamic property.
+        _set_dynamic_property(row, "selectionSurfaceRow", True)
         row.setAttribute(Qt.WA_StyledBackground, True)
         row.setFocusPolicy(Qt.NoFocus)
         row.setMinimumHeight(68)
@@ -245,17 +247,66 @@ def install_selection_surface_contracts(root: QWidget) -> None:
             _install_filter_values(view)
 
 
+def _ancestor_list(widget: QWidget | None) -> QListWidget | None:
+    parent = widget.parentWidget() if widget is not None else None
+    while parent is not None:
+        if isinstance(parent, QListWidget):
+            return parent
+        parent = parent.parentWidget()
+    return None
+
+
+class _SelectionSurfaceWatcher(QObject):
+    """Observe deferred widget construction without adding page-layout timers."""
+
+    def __init__(self, root: QWidget) -> None:
+        super().__init__(root)
+        self._watched: set[int] = set()
+        self.watch_tree(root)
+
+    def watch_tree(self, root: QWidget) -> None:
+        if root is None or not isValid(root):
+            return
+        widgets = [root]
+        widgets.extend(root.findChildren(QWidget))
+        for widget in widgets:
+            key = id(widget)
+            if key in self._watched or not isValid(widget):
+                continue
+            self._watched.add(key)
+            widget.installEventFilter(self)
+            widget.objectNameChanged.connect(self._on_object_name_changed)
+        install_selection_surface_contracts(root)
+
+    def _on_object_name_changed(self, _name: str) -> None:
+        widget = self.sender()
+        if isinstance(widget, QWidget) and isValid(widget):
+            install_selection_surface_contracts(widget)
+            ancestor = _ancestor_list(widget)
+            if ancestor is not None:
+                install_selection_surface_contracts(ancestor)
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if event.type() == QEvent.Type.ChildAdded:
+            child = event.child()
+            if isinstance(child, QWidget) and isValid(child):
+                self.watch_tree(child)
+                ancestor = _ancestor_list(child)
+                if ancestor is not None:
+                    install_selection_surface_contracts(ancestor)
+        return super().eventFilter(watched, event)
+
+
 def schedule_selection_surface_contracts(root: QWidget) -> None:
-    """Apply after page construction and once more after deferred population."""
-    root_ref = weakref.ref(root)
-
-    def run() -> None:
-        target = root_ref()
-        if target is not None and isValid(target):
-            install_selection_surface_contracts(target)
-
-    QTimer.singleShot(0, run)
-    QTimer.singleShot(120, run)
+    """Install now and watch later child construction without timer coupling."""
+    if root is None or not isValid(root):
+        return
+    watcher = getattr(root, "_selection_surface_watcher", None)
+    if watcher is None or not isValid(watcher):
+        watcher = _SelectionSurfaceWatcher(root)
+        root._selection_surface_watcher = watcher
+    else:
+        watcher.watch_tree(root)
 
 
 __all__ = [
