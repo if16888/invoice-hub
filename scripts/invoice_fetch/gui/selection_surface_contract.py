@@ -31,7 +31,7 @@ class SelectionSurfaceDelegate(QStyledItemDelegate):
     @staticmethod
     def normalized_option(option: QStyleOptionViewItem) -> QStyleOptionViewItem:
         normalized = QStyleOptionViewItem(option)
-        normalized.state &= ~QStyle.State_HasFocus
+        normalized.state &= ~QStyle.StateFlag.State_HasFocus
         return normalized
 
     def paint(self, painter, option, index) -> None:  # noqa: N802
