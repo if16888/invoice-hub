@@ -51,6 +51,7 @@ class DesignSystemV11Tests(unittest.TestCase):
         root.addWidget(nav)
 
         filter_bar = QFrame(window)
+        filter_bar.setObjectName("ExistingReviewFilterBar")
         filter_layout = QHBoxLayout(filter_bar)
         cards = {
             "all": CompactStatCard("全部", "259", state="info", parent=filter_bar),
@@ -100,9 +101,10 @@ class DesignSystemV11Tests(unittest.TestCase):
         try:
             apply_review_status_segmented_control(window)
 
-            self.assertEqual(bar.objectName(), "ReviewStatusSegmentedControl")
+            self.assertEqual(bar.objectName(), "ExistingReviewFilterBar")
             self.assertEqual(bar.property("visualRole"), "segmented-filter")
             self.assertEqual(bar.height(), DESIGN_V1_METRICS["segmented_control_height"])
+            self.assertIn('QFrame[visualRole="segmented-filter"]', bar.styleSheet())
             self.assertIn(DESIGN_V1_COLORS["surface_secondary"], bar.styleSheet())
             self.assertIn(DESIGN_V1_COLORS["border_subtle"], bar.styleSheet())
 
