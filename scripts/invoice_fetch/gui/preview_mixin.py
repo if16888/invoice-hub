@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import RUNTIME_DIR
+from .pdf_preview_controller import PdfPreviewController
 
 _log = logging.getLogger("invoice_fetch.gui.app")
 
@@ -362,6 +363,12 @@ class PreviewMixin:
 
         self.pdf_document = None
         self.pdf_view = None
+        self.pdf_preview_controller = PdfPreviewController(self.preview_stack, self)
+        self.pdf_preview_controller.ready.connect(self._on_pdf_preview_ready)
+        self.pdf_preview_controller.failed.connect(self._on_pdf_preview_failed)
+        self.pdf_preview_controller.page_changed.connect(
+            lambda *_args: self._on_pdf_page_changed(0)
+        )
         self.lbl_pdf_fallback = None
 
         self.image_scroll_area = QScrollArea()
@@ -807,50 +814,9 @@ class PreviewMixin:
         if suffix == ".pdf":
             QPdfDocument, QPdfView = get_qt_pdf_classes()
             if QPdfDocument is not None and QPdfView is not None:
-                if self.pdf_view is None:
-                    self.pdf_view = QPdfView(self)
-                    # ── PDF MultiPage: prefer MultiPage, fallback to SinglePage ──
-                    if hasattr(QPdfView.PageMode, "MultiPage"):
-                        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-                    else:
-                        self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
-                        _log.info("当前 Qt PDF 组件不支持 MultiPage，已降级为单页预览")
-                    self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
-                    self.preview_stack.addWidget(self.pdf_view)
-                    # Install event filter to capture key events that QPdfView may consume
-                    self.pdf_view.installEventFilter(self)
-
-                old_document = getattr(self, "pdf_document", None)
-                if old_document is not None:
-                    try:
-                        self.pdf_view.setDocument(None)
-                    except Exception:
-                        pass
-                    try:
-                        old_document.close()
-                    except Exception:
-                        pass
-                    try:
-                        old_document.deleteLater()
-                    except Exception:
-                        pass
-
-                self.pdf_document = QPdfDocument(self)
-                self.pdf_view.setDocument(self.pdf_document)
-                self.pdf_document.load(str(file_path))
-                # Re-apply MultiPage preference on every load
-                if hasattr(QPdfView.PageMode, "MultiPage"):
-                    self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-                else:
-                    self.pdf_view.setPageMode(QPdfView.PageMode.SinglePage)
-                self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
-                self.preview_stack.setCurrentWidget(self.pdf_view)
-                self.pdf_view.update()
-                # ── Refresh PDF-page-aware file info after loading ──
-                self._refresh_preview_file_info()
-                self._update_pdf_page_buttons()
-                # ── Connect pageNavigator signal if available ──
-                self._connect_pdf_page_navigator()
+                self.pdf_preview_controller.document_class = QPdfDocument
+                self.pdf_preview_controller.view_class = QPdfView
+                self.pdf_preview_controller.load(file_path)
             else:
                 used_fallback = True
                 if self.lbl_pdf_fallback is None:
@@ -972,6 +938,22 @@ class PreviewMixin:
         text = self._format_preview_file_info(doc, idx, len(self.current_preview_docs), pdf_page, pdf_page_count)
         if hasattr(self, "lbl_file_info"):
             self.lbl_file_info.setText(text)
+
+    def _on_pdf_preview_ready(self):
+        """Synchronize legacy toolbar consumers after an atomic PDF swap."""
+        controller = self.pdf_preview_controller
+        self.pdf_view = controller.active_view()
+        self.pdf_document = controller.active_document()
+        if self.pdf_view is not None:
+            self.pdf_view.installEventFilter(self)
+        self._refresh_preview_file_info()
+        self._update_pdf_page_buttons()
+
+    def _on_pdf_preview_failed(self, _path: str):
+        self.pdf_view = None
+        self.pdf_document = None
+        self._show_preview_status("PDF 加载失败，暂不支持预览")
+        self._set_zoom_buttons_enabled(False)
 
     def _connect_pdf_page_navigator(self):
         """Try to connect to QPdfDocument's pageNavigator currentPageChanged signal."""
