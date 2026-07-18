@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import unittest
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QStackedWidget, QWidget
@@ -18,7 +19,7 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         self.assertIn("view.setDocument(document)", source)
         self.assertIn("self._stack.removeWidget(view)", source)
         self.assertIn("document.close()", source)
-        self.assertNotIn("setDocument(None)", source)
+        self.assertIn("setDocument(None)", source)
 
     def test_preview_mixin_delegates_pdf_loading_to_controller(self):
         source = inspect.getsource(preview_mixin.PreviewMixin)
@@ -56,6 +57,34 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         # but its C++ QWidget has already gone away.
         controller._dispose(view, None)
 
+    def test_rapid_invoice_switches_keep_only_latest_pdf(self):
+        """Ten consecutive invoice changes must leave one current document."""
+        app = QApplication.instance() or QApplication([])
+        stack = QStackedWidget()
+        controller = PdfPreviewController(stack)
+        for index in range(10):
+            view = QWidget(stack)
+            document = _FakeDocument(Path(f"invoice-{index}.pdf"))
+            controller._generation += 1
+            controller._activate(controller._generation, view, document)
+        app.processEvents()
+        self.assertEqual(controller.active_path(), Path("invoice-9.pdf"))
+        self.assertLessEqual(stack.count(), 1)
+        controller.clear()
+        app.processEvents()
+        self.assertIsNone(controller.active_document())
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeDocument:
+    def __init__(self, path: Path):
+        self._invoice_hub_path = path
+
+    def close(self):
+        return None
+
+    def deleteLater(self):
+        return None
