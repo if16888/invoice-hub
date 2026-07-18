@@ -51,6 +51,12 @@ class PdfPreviewController(QObject):
         else:
             view.setPageMode(view_class.PageMode.SinglePage)
         view.setZoomMode(view_class.ZoomMode.FitToWidth)
+        # A fresh view can render while the document is loading. Make it the
+        # visible stack page immediately; this avoids a blank preview when a
+        # Windows Qt build delays or drops the Ready notification. The old
+        # view remains a separate widget until activation disposes it.
+        self._stack.addWidget(view)
+        self._stack.setCurrentWidget(view)
 
         def status_changed(status):
             if generation != self._generation:
@@ -85,7 +91,8 @@ class PdfPreviewController(QObject):
             return
         old_view, old_document = self._view, self._document
         self._view, self._document = view, document
-        self._stack.addWidget(view)
+        if self._stack.indexOf(view) < 0:
+            self._stack.addWidget(view)
         self._stack.setCurrentWidget(view)
         try:
             document.pageNavigator().jump(0, 0.0, 0.0)
