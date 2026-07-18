@@ -579,7 +579,7 @@ QLabel.InlineWarning {
 }
 QLabel#CompactBuyerWarning {
     min-height: 0;
-    max-height: 44px;
+    max-height: 64px;
     padding: 4px 9px;
     margin-top: 4px;
     margin-bottom: 4px;
@@ -1517,7 +1517,7 @@ QLabel.InlineWarning {
 }
 QLabel#CompactBuyerWarning {
     min-height: 0;
-    max-height: 44px;
+    max-height: 64px;
     padding: 4px 9px;
     margin-top: 4px;
     margin-bottom: 4px;

@@ -150,11 +150,13 @@ def _refresh_compact_buyer_warning(window) -> None:
     label.setToolTip(full_text)
     label.setAccessibleDescription(full_text)
     label.setObjectName("CompactBuyerWarning")
-    label.setWordWrap(False)
+    label.setWordWrap(True)
+    label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     label.setMinimumWidth(0)
-    label.setMaximumWidth(272)
-    label.setFixedHeight(44)
-    label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+    label.setMaximumWidth(16777215)
+    label.setMinimumHeight(44)
+    label.setMaximumHeight(64)
+    label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
     label.setProperty("tone", "warning" if summary else "muted")
     label.setVisible(bool(summary))
 
@@ -162,13 +164,13 @@ def _refresh_compact_buyer_warning(window) -> None:
     if row is not None and isValid(row):
         row.setVisible(bool(summary))
         row.setMinimumWidth(0)
-        row.setMaximumWidth(272)
-        row.setFixedHeight(44)
-        row.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        row.setMaximumWidth(16777215)
+        row.setMinimumHeight(44)
+        row.setMaximumHeight(64)
+        row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         row_layout = row.layout()
         if row_layout is not None:
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setAlignment(label, Qt.AlignLeft | Qt.AlignVCenter)
 
     button = getattr(detail, "btn_edit_reimbursement_title", None)
     if button is not None and isValid(button):
@@ -181,12 +183,14 @@ def _refresh_compact_buyer_warning(window) -> None:
 
     label.style().unpolish(label)
     label.style().polish(label)
-    # The shared InlineWarning stylesheet has a taller default. Apply the
-    # compact geometry after polishing so the buyer check cannot expand back
-    # into an empty full-width banner.
-    label.setFixedHeight(44)
+    # The shared InlineWarning stylesheet is also used by longer diagnostic
+    # messages. Reapply the compact two-line cap after polishing while leaving
+    # the label free to use the full detail-panel width.
+    label.setMinimumHeight(44)
+    label.setMaximumHeight(64)
     if row is not None and isValid(row):
-        row.setFixedHeight(44)
+        row.setMinimumHeight(44)
+        row.setMaximumHeight(64)
     label.update()
 
 
