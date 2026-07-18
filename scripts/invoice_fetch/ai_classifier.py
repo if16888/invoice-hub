@@ -48,12 +48,14 @@ def clear_all_session_paused() -> None:
 # API endpoints
 _ENDPOINTS = {
     "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
 }
 
 _DEFAULT_MODELS = {
     "none": "",
     "deepseek": "deepseek-chat",
+    "openai": "gpt-4o-mini",
     "gemini": "gemini-2.5-flash",
 }
 
@@ -151,7 +153,7 @@ class AIClassifier:
 
     def _call_api(self, chunk: list[dict]) -> list[dict]:
         """Single API call for a chunk of emails."""
-        if self.provider == "deepseek":
+        if self.provider in {"deepseek", "openai"}:
             return self._call_deepseek(chunk)
         elif self.provider == "gemini":
             return self._call_gemini(chunk)

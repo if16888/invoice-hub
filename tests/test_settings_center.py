@@ -568,7 +568,7 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         dialog = self._make_dialog()
         dialog._open_new_ai_editor()
         providers = [dialog.combo_ai_provider.itemText(i) for i in range(dialog.combo_ai_provider.count())]
-        self.assertEqual(providers, ["deepseek", "gemini"])
+        self.assertEqual(providers, ["deepseek", "gemini", "openai"])
 
     def test_ai_rows_rendered_immediately_on_init(self):
         config = {

@@ -400,6 +400,10 @@ QListWidget#EntityList::item:selected {
     background-color: #EFF6FF;
     color: #1D4ED8;
 }
+QListWidget#EntityList::item:focus {
+    outline: none;
+    border: none;
+}
 QLabel[class="EntityListTitle"] {
     color: #172033;
     font-size: 13px;

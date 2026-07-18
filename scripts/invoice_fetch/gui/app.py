@@ -418,7 +418,7 @@ class SingleTaskAiProfileDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
         self.combo_provider = QComboBox()
-        self.combo_provider.addItems(["deepseek", "gemini"])
+        self.combo_provider.addItems(["deepseek", "gemini", "openai"])
         self.txt_model = QLineEdit()
         self.chk_enabled = QCheckBox("启用 AI 提取与分类")
         form.addRow("Provider", self.combo_provider)
@@ -2399,8 +2399,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_settings_privacy.setText("敏感信息仍由系统凭据管理器保存；配置文件与日志只保留脱敏内容。")
         if hasattr(self, "lbl_settings_data"):
             self.lbl_settings_data.setText(
-                f"数据库大小：{db_size / 1024 / 1024:.1f} MB\n备份目录：{backup_dir}\n"
-                f"数据目录：{RUNTIME_DIR}\n导出目录：{RUNTIME_DIR / 'exports'}"
+                f"数据库大小：{db_size / 1024 / 1024:.1f} MB\n"
+                "数据目录：本机应用数据目录\n"
+                "备份目录：本机受保护备份目录\n"
+                "导出目录：本机导出目录（可通过下方按钮打开）"
             )
         if hasattr(self, "lbl_settings_about"):
             self.lbl_settings_about.setText(self._about_text())

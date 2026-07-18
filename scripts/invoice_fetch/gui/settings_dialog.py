@@ -2141,7 +2141,7 @@ class SettingsDialog(QDialog):
         self.txt_ai_name.textChanged.connect(self._update_ai_wizard_ui)
 
         self.combo_ai_provider = QComboBox()
-        self.combo_ai_provider.addItems(["deepseek", "gemini"])
+        self.combo_ai_provider.addItems(["deepseek", "gemini", "openai"])
         self.combo_ai_provider.currentTextChanged.connect(self._on_ai_wizard_provider_changed)
 
         form_layout.addRow("配置名称:", self.txt_ai_name)
@@ -2222,6 +2222,9 @@ class SettingsDialog(QDialog):
         elif provider == "gemini":
             self.txt_ai_model.addItems(["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"])
             self.txt_ai_model.setCurrentText("gemini-2.5-flash")
+        elif provider == "openai":
+            self.txt_ai_model.addItems(["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"])
+            self.txt_ai_model.setCurrentText("gpt-4o-mini")
 
     def _update_ai_wizard_ui(self):
         if getattr(self, "_loading_ai_profile_values", False):
