@@ -3851,6 +3851,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "workbench_nav_buttons") and page_key in self.workbench_nav_buttons:
             btn = self.workbench_nav_buttons[page_key]
             if btn and hasattr(btn, "isCheckable") and btn.isCheckable():
+                # Do not rely solely on QButtonGroup's auto-exclusive timing:
+                # page switches can be triggered programmatically while a
+                # mouse click is still being delivered. Explicitly clear the
+                # other selectable entries so the sidebar always has exactly
+                # one active page.
+                for key, candidate in self.workbench_nav_buttons.items():
+                    if key != page_key and candidate.isCheckable():
+                        candidate.setChecked(False)
                 btn.setChecked(True)
 
         if page_key == "overview":
