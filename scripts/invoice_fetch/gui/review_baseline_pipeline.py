@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
 from .company_tax_profile import apply_company_tax_profile
+from .design_system_v11 import apply_design_system_v11
 from .design_v1_review_task_closure import apply_design_v1_review_task_closure
 from .review_detail_closure import apply_review_detail_closure
 from .review_detail_width_fix import apply_review_detail_width_fix
@@ -32,6 +33,7 @@ from .review_workspace_closure import apply_review_workspace_closure
 
 ReviewStage = tuple[str, Callable[[QWidget], None]]
 
+
 REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("workspace_baseline", apply_review_workspace_baseline),
     ("toolbar_and_filters", apply_review_toolbar_filter_fixes),
@@ -43,9 +45,12 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("detail_closure", apply_review_detail_closure),
     # Paging owns the final count copy and reconnects the search debounce timer.
     ("list_paging", apply_review_list_paging_fix),
-    # Task ownership runs last so no earlier compatibility stage can restore
+    # Task ownership runs late so no earlier compatibility stage can restore
     # cross-workflow buttons or expand the buyer warning again.
     ("task_ownership", apply_design_v1_review_task_closure),
+    # Visual language is deliberately final: earlier compatibility stages may
+    # still size or restyle the five status controls as independent cards.
+    ("visual_language_v11", apply_design_system_v11),
 )
 
 

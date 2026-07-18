@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHeaderView, QSizePolicy, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_METRICS
 from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
     _refresh_compact_buyer_warning,
 )
@@ -67,9 +68,26 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                self.assertEqual(window.filter_bar_widget.height(), 40)
-                for card in window.filter_buttons.values():
-                    self.assertEqual(card.height(), 30)
+                self.assertEqual(
+                    window.filter_bar_widget.height(),
+                    DESIGN_V1_METRICS["segmented_control_height"],
+                )
+                self.assertEqual(
+                    window.filter_bar_widget.property("visualRole"),
+                    "segmented-filter",
+                )
+                self.assertIn(
+                    'QFrame[visualRole="segmented-filter"]',
+                    window.filter_bar_widget.styleSheet(),
+                )
+                for status, card in window.filter_buttons.items():
+                    self.assertEqual(
+                        card.height(),
+                        DESIGN_V1_METRICS["segmented_item_height"],
+                    )
+                    self.assertEqual(card.property("visualRole"), "status-segment")
+                    self.assertEqual(card.property("statusKey"), status)
+                    self.assertIn("border: none", card.styleSheet())
                     self.assertGreaterEqual(card.minimumWidth(), 86)
                     self.assertLessEqual(card.maximumWidth(), 92)
                 self.assertTrue(window.btn_advanced_filter.isHidden())
