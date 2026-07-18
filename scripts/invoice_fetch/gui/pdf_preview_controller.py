@@ -25,6 +25,8 @@ class PdfPreviewController(QObject):
         self._generation = 0
         self._view = None
         self._document = None
+        self.document_class = None
+        self.view_class = None
 
     def active_view(self):
         return self._view
@@ -36,16 +38,19 @@ class PdfPreviewController(QObject):
         from PySide6.QtPdf import QPdfDocument
         from PySide6.QtPdfWidgets import QPdfView
 
+        document_class = self.document_class or QPdfDocument
+        view_class = self.view_class or QPdfView
+
         self._generation += 1
         generation = self._generation
-        document = QPdfDocument(self)
-        view = QPdfView(self._stack)
+        document = document_class(self)
+        view = view_class(self._stack)
         view.setDocument(document)
-        if hasattr(QPdfView.PageMode, "MultiPage"):
-            view.setPageMode(QPdfView.PageMode.MultiPage)
+        if hasattr(view_class.PageMode, "MultiPage"):
+            view.setPageMode(view_class.PageMode.MultiPage)
         else:
-            view.setPageMode(QPdfView.PageMode.SinglePage)
-        view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+            view.setPageMode(view_class.PageMode.SinglePage)
+        view.setZoomMode(view_class.ZoomMode.FitToWidth)
 
         def status_changed(status):
             if generation != self._generation:
@@ -57,8 +62,16 @@ class PdfPreviewController(QObject):
                 self._dispose(view, document)
                 self.failed.emit(str(path))
 
+        if not hasattr(document, "statusChanged"):
+            document.load(str(path))
+            self._activate(generation, view, document)
+            return
         document.statusChanged.connect(status_changed)
         document.load(str(path))
+        # ``statusChanged`` is asynchronous on some Qt builds but is emitted
+        # synchronously before the event loop on others. Read the final state
+        # once as well so a freshly-loaded local PDF is immediately usable.
+        status_changed(document.status())
 
     def clear(self) -> None:
         self._generation += 1

@@ -814,6 +814,8 @@ class PreviewMixin:
         if suffix == ".pdf":
             QPdfDocument, QPdfView = get_qt_pdf_classes()
             if QPdfDocument is not None and QPdfView is not None:
+                self.pdf_preview_controller.document_class = QPdfDocument
+                self.pdf_preview_controller.view_class = QPdfView
                 self.pdf_preview_controller.load(file_path)
             else:
                 used_fallback = True
