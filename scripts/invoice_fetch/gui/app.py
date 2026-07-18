@@ -75,6 +75,7 @@ from .design_tokens import DESIGN_V1_COLORS
 from .api_key_dialog import ApiKeyDialog
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
+from .ui.layouts import StandardPage
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
@@ -3047,11 +3048,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_settings_ai_page()
 
     def _build_overview_page_view(self) -> QWidget:
-        page = QWidget()
-        outer_layout = QVBoxLayout(page)
-        DashboardPageLayout.apply(page, outer_layout)
+        page = StandardPage()
+        outer_layout = page.content_layout()
         self.overview_content_host = QWidget(page)
-        self.overview_content_host.setMaximumWidth(1360)
+        self.overview_content_host.setMaximumWidth(StandardPage.MAX_CONTENT_WIDTH)
         self.overview_content_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         layout = QVBoxLayout(self.overview_content_host)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -3121,9 +3121,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return page
 
     def _build_imports_page_view(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        TaskFlowPageLayout.apply(page, layout)
+        page = StandardPage()
+        layout = page.content_layout()
 
         self.imports_header = PageHeader(
             "导入中心",
@@ -3262,7 +3261,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shell.setAlignment(self.import_mail_recent_card, Qt.AlignTop)
 
         self.imports_workspace_host = QWidget()
-        self.imports_workspace_host.setMaximumWidth(1440)
+        self.imports_workspace_host.setMaximumWidth(StandardPage.MAX_CONTENT_WIDTH)
         self.imports_workspace_host.setLayout(shell)
         workspace_row = QHBoxLayout()
         workspace_row.setContentsMargins(0, 0, 0, 0)
@@ -3276,9 +3275,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return page
 
     def _build_export_page_view(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        TaskFlowPageLayout.apply(page, layout)
+        page = StandardPage()
+        layout = page.content_layout()
 
         self.export_header = PageHeader(
             "报销组与导出",
@@ -3393,9 +3391,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return page
 
     def _build_settings_page_view(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        SettingsPageLayout.apply(page, layout)
+        page = StandardPage()
+        layout = page.content_layout()
 
         self.settings_header = PageHeader(
             "系统设置",
