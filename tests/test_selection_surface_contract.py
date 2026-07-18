@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scripts.invoice_fetch.gui.column_filters import ColumnFilterPopup
 from scripts.invoice_fetch.gui.page_layouts import DashboardPageLayout
 from scripts.invoice_fetch.gui.selection_surface_contract import (
     SelectionSurfaceDelegate,
@@ -118,6 +119,27 @@ class SelectionSurfaceContractTests(unittest.TestCase):
         finally:
             nav.close()
             nav.deleteLater()
+            self._flush()
+
+    def test_filter_popup_value_list_uses_shared_selection_contract(self):
+        popup = ColumnFilterPopup(
+            "seller_name",
+            ["供应商 A", "供应商 B"],
+            {},
+            lambda _key, _spec: None,
+        )
+        try:
+            self._flush()
+            value_list = popup.value_list
+            self.assertEqual(value_list.objectName(), "FilterValueList")
+            self.assertIsInstance(value_list.itemDelegate(), SelectionSurfaceDelegate)
+            self.assertEqual(value_list.property("selectionSurfaceContract"), "filter-values")
+            qss = value_list.styleSheet()
+            self.assertIn("QListWidget#FilterValueList::item:selected:active", qss)
+            self.assertIn("outline: 0", qss)
+        finally:
+            popup.close()
+            popup.deleteLater()
             self._flush()
 
     def test_page_layout_schedules_contract_for_child_lists(self):
