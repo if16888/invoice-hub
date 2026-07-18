@@ -71,6 +71,14 @@ class DesignV1UIConvergenceTests(unittest.TestCase):
             self.assertIn(f'QLabel[status="{status}"]', qss)
         self.assertIn("QTextEdit#LogView", qss)
 
+    def test_review_actions_are_compact_and_auto_advance(self):
+        from scripts.invoice_fetch.gui.invoice_detail_panel import InvoiceDetailPanel
+        source = inspect.getsource(InvoiceDetailPanel)
+        self.assertIn('make_button("通过", variant="primary"', source)
+        self.assertIn("通过后自动进入下一张", source)
+        self.assertIn("self.inline_review_layout.setStretch(0, 1)", source)
+        self.assertNotIn('make_button("通过并下一张"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

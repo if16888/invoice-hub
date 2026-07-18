@@ -235,7 +235,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertIsInstance(self.panel.btn_err, QPushButton)
         self.assertIsInstance(self.panel.btn_inline_more, QPushButton)
         # Text checks
-        self.assertIn("通过并下一张", self.panel.btn_app.text())
+        self.assertEqual("通过", self.panel.btn_app.text())
         self.assertNotIn("\n", self.panel.btn_app.text())
         self.assertIn("忽略", self.panel.btn_ign.text())
         self.assertNotIn("\n", self.panel.btn_ign.text())

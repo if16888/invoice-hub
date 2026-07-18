@@ -2694,7 +2694,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.inline_review_layout.setSpacing(10)
-        self.btn_app = make_button("通过并下一张", variant="primary", tooltip="快捷键：Enter")
+        self.btn_app = make_button("通过", variant="primary", tooltip="通过后自动进入下一张 · 快捷键：Enter")
         self.btn_app.setFixedHeight(42)
         self.btn_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -2714,7 +2714,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.btn_ign = make_button("忽略", variant="secondary", tooltip="快捷键：Del")
         self.btn_ign.setFixedHeight(42)
-        self.btn_ign.setFixedWidth(88)
+        self.btn_ign.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
 
@@ -2732,7 +2732,7 @@ class InvoiceDetailPanel(QWidget):
 
         self.btn_err = make_button("异常", variant="danger", tooltip="快捷键：Ctrl+E")
         self.btn_err.setFixedHeight(42)
-        self.btn_err.setFixedWidth(96)
+        self.btn_err.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
 
@@ -2817,7 +2817,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.inline_review_layout.addStretch(1)
+        # Keep the three primary review actions on one row at compact widths.
+        self.inline_review_layout.setStretch(0, 1)
+        self.inline_review_layout.setStretch(1, 1)
+        self.inline_review_layout.setStretch(2, 1)
 
 
 
