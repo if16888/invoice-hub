@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QFrame, QLineEdit, QPushButton
 
 from scripts.invoice_fetch.gui.api_key_dialog import ApiKeyDialog
@@ -26,6 +27,23 @@ class IHDS09Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def tearDown(self):
+        """Flush closed Qt windows before the next fixture is constructed.
+
+        This module creates many real ``InvoiceReviewApp`` windows.  Several
+        tests intentionally call only ``close()``; leaving their deferred
+        QWidget deletions queued eventually terminates the Windows Qt test
+        process without a Python traceback.
+        """
+        for widget in list(self.app.topLevelWidgets()):
+            if widget is None or widget is self.app:
+                continue
+            widget.close()
+            widget.deleteLater()
+        self.app.processEvents()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
 
     def make_window(self, td):
         window = InvoiceReviewApp(Path(td) / "ihds09.db")
