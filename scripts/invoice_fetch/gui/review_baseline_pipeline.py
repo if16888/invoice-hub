@@ -18,6 +18,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
+from .buyer_warning_readability import apply_buyer_warning_readability
 from .company_tax_profile import apply_company_tax_profile
 from .design_system_v11 import apply_design_system_v11
 from .design_v1_review_task_closure import apply_design_v1_review_task_closure
@@ -48,6 +49,10 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     # Task ownership runs late so no earlier compatibility stage can restore
     # cross-workflow buttons or expand the buyer warning again.
     ("task_ownership", apply_design_v1_review_task_closure),
+    # Remove redundant vertical warning chrome after task ownership establishes
+    # the final compact warning surface. The local geometry contract persists
+    # across later text refreshes and high-DPI repolish operations.
+    ("buyer_warning_readability", apply_buyer_warning_readability),
     # Visual language is deliberately final: earlier compatibility stages may
     # still size or restyle the five status controls as independent cards.
     ("visual_language_v11", apply_design_system_v11),
