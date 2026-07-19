@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Invoice Hub UI Kit Component Exports."""
+"""Invoice Hub UI Kit component exports."""
 
 from .card import Card
 from .button import AppButton, IconButton
@@ -32,7 +32,3 @@ __all__ = [
     "PageHeader",
     "SegmentControl",
 ]
-from .page_header import PageHeader
-from .segment_control import SegmentControl
-
-__all__ = ["PageHeader", "SegmentControl"]
