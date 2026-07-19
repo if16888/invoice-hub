@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
 from shiboken6 import isValid
 
-from ..reimbursement import buyer_warning
+from ..reimbursement import buyer_warning, compact_buyer_warning
 from .ui_components import fit_button_to_content
 
 
@@ -148,9 +148,21 @@ def _remove_cross_workflow_actions(window) -> None:
         toolbar.adjustSize()
 
 
+def _hide_redundant_review_header(window) -> None:
+    """Keep Review as a dense workbench without a duplicate page title block."""
+    header = getattr(window, "review_header", None)
+    if header is None or not isValid(header):
+        return
+    parent = header.parentWidget()
+    if parent is not None:
+        _remove_widget_from_layout(parent.layout(), header)
+    header.hide()
+    header.setProperty("reviewDenseHeaderRemoved", True)
+
+
 def _buyer_warning_summary(full_text: str) -> str:
-    """Return the canonical user-visible comparison without losing details."""
-    return str(full_text or "").strip()
+    """Return canonical compact copy without migration-only aliases."""
+    return compact_buyer_warning(full_text)
 
 
 def _selected_invoice(window) -> dict:
@@ -191,8 +203,8 @@ def _refresh_compact_buyer_warning(window) -> None:
     # Match InvoiceDetailPanel.set_summary exactly so initial selection, filter
     # changes and later row changes never alternate between two phrasings.
     label.setText(f"⚠️ {display_text}" if display_text else "")
-    label.setToolTip(full_text)
-    label.setAccessibleDescription(full_text)
+    label.setToolTip(display_text)
+    label.setAccessibleDescription(display_text)
     label.setObjectName("CompactBuyerWarning")
     label.setWordWrap(True)
     label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -324,6 +336,7 @@ def apply_design_v1_review_task_closure(page: QWidget | None) -> None:
         return
 
     page.setProperty("designV1ReviewTaskClosureApplied", True)
+    _hide_redundant_review_header(window)
     _remove_cross_workflow_actions(window)
     _install_warning_refresh(window, page)
 
