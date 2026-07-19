@@ -21,6 +21,23 @@ _STATE_BY_KEY = {
 }
 
 
+def _repolish_widget_tree(widget: QWidget) -> None:
+    """Re-evaluate QSS for a widget and all descendants.
+
+    The segment text colors are selected through a parent dynamic-property
+    selector such as ``CompactStatCard[selected=true] QLabel``. Qt reliably
+    repolishes the card itself when that property changes, but on Windows it
+    may retain the previous palette on the child labels. Refreshing the whole
+    small segment subtree keeps background and text state synchronized.
+    """
+    widgets = (widget, *widget.findChildren(QWidget))
+    for item in widgets:
+        style = item.style()
+        style.unpolish(item)
+        style.polish(item)
+        item.update()
+
+
 class SegmentControl(QWidget):
     """Exclusive, compact control for mutually exclusive page filters."""
 
@@ -76,6 +93,7 @@ class SegmentControl(QWidget):
         self._selected = key
         for item_key, card in self.buttons.items():
             card.set_selected(item_key == key)
+            _repolish_widget_tree(card)
 
     def selected(self) -> str:
         return self._selected

@@ -8,6 +8,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
 from scripts.invoice_fetch.gui.design_system_v11 import (
@@ -17,6 +18,7 @@ from scripts.invoice_fetch.gui.design_system_v11 import (
 )
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS, DESIGN_V1_METRICS
 from scripts.invoice_fetch.gui.review_baseline_pipeline import REVIEW_BASELINE_STAGES
+from scripts.invoice_fetch.gui.ui.components import SegmentControl
 from scripts.invoice_fetch.gui.ui_components import CompactStatCard
 
 
@@ -124,6 +126,78 @@ class DesignSystemV11Tests(unittest.TestCase):
                 self.assertIn("border: none", card.styleSheet())
                 for color in status_only_colors:
                     self.assertNotIn(color, card.styleSheet())
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_segment_selection_refreshes_title_and_value_colors(self):
+        window = QWidget()
+        root = QVBoxLayout(window)
+        bar = QFrame(window)
+        bar_layout = QHBoxLayout(bar)
+        segment = SegmentControl(
+            {
+                "all": "全部",
+                "to_review": "待审核",
+                "approved": "已通过",
+                "ignored": "已忽略",
+                "error": "异常",
+            },
+            selected="all",
+            parent=bar,
+        )
+        segment.set_value("all", 259)
+        segment.set_value("to_review", 245)
+        bar_layout.addWidget(segment)
+        root.addWidget(bar)
+        window.filter_bar_widget = bar
+        window.filter_buttons = segment.buttons
+
+        try:
+            apply_review_status_segmented_control(window)
+            window.show()
+            self.app.processEvents()
+
+            segment.set_selected("all")
+            self.app.processEvents()
+            all_card = segment.buttons["all"]
+            review_card = segment.buttons["to_review"]
+            self.assertEqual(
+                all_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["accent_hover"].upper(),
+            )
+            self.assertEqual(
+                all_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["accent_hover"].upper(),
+            )
+            self.assertEqual(
+                review_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["text_secondary"].upper(),
+            )
+            self.assertEqual(
+                review_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["text"].upper(),
+            )
+
+            segment.set_selected("to_review")
+            self.app.processEvents()
+            self.assertEqual(
+                all_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["text_secondary"].upper(),
+            )
+            self.assertEqual(
+                all_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["text"].upper(),
+            )
+            self.assertEqual(
+                review_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["accent_hover"].upper(),
+            )
+            self.assertEqual(
+                review_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
+                DESIGN_V1_COLORS["accent_hover"].upper(),
+            )
         finally:
             window.close()
             window.deleteLater()
