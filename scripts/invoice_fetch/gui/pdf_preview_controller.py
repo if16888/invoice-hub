@@ -1,8 +1,8 @@
 """Atomic Qt PDF preview replacement.
 
-Every load owns a fresh ``QPdfDocument`` and ``QPdfView`` pair.  The currently
+Every load owns a fresh ``QPdfDocument`` and ``QPdfView`` pair. The currently
 visible pair remains attached until the replacement document reaches ``Ready``;
-only then is the new view shown and the previous pair retired.  This avoids both
+only then is the new view shown and the previous pair retired. This avoids both
 blank-preview gaps and the native ``QPdfLinkModel`` warnings caused by briefly
 attaching ``None`` as a document.
 """
@@ -11,16 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QStackedWidget
 
 
 def _is_qobject_alive(value) -> bool:
-    """Return whether a Qt wrapper still owns a live C++ object.
-
-    Qt may deliver a final PDF status notification after ``deleteLater`` has
-    destroyed an object.  Non-Qt test doubles are deliberately considered live.
-    """
+    """Return whether a Qt wrapper still owns a live C++ object."""
     if value is None:
         return False
     if not isinstance(value, QObject):
@@ -96,9 +92,9 @@ class PdfPreviewController(QObject):
                 if self._pending_document is document:
                     self._pending_document = None
                 self._dispose_document(document)
-                # Keep the previous valid preview visible when the replacement
-                # fails; the owning page can surface the error separately.
-                self.failed.emit(str(path))
+                # A failed replacement must not blank a previously valid PDF.
+                if self._view is None:
+                    self.failed.emit(str(path))
 
         if not hasattr(document, "statusChanged"):
             document.load(str(path))
@@ -153,13 +149,31 @@ class PdfPreviewController(QObject):
         if self._stack.indexOf(view) < 0:
             self._stack.addWidget(view)
         self._stack.setCurrentWidget(view)
+        view.show()
 
         try:
             navigator = view.pageNavigator()
+            # Existing preview helpers historically ask the document for its
+            # navigator. Expose the view navigator on the Python wrapper so both
+            # old and new callers operate on the same live object.
+            if not hasattr(document, "pageNavigator"):
+                document.pageNavigator = view.pageNavigator
             navigator.jump(0, 0.0, 0.0)
             navigator.currentPageChanged.connect(self._emit_page_changed)
         except Exception:
             pass
+
+        def refresh_viewport():
+            if not _is_qobject_alive(view):
+                return
+            try:
+                view.viewport().update()
+                view.update()
+            except Exception:
+                pass
+
+        refresh_viewport()
+        QTimer.singleShot(0, refresh_viewport)
 
         # Only retire the old pair after the replacement is visible.
         self._retire_pair(old_view, old_document)
