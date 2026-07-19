@@ -5,7 +5,6 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -35,7 +34,6 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
             window = self._make_window(td)
             try:
                 self.assertTrue(window.review_page.property("designV1ReviewTaskClosureApplied"))
-                toolbar = window.workbench_top_toolbar
                 for attr in (
                     "btn_import_local",
                     "btn_scan_email",
@@ -60,7 +58,7 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
-    def test_buyer_mismatch_is_compact_and_has_no_settings_shortcut(self):
+    def test_buyer_mismatch_is_detailed_and_has_no_settings_shortcut(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
@@ -76,18 +74,20 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                 detail = window._detail_panel
                 self.assertEqual(
                     detail.lbl_buyer_warning.text(),
-                    "购买方与默认开票主体不一致",
+                    "⚠️ 购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
                 )
-                self.assertIn("Actual Company", detail.lbl_buyer_warning.toolTip())
-                self.assertIn("Expected Company", detail.lbl_buyer_warning.toolTip())
+                self.assertEqual(
+                    detail.lbl_buyer_warning.toolTip(),
+                    "购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
+                )
                 self.assertFalse(detail.lbl_buyer_warning.isHidden())
                 self.assertFalse(detail.buyer_warning_action_row.isHidden())
                 self.assertTrue(detail.lbl_buyer_warning.wordWrap())
                 self.assertGreater(detail.lbl_buyer_warning.maximumWidth(), 272)
                 self.assertEqual(detail.lbl_buyer_warning.minimumHeight(), 44)
-                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 64)
+                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 72)
                 self.assertGreater(detail.buyer_warning_action_row.maximumWidth(), 272)
-                self.assertEqual(detail.buyer_warning_action_row.maximumHeight(), 64)
+                self.assertEqual(detail.buyer_warning_action_row.maximumHeight(), 72)
                 self.assertTrue(detail.btn_edit_reimbursement_title.isHidden())
                 self.assertTrue(
                     detail.btn_edit_reimbursement_title.property(
