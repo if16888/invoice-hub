@@ -218,9 +218,8 @@ class PdfPreviewController(QObject):
         except Exception:
             pass
 
-        # Closing is synchronous and keeps the non-null document object attached
-        # until the old view is destroyed. This stops stale rendering immediately,
-        # satisfies lifecycle callers, and avoids setDocument(None).
+        # Closing is synchronous and keeps the live document attached until the
+        # old view is destroyed. This stops stale rendering without a null bind.
         self._close_document(document)
         deleted = False
 
