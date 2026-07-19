@@ -184,20 +184,29 @@ class PdfPreviewController(QObject):
         if document is not None:
             self.page_changed.emit(page, document.pageCount())
 
-    def _dispose_document(self, document) -> None:
+    def _close_document(self, document) -> None:
+        """Synchronously stop rendering while the wrapper is still valid."""
         if not _is_qobject_alive(document):
             return
         try:
             document.close()
         except Exception:
             pass
+
+    def _delete_document_later(self, document) -> None:
+        if not _is_qobject_alive(document):
+            return
         try:
             document.deleteLater()
         except Exception:
             pass
 
+    def _dispose_document(self, document) -> None:
+        self._close_document(document)
+        self._delete_document_later(document)
+
     def _retire_pair(self, view, document) -> None:
-        """Retire a view first, then close its document after destruction."""
+        """Close a retired document now, then delete it after its view."""
         if not _is_qobject_alive(view):
             self._dispose_document(document)
             return
@@ -209,20 +218,24 @@ class PdfPreviewController(QObject):
         except Exception:
             pass
 
-        disposed = False
+        # Closing is synchronous and keeps the non-null document object attached
+        # until the old view is destroyed. This stops stale rendering immediately,
+        # satisfies lifecycle callers, and avoids setDocument(None).
+        self._close_document(document)
+        deleted = False
 
-        def finish_document_disposal(*_args):
-            nonlocal disposed
-            if disposed:
+        def finish_document_deletion(*_args):
+            nonlocal deleted
+            if deleted:
                 return
-            disposed = True
-            self._dispose_document(document)
+            deleted = True
+            self._delete_document_later(document)
 
         try:
-            view.destroyed.connect(finish_document_disposal)
+            view.destroyed.connect(finish_document_deletion)
             view.deleteLater()
         except Exception:
-            finish_document_disposal()
+            finish_document_deletion()
 
     # Compatibility entry point retained for focused tests and legacy callers.
     def _dispose(self, view, document) -> None:
