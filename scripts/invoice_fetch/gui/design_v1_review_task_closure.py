@@ -216,6 +216,17 @@ def _refresh_compact_buyer_warning(window) -> None:
     label.setProperty("tone", "warning" if display_text else "muted")
     label.setVisible(bool(display_text))
 
+    # Keep the editable/read-only buyer field synchronized with the same source.
+    # The visible banner uses compact copy; the field tooltip retains the detailed
+    # compatibility wording used by diagnostics and existing integrations.
+    buyer_field = getattr(window, "txt_buyer", None)
+    if buyer_field is None:
+        buyer_field = getattr(detail, "txt_buyer", None)
+    if buyer_field is not None and isValid(buyer_field):
+        actual_buyer = str(invoice.get("buyer_name") or "").strip() if invoice else ""
+        buyer_field.setToolTip(full_text or actual_buyer)
+        buyer_field.setAccessibleDescription(display_text or actual_buyer)
+
     row = getattr(detail, "buyer_warning_action_row", None)
     if row is not None and isValid(row):
         row.setVisible(bool(display_text))
