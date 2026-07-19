@@ -55,7 +55,6 @@ from .ui_components import (
     LogDrawer,
     PageStateStack,
     MoreMenuButton,
-    PageHeader,
     ReadOnlyDetailPanel,
     SelectableSourceCard,
     SecondaryNavStack,
@@ -75,6 +74,7 @@ from .design_tokens import DESIGN_V1_COLORS
 from .api_key_dialog import ApiKeyDialog
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
+from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
@@ -962,6 +962,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         main_layout.setContentsMargins(12, 0, 12, 0)
         main_layout.setSpacing(8)
 
+        self.review_header = PageHeader(
+            "发票审核",
+            "逐张确认原件、状态和报销组，处理完成后再进入导出。",
+        )
+        main_layout.addWidget(self.review_header)
+
         self.search_reload_timer = QTimer(self)
         self.search_reload_timer.setSingleShot(True)
         self.search_reload_timer.setInterval(250)
@@ -1125,34 +1131,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ERROR: "异常",
         }
 
-        state_by_status = {
-            "all": "info",
-            TO_REVIEW: "warning",
-            APPROVED: "success",
-            IGNORED: "muted",
-            ERROR: "danger",
-        }
-        icon_by_status = {
-            "all": "◎",
-            TO_REVIEW: "◔",
-            APPROVED: "●",
-            IGNORED: "◌",
-            ERROR: "▲",
-        }
-        for status, text in self.filter_base_labels.items():
-            card = CompactStatCard(
-                text,
-                "0",
-                state=state_by_status[status],
-                icon_text=icon_by_status[status],
-            )
-            card.setFocusPolicy(Qt.StrongFocus)
-            card.setFixedHeight(40)
-            card.setMinimumWidth(118)
-            card.set_selected(status == "all")
-            card.clicked.connect(lambda s=status: self._change_filter(s))
-            filter_layout.addWidget(card, 0)
-            self.filter_buttons[status] = card
+        self.status_segment_control = SegmentControl(self.filter_base_labels, "all")
+        self.status_segment_control.changed.connect(self._change_filter)
+        filter_layout.addWidget(self.status_segment_control, 1)
+        self.filter_buttons = self.status_segment_control.buttons
 
         filter_layout.addStretch()
 

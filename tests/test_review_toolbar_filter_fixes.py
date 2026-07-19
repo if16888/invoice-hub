@@ -42,7 +42,6 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                toolbar_layout = window.workbench_top_toolbar.layout()
                 for attr in (
                     "btn_import_local",
                     "btn_scan_email",
@@ -53,8 +52,6 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                     self.assertIsNone(button.property("reviewCompatibilityControl"))
                     self.assertNotIsInstance(button, QWidget)
 
-                # The underlying commands remain named and callable from their
-                # dedicated pages/global shortcuts; only Review presentation changes.
                 self.assertEqual(window.action_import_local.text(), "本地文件")
                 self.assertEqual(window.action_import_mobile.text(), "手机上传")
                 self.assertEqual(window.action_import_mail.text(), "邮箱扫描")
@@ -226,12 +223,12 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 self.assertFalse(detail.buyer_warning_action_row.isHidden())
                 self.assertEqual(
                     detail.lbl_buyer_warning.text(),
-                    "购买方与默认开票主体不一致",
+                    "⚠️ 购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
                 )
                 self.assertIn("Actual Company", detail.lbl_buyer_warning.toolTip())
                 self.assertIn("Expected Company", detail.lbl_buyer_warning.toolTip())
                 self.assertTrue(detail.lbl_buyer_warning.wordWrap())
-                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 64)
+                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 72)
                 self.assertTrue(detail.btn_edit_reimbursement_title.isHidden())
             finally:
                 window.close()

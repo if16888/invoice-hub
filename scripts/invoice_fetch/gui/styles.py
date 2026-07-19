@@ -136,6 +136,21 @@ QPushButton.WorkbenchNavButton:checked {
     color: #2563EB;
     font-weight: 600;
 }
+QPushButton.WorkbenchNavButton[collapsed="true"] {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+}
+QPushButton.WorkbenchNavButton[collapsed="true"]:hover {
+    background-color: #F8FAFC;
+}
+QPushButton.WorkbenchNavButton[collapsed="true"]:checked {
+    background: #EFF6FF;
+    border: none;
+    border-left: 3px solid #2563EB;
+    border-radius: 6px;
+}
 QFrame#WorkbenchTopToolbar {
     background-color: #FFFFFF;
     border: 1px solid #E5EAF2;
@@ -265,13 +280,33 @@ QFrame#PageHeader {
 }
 QLabel[class="PageTitle"] {
     color: #172033;
-    font-size: 18px;
-    font-weight: 700;
+    font-size: 22px;
+    font-weight: 600;
 }
-QLabel[class="PageHint"] {
+QLabel[class="PageHint"], QLabel[class="PageSubtitle"] {
     color: #667085;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 400;
+}
+QWidget#SegmentControl {
+    background: transparent;
+}
+QPushButton[class="SegmentItem"] {
+    background: transparent;
+    color: #475467;
+    border: none;
+    border-radius: 6px;
+    padding: 0 14px;
+    font-size: 13px;
     font-weight: 500;
+}
+QPushButton[class="SegmentItem"]:hover {
+    background: #F8FAFC;
+}
+QPushButton[class="SegmentItem"]:checked {
+    background: #2563EB;
+    color: #FFFFFF;
+    font-weight: 600;
 }
 QFrame#CommandBar {
     background-color: #FFFFFF;

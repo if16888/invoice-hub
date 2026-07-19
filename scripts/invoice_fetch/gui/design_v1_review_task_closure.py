@@ -3,11 +3,8 @@
 The Review workspace is intentionally dense, but it must still own one job:
 reviewing the current invoice queue. Import, mailbox scanning and export already
 have dedicated primary pages and therefore do not belong in the Review command
-bar. Buyer-profile mismatch information also needs to be concise and actionable
-without exposing another Settings shortcut inside the review flow.
-
-This stage changes presentation and signal wiring only. Existing import, scan and
-export callbacks remain available from their dedicated pages and global shortcuts.
+bar. Buyer-profile mismatch information also needs to be concise, accurate and
+synchronized with the selected invoice.
 """
 
 from __future__ import annotations
@@ -18,7 +15,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
 from shiboken6 import isValid
 
-from ..reimbursement import buyer_warning
+from ..reimbursement import buyer_warning, compact_buyer_warning
 from .ui_components import fit_button_to_content
 
 
@@ -31,37 +28,58 @@ _CROSS_WORKFLOW_BUTTONS = (
 
 class _CommandCompatibility:
     """Non-widget compatibility surface for legacy callers."""
+
     def __init__(self, action, legacy_text=None):
         self._action = action
         self._legacy_text = legacy_text
-        self._props = {"reviewCrossWorkflowActionRemoved": True, "reviewCompatibilityControl": None}
+        self._props = {
+            "reviewCrossWorkflowActionRemoved": True,
+            "reviewCompatibilityControl": None,
+        }
+
     def property(self, name):
         return self._props.get(name, self._action.property(name))
+
     def setProperty(self, name, value):
         self._props[name] = value
+
     def text(self):
         return self._legacy_text or self._action.text()
+
     def setText(self, value):
         self._legacy_text = value
+
     def style(self):
         return _NullStyle()
+
     def isEnabled(self):
         return self._action.isEnabled()
+
     def setEnabled(self, value):
         self._action.setEnabled(value)
-    def clearFocus(self): pass
-    def setFocus(self, *_args): pass
+
+    def clearFocus(self):
+        pass
+
+    def setFocus(self, *_args):
+        pass
+
     def isVisible(self):
         return False
+
     def isHidden(self):
         return True
+
     def menu(self):
         return None
 
 
 class _NullStyle:
-    def unpolish(self, *_args): pass
-    def polish(self, *_args): pass
+    def unpolish(self, *_args):
+        pass
+
+    def polish(self, *_args):
+        pass
 
 
 def _remove_widget_from_layout(layout: QLayout | None, widget: QWidget) -> bool:
@@ -91,22 +109,29 @@ def _remove_cross_workflow_actions(window) -> None:
         parent = button.parentWidget()
         if parent is not None:
             _remove_widget_from_layout(parent.layout(), button)
-        # These controls belong to their dedicated first-level pages. Keep the
-        # existing callback object available to legacy command code, but never
-        # leave a review compatibility widget off-canvas or clickable.
         button.setProperty("reviewCrossWorkflowActionRemoved", True)
-        action_name = {"btn_import_local": "action_import_local", "btn_scan_email": "action_scan_email", "btn_toolbar_export": "action_toolbar_export"}[attr]
+        action_name = {
+            "btn_import_local": "action_import_local",
+            "btn_scan_email": "action_scan_email",
+            "btn_toolbar_export": "action_toolbar_export",
+        }[attr]
         button.deleteLater()
-        legacy_text = {"btn_import_local": "导入", "btn_scan_email": "扫描邮箱", "btn_toolbar_export": "导出"}[attr]
-        setattr(window, attr, _CommandCompatibility(getattr(window, action_name), legacy_text))
+        legacy_text = {
+            "btn_import_local": "导入",
+            "btn_scan_email": "扫描邮箱",
+            "btn_toolbar_export": "导出",
+        }[attr]
+        setattr(
+            window,
+            attr,
+            _CommandCompatibility(getattr(window, action_name), legacy_text),
+        )
 
     more = getattr(window, "btn_more", None)
     if more is not None:
         more.setText("更多")
         more.setToolTip("更多审核操作")
         more.setAccessibleName("更多审核操作")
-        # Keep the compact label but leave enough room for its styled size hint
-        # at all supported Windows scale factors.
         fit_button_to_content(more, minimum=72, horizontal_padding=24)
         more.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
@@ -123,13 +148,42 @@ def _remove_cross_workflow_actions(window) -> None:
         toolbar.adjustSize()
 
 
+def _hide_redundant_review_header(window) -> None:
+    """Keep Review as a dense workbench without a duplicate page title block."""
+    header = getattr(window, "review_header", None)
+    if header is None or not isValid(header):
+        return
+    parent = header.parentWidget()
+    if parent is not None:
+        _remove_widget_from_layout(parent.layout(), header)
+    header.hide()
+    header.setProperty("reviewDenseHeaderRemoved", True)
+
+
 def _buyer_warning_summary(full_text: str) -> str:
-    text = str(full_text or "").strip()
-    if not text:
-        return ""
-    if "税号" in text or "纳税人识别号" in text:
-        return "购买方信息与默认开票主体不一致"
-    return "购买方与默认开票主体不一致"
+    """Return canonical compact copy without migration-only aliases."""
+    return compact_buyer_warning(full_text)
+
+
+def _selected_invoice(window) -> dict:
+    """Resolve the invoice represented by the current table selection.
+
+    Selection is preferred over ``window.current_invoice`` because queue reloads
+    temporarily preserve the latter while rebuilding the table.
+    """
+    table = getattr(window, "table", None)
+    invoices = getattr(window, "invoices_list", None) or []
+    if table is not None and isValid(table):
+        selection_model = table.selectionModel()
+        if selection_model is not None:
+            selected = selection_model.selectedRows()
+            if len(selected) == 1:
+                row = selected[0].row()
+                if 0 <= row < len(invoices):
+                    return invoices[row] or {}
+            if len(selected) > 1:
+                return {}
+    return getattr(window, "current_invoice", None) or {}
 
 
 def _refresh_compact_buyer_warning(window) -> None:
@@ -142,31 +196,44 @@ def _refresh_compact_buyer_warning(window) -> None:
     if label is None or not isValid(label):
         return
 
-    invoice = getattr(window, "current_invoice", None) or {}
+    invoice = _selected_invoice(window)
     full_text = buyer_warning(invoice, getattr(window, "config", {}) or {}) if invoice else ""
-    summary = _buyer_warning_summary(full_text)
+    display_text = _buyer_warning_summary(full_text)
 
-    label.setText(summary)
-    label.setToolTip(full_text)
-    label.setAccessibleDescription(full_text)
+    # Match InvoiceDetailPanel.set_summary exactly so initial selection, filter
+    # changes and later row changes never alternate between two phrasings.
+    label.setText(f"⚠️ {display_text}" if display_text else "")
+    label.setToolTip(display_text)
+    label.setAccessibleDescription(display_text)
     label.setObjectName("CompactBuyerWarning")
     label.setWordWrap(True)
     label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     label.setMinimumWidth(0)
     label.setMaximumWidth(16777215)
     label.setMinimumHeight(44)
-    label.setMaximumHeight(64)
+    label.setMaximumHeight(72)
     label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-    label.setProperty("tone", "warning" if summary else "muted")
-    label.setVisible(bool(summary))
+    label.setProperty("tone", "warning" if display_text else "muted")
+    label.setVisible(bool(display_text))
+
+    # Keep the editable/read-only buyer field synchronized with the same source.
+    # The visible banner uses compact copy; the field tooltip retains the detailed
+    # compatibility wording used by diagnostics and existing integrations.
+    buyer_field = getattr(window, "txt_buyer", None)
+    if buyer_field is None:
+        buyer_field = getattr(detail, "txt_buyer", None)
+    if buyer_field is not None and isValid(buyer_field):
+        actual_buyer = str(invoice.get("buyer_name") or "").strip() if invoice else ""
+        buyer_field.setToolTip(full_text or actual_buyer)
+        buyer_field.setAccessibleDescription(display_text or actual_buyer)
 
     row = getattr(detail, "buyer_warning_action_row", None)
     if row is not None and isValid(row):
-        row.setVisible(bool(summary))
+        row.setVisible(bool(display_text))
         row.setMinimumWidth(0)
         row.setMaximumWidth(16777215)
         row.setMinimumHeight(44)
-        row.setMaximumHeight(64)
+        row.setMaximumHeight(72)
         row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         row_layout = row.layout()
         if row_layout is not None:
@@ -183,14 +250,11 @@ def _refresh_compact_buyer_warning(window) -> None:
 
     label.style().unpolish(label)
     label.style().polish(label)
-    # The shared InlineWarning stylesheet is also used by longer diagnostic
-    # messages. Reapply the compact two-line cap after polishing while leaving
-    # the label free to use the full detail-panel width.
     label.setMinimumHeight(44)
-    label.setMaximumHeight(64)
+    label.setMaximumHeight(72)
     if row is not None and isValid(row):
         row.setMinimumHeight(44)
-        row.setMaximumHeight(64)
+        row.setMaximumHeight(72)
     label.update()
 
 
@@ -198,6 +262,10 @@ def _refresh_from_ref(window_ref: weakref.ReferenceType) -> None:
     target = window_ref()
     if target is not None and isValid(target):
         _refresh_compact_buyer_warning(target)
+
+
+def _schedule_refresh(window_ref: weakref.ReferenceType) -> None:
+    QTimer.singleShot(0, lambda ref=window_ref: _refresh_from_ref(ref))
 
 
 def _refresh_visible_review_from_refs(
@@ -233,9 +301,23 @@ def _install_warning_refresh(window, page: QWidget) -> None:
     table = getattr(window, "table", None)
     if table is not None:
         table.itemSelectionChanged.connect(
-            lambda ref=window_ref: QTimer.singleShot(
-                0, lambda target_ref=ref: _refresh_from_ref(target_ref)
+            lambda ref=window_ref: _schedule_refresh(ref)
+        )
+        model = table.model()
+        if model is not None:
+            # Queue reloads block table signals and then call the selection
+            # handler directly. Model changes provide a reliable final refresh
+            # after the rebuilt selection and current invoice are synchronized.
+            model.modelReset.connect(lambda ref=window_ref: _schedule_refresh(ref))
+            model.layoutChanged.connect(lambda ref=window_ref: _schedule_refresh(ref))
+            model.rowsInserted.connect(
+                lambda *_args, ref=window_ref: _schedule_refresh(ref)
             )
+
+    segment = getattr(window, "status_segment_control", None)
+    if segment is not None and hasattr(segment, "changed"):
+        segment.changed.connect(
+            lambda _key, ref=window_ref: _schedule_refresh(ref)
         )
 
     center_stack = getattr(window, "center_stack", None)
@@ -249,10 +331,11 @@ def _install_warning_refresh(window, page: QWidget) -> None:
         )
 
     _refresh_compact_buyer_warning(window)
+    _schedule_refresh(window_ref)
 
 
 def apply_design_v1_review_task_closure(page: QWidget | None) -> None:
-    """Enforce final Review task ownership and compact warning disclosure."""
+    """Enforce final Review task ownership and synchronized warning disclosure."""
     if page is None or not isValid(page) or page.property("designV1ReviewTaskClosureApplied"):
         return
     window = page.window()
@@ -264,6 +347,7 @@ def apply_design_v1_review_task_closure(page: QWidget | None) -> None:
         return
 
     page.setProperty("designV1ReviewTaskClosureApplied", True)
+    _hide_redundant_review_header(window)
     _remove_cross_workflow_actions(window)
     _install_warning_refresh(window, page)
 
@@ -272,4 +356,5 @@ __all__ = [
     "apply_design_v1_review_task_closure",
     "_buyer_warning_summary",
     "_refresh_compact_buyer_warning",
+    "_selected_invoice",
 ]

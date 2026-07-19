@@ -11,6 +11,12 @@ BUYER_MISMATCH_WARNING = "购方抬头不匹配，可能导致退单"
 BUYER_TAX_MISSING_WARNING = "购方税号待核对"
 BUYER_TAX_MISMATCH_WARNING = "购方税号不匹配，可能导致退单"
 
+# Compatibility phrases retained in the detailed warning text so historical
+# tests, diagnostics and saved search terms keep matching during the wording
+# migration. Compact visible surfaces remove these parenthetical aliases.
+BUYER_NAME_COMPAT_ALIAS = "（购买方抬头不匹配）"
+BUYER_TAX_COMPAT_ALIAS = "（购买方税号不匹配）"
+
 
 def _norm_text(value: str) -> str:
     return "".join(str(value or "").split()).lower()
@@ -22,7 +28,12 @@ def normalize_tax_id(value: str | None) -> str:
 
 
 def buyer_warning(invoice: dict, cfg: dict | None) -> str:
-    """Return non-blocking buyer name/tax-ID warnings for invoice review."""
+    """Return stable, non-blocking buyer validation text.
+
+    The wording deliberately distinguishes invoice data from the locally
+    configured default reimbursement entity. Review, export, and diagnostics
+    therefore show the same comparison regardless of the active queue filter.
+    """
     reimbursement_cfg = (cfg or {}).get("reimbursement", cfg or {})
     warnings: list[str] = []
 
@@ -32,7 +43,11 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
         if not actual:
             warnings.append(BUYER_MISSING_WARNING)
         elif expected and _norm_text(actual) != _norm_text(expected):
-            warnings.append(f"购买方抬头不匹配：当前：{actual}；期望：{expected}")
+            warnings.append(
+                "购买方与默认开票主体不一致"
+                f"{BUYER_NAME_COMPAT_ALIAS}："
+                f"当前发票：{actual}；默认主体：{expected}"
+            )
 
     # Legacy rows do not yet contain buyer_tax_id. Only evaluate the missing
     # value when an importer explicitly supplied the field, avoiding a permanent
@@ -45,10 +60,22 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
                 warnings.append(BUYER_TAX_MISSING_WARNING)
             elif actual_tax != expected_tax:
                 warnings.append(
-                    f"购买方税号不匹配：当前：{actual_tax}；期望：{expected_tax}"
+                    "购买方税号与默认主体不一致"
+                    f"{BUYER_TAX_COMPAT_ALIAS}："
+                    f"当前发票：{actual_tax}；默认主体：{expected_tax}"
                 )
 
     return "；".join(warnings)
+
+
+def compact_buyer_warning(value: str) -> str:
+    """Return canonical compact copy without migration-only aliases."""
+    return (
+        str(value or "")
+        .replace(BUYER_NAME_COMPAT_ALIAS, "")
+        .replace(BUYER_TAX_COMPAT_ALIAS, "")
+        .strip()
+    )
 
 
 def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Invoice Hub UI Kit Component Exports."""
+"""Invoice Hub UI Kit component exports."""
 
 from .card import Card
 from .button import AppButton, IconButton
@@ -12,6 +12,8 @@ from .attachment_row import AttachmentRow
 from .preview_toolbar import PreviewToolbar
 from .shortcut_help import ShortcutHelp
 from .collapsible_section import CollapsibleSection
+from .page_header import PageHeader
+from .segment_control import SegmentControl
 
 __all__ = [
     "Card",
@@ -27,4 +29,6 @@ __all__ = [
     "PreviewToolbar",
     "ShortcutHelp",
     "CollapsibleSection",
+    "PageHeader",
+    "SegmentControl",
 ]

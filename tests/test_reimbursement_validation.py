@@ -7,23 +7,31 @@ from openpyxl import load_workbook
 
 from scripts.invoice_fetch.claim_export import export_claim_package
 from scripts.invoice_fetch.db import InvoiceDB
-from scripts.invoice_fetch.reimbursement import buyer_warning
+from scripts.invoice_fetch.reimbursement import buyer_warning, compact_buyer_warning
 
 
 class ReimbursementValidationTests(unittest.TestCase):
     def test_buyer_warning_matches_missing_and_mismatch(self):
         cfg = {
             "reimbursement": {
-                "buyer_name": "\u793a\u4f8b\u79d1\u6280\u6709\u9650\u516c\u53f8",
+                "buyer_name": "示例科技有限公司",
                 "strict_buyer_check": True,
             }
         }
 
-        self.assertEqual(buyer_warning({"buyer_name": "\u793a\u4f8b\u79d1\u6280\u6709\u9650\u516c\u53f8"}, cfg), "")
-        self.assertEqual(buyer_warning({"buyer_name": ""}, cfg), "\u8d2d\u65b9\u62ac\u5934\u5f85\u6838\u5bf9")
+        self.assertEqual(buyer_warning({"buyer_name": "示例科技有限公司"}, cfg), "")
+        self.assertEqual(buyer_warning({"buyer_name": ""}, cfg), "购方抬头待核对")
+
+        detailed = buyer_warning({"buyer_name": "其他公司"}, cfg)
         self.assertEqual(
-            buyer_warning({"buyer_name": "其他公司"}, cfg),
-            "购买方抬头不匹配：当前：其他公司；期望：示例科技有限公司",
+            detailed,
+            "购买方与默认开票主体不一致（购买方抬头不匹配）："
+            "当前发票：其他公司；默认主体：示例科技有限公司",
+        )
+        self.assertEqual(
+            compact_buyer_warning(detailed),
+            "购买方与默认开票主体不一致："
+            "当前发票：其他公司；默认主体：示例科技有限公司",
         )
 
     def test_buyer_warning_without_expected_preset_only_warns_when_missing(self):
@@ -47,8 +55,8 @@ class ReimbursementValidationTests(unittest.TestCase):
                     "invoice_date": "2026-05-30",
                     "total_amount": "18.00",
                     "seller_name": "Seller",
-                    "buyer_name": "\u5176\u4ed6\u516c\u53f8",
-                    "category": "\u9910\u996e",
+                    "buyer_name": "其他公司",
+                    "category": "餐饮",
                     "attachment_path": "attachments/invoice.pdf",
                     "review_status": "approved",
                 })
@@ -61,20 +69,23 @@ class ReimbursementValidationTests(unittest.TestCase):
                     project_root=root,
                     runtime_dir=runtime,
                     reimbursement_config={
-                        "buyer_name": "\u793a\u4f8b\u79d1\u6280\u6709\u9650\u516c\u53f8",
+                        "buyer_name": "示例科技有限公司",
                         "strict_buyer_check": True,
                     },
                 )
 
             manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
-            warning = "购买方抬头不匹配：当前：其他公司；期望：示例科技有限公司"
+            warning = (
+                "购买方与默认开票主体不一致（购买方抬头不匹配）："
+                "当前发票：其他公司；默认主体：示例科技有限公司"
+            )
             self.assertEqual(manifest["items"][0]["warning"], warning)
 
             wb = load_workbook(export_dir / "reimbursement.xlsx")
             ws = wb.active
             headers = [cell.value for cell in ws[1]]
-            self.assertIn("\u6821\u9a8c\u63d0\u793a", headers)
-            warning_col = headers.index("\u6821\u9a8c\u63d0\u793a") + 1
+            self.assertIn("校验提示", headers)
+            warning_col = headers.index("校验提示") + 1
             self.assertEqual(ws.cell(row=2, column=warning_col).value, warning)
 
 
