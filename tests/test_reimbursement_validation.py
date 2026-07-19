@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 
 from scripts.invoice_fetch.claim_export import export_claim_package
 from scripts.invoice_fetch.db import InvoiceDB
-from scripts.invoice_fetch.reimbursement import buyer_warning
+from scripts.invoice_fetch.reimbursement import buyer_warning, compact_buyer_warning
 
 
 class ReimbursementValidationTests(unittest.TestCase):
@@ -21,9 +21,17 @@ class ReimbursementValidationTests(unittest.TestCase):
 
         self.assertEqual(buyer_warning({"buyer_name": "示例科技有限公司"}, cfg), "")
         self.assertEqual(buyer_warning({"buyer_name": ""}, cfg), "购方抬头待核对")
+
+        detailed = buyer_warning({"buyer_name": "其他公司"}, cfg)
         self.assertEqual(
-            buyer_warning({"buyer_name": "其他公司"}, cfg),
-            "购买方与默认开票主体不一致：当前发票：其他公司；默认主体：示例科技有限公司",
+            detailed,
+            "购买方与默认开票主体不一致（购买方抬头不匹配）："
+            "当前发票：其他公司；默认主体：示例科技有限公司",
+        )
+        self.assertEqual(
+            compact_buyer_warning(detailed),
+            "购买方与默认开票主体不一致："
+            "当前发票：其他公司；默认主体：示例科技有限公司",
         )
 
     def test_buyer_warning_without_expected_preset_only_warns_when_missing(self):
@@ -67,7 +75,10 @@ class ReimbursementValidationTests(unittest.TestCase):
                 )
 
             manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
-            warning = "购买方与默认开票主体不一致：当前发票：其他公司；默认主体：示例科技有限公司"
+            warning = (
+                "购买方与默认开票主体不一致（购买方抬头不匹配）："
+                "当前发票：其他公司；默认主体：示例科技有限公司"
+            )
             self.assertEqual(manifest["items"][0]["warning"], warning)
 
             wb = load_workbook(export_dir / "reimbursement.xlsx")
