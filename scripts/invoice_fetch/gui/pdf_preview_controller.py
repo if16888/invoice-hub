@@ -1,8 +1,10 @@
 """Atomic Qt PDF preview replacement.
 
-Qt's PDF widgets can retain painted content when one ``QPdfView`` is reused
-while its document is swapped. Every load owns a fresh document/view pair;
-the old view is explicitly detached before its document is closed.
+Every load owns a fresh ``QPdfDocument`` and ``QPdfView`` pair.  The currently
+visible pair remains attached until the replacement document reaches ``Ready``;
+only then is the new view shown and the previous pair retired.  This avoids both
+blank-preview gaps and the native ``QPdfLinkModel`` warnings caused by briefly
+attaching ``None`` as a document.
 """
 
 from __future__ import annotations
@@ -17,9 +19,7 @@ def _is_qobject_alive(value) -> bool:
     """Return whether a Qt wrapper still owns a live C++ object.
 
     Qt may deliver a final PDF status notification after ``deleteLater`` has
-    destroyed the old view.  Calling a Qt API on that Python wrapper raises
-    ``RuntimeError: Internal C++ object ... already deleted``.  Non-Qt test
-    doubles are deliberately considered live here.
+    destroyed an object.  Non-Qt test doubles are deliberately considered live.
     """
     if value is None:
         return False
@@ -44,6 +44,7 @@ class PdfPreviewController(QObject):
         self._generation = 0
         self._view = None
         self._document = None
+        self._pending_document = None
         self._active_path: Path | None = None
         self.document_class = None
         self.view_class = None
@@ -66,22 +67,37 @@ class PdfPreviewController(QObject):
 
         self._generation += 1
         generation = self._generation
-        old_view, old_document = self._view, self._document
-        self._view = self._document = None
-        self._active_path = None
-        self._dispose(old_view, old_document)
+
+        previous_pending = self._pending_document
+        self._pending_document = None
+        if previous_pending is not None and previous_pending is not self._document:
+            self._dispose_document(previous_pending)
+
         document = document_class(self)
         document._invoice_hub_path = Path(path)
+        self._pending_document = document
+        activated = False
 
         def status_changed(status):
+            nonlocal activated
+            if activated:
+                return
             if generation != self._generation:
-                self._dispose(None, document)
+                if self._pending_document is document:
+                    self._pending_document = None
+                self._dispose_document(document)
                 return
             if status == QPdfDocument.Status.Ready:
+                activated = True
                 view = self._make_view(view_class, document)
                 self._activate(generation, view, document)
             elif status == QPdfDocument.Status.Error:
-                self._dispose(None, document)
+                activated = True
+                if self._pending_document is document:
+                    self._pending_document = None
+                self._dispose_document(document)
+                # Keep the previous valid preview visible when the replacement
+                # fails; the owning page can surface the error separately.
                 self.failed.emit(str(path))
 
         if not hasattr(document, "statusChanged"):
@@ -89,15 +105,15 @@ class PdfPreviewController(QObject):
             view = self._make_view(view_class, document)
             self._activate(generation, view, document)
             return
+
         document.statusChanged.connect(status_changed)
         document.load(str(path))
-        # ``statusChanged`` is asynchronous on some Qt builds but is emitted
-        # synchronously before the event loop on others. Read the final state
-        # once as well so a freshly-loaded local PDF is immediately usable.
+        # Qt may emit Ready synchronously or asynchronously depending on the
+        # platform/plugin. Reading the current status makes both paths reliable.
         status_changed(document.status())
 
     def _make_view(self, view_class, document):
-        """Bind a fresh viewer only after the document has loaded successfully."""
+        """Create a replacement view without disturbing the active preview."""
         view = view_class(self._stack)
         view.setDocument(document)
         if hasattr(view_class.PageMode, "MultiPage"):
@@ -105,43 +121,48 @@ class PdfPreviewController(QObject):
         else:
             view.setPageMode(view_class.PageMode.SinglePage)
         view.setZoomMode(view_class.ZoomMode.FitToWidth)
-        self._stack.addWidget(view)
-        self._stack.setCurrentWidget(view)
         return view
 
     def clear(self) -> None:
         self._generation += 1
+
+        pending = self._pending_document
+        self._pending_document = None
+        if pending is not None and pending is not self._document:
+            self._dispose_document(pending)
+
         old_view, old_document = self._view, self._document
         self._view = self._document = None
         self._active_path = None
-        self._dispose(old_view, old_document)
+        self._retire_pair(old_view, old_document)
 
     def _activate(self, generation, view, document) -> None:
         if generation != self._generation:
-            self._dispose(view, document)
+            self._retire_pair(view, document)
             return
-        # ``statusChanged(Ready)`` and the immediate post-load status read can
-        # both reach this method.  The second call must not retire the active
-        # pair merely because it is also the "old" pair.
         if view is self._view and document is self._document:
             return
         if not _is_qobject_alive(view) or not _is_qobject_alive(document):
             return
+
         old_view, old_document = self._view, self._document
         self._view, self._document = view, document
+        self._pending_document = None
         self._active_path = getattr(document, "_invoice_hub_path", None)
+
         if self._stack.indexOf(view) < 0:
             self._stack.addWidget(view)
         self._stack.setCurrentWidget(view)
+
         try:
-            document.pageNavigator().jump(0, 0.0, 0.0)
+            navigator = view.pageNavigator()
+            navigator.jump(0, 0.0, 0.0)
+            navigator.currentPageChanged.connect(self._emit_page_changed)
         except Exception:
             pass
-        try:
-            document.pageNavigator().currentPageChanged.connect(self._emit_page_changed)
-        except Exception:
-            pass
-        self._dispose(old_view, old_document)
+
+        # Only retire the old pair after the replacement is visible.
+        self._retire_pair(old_view, old_document)
         self.ready.emit()
 
     def _emit_page_changed(self, page: int) -> None:
@@ -149,20 +170,46 @@ class PdfPreviewController(QObject):
         if document is not None:
             self.page_changed.emit(page, document.pageCount())
 
-    def _dispose(self, view, document) -> None:
-        if _is_qobject_alive(view):
-            # Detach before closing/deleting the document. This prevents the
-            # native QPdfLinkModel from retaining a pointer to the old file.
-            try:
-                view.setDocument(None)
-            except Exception:
-                pass
-            if _is_qobject_alive(self._stack) and self._stack.indexOf(view) >= 0:
-                self._stack.removeWidget(view)
-            view.deleteLater()
-        if _is_qobject_alive(document):
-            try:
-                document.close()
-            except Exception:
-                pass
+    def _dispose_document(self, document) -> None:
+        if not _is_qobject_alive(document):
+            return
+        try:
+            document.close()
+        except Exception:
+            pass
+        try:
             document.deleteLater()
+        except Exception:
+            pass
+
+    def _retire_pair(self, view, document) -> None:
+        """Retire a view first, then close its document after destruction."""
+        if not _is_qobject_alive(view):
+            self._dispose_document(document)
+            return
+
+        if _is_qobject_alive(self._stack) and self._stack.indexOf(view) >= 0:
+            self._stack.removeWidget(view)
+        try:
+            view.hide()
+        except Exception:
+            pass
+
+        disposed = False
+
+        def finish_document_disposal(*_args):
+            nonlocal disposed
+            if disposed:
+                return
+            disposed = True
+            self._dispose_document(document)
+
+        try:
+            view.destroyed.connect(finish_document_disposal)
+            view.deleteLater()
+        except Exception:
+            finish_document_disposal()
+
+    # Compatibility entry point retained for focused tests and legacy callers.
+    def _dispose(self, view, document) -> None:
+        self._retire_pair(view, document)
