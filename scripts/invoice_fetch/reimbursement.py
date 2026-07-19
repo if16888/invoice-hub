@@ -22,7 +22,12 @@ def normalize_tax_id(value: str | None) -> str:
 
 
 def buyer_warning(invoice: dict, cfg: dict | None) -> str:
-    """Return non-blocking buyer name/tax-ID warnings for invoice review."""
+    """Return stable, non-blocking buyer validation text.
+
+    The wording deliberately distinguishes invoice data from the locally
+    configured default reimbursement entity.  Review, export, and diagnostics
+    therefore show the same comparison regardless of the active queue filter.
+    """
     reimbursement_cfg = (cfg or {}).get("reimbursement", cfg or {})
     warnings: list[str] = []
 
@@ -32,7 +37,10 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
         if not actual:
             warnings.append(BUYER_MISSING_WARNING)
         elif expected and _norm_text(actual) != _norm_text(expected):
-            warnings.append(f"购买方抬头不匹配：当前：{actual}；期望：{expected}")
+            warnings.append(
+                "购买方与默认开票主体不一致："
+                f"当前发票：{actual}；默认主体：{expected}"
+            )
 
     # Legacy rows do not yet contain buyer_tax_id. Only evaluate the missing
     # value when an importer explicitly supplied the field, avoiding a permanent
@@ -45,7 +53,8 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
                 warnings.append(BUYER_TAX_MISSING_WARNING)
             elif actual_tax != expected_tax:
                 warnings.append(
-                    f"购买方税号不匹配：当前：{actual_tax}；期望：{expected_tax}"
+                    "购买方税号与默认主体不一致："
+                    f"当前发票：{actual_tax}；默认主体：{expected_tax}"
                 )
 
     return "；".join(warnings)
