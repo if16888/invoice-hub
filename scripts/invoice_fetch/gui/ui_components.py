@@ -52,6 +52,11 @@ except ImportError:
 
 if _HAS_QT:
 
+    # Compatibility export: first-level pages use the Design v1.1 component
+    # directly, while older imports from ``ui_components`` keep resolving to
+    # that same implementation.
+    from .ui.components.page_header import PageHeader
+
     def fit_button_to_content(button, minimum: int = 72, horizontal_padding: int = 24) -> int:
         """Size a button from its current polished content without a fixed cap."""
         button.ensurePolished()
@@ -664,27 +669,6 @@ if _HAS_QT:
         def set_hint(self, hint: str) -> None:
             self.lbl_hint.setText(hint)
             self.lbl_hint.setVisible(bool(hint))
-
-    class PageHeader(QFrame):
-        """Shared page title row with optional title and hint."""
-
-        def __init__(self, title: str, hint: str = "", parent: QWidget | None = None) -> None:
-            super().__init__(parent)
-            self.setObjectName("PageHeader")
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(4)
-
-            self.lbl_title = QLabel(title, self)
-            self.lbl_title.setProperty("class", "PageTitle")
-            layout.addWidget(self.lbl_title)
-
-            self.lbl_hint = QLabel(hint, self)
-            self.lbl_hint.setProperty("class", "PageHint")
-            self.lbl_hint.setWordWrap(True)
-            self.lbl_hint.setVisible(bool(hint))
-            layout.addWidget(self.lbl_hint)
 
     class CommandBar(QFrame):
         """Horizontal action bar wrapper used inside workbench pages."""
