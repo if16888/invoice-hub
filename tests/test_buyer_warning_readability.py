@@ -12,10 +12,15 @@ from scripts.invoice_fetch.gui.buyer_warning_readability import (
     BUYER_WARNING_HORIZONTAL_PADDING,
     BUYER_WARNING_VERTICAL_PADDING,
 )
+from scripts.invoice_fetch.gui.buyer_warning_controller import (
+    BUYER_WARNING_MAX_HEIGHT,
+    BUYER_WARNING_MIN_HEIGHT,
+)
 from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
     _refresh_compact_buyer_warning,
 )
 from scripts.invoice_fetch.gui.review_baseline_pipeline import REVIEW_BASELINE_STAGES
+from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
 
 
 class BuyerWarningReadabilityTests(unittest.TestCase):
@@ -34,16 +39,19 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_readability_stage_runs_after_task_ownership(self):
+    def test_buyer_warning_uses_one_tokenized_controller_contract(self):
         names = [name for name, _stage in REVIEW_BASELINE_STAGES]
-        self.assertLess(
-            names.index("task_ownership"),
-            names.index("buyer_warning_readability"),
+        self.assertNotIn("buyer_warning_readability", names)
+        self.assertIn("task_ownership", names)
+        self.assertIn(
+            f"max-height: {BUYER_WARNING_MAX_HEIGHT}px",
+            APP_STYLESHEET,
         )
-        self.assertLess(
-            names.index("buyer_warning_readability"),
-            names.index("visual_language_v11"),
+        self.assertIn(
+            f"min-height: {BUYER_WARNING_MIN_HEIGHT}px",
+            APP_STYLESHEET,
         )
+        self.assertNotIn("max-height: 64px", APP_STYLESHEET)
 
     def test_long_buyer_warning_fits_inside_compact_height(self):
         with tempfile.TemporaryDirectory() as td:
@@ -64,18 +72,14 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
 
                 detail = window._detail_panel
                 label = detail.lbl_buyer_warning
-                self.assertEqual(
-                    window.review_page.property("buyerWarningReadabilityApplied"),
-                    True,
-                )
-                self.assertEqual(label.property("buyerWarningLayout"), "readable")
+                self.assertEqual(label.property("buyerWarningLayout"), "tokenized")
                 self.assertIn(
                     f"padding: {BUYER_WARNING_VERTICAL_PADDING}px "
                     f"{BUYER_WARNING_HORIZONTAL_PADDING}px",
-                    label.styleSheet(),
+                    APP_STYLESHEET,
                 )
-                self.assertIn("margin-top: 0px", label.styleSheet())
-                self.assertIn("margin-bottom: 0px", label.styleSheet())
+                self.assertIn("margin-top: 0px", APP_STYLESHEET)
+                self.assertIn("margin-bottom: 0px", APP_STYLESHEET)
 
                 label.setFixedWidth(300)
                 for _ in range(4):

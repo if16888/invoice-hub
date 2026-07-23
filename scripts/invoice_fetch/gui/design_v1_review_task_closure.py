@@ -15,7 +15,10 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
 from shiboken6 import isValid
 
-from ..reimbursement import buyer_warning, compact_buyer_warning
+from .buyer_warning_controller import (
+    BuyerWarningController,
+    selected_invoice,
+)
 from .ui_components import fit_button_to_content
 
 
@@ -161,101 +164,16 @@ def _hide_redundant_review_header(window) -> None:
 
 
 def _buyer_warning_summary(full_text: str) -> str:
-    """Return canonical compact copy without migration-only aliases."""
+    """Compatibility helper for callers that still need compact warning copy."""
+    from ..reimbursement import compact_buyer_warning
+
     return compact_buyer_warning(full_text)
-
-
-def _selected_invoice(window) -> dict:
-    """Resolve the invoice represented by the current table selection.
-
-    Selection is preferred over ``window.current_invoice`` because queue reloads
-    temporarily preserve the latter while rebuilding the table.
-    """
-    table = getattr(window, "table", None)
-    invoices = getattr(window, "invoices_list", None) or []
-    if table is not None and isValid(table):
-        selection_model = table.selectionModel()
-        if selection_model is not None:
-            selected = selection_model.selectedRows()
-            if len(selected) == 1:
-                row = selected[0].row()
-                if 0 <= row < len(invoices):
-                    return invoices[row] or {}
-            if len(selected) > 1:
-                return {}
-    return getattr(window, "current_invoice", None) or {}
 
 
 def _refresh_compact_buyer_warning(window) -> None:
     if window is None or not isValid(window):
         return
-    detail = getattr(window, "_detail_panel", None)
-    if detail is None or not isValid(detail):
-        return
-    label = getattr(detail, "lbl_buyer_warning", None)
-    if label is None or not isValid(label):
-        return
-
-    invoice = _selected_invoice(window)
-    full_text = buyer_warning(invoice, getattr(window, "config", {}) or {}) if invoice else ""
-    display_text = _buyer_warning_summary(full_text)
-
-    # Match InvoiceDetailPanel.set_summary exactly so initial selection, filter
-    # changes and later row changes never alternate between two phrasings.
-    label.setText(f"⚠️ {display_text}" if display_text else "")
-    label.setToolTip(display_text)
-    label.setAccessibleDescription(display_text)
-    label.setObjectName("CompactBuyerWarning")
-    label.setWordWrap(True)
-    label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    label.setMinimumWidth(0)
-    label.setMaximumWidth(16777215)
-    label.setMinimumHeight(44)
-    label.setMaximumHeight(72)
-    label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-    label.setProperty("tone", "warning" if display_text else "muted")
-    label.setVisible(bool(display_text))
-
-    # Keep the editable/read-only buyer field synchronized with the same source.
-    # The visible banner uses compact copy; the field tooltip retains the detailed
-    # compatibility wording used by diagnostics and existing integrations.
-    buyer_field = getattr(window, "txt_buyer", None)
-    if buyer_field is None:
-        buyer_field = getattr(detail, "txt_buyer", None)
-    if buyer_field is not None and isValid(buyer_field):
-        actual_buyer = str(invoice.get("buyer_name") or "").strip() if invoice else ""
-        buyer_field.setToolTip(full_text or actual_buyer)
-        buyer_field.setAccessibleDescription(display_text or actual_buyer)
-
-    row = getattr(detail, "buyer_warning_action_row", None)
-    if row is not None and isValid(row):
-        row.setVisible(bool(display_text))
-        row.setMinimumWidth(0)
-        row.setMaximumWidth(16777215)
-        row.setMinimumHeight(44)
-        row.setMaximumHeight(72)
-        row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        row_layout = row.layout()
-        if row_layout is not None:
-            row_layout.setContentsMargins(0, 0, 0, 0)
-
-    button = getattr(detail, "btn_edit_reimbursement_title", None)
-    if button is not None and isValid(button):
-        parent = button.parentWidget()
-        if parent is not None:
-            _remove_widget_from_layout(parent.layout(), button)
-        button.hide()
-        button.setFocusPolicy(Qt.NoFocus)
-        button.setProperty("reviewCompanyActionRemoved", True)
-
-    label.style().unpolish(label)
-    label.style().polish(label)
-    label.setMinimumHeight(44)
-    label.setMaximumHeight(72)
-    if row is not None and isValid(row):
-        row.setMinimumHeight(44)
-        row.setMaximumHeight(72)
-    label.update()
+    BuyerWarningController.for_window(window).refresh()
 
 
 def _refresh_from_ref(window_ref: weakref.ReferenceType) -> None:
@@ -266,6 +184,20 @@ def _refresh_from_ref(window_ref: weakref.ReferenceType) -> None:
 
 def _schedule_refresh(window_ref: weakref.ReferenceType) -> None:
     QTimer.singleShot(0, lambda ref=window_ref: _refresh_from_ref(ref))
+
+
+def _remove_company_action(window) -> None:
+    """Keep company-profile editing on Settings, not inside the review banner."""
+    detail = getattr(window, "_detail_panel", None)
+    button = getattr(detail, "btn_edit_reimbursement_title", None) if detail else None
+    if button is None or not isValid(button):
+        return
+    parent = button.parentWidget()
+    if parent is not None:
+        _remove_widget_from_layout(parent.layout(), button)
+    button.hide()
+    button.setFocusPolicy(Qt.NoFocus)
+    button.setProperty("reviewCompanyActionRemoved", True)
 
 
 def _refresh_visible_review_from_refs(
@@ -349,6 +281,7 @@ def apply_design_v1_review_task_closure(page: QWidget | None) -> None:
     page.setProperty("designV1ReviewTaskClosureApplied", True)
     _hide_redundant_review_header(window)
     _remove_cross_workflow_actions(window)
+    _remove_company_action(window)
     _install_warning_refresh(window, page)
 
 

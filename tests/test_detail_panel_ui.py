@@ -320,7 +320,8 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.app.processEvents()
 
         self.assertTrue(self.panel.lbl_buyer_warning.isVisible())
-        self.assertLessEqual(self.panel.lbl_buyer_warning.height(), 32)
+        self.assertGreaterEqual(self.panel.lbl_buyer_warning.height(), 44)
+        self.assertLessEqual(self.panel.lbl_buyer_warning.height(), 76)
         self.assertIn("购买方抬头不匹配", self.panel.lbl_buyer_warning.text())
 
     def test_warning_header_does_not_clip_actions_in_narrow_panel(self):

@@ -85,9 +85,9 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                 self.assertTrue(detail.lbl_buyer_warning.wordWrap())
                 self.assertGreater(detail.lbl_buyer_warning.maximumWidth(), 272)
                 self.assertEqual(detail.lbl_buyer_warning.minimumHeight(), 44)
-                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 72)
+                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 76)
                 self.assertGreater(detail.buyer_warning_action_row.maximumWidth(), 272)
-                self.assertEqual(detail.buyer_warning_action_row.maximumHeight(), 72)
+                self.assertEqual(detail.buyer_warning_action_row.maximumHeight(), 76)
                 self.assertTrue(detail.btn_edit_reimbursement_title.isHidden())
                 self.assertTrue(
                     detail.btn_edit_reimbursement_title.property(

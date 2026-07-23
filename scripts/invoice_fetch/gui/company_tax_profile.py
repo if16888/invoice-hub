@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from ..config import save_config
-from ..reimbursement import buyer_warning, normalize_tax_id
+from ..reimbursement import normalize_tax_id
+from .buyer_warning_controller import BuyerWarningController
 from .ui_components import make_button
 
 
@@ -235,50 +235,8 @@ def save_company_tax_profile(window, profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def refresh_company_tax_profile_status(window) -> None:
-    """Keep the company-profile entry visible and show the current check result."""
-    detail = getattr(window, "_detail_panel", None)
-    if detail is None or not hasattr(detail, "lbl_buyer_warning"):
-        return
-
-    profile = normalize_company_tax_profile(
-        (getattr(window, "config", {}) or {}).get("reimbursement", {})
-    )
-    invoice = getattr(window, "current_invoice", None) or {}
-    warning = buyer_warning(invoice, {"reimbursement": profile}) if invoice else ""
-
-    label = detail.lbl_buyer_warning
-    if warning:
-        text = warning
-        tone = "warning"
-    elif profile["buyer_name"]:
-        text = f"开票单位：{profile['buyer_name']}"
-        tone = "muted"
-    else:
-        text = "未设置公司开票信息"
-        tone = "muted"
-    label.setText(text)
-    label.setToolTip(text)
-    label.setProperty("tone", tone)
-    label.setVisible(True)
-    label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-
-    row = getattr(detail, "buyer_warning_action_row", None)
-    if row is not None:
-        row.setVisible(True)
-
-    button = getattr(detail, "btn_edit_reimbursement_title", None)
-    if button is not None:
-        button.setText("公司开票信息")
-        button.setToolTip("查看、复制或修改本机保存的公司开票资料")
-        button.setAccessibleName("公司开票信息")
-        button.setMinimumWidth(96)
-        button.setMaximumWidth(116)
-
-    for widget in (label, row):
-        if widget is not None:
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-            widget.update()
+    """Refresh the canonical warning after company-profile data changes."""
+    BuyerWarningController.for_window(window).refresh()
 
 
 def _open_company_tax_profile_dialog(window) -> None:
@@ -306,11 +264,6 @@ def apply_company_tax_profile(page: QWidget | None) -> None:
     button = getattr(detail, "btn_edit_reimbursement_title", None) if detail else None
     if detail is None or button is None:
         return
-
-    from . import review_toolbar_filter_fixes as toolbar_fixes
-
-    toolbar_fixes._refresh_buyer_warning = refresh_company_tax_profile_status
-    refresh_company_tax_profile_status._company_tax_profile_refresh = True
 
     try:
         button.clicked.disconnect()
