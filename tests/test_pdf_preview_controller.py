@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QStackedWidget, QWidget
@@ -29,6 +31,27 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         source = inspect.getsource(preview_mixin.PreviewMixin)
         self.assertIn("self.pdf_preview_controller.load(file_path)", source)
         self.assertNotIn("self.pdf_view.setDocument(None)", source)
+
+    def test_failed_replacement_always_notifies_host(self):
+        source = inspect.getsource(PdfPreviewController.load)
+        self.assertIn("self.failed.emit(str(path))", source)
+        self.assertNotIn("if self._view is None:", source)
+
+    def test_failed_replacement_clears_previous_preview_before_error_state(self):
+        target = SimpleNamespace(
+            pdf_preview_controller=SimpleNamespace(clear=MagicMock()),
+            _show_preview_status=MagicMock(),
+            _set_zoom_buttons_enabled=MagicMock(),
+            pdf_view=object(),
+            pdf_document=object(),
+        )
+
+        preview_mixin.PreviewMixin._on_pdf_preview_failed(target, "broken.pdf")
+
+        target.pdf_preview_controller.clear.assert_called_once_with()
+        self.assertIsNone(target.pdf_view)
+        self.assertIsNone(target.pdf_document)
+        target._show_preview_status.assert_called_once_with("PDF 加载失败，暂不支持预览")
 
     def test_generation_guard_prevents_stale_activation(self):
         source = inspect.getsource(PdfPreviewController._activate)

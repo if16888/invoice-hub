@@ -950,6 +950,10 @@ class PreviewMixin:
         self._update_pdf_page_buttons()
 
     def _on_pdf_preview_failed(self, _path: str):
+        # A previous PDF may still be attached while the replacement fails.
+        # Clear it before showing the error so old invoice content cannot be
+        # mistaken for the currently selected file.
+        self.pdf_preview_controller.clear()
         self.pdf_view = None
         self.pdf_document = None
         self._show_preview_status("PDF 加载失败，暂不支持预览")

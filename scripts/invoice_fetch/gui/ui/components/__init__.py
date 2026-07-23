@@ -12,8 +12,6 @@ from .attachment_row import AttachmentRow
 from .preview_toolbar import PreviewToolbar
 from .shortcut_help import ShortcutHelp
 from .collapsible_section import CollapsibleSection
-from .page_header import PageHeader
-from .segment_control import SegmentControl
 
 __all__ = [
     "Card",
@@ -32,3 +30,14 @@ __all__ = [
     "PageHeader",
     "SegmentControl",
 ]
+
+
+def __getattr__(name: str):
+    """Load Design v1.1 components lazily to avoid compatibility cycles."""
+    if name == "PageHeader":
+        from .page_header import PageHeader
+        return PageHeader
+    if name == "SegmentControl":
+        from .segment_control import SegmentControl
+        return SegmentControl
+    raise AttributeError(name)

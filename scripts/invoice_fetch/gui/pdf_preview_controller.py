@@ -92,9 +92,10 @@ class PdfPreviewController(QObject):
                 if self._pending_document is document:
                     self._pending_document = None
                 self._dispose_document(document)
-                # A failed replacement must not blank a previously valid PDF.
-                if self._view is None:
-                    self.failed.emit(str(path))
+                # The host owns the visible error state. Always notify it:
+                # retaining the previous PDF after selecting a new invoice
+                # would otherwise show stale content under the new metadata.
+                self.failed.emit(str(path))
 
         if not hasattr(document, "statusChanged"):
             document.load(str(path))
