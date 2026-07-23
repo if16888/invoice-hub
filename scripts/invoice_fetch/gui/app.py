@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
     QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog
 )
-from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QSettings, QItemSelectionModel
+from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPainter, QPen
 
@@ -78,6 +78,7 @@ from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
+from .workbench_settings import workbench_settings
 from .workbench_state import is_keyboard_input_target
 from .column_filters import (
     COLUMN_DEFINITIONS,
@@ -728,7 +729,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_collapsed_manual = not nav_collapsed
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
         settings.sync()
         self._apply_workbench_metrics()
@@ -747,7 +748,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._apply_workbench_metrics(event.size().width(), event.size().height())
 
     def _save_splitter_prefs(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         if hasattr(self, "main_splitter"):
             settings.setValue("splitter/main", self.main_splitter.sizes())
         if hasattr(self, "left_splitter"):
@@ -761,7 +762,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         settings.sync()
 
     def _restore_splitter_prefs(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         main_sizes = settings.value("splitter/main", None)
         if main_sizes is not None:
             try:

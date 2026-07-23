@@ -96,6 +96,7 @@ class TestClampVerticalSplit(unittest.TestCase):
 try:
     from PySide6.QtCore import Qt, QSettings
     from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QSizePolicy
+    from scripts.invoice_fetch.gui.workbench_settings import workbench_settings
 
     _HAS_PYSIDE6 = True
 except ImportError:
@@ -128,7 +129,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         if not _HAS_PYSIDE6:
             self.skipTest("PySide6 not available")
         _get_app()
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.remove("nav_collapsed_manual")
         settings.remove("shortcut_help_expanded")
         settings.sync()
@@ -136,7 +137,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def tearDown(self):
         if _HAS_PYSIDE6:
             QApplication.processEvents()
-            settings = QSettings("InvoiceHub", "workbench")
+            settings = workbench_settings()
             settings.remove("nav_collapsed_manual")
             settings.remove("shortcut_help_expanded")
             settings.sync()
@@ -158,6 +159,16 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             for button in root.findChildren(QPushButton)
             if button.isVisible() and is_visual_primary(button)
         ]
+
+    def test_workbench_settings_use_explicit_writable_ini_store(self):
+        settings = workbench_settings()
+        self.assertEqual(settings.format(), QSettings.IniFormat)
+        self.assertNotIn("HKEY_", settings.fileName())
+        settings.setValue("__test_write_probe", True)
+        settings.sync()
+        self.assertEqual(settings.status(), QSettings.NoError)
+        settings.remove("__test_write_probe")
+        settings.sync()
 
     # ------------------------------------------------------------------
     # Splitter hierarchy and orientation
@@ -836,9 +847,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.close()
 
     def test_shortcut_disclosure_defaults_collapsed_without_resizing_splitter(self):
-        from PySide6.QtCore import QSettings
-
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.remove("shortcut_help_expanded")
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
@@ -948,7 +957,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_default_nav_is_expanded_at_1920(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
@@ -968,7 +977,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_nav_collapse_toggle_works_at_large_size(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
@@ -1005,7 +1014,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_nav_collapsed_state_persists_on_restart(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
@@ -1043,7 +1052,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     first.db.close()
 
     def test_default_nav_does_not_persist_manual_state(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = workbench_settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
