@@ -78,7 +78,11 @@ from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
-from .workbench_settings import workbench_settings
+from .workbench_settings import (
+    migrate_legacy_workbench_settings,
+    sync_workbench_settings,
+    workbench_settings,
+)
 from .workbench_state import is_keyboard_input_target
 from .column_filters import (
     COLUMN_DEFINITIONS,
@@ -731,7 +735,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._nav_collapsed_manual = not nav_collapsed
         settings = workbench_settings()
         settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
-        settings.sync()
+        sync_workbench_settings(settings)
         self._apply_workbench_metrics()
 
     def resize(self, *args):
@@ -759,10 +763,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             settings.remove("nav_collapsed_manual")
         else:
             settings.setValue("nav_collapsed_manual", self._nav_collapsed_manual)
-        settings.sync()
+        sync_workbench_settings(settings)
 
     def _restore_splitter_prefs(self):
         settings = workbench_settings()
+        migrate_legacy_workbench_settings(settings)
         main_sizes = settings.value("splitter/main", None)
         if main_sizes is not None:
             try:
