@@ -92,6 +92,14 @@ DESIGN_V1_METRICS = {
     "radius_large": 10,
 }
 
+DESIGN_V1_BUYER_WARNING = {
+    "min_height": 44,
+    "max_height": 76,
+    "padding_y": 2,
+    "padding_x": 9,
+    "margin_y": 0,
+}
+
 # Compatibility keys consumed by styles.py. Values are always sourced from the
 # Design v1 authority above; no product-facing module should redefine them.
 LEGACY_COLOR_TOKEN_MAP = {
@@ -126,6 +134,7 @@ def apply_legacy_color_tokens(target: MutableMapping[str, str]) -> None:
 __all__ = [
     "DESIGN_TOKEN_VERSION",
     "DESIGN_V1_COLORS",
+    "DESIGN_V1_BUYER_WARNING",
     "DESIGN_V1_METRICS",
     "DESIGN_V1_TYPE",
     "LEGACY_COLOR_TOKEN_MAP",

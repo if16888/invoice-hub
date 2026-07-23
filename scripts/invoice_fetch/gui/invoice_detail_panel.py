@@ -1359,23 +1359,11 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        if buyer_warning:
+        from .buyer_warning_controller import BuyerWarningController
 
-
-
-            self.lbl_buyer_warning.setText(f"⚠️ {buyer_warning}")
-
-
-
-            self.lbl_buyer_warning.setVisible(True)
-
-
-
-        else:
-
-
-
-            self.lbl_buyer_warning.setVisible(False)
+        BuyerWarningController.for_window(self.window()).refresh(
+            full_text=buyer_warning,
+        )
 
 
 

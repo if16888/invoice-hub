@@ -32,7 +32,7 @@ PAGES = (
 )
 SUPPORTED_STATES = {
     "dashboard": {"normal", "empty", "error"},
-    "review": {"normal", "empty", "no-selection"},
+    "review": {"normal", "empty", "no-selection", "long-text"},
     "imports-email": {"normal"},
     "imports-local": {"normal"},
     "imports-mobile": {"normal", "error", "mobile-active"},
@@ -97,6 +97,28 @@ def apply_state(window: InvoiceReviewApp, page: str, state: str) -> None:
         window.current_invoice = None
         window.table.clearSelection()
         window._clear_detail_form()
+    elif page == "review" and state == "long-text":
+        window.config = {
+            "reimbursement": {
+                "buyer_name": "示例科技有限公司",
+                "strict_buyer_check": True,
+            }
+        }
+        window.current_invoice = {
+            "buyer_name": "上海远景科创智能科技有限公司",
+        }
+        window.invoices_list = [window.current_invoice]
+        window._record_total_matching = 1
+        window.table.setRowCount(1)
+        window._detail_panel.set_summary(
+            buyer_warning=(
+                "购买方与默认开票主体不一致：当前发票："
+                "上海远景科创智能科技有限公司；默认主体：示例科技有限公司"
+            ),
+        )
+        window._set_right_panel_state(True)
+        window.right_stack.setCurrentWidget(window.right_content_widget)
+        window.table.selectRow(0)
     elif page == "settings-mailbox" and state == "missing-authorization":
         window.lbl_detail_credential_status.setText("需要授权")
         window.lbl_settings_mailbox_test_status.setText("请补充授权码后再测试连接。")
@@ -142,6 +164,10 @@ def validate_applied_state(window: InvoiceReviewApp, page: str, state: str) -> N
     elif page == "review" and state == "no-selection":
         if window.current_invoice is not None or window.right_stack.currentWidget() is not window.right_empty_widget:
             raise RuntimeError(f"state validation failed: {page}/{state}")
+    elif page == "review" and state == "long-text":
+        label = window._detail_panel.lbl_buyer_warning
+        if label.isHidden() or "上海远景科创智能科技有限公司" not in label.text():
+            raise RuntimeError(f"state validation failed: {page}/{state}")
     elif page == "imports-mobile" and state == "mobile-active":
         panel = window.mobile_upload_panel
         if panel.stack.currentWidget() is not panel.active_page or not panel.txt_url.text() or panel.lbl_qr.pixmap() is None:
@@ -177,6 +203,12 @@ def capture_one(app: QApplication, page: str, state: str, size: tuple[int, int],
         validate_applied_state(window, page, state)
         window.show()
         app.processEvents(); app.processEvents()
+        if page == "review" and state == "long-text":
+            # The native window may restore the empty-state stack while it is
+            # being shown; re-apply the synthetic warning after that transition.
+            apply_state(window, page, state)
+            validate_applied_state(window, page, state)
+            app.processEvents(); app.processEvents()
         target = dialog or window
         name = f"{page}__{state}__{size[0]}x{size[1]}__scale-{scale:g}.png"
         path = output / name

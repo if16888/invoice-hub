@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import save_config
-from ..reimbursement import buyer_warning
+from .buyer_warning_controller import BuyerWarningController
 from .column_filters import has_active_filters
 from .icon_provider import IconProvider
 from .ui_components import make_button
@@ -421,23 +421,7 @@ def _save_reimbursement_title(window, buyer_name: str, buyer_tax_id: str, strict
 
 
 def _refresh_buyer_warning(window) -> None:
-    detail = getattr(window, "_detail_panel", None)
-    if detail is None or not hasattr(detail, "lbl_buyer_warning"):
-        return
-    invoice = getattr(window, "current_invoice", None) or {}
-    warning = buyer_warning(invoice, getattr(window, "config", {}) or {}) if invoice else ""
-    detail.lbl_buyer_warning.setText(warning)
-    detail.lbl_buyer_warning.setVisible(bool(warning))
-    row = getattr(detail, "buyer_warning_action_row", None)
-    if row is not None:
-        row.setVisible(bool(warning))
-    button = getattr(detail, "btn_edit_reimbursement_title", None)
-    if button is not None:
-        expected = str(
-            (getattr(window, "config", {}) or {}).get("reimbursement", {}).get("buyer_name") or ""
-        ).strip()
-        button.setText("修改抬头" if expected else "设置抬头")
-        button.setToolTip("设置用于报销核对的购买方单位名称")
+    BuyerWarningController.for_window(window).refresh()
 
 
 def _open_reimbursement_title_dialog(window) -> None:
@@ -474,7 +458,6 @@ def _install_buyer_title_entry(window) -> None:
         row_layout.setSpacing(8)
         parent_layout.replaceWidget(warning, row)
         warning.setParent(row)
-        warning.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         row_layout.addWidget(warning, 1)
         edit_button = make_button("设置抬头", variant="secondary", min_width=76)
         edit_button.setMaximumWidth(92)
@@ -485,12 +468,7 @@ def _install_buyer_title_entry(window) -> None:
         detail.btn_edit_reimbursement_title = edit_button
         window.btn_edit_reimbursement_title = edit_button
 
-    table = getattr(window, "table", None)
-    if table is not None:
-        table.itemSelectionChanged.connect(
-            lambda: QTimer.singleShot(0, lambda: _refresh_buyer_warning(window))
-        )
-    _refresh_buyer_warning(window)
+    BuyerWarningController.for_window(window).refresh()
 
 
 def apply_review_toolbar_filter_fixes(page: QWidget) -> None:

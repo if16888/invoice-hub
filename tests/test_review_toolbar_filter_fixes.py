@@ -228,7 +228,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 self.assertIn("Actual Company", detail.lbl_buyer_warning.toolTip())
                 self.assertIn("Expected Company", detail.lbl_buyer_warning.toolTip())
                 self.assertTrue(detail.lbl_buyer_warning.wordWrap())
-                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 72)
+                self.assertEqual(detail.lbl_buyer_warning.maximumHeight(), 76)
                 self.assertTrue(detail.btn_edit_reimbursement_title.isHidden())
             finally:
                 window.close()

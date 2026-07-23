@@ -3,6 +3,8 @@
 Invoice Hub PySide6 QSS StyleSheet
 """
 
+from .design_tokens import DESIGN_V1_BUYER_WARNING
+
 PRIMARY_BUTTON_STYLE = "QPushButton.PrimaryBtn"
 SECONDARY_BUTTON_STYLE = "QPushButton.SecondaryBtn"
 TOOLBAR_ACTION_STYLE = "QPushButton.ToolbarActionBtn"
@@ -613,11 +615,11 @@ QLabel.InlineWarning {
     font-weight: 500;
 }
 QLabel#CompactBuyerWarning {
-    min-height: 0;
-    max-height: 64px;
-    padding: 4px 9px;
-    margin-top: 4px;
-    margin-bottom: 4px;
+    min-height: __BUYER_WARNING_MIN_HEIGHT__px;
+    max-height: __BUYER_WARNING_MAX_HEIGHT__px;
+    padding: __BUYER_WARNING_PADDING_Y__px __BUYER_WARNING_PADDING_X__px;
+    margin-top: __BUYER_WARNING_MARGIN_Y__px;
+    margin-bottom: __BUYER_WARNING_MARGIN_Y__px;
     border-radius: 6px;
     font-size: 12px;
 }
@@ -1551,11 +1553,11 @@ QLabel.InlineWarning {
     font-weight: 500;
 }
 QLabel#CompactBuyerWarning {
-    min-height: 0;
-    max-height: 64px;
-    padding: 4px 9px;
-    margin-top: 4px;
-    margin-bottom: 4px;
+    min-height: __BUYER_WARNING_MIN_HEIGHT__px;
+    max-height: __BUYER_WARNING_MAX_HEIGHT__px;
+    padding: __BUYER_WARNING_PADDING_Y__px __BUYER_WARNING_PADDING_X__px;
+    margin-top: __BUYER_WARNING_MARGIN_Y__px;
+    margin-bottom: __BUYER_WARNING_MARGIN_Y__px;
     border-radius: 6px;
     font-size: 12px;
 }
@@ -1960,7 +1962,7 @@ QLabel#InvoiceTableStatsLabel {
 
 def build_app_stylesheet() -> str:
     """Build core QSS from the shared token values."""
-    return (
+    stylesheet = (
         _BASE_STYLESHEET
         .replace("#F6F8FB", COLOR_TOKENS["app_background"])
         .replace("#FFFFFF", COLOR_TOKENS["surface_primary"])
@@ -1975,6 +1977,18 @@ def build_app_stylesheet() -> str:
         .replace("min-height: 34px", f"min-height: {CONTROL_HEIGHT_MD}px")
         .replace("max-height: 34px", f"max-height: {CONTROL_HEIGHT_MD}px")
     )
+    for placeholder, key in (
+        ("__BUYER_WARNING_MIN_HEIGHT__", "min_height"),
+        ("__BUYER_WARNING_MAX_HEIGHT__", "max_height"),
+        ("__BUYER_WARNING_PADDING_Y__", "padding_y"),
+        ("__BUYER_WARNING_PADDING_X__", "padding_x"),
+        ("__BUYER_WARNING_MARGIN_Y__", "margin_y"),
+    ):
+        stylesheet = stylesheet.replace(
+            placeholder,
+            str(DESIGN_V1_BUYER_WARNING[key]),
+        )
+    return stylesheet
 
 
 APP_STYLESHEET = build_app_stylesheet()
