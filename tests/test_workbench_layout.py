@@ -902,12 +902,24 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                total = sum(window.left_splitter.sizes())
-                # Apply an extreme out-of-bounds restore directly via the
-                # internal helper; sizes must still satisfy the minimums.
-                window._restore_left_splitter_sizes([total - 10, 10])
-                QApplication.processEvents()
-                record, preview = window.left_splitter.sizes()
+                # Use a stable synthetic persisted total. The live Qt splitter
+                # can report a transient platform-dependent height while the
+                # window is being shown, which is not the preference contract
+                # this test is intended to cover.
+                total = 900
+                # Capture the value handed to Qt instead of reading the live
+                # splitter back after layout polish, which can normalize sizes
+                # differently across Windows runners.
+                captured = []
+                with patch.object(
+                    window.left_splitter,
+                    "setSizes",
+                    side_effect=lambda values: captured.append(list(values)),
+                ):
+                    window._restore_left_splitter_sizes([total - 10, 10])
+                self.assertEqual(len(captured), 1)
+                record, preview = captured[0]
+                self.assertEqual(record + preview, total)
                 self.assertGreaterEqual(record, 280)
                 self.assertGreaterEqual(preview, 180)
             finally:
