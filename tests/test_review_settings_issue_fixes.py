@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import warnings
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -143,11 +144,19 @@ class ReviewAttachmentActionFixTests(unittest.TestCase):
         company_button = detail.btn_edit_reimbursement_title
         version = window.lbl_version
         try:
-            apply_review_attachment_action_fix(page)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                apply_review_attachment_action_fix(page)
+                apply_review_attachment_action_fix(page)
 
             self.assertTrue(company_button.isHidden())
+            self.assertFalse(company_button.isEnabled())
             self.assertTrue(company_button.property("reviewCompanyActionRemoved"))
             self.assertIs(company_button.parentWidget(), detail)
+            self.assertLess(detail.layout().indexOf(company_button), 0)
+            self.assertFalse(
+                any("disconnect" in str(item.message).lower() for item in caught)
+            )
             self.assertTrue(version.isHidden())
             self.assertTrue(version.property("reviewFooterVersionRemoved"))
             self.assertIs(version.parentWidget(), window)

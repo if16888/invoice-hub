@@ -398,10 +398,12 @@ def _remove_review_company_action(detail) -> None:
     button = getattr(detail, "btn_edit_reimbursement_title", None)
     if button is None:
         return
-    try:
-        button.clicked.disconnect()
-    except (RuntimeError, TypeError):
-        pass
+    # The control is removed from the layout and hidden below.  Disconnecting
+    # all slots without knowing the original callable makes PySide emit a
+    # RuntimeWarning when another compatibility pass already detached it.
+    # A hidden, disabled control cannot be activated by the user and remains
+    # owned by the detail panel for safe Qt lifetime management.
+    button.setEnabled(False)
     _remove_from_layout(button)
     button.hide()
     button.setParent(detail)

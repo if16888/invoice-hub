@@ -96,6 +96,7 @@ class TestClampVerticalSplit(unittest.TestCase):
 try:
     from PySide6.QtCore import Qt, QSettings
     from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QSizePolicy
+    from scripts.invoice_fetch.gui.workbench_settings import workbench_settings
 
     _HAS_PYSIDE6 = True
 except ImportError:
@@ -104,6 +105,7 @@ except ImportError:
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 _QAPP = None
 
@@ -127,8 +129,20 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def setUp(self):
         if not _HAS_PYSIDE6:
             self.skipTest("PySide6 not available")
+        self._settings_dir = tempfile.TemporaryDirectory(
+            prefix="invoice-hub-workbench-settings-"
+        )
+        self.addCleanup(self._settings_dir.cleanup)
+        self._settings_patch = patch(
+            "scripts.invoice_fetch.gui.app.workbench_settings",
+            side_effect=lambda runtime_dir=None: workbench_settings(
+                runtime_dir or Path(self._settings_dir.name)
+            ),
+        )
+        self._settings_patch.start()
+        self.addCleanup(self._settings_patch.stop)
         _get_app()
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = self._settings()
         settings.remove("nav_collapsed_manual")
         settings.remove("shortcut_help_expanded")
         settings.sync()
@@ -136,10 +150,13 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
     def tearDown(self):
         if _HAS_PYSIDE6:
             QApplication.processEvents()
-            settings = QSettings("InvoiceHub", "workbench")
+            settings = self._settings()
             settings.remove("nav_collapsed_manual")
             settings.remove("shortcut_help_expanded")
             settings.sync()
+
+    def _settings(self):
+        return workbench_settings(Path(self._settings_dir.name))
 
     def _make_window(self, td: str):
         """Create a minimal InvoiceReviewApp against a temp database."""
@@ -158,6 +175,20 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             for button in root.findChildren(QPushButton)
             if button.isVisible() and is_visual_primary(button)
         ]
+
+    def test_workbench_settings_use_explicit_writable_ini_store(self):
+        settings = self._settings()
+        self.assertEqual(settings.format(), QSettings.IniFormat)
+        self.assertEqual(
+            Path(settings.fileName()).parent,
+            Path(self._settings_dir.name),
+        )
+        self.assertNotIn("HKEY_", settings.fileName())
+        settings.setValue("__test_write_probe", True)
+        settings.sync()
+        self.assertEqual(settings.status(), QSettings.NoError)
+        settings.remove("__test_write_probe")
+        settings.sync()
 
     # ------------------------------------------------------------------
     # Splitter hierarchy and orientation
@@ -836,9 +867,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.close()
 
     def test_shortcut_disclosure_defaults_collapsed_without_resizing_splitter(self):
-        from PySide6.QtCore import QSettings
-
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = self._settings()
         settings.remove("shortcut_help_expanded")
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
@@ -873,12 +902,24 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                total = sum(window.left_splitter.sizes())
-                # Apply an extreme out-of-bounds restore directly via the
-                # internal helper; sizes must still satisfy the minimums.
-                window._restore_left_splitter_sizes([total - 10, 10])
-                QApplication.processEvents()
-                record, preview = window.left_splitter.sizes()
+                # Use a stable synthetic persisted total. The live Qt splitter
+                # can report a transient platform-dependent height while the
+                # window is being shown, which is not the preference contract
+                # this test is intended to cover.
+                total = 900
+                # Capture the value handed to Qt instead of reading the live
+                # splitter back after layout polish, which can normalize sizes
+                # differently across Windows runners.
+                captured = []
+                with patch.object(
+                    window.left_splitter,
+                    "setSizes",
+                    side_effect=lambda values: captured.append(list(values)),
+                ):
+                    window._restore_left_splitter_sizes([total - 10, 10])
+                self.assertEqual(len(captured), 1)
+                record, preview = captured[0]
+                self.assertEqual(record + preview, total)
                 self.assertGreaterEqual(record, 280)
                 self.assertGreaterEqual(preview, 180)
             finally:
@@ -948,7 +989,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_default_nav_is_expanded_at_1920(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = self._settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
@@ -968,7 +1009,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_nav_collapse_toggle_works_at_large_size(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = self._settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
@@ -1005,7 +1046,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
     def test_nav_collapsed_state_persists_on_restart(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = self._settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
@@ -1043,7 +1084,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     first.db.close()
 
     def test_default_nav_does_not_persist_manual_state(self):
-        settings = QSettings("InvoiceHub", "workbench")
+        settings = self._settings()
         settings.remove("nav_collapsed_manual")
         settings.sync()
         with tempfile.TemporaryDirectory() as td:
