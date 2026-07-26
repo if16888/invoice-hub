@@ -9,7 +9,15 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from scripts.invoice_fetch.gui.design_system_v11 import (
     apply_design_system_v11,
@@ -71,6 +79,56 @@ class DesignSystemV11Tests(unittest.TestCase):
         window.filter_bar_widget = filter_bar
         window.filter_buttons = cards
         return window, nav, collapse, filter_bar, cards
+
+    def _filter_state_fixture(self):
+        window = QWidget()
+        root = QVBoxLayout(window)
+        bar = QFrame(window)
+        layout = QHBoxLayout(bar)
+        segment = SegmentControl(
+            {
+                "all": "全部",
+                "to_review": "待审核",
+                "approved": "已通过",
+                "ignored": "已忽略",
+                "error": "异常",
+            },
+            selected="all",
+            parent=bar,
+        )
+        layout.addWidget(segment)
+        root.addWidget(bar)
+
+        search = QLineEdit(window)
+        reset = QPushButton("清除筛选", window)
+        empty_reset = QPushButton("重置筛选", window)
+        root.addWidget(search)
+        root.addWidget(reset)
+        root.addWidget(empty_reset)
+
+        window.filter_bar_widget = bar
+        window.filter_buttons = segment.buttons
+        window.status_segment_control = segment
+        window.current_filter_status = None
+        window.column_filters = {}
+        window.txt_search = search
+        window.btn_reset_filters = reset
+        window.empty_btn_reset_filters = empty_reset
+        window._refresh_column_filter_headers = lambda: None
+
+        def change_filter(status: str) -> None:
+            window.current_filter_status = None if status == "all" else status
+
+        def reset_filters() -> None:
+            window.current_filter_status = None
+            window.column_filters.clear()
+            window.txt_search.clear()
+
+        segment.changed.connect(change_filter)
+        window._reset_invoice_filters = reset_filters
+        reset.clicked.connect(window._reset_invoice_filters)
+        empty_reset.clicked.connect(window._reset_invoice_filters)
+        return window, segment, reset, empty_reset
 
     def test_authoritative_tokens_include_interaction_metrics(self):
         self.assertEqual(DESIGN_TOKEN_VERSION, "design-v1.3-visual-language")
@@ -198,6 +256,59 @@ class DesignSystemV11Tests(unittest.TestCase):
                 review_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
                 DESIGN_V1_COLORS["accent_hover"].upper(),
             )
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_reset_filter_restores_all_segment_and_hides_clear_action(self):
+        window, segment, reset, empty_reset = self._filter_state_fixture()
+        try:
+            apply_review_status_segmented_control(window)
+            window.show()
+            self.app.processEvents()
+
+            segment.buttons["ignored"].clicked.emit()
+            self.app.processEvents()
+            self.assertEqual(window.current_filter_status, "ignored")
+            self.assertEqual(segment.selected(), "ignored")
+            self.assertTrue(segment.buttons["ignored"].property("selected"))
+            self.assertFalse(reset.isHidden())
+
+            reset.click()
+            self.app.processEvents()
+            self.assertIsNone(window.current_filter_status)
+            self.assertEqual(segment.selected(), "all")
+            self.assertTrue(segment.buttons["all"].property("selected"))
+            self.assertFalse(segment.buttons["ignored"].property("selected"))
+            self.assertTrue(reset.isHidden())
+
+            segment.buttons["ignored"].clicked.emit()
+            self.app.processEvents()
+            empty_reset.click()
+            self.app.processEvents()
+            self.assertEqual(segment.selected(), "all")
+            self.assertTrue(segment.buttons["all"].property("selected"))
+            self.assertFalse(segment.buttons["ignored"].property("selected"))
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_direct_reset_callback_uses_same_filter_state_contract(self):
+        window, segment, _reset, _empty_reset = self._filter_state_fixture()
+        try:
+            apply_review_status_segmented_control(window)
+            segment.buttons["ignored"].clicked.emit()
+            self.app.processEvents()
+            self.assertEqual(segment.selected(), "ignored")
+
+            window._reset_invoice_filters()
+
+            self.assertIsNone(window.current_filter_status)
+            self.assertEqual(segment.selected(), "all")
+            self.assertTrue(segment.buttons["all"].property("selected"))
+            self.assertFalse(segment.buttons["ignored"].property("selected"))
         finally:
             window.close()
             window.deleteLater()

@@ -7,10 +7,13 @@ review filters do not look like unrelated bordered buttons.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from functools import wraps
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QPushButton, QSizePolicy, QWidget
 from shiboken6 import isValid
 
+from .column_filters import has_active_filters
 from .design_tokens import DESIGN_V1_COLORS, DESIGN_V1_METRICS, DESIGN_V1_TYPE
 
 
@@ -193,6 +196,89 @@ def apply_sidebar_visual_language(window) -> None:
     _repolish(nav)
 
 
+def _review_filter_key(window) -> str:
+    cards = getattr(window, "filter_buttons", {}) or {}
+    status = getattr(window, "current_filter_status", None)
+    return status if status in cards else "all"
+
+
+def _sync_review_filter_state(window) -> None:
+    """Keep model, segmented-control selection and clear action synchronized."""
+    cards = getattr(window, "filter_buttons", {}) or {}
+    key = _review_filter_key(window)
+    segment = getattr(window, "status_segment_control", None)
+    if segment is not None and hasattr(segment, "set_selected"):
+        segment.set_selected(key)
+    else:
+        for status, card in cards.items():
+            if hasattr(card, "set_selected"):
+                card.set_selected(status == key)
+            elif hasattr(card, "setChecked"):
+                card.setChecked(status == key)
+
+    reset = getattr(window, "btn_reset_filters", None)
+    if reset is not None:
+        search = getattr(window, "txt_search", None)
+        active = (
+            getattr(window, "current_filter_status", None) is not None
+            or has_active_filters(getattr(window, "column_filters", {}) or {})
+            or bool(search is not None and search.text().strip())
+        )
+        reset.setVisible(active)
+
+
+def _install_review_filter_state_contract(window) -> None:
+    """Install one-way synchronization around legacy reset and refresh callbacks."""
+    bar = getattr(window, "filter_bar_widget", None)
+    if bar is None or not isValid(bar):
+        return
+    if bar.property("reviewFilterStateContractInstalled") is True:
+        _sync_review_filter_state(window)
+        return
+    bar.setProperty("reviewFilterStateContractInstalled", True)
+
+    reset_filters = getattr(window, "_reset_invoice_filters", None)
+    if callable(reset_filters):
+        @wraps(reset_filters)
+        def reset_and_sync(*args, **kwargs):
+            result = reset_filters(*args, **kwargs)
+            _sync_review_filter_state(window)
+            return result
+
+        window._reset_invoice_filters = reset_and_sync
+
+    refresh_headers = getattr(window, "_refresh_column_filter_headers", None)
+    if callable(refresh_headers):
+        @wraps(refresh_headers)
+        def refresh_and_sync(*args, **kwargs):
+            result = refresh_headers(*args, **kwargs)
+            _sync_review_filter_state(window)
+            return result
+
+        window._refresh_column_filter_headers = refresh_and_sync
+
+    def queue_sync(*_args) -> None:
+        QTimer.singleShot(0, lambda: _sync_review_filter_state(window))
+
+    for attr in ("btn_reset_filters", "empty_btn_reset_filters"):
+        button = getattr(window, attr, None)
+        if button is not None and button.property("reviewFilterStateSyncConnected") is not True:
+            button.setProperty("reviewFilterStateSyncConnected", True)
+            button.clicked.connect(queue_sync)
+
+    for card in getattr(window, "filter_buttons", {}).values():
+        if card.property("reviewFilterStateSyncConnected") is not True:
+            card.setProperty("reviewFilterStateSyncConnected", True)
+            card.clicked.connect(queue_sync)
+
+    search = getattr(window, "txt_search", None)
+    if search is not None and search.property("reviewFilterStateSyncConnected") is not True:
+        search.setProperty("reviewFilterStateSyncConnected", True)
+        search.textChanged.connect(queue_sync)
+
+    _sync_review_filter_state(window)
+
+
 def apply_review_status_segmented_control(window) -> None:
     """Turn the five review statuses into one neutral segmented filter."""
     bar = getattr(window, "filter_bar_widget", None)
@@ -229,6 +315,7 @@ def apply_review_status_segmented_control(window) -> None:
         if value is not None:
             value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         _repolish(card)
+    _install_review_filter_state_contract(window)
     _repolish(bar)
 
 
