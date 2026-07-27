@@ -849,11 +849,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.deleteLater()
                 QApplication.processEvents()
 
-    def test_workbench_version_is_014(self):
+    def test_workbench_version_is_015(self):
         from scripts.invoice_fetch.version import APP_VERSION, VERSION
 
-        self.assertEqual(VERSION, "0.1.4")
-        self.assertEqual(APP_VERSION, "v0.1.4")
+        self.assertEqual(VERSION, "0.1.5")
+        self.assertEqual(APP_VERSION, "v0.1.5")
 
     def test_status_bar_shortcut_copy_uses_chinese_punctuation(self):
         with tempfile.TemporaryDirectory() as td:
