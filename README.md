@@ -4,7 +4,7 @@
 
 | 当前公开下载版本 | 当前开发版本 | 状态 | 推荐 |
 | --- | --- | --- | --- |
-| [Invoice Hub v0.1.3](https://github.com/if16888/invoice-hub/releases/tag/v0.1.3) | Invoice Hub v0.1.3 | stable / 稳定版 | 正式使用前仍建议先用少量脱敏样本验证 |
+| [Invoice Hub v0.1.3](https://github.com/if16888/invoice-hub/releases/tag/v0.1.3) | Invoice Hub v0.1.5-rc1 | RC / 候选版 | 完成人工 Windows 安装、升级、卸载和真实工作流验收后再正式使用 |
 
 Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交报销前，把散落在邮箱、本地文件夹和手机里的发票、收据、截图、证明材料整理成可审核、可归组、可导出的资料包。
 

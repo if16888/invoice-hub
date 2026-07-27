@@ -95,12 +95,17 @@ jobs:
 
       - name: Prepare release version
         run: |
-          $version = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
+          $sourceVersion = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
           $tagVersion = "${{ github.ref_name }}" -replace '/', '-'
-          if ($tagVersion -and $tagVersion -ne "v$version") {
-            Write-Error "Tag version $tagVersion does not match version $version from scripts.invoice_fetch.version.VERSION"
+          if ($tagVersion -notmatch '^v(?<base>\d+\.\d+\.\d+)(?<suffix>-(?:rc|pre)\d+)?$') {
+            Write-Error "Tag $tagVersion must match vX.Y.Z or vX.Y.Z-rcN/vX.Y.Z-preN."
             exit 1
           }
+          if ($Matches.base -ne $sourceVersion) {
+            Write-Error "Tag base version $($Matches.base) does not match source version $sourceVersion."
+            exit 1
+          }
+          $version = $tagVersion.Substring(1)
           echo "VERSION=${version}" >> $env:GITHUB_ENV
           echo "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
           echo "SETUP_NAME=InvoiceHub-${version}-win64-setup.exe" >> $env:GITHUB_ENV
@@ -234,7 +239,7 @@ jobs:
             Download only from the official GitHub Releases page and verify SHA256 before installing.
             SmartScreen or Unknown Publisher prompts can appear for unsigned builds with little download reputation; that is expected until trusted Authenticode signing is in place.
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(env.VERSION, '-') }}
           files: |
             dist/${{ env.ZIP_NAME }}
             dist/${{ env.SETUP_NAME }}
