@@ -31,6 +31,7 @@ from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPainter, QP
 from ..db import InvoiceDB, is_pending_evidence_invoice
 from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
+from ..export_paths import resolve_export_directory
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total, get_date_warning
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
@@ -76,7 +77,7 @@ from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
 from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
-from .workers import EmailScanWorker, LocalImportWorker
+from .workers import EmailScanWorker, ExportMigrationWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .workbench_settings import (
     migrate_legacy_workbench_settings,
@@ -501,6 +502,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.splash.show_message("正在打开本地数据库...", 40)
         self.db = InvoiceDB(db_path)
         self.config = load_config_safe()
+        self._export_dir = resolve_export_directory(self.config)
+        self._legacy_exports = (
+            PROJECT_ROOT / "exports"
+            if getattr(sys, "frozen", False)
+            else PROJECT_ROOT / ".invoice-hub-no-legacy-exports"
+        )
+        self._export_migration = None
+        self._export_migration_worker = None
         db_time = _time_mod.time()
         self.db_open_ms = int((db_time - start_time) * 1000)
 
@@ -546,7 +555,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if self.splash:
             self.splash.show_message("正在初始化界面布局...", 70)
         self._init_ui()
+        self._scan_stage_display = "准备连接"
+        self._scan_stage_counts = {}
+        self._scan_elapsed_timer = QTimer(self)
+        self._scan_elapsed_timer.timeout.connect(self._refresh_scan_elapsed)
         self._restore_splitter_prefs()
+        self._start_export_migration()
         init_time = _time_mod.time()
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
@@ -557,6 +571,70 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Register deferred load
         QTimer.singleShot(50, self._deferred_init)
+
+    def _start_export_migration(self):
+        """Start legacy export migration after the main window is constructed."""
+        if not self._legacy_exports.is_dir():
+            return
+        worker = ExportMigrationWorker(
+            self._legacy_exports,
+            self._export_dir,
+            parent=self,
+        )
+        self._export_migration_worker = worker
+        worker.progress.connect(self._export_migration_progress)
+        worker.finished.connect(self._export_migration_finished)
+        worker.error.connect(self._export_migration_error)
+        self.statusBar().showMessage("正在迁移旧导出文件…", 4000)
+        worker.start()
+
+    def _export_migration_progress(self, progress: dict):
+        processed = int(progress.get("processed", 0) or 0)
+        total = int(progress.get("total", 0) or 0)
+        copied = int(progress.get("copied", 0) or 0)
+        conflicts = int(progress.get("conflicts", 0) or 0)
+        failed = int(progress.get("failed", 0) or 0)
+        self.statusBar().showMessage(
+            f"正在迁移旧导出文件：{processed}/{total}，已复制 {copied}，"
+            f"冲突 {conflicts}，失败 {failed}",
+            4000,
+        )
+
+    def _export_migration_finished(self, result):
+        self._export_migration = result
+        if result.failures or result.source_remains:
+            message = "旧导出目录迁移未完成，源文件已保留。"
+        else:
+            message = (
+                f"旧导出目录迁移完成：处理 {result.processed}/{result.total}，"
+                f"复制 {result.copied}，冲突 {result.conflicts}。"
+            )
+        self.statusBar().showMessage(message, 8000)
+        if result.attempted:
+            QTimer.singleShot(0, self._show_export_migration_result)
+
+    def _export_migration_error(self, message: str):
+        self.statusBar().showMessage(f"旧导出目录迁移失败：{message}", 8000)
+
+    def _show_export_migration_result(self):
+        result = self._export_migration
+        if result is None:
+            return
+        if result.failures or result.source_remains:
+            QMessageBox.warning(
+                self,
+                "旧导出目录迁移未完成",
+                "部分旧导出文件未能迁移，源文件已保留。\n"
+                f"旧目录: {result.source}\n新目录: {result.destination}\n"
+                "请确认目录权限或磁盘空间后重启应用重试。",
+            )
+        elif result.copied or result.conflicts:
+            QMessageBox.information(
+                self,
+                "导出目录已迁移",
+                f"已将 {result.copied + result.conflicts} 个旧导出文件安全迁移到用户文档目录。\n"
+                f"新目录: {result.destination}",
+            )
 
     def _deferred_init(self):
         # If the window has already been closed or DB closed (e.g. during rapid unit tests), bypass!
@@ -613,6 +691,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             event.ignore()
             return
         self._close_pending = False
+
+        migration_worker = getattr(self, "_export_migration_worker", None)
+        if migration_worker is not None and migration_worker.isRunning():
+            self.statusBar().showMessage("正在完成旧导出文件迁移，请稍候…")
+            # Migration copies into a private temporary file and only exposes a
+            # verified target at the end.  Wait cooperatively instead of
+            # terminating the worker while a destination file is being written.
+            migration_worker.wait()
+            if migration_worker.result is not None:
+                self._export_migration = migration_worker.result
+
+        scan_worker = getattr(self, "scan_worker", None)
+        is_scan_running = getattr(scan_worker, "isRunning", None)
+        if callable(is_scan_running) and is_scan_running():
+            scan_worker.request_cancel()
+            scan_worker.wait()
         self._save_splitter_prefs()
         self.db.close()
         event.accept()
@@ -3179,6 +3273,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_import_scan_default = make_button("扫默认", variant="secondary")
         self.btn_import_scan_default.clicked.connect(self._scan_default_email_clicked)
 
+        self.btn_import_scan_cancel = make_button("取消扫描", variant="secondary")
+        self.btn_import_scan_cancel.setVisible(False)
+        self.btn_import_scan_cancel.clicked.connect(self._cancel_email_scan_clicked)
+        self.lbl_import_scan_status = QLabel("扫描状态：未开始")
+        self.lbl_import_scan_status.setObjectName("importScanStatus")
+
         self.import_mail_more = MoreMenuButton(parent=self)
         self.import_mail_more_menu = QMenu(self.import_mail_more)
         self.import_mail_more_menu.addAction("管理邮箱", lambda: self._switch_main_page("settings", sub_tab=1))
@@ -3190,10 +3290,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             primary_action=self.btn_import_scan_selected,
             secondary_actions=[
                 self.btn_import_scan_default,
+                self.btn_import_scan_cancel,
             ],
             more_menu=self.import_mail_more,
         )
         self.import_mail_accounts_card.body_layout.addWidget(self.import_mail_command_bar)
+        self.import_mail_accounts_card.body_layout.addWidget(self.lbl_import_scan_status)
 
         self.import_local_task_card = SectionCard(
             "本地导入",
@@ -3781,10 +3883,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         missing_amount = int(stats.get("missing_amount", 0) or 0)
 
         # Export directory check
-        export_dir = getattr(self, "_export_dir", None) or (
-            self.config.get("export", {}).get("output_dir") if hasattr(self, "config") else None
-        )
-        dir_ok = bool(export_dir)
+        export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(self.config)
+        dir_ok = True
 
         blockers = []
         if approved_cnt <= 0:
@@ -6138,7 +6238,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _open_exports_directory(self):
         """Open global exports folder, write to status bar."""
-        exports_dir = PROJECT_ROOT / "exports"
+        exports_dir = getattr(self, "_export_dir", None) or resolve_export_directory(self.config)
         exports_dir.mkdir(parents=True, exist_ok=True)
         self._open_local_path(exports_dir)
         self.statusBar().showMessage("已打开总导出 exports 目录", 3000)
@@ -6615,7 +6715,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # Trigger standard package exporter
             from ..claim_export import export_claim_package
             cfg = load_config_safe()
-            configured_export_dir = getattr(self, "_export_dir", None) or cfg.get("export", {}).get("output_dir")
+            configured_export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(cfg)
             export_dir = export_claim_package(
                 db=self.db,
                 claim_id=claim_id,
@@ -6623,7 +6723,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 runtime_dir=RUNTIME_DIR,
                 include_to_review=include_to_review,
                 reimbursement_config=cfg.get("reimbursement", {}),
-                export_root=Path(configured_export_dir) if configured_export_dir else None,
+                export_root=Path(configured_export_dir),
             )
 
             # Read manifest.json to get item count and skipped counts
@@ -6652,7 +6752,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # 不要泄露完整本机路径: show path relative to project root
             relative_export_dir = ""
             try:
-                relative_export_dir = "exports/" + Path(export_dir).relative_to(PROJECT_ROOT / "exports").as_posix()
+                relative_export_dir = Path(export_dir).relative_to(Path(configured_export_dir)).as_posix()
             except Exception:
                 try:
                     relative_export_dir = Path(export_dir).relative_to(PROJECT_ROOT).as_posix()
@@ -6779,6 +6879,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         active_btn = trigger_btn or getattr(self, "btn_scan_email", None)
         self.write_log("📥 [邮箱扫描] 增量拉取任务已启动...")
         self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
+        self._scan_started_at = time.monotonic()
+        self._scan_stage_display = "准备连接"
+        self._scan_stage_counts = {}
+        if hasattr(self, "lbl_import_scan_status"):
+            self.lbl_import_scan_status.setText("扫描状态：准备连接（已耗时 0 秒）")
+        if hasattr(self, "btn_import_scan_cancel"):
+            self.btn_import_scan_cancel.setVisible(True)
+            self.btn_import_scan_cancel.setEnabled(True)
+        if hasattr(self, "_scan_elapsed_timer"):
+            self._scan_elapsed_timer.start(500)
         if active_btn:
             self._set_action_busy(active_btn, "扫描中...")
 
@@ -6788,11 +6898,91 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.scan_worker.log.connect(
             lambda text: self.write_log(text, mirror_to_file=False)
         )
+        self.scan_worker.stage.connect(self._scan_stage_updated)
         self.scan_worker.finished.connect(self._scan_email_finished)
         self.scan_worker.error.connect(self._scan_email_error)
         self.scan_worker.start()
 
+    def _scan_stage_updated(self, event: dict):
+        if not isinstance(event, dict):
+            return
+        labels = {
+            "connect": "连接",
+            "tls": "TLS 握手",
+            "authenticate": "认证",
+            "query": "查询",
+            "download": "下载",
+            "parse": "解析",
+            "save": "保存",
+            "complete": "完成",
+            "failed": "失败",
+            "cancelled": "已取消",
+        }
+        stage_name = labels.get(str(event.get("stage") or ""), str(event.get("stage") or "处理中"))
+        elapsed = int(event.get("elapsed_ms") or 0) / 1000
+        counts = event.get("counts") or {}
+        self._scan_stage_display = stage_name
+        self._scan_stage_counts = dict(counts)
+        count_text = ""
+        if counts:
+            count_text = " · " + ", ".join(f"{k}={v}" for k, v in counts.items())
+        text = f"扫描状态：{stage_name}（已耗时 {elapsed:.1f} 秒{count_text}）"
+        if hasattr(self, "lbl_import_scan_status"):
+            self.lbl_import_scan_status.setText(text)
+        self.statusBar().showMessage(text, 2500)
+
+    def _refresh_scan_elapsed(self):
+        if not getattr(self, "_scan_started_at", None):
+            return
+        elapsed = time.monotonic() - self._scan_started_at
+        count_text = ""
+        if self._scan_stage_counts:
+            count_text = " · " + ", ".join(
+                f"{k}={v}" for k, v in self._scan_stage_counts.items()
+            )
+        text = f"扫描状态：{self._scan_stage_display}（已耗时 {elapsed:.1f} 秒{count_text}）"
+        if hasattr(self, "lbl_import_scan_status"):
+            self.lbl_import_scan_status.setText(text)
+
+    def _cancel_email_scan_clicked(self):
+        worker = getattr(self, "scan_worker", None)
+        if worker is None or not worker.isRunning():
+            return
+        self.btn_import_scan_cancel.setEnabled(False)
+        self.btn_import_scan_cancel.setText("正在取消…")
+        self.statusBar().showMessage("正在关闭邮箱连接并取消扫描…", 4000)
+        worker.request_cancel()
+
+    def _finish_scan_ui(self, cancelled: bool = False):
+        worker = getattr(self, "scan_worker", None)
+        btn = getattr(worker, "_trigger_btn", None) if worker else None
+        if btn:
+            orig_text = btn.property("original_text") or (
+                "开始扫描" if btn is getattr(self, "btn_import_scan_selected", None)
+                else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步")
+            )
+            self._clear_action_busy(btn, orig_text)
+        if hasattr(self, "btn_import_scan_selected"):
+            self.btn_import_scan_selected.setEnabled(True)
+        if hasattr(self, "btn_import_scan_default"):
+            self.btn_import_scan_default.setEnabled(True)
+        if hasattr(self, "_scan_elapsed_timer"):
+            self._scan_elapsed_timer.stop()
+        if hasattr(self, "btn_import_scan_cancel"):
+            self.btn_import_scan_cancel.setVisible(False)
+            self.btn_import_scan_cancel.setEnabled(False)
+            self.btn_import_scan_cancel.setText("取消扫描")
+        if cancelled and hasattr(self, "lbl_import_scan_status"):
+            elapsed = time.monotonic() - getattr(self, "_scan_started_at", time.monotonic())
+            self.lbl_import_scan_status.setText(f"扫描状态：已取消（耗时 {elapsed:.1f} 秒）")
+
     def _scan_email_finished(self, res: dict):
+        cancelled = bool(isinstance(res, dict) and res.get("cancelled"))
+        self._finish_scan_ui(cancelled=cancelled)
+        if cancelled:
+            self.write_log("⏹ [邮箱扫描] 用户已取消，当前邮箱事务保持一致，未开始后续邮箱。")
+            self.statusBar().showMessage("邮箱扫描已取消", 4000)
+            return
         btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
             orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))
@@ -6826,6 +7016,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._load_invoices()
 
     def _scan_email_error(self, err_msg: str):
+        self._finish_scan_ui(cancelled=False)
         btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
             orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))

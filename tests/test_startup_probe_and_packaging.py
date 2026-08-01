@@ -541,7 +541,9 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
 
     def test_inno_does_not_delete_user_appdata_on_uninstall(self):
         src = self._installer_path().read_text(encoding="utf-8")
-        self.assertNotIn("[UninstallDelete]", src)
+        self.assertIn("[UninstallDelete]", src)
+        self.assertIn('Type: dirifempty; Name: "{app}\\exports"', src)
+        self.assertNotIn("filesandordirs", src.lower())
         self.assertNotIn("{userappdata}", src)
         self.assertNotIn("{commonappdata}", src)
 

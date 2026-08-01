@@ -66,6 +66,7 @@ _DEFAULTS = {
     "ai": {"provider": "none", "model": "", "batch_size": 20},
     "ai_profiles": [],
     "reimbursement": {"buyer_name": "", "buyer_tax_id": "", "strict_buyer_check": True},
+    "export": {"output_dir": ""},
     "playwright": {"channel": "auto"},
     "categories": {},
 }
@@ -117,7 +118,9 @@ def _normalize_imap_for_provider(
     preset = _EMAIL_PROVIDER_PRESETS[provider]
     merged = {}
     if isinstance(fallback_imap, dict):
-        merged.update(fallback_imap)
+        # Keep global lifecycle tuning in cfg['imap']; do not inject it into
+        # every normalized account object or change persisted account shape.
+        merged.update({k: v for k, v in fallback_imap.items() if k != "timeouts"})
     if isinstance(imap_cfg, dict):
         merged.update(imap_cfg)
 

@@ -13,6 +13,8 @@ import email as _email
 import imaplib
 import logging
 import re
+import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from email.header import decode_header
@@ -20,6 +22,7 @@ from email.message import Message
 from typing import Optional
 
 from .log_privacy import PrivacyLogFilter
+from .scan_lifecycle import DEFAULT_IMAP_TIMEOUTS, ScanCancelled, ScanStage
 
 _log = logging.getLogger(__name__)
 _log.addFilter(PrivacyLogFilter())
@@ -137,17 +140,106 @@ def _email_looks_relevant(msg: MailMessage) -> bool:
 
 # ── Main fetcher ─────────────────────────────────────────────────────
 
+class _TimedIMAP4SSL(imaplib.IMAP4_SSL):
+    """IMAP4_SSL with separate TCP-connect, TLS-handshake and read timeouts."""
+
+    def __init__(
+        self,
+        *args,
+        connect_timeout,
+        tls_timeout,
+        command_timeout,
+        socket_callback=None,
+        stage_callback=None,
+        **kwargs,
+    ):
+        self._connect_timeout = float(connect_timeout)
+        self._tls_timeout = float(tls_timeout)
+        self._command_timeout = float(command_timeout)
+        self._socket_callback = socket_callback
+        self._stage_callback = stage_callback
+        super().__init__(*args, **kwargs)
+
+    def _create_socket(self, _timeout):
+        if self._stage_callback:
+            self._stage_callback(ScanStage.CONNECT)
+        raw = socket.create_connection((self.host or None, self.port), self._connect_timeout)
+        if self._socket_callback:
+            self._socket_callback(raw)
+        raw.settimeout(self._tls_timeout)
+        try:
+            if self._stage_callback:
+                self._stage_callback(ScanStage.TLS)
+            wrapped = self.ssl_context.wrap_socket(raw, server_hostname=self.host)
+        except Exception:
+            try:
+                raw.close()
+            except OSError:
+                pass
+            raise
+        wrapped.settimeout(self._command_timeout)
+        if self._socket_callback:
+            self._socket_callback(wrapped)
+        return wrapped
+
+
 class MailFetcher:
     """IMAP mail fetcher with newest-first scanning."""
 
     def __init__(self, address: str, auth_code: str,
-                 server: str = "imap.qq.com", port: int = 993):
+                 server: str = "imap.qq.com", port: int = 993,
+                 control=None, progress_callback=None, timeouts: dict | None = None):
         self._address = address
         self._auth_code = auth_code
         self._server = server
         self._port = port
         self._conn: Optional[imaplib.IMAP4_SSL] = None
         self._selected_folder: Optional[str] = None
+        self._control = control
+        self._progress_callback = progress_callback
+        self._timeouts = {**DEFAULT_IMAP_TIMEOUTS, **(timeouts or {})}
+        self._active_socket = None
+        self._cancelled = False
+        if self._control is not None:
+            self._control.register_fetcher(self)
+
+    def _notify_stage(self, stage: str, counts: dict | None = None):
+        if self._progress_callback:
+            if counts is None:
+                self._progress_callback(stage)
+                return
+            try:
+                self._progress_callback(stage, counts)
+            except TypeError as exc:
+                # Preserve the one-argument callback contract used by older
+                # integrations and test doubles.
+                if "positional" not in str(exc) and "argument" not in str(exc):
+                    raise
+                self._progress_callback(stage)
+
+    def _check_cancelled(self):
+        if self._control is not None:
+            self._control.raise_if_cancelled()
+        if self._cancelled:
+            raise ScanCancelled("用户取消邮箱扫描")
+
+    def _was_cancelled(self) -> bool:
+        return self._cancelled or bool(self._control is not None and self._control.cancelled)
+
+    def _socket_changed(self, sock):
+        self._active_socket = sock
+
+    def _new_connection(self):
+        self._check_cancelled()
+        return _TimedIMAP4SSL(
+            self._server,
+            self._port,
+            connect_timeout=self._timeouts["connect"],
+            tls_timeout=self._timeouts["tls"],
+            command_timeout=self._timeouts["command"],
+            socket_callback=self._socket_changed,
+            stage_callback=self._notify_stage,
+        )
 
     # ── Context manager ──────────────────────────────────────────────
 
@@ -163,22 +255,59 @@ class MailFetcher:
     def connect(self):
         _log.info("正在连接 IMAP %s:%s …", self._server, self._port)
         try:
-            self._conn = imaplib.IMAP4_SSL(self._server, self._port)
+            self._check_cancelled()
+            self._conn = self._new_connection()
+            self._check_cancelled()
+            self._notify_stage("authenticate")
             self._conn.login(self._address, self._auth_code)
             _log.info("邮箱登录成功: %s", self._address)
-        except imaplib.IMAP4.error as exc:
+        except ScanCancelled:
+            self.cancel()
+            self.disconnect()
+            raise
+        except (imaplib.IMAP4.error, TimeoutError, socket.timeout, OSError) as exc:
+            if self._was_cancelled():
+                self.cancel()
+                self.disconnect()
+                raise ScanCancelled("用户取消邮箱扫描") from exc
+            self.disconnect()
             _log.error("IMAP 登录失败: %s", exc)
             raise ConnectionError(f"无法登录邮箱 IMAP 服务: {exc}") from exc
 
     def disconnect(self):
         if self._conn:
             try:
-                self._conn.logout()
+                if not self._cancelled:
+                    self._conn.logout()
+                else:
+                    self._conn.shutdown()
             except Exception:
                 pass
             self._conn = None
-            self._auth_code = ""
-            _log.info("已断开 IMAP 连接")
+            self._active_socket = None
+        if self._control is not None:
+            self._control.unregister_fetcher(self)
+        self._auth_code = ""
+        _log.info("已断开 IMAP 连接")
+
+    def cancel(self):
+        self._cancelled = True
+        sock = self._active_socket
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+        conn = self._conn
+        if conn is not None and conn is not sock:
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
 
     # ── Fetch ────────────────────────────────────────────────────────
 
@@ -198,6 +327,7 @@ class MailFetcher:
         """
         if not self._conn:
             raise ConnectionError("未连接 — 请先调用 connect()")
+        self._check_cancelled()
 
         processed_uids = processed_uids or set()
 
@@ -254,6 +384,7 @@ class MailFetcher:
         early_stop_consec = 100
 
         for i, mid in enumerate(all_ids):
+            self._check_cancelled()
             if limit and len(messages) >= limit:
                 _log.info("已达上限 %d，停止", limit)
                 break
@@ -359,8 +490,10 @@ class MailFetcher:
         """
         if not self._conn:
             raise ConnectionError("未连接")
+        self._check_cancelled()
 
         known_uids = known_uids or set()
+        self._notify_stage("query")
 
         status, data = self._conn.select(folder, readonly=True)
         if status != "OK":
@@ -404,6 +537,33 @@ class MailFetcher:
         skip_known = 0
         skip_old = 0
         errors = 0
+        processed = 0
+        last_progress_at = 0.0
+
+        def report_progress(force: bool = False) -> None:
+            nonlocal last_progress_at
+            now = time.monotonic()
+            if (
+                not force
+                and processed < len(all_ids)
+                and processed % 25 != 0
+                and now - last_progress_at < 1.0
+            ):
+                return
+            last_progress_at = now
+            self._notify_stage(
+                ScanStage.QUERY,
+                {
+                    "processed": processed,
+                    "total": len(all_ids),
+                    "headers": len(headers),
+                    "known_skipped": skip_known,
+                    "old_skipped": skip_old,
+                    "errors": errors,
+                },
+            )
+
+        report_progress(force=True)
         consec_old = 0
         i = 0
 
@@ -415,6 +575,7 @@ class MailFetcher:
         consec_known = 0
 
         for i, mid in enumerate(all_ids):
+            self._check_cancelled()
             if limit and len(headers) >= limit:
                 _log.info("已达上限 %d", limit)
                 break
@@ -488,26 +649,40 @@ class MailFetcher:
                         "扫描进度: %d/%d — 获取 %d, 跳过 %d(已知)+%d(过旧)",
                         i + 1, len(all_ids), len(headers), skip_known, skip_old,
                     )
+            except ScanCancelled:
+                raise
+            except (TimeoutError, socket.timeout) as exc:
+                raise ConnectionError("IMAP 查询读取超时") from exc
             except Exception as exc:
+                if self._was_cancelled():
+                    raise ScanCancelled("用户取消邮箱扫描") from exc
                 errors += 1
                 if "EOF" in str(exc) or "socket" in str(exc).lower():
                     _log.warning("连接断开，尝试重连… (%s)", exc)
                     try:
-                        self._conn = imaplib.IMAP4_SSL(self._server, self._port)
+                        self._conn = self._new_connection()
+                        self._check_cancelled()
+                        self._notify_stage(ScanStage.AUTHENTICATE)
                         self._conn.login(self._address, self._auth_code or "")
                         self._conn.select(folder, readonly=True)
                         self._selected_folder = folder
                         _log.info("重连成功，继续扫描")
+                    except ScanCancelled:
+                        raise
                     except Exception:
                         _log.error("重连失败，停止扫描")
                         break
                 else:
                     _log.debug("扫描 msg_id=%s 出错: %s", mid, exc)
+            finally:
+                processed = i + 1
+                report_progress()
 
+        report_progress(force=True)
         _log.info(
             "头扫描完成: 扫描 %d/%d, 新增 %d, "
             "跳过 %d(已知)+%d(过旧), 出错 %d",
-            min(i + 1, len(all_ids)) if all_ids else 0, len(all_ids),
+            processed, len(all_ids),
             len(headers), skip_known, skip_old, errors,
         )
         return headers
@@ -518,6 +693,8 @@ class MailFetcher:
         """Fetch a single email's full RFC822 content by UID."""
         if not self._conn:
             return None
+        self._check_cancelled()
+        self._notify_stage("download")
         try:
             # Ensure folder is selected (crucial for --download-only mode)
             if self._selected_folder != folder:
@@ -528,6 +705,12 @@ class MailFetcher:
                 return None
             raw = data[0][1]
             return MailMessage(uid=uid, raw_msg=_email.message_from_bytes(raw))
+        except ScanCancelled:
+            raise
+        except (TimeoutError, socket.timeout) as exc:
+            raise ConnectionError("IMAP 下载读取超时") from exc
         except Exception as exc:
+            if self._was_cancelled():
+                raise ScanCancelled("用户取消邮箱扫描") from exc
             _log.debug("fetch_by_uid(%d) 失败: %s", uid, exc)
             return None
