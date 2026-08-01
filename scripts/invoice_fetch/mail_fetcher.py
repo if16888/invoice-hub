@@ -14,6 +14,7 @@ import imaplib
 import logging
 import re
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from email.header import decode_header
@@ -21,7 +22,7 @@ from email.message import Message
 from typing import Optional
 
 from .log_privacy import PrivacyLogFilter
-from .scan_lifecycle import DEFAULT_IMAP_TIMEOUTS, ScanCancelled
+from .scan_lifecycle import DEFAULT_IMAP_TIMEOUTS, ScanCancelled, ScanStage
 
 _log = logging.getLogger(__name__)
 _log.addFilter(PrivacyLogFilter())
@@ -142,19 +143,33 @@ def _email_looks_relevant(msg: MailMessage) -> bool:
 class _TimedIMAP4SSL(imaplib.IMAP4_SSL):
     """IMAP4_SSL with separate TCP-connect, TLS-handshake and read timeouts."""
 
-    def __init__(self, *args, connect_timeout, tls_timeout, command_timeout, socket_callback=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        connect_timeout,
+        tls_timeout,
+        command_timeout,
+        socket_callback=None,
+        stage_callback=None,
+        **kwargs,
+    ):
         self._connect_timeout = float(connect_timeout)
         self._tls_timeout = float(tls_timeout)
         self._command_timeout = float(command_timeout)
         self._socket_callback = socket_callback
+        self._stage_callback = stage_callback
         super().__init__(*args, **kwargs)
 
     def _create_socket(self, _timeout):
+        if self._stage_callback:
+            self._stage_callback(ScanStage.CONNECT)
         raw = socket.create_connection((self.host or None, self.port), self._connect_timeout)
         if self._socket_callback:
             self._socket_callback(raw)
         raw.settimeout(self._tls_timeout)
         try:
+            if self._stage_callback:
+                self._stage_callback(ScanStage.TLS)
             wrapped = self.ssl_context.wrap_socket(raw, server_hostname=self.host)
         except Exception:
             try:
@@ -188,9 +203,19 @@ class MailFetcher:
         if self._control is not None:
             self._control.register_fetcher(self)
 
-    def _notify_stage(self, stage: str):
+    def _notify_stage(self, stage: str, counts: dict | None = None):
         if self._progress_callback:
-            self._progress_callback(stage)
+            if counts is None:
+                self._progress_callback(stage)
+                return
+            try:
+                self._progress_callback(stage, counts)
+            except TypeError as exc:
+                # Preserve the one-argument callback contract used by older
+                # integrations and test doubles.
+                if "positional" not in str(exc) and "argument" not in str(exc):
+                    raise
+                self._progress_callback(stage)
 
     def _check_cancelled(self):
         if self._control is not None:
@@ -213,6 +238,7 @@ class MailFetcher:
             tls_timeout=self._timeouts["tls"],
             command_timeout=self._timeouts["command"],
             socket_callback=self._socket_changed,
+            stage_callback=self._notify_stage,
         )
 
     # ── Context manager ──────────────────────────────────────────────
@@ -230,8 +256,6 @@ class MailFetcher:
         _log.info("正在连接 IMAP %s:%s …", self._server, self._port)
         try:
             self._check_cancelled()
-            self._notify_stage("connect")
-            self._notify_stage("tls")
             self._conn = self._new_connection()
             self._check_cancelled()
             self._notify_stage("authenticate")
@@ -513,6 +537,33 @@ class MailFetcher:
         skip_known = 0
         skip_old = 0
         errors = 0
+        processed = 0
+        last_progress_at = 0.0
+
+        def report_progress(force: bool = False) -> None:
+            nonlocal last_progress_at
+            now = time.monotonic()
+            if (
+                not force
+                and processed < len(all_ids)
+                and processed % 25 != 0
+                and now - last_progress_at < 1.0
+            ):
+                return
+            last_progress_at = now
+            self._notify_stage(
+                ScanStage.QUERY,
+                {
+                    "processed": processed,
+                    "total": len(all_ids),
+                    "headers": len(headers),
+                    "known_skipped": skip_known,
+                    "old_skipped": skip_old,
+                    "errors": errors,
+                },
+            )
+
+        report_progress(force=True)
         consec_old = 0
         i = 0
 
@@ -603,25 +654,35 @@ class MailFetcher:
             except (TimeoutError, socket.timeout) as exc:
                 raise ConnectionError("IMAP 查询读取超时") from exc
             except Exception as exc:
+                if self._was_cancelled():
+                    raise ScanCancelled("用户取消邮箱扫描") from exc
                 errors += 1
                 if "EOF" in str(exc) or "socket" in str(exc).lower():
                     _log.warning("连接断开，尝试重连… (%s)", exc)
                     try:
                         self._conn = self._new_connection()
+                        self._check_cancelled()
+                        self._notify_stage(ScanStage.AUTHENTICATE)
                         self._conn.login(self._address, self._auth_code or "")
                         self._conn.select(folder, readonly=True)
                         self._selected_folder = folder
                         _log.info("重连成功，继续扫描")
+                    except ScanCancelled:
+                        raise
                     except Exception:
                         _log.error("重连失败，停止扫描")
                         break
                 else:
                     _log.debug("扫描 msg_id=%s 出错: %s", mid, exc)
+            finally:
+                processed = i + 1
+                report_progress()
 
+        report_progress(force=True)
         _log.info(
             "头扫描完成: 扫描 %d/%d, 新增 %d, "
             "跳过 %d(已知)+%d(过旧), 出错 %d",
-            min(i + 1, len(all_ids)) if all_ids else 0, len(all_ids),
+            processed, len(all_ids),
             len(headers), skip_known, skip_old, errors,
         )
         return headers

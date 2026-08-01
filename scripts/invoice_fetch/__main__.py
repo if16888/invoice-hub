@@ -3847,7 +3847,7 @@ def _scan_mailboxes_with_db(
             "server": imap_cfg.get("server", "imap.qq.com"),
             "port": imap_cfg.get("port", 993),
             "control": scan_control,
-            "progress_callback": lambda name: stage(mailbox, name),
+            "progress_callback": lambda name, counts=None: stage(mailbox, name, counts),
             "timeouts": (
                 imap_cfg.get("timeouts")
                 if isinstance(imap_cfg.get("timeouts"), dict)
@@ -3955,7 +3955,6 @@ def _scan_mailboxes_with_db(
                     emit(f"Full scan of the most recent {months_back} months [{mask_email(email_addr)}]")
 
                 known = db.get_all_email_uids(mailbox_key=mailbox_key)
-                stage(email_addr, ScanStage.CONNECT)
                 with make_fetcher(account, email_addr) as fetcher:
                     headers = fetcher.scan_headers(
                         folder=folder,
@@ -3964,6 +3963,7 @@ def _scan_mailboxes_with_db(
                         known_uids=known,
                         limit=limit,
                     )
+                    scan_control.raise_if_cancelled()
                     scanned_headers += len(headers)
                     inserted_headers = db.bulk_upsert_emails(
                         headers,
@@ -4033,7 +4033,6 @@ def _scan_mailboxes_with_db(
                     emit(f"No invoice emails pending download for {mask_email(email_addr)}")
                     continue
                 emit(f"Downloading {len(pending_for_account)} invoice emails for {mask_email(email_addr)}")
-                stage(email_addr, ScanStage.CONNECT)
                 with make_fetcher(account, email_addr) as fetcher:
                     for row in pending_for_account:
                         scan_control.raise_if_cancelled()
