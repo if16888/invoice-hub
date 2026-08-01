@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import os
 import shutil
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from uuid import UUID
+from typing import Callable
+from uuid import UUID, uuid4
 
 
 def get_documents_directory() -> Path:
@@ -41,6 +44,8 @@ def resolve_export_directory(config: dict | None, documents_dir: Path | None = N
 class ExportMigrationResult:
     source: Path
     destination: Path
+    processed: int = 0
+    total: int = 0
     copied: int = 0
     conflicts: int = 0
     failures: list[str] = field(default_factory=list)
@@ -63,11 +68,56 @@ def _conflict_target(target: Path, digest: str) -> Path:
     return target.with_name(f"{target.stem}.migrated-{digest[:8]}{target.suffix}")
 
 
-def migrate_legacy_exports(source: Path, destination: Path) -> ExportMigrationResult:
+def _notify_migration_progress(
+    callback: Callable[[dict], None] | None,
+    result: ExportMigrationResult,
+) -> None:
+    if callback is None:
+        return
+    callback(
+        {
+            "processed": result.processed,
+            "total": result.total,
+            "copied": result.copied,
+            "conflicts": result.conflicts,
+            "failed": len(result.failures),
+        }
+    )
+
+
+def _copy_verified_atomically(source: Path, target: Path, source_digest: str) -> None:
+    """Copy to a private temporary file before making the final target visible."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.invoice-hub-migrating-{uuid4().hex}.tmp"
+    )
+    try:
+        shutil.copy2(source, temporary)
+        if _digest(temporary) != source_digest:
+            raise OSError("迁移复制校验失败")
+        # On Windows os.rename refuses to replace an existing destination.  The
+        # existence check below also turns a concurrent destination race into a
+        # safe failure instead of overwriting a user file.
+        if target.exists():
+            raise FileExistsError(str(target))
+        os.rename(temporary, target)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def migrate_legacy_exports(
+    source: Path,
+    destination: Path,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> ExportMigrationResult:
     """Copy-verify legacy exports, then remove only verified source files/empty dirs.
 
     Existing files are never overwritten. A deterministic digest suffix makes retries
-    idempotent after an interrupted migration.
+    idempotent after an interrupted migration.  Progress is reported from the caller's
+    worker thread so the GUI can show counts without doing any file I/O on the UI thread.
     """
     source = Path(source)
     destination = Path(destination)
@@ -81,9 +131,12 @@ def migrate_legacy_exports(source: Path, destination: Path) -> ExportMigrationRe
     ):
         return result
 
-    for item in sorted(source.rglob("*")):
-        if not item.is_file():
-            continue
+    files = sorted(item for item in source.rglob("*") if item.is_file())
+    result.total = len(files)
+    _notify_migration_progress(progress_callback, result)
+    last_progress_at = time.monotonic()
+
+    for item in files:
         relative = item.relative_to(source)
         target = destination / relative
         try:
@@ -97,14 +150,21 @@ def migrate_legacy_exports(source: Path, destination: Path) -> ExportMigrationRe
                     if target.exists() and _digest(target) != source_digest:
                         raise OSError("迁移冲突目标已存在且内容不同")
             if not target.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
-                if _digest(target) != source_digest:
-                    raise OSError("迁移复制校验失败")
+                _copy_verified_atomically(item, target, source_digest)
                 result.copied += 1
             item.unlink()
         except Exception as exc:
             result.failures.append(f"{relative.as_posix()}: {type(exc).__name__}: {exc}")
+        finally:
+            result.processed += 1
+            now = time.monotonic()
+            if (
+                result.processed == result.total
+                or result.processed % 25 == 0
+                or now - last_progress_at >= 1.0
+            ):
+                last_progress_at = now
+                _notify_migration_progress(progress_callback, result)
 
     for directory in sorted((p for p in source.rglob("*") if p.is_dir()), reverse=True):
         try:

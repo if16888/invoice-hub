@@ -6,6 +6,35 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 
+class ExportMigrationWorker(QThread):
+    """Move legacy install-local exports without delaying UI construction."""
+
+    progress = Signal(dict)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, source: Path, destination: Path, parent=None):
+        super().__init__(parent)
+        self.source = Path(source)
+        self.destination = Path(destination)
+        self.result = None
+
+    def run(self):
+        try:
+            from ..export_paths import migrate_legacy_exports
+
+            self.result = migrate_legacy_exports(
+                self.source,
+                self.destination,
+                progress_callback=self.progress.emit,
+            )
+            self.finished.emit(self.result)
+        except Exception as e:
+            self.error.emit(str(e))
+        except BaseException as e:
+            self.error.emit(str(e))
+
+
 class LocalImportWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)

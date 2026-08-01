@@ -31,7 +31,7 @@ from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPainter, QP
 from ..db import InvoiceDB, is_pending_evidence_invoice
 from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
-from ..export_paths import migrate_legacy_exports, resolve_export_directory
+from ..export_paths import resolve_export_directory
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total, get_date_warning
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
@@ -77,7 +77,7 @@ from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
 from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
-from .workers import EmailScanWorker, LocalImportWorker
+from .workers import EmailScanWorker, ExportMigrationWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .workbench_settings import (
     migrate_legacy_workbench_settings,
@@ -503,12 +503,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.db = InvoiceDB(db_path)
         self.config = load_config_safe()
         self._export_dir = resolve_export_directory(self.config)
-        legacy_exports = (
+        self._legacy_exports = (
             PROJECT_ROOT / "exports"
             if getattr(sys, "frozen", False)
             else PROJECT_ROOT / ".invoice-hub-no-legacy-exports"
         )
-        self._export_migration = migrate_legacy_exports(legacy_exports, self._export_dir)
+        self._export_migration = None
+        self._export_migration_worker = None
         db_time = _time_mod.time()
         self.db_open_ms = int((db_time - start_time) * 1000)
 
@@ -559,6 +560,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._scan_elapsed_timer = QTimer(self)
         self._scan_elapsed_timer.timeout.connect(self._refresh_scan_elapsed)
         self._restore_splitter_prefs()
+        self._start_export_migration()
         init_time = _time_mod.time()
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
@@ -569,11 +571,55 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Register deferred load
         QTimer.singleShot(50, self._deferred_init)
-        if self._export_migration.attempted:
-            QTimer.singleShot(100, self._show_export_migration_result)
+
+    def _start_export_migration(self):
+        """Start legacy export migration after the main window is constructed."""
+        if not self._legacy_exports.is_dir():
+            return
+        worker = ExportMigrationWorker(
+            self._legacy_exports,
+            self._export_dir,
+            parent=self,
+        )
+        self._export_migration_worker = worker
+        worker.progress.connect(self._export_migration_progress)
+        worker.finished.connect(self._export_migration_finished)
+        worker.error.connect(self._export_migration_error)
+        self.statusBar().showMessage("正在迁移旧导出文件…", 4000)
+        worker.start()
+
+    def _export_migration_progress(self, progress: dict):
+        processed = int(progress.get("processed", 0) or 0)
+        total = int(progress.get("total", 0) or 0)
+        copied = int(progress.get("copied", 0) or 0)
+        conflicts = int(progress.get("conflicts", 0) or 0)
+        failed = int(progress.get("failed", 0) or 0)
+        self.statusBar().showMessage(
+            f"正在迁移旧导出文件：{processed}/{total}，已复制 {copied}，"
+            f"冲突 {conflicts}，失败 {failed}",
+            4000,
+        )
+
+    def _export_migration_finished(self, result):
+        self._export_migration = result
+        if result.failures or result.source_remains:
+            message = "旧导出目录迁移未完成，源文件已保留。"
+        else:
+            message = (
+                f"旧导出目录迁移完成：处理 {result.processed}/{result.total}，"
+                f"复制 {result.copied}，冲突 {result.conflicts}。"
+            )
+        self.statusBar().showMessage(message, 8000)
+        if result.attempted:
+            QTimer.singleShot(0, self._show_export_migration_result)
+
+    def _export_migration_error(self, message: str):
+        self.statusBar().showMessage(f"旧导出目录迁移失败：{message}", 8000)
 
     def _show_export_migration_result(self):
         result = self._export_migration
+        if result is None:
+            return
         if result.failures or result.source_remains:
             QMessageBox.warning(
                 self,
@@ -645,6 +691,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             event.ignore()
             return
         self._close_pending = False
+
+        migration_worker = getattr(self, "_export_migration_worker", None)
+        if migration_worker is not None and migration_worker.isRunning():
+            self.statusBar().showMessage("正在完成旧导出文件迁移，请稍候…")
+            # Migration copies into a private temporary file and only exposes a
+            # verified target at the end.  Wait cooperatively instead of
+            # terminating the worker while a destination file is being written.
+            migration_worker.wait()
+            if migration_worker.result is not None:
+                self._export_migration = migration_worker.result
+
+        scan_worker = getattr(self, "scan_worker", None)
+        is_scan_running = getattr(scan_worker, "isRunning", None)
+        if callable(is_scan_running) and is_scan_running():
+            scan_worker.request_cancel()
+            scan_worker.wait()
         self._save_splitter_prefs()
         self.db.close()
         event.accept()

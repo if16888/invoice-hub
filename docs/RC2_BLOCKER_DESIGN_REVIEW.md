@@ -26,11 +26,16 @@ credentials remain user-owned runtime data. A configured non-empty
 ## Minimal repair
 
 * Resolve the Windows Documents known folder through the platform API.
-* Copy and verify legacy install-local exports without overwriting; use a
+* Start legacy export migration only after the main window is initialized, in a
+  worker that reports processed/total/copied/conflict/failure counts. Copy and
+  verify each file through a private temporary target, never overwrite, use a
   deterministic digest suffix for conflicts, remove only verified files and
   empty source directories, and report failures while retaining sources.
-* Add cooperative scan control and stage events for connect, TLS, auth, query,
-  download, parse, save, complete, failed and cancelled.
+* Emit CONNECT immediately before TCP creation, TLS immediately before the
+  handshake, and AUTHENTICATE immediately before login. Add cooperative scan
+  control and stage events for connect, TLS, auth, query, download, parse,
+  save, complete, failed and cancelled. Header query progress is throttled and
+  includes processed/total/headers/known-skipped/old-skipped/errors.
 * Bound TCP connect, TLS handshake and IMAP command/read operations separately.
   Cancellation closes the active socket and is observed at database-safe
   operation boundaries; it never terminates the worker thread.
@@ -44,8 +49,11 @@ migration; a conflict or copy error keeps the source file.
 
 ## Test strategy
 
-Unit coverage verifies default/custom paths, migration idempotence, same-name
-conflicts, source retention on failure, staged redacted events, separate
-timeouts, socket cancellation, compileability, and existing IMAP semantics.
+Unit and integration coverage verifies default/custom paths, migration
+idempotence, same-name conflicts, source retention on failure, large/many-file
+progress, atomic targets, real CONNECT/TLS/AUTH callback order, TCP/TLS
+failure stage boundaries, throttled header counters, separate timeouts, socket
+cancellation, database integrity, worker/UI recovery, compileability, and
+existing IMAP semantics.
 The remaining release gates and the physical RC2 install/upgrade/uninstall
 acceptance remain mandatory before any rc2 tag or stable decision.
