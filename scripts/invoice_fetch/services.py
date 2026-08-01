@@ -13,6 +13,7 @@ from .link_downloader import LinkDownloader
 from .db import InvoiceDB
 from .excel_export import export_excel
 from .log_privacy import mask_email, mask_uid, sanitize_log_message
+from .scan_lifecycle import ScanControl
 
 _log = logging.getLogger("invoice_fetch")
 
@@ -61,6 +62,8 @@ def scan_email_and_download(
     retry_failed: bool = False,
     log_callback=None,
     selected_keys: list[str] | None = None,
+    scan_control: ScanControl | None = None,
+    progress_callback=None,
 ) -> dict:
     """Public wrapper to scan emails and download invoices safely from GUI/CLI."""
     from .__main__ import _scan_mailboxes_with_db
@@ -86,6 +89,8 @@ def scan_email_and_download(
                 retry_failed=retry_failed,
                 log_callback=log,
                 selected_keys=selected_keys,
+                scan_control=scan_control,
+                progress_callback=progress_callback,
             )
 
     except SystemExit as sys_err:

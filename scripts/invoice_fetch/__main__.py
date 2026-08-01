@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ from .invoice_parser import InvoiceParser, parse_html_body, parse_subject
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .mail_fetcher import MailFetcher
 from .log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message, mask_filename, mask_invoice_number, mask_path, mask_uid, redact_text
+from .scan_lifecycle import ScanCancelled, ScanControl, ScanStage, new_scan_id, redacted_progress
 from .url_utils import _mask_url
 from .rule_classifier import classify as rule_classify
 from . import review_status
@@ -3802,6 +3804,8 @@ def _scan_mailboxes_with_db(
     log_callback=None,
     no_ai: bool = False,
     selected_keys: list[str] | None = None,
+    scan_control: ScanControl | None = None,
+    progress_callback=None,
 ) -> dict:
     """Sequentially scan multiple enabled mailboxes and process pending invoices."""
 
@@ -3811,6 +3815,56 @@ def _scan_mailboxes_with_db(
             log_callback(message)
         else:
             _log.info(message)
+
+    scan_control = scan_control or ScanControl()
+    scan_id = new_scan_id()
+    scan_started = time.monotonic()
+
+    def stage(mailbox: str, stage_name: str, counts: dict | None = None,
+              reason: str = "", exc: BaseException | None = None) -> None:
+        event = redacted_progress(
+            scan_id=scan_id,
+            mailbox=mailbox,
+            stage=stage_name,
+            started_at=scan_started,
+            counts=counts,
+            reason=reason,
+            exception_type=type(exc).__name__ if exc else "",
+        )
+        if progress_callback:
+            progress_callback(event)
+        _log.info(
+            "scan_id=%s mailbox=%s stage=%s elapsed_ms=%s counts=%s reason=%s exception_type=%s",
+            event["scan_id"], event["mailbox"], event["stage"], event["elapsed_ms"],
+            event["counts"], event["reason"], event["exception_type"],
+        )
+
+    def make_fetcher(account: dict, mailbox: str):
+        imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
+        kwargs = {
+            "address": account.get("address", ""),
+            "auth_code": account["auth_code"],
+            "server": imap_cfg.get("server", "imap.qq.com"),
+            "port": imap_cfg.get("port", 993),
+            "control": scan_control,
+            "progress_callback": lambda name: stage(mailbox, name),
+            "timeouts": (
+                imap_cfg.get("timeouts")
+                if isinstance(imap_cfg.get("timeouts"), dict)
+                else (cfg.get("imap", {}).get("timeouts") if isinstance(cfg.get("imap"), dict) else None)
+            ),
+        }
+        try:
+            return MailFetcher(**kwargs)
+        except TypeError as exc:
+            # Keep existing test doubles and third-party integrations compatible
+            # while the production MailFetcher receives lifecycle controls.
+            if "unexpected keyword" not in str(exc):
+                raise
+            return MailFetcher(
+                kwargs["address"], kwargs["auth_code"],
+                kwargs["server"], kwargs["port"],
+            )
 
     accounts = get_email_accounts(cfg)
     if selected_keys:
@@ -3865,6 +3919,7 @@ def _scan_mailboxes_with_db(
 
     if retry_failed:
         for account in account_contexts:
+            scan_control.raise_if_cancelled()
             mailbox_key = account.get("mailbox_key", "legacy")
             failed_invoices = db.get_failed_downloads(mailbox_key=mailbox_key)
             if failed_invoices:
@@ -3881,6 +3936,7 @@ def _scan_mailboxes_with_db(
 
     if not download_only:
         for account in account_contexts:
+            scan_control.raise_if_cancelled()
             mailbox_key = account.get("mailbox_key", "legacy")
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
@@ -3899,12 +3955,8 @@ def _scan_mailboxes_with_db(
                     emit(f"Full scan of the most recent {months_back} months [{mask_email(email_addr)}]")
 
                 known = db.get_all_email_uids(mailbox_key=mailbox_key)
-                with MailFetcher(
-                    address=email_addr,
-                    auth_code=account["auth_code"],
-                    server=account.get("imap", {}).get("server", "imap.qq.com"),
-                    port=account.get("imap", {}).get("port", 993),
-                ) as fetcher:
+                stage(email_addr, ScanStage.CONNECT)
+                with make_fetcher(account, email_addr) as fetcher:
                     headers = fetcher.scan_headers(
                         folder=folder,
                         months_back=months_back,
@@ -3917,6 +3969,12 @@ def _scan_mailboxes_with_db(
                         headers,
                         mailbox_key=mailbox_key,
                     )
+                    stage(
+                        email_addr,
+                        ScanStage.SAVE,
+                        {"headers": len(headers), "new_headers": inserted_headers},
+                    )
+                    scan_control.raise_if_cancelled()
                     new_email_headers += inserted_headers
                     emit(
                         f"Scan complete for {mask_email(email_addr)}: "
@@ -3937,13 +3995,23 @@ def _scan_mailboxes_with_db(
                             emit(f"AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类，{ai_pending_classification} 封邮件待分类。")
                         else:
                             emit("AI API Key 鉴权失败，请检查设置；当前应用会话已暂停 AI 分类。")
+                    stage(
+                        email_addr,
+                        ScanStage.COMPLETE,
+                        {"headers": len(headers), "new_headers": inserted_headers},
+                    )
+            except ScanCancelled as exc:
+                stage(email_addr, ScanStage.CANCELLED, reason="用户取消扫描", exc=exc)
+                raise
             except Exception as exc:
+                stage(email_addr, ScanStage.FAILED, reason="扫描失败", exc=exc)
                 failed_account_keys.add(mailbox_key)
                 failed_summaries.append(sanitize_log_message(f"scan failed for {mask_email(email_addr)}: {exc}"))
                 emit(sanitize_log_message(f"Scan failed for {mask_email(email_addr)}: {exc}"))
 
     if not scan_only:
         for account in account_contexts:
+            scan_control.raise_if_cancelled()
             mailbox_key = account.get("mailbox_key", "legacy")
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
@@ -3965,13 +4033,10 @@ def _scan_mailboxes_with_db(
                     emit(f"No invoice emails pending download for {mask_email(email_addr)}")
                     continue
                 emit(f"Downloading {len(pending_for_account)} invoice emails for {mask_email(email_addr)}")
-                with MailFetcher(
-                    address=email_addr,
-                    auth_code=account["auth_code"],
-                    server=account.get("imap", {}).get("server", "imap.qq.com"),
-                    port=account.get("imap", {}).get("port", 993),
-                ) as fetcher:
+                stage(email_addr, ScanStage.CONNECT)
+                with make_fetcher(account, email_addr) as fetcher:
                     for row in pending_for_account:
+                        scan_control.raise_if_cancelled()
                         rule_result, rule_reason = rule_classify(
                             row.get("subject", ""),
                             row.get("sender", ""),
@@ -3991,9 +4056,15 @@ def _scan_mailboxes_with_db(
                                 f"{mask_uid(row.get('uid', 0))}"
                             )
                             handled_pending_uids.add(int(row["uid"]))
+                            scan_control.raise_if_cancelled()
                             continue
                         classified_invoice += 1
                         try:
+                            stage(
+                                email_addr,
+                                ScanStage.DOWNLOAD,
+                                {"pending": len(pending_for_account), "processed": downloaded_emails},
+                            )
                             before_active_count = db.count_invoices()
                             before_total_count = db.count_invoices(include_deleted=True)
                             before_pending_manual = db.count_pending_manual_invoices()
@@ -4007,6 +4078,7 @@ def _scan_mailboxes_with_db(
                                 db=db,
                                 categories=categories,
                                 config=cfg,
+                                progress_callback=lambda name: stage(email_addr, name),
                             )
                             after_active_count = db.count_invoices()
                             after_total_count = db.count_invoices(include_deleted=True)
@@ -4060,6 +4132,8 @@ def _scan_mailboxes_with_db(
                                     f"{outcome_status}: {mask_uid(row.get('uid', 0))}"
                                 )
                         except Exception as exc:
+                            if isinstance(exc, ScanCancelled):
+                                raise
                             download_failed += 1
                             failed += 1
                             db.record_email_download_failure(
@@ -4071,7 +4145,12 @@ def _scan_mailboxes_with_db(
                             failed_summaries.append(sanitize_log_message(str(exc)))
                             emit(sanitize_log_message(f"Failed to process {mask_uid(row.get('uid', 0))}: {exc}"))
                         handled_pending_uids.add(int(row["uid"]))
+                        scan_control.raise_if_cancelled()
+            except ScanCancelled as exc:
+                stage(email_addr, ScanStage.CANCELLED, reason="用户取消扫描", exc=exc)
+                raise
             except Exception as exc:
+                stage(email_addr, ScanStage.FAILED, reason="下载处理失败", exc=exc)
                 failed_account_keys.add(mailbox_key)
                 unfinished_rows = [
                     row for row in pending_for_account
@@ -4317,6 +4396,7 @@ def _handle_pending_email(
     db: InvoiceDB,
     categories: dict,
     config: dict | None = None,
+    progress_callback=None,
 ) -> PendingEmailResult:
     """Fetch and process one pending invoice email.
 
@@ -4330,6 +4410,9 @@ def _handle_pending_email(
     if not msg.date:
         msg.date = row.get("mail_date", "")
 
+    if progress_callback:
+        progress_callback(ScanStage.PARSE)
+
     try:
         link_dl.last_download_diagnostics = {
             "found_links": 0,
@@ -4340,6 +4423,8 @@ def _handle_pending_email(
         link_dl.last_process_outcome = ""
     except (AttributeError, TypeError):
         pass
+    if progress_callback:
+        progress_callback(ScanStage.SAVE)
     recorded = _process_email(
         msg,
         att_handler,

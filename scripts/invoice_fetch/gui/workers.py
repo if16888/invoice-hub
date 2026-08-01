@@ -28,6 +28,7 @@ class LocalImportWorker(QThread):
 
 class EmailScanWorker(QThread):
     log = Signal(str)
+    stage = Signal(dict)
     finished = Signal(dict)
     error = Signal(str)
 
@@ -36,6 +37,11 @@ class EmailScanWorker(QThread):
         self.db_path = db_path
         self.selected_keys = selected_keys
         self.summary_logs = []
+        from ..scan_lifecycle import ScanControl
+        self.control = ScanControl()
+
+    def request_cancel(self):
+        self.control.cancel()
 
     def run(self):
         try:
@@ -49,9 +55,15 @@ class EmailScanWorker(QThread):
                 db_path=self.db_path,
                 log_callback=gui_log,
                 selected_keys=self.selected_keys,
+                scan_control=self.control,
+                progress_callback=self.stage.emit,
             )
             self.finished.emit(res)
         except Exception as e:
-            self.error.emit(str(e))
+            from ..scan_lifecycle import ScanCancelled
+            if isinstance(e, ScanCancelled):
+                self.finished.emit({"cancelled": True, "reason": str(e)})
+            else:
+                self.error.emit(str(e))
         except BaseException as e:
             self.error.emit(str(e))
