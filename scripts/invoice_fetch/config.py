@@ -60,12 +60,18 @@ def is_outlook_like_account(provider: str, address: str, server: str) -> bool:
 
 _DEFAULTS = {
     "email": {"provider": "qq", "address": "", "username": ""},
-    "imap": {"server": "", "port": 993, "ssl": True},
+    "imap": {
+        "server": "",
+        "port": 993,
+        "ssl": True,
+        "timeouts": {"connect": 15, "tls": 20, "command": 30},
+    },
     "search": {"folder": "INBOX", "months_back": 3},
     "email_accounts": [],
     "ai": {"provider": "none", "model": "", "batch_size": 20},
     "ai_profiles": [],
     "reimbursement": {"buyer_name": "", "buyer_tax_id": "", "strict_buyer_check": True},
+    "export": {"output_dir": ""},
     "playwright": {"channel": "auto"},
     "categories": {},
 }

@@ -198,7 +198,10 @@ def export_claim_package(
     # 1. Setup export directory with timestamp to avoid stale files from repeated exports
     sanitized_name = _sanitize_dirname(claim["name"])
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    export_base = Path(export_root) if export_root is not None else project_root / "exports"
+    if export_root is None:
+        from .export_paths import resolve_export_directory
+        export_root = resolve_export_directory(load_config_safe())
+    export_base = Path(export_root)
     export_dir = export_base / f"{sanitized_name}_{timestamp}"
     export_dir.mkdir(parents=True, exist_ok=True)
 

@@ -38,6 +38,10 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[UninstallDelete]
+; Legacy runtime export folders are removed only when migration left them empty.
+Type: dirifempty; Name: "{app}\exports"
+
 [Icons]
 Name: "{autoprograms}\Invoice Hub"; Filename: "{app}\InvoiceHub.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\Invoice Hub"; Filename: "{app}\InvoiceHub.exe"; WorkingDir: "{app}"; Tasks: desktopicon
