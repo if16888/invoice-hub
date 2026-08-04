@@ -1,0 +1,19 @@
+{
+  "page": "export",
+  "state": "export-blocked",
+  "requested_size": [
+    1366,
+    768
+  ],
+  "actual_window_size": [
+    1366,
+    768
+  ],
+  "device_pixel_ratio": 1.0,
+  "logical_dpi": 96.0,
+  "source_commit": "51d6b5bd24db4ae5ac74cee8d58872c44e79fbb1",
+  "state_validation": "passed",
+  "dataset_name": "rc2-synthetic-complete-v1",
+  "button_enabled": false,
+  "action_hint": "阻塞：缺补充材料 1 张；材料不可用 1 张"
+}

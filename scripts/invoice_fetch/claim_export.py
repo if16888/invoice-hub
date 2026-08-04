@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from datetime import datetime
@@ -62,6 +63,70 @@ def _normalize_path_list(raw_value) -> list[str]:
     return normalized
 
 
+def _flag_is_true(value) -> bool:
+    """Interpret SQLite/config boolean values without treating ``"0"`` as true."""
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "none", "null", "否"}
+    return bool(value)
+
+
+def _resolve_export_source_path(raw_value: str, runtime_dir: Path) -> Path:
+    source_path = Path(str(raw_value))
+    if not source_path.is_absolute():
+        source_path = Path(runtime_dir) / source_path
+    return source_path
+
+
+def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
+    """Return one invoice's supplemental-material integrity result.
+
+    ``missing_extra`` is the persisted semantic flag for a required material
+    that has not been supplied.  A non-empty ``extra_paths`` value is a
+    declaration that the files must be usable by export.  Legacy rows that
+    claim ``has_extra``/``extra_type`` but have no paths are also treated as
+    unavailable, while an ordinary invoice with all three fields empty is
+    valid and is not rejected because ``extra_paths`` is ``[]``.
+    """
+    extra_paths = _normalize_path_list(invoice.get("extra_paths"))
+    missing_extra = _flag_is_true(invoice.get("missing_extra"))
+    has_extra = _flag_is_true(invoice.get("has_extra"))
+    extra_type = str(invoice.get("extra_type") or "").strip()
+    unavailable_paths = []
+
+    for raw_path in extra_paths:
+        source_path = _resolve_export_source_path(raw_path, runtime_dir)
+        try:
+            if not source_path.is_file() or not os.access(str(source_path), os.R_OK):
+                unavailable_paths.append(raw_path)
+        except (OSError, ValueError):
+            unavailable_paths.append(raw_path)
+
+    # A non-empty material declaration without a path is inconsistent data.
+    # Do not apply this rule to ordinary invoices whose material fields are
+    # all empty; those are valid without supplemental evidence.
+    if not extra_paths and not missing_extra and (has_extra or extra_type):
+        unavailable_paths.append("<declared-material>")
+
+    return {
+        "missing_extra": missing_extra,
+        "unavailable_extra": bool(unavailable_paths),
+        "extra_paths": extra_paths,
+        "unavailable_paths": unavailable_paths,
+    }
+
+
+def summarize_extra_material_issues(invoices: list[dict], runtime_dir: Path) -> dict:
+    """Count supplemental-material issues without exposing local paths."""
+    summary = {"missing_extra": 0, "unavailable_extra": 0}
+    for invoice in invoices:
+        result = inspect_extra_material(invoice, runtime_dir)
+        if result["missing_extra"]:
+            summary["missing_extra"] += 1
+        if result["unavailable_extra"]:
+            summary["unavailable_extra"] += 1
+    return summary
+
+
 def _normalize_export_date_prefix(raw_value: str) -> str:
     text = str(raw_value or "").strip()
     if not text:
@@ -98,9 +163,7 @@ def _copy_into_attachments(
 ) -> str:
     if not src_value:
         return ""
-    src_path = Path(src_value)
-    if not src_path.is_absolute():
-        src_path = runtime_dir / src_value
+    src_path = _resolve_export_source_path(src_value, runtime_dir)
     if not src_path.exists() or not src_path.is_file():
         _log.warning("Attachment file not found at: %s (skipped)", mask_path(src_path))
         return ""
@@ -191,6 +254,15 @@ def export_claim_package(
         raise ValueError(f"报销组“{claim['name']}”筛选后没有符合条件的可导出发票。")
 
     invoices.sort(key=_invoice_sort_key)
+
+    material_issues = summarize_extra_material_issues(invoices, runtime_dir)
+    material_blockers = []
+    if material_issues["missing_extra"]:
+        material_blockers.append(f"缺补充材料 {material_issues['missing_extra']} 张")
+    if material_issues["unavailable_extra"]:
+        material_blockers.append(f"补充材料不可用 {material_issues['unavailable_extra']} 张")
+    if material_blockers:
+        raise ValueError("导出已阻断：" + "；".join(material_blockers) + "。请补齐材料后重试。")
 
     if reimbursement_config is None:
         reimbursement_config = load_config_safe().get("reimbursement", {})

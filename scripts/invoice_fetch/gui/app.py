@@ -2407,13 +2407,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             stats = self._claim_export_preflight_stats(claim.get("id"))
             total_approved += int(stats.get(APPROVED, 0) or 0)
             total_pending += int(stats.get(TO_REVIEW, 0) or 0)
-            total_missing += int(stats.get("missing_attachment", 0) or 0) + int(stats.get("missing_amount", 0) or 0)
+            total_missing += (
+                int(stats.get("missing_attachment", 0) or 0)
+                + int(stats.get("missing_amount", 0) or 0)
+                + int(stats.get("missing_extra", 0) or 0)
+                + int(stats.get("unavailable_extra", 0) or 0)
+            )
             invoices = self.db.get_claim_invoices(claim.get("id"))
             count, total, _has_missing = amount_total(invoices)
-            missing_docs = int(stats.get("missing_attachment", 0) or 0) + int(stats.get("missing_amount", 0) or 0)
+            missing_docs = (
+                int(stats.get("missing_attachment", 0) or 0)
+                + int(stats.get("missing_amount", 0) or 0)
+                + int(stats.get("missing_extra", 0) or 0)
+                + int(stats.get("unavailable_extra", 0) or 0)
+            )
             ready = int(stats.get(APPROVED, 0) or 0) > 0 and missing_docs == 0
             subtitle = f"{count} 张发票 · ¥{Decimal(str(total)).quantize(Decimal('0.00'))}"
-            meta = f"缺材料 {missing_docs}"
+            meta = f"完整性缺口 {missing_docs}"
             badge = "可导出" if ready else "待补齐"
             self.export_group_list.add_entity_row(
                 title=str(claim.get("name") or "未命名报销组").strip(),
@@ -2439,6 +2449,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self.export_check_pending,
                     self.export_check_missing_attach,
                     self.export_check_missing_amount,
+                    self.export_check_missing_extra,
+                    self.export_check_unavailable_extra,
                     self.export_check_dir,
                 ):
                     row.set_value("—", None)
@@ -3382,7 +3394,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_summary_strip.add_metric("groups", "报销组", "0", state="info")
         self.export_summary_strip.add_metric("approved", "已通过", "0", state="success")
         self.export_summary_strip.add_metric("pending", "待处理", "0", state="warning")
-        self.export_summary_strip.add_metric("missing", "缺材料", "0", state="danger")
+        self.export_summary_strip.add_metric("missing", "完整性缺口", "0", state="danger")
         self.export_summary_strip.add_metric("ready", "导出状态", "待检查", state="muted")
         layout.addWidget(self.export_summary_strip)
 
@@ -3391,7 +3403,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shell.setSpacing(12)
         shell.setAlignment(Qt.AlignTop)
 
-        self.export_group_card = SectionCard("报销组", hint="左侧按组查看发票数、金额和缺材料情况；完整性检查会随选择更新。")
+        self.export_group_card = SectionCard("报销组", hint="左侧按组查看发票数、金额和完整性缺口；检查会随选择更新。")
         self.export_group_card.setFixedWidth(300)
         self.export_group_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
         self.export_empty_state = EmptyStateCard(
@@ -3427,13 +3439,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Structured ChecklistRow preflight items (replaces long text labels)
         self.export_check_approved = ChecklistRow("已通过发票", "—")
         self.export_check_pending = ChecklistRow("待处理", "—")
-        self.export_check_missing_attach = ChecklistRow("缺材料", "—")
+        self.export_check_missing_attach = ChecklistRow("缺原件", "—")
         self.export_check_missing_amount = ChecklistRow("缺金额", "—")
+        self.export_check_missing_extra = ChecklistRow("缺补充材料", "—")
+        self.export_check_unavailable_extra = ChecklistRow("材料不可用", "—")
         self.export_check_dir = ChecklistRow("导出目录", "未设置")
         self.export_integrity_card.body_layout.addWidget(self.export_check_approved)
         self.export_integrity_card.body_layout.addWidget(self.export_check_pending)
         self.export_integrity_card.body_layout.addWidget(self.export_check_missing_attach)
         self.export_integrity_card.body_layout.addWidget(self.export_check_missing_amount)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_missing_extra)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_unavailable_extra)
         self.export_integrity_card.body_layout.addWidget(self.export_check_dir)
 
         # Keep legacy label references for backward compatibility with tests
@@ -3851,6 +3867,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.export_check_pending.set_value("—", None)
                 self.export_check_missing_attach.set_value("—", None)
                 self.export_check_missing_amount.set_value("—", None)
+                self.export_check_missing_extra.set_value("—", None)
+                self.export_check_unavailable_extra.set_value("—", None)
                 self.export_check_dir.set_value("—", None)
             if hasattr(self, "lbl_export_action_hint"):
                 self.lbl_export_action_hint.setText("先选左侧报销组，再确认组内发票和完整性检查。")
@@ -3881,6 +3899,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         pending_cnt = int(stats.get(TO_REVIEW, 0) or 0)
         missing_attach = int(stats.get("missing_attachment", 0) or 0)
         missing_amount = int(stats.get("missing_amount", 0) or 0)
+        missing_extra = int(stats.get("missing_extra", 0) or 0)
+        unavailable_extra = int(stats.get("unavailable_extra", 0) or 0)
 
         # Export directory check
         export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(self.config)
@@ -3893,6 +3913,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             blockers.append(f"缺原件 {missing_attach} 张")
         if missing_amount > 0:
             blockers.append(f"缺金额 {missing_amount} 张")
+        if missing_extra > 0:
+            blockers.append(f"缺补充材料 {missing_extra} 张")
+        if unavailable_extra > 0:
+            blockers.append(f"材料不可用 {unavailable_extra} 张")
 
         is_ready = not blockers and dir_ok
 
@@ -3907,6 +3931,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.export_check_missing_amount.set_value(
                 "无" if missing_amount == 0 else f"{missing_amount} 张",
                 ok=missing_amount == 0,
+            )
+            self.export_check_missing_extra.set_value(
+                "无" if missing_extra == 0 else f"{missing_extra} 张",
+                ok=missing_extra == 0,
+            )
+            self.export_check_unavailable_extra.set_value(
+                "无" if unavailable_extra == 0 else f"{unavailable_extra} 张",
+                ok=unavailable_extra == 0,
             )
             self.export_check_dir.set_value(
                 str(export_dir) if dir_ok else "未设置", ok=dir_ok
@@ -6637,8 +6669,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             _log.error("Failed to unlink invoices from claim: %s", e)
             QMessageBox.critical(self, "错误", f"取消关联失败: {e}")
 
-    def _claim_export_preflight_stats(self, claim_id: int) -> dict:
+    def _claim_export_preflight_stats(
+        self,
+        claim_id: int,
+        *,
+        include_to_review: bool = True,
+    ) -> dict:
+        return self._claim_export_preflight_stats_for_range(
+            claim_id,
+            include_to_review=include_to_review,
+        )
+
+    def _claim_export_preflight_stats_for_range(
+        self,
+        claim_id: int,
+        *,
+        include_to_review: bool,
+    ) -> dict:
+        """Calculate preflight stats for the selected export status range."""
+        from ..claim_export import summarize_extra_material_issues
+
         invoices = self.db.get_claim_invoices(claim_id)
+        material_statuses = {APPROVED}
+        if include_to_review:
+            material_statuses.add(TO_REVIEW)
         stats = {
             APPROVED: 0,
             TO_REVIEW: 0,
@@ -6646,16 +6700,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ERROR: 0,
             "missing_attachment": 0,
             "missing_amount": 0,
+            "missing_extra": 0,
+            "unavailable_extra": 0,
         }
+        material_invoices = []
         for inv in invoices:
+            if is_pending_evidence_invoice(inv):
+                continue
             status = inv.get("review_status") or TO_REVIEW
             if status in (APPROVED, TO_REVIEW, IGNORED, ERROR):
                 stats[status] += 1
-            if status in (APPROVED, TO_REVIEW):
+            if status in material_statuses:
+                material_invoices.append(inv)
                 if not str(inv.get("attachment_path") or "").strip():
                     stats["missing_attachment"] += 1
                 if not str(inv.get("total_amount") or "").strip():
                     stats["missing_amount"] += 1
+        stats.update(summarize_extra_material_issues(material_invoices, RUNTIME_DIR))
         return stats
 
     def _format_claim_export_preflight_text(self, stats: dict) -> str:
@@ -6665,8 +6726,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"待处理：{stats.get(TO_REVIEW, 0)} 张\n"
             f"缺原件：{stats.get('missing_attachment', 0)} 张\n"
             f"缺金额：{stats.get('missing_amount', 0)} 张\n"
+            f"缺补充材料：{stats.get('missing_extra', 0)} 张\n"
+            f"材料不可用：{stats.get('unavailable_extra', 0)} 张\n"
             "已忽略和异常发票不会进入报销包。"
         )
+
+    def _claim_export_material_blocker_text(self, stats: dict) -> str:
+        blockers = []
+        missing_extra = int(stats.get("missing_extra", 0) or 0)
+        unavailable_extra = int(stats.get("unavailable_extra", 0) or 0)
+        if missing_extra:
+            blockers.append(f"缺补充材料 {missing_extra} 张")
+        if unavailable_extra:
+            blockers.append(f"补充材料不可用 {unavailable_extra} 张")
+        if not blockers:
+            return ""
+        return "导出已阻断：" + "；".join(blockers) + "。请补齐材料后重试。"
 
     def _export_claim_package(self):
         """Run standard claim export (offering choices for range scope) and offer direct file manager folder opening."""
@@ -6709,6 +6784,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         include_to_review = (box.clickedButton() == btn_include_all)
+        selected_stats = self._claim_export_preflight_stats(
+            claim_id,
+            include_to_review=include_to_review,
+        )
+        material_blocker = self._claim_export_material_blocker_text(selected_stats)
+        if material_blocker:
+            QMessageBox.warning(self, "导出已阻断", material_blocker)
+            return
 
         self._set_action_busy(self.btn_toolbar_export, "导出中...")
         try:
