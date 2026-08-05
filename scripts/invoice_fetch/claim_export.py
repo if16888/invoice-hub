@@ -160,12 +160,21 @@ def _copy_into_attachments(
     attachments_dir: Path,
     *,
     date_prefix: str = "",
+    required: bool = False,
 ) -> str:
     if not src_value:
+        if required:
+            raise ValueError(
+                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
+            )
         return ""
     src_path = _resolve_export_source_path(src_value, runtime_dir)
     if not src_path.exists() or not src_path.is_file():
         _log.warning("Attachment file not found at: %s (skipped)", mask_path(src_path))
+        if required:
+            raise ValueError(
+                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
+            )
         return ""
 
     dest_name = _prefix_export_filename(src_path.name, date_prefix)
@@ -181,10 +190,45 @@ def _copy_into_attachments(
                 break
             counter += 1
 
-    shutil.copy2(src_path, dest_path)
+    try:
+        shutil.copy2(src_path, dest_path)
+    except (OSError, shutil.Error):
+        if required:
+            raise ValueError(
+                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
+            ) from None
+        raise
+
+    if required:
+        try:
+            copied_ok = dest_path.is_file()
+        except OSError:
+            copied_ok = False
+        if not copied_ok:
+            raise ValueError(
+                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
+            )
+
     copied_relative_path = f"attachments/{dest_path.name}"
     _log.info("Copied export file: %s -> %s", mask_path(src_path), mask_path(copied_relative_path))
     return copied_relative_path
+
+
+def _cleanup_failed_export_dir(export_dir: Path) -> None:
+    """Remove only the package directory created by the current export call."""
+    if not export_dir.exists():
+        return
+    try:
+        shutil.rmtree(export_dir)
+    except OSError as exc:
+        _log.error(
+            "Failed to clean incomplete export directory: %s (%s)",
+            mask_path(export_dir),
+            type(exc).__name__,
+        )
+        raise RuntimeError(
+            "导出失败，且未能清理本次生成的半成品目录。请关闭占用文件后重试。"
+        ) from None
 
 
 
@@ -275,118 +319,134 @@ def export_claim_package(
         export_root = resolve_export_directory(load_config_safe())
     export_base = Path(export_root)
     export_dir = export_base / f"{sanitized_name}_{timestamp}"
-    export_dir.mkdir(parents=True, exist_ok=True)
+    export_dir_created = False
+    try:
+        # ``exist_ok=False`` ensures cleanup can never remove a historical package.
+        export_dir.mkdir(parents=True, exist_ok=False)
+        export_dir_created = True
 
-    attachments_dir = export_dir / "attachments"
-    attachments_dir.mkdir(exist_ok=True)
+        attachments_dir = export_dir / "attachments"
+        attachments_dir.mkdir(exist_ok=False)
 
-    # We will copy invoices list to avoid mutating items in-memory that other code might use
-    export_invoices = []
-    manifest_items = []
+        # We will copy invoices list to avoid mutating items in-memory that other code might use
+        export_invoices = []
+        manifest_items = []
 
-    # 2. Process attachments
-    for inv in invoices:
-        inv_copy = dict(inv)
-        b_warning = buyer_warning(inv, reimbursement_config)
-        d_warning = get_date_warning(inv)
-        if b_warning and d_warning:
-            warning = f"{b_warning}；{d_warning}"
-        elif b_warning:
-            warning = b_warning
-        else:
-            warning = d_warning
-        inv_copy["warning"] = warning
-        copied_relative_path = ""
-        orig_attachment_path = inv.get("attachment_path", "")
-        export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or inv.get("mail_date") or "unknown-date"
+        # 2. Process attachments
+        for inv in invoices:
+            inv_copy = dict(inv)
+            b_warning = buyer_warning(inv, reimbursement_config)
+            d_warning = get_date_warning(inv)
+            if b_warning and d_warning:
+                warning = f"{b_warning}；{d_warning}"
+            elif b_warning:
+                warning = b_warning
+            else:
+                warning = d_warning
+            inv_copy["warning"] = warning
+            copied_relative_path = ""
+            orig_attachment_path = inv.get("attachment_path", "")
+            export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or inv.get("mail_date") or "unknown-date"
 
-        if orig_attachment_path:
-            copied_relative_path = _copy_into_attachments(
-                orig_attachment_path,
-                runtime_dir,
-                attachments_dir,
-                date_prefix=export_date_prefix,
-            )
-        else:
-            _log.info("No attachment path found for invoice ID %s", inv.get("id"))
+            if orig_attachment_path:
+                copied_relative_path = _copy_into_attachments(
+                    orig_attachment_path,
+                    runtime_dir,
+                    attachments_dir,
+                    date_prefix=export_date_prefix,
+                )
+            else:
+                _log.info("No attachment path found for invoice ID %s", inv.get("id"))
 
-        raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
-        copied_extra_paths = []
-        for extra_path in raw_extra_paths:
-            copied_extra_path = _copy_into_attachments(
-                extra_path,
-                runtime_dir,
-                attachments_dir,
-                date_prefix=export_date_prefix,
-            )
-            if copied_extra_path:
+            raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
+            copied_extra_paths = []
+            for extra_path in raw_extra_paths:
+                copied_extra_path = _copy_into_attachments(
+                    extra_path,
+                    runtime_dir,
+                    attachments_dir,
+                    date_prefix=export_date_prefix,
+                    required=True,
+                )
+                if not copied_extra_path:
+                    raise ValueError(
+                        "导出已阻断：补充材料复制数量不完整。请确认材料文件仍可访问后重试。"
+                    )
                 copied_extra_paths.append(copied_extra_path)
+            if len(copied_extra_paths) != len(raw_extra_paths):
+                raise ValueError(
+                    "导出已阻断：补充材料复制数量不完整。请确认材料文件仍可访问后重试。"
+                )
 
-        # Update the row's attachment path so that the exported Excel file points relatively to the copied file
-        inv_copy["attachment_path"] = copied_relative_path
-        inv_copy["extra_paths"] = copied_extra_paths
-        export_invoices.append(inv_copy)
+            # Update the row's attachment path so that the exported Excel file points relatively to the copied file
+            inv_copy["attachment_path"] = copied_relative_path
+            inv_copy["extra_paths"] = copied_extra_paths
+            export_invoices.append(inv_copy)
 
-        # Build manifest item details
-        manifest_items.append({
-            "invoice_id": inv.get("id"),
-            "invoice_number": inv.get("invoice_number"),
-            "invoice_date": inv.get("invoice_date"),
-            "expense_date": inv.get("expense_date") or inv.get("invoice_date"),
-            "date_source": inv.get("date_source", ""),
-            "category": inv.get("category"),
-            "total_amount": inv.get("total_amount"),
-            "currency": inv.get("currency", ""),
-            "extra_type": inv.get("extra_type", ""),
-            "has_extra": bool(inv.get("has_extra")),
-            "missing_extra": bool(inv.get("missing_extra")),
-            "parse_note": inv.get("parse_note", ""),
-            "confirmed_note": inv.get("confirmed_note", ""),
-            "attachment_path": copied_relative_path,
-            "copied_attachment_path": copied_relative_path,
-            "extra_paths": copied_extra_paths,
-            "copied_extra_paths": copied_extra_paths,
-            "review_status": inv.get("review_status", ""),
-            "warning": warning,
-        })
+            # Build manifest item details
+            manifest_items.append({
+                "invoice_id": inv.get("id"),
+                "invoice_number": inv.get("invoice_number"),
+                "invoice_date": inv.get("invoice_date"),
+                "expense_date": inv.get("expense_date") or inv.get("invoice_date"),
+                "date_source": inv.get("date_source", ""),
+                "category": inv.get("category"),
+                "total_amount": inv.get("total_amount"),
+                "currency": inv.get("currency", ""),
+                "extra_type": inv.get("extra_type", ""),
+                "has_extra": bool(inv.get("has_extra")),
+                "missing_extra": bool(inv.get("missing_extra")),
+                "parse_note": inv.get("parse_note", ""),
+                "confirmed_note": inv.get("confirmed_note", ""),
+                "attachment_path": copied_relative_path,
+                "copied_attachment_path": copied_relative_path,
+                "extra_paths": copied_extra_paths,
+                "copied_extra_paths": copied_extra_paths,
+                "review_status": inv.get("review_status", ""),
+                "warning": warning,
+            })
 
-    # 3. Generate reimbursement.xlsx
-    xlsx_dest = export_dir / "reimbursement.xlsx"
-    export_excel(export_invoices, xlsx_dest)
+        # 3. Generate reimbursement.xlsx
+        xlsx_dest = export_dir / "reimbursement.xlsx"
+        export_excel(export_invoices, xlsx_dest)
 
-    # 3.5 Generate claim_quality_report.md
-    qa_warnings_count = _generate_quality_report(
-        export_dir=export_dir,
-        claim_name=claim["name"],
-        export_invoices=export_invoices,
-        original_invoices=invoices,
-        all_invoices=all_invoices,
-        db=db,
-        runtime_dir=runtime_dir,
-    )
+        # 3.5 Generate claim_quality_report.md
+        qa_warnings_count = _generate_quality_report(
+            export_dir=export_dir,
+            claim_name=claim["name"],
+            export_invoices=export_invoices,
+            original_invoices=invoices,
+            all_invoices=all_invoices,
+            db=db,
+            runtime_dir=runtime_dir,
+        )
 
-    # 4. Generate manifest.json
-    manifest_data = {
-        "claim_id": claim_id,
-        "claim_name": claim["name"],
-        "export_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "export_filter": {
-            "type": export_filter,
-            "include_to_review": include_to_review,
-            "included_statuses": included_statuses,
-            "always_excluded_statuses": always_excluded_statuses
-        },
-        "skipped_counts": skipped_counts,
-        "item_count": len(manifest_items),
-        "qa_warnings_count": qa_warnings_count,
-        "items": manifest_items
-    }
-    manifest_dest = export_dir / "manifest.json"
-    with open(manifest_dest, "w", encoding="utf-8") as f:
-        json.dump(manifest_data, f, ensure_ascii=False, indent=2)
+        # 4. Generate manifest.json
+        manifest_data = {
+            "claim_id": claim_id,
+            "claim_name": claim["name"],
+            "export_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "export_filter": {
+                "type": export_filter,
+                "include_to_review": include_to_review,
+                "included_statuses": included_statuses,
+                "always_excluded_statuses": always_excluded_statuses
+            },
+            "skipped_counts": skipped_counts,
+            "item_count": len(manifest_items),
+            "qa_warnings_count": qa_warnings_count,
+            "items": manifest_items
+        }
+        manifest_dest = export_dir / "manifest.json"
+        with open(manifest_dest, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
-    # 5. Log the export run in the DB
-    db.add_export_run(claim_id, str(export_dir), "generic_excel", len(invoices))
+        # 5. Log the export run in the DB only after every package file succeeded.
+        db.add_export_run(claim_id, str(export_dir), "generic_excel", len(invoices))
+    except Exception:
+        if export_dir_created:
+            _cleanup_failed_export_dir(export_dir)
+        raise
 
     _log.info("Claim export package completed successfully under: %s", mask_path(export_dir))
     return export_dir

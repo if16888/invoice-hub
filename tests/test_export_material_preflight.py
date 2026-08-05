@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from scripts.invoice_fetch import claim_export as claim_export_module
 from scripts.invoice_fetch import review_status
 from scripts.invoice_fetch.claim_export import (
     export_claim_package,
@@ -58,6 +59,10 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                 path.write_bytes(b"synthetic evidence")
 
         return project_root, runtime_dir, claim_id
+
+    def _assert_no_partial_package(self, export_root: Path) -> None:
+        if export_root.exists():
+            self.assertEqual(list(export_root.iterdir()), [])
 
     def test_missing_extra_is_reported_by_shared_integrity_judgement(self):
         with tempfile.TemporaryDirectory() as td:
@@ -201,8 +206,14 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     "missing_extra": False,
                     "has_extra": True,
                     "extra_type": "水单",
-                    "extra_paths": ["attachments/evidence.pdf"],
-                    "files": ["attachments/evidence.pdf"],
+                    "extra_paths": [
+                        "attachments/evidence.pdf",
+                        "attachments/evidence-2.pdf",
+                    ],
+                    "files": [
+                        "attachments/evidence.pdf",
+                        "attachments/evidence-2.pdf",
+                    ],
                 }],
             )
             with InvoiceDB(runtime_dir / "invoices.db") as db:
@@ -215,8 +226,10 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                 )
                 manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
                 item = manifest["items"][0]
-                self.assertTrue(item["copied_extra_paths"])
-                self.assertTrue((export_dir / item["copied_extra_paths"][0]).is_file())
+                self.assertEqual(len(item["copied_extra_paths"]), 2)
+                self.assertTrue(
+                    all((export_dir / copied_path).is_file() for copied_path in item["copied_extra_paths"])
+                )
                 self.assertEqual(len(db.list_export_runs(claim_id)), 1)
 
     def test_declared_missing_extra_path_blocks_export_without_run(self):
@@ -242,6 +255,138 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     )
                 self.assertFalse(export_root.exists())
                 self.assertEqual(db.list_export_runs(claim_id), [])
+
+    def test_extra_file_disappearing_after_preflight_cleans_partial_package(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{
+                    "attachment_path": "",
+                    "missing_extra": False,
+                    "has_extra": True,
+                    "extra_type": "水单",
+                    "extra_paths": ["attachments/evidence.pdf"],
+                    "files": ["attachments/evidence.pdf"],
+                }],
+            )
+            evidence_path = runtime_dir / "attachments/evidence.pdf"
+            export_root = project_root / "exports"
+            original_summary = claim_export_module.summarize_extra_material_issues
+
+            def inspect_then_remove(invoices, inspected_runtime_dir):
+                result = original_summary(invoices, inspected_runtime_dir)
+                evidence_path.unlink()
+                return result
+
+            with InvoiceDB(runtime_dir / "invoices.db") as db:
+                with patch.object(
+                    claim_export_module,
+                    "summarize_extra_material_issues",
+                    side_effect=inspect_then_remove,
+                ), patch.object(
+                    claim_export_module,
+                    "export_excel",
+                ) as export_excel_mock, patch.object(
+                    claim_export_module.json,
+                    "dump",
+                ) as manifest_dump_mock:
+                    with self.assertRaisesRegex(ValueError, "补充材料复制失败或已不可用") as ctx:
+                        export_claim_package(
+                            db,
+                            claim_id,
+                            project_root,
+                            runtime_dir,
+                            export_root=export_root,
+                        )
+                export_excel_mock.assert_not_called()
+                manifest_dump_mock.assert_not_called()
+                self.assertNotIn(str(runtime_dir), str(ctx.exception))
+                self.assertEqual(db.list_export_runs(claim_id), [])
+                self._assert_no_partial_package(export_root)
+
+    def test_extra_copy_oserror_is_sanitized_and_preserves_historical_exports(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{
+                    "attachment_path": "",
+                    "missing_extra": False,
+                    "has_extra": True,
+                    "extra_type": "水单",
+                    "extra_paths": ["attachments/evidence.pdf"],
+                    "files": ["attachments/evidence.pdf"],
+                }],
+            )
+            evidence_path = runtime_dir / "attachments/evidence.pdf"
+            export_root = project_root / "exports"
+            historical_dir = export_root / "historical-success"
+            historical_dir.mkdir(parents=True)
+            historical_marker = historical_dir / "manifest.json"
+            historical_marker.write_text("synthetic history", encoding="utf-8")
+
+            with InvoiceDB(runtime_dir / "invoices.db") as db:
+                with patch.object(
+                    claim_export_module.shutil,
+                    "copy2",
+                    side_effect=OSError(f"copy failed: {evidence_path}"),
+                ), patch.object(
+                    claim_export_module,
+                    "export_excel",
+                ) as export_excel_mock, patch.object(
+                    claim_export_module.json,
+                    "dump",
+                ) as manifest_dump_mock:
+                    with self.assertRaisesRegex(ValueError, "补充材料复制失败或已不可用") as ctx:
+                        export_claim_package(
+                            db,
+                            claim_id,
+                            project_root,
+                            runtime_dir,
+                            export_root=export_root,
+                        )
+                export_excel_mock.assert_not_called()
+                manifest_dump_mock.assert_not_called()
+                self.assertNotIn(str(runtime_dir), str(ctx.exception))
+                self.assertEqual(db.list_export_runs(claim_id), [])
+                self.assertTrue(historical_marker.is_file())
+                self.assertEqual(list(export_root.iterdir()), [historical_dir])
+
+    def test_excel_quality_and_manifest_failures_clean_current_export_only(self):
+        failure_cases = (
+            ("excel", "export_excel"),
+            ("quality", "_generate_quality_report"),
+            ("manifest", "json.dump"),
+        )
+        for label, target in failure_cases:
+            with self.subTest(stage=label), tempfile.TemporaryDirectory() as td:
+                project_root, runtime_dir, claim_id = self._create_claim(
+                    Path(td),
+                    [{"missing_extra": False, "has_extra": False, "extra_paths": []}],
+                )
+                export_root = project_root / "exports"
+                with InvoiceDB(runtime_dir / "invoices.db") as db:
+                    if target == "json.dump":
+                        failure_patch = patch.object(
+                            claim_export_module.json,
+                            "dump",
+                            side_effect=OSError("synthetic manifest failure"),
+                        )
+                    else:
+                        failure_patch = patch.object(
+                            claim_export_module,
+                            target,
+                            side_effect=OSError(f"synthetic {label} failure"),
+                        )
+                    with failure_patch, self.assertRaises(OSError):
+                        export_claim_package(
+                            db,
+                            claim_id,
+                            project_root,
+                            runtime_dir,
+                            export_root=export_root,
+                        )
+                    self.assertEqual(db.list_export_runs(claim_id), [])
+                    self._assert_no_partial_package(export_root)
 
     def test_mixed_claim_is_blocked_when_one_invoice_lacks_extra(self):
         with tempfile.TemporaryDirectory() as td:
