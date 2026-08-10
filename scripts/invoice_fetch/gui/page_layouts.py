@@ -8,6 +8,7 @@ from .design_baseline_styles import apply_global_design_baseline
 from .design_system_v11 import apply_design_system_v11
 from .design_tokens import DESIGN_V1_METRICS
 from .hci_v1 import schedule_dashboard_hci_v1, schedule_task_flow_hci_v1
+from .hci_v1_closure import schedule_task_flow_hci_closure
 from .review_baseline_pipeline import schedule_review_baseline_pipeline
 from .selection_surface_contract import schedule_selection_surface_contracts
 from .settings_baseline_pipeline import schedule_settings_baseline_pipeline
@@ -93,6 +94,7 @@ class TaskFlowPageLayout(_PageLayoutContract):
         super().apply(page, layout)
         QTimer.singleShot(0, lambda p=page: apply_task_flow_baseline(p))
         schedule_task_flow_hci_v1(page)
+        schedule_task_flow_hci_closure(page)
         return layout
 
 
