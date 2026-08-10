@@ -131,6 +131,12 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertFalse(window._hci_shortcut_e.isEnabled())
                 self.assertFalse(window._hci_shortcut_g.isEnabled())
 
+                # Match the real user path: focus mode is entered only after the
+                # Review page itself is visible.
+                window._switch_main_page("review")
+                self.app.processEvents()
+                self.assertTrue(window.left_upper_widget.isVisible())
+
                 window._enter_hci_continuous_review()
                 self.app.processEvents()
                 self.assertTrue(window.review_page.property("hciContinuousReview"))
