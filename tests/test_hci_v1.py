@@ -6,11 +6,11 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard
+from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard, HistoryRecheckWorker
 from scripts.invoice_fetch.gui.review_baseline_pipeline import REVIEW_BASELINE_STAGES
 from scripts.invoice_fetch.hci_v1_services import (
     _enabled_mailbox_keys,
@@ -94,11 +94,12 @@ class HciV1DesktopTests(unittest.TestCase):
         self.assertEqual(REVIEW_BASELINE_STAGES[-2][0], "hci_v1_task_flow")
         self.assertEqual(REVIEW_BASELINE_STAGES[-1][0], "hci_v1_closure")
 
-    def test_dashboard_exposes_task_cards_and_continuous_review_cta(self):
+    def test_dashboard_exposes_task_cards_and_single_review_cta(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
                 self.assertTrue(window.overview_page.property("hciV1DashboardApplied"))
+                self.assertTrue(window.overview_page.property("hciV1DashboardClosureApplied"))
                 self.assertEqual(window.overview_header.lbl_title.text(), "今天需要处理什么")
                 self.assertEqual(
                     set(window.hci_dashboard_task_cards),
@@ -111,6 +112,13 @@ class HciV1DesktopTests(unittest.TestCase):
                     )
                 )
                 self.assertTrue(window.btn_hci_continue_tasks.text())
+                duplicate_review_actions = [
+                    button
+                    for button in window.overview_page.findChildren(QPushButton)
+                    if button.text().strip() == "开始审核" and button.isVisible()
+                ]
+                self.assertEqual(duplicate_review_actions, [])
+                self.assertIn("重新检查", window.lbl_overview_next_actions.text())
                 self.assertEqual(
                     window.overview_activity_card.lbl_title.text(),
                     "今天已完成",
@@ -175,6 +183,8 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertIn("重新检查指定时间范围", labels)
                 self.assertIn("重新处理最近 30 天已知附件", labels)
                 self.assertTrue(hasattr(window, "btn_hci_import_review_result"))
+                self.assertTrue(hasattr(window, "_hci_history_close_filter"))
+                self.assertTrue(getattr(HistoryRecheckWorker, "_hci_safe_delete_installed", False))
             finally:
                 window.db.close()
                 window.close()
