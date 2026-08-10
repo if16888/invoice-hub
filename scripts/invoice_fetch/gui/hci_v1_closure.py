@@ -206,8 +206,11 @@ def _sync_incremental_result(window, res: dict) -> None:
 
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
+        # Keep the outer structural title for Design v1 compatibility; the
+        # user-facing HCI semantics live in the result copy and action below.
+        recent.set_title("本次运行")
         recent.set_hint(
-            f"同步完成：检查 {scanned} 封邮件；新增 {new}，恢复 {restored}，"
+            f"同步结果：检查 {scanned} 封邮件；新增 {new}，恢复 {restored}，"
             f"已存在/重复 {duplicates}。"
         )
 
@@ -312,6 +315,10 @@ def apply_import_hci_closure(page: QWidget | None) -> None:
         return
 
     page.setProperty("hciV1ImportClosureApplied", True)
+    recent = getattr(window, "import_mail_recent_card", None)
+    if recent is not None:
+        recent.set_title("本次运行")
+        recent.set_hint("同步结果会说明检查范围、找到多少票据，以及下一步可以做什么。")
     _install_scan_finish_closure(window)
     _install_history_close_guard(window)
 
