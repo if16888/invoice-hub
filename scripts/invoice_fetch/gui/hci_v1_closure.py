@@ -2,10 +2,11 @@
 
 This stage runs after the visual/HCI migrations. It owns interaction details
 that must remain fail-safe regardless of later compatibility changes:
+- dashboard exposes one review CTA instead of duplicate legacy actions;
 - single-key review shortcuts never fire while editing text;
 - continuous review exposes a truthful "稍后处理" navigation action;
 - incremental mailbox sync ends with an actionable result;
-- a running history re-check prevents unsafe window teardown.
+- a running history re-check cannot be destroyed or interrupted by window close.
 """
 
 from __future__ import annotations
@@ -14,13 +15,49 @@ import weakref
 from functools import wraps
 from types import MethodType
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QThread, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 from shiboken6 import isValid
 
-from .ui_components import make_button
+from .ui_components import SectionCard, make_button
 from .workbench_state import is_keyboard_input_target
+
+
+def _section_ancestor(widget: QWidget | None) -> SectionCard | None:
+    current = widget
+    while current is not None:
+        if isinstance(current, SectionCard):
+            return current
+        current = current.parentWidget()
+    return None
+
+
+def apply_dashboard_hci_closure(page: QWidget | None) -> None:
+    """Remove legacy duplicate actions after the HCI dashboard is composed."""
+    if page is None or not isValid(page) or page.property("hciV1DashboardClosureApplied"):
+        return
+    window = page.window()
+    if page is not getattr(window, "overview_page", None):
+        return
+    if not page.property("hciV1DashboardApplied"):
+        return
+
+    page.setProperty("hciV1DashboardClosureApplied", True)
+    sync_hint = getattr(window, "lbl_overview_recent_imports", None)
+    left_card = _section_ancestor(sync_hint)
+    if left_card is not None:
+        for button in left_card.findChildren(QPushButton):
+            if button.text().strip() == "开始审核":
+                button.hide()
+                button.setEnabled(False)
+                button.setProperty("hciDuplicateActionRetired", True)
+
+    next_actions = getattr(window, "lbl_overview_next_actions", None)
+    if next_actions is not None:
+        next_actions.setText(
+            "普通同步不会重复处理已有邮件；误删记录或需要重新识别历史附件时，使用“重新检查”。"
+        )
 
 
 def _focus_accepts_text() -> bool:
@@ -99,6 +136,8 @@ def apply_review_hci_closure(page: QWidget | None) -> None:
             return result
 
         window._enter_hci_continuous_review = MethodType(guarded_enter, window)
+        # The button was connected before the method wrapper above. Keep its
+        # existing business callback and synchronize the closure UI afterwards.
         getattr(window, "btn_hci_enter_review").clicked.connect(
             lambda: QTimer.singleShot(
                 0, lambda: btn_later.setVisible(bool(page.property("hciContinuousReview")))
@@ -171,26 +210,69 @@ def _install_scan_finish_closure(window) -> None:
     window._hci_scan_finish_closure_installed = True
 
 
+def _running_history_worker(window):
+    worker = getattr(window, "_hci_history_worker", None)
+    if worker is not None and isValid(worker) and worker.isRunning():
+        return worker
+    # Result callbacks may clear the convenience attribute a fraction before the
+    # QThread emits its built-in finished signal. Search parented workers too so
+    # close remains fail-safe during that handoff.
+    for thread in window.findChildren(QThread):
+        if thread.__class__.__name__ == "HistoryRecheckWorker" and thread.isRunning():
+            return thread
+    return None
+
+
+class _HistoryCloseFilter(QObject):
+    def __init__(self, window):
+        super().__init__(window)
+        self._window_ref = weakref.ref(window)
+
+    def eventFilter(self, watched, event):
+        window = self._window_ref()
+        if window is None:
+            return False
+        if watched is window and event.type() == QEvent.Close:
+            if _running_history_worker(window) is not None:
+                event.ignore()
+                status_bar = window.statusBar()
+                if status_bar is not None:
+                    status_bar.showMessage(
+                        "正在重新检查历史邮件；为避免中断数据库写入，请等待任务完成后再关闭。",
+                        6000,
+                    )
+                return True
+        return False
+
+
+def _install_history_delete_later_guard() -> None:
+    """Delay deletion of a history QThread until its native thread has exited."""
+    from .hci_v1 import HistoryRecheckWorker
+
+    if getattr(HistoryRecheckWorker, "_hci_safe_delete_installed", False):
+        return
+
+    original_delete_later = HistoryRecheckWorker.deleteLater
+
+    def safe_delete_later(self):
+        if self.isRunning():
+            if not self.property("hciDeleteAfterFinished"):
+                self.setProperty("hciDeleteAfterFinished", True)
+                self.finished.connect(lambda worker=self: original_delete_later(worker))
+            return
+        original_delete_later(self)
+
+    HistoryRecheckWorker.deleteLater = safe_delete_later
+    HistoryRecheckWorker._hci_safe_delete_installed = True
+
+
 def _install_history_close_guard(window) -> None:
     if getattr(window, "_hci_history_close_guard_installed", False):
         return
-    original = window.closeEvent
-
-    @wraps(original)
-    def guarded_close(self, event):
-        worker = getattr(self, "_hci_history_worker", None)
-        if worker is not None and worker.isRunning():
-            event.ignore()
-            status_bar = self.statusBar()
-            if status_bar is not None:
-                status_bar.showMessage(
-                    "正在重新检查历史邮件；为避免中断数据库写入，请等待任务完成后再关闭。",
-                    6000,
-                )
-            return
-        return original(event)
-
-    window.closeEvent = MethodType(guarded_close, window)
+    _install_history_delete_later_guard()
+    close_filter = _HistoryCloseFilter(window)
+    window.installEventFilter(close_filter)
+    window._hci_history_close_filter = close_filter
     window._hci_history_close_guard_installed = True
 
 
@@ -217,6 +299,19 @@ def apply_task_flow_hci_closure(page: QWidget | None) -> None:
         apply_import_hci_closure(page)
 
 
+def schedule_dashboard_hci_closure(page: QWidget | None) -> None:
+    if page is None or not isValid(page):
+        return
+    page_ref = weakref.ref(page)
+
+    def run() -> None:
+        target = page_ref()
+        if target is not None and isValid(target):
+            apply_dashboard_hci_closure(target)
+
+    QTimer.singleShot(0, run)
+
+
 def schedule_task_flow_hci_closure(page: QWidget | None) -> None:
     if page is None or not isValid(page):
         return
@@ -231,8 +326,10 @@ def schedule_task_flow_hci_closure(page: QWidget | None) -> None:
 
 
 __all__ = [
+    "apply_dashboard_hci_closure",
     "apply_import_hci_closure",
     "apply_review_hci_closure",
     "apply_task_flow_hci_closure",
+    "schedule_dashboard_hci_closure",
     "schedule_task_flow_hci_closure",
 ]
