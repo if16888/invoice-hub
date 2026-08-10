@@ -3,6 +3,7 @@
 This stage runs after the visual/HCI migrations. It owns interaction details
 that must remain fail-safe regardless of later compatibility changes:
 - dashboard exposes one review CTA instead of duplicate legacy actions;
+- dashboard task-language remains stable after data refreshes;
 - single-key review shortcuts never fire while editing text;
 - continuous review exposes a truthful "稍后处理" navigation action;
 - incremental mailbox sync ends with an actionable result;
@@ -33,17 +34,9 @@ def _section_ancestor(widget: QWidget | None) -> SectionCard | None:
     return None
 
 
-def apply_dashboard_hci_closure(page: QWidget | None) -> None:
-    """Remove legacy duplicate actions after the HCI dashboard is composed."""
-    if page is None or not isValid(page) or page.property("hciV1DashboardClosureApplied"):
+def _sync_dashboard_closure(window) -> None:
+    if not isValid(window):
         return
-    window = page.window()
-    if page is not getattr(window, "overview_page", None):
-        return
-    if not page.property("hciV1DashboardApplied"):
-        return
-
-    page.setProperty("hciV1DashboardClosureApplied", True)
     sync_hint = getattr(window, "lbl_overview_recent_imports", None)
     left_card = _section_ancestor(sync_hint)
     if left_card is not None:
@@ -58,6 +51,38 @@ def apply_dashboard_hci_closure(page: QWidget | None) -> None:
         next_actions.setText(
             "普通同步不会重复处理已有邮件；误删记录或需要重新识别历史附件时，使用“重新检查”。"
         )
+
+
+def _install_dashboard_refresh_closure(window) -> None:
+    if getattr(window, "_hci_dashboard_refresh_closure_installed", False):
+        return
+    original = getattr(window, "_refresh_overview_page", None)
+    if not callable(original):
+        return
+
+    @wraps(original)
+    def wrapped(self, *args, **kwargs):
+        result = original(*args, **kwargs)
+        QTimer.singleShot(0, lambda: _sync_dashboard_closure(self))
+        return result
+
+    window._refresh_overview_page = MethodType(wrapped, window)
+    window._hci_dashboard_refresh_closure_installed = True
+
+
+def apply_dashboard_hci_closure(page: QWidget | None) -> None:
+    """Remove legacy duplicate actions after the HCI dashboard is composed."""
+    if page is None or not isValid(page) or page.property("hciV1DashboardClosureApplied"):
+        return
+    window = page.window()
+    if page is not getattr(window, "overview_page", None):
+        return
+    if not page.property("hciV1DashboardApplied"):
+        return
+
+    page.setProperty("hciV1DashboardClosureApplied", True)
+    _install_dashboard_refresh_closure(window)
+    _sync_dashboard_closure(window)
 
 
 def _focus_accepts_text() -> bool:
