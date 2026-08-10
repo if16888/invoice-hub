@@ -11,7 +11,10 @@ from PySide6.QtWidgets import QApplication, QPushButton
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard, HistoryRecheckWorker
-from scripts.invoice_fetch.gui.review_baseline_pipeline import REVIEW_BASELINE_STAGES
+from scripts.invoice_fetch.gui.review_baseline_pipeline import (
+    REVIEW_BASELINE_STAGES,
+    REVIEW_HCI_STAGES,
+)
 from scripts.invoice_fetch.hci_v1_services import (
     _enabled_mailbox_keys,
     recheck_known_email_history,
@@ -90,9 +93,12 @@ class HciV1DesktopTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_review_pipeline_ends_with_hci_safety_closure(self):
-        self.assertEqual(REVIEW_BASELINE_STAGES[-2][0], "hci_v1_task_flow")
-        self.assertEqual(REVIEW_BASELINE_STAGES[-1][0], "hci_v1_closure")
+    def test_review_baseline_keeps_visual_final_then_runs_hci(self):
+        self.assertEqual(REVIEW_BASELINE_STAGES[-1][0], "visual_language_v11")
+        self.assertEqual(
+            [name for name, _stage in REVIEW_HCI_STAGES],
+            ["hci_v1_task_flow", "hci_v1_closure"],
+        )
 
     def test_dashboard_exposes_task_cards_and_single_review_cta(self):
         with tempfile.TemporaryDirectory() as td:
@@ -133,6 +139,7 @@ class HciV1DesktopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
+                self.assertTrue(window.review_page.property("reviewHciPipelineApplied"))
                 self.assertTrue(window.review_page.property("hciV1ReviewApplied"))
                 self.assertTrue(window.review_page.property("hciV1ReviewClosureApplied"))
                 self.assertFalse(window.review_page.property("hciContinuousReview"))
@@ -185,6 +192,7 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertTrue(hasattr(window, "btn_hci_import_review_result"))
                 self.assertTrue(hasattr(window, "_hci_history_close_filter"))
                 self.assertTrue(getattr(HistoryRecheckWorker, "_hci_safe_delete_installed", False))
+                self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
             finally:
                 window.db.close()
                 window.close()
