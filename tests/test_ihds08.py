@@ -182,7 +182,7 @@ class IHDS08Tests(unittest.TestCase):
                     window._record_import_activity("local", added=value + 1)
                 window._refresh_imports_page()
                 self.assertEqual(window.import_recent_timeline.layout().count(), 3)
-                self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
+                self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "同步结果")
             finally: window.close()
 
     def test_wide_import_workspace_is_centered_and_bounded(self):
