@@ -146,8 +146,6 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertFalse(window._hci_shortcut_e.isEnabled())
                 self.assertFalse(window._hci_shortcut_g.isEnabled())
 
-                # Match the real user path: focus mode is entered only after the
-                # Review page itself is visible.
                 window._switch_main_page("review")
                 self.app.processEvents()
                 self.assertTrue(window.left_upper_widget.isVisible())
@@ -172,7 +170,7 @@ class HciV1DesktopTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
-    def test_import_uses_sync_and_bounded_recheck_language(self):
+    def test_import_uses_visible_sync_cta_and_stable_scan_control(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
@@ -180,7 +178,16 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertTrue(window.imports_page.property("hciV1ImportClosureApplied"))
                 self.assertIn(
                     window.btn_import_scan_selected.text(),
+                    {"开始扫描", "补授权码"},
+                )
+                self.assertTrue(hasattr(window, "btn_hci_sync_new_mail"))
+                self.assertIn(
+                    window.btn_hci_sync_new_mail.text(),
                     {"同步新邮件", "补授权码"},
+                )
+                self.assertIs(
+                    window.import_mail_command_bar.primary_action,
+                    window.btn_hci_sync_new_mail,
                 )
                 self.assertTrue(hasattr(window, "btn_hci_import_recheck"))
                 menu = window.btn_hci_import_recheck.menu()
