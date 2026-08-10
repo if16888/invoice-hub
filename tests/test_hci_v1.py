@@ -90,8 +90,9 @@ class HciV1DesktopTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_review_pipeline_ends_with_hci_task_flow(self):
-        self.assertEqual(REVIEW_BASELINE_STAGES[-1][0], "hci_v1_task_flow")
+    def test_review_pipeline_ends_with_hci_safety_closure(self):
+        self.assertEqual(REVIEW_BASELINE_STAGES[-2][0], "hci_v1_task_flow")
+        self.assertEqual(REVIEW_BASELINE_STAGES[-1][0], "hci_v1_closure")
 
     def test_dashboard_exposes_task_cards_and_continuous_review_cta(self):
         with tempfile.TemporaryDirectory() as td:
@@ -125,7 +126,10 @@ class HciV1DesktopTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertTrue(window.review_page.property("hciV1ReviewApplied"))
+                self.assertTrue(window.review_page.property("hciV1ReviewClosureApplied"))
                 self.assertFalse(window.review_page.property("hciContinuousReview"))
+                self.assertFalse(window._hci_shortcut_e.isEnabled())
+                self.assertFalse(window._hci_shortcut_g.isEnabled())
 
                 window._enter_hci_continuous_review()
                 self.app.processEvents()
@@ -133,12 +137,14 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertEqual(window.review_header.lbl_title.text(), "连续审核")
                 self.assertFalse(window.left_upper_widget.isVisible())
                 self.assertTrue(window.lbl_hci_review_progress.isVisible())
+                self.assertTrue(window.btn_hci_review_later.isVisible())
 
                 window._exit_hci_continuous_review()
                 self.app.processEvents()
                 self.assertFalse(window.review_page.property("hciContinuousReview"))
                 self.assertEqual(window.review_header.lbl_title.text(), "发票审核")
                 self.assertTrue(window.left_upper_widget.isVisible())
+                self.assertFalse(window.btn_hci_review_later.isVisible())
             finally:
                 window.db.close()
                 window.close()
@@ -150,6 +156,7 @@ class HciV1DesktopTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertTrue(window.imports_page.property("hciV1ImportApplied"))
+                self.assertTrue(window.imports_page.property("hciV1ImportClosureApplied"))
                 self.assertIn(
                     window.btn_import_scan_selected.text(),
                     {"同步新邮件", "补授权码"},
@@ -161,6 +168,7 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertIn("重新检查最近 30 天", labels)
                 self.assertIn("重新检查指定时间范围", labels)
                 self.assertIn("重新处理最近 30 天已知附件", labels)
+                self.assertTrue(hasattr(window, "btn_hci_import_review_result"))
             finally:
                 window.db.close()
                 window.close()
