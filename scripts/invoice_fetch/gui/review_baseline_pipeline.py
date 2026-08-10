@@ -1,12 +1,9 @@
-"""Deterministic Design Baseline v1.0 pipeline for the Review workspace.
+"""Deterministic Review baseline and post-baseline HCI pipelines.
 
 The Review page is assembled from legacy-compatible widgets and then normalized
-by a small set of focused migrations. These migrations used to be queued as
-independent zero-delay callbacks, which made the final result depend on event
-queue ordering and left several callbacks alive while windows were closing.
-
-This module owns the order explicitly and schedules exactly one deferred
-callback after the page has finished constructing its controls.
+by a small set of focused migrations. Design System v1.1 remains the final
+*baseline* stage. HCI v1.0 is an interaction extension that runs only after that
+visual baseline has settled.
 """
 
 from __future__ import annotations
@@ -50,45 +47,83 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     # Task ownership runs late so no earlier compatibility stage can restore
     # cross-workflow buttons or expand the buyer warning again.
     ("task_ownership", apply_design_v1_review_task_closure),
-    # Visual language is deliberately final for legacy compatibility surfaces.
+    # Keep the established Design System contract: visual language is the final
+    # Review baseline stage.
     ("visual_language_v11", apply_design_system_v11),
-    # HCI v1 is interaction-only and must run after all visual/baseline stages.
+)
+
+
+REVIEW_HCI_STAGES: tuple[ReviewStage, ...] = (
     ("hci_v1_task_flow", apply_review_hci_v1),
-    # Closure owns shortcut focus safety and review-mode lifecycle guarantees.
     ("hci_v1_closure", apply_review_hci_closure),
 )
 
 
+def _apply_stages(
+    page: QWidget,
+    stages: tuple[ReviewStage, ...],
+    *,
+    active_property: str,
+    failed_property: str,
+) -> tuple[str, ...]:
+    completed: list[str] = []
+    page.setProperty(failed_property, "")
+    for name, stage in stages:
+        page.setProperty(active_property, name)
+        try:
+            stage(page)
+        except Exception:
+            page.setProperty(failed_property, name)
+            raise
+        completed.append(name)
+    page.setProperty(active_property, "")
+    return tuple(completed)
+
+
 def apply_review_baseline_pipeline(page: QWidget | None) -> None:
-    """Apply all Review migrations once, in their documented order."""
+    """Apply the established Review visual/geometry baseline once."""
     if page is None or not isValid(page):
         return
     if page.property("reviewBaselinePipelineApplied"):
         return
 
-    page.setProperty("reviewBaselinePipelineFailedStage", "")
-    completed: list[str] = []
-    for name, stage in REVIEW_BASELINE_STAGES:
-        page.setProperty("reviewBaselinePipelineActiveStage", name)
-        try:
-            stage(page)
-        except Exception:
-            page.setProperty("reviewBaselinePipelineFailedStage", name)
-            raise
-        completed.append(name)
-
-    page.setProperty("reviewBaselinePipelineActiveStage", "")
-    page.setProperty("reviewBaselinePipelineStages", tuple(completed))
+    completed = _apply_stages(
+        page,
+        REVIEW_BASELINE_STAGES,
+        active_property="reviewBaselinePipelineActiveStage",
+        failed_property="reviewBaselinePipelineFailedStage",
+    )
+    page.setProperty("reviewBaselinePipelineStages", completed)
     page.setProperty("reviewBaselinePipelineApplied", True)
 
 
-def schedule_review_baseline_pipeline(page: QWidget | None) -> None:
-    """Queue one safe callback after Review controls have been constructed."""
+def apply_review_hci_pipeline(page: QWidget | None) -> None:
+    """Apply HCI interaction stages only after the baseline has settled."""
     if page is None or not isValid(page):
         return
-    if page.property("reviewBaselinePipelineApplied") or page.property(
-        "reviewBaselinePipelineScheduled"
-    ):
+    if page.property("reviewHciPipelineApplied"):
+        return
+    if not page.property("reviewBaselinePipelineApplied"):
+        apply_review_baseline_pipeline(page)
+
+    completed = _apply_stages(
+        page,
+        REVIEW_HCI_STAGES,
+        active_property="reviewHciPipelineActiveStage",
+        failed_property="reviewHciPipelineFailedStage",
+    )
+    page.setProperty("reviewHciPipelineStages", completed)
+    page.setProperty("reviewHciPipelineApplied", True)
+
+
+def schedule_review_baseline_pipeline(page: QWidget | None) -> None:
+    """Queue one safe callback for baseline followed by post-baseline HCI."""
+    if page is None or not isValid(page):
+        return
+    if (
+        page.property("reviewBaselinePipelineApplied")
+        and page.property("reviewHciPipelineApplied")
+    ) or page.property("reviewBaselinePipelineScheduled"):
         return
 
     page.setProperty("reviewBaselinePipelineScheduled", True)
@@ -100,6 +135,7 @@ def schedule_review_baseline_pipeline(page: QWidget | None) -> None:
             return
         try:
             apply_review_baseline_pipeline(target)
+            apply_review_hci_pipeline(target)
         finally:
             if isValid(target):
                 target.setProperty("reviewBaselinePipelineScheduled", False)
@@ -109,6 +145,8 @@ def schedule_review_baseline_pipeline(page: QWidget | None) -> None:
 
 __all__ = [
     "REVIEW_BASELINE_STAGES",
+    "REVIEW_HCI_STAGES",
     "apply_review_baseline_pipeline",
+    "apply_review_hci_pipeline",
     "schedule_review_baseline_pipeline",
 ]
