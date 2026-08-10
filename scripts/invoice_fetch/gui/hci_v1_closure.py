@@ -6,6 +6,8 @@ that must remain fail-safe regardless of later compatibility changes:
 - dashboard task-language remains stable after data refreshes;
 - single-key review shortcuts never fire while editing text;
 - continuous review exposes a truthful "稍后处理" navigation action;
+- visible mailbox sync uses HCI language while the legacy scan control remains
+  a stable hidden execution interface;
 - incremental mailbox sync ends with an actionable result;
 - a running history re-check cannot be destroyed or interrupted by window close.
 """
@@ -161,8 +163,6 @@ def apply_review_hci_closure(page: QWidget | None) -> None:
             return result
 
         window._enter_hci_continuous_review = MethodType(guarded_enter, window)
-        # The button was connected before the method wrapper above. Keep its
-        # existing business callback and synchronize the closure UI afterwards.
         getattr(window, "btn_hci_enter_review").clicked.connect(
             lambda: QTimer.singleShot(
                 0, lambda: btn_later.setVisible(bool(page.property("hciContinuousReview")))
@@ -180,8 +180,102 @@ def apply_review_hci_closure(page: QWidget | None) -> None:
         getattr(window, "btn_hci_exit_review").clicked.connect(btn_later.hide)
 
 
+class _LegacyScanBridgeFilter(QObject):
+    """Mirror enabled state from the hidden stable scan control to HCI CTA."""
+
+    def __init__(self, window, legacy: QPushButton, visible: QPushButton):
+        super().__init__(window)
+        self._window_ref = weakref.ref(window)
+        self._legacy_ref = weakref.ref(legacy)
+        self._visible_ref = weakref.ref(visible)
+
+    def eventFilter(self, watched, event):
+        legacy = self._legacy_ref()
+        visible = self._visible_ref()
+        if legacy is None or visible is None:
+            return False
+        if watched is legacy and event.type() == QEvent.EnabledChange:
+            visible.setEnabled(legacy.isEnabled())
+        return False
+
+
+def _sync_import_primary_bridge(window) -> None:
+    legacy = getattr(window, "btn_import_scan_selected", None)
+    visible = getattr(window, "btn_hci_sync_new_mail", None)
+    if legacy is None or visible is None:
+        return
+
+    missing_auth = legacy.text().strip() == "补授权码"
+    if missing_auth:
+        visible.setText("补授权码")
+        visible.setToolTip("先补齐所选邮箱的授权码，再开始同步")
+    else:
+        # Preserve the established programmatic control contract while the user
+        # interacts only with the HCI button.
+        legacy.setText("开始扫描")
+        visible.setText("同步新邮件")
+        visible.setToolTip("只检查上次同步之后的新邮件")
+    visible.setEnabled(legacy.isEnabled())
+    legacy.hide()
+
+
+def _install_import_primary_bridge(window) -> None:
+    if getattr(window, "_hci_import_primary_bridge_installed", False):
+        _sync_import_primary_bridge(window)
+        return
+
+    legacy = getattr(window, "btn_import_scan_selected", None)
+    command = getattr(window, "import_mail_command_bar", None)
+    recheck = getattr(window, "btn_hci_import_recheck", None)
+    if legacy is None or command is None or recheck is None:
+        return
+
+    visible = make_button("同步新邮件", variant="primary")
+
+    def forward_scan() -> None:
+        legacy.click()
+        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(window))
+
+    visible.clicked.connect(forward_scan)
+    window.btn_hci_sync_new_mail = visible
+
+    cancel = getattr(window, "btn_import_scan_cancel", None)
+    secondary = [recheck]
+    if cancel is not None:
+        secondary.append(cancel)
+    command.set_actions(
+        primary_action=visible,
+        secondary_actions=secondary,
+        more_menu=getattr(window, "import_mail_more", None),
+    )
+
+    bridge_filter = _LegacyScanBridgeFilter(window, legacy, visible)
+    legacy.installEventFilter(bridge_filter)
+    window._hci_import_primary_bridge_filter = bridge_filter
+    window._hci_import_primary_bridge_installed = True
+    _sync_import_primary_bridge(window)
+
+
+def _install_import_refresh_bridge(window) -> None:
+    if getattr(window, "_hci_import_refresh_bridge_installed", False):
+        return
+    original = getattr(window, "_refresh_imports_page", None)
+    if not callable(original):
+        return
+
+    @wraps(original)
+    def wrapped(self, *args, **kwargs):
+        result = original(*args, **kwargs)
+        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(self))
+        return result
+
+    window._refresh_imports_page = MethodType(wrapped, window)
+    window._hci_import_refresh_bridge_installed = True
+
+
 def _sync_incremental_result(window, res: dict) -> None:
     if bool((res or {}).get("cancelled")):
+        _sync_import_primary_bridge(window)
         return
     summary = getattr(window, "_last_scan_summary", None) or {}
     scanned = int(
@@ -199,15 +293,10 @@ def _sync_incremental_result(window, res: dict) -> None:
     restored = int(summary.get("restored") or 0)
     duplicates = int(summary.get("duplicates") or 0)
 
-    primary = getattr(window, "btn_import_scan_selected", None)
-    if primary is not None and primary.text() != "补授权码":
-        primary.setText("同步新邮件")
-        primary.setToolTip("只检查上次同步之后的新邮件")
+    _sync_import_primary_bridge(window)
 
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
-        # Keep the outer structural title for Design v1 compatibility; the
-        # user-facing HCI semantics live in the result copy and action below.
         recent.set_title("本次运行")
         recent.set_hint(
             f"同步结果：检查 {scanned} 封邮件；新增 {new}，恢复 {restored}，"
@@ -242,9 +331,6 @@ def _running_history_worker(window):
     worker = getattr(window, "_hci_history_worker", None)
     if worker is not None and isValid(worker) and worker.isRunning():
         return worker
-    # Result callbacks may clear the convenience attribute a fraction before the
-    # QThread emits its built-in finished signal. Search parented workers too so
-    # close remains fail-safe during that handoff.
     for thread in window.findChildren(QThread):
         if thread.__class__.__name__ == "HistoryRecheckWorker" and thread.isRunning():
             return thread
@@ -319,6 +405,8 @@ def apply_import_hci_closure(page: QWidget | None) -> None:
     if recent is not None:
         recent.set_title("本次运行")
         recent.set_hint("同步结果会说明检查范围、找到多少票据，以及下一步可以做什么。")
+    _install_import_primary_bridge(window)
+    _install_import_refresh_bridge(window)
     _install_scan_finish_closure(window)
     _install_history_close_guard(window)
 
