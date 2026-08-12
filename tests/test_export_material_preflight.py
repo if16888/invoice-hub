@@ -158,6 +158,90 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     window.deleteLater()
                     self.qt_app.processEvents()
 
+    def test_gui_mixed_status_keeps_approved_only_entry_and_blocks_pending_scope(self):
+        from scripts.invoice_fetch.gui import app as app_module
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [
+                    {
+                        "invoice_number": "APPROVED-COMPLETE",
+                        "review_status": review_status.APPROVED,
+                        "missing_extra": False,
+                    },
+                    {
+                        "invoice_number": "PENDING-MISSING",
+                        "review_status": review_status.TO_REVIEW,
+                        "missing_extra": True,
+                    },
+                ],
+            )
+            with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
+                app_module, "RUNTIME_DIR", runtime_dir
+            ):
+                window = InvoiceReviewApp(runtime_dir / "invoices.db", splash=None)
+                try:
+                    window._deferred_init()
+                    self.qt_app.processEvents()
+                    window._refresh_export_page()
+                    window.export_group_list.setCurrentRow(0)
+                    window._sync_export_claim_selection()
+
+                    self.assertTrue(window.btn_run_export_page.isEnabled())
+                    self.assertEqual(window.export_check_missing_extra.lbl_value.text(), "1 张")
+                    self.assertIn("已通过发票可导出", window.lbl_export_action_hint.text())
+
+                    window.combo_claims.clear()
+                    window.combo_claims.addItem("Synthetic Material Preflight", claim_id)
+                    window.combo_claims.setCurrentIndex(0)
+
+                    approved_button = Mock()
+                    include_button = Mock()
+                    cancel_button = Mock()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
+                        "scripts.invoice_fetch.claim_export.export_claim_package",
+                        side_effect=RuntimeError("synthetic approved-only handoff"),
+                    ) as exporter:
+                        message_box.return_value.addButton.side_effect = [
+                            approved_button,
+                            include_button,
+                            cancel_button,
+                        ]
+                        message_box.return_value.clickedButton.return_value = approved_button
+                        window._export_claim_package()
+
+                        exporter.assert_called_once()
+                        self.assertFalse(exporter.call_args.kwargs["include_to_review"])
+                        message_box.warning.assert_not_called()
+
+                    approved_button = Mock()
+                    include_button = Mock()
+                    cancel_button = Mock()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
+                        "scripts.invoice_fetch.claim_export.export_claim_package",
+                    ) as exporter:
+                        message_box.return_value.addButton.side_effect = [
+                            approved_button,
+                            include_button,
+                            cancel_button,
+                        ]
+                        message_box.return_value.clickedButton.return_value = include_button
+                        window._export_claim_package()
+
+                        exporter.assert_not_called()
+                        message_box.warning.assert_called_once()
+                        warning_args = message_box.warning.call_args.args
+                        self.assertEqual(warning_args[1], "导出已阻断")
+                        self.assertIn("缺补充材料 1 张", warning_args[2])
+                finally:
+                    if getattr(window, "db", None) is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    self.qt_app.processEvents()
+
     def test_direct_export_rejects_missing_extra_before_side_effects(self):
         with tempfile.TemporaryDirectory() as td:
             project_root, runtime_dir, claim_id = self._create_claim(

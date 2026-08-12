@@ -2105,8 +2105,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         try:
             for claim in self.db.list_claim_groups():
-                stats = self._claim_export_preflight_stats(claim.get("id"))
-                if int(stats.get(APPROVED, 0) or 0) and not int(stats.get("missing_attachment", 0) or 0) and not int(stats.get("missing_amount", 0) or 0):
+                stats = self._claim_export_preflight_stats(
+                    claim.get("id"),
+                    include_to_review=False,
+                )
+                if (
+                    int(stats.get(APPROVED, 0) or 0)
+                    and not int(stats.get("missing_attachment", 0) or 0)
+                    and not int(stats.get("missing_amount", 0) or 0)
+                    and not int(stats.get("missing_extra", 0) or 0)
+                    and not int(stats.get("unavailable_extra", 0) or 0)
+                ):
                     export_ready += 1
         except Exception:
             export_ready = 0
@@ -2405,6 +2414,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         total_missing = 0
         for claim in claims:
             stats = self._claim_export_preflight_stats(claim.get("id"))
+            approved_stats = self._claim_export_preflight_stats(
+                claim.get("id"),
+                include_to_review=False,
+            )
             total_approved += int(stats.get(APPROVED, 0) or 0)
             total_pending += int(stats.get(TO_REVIEW, 0) or 0)
             total_missing += (
@@ -2415,15 +2428,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
             invoices = self.db.get_claim_invoices(claim.get("id"))
             count, total, _has_missing = amount_total(invoices)
-            missing_docs = (
+            displayed_missing = (
                 int(stats.get("missing_attachment", 0) or 0)
                 + int(stats.get("missing_amount", 0) or 0)
                 + int(stats.get("missing_extra", 0) or 0)
                 + int(stats.get("unavailable_extra", 0) or 0)
             )
-            ready = int(stats.get(APPROVED, 0) or 0) > 0 and missing_docs == 0
+            approved_blockers = (
+                int(approved_stats.get("missing_attachment", 0) or 0)
+                + int(approved_stats.get("missing_amount", 0) or 0)
+                + int(approved_stats.get("missing_extra", 0) or 0)
+                + int(approved_stats.get("unavailable_extra", 0) or 0)
+            )
+            ready = int(approved_stats.get(APPROVED, 0) or 0) > 0 and approved_blockers == 0
             subtitle = f"{count} 张发票 · ¥{Decimal(str(total)).quantize(Decimal('0.00'))}"
-            meta = f"完整性缺口 {missing_docs}"
+            meta = f"完整性缺口 {displayed_missing}"
             badge = "可导出" if ready else "待补齐"
             self.export_group_list.add_entity_row(
                 title=str(claim.get("name") or "未命名报销组").strip(),
@@ -3882,6 +3901,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if idx >= 0 and self.combo_claims.currentIndex() != idx:
                 self.combo_claims.setCurrentIndex(idx)
         stats = self._claim_export_preflight_stats(claim_id)
+        approved_stats = self._claim_export_preflight_stats(
+            claim_id,
+            include_to_review=False,
+        )
         invoices = self.db.get_claim_invoices(claim_id)
         if hasattr(self, "export_invoice_list"):
             self.export_invoice_list.clear()
@@ -3907,16 +3930,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         dir_ok = True
 
         blockers = []
-        if approved_cnt <= 0:
+        if int(approved_stats.get(APPROVED, 0) or 0) <= 0:
             blockers.append("没有已通过发票")
-        if missing_attach > 0:
-            blockers.append(f"缺原件 {missing_attach} 张")
-        if missing_amount > 0:
-            blockers.append(f"缺金额 {missing_amount} 张")
-        if missing_extra > 0:
-            blockers.append(f"缺补充材料 {missing_extra} 张")
-        if unavailable_extra > 0:
-            blockers.append(f"材料不可用 {unavailable_extra} 张")
+        approved_missing_attach = int(approved_stats.get("missing_attachment", 0) or 0)
+        approved_missing_amount = int(approved_stats.get("missing_amount", 0) or 0)
+        approved_missing_extra = int(approved_stats.get("missing_extra", 0) or 0)
+        approved_unavailable_extra = int(approved_stats.get("unavailable_extra", 0) or 0)
+        if approved_missing_attach > 0:
+            blockers.append(f"缺原件 {approved_missing_attach} 张")
+        if approved_missing_amount > 0:
+            blockers.append(f"缺金额 {approved_missing_amount} 张")
+        if approved_missing_extra > 0:
+            blockers.append(f"缺补充材料 {approved_missing_extra} 张")
+        if approved_unavailable_extra > 0:
+            blockers.append(f"材料不可用 {approved_unavailable_extra} 张")
 
         is_ready = not blockers and dir_ok
 
@@ -3947,7 +3974,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_summary_strip.set_metric("ready", "可导出" if is_ready else "需处理")
         if hasattr(self, "lbl_export_action_hint"):
             if is_ready:
-                self.lbl_export_action_hint.setText("导出会沿用现有业务逻辑；当前报销组已可直接导出。")
+                pending_scope_issues = (
+                    missing_attach
+                    + missing_amount
+                    + missing_extra
+                    + unavailable_extra
+                    - approved_missing_attach
+                    - approved_missing_amount
+                    - approved_missing_extra
+                    - approved_unavailable_extra
+                )
+                if pending_scope_issues > 0:
+                    self.lbl_export_action_hint.setText(
+                        "已通过发票可导出；若包含待处理发票，将按所选范围再次检查材料。"
+                    )
+                else:
+                    self.lbl_export_action_hint.setText("导出会沿用现有业务逻辑；当前报销组已可直接导出。")
             else:
                 self.lbl_export_action_hint.setText(
                     "阻塞：" + "；".join(blockers) if blockers else "请先设置导出目录。"
