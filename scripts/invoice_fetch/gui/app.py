@@ -29,6 +29,11 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPainter, QPen
 
 from ..db import InvoiceDB, is_pending_evidence_invoice
+from ..db_backup import (
+    create_verified_database_backup,
+    restore_verified_database_backup,
+    validate_sqlite_database,
+)
 from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..export_paths import resolve_export_directory
@@ -2497,9 +2502,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _refresh_settings_page(self) -> None:
         self._desktop_settings_cfg = deepcopy(load_config_safe())
         self.config = deepcopy(self._desktop_settings_cfg)
-        db_file = RUNTIME_DIR / "invoices.db"
+        db_file = Path(self.db_path)
         db_size = db_file.stat().st_size if db_file.exists() else 0
-        backup_dir = RUNTIME_DIR / "backups"
         last_scan = "暂无记录"
         if getattr(self, "_last_scan_summary", None):
             last_scan = self._format_scan_result_for_people(self._last_scan_summary).replace("最近扫描：", "")
@@ -2521,6 +2525,118 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_settings_about.setText(self._about_text())
         self._refresh_settings_mailbox_page()
         self._refresh_settings_ai_page()
+
+    def _data_operation_busy_reason(self) -> str:
+        for attr, label in (
+            ("scan_worker", "邮箱扫描"),
+            ("import_worker", "本地导入"),
+            ("_export_migration_worker", "旧导出目录迁移"),
+        ):
+            worker = getattr(self, attr, None)
+            is_running = getattr(worker, "isRunning", None)
+            if callable(is_running) and is_running():
+                return label
+        controller = getattr(self, "mobile_upload_controller", None)
+        if controller is not None and (
+            bool(getattr(controller, "is_starting", False))
+            or getattr(controller, "server", None) is not None
+        ):
+            return "手机上传"
+        return ""
+
+    def _create_database_backup_from_settings(self) -> None:
+        busy = self._data_operation_busy_reason()
+        if busy:
+            QMessageBox.warning(self, "暂时无法备份", f"{busy}正在运行，请完成或取消后再试。")
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            backup = create_verified_database_backup(
+                self.db_path,
+                backup_dir=Path(self.db_path).parent / "backups",
+                reason="manual",
+            )
+        except Exception as exc:
+            _log.warning("database backup failed: %s", type(exc).__name__)
+            QMessageBox.critical(self, "备份失败", "未能创建数据库备份，请检查磁盘空间和目录权限后重试。")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._refresh_settings_page()
+        self.statusBar().showMessage(f"数据库备份已创建：{backup.name}", 6000)
+        QMessageBox.information(
+            self,
+            "备份完成",
+            f"数据库备份已创建并通过完整性检查。\n\n文件：{backup.name}",
+        )
+
+    def _restore_database_backup_from_settings(self) -> None:
+        busy = self._data_operation_busy_reason()
+        if busy:
+            QMessageBox.warning(self, "暂时无法恢复", f"{busy}正在运行，请完成或取消后再试。")
+            return
+        backup_dir = Path(self.db_path).parent / "backups"
+        selected, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择数据库备份",
+            str(backup_dir),
+            "SQLite 数据库 (*.db);;所有文件 (*)",
+        )
+        if not selected:
+            return
+        selected_path = Path(selected)
+        try:
+            validate_sqlite_database(selected_path, required_tables=("invoices",))
+        except ValueError as exc:
+            QMessageBox.critical(self, "备份不可用", str(exc))
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认恢复数据库",
+            "恢复后，当前发票、审核状态、材料关联和报销组将替换为所选备份中的内容。\n"
+            "系统会先为当前数据库创建安全备份。是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.current_invoice = None
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        safety_backup = None
+        try:
+            self.db.close()
+            safety_backup = restore_verified_database_backup(
+                selected_path,
+                self.db_path,
+                backup_dir=backup_dir,
+            )
+        except Exception as exc:
+            _log.warning("database restore failed: %s", type(exc).__name__)
+            QMessageBox.critical(
+                self,
+                "恢复失败",
+                "数据库未能恢复。原数据库仍保留，请检查备份文件、磁盘空间和目录权限后重试。",
+            )
+        finally:
+            try:
+                self.db = InvoiceDB(self.db_path)
+            finally:
+                QApplication.restoreOverrideCursor()
+        if safety_backup is None:
+            return
+        self._load_invoices()
+        self._load_claims()
+        self._refresh_overview_page()
+        self._refresh_imports_page()
+        self._refresh_settings_page()
+        self.statusBar().showMessage("数据库恢复完成", 6000)
+        QMessageBox.information(
+            self,
+            "恢复完成",
+            "数据库已恢复并重新加载。建议重启应用后再次核对关键数据。\n\n"
+            f"恢复前安全备份：{safety_backup.name}",
+        )
 
     def _settings_tab_index(self, tab_key: str) -> int:
         order = {
@@ -3567,18 +3683,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         privacy_actions.secondary_actions[0].clicked.connect(self._export_diagnostics_package)
         privacy_tab.layout().addWidget(privacy_actions)
 
-        data_tab = build_info_page("数据与备份", "查看数据位置并管理可安全导出的诊断信息。", "lbl_settings_data")
+        data_tab = build_info_page("数据与备份", "创建或恢复数据库备份，并查看本地数据位置。", "lbl_settings_data")
+        self.btn_create_database_backup = make_button("创建数据库备份", variant="primary")
+        self.btn_restore_database_backup = make_button("恢复数据库备份", variant="secondary")
+        self.btn_open_database_backups = make_button("打开备份目录", variant="secondary")
+        self.btn_create_database_backup.clicked.connect(self._create_database_backup_from_settings)
+        self.btn_restore_database_backup.clicked.connect(self._restore_database_backup_from_settings)
+        self.btn_open_database_backups.clicked.connect(
+            lambda: self._open_local_path(Path(self.db_path).parent / "backups")
+        )
+        self.data_more = MoreMenuButton(parent=data_tab)
+        self.data_more.setToolTip("更多数据操作")
+        self.data_more_menu = QMenu(self.data_more)
+        self.data_more_menu.addAction("打开数据目录", lambda: self._open_local_path(Path(self.db_path).parent))
+        self.data_more_menu.addAction("打开导出目录", self._open_exports_directory)
+        self.data_more_menu.addSeparator()
+        self.data_more_menu.addAction("导出脱敏诊断包", self._export_diagnostics_package)
+        self.data_more.setMenu(self.data_more_menu)
         data_actions = CommandBar()
         data_actions.set_actions(
+            primary_action=self.btn_create_database_backup,
             secondary_actions=[
-                make_button("打开数据目录", variant="secondary"),
-                make_button("打开导出目录", variant="secondary"),
-                make_button("导出脱敏诊断包", variant="secondary"),
-            ]
+                self.btn_restore_database_backup,
+                self.btn_open_database_backups,
+            ],
+            more_menu=self.data_more,
         )
-        data_actions.secondary_actions[0].clicked.connect(lambda: self._open_local_path(RUNTIME_DIR))
-        data_actions.secondary_actions[1].clicked.connect(self._open_exports_directory)
-        data_actions.secondary_actions[2].clicked.connect(self._export_diagnostics_package)
         data_tab.layout().addWidget(data_actions)
 
         about_tab = build_info_page("关于", "本地优先的个人报销工作台。", "lbl_settings_about")
