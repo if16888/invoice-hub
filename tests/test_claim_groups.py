@@ -6813,8 +6813,30 @@ class ClaimGroupsTests(unittest.TestCase):
                 attachments_dir.mkdir(parents=True, exist_ok=True)
                 (attachments_dir / "dummy.pdf").write_bytes(b"%PDF-1.4 dummy")
 
-                # Perform the export
-                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+                # F-001: an incomplete supplemental-material claim is blocked
+                # before the exporter creates an output directory or writes a run.
+                with self.assertRaisesRegex(ValueError, "缺补充材料 1 张"):
+                    export_claim_package(db, claim_id, project_root, runtime_dir)
+                self.assertFalse((project_root / "exports").exists())
+                self.assertEqual(db.list_export_runs(claim_id), [])
+
+                # Keep the quality-report unit coverage independent from the
+                # export guard: the report still describes incomplete data,
+                # but it is no longer produced as an incomplete package.
+                from scripts.invoice_fetch.claim_export import _generate_quality_report
+
+                export_dir = project_root / "quality-report"
+                export_dir.mkdir(parents=True, exist_ok=True)
+                invoices = db.get_claim_invoices(claim_id)
+                qa_warnings_count = _generate_quality_report(
+                    export_dir=export_dir,
+                    claim_name="Quality QA Group",
+                    export_invoices=invoices,
+                    original_invoices=invoices,
+                    all_invoices=invoices,
+                    db=db,
+                    runtime_dir=runtime_dir,
+                )
 
                 # Check report file exists
                 report_path = export_dir / "claim_quality_report.md"
@@ -6833,16 +6855,10 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.assertIn("8. 证明材料文件不存在 | 1", report_md)
                 self.assertIn("9. 重复发票疑似项 | 2", report_md)
 
-                # Verify manifest data contains qa_warnings_count
-                manifest_path = export_dir / "manifest.json"
-                self.assertTrue(manifest_path.exists())
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest = json.load(f)
-
                 # Expected total warnings = 1 (missing orig) + 1 (empty seller) + 1 (empty amount) + 1 (empty date)
                 #                          + 1 (category others) + 1 (missing extras) + 1 (missing evidence file) + 2 (duplicates)
                 #                          = 9 warnings.
-                self.assertEqual(manifest.get("qa_warnings_count"), 9)
+                self.assertEqual(qa_warnings_count, 9)
 
     def test_claim_quality_report_gui_prompt(self):
         """验证 GUI 在导出完成后提取 qa_warnings_count，并向用户展示包含掩码路径与需确认项的对话框"""
