@@ -10,11 +10,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import (
     QApplication,
+    QLabel,
     QStyle,
     QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
 from scripts.invoice_fetch.gui.column_filters import ColumnFilterPopup
 from scripts.invoice_fetch.gui.page_layouts import DashboardPageLayout
@@ -85,6 +88,38 @@ class SelectionSurfaceContractTests(unittest.TestCase):
             self.assertIn('QWidget[selectionSurfaceRow="true"][selected="true"]', qss)
             self.assertIn("QListWidget#EntityList::item:selected:active", qss)
             self.assertIn("outline: 0", qss)
+        finally:
+            entity_list.close()
+            entity_list.deleteLater()
+            self._flush()
+
+    def test_entity_row_text_click_changes_current_item(self):
+        entity_list = EntityList()
+        first = entity_list.add_entity_row("First claim", "1 张发票", user_data=1)
+        second = entity_list.add_entity_row("Second claim", "2 张发票", user_data=2)
+        try:
+            install_selection_surface_contracts(entity_list)
+            entity_list.resize(360, 180)
+            entity_list.show()
+            entity_list.setCurrentItem(first)
+            self._flush()
+
+            entity_list.setFocus(Qt.OtherFocusReason)
+            QTest.keyClick(entity_list, Qt.Key_Down)
+            self._flush()
+            self.assertEqual(entity_list.currentRow(), 1)
+            self.assertIs(entity_list.currentItem(), second)
+
+            entity_list.setCurrentItem(first)
+            self._flush()
+
+            second_row = entity_list.itemWidget(second)
+            second_title = second_row.findChildren(QLabel)[0]
+            QTest.mouseClick(second_title, Qt.LeftButton, pos=second_title.rect().center())
+            self._flush()
+
+            self.assertEqual(entity_list.currentRow(), 1)
+            self.assertIs(entity_list.currentItem(), second)
         finally:
             entity_list.close()
             entity_list.deleteLater()
