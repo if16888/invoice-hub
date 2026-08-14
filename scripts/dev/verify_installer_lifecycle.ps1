@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$IsccPath = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    [string]$IsccPath = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    [switch]$KeepEvidence
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +12,9 @@ $testName = "InvoiceHubInstallerLifecycle-$PID"
 $installDir = Join-Path $env:LOCALAPPDATA $testName
 $workDir = Join-Path $env:TEMP $testName
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{$testGuid}_is1"
+$userDataDir = Join-Path $workDir 'user-data'
+$appDataDir = Join-Path $userDataDir 'AppData\InvoiceHub'
+$documentsDir = Join-Path $userDataDir 'Documents\Invoice Hub'
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -45,6 +49,47 @@ function Invoke-RegisteredUninstall {
     Assert-True (-not (Test-Path -LiteralPath $installDir)) 'Install directory remained.'
 }
 
+function Get-UserDataSnapshot {
+    $records = @(
+        Get-ChildItem -LiteralPath $userDataDir -File -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object FullName |
+            ForEach-Object {
+                $relative = $_.FullName.Substring($userDataDir.Length).TrimStart('\')
+                $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                '{0}|{1}|{2}' -f $relative, $_.Length, $hash
+            }
+    )
+    return ($records -join [Environment]::NewLine)
+}
+
+function Assert-UserDataUnchanged {
+    param([string]$ExpectedSnapshot)
+    Assert-True (Test-Path -LiteralPath $appDataDir) 'AppData fixture was removed.'
+    Assert-True (Test-Path -LiteralPath $documentsDir) 'Documents fixture was removed.'
+    $actualSnapshot = Get-UserDataSnapshot
+    Assert-True ($actualSnapshot -eq $ExpectedSnapshot) 'User data changed during installer lifecycle.'
+}
+
+function New-UserDataFixture {
+    New-Item -ItemType Directory -Path (Join-Path $appDataDir 'attachments') -Force | Out-Null
+    New-Item -ItemType Directory -Path $documentsDir -Force | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $appDataDir 'invoices.db'),
+        'synthetic invoice database baseline',
+        [Text.UTF8Encoding]::new($false)
+    )
+    [IO.File]::WriteAllText(
+        (Join-Path $appDataDir 'attachments\historical-rc2-proof.pdf'),
+        'synthetic attachment baseline',
+        [Text.UTF8Encoding]::new($false)
+    )
+    [IO.File]::WriteAllText(
+        (Join-Path $documentsDir 'historical-export.zip'),
+        'synthetic export baseline',
+        [Text.UTF8Encoding]::new($false)
+    )
+}
+
 function Assert-CurrentRegistration {
     param([string]$Version)
     Assert-True (Test-Path -LiteralPath $uninstallKey) 'Uninstall registration is missing.'
@@ -70,6 +115,10 @@ try {
     Assert-True ($workDir.StartsWith((Join-Path $env:TEMP 'InvoiceHubInstallerLifecycle-'))) 'Unsafe test work path.'
 
     New-Item -ItemType Directory -Path (Join-Path $workDir 'payload') -Force | Out-Null
+    New-UserDataFixture
+    $userDataSnapshot = Get-UserDataSnapshot
+    Assert-True ($userDataSnapshot.Length -gt 0) 'User data fixture was not created.'
+
     [IO.File]::WriteAllText(
         (Join-Path $workDir 'payload\InvoiceHub.exe'),
         'synthetic installer lifecycle payload',
@@ -78,6 +127,9 @@ try {
 
     $sourcePath = Join-Path $repoRoot 'packaging\invoice_hub_windows.iss'
     $source = [IO.File]::ReadAllText($sourcePath, [Text.Encoding]::UTF8)
+    Assert-True $source.Contains('RemoveBrokenUninstallRegistration') 'Stale-registration removal code is missing.'
+    Assert-True (-not $source.Contains('RegWriteStringValue')) 'Installer must not rewrite uninstall registration.'
+    Assert-True (-not $source.Contains('FindAlternateUninstaller')) 'Installer must not manually select an alternate log.'
     $testSource = $source.Replace($productionGuid, $testGuid)
     Assert-True ($testSource -ne $source) 'Test AppId replacement failed.'
     $currentScript = Join-Path $workDir 'current.iss'
@@ -92,65 +144,61 @@ try {
         [Text.UTF8Encoding]::new($false)
     )
 
-    $old1 = Compile-Installer $oldScript '1.0'
-    $old2 = Compile-Installer $oldScript '2.0'
-    $current = Compile-Installer $currentScript '3.0'
+    $rc1 = Compile-Installer $oldScript '0.1.5-rc1'
+    $rc2 = Compile-Installer $oldScript '0.1.5-rc2'
+    $candidate = Compile-Installer $currentScript '0.1.5-rc3-dev'
 
     # Fresh install -> uninstall.
-    Invoke-Setup $current 'fresh.log' | Out-Null
-    Assert-CurrentRegistration '3.0'
+    Invoke-Setup $candidate 'fresh.log' | Out-Null
+    Assert-CurrentRegistration '0.1.5-rc3-dev'
     Invoke-RegisteredUninstall
+    Assert-UserDataUnchanged $userDataSnapshot
 
-    # Valid old install -> current upgrade -> uninstall.
-    Invoke-Setup $old1 'valid-old.log' | Out-Null
-    Invoke-Setup $current 'valid-upgrade.log' | Out-Null
-    Assert-CurrentRegistration '3.0'
+    # Historical RC1 -> candidate upgrade with an intact native uninstall log.
+    Invoke-Setup $rc1 'historical-rc1-valid.log' | Out-Null
+    Invoke-Setup $candidate 'historical-rc1-upgrade.log' | Out-Null
+    Assert-CurrentRegistration '0.1.5-rc3-dev'
     Invoke-RegisteredUninstall
+    Assert-UserDataUnchanged $userDataSnapshot
 
-    # A later valid old install follows the same native append path.
-    Invoke-Setup $old2 'valid-old2.log' | Out-Null
-    Invoke-Setup $current 'valid-upgrade2.log' | Out-Null
-    Assert-CurrentRegistration '3.0'
-    Invoke-RegisteredUninstall
-
-    # A broken registration without any alternate log creates one clean current
-    # log, then removes the stale executable after installation.
-    Invoke-Setup $old1 'broken-only-old.log' | Out-Null
-    $brokenOnlyDat = Join-Path $installDir 'unins000.dat'
-    $brokenOnlyExe = Join-Path $installDir 'unins000.exe'
-    Remove-Item -LiteralPath $brokenOnlyDat -Force
-    $brokenOnlyLog = Invoke-Setup $current 'broken-only-repair.log'
-    Assert-CurrentRegistration '3.0'
-    Assert-True (-not (Test-Path -LiteralPath $brokenOnlyExe)) 'Broken uninstaller without an alternate remained.'
-    $brokenOnlyText = [IO.File]::ReadAllText($brokenOnlyLog, [Text.Encoding]::UTF8)
-    Assert-True ($brokenOnlyText.Contains('No alternate Inno uninstall log candidate was found.')) 'Missing-alternate repair path was not used.'
-    Invoke-RegisteredUninstall
-
-    # Reproduce the RC2 state: the registered unins000 log is missing, a valid
-    # alternate unins001 pair exists, and the registry still targets unins000.
-    Invoke-Setup $old1 'damaged-old1.log' | Out-Null
+    # Reproduce the historical RC1/RC2 field state: RC1 left the registered
+    # unins000 entry, RC2 left a valid unins001 pair, but the ARP entry still
+    # points at unins000 without its matching .dat.
+    Invoke-Setup $rc1 'historical-rc1-damaged.log' | Out-Null
+    Assert-CurrentRegistration '0.1.5-rc1'
     $brokenDat = Join-Path $installDir 'unins000.dat'
-    Assert-True (Test-Path -LiteralPath $brokenDat) 'Expected old uninstall log is missing.'
     Remove-Item -LiteralPath $brokenDat -Force
-    Invoke-Setup $old2 'damaged-old2.log' | Out-Null
+    Invoke-Setup $rc2 'historical-rc2-damaged.log' | Out-Null
     $brokenExe = Join-Path $installDir 'unins000.exe'
-    Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'unins001.dat')) 'Alternate uninstall log was not created.'
-    Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value '1.0'
+    $alternateExe = Join-Path $installDir 'unins001.exe'
+    $alternateDat = Join-Path $installDir 'unins001.dat'
+    Assert-True (Test-Path -LiteralPath $brokenExe) 'Historical RC2 fixture lost unins000.exe.'
+    Assert-True (Test-Path -LiteralPath $alternateExe) 'Historical RC2 fixture did not create unins001.exe.'
+    Assert-True (Test-Path -LiteralPath $alternateDat) 'Historical RC2 fixture did not create unins001.dat.'
+
+    if (Test-Path -LiteralPath $brokenDat) {
+        Remove-Item -LiteralPath $brokenDat -Force
+    }
+    Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value '0.1.5-rc1'
     Set-ItemProperty -LiteralPath $uninstallKey -Name UninstallString -Value ('"' + $brokenExe + '"')
     Set-ItemProperty -LiteralPath $uninstallKey -Name QuietUninstallString -Value ('"' + $brokenExe + '" /SILENT')
 
-    $repairLog = Invoke-Setup $current 'damaged-repair.log'
-    Assert-CurrentRegistration '3.0'
-    Assert-True (-not (Test-Path -LiteralPath $brokenExe)) 'Broken registered uninstaller remained.'
+    # The candidate must leave the valid alternate pair untouched while native
+    # Inno chooses the new/appended log.
+    $repairLog = Invoke-Setup $candidate 'historical-rc2-repair.log'
+    Assert-CurrentRegistration '0.1.5-rc3-dev'
+    Assert-True (Test-Path -LiteralPath $alternateExe) 'Valid alternate uninstaller was removed.'
+    Assert-True (Test-Path -LiteralPath $alternateDat) 'Valid alternate uninstall log was removed.'
     $repairText = [IO.File]::ReadAllText($repairLog, [Text.Encoding]::UTF8)
-    Assert-True ($repairText.Contains('Repaired the damaged Invoice Hub uninstall registration.')) 'Repair was not logged.'
-    Assert-True ($repairText.Contains('Will append to existing uninstall log:')) 'Valid alternate log was not reused.'
+    Assert-True ($repairText.Contains('Removed the damaged Invoice Hub uninstall registration before native setup.')) 'Stale ARP removal was not logged.'
     Invoke-RegisteredUninstall
+    Assert-UserDataUnchanged $userDataSnapshot
 
-    # Reinstall current -> uninstall.
-    Invoke-Setup $current 'reinstall.log' | Out-Null
-    Assert-CurrentRegistration '3.0'
+    # Reinstall candidate -> registered uninstall, with user data still intact.
+    Invoke-Setup $candidate 'reinstall.log' | Out-Null
+    Assert-CurrentRegistration '0.1.5-rc3-dev'
     Invoke-RegisteredUninstall
+    Assert-UserDataUnchanged $userDataSnapshot
 
     $residual = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
         $_.ProcessName -match '^(InvoiceHub|unins[0-9]+)$'
@@ -159,6 +207,23 @@ try {
     Write-Output 'INSTALLER_LIFECYCLE_PROBE: PASS'
 }
 finally {
+    if ($KeepEvidence) {
+        $evidenceDir = Join-Path $env:TEMP "$testName-evidence"
+        if (Test-Path -LiteralPath $evidenceDir) {
+            Remove-Item -LiteralPath $evidenceDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $evidenceDir -Force | Out-Null
+        if (Test-Path -LiteralPath $workDir) {
+            Copy-Item -LiteralPath $workDir -Destination (Join-Path $evidenceDir 'work') -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $installDir) {
+            Copy-Item -LiteralPath $installDir -Destination (Join-Path $evidenceDir 'install') -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $uninstallKey) {
+            Get-ItemProperty -LiteralPath $uninstallKey | Out-File -FilePath (Join-Path $evidenceDir 'uninstall-registration.txt') -Encoding utf8
+        }
+        Write-Output "INSTALLER_LIFECYCLE_EVIDENCE: $evidenceDir"
+    }
     if (Test-Path -LiteralPath $uninstallKey) {
         Remove-Item -LiteralPath $uninstallKey -Recurse -Force
     }

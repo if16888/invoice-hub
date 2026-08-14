@@ -561,21 +561,24 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertNotIn("{userappdata}", src)
         self.assertNotIn("{commonappdata}", src)
 
-    def test_inno_repairs_only_a_broken_registered_uninstaller(self):
+    def test_inno_removes_only_a_broken_registered_uninstaller_key(self):
         src = self._installer_path().read_text(encoding="utf-8")
-        self.assertIn("function RepairBrokenUninstallRegistration: String;", src)
+        self.assertIn("function RemoveBrokenUninstallRegistration: String;", src)
         self.assertIn("IsInnoUninstallerName", src)
         self.assertIn("AppDirectory := InstallLocation", src)
         self.assertIn("FileExists(ChangeFileExt(UninstallerPath, '.dat'))", src)
         self.assertIn("RegDeleteKeyIncludingSubkeys", src)
-        self.assertIn("function FindAlternateUninstaller(", src)
-        self.assertIn("RegWriteStringValue", src)
-        self.assertIn("AppId and append only when it belongs", src)
+        self.assertNotIn("FindAlternateUninstaller", src)
+        self.assertNotIn("RegWriteStringValue", src)
+        self.assertNotIn("DeleteFile(UninstallerPath", src)
+        self.assertNotIn("RenameFile(UninstallerPath", src)
         self.assertIn("function InitializeSetup: Boolean;", src)
         self.assertIn("SuppressibleMsgBox(RepairError", src)
-        self.assertIn("BrokenRegisteredUninstaller := UninstallerPath", src)
-        self.assertIn("if CurStep = ssPostInstall then", src)
-        self.assertIn("RemoveBrokenRegisteredUninstaller", src)
+        self.assertIn("native setup", src)
+        self.assertIn("procedure RemoveEmptyDirectoryTree", src)
+        self.assertIn("FILE_ATTRIBUTE_REPARSE_POINT", src)
+        self.assertIn("procedure CurUninstallStepChanged", src)
+        self.assertIn("RemoveDir(Directory)", src)
 
     def test_inno_preserves_valid_native_upgrade_logs(self):
         src = self._installer_path().read_text(encoding="utf-8")
@@ -598,7 +601,11 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         src = self._lifecycle_probe_path().read_text(encoding="utf-8")
         self.assertIn("[guid]::NewGuid()", src)
         self.assertIn("InvoiceHubInstallerLifecycle-$PID", src)
-        self.assertIn("Will append to existing uninstall log:", src)
+        self.assertIn("0.1.5-rc1", src)
+        self.assertIn("0.1.5-rc2", src)
+        self.assertIn("historical-rc2-repair.log", src)
+        self.assertIn("Get-UserDataSnapshot", src)
+        self.assertIn("Removed the damaged Invoice Hub uninstall registration before native setup.", src)
         self.assertIn("INSTALLER_LIFECYCLE_PROBE: PASS", src)
 
     def test_workflow_builds_setup_zip_and_checksums(self):

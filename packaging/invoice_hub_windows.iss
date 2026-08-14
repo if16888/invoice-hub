@@ -113,27 +113,19 @@ begin
     (Copy(Name, 9, 4) = '.exe');
 end;
 
-function FindAlternateUninstaller(
-  const AppDirectory: String;
-  const BrokenUninstaller: String): String;
+function DirectoryHasEntries(const Directory: String): Boolean;
 var
   FindRec: TFindRec;
-  Candidate: String;
 begin
-  Result := '';
-  if FindFirst(AppDirectory + '\unins???.dat', FindRec) then
+  Result := False;
+  if FindFirst(PathWithoutTrailingBackslash(Directory) + '\*', FindRec) then
   begin
     try
       repeat
-        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0) then
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
         begin
-          Candidate := AppDirectory + '\' +
-            ChangeFileExt(FindRec.Name, '.exe');
-          if FileExists(Candidate) and
-             IsInnoUninstallerName(ExtractFileName(Candidate)) and
-             (CompareText(Candidate, BrokenUninstaller) <> 0) and
-             ((Result = '') or (CompareText(Candidate, Result) > 0)) then
-            Result := Candidate;
+          Result := True;
+          Break;
         end;
       until not FindNext(FindRec);
     finally
@@ -142,14 +134,45 @@ begin
   end;
 end;
 
-function RepairBrokenUninstallRegistration: String;
+procedure RemoveEmptyDirectoryTree(const Directory: String);
+var
+  FindRec: TFindRec;
+  ChildDirectory: String;
+begin
+  if not DirExists(Directory) then
+    Exit;
+
+  if FindFirst(PathWithoutTrailingBackslash(Directory) + '\*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') and
+           (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
+           (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT = 0) then
+        begin
+          ChildDirectory := PathWithoutTrailingBackslash(Directory) + '\' +
+            FindRec.Name;
+          RemoveEmptyDirectoryTree(ChildDirectory);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+
+  { This procedure never deletes files. It only removes directories that are
+    empty after native Inno uninstall processing, and it is called only for
+    the installer-owned application tree. }
+  if not DirectoryHasEntries(Directory) then
+    RemoveDir(Directory);
+end;
+
+function RemoveBrokenUninstallRegistration: String;
 var
   InstallLocation: String;
   UninstallCommand: String;
   UninstallerPath: String;
   AppDirectory: String;
-  OrphanPath: String;
-  AlternateUninstaller: String;
 begin
   Result := '';
   if not RegQueryStringValue(
@@ -165,8 +188,8 @@ begin
   AppDirectory := InstallLocation;
   UninstallerPath := RegisteredExecutable(UninstallCommand);
 
-  { Repair only the exact per-user Invoice Hub registration and only when its
-    registered Inno uninstaller is directly inside the selected app directory. }
+  { Handle only the exact per-user Invoice Hub registration and only when its
+    registered Inno uninstaller is directly inside the recorded app directory. }
   if (CompareText(
        PathWithoutTrailingBackslash(ExtractFileDir(UninstallerPath)),
        AppDirectory) <> 0) or
@@ -179,86 +202,38 @@ begin
     Exit;
 
   Log('Detected an Invoice Hub uninstall registration without its matching log.');
-  OrphanPath := UninstallerPath + '.invoicehub-orphan';
-  if FileExists(OrphanPath) and (not DeleteFile(OrphanPath)) then
+  { Remove only the exact per-user ARP key. Do not rewrite either uninstall
+    command and do not touch any uninsNNN.exe/.dat pair. Native Inno Setup must
+    discover the AppId and choose a new or appended uninstall log itself. }
+  if not RegDeleteKeyIncludingSubkeys(
+    HKEY_CURRENT_USER, InvoiceHubUninstallKey) then
   begin
-    Result := '检测到旧版卸载信息已损坏，且无法安全清理。请关闭 Invoice Hub 后重试安装。';
+    Result := '检测到旧版卸载信息已损坏，且无法清理旧注册。请重试安装。';
     Exit;
   end;
-  if FileExists(UninstallerPath) and
-     (not RenameFile(UninstallerPath, OrphanPath)) then
-  begin
-    Result := '检测到旧版卸载信息已损坏，且卸载程序正在使用。请关闭 Invoice Hub 后重试安装。';
-    Exit;
-  end;
-  if FileExists(OrphanPath) and
-     (not RenameFile(OrphanPath, UninstallerPath)) then
-  begin
-    Result := '检测到旧版卸载信息已损坏，且无法安全验证卸载程序。请重试安装。';
-    Exit;
-  end;
-
-  AlternateUninstaller := FindAlternateUninstaller(
-    AppDirectory, UninstallerPath);
-  if AlternateUninstaller <> '' then
-  begin
-    Log('Found an alternate Inno uninstall log candidate.');
-    { Point Setup at an existing candidate so Inno can verify its embedded
-      AppId and append only when it belongs to this application. }
-    if (not RegWriteStringValue(
-      HKEY_CURRENT_USER, InvoiceHubUninstallKey, 'UninstallString',
-      '"' + AlternateUninstaller + '"')) or
-       (not RegWriteStringValue(
-      HKEY_CURRENT_USER, InvoiceHubUninstallKey, 'QuietUninstallString',
-      '"' + AlternateUninstaller + '" /SILENT')) then
-    begin
-      Result := '检测到旧版卸载信息已损坏，且无法修复卸载注册。请重试安装。';
-      Exit;
-    end;
-  end
-  else
-  begin
-    Log('No alternate Inno uninstall log candidate was found.');
-    if not RegDeleteKeyIncludingSubkeys(
-      HKEY_CURRENT_USER, InvoiceHubUninstallKey) then
-    begin
-      Result := '检测到旧版卸载信息已损坏，且无法修复卸载注册。请重试安装。';
-      Exit;
-    end;
-  end;
-
-  { Keep the orphan in place until Inno has selected/appended the current log.
-    Removing it now could make Setup reuse its number and strand a valid
-    alternate log. }
   BrokenRegisteredUninstaller := UninstallerPath;
-  Log('Repaired the damaged Invoice Hub uninstall registration.');
+  Log('Removed the damaged Invoice Hub uninstall registration before native setup.');
 end;
 
 procedure RemoveBrokenRegisteredUninstaller;
-var
-  OrphanPath: String;
-  MessagePath: String;
 begin
-  if BrokenRegisteredUninstaller = '' then
+  if (BrokenRegisteredUninstaller = '') or
+     (not FileExists(BrokenRegisteredUninstaller)) or
+     FileExists(ChangeFileExt(BrokenRegisteredUninstaller, '.dat')) then
     Exit;
 
-  OrphanPath := BrokenRegisteredUninstaller + '.invoicehub-orphan';
-  if FileExists(BrokenRegisteredUninstaller) and
-     (not DeleteFile(BrokenRegisteredUninstaller)) then
-  begin
-    if not RenameFile(BrokenRegisteredUninstaller, OrphanPath) then
-      Log('Warning: could not remove the obsolete Invoice Hub uninstaller.');
-  end;
-  MessagePath := ChangeFileExt(BrokenRegisteredUninstaller, '.msg');
-  if FileExists(MessagePath) then
-    DeleteFile(MessagePath);
+  { Native Setup owns the selected/new log. Remove only the previously
+    registered installer-owned executable when it is still an unpaired stale
+    file; never remove a valid alternate uninsNNN.exe/.dat pair. }
+  if not DeleteFile(BrokenRegisteredUninstaller) then
+    Log('Warning: could not remove the obsolete Invoice Hub uninstaller.');
 end;
 
 function InitializeSetup: Boolean;
 var
   RepairError: String;
 begin
-  RepairError := RepairBrokenUninstallRegistration;
+  RepairError := RemoveBrokenUninstallRegistration;
   Result := RepairError = '';
   if not Result then
     SuppressibleMsgBox(RepairError, mbError, MB_OK, IDOK);
@@ -268,4 +243,10 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
     RemoveBrokenRegisteredUninstaller;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    RemoveEmptyDirectoryTree(ExpandConstant('{app}'));
 end;
