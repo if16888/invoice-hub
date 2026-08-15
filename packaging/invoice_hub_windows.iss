@@ -63,11 +63,13 @@ Filename: "{app}\InvoiceHub.exe"; Description: "Launch Invoice Hub"; Flags: nowa
 
 [Code]
 const
+#include "legacy\installer_ownership.issinc"
   InvoiceHubUninstallKey =
     'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{#AppIdGuid}}_is1';
 
 var
   BrokenRegisteredUninstaller: String;
+  LegacyPreservedData: String;
 
 function PathWithoutTrailingBackslash(const Value: String): String;
 begin
@@ -229,6 +231,350 @@ begin
     Log('Warning: could not remove the obsolete Invoice Hub uninstaller.');
 end;
 
+function IsUnsafeLegacyRelativePath(const Value: String): Boolean;
+var
+  Normalized: String;
+  Remaining: String;
+  Component: String;
+  Separator: Integer;
+begin
+  Result := True;
+  if Value = '' then
+    Exit;
+
+  Normalized := Value;
+  StringChangeEx(Normalized, '/', '\', True);
+  if (Normalized = '') or (Normalized[1] = '\') or
+     ((Length(Normalized) >= 2) and (Normalized[2] = ':')) then
+    Exit;
+
+  Remaining := Normalized;
+  while Remaining <> '' do
+  begin
+    Separator := Pos('\', Remaining);
+    if Separator = 0 then
+    begin
+      Component := Remaining;
+      Remaining := '';
+    end
+    else
+    begin
+      Component := Copy(Remaining, 1, Separator - 1);
+      Delete(Remaining, 1, Separator);
+    end;
+    if (Component = '') or (Component = '.') or (Component = '..') then
+      Exit;
+  end;
+  Result := False;
+end;
+
+function FindChildAttributes(
+  const ParentDirectory, ChildName: String;
+  var Attributes: Integer): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+  Attributes := 0;
+  if FindFirst(PathWithoutTrailingBackslash(ParentDirectory) + '\*', FindRec) then
+  begin
+    try
+      repeat
+        if CompareText(FindRec.Name, ChildName) = 0 then
+        begin
+          Attributes := FindRec.Attributes;
+          Result := True;
+          Break;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+function LegacyPathHasReparsePoint(
+  const AppDirectory, RelativePath: String): Boolean;
+var
+  ParentDirectory: String;
+  Remaining: String;
+  Component: String;
+  Separator: Integer;
+  Attributes: Integer;
+begin
+  Result := False;
+  ParentDirectory := PathWithoutTrailingBackslash(AppDirectory);
+  Remaining := RelativePath;
+  StringChangeEx(Remaining, '/', '\', True);
+  while Remaining <> '' do
+  begin
+    Separator := Pos('\', Remaining);
+    if Separator = 0 then
+    begin
+      Component := Remaining;
+      Remaining := '';
+    end
+    else
+    begin
+      Component := Copy(Remaining, 1, Separator - 1);
+      Delete(Remaining, 1, Separator);
+    end;
+
+    if not FindChildAttributes(ParentDirectory, Component, Attributes) then
+      Exit;
+    if (Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+    ParentDirectory := PathWithoutTrailingBackslash(ParentDirectory) + '\' +
+      Component;
+  end;
+end;
+
+function BuildLegacyOwnedTarget(
+  const RelativePath: String; var TargetPath: String): Boolean;
+var
+  Normalized: String;
+  AppDirectory: String;
+begin
+  Result := False;
+  TargetPath := '';
+  if IsUnsafeLegacyRelativePath(RelativePath) then
+  begin
+    Log('Ignoring unsafe legacy ownership path.');
+    Exit;
+  end;
+
+  Normalized := RelativePath;
+  StringChangeEx(Normalized, '/', '\', True);
+  AppDirectory := PathWithoutTrailingBackslash(ExpandConstant('{app}'));
+  TargetPath := AppDirectory + '\' + Normalized;
+  if CompareText(
+       Copy(TargetPath, 1, Length(AppDirectory) + 1),
+       AppDirectory + '\') <> 0 then
+  begin
+    TargetPath := '';
+    Log('Ignoring legacy ownership path outside the application directory.');
+    Exit;
+  end;
+  Result := True;
+end;
+
+function NextLegacyOwnershipRecord(
+  var Remaining, RelativePath, ExpectedHash: String): Boolean;
+var
+  Line: String;
+  LineEnd: Integer;
+  Separator: Integer;
+begin
+  Result := False;
+  RelativePath := '';
+  ExpectedHash := '';
+  if Remaining = '' then
+    Exit;
+
+  LineEnd := Pos(#13#10, Remaining);
+  if LineEnd = 0 then
+  begin
+    Line := Remaining;
+    Remaining := '';
+  end
+  else
+  begin
+    Line := Copy(Remaining, 1, LineEnd - 1);
+    Delete(Remaining, 1, LineEnd + 1);
+  end;
+
+  Separator := Pos('|', Line);
+  if Separator <= 1 then
+    Exit;
+  RelativePath := Copy(Line, 1, Separator - 1);
+  ExpectedHash := Copy(Line, Separator + 1, Length(Line));
+  Result := ExpectedHash <> '';
+end;
+
+function FindLegacyBackupPath(
+  const TargetPath: String; var BackupPath: String): Boolean;
+var
+  Index: Integer;
+  Candidate: String;
+begin
+  Result := False;
+  BackupPath := TargetPath + '.invoicehub-preserved';
+  if not FileExists(BackupPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  for Index := 1 to 1000 do
+  begin
+    Candidate := TargetPath + '.invoicehub-preserved-' + IntToStr(Index);
+    if not FileExists(Candidate) then
+    begin
+      BackupPath := Candidate;
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+function NextLegacyPreservedRecord(
+  var Remaining, RelativePath, BackupPath: String): Boolean;
+var
+  Line: String;
+  LineEnd: Integer;
+  Separator: Integer;
+begin
+  Result := False;
+  RelativePath := '';
+  BackupPath := '';
+  if Remaining = '' then
+    Exit;
+
+  LineEnd := Pos(#13#10, Remaining);
+  if LineEnd = 0 then
+  begin
+    Line := Remaining;
+    Remaining := '';
+  end
+  else
+  begin
+    Line := Copy(Remaining, 1, LineEnd - 1);
+    Delete(Remaining, 1, LineEnd + 1);
+  end;
+
+  Separator := Pos('|', Line);
+  if Separator <= 1 then
+    Exit;
+  RelativePath := Copy(Line, 1, Separator - 1);
+  BackupPath := Copy(Line, Separator + 1, Length(Line));
+  Result := BackupPath <> '';
+end;
+
+procedure ProtectLegacyFilesBeforeNativeUninstall;
+var
+  Remaining: String;
+  RelativePath: String;
+  ExpectedHash: String;
+  TargetPath: String;
+  BackupPath: String;
+  AppDirectory: String;
+  ActualHash: String;
+  ShouldProtect: Boolean;
+begin
+  AppDirectory := PathWithoutTrailingBackslash(ExpandConstant('{app}'));
+  Remaining := LegacyOwnershipData;
+  while NextLegacyOwnershipRecord(
+    Remaining, RelativePath, ExpectedHash) do
+  begin
+    if not BuildLegacyOwnedTarget(RelativePath, TargetPath) then
+      Continue;
+    if not FileExists(TargetPath) then
+      Continue;
+
+    ShouldProtect := LegacyPathHasReparsePoint(AppDirectory, RelativePath);
+    if not ShouldProtect then
+    begin
+      ActualHash := GetSHA256OfFile(TargetPath);
+      ShouldProtect := CompareText(ActualHash, ExpectedHash) <> 0;
+    end;
+    if not ShouldProtect then
+      Continue;
+
+    if not FindLegacyBackupPath(TargetPath, BackupPath) then
+    begin
+      Log('Could not allocate a preservation name for legacy path: ' +
+        RelativePath);
+      Continue;
+    end;
+    if RenameFile(TargetPath, BackupPath) then
+    begin
+      LegacyPreservedData := LegacyPreservedData + RelativePath + '|' +
+        BackupPath + #13#10;
+      Log('Temporarily preserved legacy path before native uninstall: ' +
+        RelativePath);
+    end
+    else
+      Log('Could not temporarily preserve legacy path before native uninstall: ' +
+        RelativePath);
+  end;
+end;
+
+procedure RestoreLegacyFilesAfterNativeUninstall;
+var
+  Remaining: String;
+  RelativePath: String;
+  BackupPath: String;
+  TargetPath: String;
+begin
+  Remaining := LegacyPreservedData;
+  while NextLegacyPreservedRecord(
+    Remaining, RelativePath, BackupPath) do
+  begin
+    if not BuildLegacyOwnedTarget(RelativePath, TargetPath) then
+      Continue;
+    if FileExists(BackupPath) then
+    begin
+      if FileExists(TargetPath) then
+      begin
+        Log('Preserving legacy backup because the original path was recreated: ' +
+          RelativePath);
+        Break;
+      end;
+      if RenameFile(BackupPath, TargetPath) then
+        Log('Restored preserved legacy path after native uninstall: ' +
+          RelativePath)
+      else
+      begin
+        Log('Could not restore preserved legacy path after native uninstall: ' +
+          RelativePath);
+      end;
+    end;
+  end;
+  LegacyPreservedData := '';
+end;
+
+procedure RemoveKnownLegacyOwnedFiles;
+var
+  Remaining: String;
+  RelativePath: String;
+  ExpectedHash: String;
+  TargetPath: String;
+  AppDirectory: String;
+  ActualHash: String;
+begin
+  AppDirectory := PathWithoutTrailingBackslash(ExpandConstant('{app}'));
+  Remaining := LegacyOwnershipData;
+  while NextLegacyOwnershipRecord(
+    Remaining, RelativePath, ExpectedHash) do
+  begin
+    if not BuildLegacyOwnedTarget(RelativePath, TargetPath) then
+      Continue;
+    if not FileExists(TargetPath) then
+      Continue;
+    if LegacyPathHasReparsePoint(AppDirectory, RelativePath) then
+    begin
+      Log('Preserving legacy path on a reparse point: ' + RelativePath);
+      Continue;
+    end;
+
+    ActualHash := GetSHA256OfFile(TargetPath);
+    if CompareText(ActualHash, ExpectedHash) <> 0 then
+    begin
+      Log('Preserving legacy path with an ownership hash mismatch: ' +
+        RelativePath);
+      Continue;
+    end;
+    if DeleteFile(TargetPath) then
+      Log('Removed verified legacy installer-owned file: ' + RelativePath)
+    else
+      Log('Could not remove verified legacy installer-owned file: ' +
+        RelativePath);
+  end;
+end;
+
 function InitializeSetup: Boolean;
 var
   RepairError: String;
@@ -247,6 +593,15 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    LegacyPreservedData := '';
+    ProtectLegacyFilesBeforeNativeUninstall;
+  end;
   if CurUninstallStep = usPostUninstall then
+  begin
+    RestoreLegacyFilesAfterNativeUninstall;
+    RemoveKnownLegacyOwnedFiles;
     RemoveEmptyDirectoryTree(ExpandConstant('{app}'));
+  end;
 end;
