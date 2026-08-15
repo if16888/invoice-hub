@@ -84,6 +84,20 @@ function Invoke-RegisteredUninstall {
     }
 }
 
+function Invoke-ExpectedUninstallAbort {
+    param([string]$Reason)
+    $command = Get-RegisteredUninstaller
+    Assert-True (Test-Path -LiteralPath $command) 'Registered uninstaller does not exist before expected abort.'
+    $process = Start-Process -FilePath $command -ArgumentList @(
+        '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+    ) -Wait -PassThru -WindowStyle Hidden
+    Write-Verbose "Expected uninstall abort for $Reason returned exit code $($process.ExitCode)."
+    Assert-True (Test-Path -LiteralPath $uninstallKey) "Uninstall registration was removed after expected abort: $Reason"
+    Assert-True (Test-Path -LiteralPath $installDir) "Install directory was removed after expected abort: $Reason"
+    Assert-True (Test-Path -LiteralPath $command) "Registered uninstaller was removed after expected abort: $Reason"
+    Assert-NoProductResidualProcesses
+}
+
 function Get-UserDataSnapshot {
     $records = @(
         Get-ChildItem -LiteralPath $userDataDir -File -Recurse -ErrorAction SilentlyContinue |
@@ -143,11 +157,13 @@ function New-HistoricalPayloads {
     Write-FixtureFile $payloads.rc1 'InvoiceHub.exe' 'synthetic RC1 executable'
     Write-FixtureFile $payloads.rc1 'legacy\rc1-only.pyd' 'synthetic RC1-only module'
     Write-FixtureFile $payloads.rc1 'legacy\nested\rc1-only.txt' 'synthetic nested RC1 file'
+    Write-FixtureFile $payloads.rc1 'legacy-junction\sentinel.dll' 'synthetic junction sentinel'
 
     Write-FixtureFile $payloads.rc2 'InvoiceHub.exe' 'synthetic RC2 executable'
     Write-FixtureFile $payloads.rc2 'legacy\rc1-only.pyd' 'synthetic RC1-only module'
     Write-FixtureFile $payloads.rc2 'legacy\nested\rc1-only.txt' 'synthetic nested RC1 file'
     Write-FixtureFile $payloads.rc2 'legacy\rc2-only.dll' 'synthetic RC2-only module'
+    Write-FixtureFile $payloads.rc2 'legacy-junction\sentinel.dll' 'synthetic junction sentinel'
 
     Write-FixtureFile $payloads.current 'InvoiceHub.exe' 'synthetic current executable'
     Write-FixtureFile $payloads.current 'current\current-only.dll' 'synthetic current module'
@@ -183,7 +199,7 @@ function New-OwnershipFixtures {
         '--output', $include, '--current-manifest-output', $currentManifest
     )
     $includeText = [IO.File]::ReadAllText($include, [Text.Encoding]::UTF8)
-    Assert-True ($includeText.Contains('LegacyOwnershipCount = 3;')) 'Historical fixture did not produce three old-only records.'
+    Assert-True ($includeText.Contains('LegacyOwnershipCount = 4;')) 'Historical fixture did not produce four old-only records.'
     return $include
 }
 
@@ -223,6 +239,8 @@ try {
     Assert-True $source.Contains('RemoveKnownLegacyOwnedFiles') 'Historical ownership cleanup is missing.'
     Assert-True (-not $source.Contains('RegWriteStringValue')) 'Installer must not rewrite uninstall registration.'
     Assert-True (-not $source.Contains('FindAlternateUninstaller')) 'Installer must not manually select an alternate log.'
+    Assert-True $source.Contains('Abort;') 'Installer must abort before native uninstall when preservation fails.'
+    Assert-True $source.Contains('Refusing to touch a legacy path below a reparse point') 'Installer must reject reparse paths before mutation.'
     $testSource = $source.Replace($productionGuid, $testGuid)
     Assert-True ($testSource -ne $source) 'Test AppId replacement failed.'
     $currentScript = Join-Path $workDir 'current.iss'
@@ -309,6 +327,58 @@ try {
     [IO.File]::WriteAllText($alteredFile, 'synthetic user modification', [Text.UTF8Encoding]::new($false))
     Invoke-RegisteredUninstall -AllowInstallDirectoryRemainder
     Assert-True (Test-Path -LiteralPath $alteredFile) 'Hash-mismatched historical file was deleted.'
+    Assert-UserDataUnchanged $userDataSnapshot
+    Remove-Item -LiteralPath $installDir -Recurse -Force
+
+    # A reparse point is an unsafe filesystem boundary. The uninstaller must
+    # abort before native processing, leaving both the junction and its
+    # external target untouched and the ARP registration usable.
+    Invoke-Setup $candidate 'reparse-candidate.log' | Out-Null
+    $externalDir = Join-Path $workDir 'external-junction-target'
+    $junctionDir = Join-Path $installDir 'legacy-junction'
+    New-Item -ItemType Directory -Path $externalDir -Force | Out-Null
+    $externalSentinel = Join-Path $externalDir 'sentinel.dll'
+    [IO.File]::WriteAllText($externalSentinel, 'synthetic junction sentinel', [Text.UTF8Encoding]::new($false))
+    New-Item -ItemType Junction -Path $junctionDir -Target $externalDir | Out-Null
+    $junctionInfo = Get-Item -LiteralPath $junctionDir -Force
+    Assert-True (($junctionInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'Junction fixture was not a reparse point.'
+    $externalBefore = (Get-FileHash -LiteralPath $externalSentinel -Algorithm SHA256).Hash
+    Invoke-ExpectedUninstallAbort 'reparse point'
+    Assert-True (Test-Path -LiteralPath $junctionDir) 'Reparse junction was removed after expected abort.'
+    Assert-True (Test-Path -LiteralPath $externalSentinel) 'External junction target was removed after expected abort.'
+    $externalAfter = (Get-FileHash -LiteralPath $externalSentinel -Algorithm SHA256).Hash
+    Assert-True ($externalAfter -eq $externalBefore) 'External junction target changed after expected abort.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'InvoiceHub.exe')) 'Application was removed after expected reparse abort.'
+    if (Test-Path -LiteralPath $junctionDir) {
+        [IO.Directory]::Delete($junctionDir, $false)
+    }
+    Remove-Item -LiteralPath $externalDir -Recurse -Force
+    Invoke-RegisteredUninstall
+    Assert-UserDataUnchanged $userDataSnapshot
+
+    # A hash-mismatched file held open by another process cannot be moved to a
+    # preservation name. That failure must abort native uninstall. After the
+    # handle is released, retrying must preserve the modified file normally.
+    Invoke-Setup $rc1 'locked-rc1.log' | Out-Null
+    Invoke-Setup $candidate 'locked-candidate.log' | Out-Null
+    $lockedFile = Join-Path $installDir 'legacy\rc1-only.pyd'
+    Assert-True (Test-Path -LiteralPath $lockedFile) 'Locked historical fixture file was not present.'
+    [IO.File]::WriteAllText($lockedFile, 'synthetic locked user modification', [Text.UTF8Encoding]::new($false))
+    $lockedHash = (Get-FileHash -LiteralPath $lockedFile -Algorithm SHA256).Hash
+    $lockedStream = [IO.File]::Open($lockedFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        Invoke-ExpectedUninstallAbort 'locked hash-mismatched file'
+        Assert-True (Test-Path -LiteralPath $lockedFile) 'Locked file disappeared after expected abort.'
+        $lockedAfterAbortHash = (Get-FileHash -LiteralPath $lockedFile -Algorithm SHA256).Hash
+        Assert-True ($lockedAfterAbortHash -eq $lockedHash) 'Locked file changed after expected abort.'
+    }
+    finally {
+        $lockedStream.Dispose()
+    }
+    Invoke-RegisteredUninstall -AllowInstallDirectoryRemainder
+    Assert-True (Test-Path -LiteralPath $lockedFile) 'Modified file was not restored after retry.'
+    $lockedAfterRetryHash = (Get-FileHash -LiteralPath $lockedFile -Algorithm SHA256).Hash
+    Assert-True ($lockedAfterRetryHash -eq $lockedHash) 'Modified file content changed after retry.'
     Assert-UserDataUnchanged $userDataSnapshot
     Remove-Item -LiteralPath $installDir -Recurse -Force
 

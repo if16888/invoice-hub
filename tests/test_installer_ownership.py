@@ -104,10 +104,13 @@ class TestInstallerOwnershipContract(unittest.TestCase):
             "GetSHA256OfFile",
             "LegacyPathHasReparsePoint",
             "ProtectLegacyFilesBeforeNativeUninstall",
+            "FailLegacyProtection",
             "RestoreLegacyFilesAfterNativeUninstall",
             "RemoveKnownLegacyOwnedFiles",
             "RemoveEmptyDirectoryTree",
             "FILE_ATTRIBUTE_REPARSE_POINT",
+            "Refusing to touch a legacy path below a reparse point",
+            "Abort;",
         ):
             self.assertIn(token, source)
         self.assertNotIn('Name: "{app}\\*"', source)

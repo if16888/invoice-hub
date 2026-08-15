@@ -24,7 +24,11 @@ python scripts/dev/generate_installer_ownership.py manifest \
 ```
 
 At release build time, the workflow hashes the exact current PyInstaller
-payload and generates `packaging/legacy/installer_ownership.issinc`. The generated Inno
-code removes only historical paths absent from the current payload and only
-when the on-disk SHA256 matches a recorded official hash. Unknown files and
-hash-mismatched files are preserved.
+payload and generates `packaging/legacy/installer_ownership.issinc`. The
+`size` column remains audit metadata; the generated Inno runtime data uses the
+recorded SHA256 as the content-identity check. The generated Inno code removes
+only historical paths absent from the current payload and only when the
+on-disk SHA256 matches a recorded official hash. Unknown files and
+hash-mismatched files are preserved. If a legacy path crosses a reparse point,
+or a modified file cannot be moved to a preservation name, uninstall aborts
+before native Inno removal begins.

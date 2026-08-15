@@ -606,9 +606,12 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertIn("field-repair.log", src)
         self.assertIn('"payload-$name"', src)
         self.assertIn("New-HistoricalPayloads", src)
-        self.assertIn("LegacyOwnershipCount = 3;", src)
+        self.assertIn("LegacyOwnershipCount = 4;", src)
         self.assertIn("Get-UserDataSnapshot", src)
         self.assertIn("Removed the damaged Invoice Hub uninstall registration before native setup.", src)
+        self.assertIn("Invoke-ExpectedUninstallAbort", src)
+        self.assertIn("ItemType Junction", src)
+        self.assertIn("FileShare]::Read", src)
         self.assertIn("INSTALLER_LIFECYCLE_PROBE: PASS", src)
 
     def test_workflow_builds_setup_zip_and_checksums(self):

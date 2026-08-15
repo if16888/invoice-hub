@@ -70,6 +70,7 @@ const
 var
   BrokenRegisteredUninstaller: String;
   LegacyPreservedData: String;
+  LegacyUninstallAborted: Boolean;
 
 function PathWithoutTrailingBackslash(const Value: String): String;
 begin
@@ -402,7 +403,7 @@ var
 begin
   Result := False;
   BackupPath := TargetPath + '.invoicehub-preserved';
-  if not FileExists(BackupPath) then
+  if not FileExists(BackupPath) and not DirExists(BackupPath) then
   begin
     Result := True;
     Exit;
@@ -411,7 +412,7 @@ begin
   for Index := 1 to 1000 do
   begin
     Candidate := TargetPath + '.invoicehub-preserved-' + IntToStr(Index);
-    if not FileExists(Candidate) then
+    if not FileExists(Candidate) and not DirExists(Candidate) then
     begin
       BackupPath := Candidate;
       Result := True;
@@ -453,7 +454,21 @@ begin
   Result := BackupPath <> '';
 end;
 
-procedure ProtectLegacyFilesBeforeNativeUninstall;
+function RestoreLegacyFilesAfterNativeUninstall: Boolean; forward;
+
+function FailLegacyProtection(
+  const UserMessage: String; var ErrorText: String): Boolean;
+begin
+  ErrorText := UserMessage;
+  { A previous record may already have been moved before this failure. Restore
+    it before Abort so the application remains in its pre-uninstall state. }
+  if not RestoreLegacyFilesAfterNativeUninstall then
+    ErrorText := '无法安全恢复安装文件，卸载已取消。请不要重试并联系支持人员。';
+  Result := False;
+end;
+
+function ProtectLegacyFilesBeforeNativeUninstall(
+  var ErrorText: String): Boolean;
 var
   Remaining: String;
   RelativePath: String;
@@ -462,8 +477,9 @@ var
   BackupPath: String;
   AppDirectory: String;
   ActualHash: String;
-  ShouldProtect: Boolean;
 begin
+  Result := False;
+  ErrorText := '';
   AppDirectory := PathWithoutTrailingBackslash(ExpandConstant('{app}'));
   Remaining := LegacyOwnershipData;
   while NextLegacyOwnershipRecord(
@@ -471,63 +487,88 @@ begin
   begin
     if not BuildLegacyOwnedTarget(RelativePath, TargetPath) then
       Continue;
+
+    { A reparse point is an unsafe boundary, not a file to be moved. Check it
+      before FileExists or hashing so no operation follows the redirected path. }
+    if LegacyPathHasReparsePoint(AppDirectory, RelativePath) then
+    begin
+      Log('Refusing to touch a legacy path below a reparse point: ' +
+        RelativePath);
+      FailLegacyProtection(
+        '检测到安装目录包含不安全的重解析路径，卸载已取消。请先移除该路径后重试。',
+        ErrorText);
+      Exit;
+    end;
     if not FileExists(TargetPath) then
       Continue;
 
-    ShouldProtect := LegacyPathHasReparsePoint(AppDirectory, RelativePath);
-    if not ShouldProtect then
-    begin
-      ActualHash := GetSHA256OfFile(TargetPath);
-      ShouldProtect := CompareText(ActualHash, ExpectedHash) <> 0;
-    end;
-    if not ShouldProtect then
+    ActualHash := GetSHA256OfFile(TargetPath);
+    if CompareText(ActualHash, ExpectedHash) = 0 then
       Continue;
 
     if not FindLegacyBackupPath(TargetPath, BackupPath) then
     begin
       Log('Could not allocate a preservation name for legacy path: ' +
         RelativePath);
-      Continue;
+      FailLegacyProtection(
+        '无法安全保护已修改的安装文件，卸载已取消。请关闭占用该文件的程序后重试。',
+        ErrorText);
+      Exit;
     end;
-    if RenameFile(TargetPath, BackupPath) then
+    if not RenameFile(TargetPath, BackupPath) then
     begin
-      LegacyPreservedData := LegacyPreservedData + RelativePath + '|' +
-        BackupPath + #13#10;
-      Log('Temporarily preserved legacy path before native uninstall: ' +
-        RelativePath);
-    end
-    else
       Log('Could not temporarily preserve legacy path before native uninstall: ' +
         RelativePath);
+      FailLegacyProtection(
+        '无法安全保护已修改的安装文件，卸载已取消。请关闭占用该文件的程序后重试。',
+        ErrorText);
+      Exit;
+    end;
+    LegacyPreservedData := LegacyPreservedData + RelativePath + '|' +
+      BackupPath + #13#10;
+    Log('Temporarily preserved legacy path before native uninstall: ' +
+      RelativePath);
   end;
+  Result := True;
 end;
 
-procedure RestoreLegacyFilesAfterNativeUninstall;
+function RestoreLegacyFilesAfterNativeUninstall: Boolean;
 var
   Remaining: String;
   RelativePath: String;
   BackupPath: String;
   TargetPath: String;
+  AppDirectory: String;
 begin
+  Result := True;
+  AppDirectory := PathWithoutTrailingBackslash(ExpandConstant('{app}'));
   Remaining := LegacyPreservedData;
   while NextLegacyPreservedRecord(
     Remaining, RelativePath, BackupPath) do
   begin
     if not BuildLegacyOwnedTarget(RelativePath, TargetPath) then
       Continue;
+    if LegacyPathHasReparsePoint(AppDirectory, RelativePath) then
+    begin
+      Result := False;
+      Log('Refusing to restore a legacy path below a reparse point: ' +
+        RelativePath);
+      Continue;
+    end;
     if FileExists(BackupPath) then
     begin
       if FileExists(TargetPath) then
       begin
         Log('Preserving legacy backup because the original path was recreated: ' +
           RelativePath);
-        Break;
+        Continue;
       end;
       if RenameFile(BackupPath, TargetPath) then
         Log('Restored preserved legacy path after native uninstall: ' +
           RelativePath)
       else
       begin
+        Result := False;
         Log('Could not restore preserved legacy path after native uninstall: ' +
           RelativePath);
       end;
@@ -552,13 +593,13 @@ begin
   begin
     if not BuildLegacyOwnedTarget(RelativePath, TargetPath) then
       Continue;
-    if not FileExists(TargetPath) then
-      Continue;
     if LegacyPathHasReparsePoint(AppDirectory, RelativePath) then
     begin
       Log('Preserving legacy path on a reparse point: ' + RelativePath);
       Continue;
     end;
+    if not FileExists(TargetPath) then
+      Continue;
 
     ActualHash := GetSHA256OfFile(TargetPath);
     if CompareText(ActualHash, ExpectedHash) <> 0 then
@@ -592,14 +633,26 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ProtectionError: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
     LegacyPreservedData := '';
-    ProtectLegacyFilesBeforeNativeUninstall;
+    LegacyUninstallAborted := False;
+    if not ProtectLegacyFilesBeforeNativeUninstall(ProtectionError) then
+    begin
+      LegacyUninstallAborted := True;
+      if ProtectionError = '' then
+        ProtectionError := '无法安全保护安装文件，卸载已取消。请重试。';
+      SuppressibleMsgBox(ProtectionError, mbError, MB_OK, IDOK);
+      Abort;
+    end;
   end;
   if CurUninstallStep = usPostUninstall then
   begin
+    if LegacyUninstallAborted then
+      Exit;
     RestoreLegacyFilesAfterNativeUninstall;
     RemoveKnownLegacyOwnedFiles;
     RemoveEmptyDirectoryTree(ExpandConstant('{app}'));
