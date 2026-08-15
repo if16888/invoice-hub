@@ -153,6 +153,38 @@ QListWidget#FilterValueList::item:selected:!active {{
 """
 
 
+class _EntityRowMouseBridge(QObject):
+    """Route clicks on row children back through QListWidget selection."""
+
+    def __init__(self, view: QListWidget) -> None:
+        super().__init__(view)
+        self._view_ref = weakref.ref(view)
+        self._watched: weakref.WeakSet[QWidget] = weakref.WeakSet()
+
+    def attach_row(self, row: QWidget) -> None:
+        widgets = [row]
+        widgets.extend(row.findChildren(QWidget))
+        for widget in widgets:
+            if widget in self._watched or not isValid(widget):
+                continue
+            self._watched.add(widget)
+            widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
+            view = self._view_ref()
+            if view is not None and isValid(view) and isinstance(watched, QWidget):
+                point = watched.mapTo(view.viewport(), event.position().toPoint())
+                item = view.itemAt(point)
+                if item is not None:
+                    view.setCurrentItem(item)
+                    view.setFocus(Qt.MouseFocusReason)
+                    # Keep the original child event alive so labels can
+                    # still support text selection and future row actions.
+                    return False
+        return super().eventFilter(watched, event)
+
+
 def _decorate_entity_rows(view: QListWidget) -> None:
     if not isValid(view):
         return
@@ -166,6 +198,11 @@ def _decorate_entity_rows(view: QListWidget) -> None:
         # The reusable selection surface is identified by a dynamic property.
         _set_dynamic_property(row, "selectionSurfaceRow", True)
         row.setAttribute(Qt.WA_StyledBackground, True)
+        bridge = getattr(view, "_entity_row_mouse_bridge", None)
+        if bridge is None or not isValid(bridge):
+            bridge = _EntityRowMouseBridge(view)
+            view._entity_row_mouse_bridge = bridge
+        bridge.attach_row(row)
         row.setFocusPolicy(Qt.NoFocus)
         row.setMinimumHeight(68)
         layout = row.layout()
