@@ -127,6 +127,8 @@ class TestInstallerOwnershipContract(unittest.TestCase):
         self.assertIn("build\\current-installer-files.txt", workflow)
         self.assertLess(workflow.index(generator), workflow.index("Build Inno Setup installer"))
         self.assertIn("Verify installer lifecycle ownership recovery", workflow)
+        self.assertIn("Get-Command iscc -CommandType Application", workflow)
+        self.assertIn("-IsccPath $isccPath", workflow)
         self.assertIn("-InstallRoot $env:TEMP", workflow)
 
 

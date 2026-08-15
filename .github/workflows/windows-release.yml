@@ -162,7 +162,12 @@ jobs:
 
       - name: Verify installer lifecycle ownership recovery
         run: |
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\dev\verify_installer_lifecycle.ps1 -InstallRoot $env:TEMP
+          $isccPath = (Get-Command iscc -CommandType Application -ErrorAction Stop).Source
+          if (-not $isccPath) {
+            throw "Inno Setup compiler was not resolved from PATH."
+          }
+          Write-Host "Using Inno Setup compiler: $isccPath"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\dev\verify_installer_lifecycle.ps1 -IsccPath $isccPath -InstallRoot $env:TEMP
 
       - name: Sign installer
         run: '& scripts\sign_windows.ps1 "dist\${env:SETUP_NAME}"'
