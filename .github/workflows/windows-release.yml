@@ -144,12 +144,25 @@ jobs:
           Compress-Archive -Path "dist\InvoiceHub\*" -DestinationPath "dist\${zipName}" -Force
           Write-Host "Created: dist\${zipName}"
 
+      - name: Generate installer ownership data
+        run: |
+          python scripts\dev\generate_installer_ownership.py include --current-dir dist\InvoiceHub --legacy-manifest packaging\legacy\v0.1.5-rc1-files.txt --legacy-manifest packaging\legacy\v0.1.5-rc2-files.txt --output packaging\legacy\installer_ownership.issinc --current-manifest-output build\current-installer-files.txt
+          if (-not (Test-Path "packaging\legacy\installer_ownership.issinc")) {
+            Write-Error "Installer ownership include was not generated."
+            exit 1
+          }
+          Get-Item "packaging\legacy\installer_ownership.issinc", "build\current-installer-files.txt" | Select-Object Name, Length
+
       - name: Build Inno Setup installer
         run: |
           $version = "${env:VERSION}"
           $sourceDir = (Resolve-Path "dist\InvoiceHub").Path
           $outputDir = (Resolve-Path "dist").Path
           iscc packaging\invoice_hub_windows.iss /DAppVersion="${version}" /DSourceDir="${sourceDir}" /DOutputDir="${outputDir}"
+
+      - name: Verify installer lifecycle ownership recovery
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\dev\verify_installer_lifecycle.ps1 -InstallRoot $env:TEMP
 
       - name: Sign installer
         run: '& scripts\sign_windows.ps1 "dist\${env:SETUP_NAME}"'

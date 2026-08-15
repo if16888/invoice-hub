@@ -519,13 +519,26 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertTrue(p.exists(), f"workflow not found at {p}")
         return p
 
+    def _lifecycle_probe_path(self) -> Path:
+        p = PROJECT_ROOT / "scripts" / "dev" / "verify_installer_lifecycle.ps1"
+        self.assertTrue(p.exists(), f"installer lifecycle probe not found at {p}")
+        return p
+
     def test_inno_script_exists(self):
         self._installer_path()
 
     def test_inno_installs_per_user_without_admin(self):
         src = self._installer_path().read_text(encoding="utf-8")
         self.assertIn("PrivilegesRequired=lowest", src)
-        self.assertIn(r"DefaultDirName={localappdata}\Programs\InvoiceHub", src)
+        self.assertIn(
+            '#define DefaultInstallDir "{localappdata}\\Programs\\InvoiceHub"',
+            src,
+        )
+        self.assertIn("DefaultDirName={#DefaultInstallDir}", src)
+        self.assertIn(
+            "AppId={{B4A5B8B8-0F83-4E8B-9A8D-3C4321609C5D}",
+            src,
+        )
 
     def test_inno_creates_desktop_and_start_menu_shortcuts(self):
         src = self._installer_path().read_text(encoding="utf-8")
@@ -543,9 +556,63 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         src = self._installer_path().read_text(encoding="utf-8")
         self.assertIn("[UninstallDelete]", src)
         self.assertIn('Type: dirifempty; Name: "{app}\\exports"', src)
+        self.assertIn('Type: dirifempty; Name: "{app}"', src)
         self.assertNotIn("filesandordirs", src.lower())
         self.assertNotIn("{userappdata}", src)
         self.assertNotIn("{commonappdata}", src)
+
+    def test_inno_removes_only_a_broken_registered_uninstaller_key(self):
+        src = self._installer_path().read_text(encoding="utf-8")
+        self.assertIn("function RemoveBrokenUninstallRegistration: String;", src)
+        self.assertIn("IsInnoUninstallerName", src)
+        self.assertIn("AppDirectory := InstallLocation", src)
+        self.assertIn("FileExists(ChangeFileExt(UninstallerPath, '.dat'))", src)
+        self.assertIn("RegDeleteKeyIncludingSubkeys", src)
+        self.assertNotIn("FindAlternateUninstaller", src)
+        self.assertNotIn("RegWriteStringValue", src)
+        self.assertNotIn("DeleteFile(UninstallerPath", src)
+        self.assertNotIn("RenameFile(UninstallerPath", src)
+        self.assertIn("function InitializeSetup: Boolean;", src)
+        self.assertIn("SuppressibleMsgBox(RepairError", src)
+        self.assertIn("native setup", src)
+        self.assertIn("procedure RemoveEmptyDirectoryTree", src)
+        self.assertIn("FILE_ATTRIBUTE_REPARSE_POINT", src)
+        self.assertIn("procedure CurUninstallStepChanged", src)
+        self.assertIn("RemoveDir(Directory)", src)
+
+    def test_inno_preserves_valid_native_upgrade_logs(self):
+        src = self._installer_path().read_text(encoding="utf-8")
+        valid_log_guard = """if FileExists(ChangeFileExt(UninstallerPath, '.dat')) then
+    Exit;"""
+        self.assertIn(valid_log_guard, src)
+        self.assertNotIn("UninstallLogMode=overwrite", src)
+        self.assertNotIn("UninstallFilesDir=", src)
+
+    def test_inno_orphan_cleanup_is_narrow_and_keeps_user_data(self):
+        src = self._installer_path().read_text(encoding="utf-8")
+        self.assertIn(
+            'Type: files; Name: "{app}\\unins???.exe.invoicehub-orphan"',
+            src,
+        )
+        self.assertNotIn('Name: "{app}\\unins*.exe"', src)
+        self.assertNotIn("filesandordirs", src.lower())
+
+    def test_installer_lifecycle_probe_uses_isolated_identity_and_paths(self):
+        src = self._lifecycle_probe_path().read_text(encoding="utf-8")
+        self.assertIn("[guid]::NewGuid()", src)
+        self.assertIn("InvoiceHubInstallerLifecycle-$PID", src)
+        self.assertIn("0.1.5-rc1", src)
+        self.assertIn("0.1.5-rc2", src)
+        self.assertIn("field-repair.log", src)
+        self.assertIn('"payload-$name"', src)
+        self.assertIn("New-HistoricalPayloads", src)
+        self.assertIn("LegacyOwnershipCount = 4;", src)
+        self.assertIn("Get-UserDataSnapshot", src)
+        self.assertIn("Removed the damaged Invoice Hub uninstall registration before native setup.", src)
+        self.assertIn("Invoke-ExpectedUninstallAbort", src)
+        self.assertIn("ItemType Junction", src)
+        self.assertIn("FileShare]::Read", src)
+        self.assertIn("INSTALLER_LIFECYCLE_PROBE: PASS", src)
 
     def test_workflow_builds_setup_zip_and_checksums(self):
         src = self._workflow_path().read_text(encoding="utf-8")

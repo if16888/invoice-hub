@@ -1,0 +1,4 @@
+// Fallback for local Inno builds that did not run the ownership generator.
+// The Windows release workflow replaces this file before compiling Setup.
+  LegacyOwnershipCount = 0;
+  LegacyOwnershipData = '';
