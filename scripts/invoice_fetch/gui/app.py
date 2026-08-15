@@ -29,6 +29,12 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import QFont, QColor, QDesktopServices, QAction, QPainter, QPen
 
 from ..db import InvoiceDB, is_pending_evidence_invoice
+from ..db_backup import (
+    create_verified_database_backup,
+    restore_verified_database_backup,
+    validate_sqlite_database,
+)
+from ..data_operation_gate import DataOperationGate
 from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..export_paths import resolve_export_directory
@@ -501,6 +507,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if self.splash:
             self.splash.show_message("正在打开本地数据库...", 40)
         self.db = InvoiceDB(db_path)
+        self._data_operation_gate = DataOperationGate()
         self.config = load_config_safe()
         self._export_dir = resolve_export_directory(self.config)
         self._legacy_exports = (
@@ -576,6 +583,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Start legacy export migration after the main window is constructed."""
         if not self._legacy_exports.is_dir():
             return
+        if not self._data_operation_gate.try_acquire("旧导出目录迁移"):
+            return
         worker = ExportMigrationWorker(
             self._legacy_exports,
             self._export_dir,
@@ -586,7 +595,58 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         worker.finished.connect(self._export_migration_finished)
         worker.error.connect(self._export_migration_error)
         self.statusBar().showMessage("正在迁移旧导出文件…", 4000)
-        worker.start()
+        try:
+            worker.start()
+        except Exception:
+            self._end_data_operation("旧导出目录迁移")
+            raise
+
+    def _data_operation_busy_reason(self) -> str:
+        gate_reason = self._data_operation_gate.busy_reason()
+        if gate_reason:
+            return gate_reason
+        for attr, label in (
+            ("scan_worker", "邮箱扫描"),
+            ("import_worker", "本地导入"),
+            ("_export_migration_worker", "旧导出目录迁移"),
+            ("_hci_history_worker", "历史记录重检"),
+        ):
+            worker = getattr(self, attr, None)
+            is_running = getattr(worker, "isRunning", None)
+            if callable(is_running) and is_running():
+                return label
+        controller = getattr(self, "mobile_upload_controller", None)
+        if controller is not None and (
+            bool(getattr(controller, "is_starting", False))
+            or getattr(controller, "server", None) is not None
+        ):
+            return "手机上传"
+        return ""
+
+    def _try_begin_data_operation(self, operation: str, *, notify: bool = True) -> bool:
+        busy = self._data_operation_busy_reason()
+        if busy:
+            if notify:
+                QMessageBox.warning(
+                    self,
+                    "暂时无法执行",
+                    f"{busy}正在运行，请完成或取消后再试。",
+                )
+            return False
+        if self._data_operation_gate.try_acquire(operation):
+            return True
+        if notify:
+            current = self._data_operation_gate.busy_reason() or "其他数据操作"
+            QMessageBox.warning(self, "暂时无法执行", f"{current}正在运行，请完成后再试。")
+        return False
+
+    def _end_data_operation(self, operation: str) -> None:
+        if self._data_operation_gate.owner != operation:
+            return
+        try:
+            self._data_operation_gate.release(operation)
+        except RuntimeError:
+            _log.warning("data operation gate release mismatch: %s", operation)
 
     def _export_migration_progress(self, progress: dict):
         processed = int(progress.get("processed", 0) or 0)
@@ -601,6 +661,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _export_migration_finished(self, result):
+        self._end_data_operation("旧导出目录迁移")
         self._export_migration = result
         if result.failures or result.source_remains:
             message = "旧导出目录迁移未完成，源文件已保留。"
@@ -614,6 +675,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QTimer.singleShot(0, self._show_export_migration_result)
 
     def _export_migration_error(self, message: str):
+        self._end_data_operation("旧导出目录迁移")
         self.statusBar().showMessage(f"旧导出目录迁移失败：{message}", 8000)
 
     def _show_export_migration_result(self):
@@ -701,12 +763,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             migration_worker.wait()
             if migration_worker.result is not None:
                 self._export_migration = migration_worker.result
+            self._end_data_operation("旧导出目录迁移")
 
         scan_worker = getattr(self, "scan_worker", None)
         is_scan_running = getattr(scan_worker, "isRunning", None)
         if callable(is_scan_running) and is_scan_running():
             scan_worker.request_cancel()
             scan_worker.wait()
+            self._end_data_operation("邮箱扫描")
         self._save_splitter_prefs()
         self.db.close()
         event.accept()
@@ -2497,9 +2561,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _refresh_settings_page(self) -> None:
         self._desktop_settings_cfg = deepcopy(load_config_safe())
         self.config = deepcopy(self._desktop_settings_cfg)
-        db_file = RUNTIME_DIR / "invoices.db"
+        db_file = Path(self.db_path)
         db_size = db_file.stat().st_size if db_file.exists() else 0
-        backup_dir = RUNTIME_DIR / "backups"
+        backup_dir = db_file.parent / "backups"
         last_scan = "暂无记录"
         if getattr(self, "_last_scan_summary", None):
             last_scan = self._format_scan_result_for_people(self._last_scan_summary).replace("最近扫描：", "")
@@ -2514,13 +2578,144 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_settings_data.setText(
                 f"数据库大小：{db_size / 1024 / 1024:.1f} MB\n"
                 "数据目录：本机应用数据目录\n"
-                "备份目录：本机受保护备份目录\n"
+                f"备份目录：{backup_dir}\n"
                 "导出目录：本机导出目录（可通过下方按钮打开）"
             )
         if hasattr(self, "lbl_settings_about"):
             self.lbl_settings_about.setText(self._about_text())
         self._refresh_settings_mailbox_page()
         self._refresh_settings_ai_page()
+
+    @staticmethod
+    def _validate_database_reopen(path: Path) -> None:
+        candidate = None
+        try:
+            candidate = InvoiceDB(path)
+        finally:
+            if candidate is not None:
+                candidate.close()
+
+    def _create_database_backup_from_settings(self) -> None:
+        if not self._try_begin_data_operation("数据库备份"):
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        backup = None
+        try:
+            backup = create_verified_database_backup(
+                self.db_path,
+                backup_dir=Path(self.db_path).parent / "backups",
+                reason="manual",
+            )
+        except Exception as exc:
+            _log.warning("database backup failed: %s", type(exc).__name__)
+            QMessageBox.critical(
+                self,
+                "备份失败",
+                "未能创建并验证数据库备份，请检查磁盘空间和目录权限后重试。",
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._end_data_operation("数据库备份")
+        if backup is None:
+            return
+        self._refresh_settings_page()
+        self.statusBar().showMessage(f"数据库备份已创建：{backup.name}", 6000)
+        QMessageBox.information(
+            self,
+            "备份完成",
+            f"数据库备份已创建并通过完整性检查。\n\n文件：{backup.name}",
+        )
+
+    def _restore_database_backup_from_settings(self) -> None:
+        busy = self._data_operation_busy_reason()
+        if busy:
+            QMessageBox.warning(self, "暂时无法恢复", f"{busy}正在运行，请完成或取消后再试。")
+            return
+
+        backup_dir = Path(self.db_path).parent / "backups"
+        selected, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择数据库备份",
+            str(backup_dir),
+            "SQLite 数据库 (*.db);;所有文件 (*)",
+        )
+        if not selected:
+            return
+        selected_path = Path(selected)
+        try:
+            validate_sqlite_database(selected_path)
+        except ValueError as exc:
+            QMessageBox.critical(self, "备份不可用", str(exc))
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认恢复数据库",
+            "恢复后，当前发票、审核状态、材料关联和报销组将替换为所选备份中的内容。\n"
+            "系统会先为当前数据库创建安全备份。是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        if not self._try_begin_data_operation("数据库恢复"):
+            return
+
+        self.current_invoice = None
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        safety_backup = None
+        restored_db = False
+        try:
+            self.db.close()
+            safety_backup = restore_verified_database_backup(
+                selected_path,
+                self.db_path,
+                backup_dir=backup_dir,
+                reopen_validator=self._validate_database_reopen,
+            )
+            self.db = InvoiceDB(self.db_path)
+            restored_db = True
+        except Exception as exc:
+            _log.warning("database restore failed: %s", type(exc).__name__)
+            # If the final application reopen itself fails after the helper has
+            # committed, use the retained safety copy as a second transaction.
+            if safety_backup is not None:
+                try:
+                    self.db = None
+                    restore_verified_database_backup(
+                        safety_backup,
+                        self.db_path,
+                        backup_dir=backup_dir,
+                        reopen_validator=self._validate_database_reopen,
+                    )
+                except Exception:
+                    _log.warning("database restore rollback retry failed", exc_info=True)
+            try:
+                self.db = InvoiceDB(self.db_path)
+                restored_db = True
+            except Exception:
+                _log.error("database could not be reopened after restore failure", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "恢复失败",
+                "数据库未能恢复，应用已尝试保留并重新打开原数据。请重启应用后再核对数据。",
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._end_data_operation("数据库恢复")
+        if not restored_db or safety_backup is None:
+            return
+        self._load_invoices()
+        self._load_claims()
+        self._refresh_overview_page()
+        self._refresh_imports_page()
+        self._refresh_settings_page()
+        self.statusBar().showMessage("数据库恢复完成", 6000)
+        QMessageBox.information(
+            self,
+            "恢复完成",
+            "数据库已恢复并重新加载。建议重启应用后再次核对关键数据。\n\n"
+            f"恢复前安全备份：{safety_backup.name}",
+        )
 
     def _settings_tab_index(self, tab_key: str) -> int:
         order = {
@@ -3346,7 +3541,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             hint="启动上传服务后，可从手机提交原件或证明材料。",
         )
         self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        self.mobile_upload_controller = MobileUploadSessionController(self.db_path, self)
+        self.mobile_upload_controller = MobileUploadSessionController(
+            self.db_path,
+            self,
+            operation_gate=self._data_operation_gate,
+        )
         self.mobile_upload_panel = MobileUploadSessionPanel(self.mobile_upload_controller)
         self.mobile_upload_controller.upload_received.connect(self._mobile_upload_finished)
         self.mobile_upload_controller.stopped.connect(self._retry_close_after_mobile_shutdown)
@@ -3567,18 +3766,29 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         privacy_actions.secondary_actions[0].clicked.connect(self._export_diagnostics_package)
         privacy_tab.layout().addWidget(privacy_actions)
 
-        data_tab = build_info_page("数据与备份", "查看数据位置并管理可安全导出的诊断信息。", "lbl_settings_data")
+        data_tab = build_info_page("数据与备份", "创建或恢复数据库备份，并查看本地数据位置。", "lbl_settings_data")
+        self.btn_create_database_backup = make_button("创建数据库备份", variant="primary")
+        self.btn_restore_database_backup = make_button("恢复数据库备份", variant="secondary")
+        self.btn_open_database_backups = make_button("打开备份目录", variant="secondary")
+        self.btn_create_database_backup.clicked.connect(self._create_database_backup_from_settings)
+        self.btn_restore_database_backup.clicked.connect(self._restore_database_backup_from_settings)
+        self.btn_open_database_backups.clicked.connect(
+            lambda: self._open_local_path(Path(self.db_path).parent / "backups")
+        )
+        self.data_more = MoreMenuButton(parent=data_tab)
+        self.data_more.setToolTip("更多数据操作")
+        self.data_more_menu = QMenu(self.data_more)
+        self.data_more_menu.addAction("打开数据目录", lambda: self._open_local_path(Path(self.db_path).parent))
+        self.data_more_menu.addAction("打开导出目录", self._open_exports_directory)
+        self.data_more_menu.addSeparator()
+        self.data_more_menu.addAction("导出脱敏诊断包", self._export_diagnostics_package)
+        self.data_more.setMenu(self.data_more_menu)
         data_actions = CommandBar()
         data_actions.set_actions(
-            secondary_actions=[
-                make_button("打开数据目录", variant="secondary"),
-                make_button("打开导出目录", variant="secondary"),
-                make_button("导出脱敏诊断包", variant="secondary"),
-            ]
+            primary_action=self.btn_create_database_backup,
+            secondary_actions=[self.btn_restore_database_backup, self.btn_open_database_backups],
+            more_menu=self.data_more,
         )
-        data_actions.secondary_actions[0].clicked.connect(lambda: self._open_local_path(RUNTIME_DIR))
-        data_actions.secondary_actions[1].clicked.connect(self._open_exports_directory)
-        data_actions.secondary_actions[2].clicked.connect(self._export_diagnostics_package)
         data_tab.layout().addWidget(data_actions)
 
         about_tab = build_info_page("关于", "本地优先的个人报销工作台。", "lbl_settings_about")
@@ -7002,6 +7212,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         active_btn = trigger_btn or getattr(self, "btn_scan_email", None)
+        if not self._try_begin_data_operation("邮箱扫描"):
+            return
         self.write_log("📥 [邮箱扫描] 增量拉取任务已启动...")
         self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
         self._scan_started_at = time.monotonic()
@@ -7026,7 +7238,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.scan_worker.stage.connect(self._scan_stage_updated)
         self.scan_worker.finished.connect(self._scan_email_finished)
         self.scan_worker.error.connect(self._scan_email_error)
-        self.scan_worker.start()
+        try:
+            self.scan_worker.start()
+        except Exception:
+            self._end_data_operation("邮箱扫描")
+            raise
 
     def _scan_stage_updated(self, event: dict):
         if not isinstance(event, dict):
@@ -7079,6 +7295,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         worker.request_cancel()
 
     def _finish_scan_ui(self, cancelled: bool = False):
+        self._end_data_operation("邮箱扫描")
         worker = getattr(self, "scan_worker", None)
         btn = getattr(worker, "_trigger_btn", None) if worker else None
         if btn:
@@ -7274,6 +7491,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         path = Path(folder)
+        if not self._try_begin_data_operation("本地导入"):
+            return
         self.write_log(f"📁 [本地导入] 已选择本地文件夹: {path.absolute()}")
         self.statusBar().showMessage(f"正在读取与导入本地发票: {path.name}...")
         self._set_action_busy(self.btn_import_local, "导入中...")
@@ -7282,7 +7501,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_worker = LocalImportWorker(path, self.db_path)
         self.import_worker.finished.connect(self._import_local_finished)
         self.import_worker.error.connect(self._import_local_error)
-        self.import_worker.start()
+        try:
+            self.import_worker.start()
+        except Exception:
+            self._end_data_operation("本地导入")
+            raise
 
     def _mobile_upload_clicked(self):
         self._switch_main_page("imports")
@@ -7317,6 +7540,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _import_local_finished(self, stats: dict):
+        self._end_data_operation("本地导入")
         self._clear_action_busy(self.btn_import_local, "导入")
         added = stats.get("added", 0)
         duplicates = stats.get("duplicates", 0)
@@ -7346,6 +7570,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_settings_page()
 
     def _import_local_error(self, err_msg: str):
+        self._end_data_operation("本地导入")
         self._clear_action_busy(self.btn_import_local, "导入")
         self.write_log(f"❌ [本地导入] 失败: {err_msg}")
         self.statusBar().showMessage("本地发票导入失败！", 4000)
@@ -7498,7 +7723,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "如果没有看到预期发票，请清空筛选，或用发票号、购买方、金额搜索。"
         )
 
-    def _scan_email_error(self, err_msg: str):
+    def _scan_email_error_legacy(self, err_msg: str):
         self._clear_action_busy(self.btn_scan_email, "同步")
         self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
         self.statusBar().showMessage("邮箱扫描处理失败！", 4000)

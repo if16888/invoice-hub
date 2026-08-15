@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import openpyxl
 
 from scripts.invoice_fetch.db import InvoiceDB, is_pending_evidence_invoice
-from scripts.invoice_fetch.migrations import check_and_migrate
+from scripts.invoice_fetch.migrations import LATEST_SCHEMA_VERSION, check_and_migrate
 from scripts.invoice_fetch.claim_export import _sanitize_dirname, export_claim_package
 from scripts.invoice_fetch.__main__ import _parse_args
 from scripts.invoice_fetch import review_status
@@ -77,7 +77,7 @@ class ClaimGroupsTests(unittest.TestCase):
             # Check user_version
             cursor.execute("PRAGMA user_version")
             version = cursor.fetchone()[0]
-            self.assertIn(version, (2, 3, 4, 5, 6, 7))
+            self.assertIn(version, (2, 3, 4, 5, 6, LATEST_SCHEMA_VERSION))
 
             # Check claim_groups columns
             cursor.execute("PRAGMA table_info(claim_groups)")

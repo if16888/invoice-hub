@@ -50,10 +50,13 @@ class MobileUploadSessionController(QObject):
     failed = Signal(str)
     stopped = Signal()
 
-    def __init__(self, db_path: Path, parent=None, runtime_dir: Path = RUNTIME_DIR):
+    def __init__(self, db_path: Path, parent=None, runtime_dir: Path = RUNTIME_DIR, operation_gate=None):
         super().__init__(parent)
         self.db_path = Path(db_path)
         self.runtime_dir = Path(runtime_dir)
+        self.operation_gate = operation_gate
+        self._gate_acquired = False
+        self._operation_name = "手机上传"
         self.server = None
         self.session = None
         self.host_options = []
@@ -78,6 +81,12 @@ class MobileUploadSessionController(QObject):
     def start(self, host: str | None = None):
         if self.server is not None or self._starting:
             return self.session
+        if self.operation_gate is not None:
+            if not self.operation_gate.try_acquire(self._operation_name):
+                busy = self.operation_gate.busy_reason() or "其他数据操作"
+                self.failed.emit(f"{busy}正在运行，请完成后再试。")
+                return None
+            self._gate_acquired = True
         self._starting = True
         self._stop_requested = False
         self.starting.emit()
@@ -90,7 +99,12 @@ class MobileUploadSessionController(QObject):
         thread.finished.connect(thread.deleteLater)
         self._start_thread = thread
         self._start_worker = worker
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self._starting = False
+            self._release_operation_gate()
+            raise
         return None
 
     @Slot()
@@ -110,6 +124,7 @@ class MobileUploadSessionController(QObject):
         if self._stop_requested:
             server.stop()
             self._stop_requested = False
+            self._release_operation_gate()
             self.stopped.emit()
             return
         self.server = server
@@ -124,6 +139,7 @@ class MobileUploadSessionController(QObject):
         self._starting = False
         self.server = None
         self.session = None
+        self._release_operation_gate()
         self.failed.emit(message)
         # If shutdown() timed out and set _stop_requested while the thread was
         # still running, the closeEvent is stuck with _close_pending=True waiting
@@ -136,6 +152,17 @@ class MobileUploadSessionController(QObject):
     def _clear_start_worker(self):
         self._start_thread = None
         self._start_worker = None
+
+    def _release_operation_gate(self):
+        if not self._gate_acquired or self.operation_gate is None:
+            return
+        self._gate_acquired = False
+        try:
+            self.operation_gate.release(self._operation_name)
+        except RuntimeError:
+            # Window shutdown may have already released the gate after waiting
+            # for the start worker; cleanup must remain idempotent.
+            pass
 
     def set_public_host(self, host: str):
         if self.server is None:
@@ -166,6 +193,7 @@ class MobileUploadSessionController(QObject):
         self.server = None
         self.session = None
         self.timer.stop()
+        self._release_operation_gate()
         self.stopped.emit()
 
     def shutdown(self, timeout_ms: int = 5000):
