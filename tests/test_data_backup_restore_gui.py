@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from scripts.invoice_fetch.data_operation_gate import DataOperationGate
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
 
 
 class DataBackupRestoreGuiTests(unittest.TestCase):
@@ -101,6 +103,53 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
             self.assertEqual(gate.busy_reason(), "数据库备份")
             self.assertFalse(gate.try_acquire("数据库恢复"))
         self.assertEqual(gate.busy_reason(), "")
+
+    def test_scan_gate_releases_after_cancel_and_error(self):
+        class FinishedWorker:
+            _trigger_btn = None
+
+            @staticmethod
+            def isRunning():
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(Path(td))
+            try:
+                window.scan_worker = FinishedWorker()
+                self.assertTrue(window._data_operation_gate.try_acquire("邮箱扫描"))
+                window._finish_scan_ui(cancelled=True)
+                self.assertEqual(window._data_operation_gate.busy_reason(), "")
+
+                window.scan_worker = FinishedWorker()
+                self.assertTrue(window._data_operation_gate.try_acquire("邮箱扫描"))
+                with patch.object(QMessageBox, "critical", return_value=QMessageBox.Ok):
+                    window._scan_email_error("synthetic failure")
+                self.assertEqual(window._data_operation_gate.busy_reason(), "")
+            finally:
+                window.close()
+
+    def test_mobile_upload_gate_releases_on_start_failure_and_stop(self):
+        gate = DataOperationGate()
+        controller = MobileUploadSessionController(
+            Path("unused.db"),
+            operation_gate=gate,
+        )
+        try:
+            with patch("scripts.invoice_fetch.gui.mobile_upload_session.QThread.start"):
+                controller.start()
+            self.assertEqual(gate.busy_reason(), "手机上传")
+            controller._start_failed("synthetic start failure")
+            self.assertEqual(gate.busy_reason(), "")
+
+            with patch("scripts.invoice_fetch.gui.mobile_upload_session.QThread.start"):
+                controller.start()
+            server = SimpleNamespace(stop=lambda: None)
+            controller._start_succeeded(server, SimpleNamespace(host="127.0.0.1"), [])
+            self.assertEqual(gate.busy_reason(), "手机上传")
+            controller.stop()
+            self.assertEqual(gate.busy_reason(), "")
+        finally:
+            controller.shutdown(timeout_ms=1)
 
 
 if __name__ == "__main__":

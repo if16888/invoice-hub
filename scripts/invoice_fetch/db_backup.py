@@ -18,7 +18,10 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import RUNTIME_DIR
-from .migrations import LATEST_SCHEMA_VERSION
+from .migrations import (
+    validate_latest_schema,
+    validate_legacy_schema,
+)
 
 DEFAULT_BACKUP_DIR = RUNTIME_DIR / "backups"
 _log = logging.getLogger(__name__)
@@ -101,44 +104,40 @@ def _private_path(path: Path, purpose: str) -> Path:
     return path.with_name(f".{path.name}.{purpose}-{uuid.uuid4().hex}.tmp")
 
 
-def _read_sqlite_metadata(path: Path) -> tuple[int, set[str]]:
+def _validate_database_file(
+    path: Path,
+    validator: Callable[[sqlite3.Connection], None],
+) -> None:
+    """Validate SQLite health and an Invoice Hub schema contract read-only."""
     if not _path_exists(path) or not path.is_file():
         raise ValueError("所选文件不是可用的数据库备份")
     try:
         uri = path.resolve().as_uri() + "?mode=ro"
         with closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn:
             checks = conn.execute("PRAGMA quick_check").fetchall()
-            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            tables = {
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                ).fetchall()
-            }
-    except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
+            if not checks or any(str(row[0]).lower() != "ok" for row in checks):
+                raise ValueError("所选数据库未通过完整性检查")
+            validator(conn)
+    except ValueError:
+        raise
+    except (OSError, sqlite3.Error, TypeError) as exc:
         raise ValueError("所选文件不是可用的 SQLite 数据库") from exc
-    if not checks or any(str(row[0]).lower() != "ok" for row in checks):
-        raise ValueError("所选数据库未通过完整性检查")
-    if version < 0 or version > LATEST_SCHEMA_VERSION:
-        raise ValueError("所选数据库版本高于当前应用，无法安全恢复")
-    return version, tables
 
 
 def validate_sqlite_database(
     db_path: str | Path,
-    *,
-    required_tables: tuple[str, ...] = (),
 ) -> None:
-    """Raise ``ValueError`` unless a SQLite file is healthy and supported."""
-    _version, tables = _read_sqlite_metadata(Path(db_path))
-    if any(table not in tables for table in required_tables):
-        raise ValueError("所选文件不是 Invoice Hub 数据库备份")
+    """Validate a supported legacy/current Invoice Hub backup identity."""
+    _validate_database_file(Path(db_path), validate_legacy_schema)
+
+
+def validate_current_database(db_path: str | Path) -> None:
+    """Validate the exact current Invoice Hub schema read-only."""
+    _validate_database_file(Path(db_path), validate_latest_schema)
 
 
 def _migrate_and_validate_database(
     db_path: Path,
-    *,
-    required_tables: tuple[str, ...],
 ) -> None:
     """Run the real application migrations on a private copy, then verify it."""
     db = None
@@ -147,17 +146,17 @@ def _migrate_and_validate_database(
         from .db import InvoiceDB
 
         db = InvoiceDB(db_path)
-        version = int(db._conn.execute("PRAGMA user_version").fetchone()[0])
-        if version != LATEST_SCHEMA_VERSION:
-            raise DatabaseBackupError("数据库迁移未达到当前支持的架构版本")
+        validate_latest_schema(db._conn)
     except DatabaseBackupError:
         raise
+    except ValueError as exc:
+        raise DatabaseBackupError(str(exc)) from exc
     except Exception as exc:
         raise DatabaseBackupError("数据库迁移或重新打开校验失败") from exc
     finally:
         if db is not None:
             db.close()
-    validate_sqlite_database(db_path, required_tables=required_tables)
+    validate_current_database(db_path)
 
 
 def _remove_private_sidecars(path: Path) -> None:
@@ -175,11 +174,10 @@ def create_verified_database_backup(
     backup_dir: str | Path | None = None,
     reason: str = "manual",
     now: datetime | None = None,
-    required_tables: tuple[str, ...] = ("invoices",),
 ) -> Path:
     """Create a consistent, migrated, and integrity-checked SQLite backup."""
     source = Path(db_path)
-    validate_sqlite_database(source, required_tables=required_tables)
+    validate_sqlite_database(source)
     dest_dir = Path(backup_dir) if backup_dir is not None else DEFAULT_BACKUP_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
@@ -193,7 +191,7 @@ def create_verified_database_backup(
             closing(sqlite3.connect(str(dest), timeout=5)) as dest_conn,
         ):
             source_conn.backup(dest_conn)
-        _migrate_and_validate_database(dest, required_tables=required_tables)
+        _migrate_and_validate_database(dest)
     except Exception as exc:
         try:
             dest.unlink(missing_ok=True)
@@ -274,7 +272,6 @@ def restore_verified_database_backup(
     backup_dir: str | Path | None = None,
     now: datetime | None = None,
     reopen_validator: Callable[[Path], None] | None = None,
-    required_tables: tuple[str, ...] = ("invoices",),
 ) -> Path:
     """Restore a backup with a sidecar-safe atomic transaction.
 
@@ -286,14 +283,13 @@ def restore_verified_database_backup(
     """
     selected = Path(backup_path)
     destination = Path(db_path)
-    validate_sqlite_database(selected, required_tables=required_tables)
-    validate_sqlite_database(destination, required_tables=required_tables)
+    validate_sqlite_database(selected)
+    validate_sqlite_database(destination)
     safety_backup = create_verified_database_backup(
         destination,
         backup_dir=backup_dir,
         reason="restore-safety",
         now=now,
-        required_tables=required_tables,
     )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -304,7 +300,7 @@ def restore_verified_database_backup(
     try:
         try:
             shutil.copy2(selected, staging)
-            _migrate_and_validate_database(staging, required_tables=required_tables)
+            _migrate_and_validate_database(staging)
             _remove_private_sidecars(staging)
         except (ValueError, DatabaseBackupError):
             raise
@@ -322,10 +318,10 @@ def restore_verified_database_backup(
 
         try:
             if reopen_validator is None:
-                _migrate_and_validate_database(destination, required_tables=required_tables)
+                _migrate_and_validate_database(destination)
             else:
                 reopen_validator(destination)
-            validate_sqlite_database(destination, required_tables=required_tables)
+            validate_current_database(destination)
         except Exception as exc:
             try:
                 _rollback_restore(destination, rollback_db, moved_sidecars)

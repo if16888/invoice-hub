@@ -11,6 +11,7 @@ from scripts.invoice_fetch.invoice_parser import (
     InvoiceInfo
 )
 from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch.migrations import LATEST_SCHEMA_VERSION
 from scripts.invoice_fetch.reimbursement import get_date_warning
 from scripts.invoice_fetch.claim_export import export_claim_package
 
@@ -121,7 +122,7 @@ class ExpenseDateTests(unittest.TestCase):
                 cursor = db._conn.cursor()
                 cursor.execute("PRAGMA user_version")
                 ver = cursor.fetchone()[0]
-                self.assertEqual(ver, 7)
+                self.assertEqual(ver, LATEST_SCHEMA_VERSION)
 
                 # Verify new columns exist
                 cursor.execute("PRAGMA table_info(invoices)")

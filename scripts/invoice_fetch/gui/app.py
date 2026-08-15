@@ -2643,7 +2643,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         selected_path = Path(selected)
         try:
-            validate_sqlite_database(selected_path, required_tables=("invoices",))
+            validate_sqlite_database(selected_path)
         except ValueError as exc:
             QMessageBox.critical(self, "备份不可用", str(exc))
             return
@@ -7723,7 +7723,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "如果没有看到预期发票，请清空筛选，或用发票号、购买方、金额搜索。"
         )
 
-    def _scan_email_error(self, err_msg: str):
+    def _scan_email_error_legacy(self, err_msg: str):
         self._clear_action_busy(self.btn_scan_email, "同步")
         self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
         self.statusBar().showMessage("邮箱扫描处理失败！", 4000)

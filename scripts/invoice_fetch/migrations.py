@@ -4,10 +4,200 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Mapping
 
 _log = logging.getLogger(__name__)
 
 LATEST_SCHEMA_VERSION = 7
+
+
+# The legacy contract describes the stable Invoice Hub identity that existed
+# before the current migration chain.  It deliberately does not require the
+# latest tables or columns because old backups must be allowed to enter the
+# private staging migration path.
+LEGACY_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
+    "invoices": frozenset(
+        {
+            "id",
+            "invoice_number",
+            "invoice_date",
+            "amount",
+            "total_amount",
+            "seller_name",
+            "buyer_name",
+            "attachment_path",
+        }
+    ),
+    "emails": frozenset(
+        {"uid", "subject", "sender", "mail_date", "is_invoice", "downloaded"}
+    ),
+    "processed_emails": frozenset(
+        {"uid", "subject", "sender", "mail_date", "processed_at"}
+    ),
+    "trusted_senders": frozenset({"sender"}),
+}
+
+
+# This is the application schema after all migrations have completed.  The
+# contract intentionally checks required columns, but permits additional
+# columns so that additive, backward-compatible fields do not invalidate an
+# otherwise usable database.
+LATEST_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
+    "invoices": frozenset(
+        {
+            "id",
+            "mailbox_key",
+            "invoice_number",
+            "invoice_code",
+            "invoice_date",
+            "expense_date",
+            "date_source",
+            "amount",
+            "total_amount",
+            "seller_name",
+            "buyer_name",
+            "invoice_type",
+            "category",
+            "has_extra",
+            "extra_type",
+            "missing_extra",
+            "mail_uid",
+            "mail_subject",
+            "mail_date",
+            "mail_sender",
+            "parse_success",
+            "parse_note",
+            "attachment_path",
+            "extra_paths",
+            "download_url",
+            "item_name",
+            "is_deleted",
+            "created_at",
+            "review_status",
+            "processing_status",
+            "currency",
+            "exchange_rate",
+            "amount_home",
+            "file_hash",
+            "confirmed_at",
+            "confirmed_note",
+        }
+    ),
+    "emails": frozenset(
+        {
+            "id",
+            "mailbox_key",
+            "uid",
+            "subject",
+            "sender",
+            "mail_date",
+            "is_invoice",
+            "classify_by",
+            "classify_reason",
+            "downloaded",
+            "scanned_at",
+            "processed_at",
+        }
+    ),
+    "processed_emails": frozenset(
+        {
+            "id",
+            "mailbox_key",
+            "uid",
+            "subject",
+            "sender",
+            "mail_date",
+            "processed_at",
+        }
+    ),
+    "trusted_senders": frozenset({"sender", "added_at"}),
+    "claim_groups": frozenset(
+        {"id", "name", "period_start", "period_end", "status", "created_at"}
+    ),
+    "claim_group_items": frozenset(
+        {"id", "claim_id", "invoice_id", "sort_order", "note"}
+    ),
+    "export_runs": frozenset(
+        {"id", "claim_id", "export_dir", "export_type", "item_count", "created_at"}
+    ),
+    "email_download_failures": frozenset(
+        {
+            "mailbox_key",
+            "uid",
+            "reason_code",
+            "fail_count",
+            "next_retry_at",
+            "last_error_at",
+            "last_error_summary",
+        }
+    ),
+}
+
+
+def _schema_snapshot(conn: sqlite3.Connection) -> tuple[int, dict[str, set[str]]]:
+    """Return the user version and columns for every user table."""
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    tables: dict[str, set[str]] = {}
+    for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'"
+    ).fetchall():
+        table = str(row[0])
+        quoted_table = table.replace('"', '""')
+        columns = {
+            str(column[1])
+            for column in conn.execute(
+                f'PRAGMA table_info("{quoted_table}")'
+            ).fetchall()
+        }
+        tables[table] = columns
+    return version, tables
+
+
+def _validate_schema_snapshot(
+    version: int,
+    tables: Mapping[str, set[str]],
+    contract: Mapping[str, frozenset[str]],
+    *,
+    expected_version: int | None = None,
+) -> None:
+    if version < 0 or version > LATEST_SCHEMA_VERSION:
+        raise ValueError("所选数据库版本高于当前应用，无法安全恢复")
+    if expected_version is not None and version != expected_version:
+        raise ValueError("数据库未达到当前应用的架构版本")
+
+    missing_tables = sorted(set(contract) - set(tables))
+    missing_columns = {
+        table: sorted(set(columns) - tables.get(table, set()))
+        for table, columns in contract.items()
+        if table in tables and set(columns) - tables.get(table, set())
+    }
+    if missing_tables or missing_columns:
+        details: list[str] = []
+        if missing_tables:
+            details.append("缺少表 " + ", ".join(missing_tables))
+        if missing_columns:
+            details.extend(
+                f"{table} 缺少字段 {', '.join(columns)}"
+                for table, columns in sorted(missing_columns.items())
+            )
+        raise ValueError("Invoice Hub 数据库架构不完整：" + "；".join(details))
+
+
+def validate_legacy_schema(conn: sqlite3.Connection) -> None:
+    """Validate a supported pre-current-version Invoice Hub database."""
+    version, tables = _schema_snapshot(conn)
+    _validate_schema_snapshot(version, tables, LEGACY_SCHEMA_CONTRACT)
+
+
+def validate_latest_schema(conn: sqlite3.Connection) -> None:
+    """Validate the exact current version and required application schema."""
+    version, tables = _schema_snapshot(conn)
+    _validate_schema_snapshot(
+        version,
+        tables,
+        LATEST_SCHEMA_CONTRACT,
+        expected_version=LATEST_SCHEMA_VERSION,
+    )
 
 
 def check_and_migrate(conn: sqlite3.Connection):
