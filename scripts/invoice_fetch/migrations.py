@@ -7,6 +7,8 @@ import sqlite3
 
 _log = logging.getLogger(__name__)
 
+LATEST_SCHEMA_VERSION = 7
+
 
 def check_and_migrate(conn: sqlite3.Connection):
     """Run database migrations in a safe, idempotent way using PRAGMA user_version."""

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from .config import RUNTIME_DIR
-from .db_backup import DEFAULT_BACKUP_DIR, create_database_backup, prune_database_backups
+from .db_backup import DEFAULT_BACKUP_DIR, create_verified_database_backup, prune_database_backups
 
 DEFAULT_DB_PATH = RUNTIME_DIR / "invoices.db"
 
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--keep-backups must be >= 1 unless --no-prune is set")
 
     try:
-        backup_path = create_database_backup(
+        backup_path = create_verified_database_backup(
             Path(args.db),
             backup_dir=Path(args.backup_dir),
             reason=args.reason,

@@ -1,13 +1,37 @@
 import tempfile
 import time
 import unittest
+import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.invoice_fetch.db_backup import create_database_backup, prune_database_backups
+from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch.db_backup import (
+    DatabaseRestoreError,
+    create_database_backup,
+    create_verified_database_backup,
+    prune_database_backups,
+    restore_verified_database_backup,
+    validate_sqlite_database,
+)
 
 
 class DatabaseBackupTests(unittest.TestCase):
+    @staticmethod
+    def make_database(path: Path, value: str = "current") -> None:
+        db = InvoiceDB(path)
+        db._conn.execute("CREATE TABLE acceptance_marker (value TEXT NOT NULL)")
+        db._conn.execute("INSERT INTO acceptance_marker(value) VALUES (?)", (value,))
+        db._conn.commit()
+        db.close()
+
+    @staticmethod
+    def read_value(path: Path) -> str:
+        with closing(sqlite3.connect(path)) as conn:
+            return conn.execute("SELECT value FROM acceptance_marker").fetchone()[0]
+
     def test_create_database_backup_copies_file_with_sanitized_reason(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -61,6 +85,97 @@ class DatabaseBackupTests(unittest.TestCase):
 
             with self.assertRaises(FileNotFoundError):
                 create_database_backup(missing, backup_dir=Path(td) / "backups")
+
+    def test_verified_backup_uses_sqlite_online_backup_and_migrates_private_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            self.make_database(db_path, "before")
+
+            backup = create_verified_database_backup(db_path, backup_dir=root / "backups")
+
+            validate_sqlite_database(backup, required_tables=("invoices",))
+            self.assertEqual(self.read_value(backup), "before")
+            with closing(sqlite3.connect(backup)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 7)
+
+    def test_restore_replaces_database_and_keeps_selected_and_safety_backups(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(db_path, "current")
+            self.make_database(selected, "restored")
+
+            safety = restore_verified_database_backup(selected, db_path, backup_dir=root / "backups")
+
+            self.assertEqual(self.read_value(db_path), "restored")
+            self.assertEqual(self.read_value(safety), "current")
+            self.assertEqual(self.read_value(selected), "restored")
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_sidecar_protection_failure_is_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(db_path, "current")
+            self.make_database(selected, "restored")
+            with patch(
+                "scripts.invoice_fetch.db_backup._move_existing_sidecars",
+                side_effect=DatabaseRestoreError("synthetic sidecar failure"),
+            ):
+                with self.assertRaises(DatabaseRestoreError):
+                    restore_verified_database_backup(selected, db_path, backup_dir=root / "backups")
+
+            self.assertEqual(self.read_value(db_path), "current")
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_reopen_failure_rolls_back_database_and_sidecars(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(db_path, "current")
+            self.make_database(selected, "restored")
+            wal = db_path.with_name(db_path.name + "-wal")
+            moved_wal = root / ".invoices.db.restore-sidecar-wal.tmp"
+            moved_wal.write_text("wal-sentinel", encoding="utf-8")
+
+            def fail_reopen(_path):
+                raise RuntimeError("synthetic reopen failure")
+
+            with patch(
+                "scripts.invoice_fetch.db_backup._move_existing_sidecars",
+                return_value={wal: moved_wal},
+            ):
+                with self.assertRaises(DatabaseRestoreError) as caught:
+                    restore_verified_database_backup(
+                        selected,
+                        db_path,
+                        backup_dir=root / "backups",
+                        reopen_validator=fail_reopen,
+                    )
+
+            self.assertEqual(wal.read_text(encoding="utf-8"), "wal-sentinel")
+            self.assertEqual(self.read_value(db_path), "current")
+            self.assertNotIn(str(root), str(caught.exception))
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_copy_failure_keeps_live_database_and_cleans_staging(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(db_path, "current")
+            self.make_database(selected, "restored")
+
+            with patch("scripts.invoice_fetch.db_backup.shutil.copy2", side_effect=OSError("copy failed")):
+                with self.assertRaises(DatabaseRestoreError):
+                    restore_verified_database_backup(selected, db_path, backup_dir=root / "backups")
+
+            self.assertEqual(self.read_value(db_path), "current")
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
 
     def test_prune_database_backups_keeps_newest_files(self):
         with tempfile.TemporaryDirectory() as td:
