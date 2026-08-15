@@ -6,11 +6,17 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard, HistoryRecheckWorker
+from scripts.invoice_fetch.gui.hci_v1 import (
+    HciTaskCard,
+    HistoryRecheckWorker,
+    _history_recheck_failed,
+    _history_recheck_finished,
+    _start_history_recheck,
+)
 from scripts.invoice_fetch.gui.review_baseline_pipeline import (
     REVIEW_BASELINE_STAGES,
     REVIEW_HCI_STAGES,
@@ -200,6 +206,80 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertTrue(hasattr(window, "_hci_history_close_filter"))
                 self.assertTrue(getattr(HistoryRecheckWorker, "_hci_safe_delete_installed", False))
                 self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_history_recheck_owns_and_releases_data_operation_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                with (
+                    patch(
+                        "scripts.invoice_fetch.gui.hci_v1.QMessageBox.question",
+                        return_value=QMessageBox.Yes,
+                    ),
+                    patch.object(HistoryRecheckWorker, "start", return_value=None),
+                ):
+                    _start_history_recheck(window, since="2026-08-01")
+
+                self.assertEqual(
+                    window._data_operation_gate.busy_reason(),
+                    "历史记录重检",
+                )
+                self.assertFalse(
+                    window._try_begin_data_operation("数据库备份", notify=False)
+                )
+
+                _history_recheck_finished(
+                    window,
+                    {"processed_emails": 1, "added_or_restored": 1},
+                )
+                self.assertEqual(window._data_operation_gate.busy_reason(), "")
+
+                with (
+                    patch(
+                        "scripts.invoice_fetch.gui.hci_v1.QMessageBox.question",
+                        return_value=QMessageBox.Yes,
+                    ),
+                    patch.object(HistoryRecheckWorker, "start", return_value=None),
+                ):
+                    _start_history_recheck(window, since="2026-08-01")
+
+                self.assertEqual(
+                    window._data_operation_gate.busy_reason(),
+                    "历史记录重检",
+                )
+                with patch.object(QMessageBox, "critical", return_value=QMessageBox.Ok):
+                    _history_recheck_failed(window, "synthetic history failure")
+                self.assertEqual(window._data_operation_gate.busy_reason(), "")
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_history_recheck_start_failure_releases_data_operation_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                with (
+                    patch(
+                        "scripts.invoice_fetch.gui.hci_v1.QMessageBox.question",
+                        return_value=QMessageBox.Yes,
+                    ),
+                    patch.object(
+                        HistoryRecheckWorker,
+                        "start",
+                        side_effect=RuntimeError("synthetic start failure"),
+                    ),
+                    self.assertRaises(RuntimeError),
+                ):
+                    _start_history_recheck(window, since="2026-08-01")
+
+                self.assertEqual(window._data_operation_gate.busy_reason(), "")
             finally:
                 window.db.close()
                 window.close()

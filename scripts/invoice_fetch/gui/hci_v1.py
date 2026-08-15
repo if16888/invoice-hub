@@ -692,6 +692,7 @@ def _history_recheck_finished(window, result: dict) -> None:
     if worker is not None:
         worker.deleteLater()
     window._hci_history_worker = None
+    _release_history_operation(window, worker)
 
     button = getattr(window, "btn_hci_import_recheck", None)
     if button is not None:
@@ -733,6 +734,7 @@ def _history_recheck_failed(window, message: str) -> None:
     if worker is not None:
         worker.deleteLater()
     window._hci_history_worker = None
+    _release_history_operation(window, worker)
     button = getattr(window, "btn_hci_import_recheck", None)
     if button is not None:
         button.setEnabled(True)
@@ -768,16 +770,25 @@ def _start_history_recheck(
         QMessageBox.critical(window, "无法重新检查", "当前数据库路径不可用。")
         return
 
-    worker = HistoryRecheckWorker(
-        Path(db_path),
-        since=since,
-        until=until,
-        selected_keys=selected_keys or None,
-        only_downloaded=only_downloaded,
-        limit=200,
-        parent=window,
-    )
+    begin_operation = getattr(window, "_try_begin_data_operation", None)
+    if callable(begin_operation) and not begin_operation("历史记录重检"):
+        return
+
+    try:
+        worker = HistoryRecheckWorker(
+            Path(db_path),
+            since=since,
+            until=until,
+            selected_keys=selected_keys or None,
+            only_downloaded=only_downloaded,
+            limit=200,
+            parent=window,
+        )
+    except Exception:
+        _release_history_operation(window)
+        raise
     window._hci_history_worker = worker
+    window._hci_history_operation_token = worker
     button = getattr(window, "btn_hci_import_recheck", None)
     if button is not None:
         button.setEnabled(False)
@@ -792,7 +803,29 @@ def _start_history_recheck(
 
     worker.finished_result.connect(lambda result, w=window: _history_recheck_finished(w, result))
     worker.failed.connect(lambda message, w=window: _history_recheck_failed(w, message))
-    worker.start()
+    # The result/error signals release the gate after UI cleanup.  The native
+    # QThread finished signal is a final safety net for an unexpected worker
+    # exit that emits neither application signal.
+    worker.finished.connect(
+        lambda w=window, worker=worker: _release_history_operation(w, worker)
+    )
+    try:
+        worker.start()
+    except Exception:
+        window._hci_history_worker = None
+        _release_history_operation(window, worker)
+        worker.deleteLater()
+        raise
+
+
+def _release_history_operation(window, worker=None) -> None:
+    token = getattr(window, "_hci_history_operation_token", None)
+    if worker is not None and token is not worker:
+        return
+    window._hci_history_operation_token = None
+    end_operation = getattr(window, "_end_data_operation", None)
+    if callable(end_operation):
+        end_operation("历史记录重检")
 
 
 def _start_recent_30_day_recheck(window) -> None:
