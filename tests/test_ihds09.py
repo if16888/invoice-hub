@@ -39,7 +39,9 @@ class IHDS09Tests(unittest.TestCase):
         for widget in list(self.app.topLevelWidgets()):
             if widget is None or widget is self.app:
                 continue
-            widget.close()
+            close = getattr(widget, "close", None)
+            if callable(close):
+                close()
             widget.deleteLater()
         self.app.processEvents()
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
