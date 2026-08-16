@@ -38,7 +38,7 @@ def _section_ancestor(widget: QWidget | None) -> SectionCard | None:
 
 
 def _sync_dashboard_closure(window) -> None:
-    if not isValid(window):
+    if window is None or not _qt_dispatch_allowed(window=window):
         return
     sync_hint = getattr(window, "lbl_overview_recent_imports", None)
     left_card = _section_ancestor(sync_hint)
@@ -65,8 +65,11 @@ def _install_dashboard_refresh_closure(window) -> None:
 
     @wraps(original)
     def wrapped(self, *args, **kwargs):
+        if not _qt_dispatch_allowed(window=self):
+            return None
         result = original(*args, **kwargs)
-        QTimer.singleShot(0, lambda: _sync_dashboard_closure(self))
+        window_ref = weakref.ref(self)
+        QTimer.singleShot(0, lambda: _sync_dashboard_closure(window_ref()))
         return result
 
     window._refresh_overview_page = MethodType(wrapped, window)
@@ -106,16 +109,23 @@ def _qt_dispatch_allowed(*, window=None, page=None) -> bool:
 
 
 def _activate_detail_action(page: QWidget, detail, attr: str) -> None:
+    if page is None or not isValid(page):
+        return
+    window = page.window()
+    if not _qt_dispatch_allowed(window=window, page=page):
+        return
     if not page.property("hciContinuousReview") or _focus_accepts_text():
         return
     button = getattr(detail, attr, None)
-    if button is not None and button.isEnabled():
+    if button is not None and isValid(button) and button.isEnabled():
         button.click()
 
 
 def _move_to_next_review_row(window) -> None:
+    if window is None or not _qt_dispatch_allowed(window=window):
+        return
     table = getattr(window, "table", None)
-    if table is None or table.rowCount() <= 0:
+    if table is None or not isValid(table) or table.rowCount() <= 0:
         return
     row = max(0, table.currentRow())
     next_row = row + 1
@@ -134,6 +144,8 @@ def _install_review_progress_refresh(window, page: QWidget) -> None:
 
     @wraps(original)
     def wrapped(self, *args, **kwargs):
+        if not _qt_dispatch_allowed(window=self, page=page):
+            return None
         result = original(*args, **kwargs)
         success = int((result or {}).get("success", 0) or 0) if isinstance(result, dict) else 0
         if (
@@ -158,7 +170,7 @@ def _install_review_progress_refresh(window, page: QWidget) -> None:
 
 
 def _sync_review_progress_after_mutation(window, page=None) -> None:
-    if not _qt_dispatch_allowed(window=window, page=page):
+    if window is None or not _qt_dispatch_allowed(window=window, page=page):
         return
     from .hci_v1 import _sync_review_hci
 
@@ -207,28 +219,49 @@ def apply_review_hci_closure(page: QWidget | None) -> None:
     layout.insertWidget(max(0, layout.count() - 2), btn_later)
     window.btn_hci_review_later = btn_later
 
+    window_ref = weakref.ref(window)
+    page_ref = weakref.ref(page)
+    btn_later_ref = weakref.ref(btn_later)
+
+    def sync_later_visibility() -> None:
+        target = window_ref()
+        current_page = page_ref()
+        button = btn_later_ref()
+        if (
+            target is None
+            or current_page is None
+            or button is None
+            or not isValid(button)
+            or not _qt_dispatch_allowed(window=target, page=current_page)
+        ):
+            return
+        button.setVisible(bool(current_page.property("hciContinuousReview")))
+
     original_enter = getattr(window, "_enter_hci_continuous_review", None)
     original_exit = getattr(window, "_exit_hci_continuous_review", None)
 
     if callable(original_enter):
         @wraps(original_enter)
         def guarded_enter(self):
+            if not _qt_dispatch_allowed(window=self, page=page):
+                return None
             result = original_enter()
-            btn_later.setVisible(bool(page.property("hciContinuousReview")))
+            sync_later_visibility()
             return result
 
         window._enter_hci_continuous_review = MethodType(guarded_enter, window)
         getattr(window, "btn_hci_enter_review").clicked.connect(
-            lambda: QTimer.singleShot(
-                0, lambda: btn_later.setVisible(bool(page.property("hciContinuousReview")))
-            )
+            lambda: QTimer.singleShot(0, sync_later_visibility)
         )
 
     if callable(original_exit):
         @wraps(original_exit)
         def guarded_exit(self):
+            if not _qt_dispatch_allowed(window=self, page=page):
+                return None
             result = original_exit()
-            btn_later.hide()
+            if isValid(btn_later):
+                btn_later.hide()
             return result
 
         window._exit_hci_continuous_review = MethodType(guarded_exit, window)
@@ -422,6 +455,8 @@ def _install_scan_status_presentation(window) -> None:
     if callable(original_finished):
         @wraps(original_finished)
         def wrapped_finished(self, result, *args, **kwargs):
+            if not _qt_dispatch_allowed(window=self, page=page_ref()):
+                return None
             elapsed = _scan_elapsed(self)
             cancelled = bool(isinstance(result, dict) and result.get("cancelled"))
             outcome = original_finished(result, *args, **kwargs)
@@ -448,6 +483,8 @@ def _install_scan_status_presentation(window) -> None:
     if callable(original_error):
         @wraps(original_error)
         def wrapped_error(self, message, *args, **kwargs):
+            if not _qt_dispatch_allowed(window=self, page=page_ref()):
+                return None
             elapsed = _scan_elapsed(self)
             outcome = original_error(message, *args, **kwargs)
             _render_scan_terminal(
@@ -483,9 +520,16 @@ class _LegacyScanBridgeFilter(QObject):
 
 
 def _sync_import_primary_bridge(window) -> None:
+    if window is None or not _qt_dispatch_allowed(window=window):
+        return
     legacy = getattr(window, "btn_import_scan_selected", None)
     visible = getattr(window, "btn_hci_sync_new_mail", None)
-    if legacy is None or visible is None:
+    if (
+        legacy is None
+        or visible is None
+        or not isValid(legacy)
+        or not isValid(visible)
+    ):
         return
 
     missing_auth = legacy.text().strip() == "补授权码"
@@ -514,10 +558,21 @@ def _install_import_primary_bridge(window) -> None:
         return
 
     visible = make_button("同步新邮件", variant="primary")
+    window_ref = weakref.ref(window)
+    legacy_ref = weakref.ref(legacy)
 
     def forward_scan() -> None:
-        legacy.click()
-        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(window))
+        target = window_ref()
+        stable_control = legacy_ref()
+        if (
+            target is None
+            or stable_control is None
+            or not isValid(stable_control)
+            or not _qt_dispatch_allowed(window=target)
+        ):
+            return
+        stable_control.click()
+        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(window_ref()))
 
     visible.clicked.connect(forward_scan)
     window.btn_hci_sync_new_mail = visible
@@ -548,8 +603,11 @@ def _install_import_refresh_bridge(window) -> None:
 
     @wraps(original)
     def wrapped(self, *args, **kwargs):
+        if not _qt_dispatch_allowed(window=self):
+            return None
         result = original(*args, **kwargs)
-        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(self))
+        window_ref = weakref.ref(self)
+        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(window_ref()))
         return result
 
     window._refresh_imports_page = MethodType(wrapped, window)
@@ -557,7 +615,7 @@ def _install_import_refresh_bridge(window) -> None:
 
 
 def _sync_incremental_result(window, res: dict) -> None:
-    if not _qt_dispatch_allowed(window=window):
+    if window is None or not _qt_dispatch_allowed(window=window):
         return
     if bool((res or {}).get("cancelled")):
         _sync_import_primary_bridge(window)
@@ -605,6 +663,8 @@ def _install_scan_finish_closure(window) -> None:
 
     @wraps(original)
     def wrapped(self, res):
+        if not _qt_dispatch_allowed(window=self, page=page_ref()):
+            return None
         result = original(res)
         window_ref = weakref.ref(self)
         QTimer.singleShot(
@@ -662,9 +722,21 @@ def _install_history_delete_later_guard() -> None:
         if self.isRunning():
             if not self.property("hciDeleteAfterFinished"):
                 self.setProperty("hciDeleteAfterFinished", True)
-                self.finished.connect(lambda worker=self: original_delete_later(worker))
+                worker_ref = weakref.ref(self)
+
+                def delete_after_finished() -> None:
+                    worker = worker_ref()
+                    if (
+                        worker is not None
+                        and isValid(worker)
+                        and not QCoreApplication.closingDown()
+                    ):
+                        original_delete_later(worker)
+
+                self.finished.connect(delete_after_finished)
             return
-        original_delete_later(self)
+        if isValid(self) and not QCoreApplication.closingDown():
+            original_delete_later(self)
 
     HistoryRecheckWorker.deleteLater = safe_delete_later
     HistoryRecheckWorker._hci_safe_delete_installed = True
@@ -711,26 +783,42 @@ def apply_task_flow_hci_closure(page: QWidget | None) -> None:
 
 
 def schedule_dashboard_hci_closure(page: QWidget | None) -> None:
-    if page is None or not isValid(page):
+    if (
+        page is None
+        or not isValid(page)
+        or not _qt_dispatch_allowed(window=page.window(), page=page)
+    ):
         return
     page_ref = weakref.ref(page)
 
     def run() -> None:
         target = page_ref()
-        if target is not None and isValid(target):
+        if (
+            target is not None
+            and isValid(target)
+            and _qt_dispatch_allowed(window=target.window(), page=target)
+        ):
             apply_dashboard_hci_closure(target)
 
     QTimer.singleShot(0, run)
 
 
 def schedule_task_flow_hci_closure(page: QWidget | None) -> None:
-    if page is None or not isValid(page):
+    if (
+        page is None
+        or not isValid(page)
+        or not _qt_dispatch_allowed(window=page.window(), page=page)
+    ):
         return
     page_ref = weakref.ref(page)
 
     def run() -> None:
         target = page_ref()
-        if target is not None and isValid(target):
+        if (
+            target is not None
+            and isValid(target)
+            and _qt_dispatch_allowed(window=target.window(), page=target)
+        ):
             apply_task_flow_hci_closure(target)
 
     QTimer.singleShot(0, run)
