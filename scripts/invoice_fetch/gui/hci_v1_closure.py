@@ -19,7 +19,7 @@ import weakref
 from functools import wraps
 from types import MethodType
 
-from PySide6.QtCore import QEvent, QObject, QThread, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 from shiboken6 import isValid
@@ -93,6 +93,18 @@ def _focus_accepts_text() -> bool:
     return bool(widget is not None and is_keyboard_input_target(widget))
 
 
+def _qt_dispatch_allowed(*, window=None, page=None) -> bool:
+    """Keep deferred UI callbacks out of Qt shutdown and dead wrappers."""
+    app = QApplication.instance()
+    if app is None or not isValid(app) or QCoreApplication.closingDown():
+        return False
+    if window is not None and not isValid(window):
+        return False
+    if page is not None and not isValid(page):
+        return False
+    return True
+
+
 def _activate_detail_action(page: QWidget, detail, attr: str) -> None:
     if not page.property("hciContinuousReview") or _focus_accepts_text():
         return
@@ -124,12 +136,20 @@ def _install_review_progress_refresh(window, page: QWidget) -> None:
     def wrapped(self, *args, **kwargs):
         result = original(*args, **kwargs)
         success = int((result or {}).get("success", 0) or 0) if isinstance(result, dict) else 0
-        if success > 0 and page.property("hciContinuousReview"):
+        if (
+            success > 0
+            and _qt_dispatch_allowed(window=self, page=page)
+            and page.property("hciContinuousReview")
+        ):
             # _set_selected_status has already committed the mutation and
             # reloaded the filtered list when this callback is queued.
+            window_ref = weakref.ref(self)
+            page_ref = weakref.ref(page)
             QTimer.singleShot(
                 0,
-                lambda target=self: _sync_review_progress_after_mutation(target),
+                lambda: _sync_review_progress_after_mutation(
+                    window_ref(), page_ref()
+                ),
             )
         return result
 
@@ -137,8 +157,8 @@ def _install_review_progress_refresh(window, page: QWidget) -> None:
     window._hci_review_progress_refresh_installed = True
 
 
-def _sync_review_progress_after_mutation(window) -> None:
-    if not isValid(window):
+def _sync_review_progress_after_mutation(window, page=None) -> None:
+    if not _qt_dispatch_allowed(window=window, page=page):
         return
     from .hci_v1 import _sync_review_hci
 
@@ -259,6 +279,8 @@ def _set_scan_status_label(window, text: str) -> None:
 
 
 def _render_scan_active(window, stage: str | None = None, elapsed: float | None = None) -> None:
+    if not _qt_dispatch_allowed(window=window):
+        return
     if getattr(window, "_hci_scan_terminal_stage", None):
         return
     stage = str(stage or getattr(window, "_hci_scan_stage_key", "connect"))
@@ -281,6 +303,8 @@ def _render_scan_terminal(
     result: dict | None = None,
     reason: str = "",
 ) -> None:
+    if not _qt_dispatch_allowed(window=window):
+        return
     summary = summary or {}
     result = result or {}
     window._hci_scan_terminal_stage = terminal
@@ -326,11 +350,15 @@ def _install_scan_status_presentation(window) -> None:
     """Make the existing scan lifecycle legible while it is still running."""
     if getattr(window, "_hci_scan_status_presentation_installed", False):
         return
+    imports_page = getattr(window, "imports_page", None)
+    page_ref = weakref.ref(imports_page) if imports_page is not None else lambda: None
 
     original_start = getattr(window, "_scan_email_clicked", None)
     if callable(original_start):
         @wraps(original_start)
         def wrapped_start(self, *args, **kwargs):
+            if not _qt_dispatch_allowed(window=self, page=page_ref()):
+                return None
             self._hci_scan_terminal_stage = None
             self._hci_scan_elapsed_frozen = None
             self._hci_scan_stage_key = "connect"
@@ -342,6 +370,8 @@ def _install_scan_status_presentation(window) -> None:
     if callable(original_stage):
         @wraps(original_stage)
         def wrapped_stage(self, event, *args, **kwargs):
+            if not _qt_dispatch_allowed(window=self, page=page_ref()):
+                return None
             stage = str((event or {}).get("stage") or "") if isinstance(event, dict) else ""
             if stage not in {"complete", "failed", "cancelled"}:
                 self._hci_scan_terminal_stage = None
@@ -363,6 +393,8 @@ def _install_scan_status_presentation(window) -> None:
     if callable(original_refresh):
         @wraps(original_refresh)
         def wrapped_refresh(self, *args, **kwargs):
+            if not _qt_dispatch_allowed(window=self, page=page_ref()):
+                return None
             result = original_refresh(*args, **kwargs)
             _render_scan_active(self)
             return result
@@ -378,7 +410,9 @@ def _install_scan_status_presentation(window) -> None:
 
         def refresh_status_overlay() -> None:
             target = window_ref()
-            if target is not None and isValid(target):
+            if target is not None and _qt_dispatch_allowed(
+                window=target, page=page_ref()
+            ):
                 _render_scan_active(target)
 
         elapsed_timer.timeout.connect(refresh_status_overlay)
@@ -523,6 +557,8 @@ def _install_import_refresh_bridge(window) -> None:
 
 
 def _sync_incremental_result(window, res: dict) -> None:
+    if not _qt_dispatch_allowed(window=window):
+        return
     if bool((res or {}).get("cancelled")):
         _sync_import_primary_bridge(window)
         return
@@ -570,7 +606,11 @@ def _install_scan_finish_closure(window) -> None:
     @wraps(original)
     def wrapped(self, res):
         result = original(res)
-        QTimer.singleShot(0, lambda: _sync_incremental_result(self, res or {}))
+        window_ref = weakref.ref(self)
+        QTimer.singleShot(
+            0,
+            lambda: _sync_incremental_result(window_ref(), res or {}),
+        )
         return result
 
     window._scan_email_finished = MethodType(wrapped, window)
