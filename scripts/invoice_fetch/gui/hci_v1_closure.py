@@ -316,6 +316,8 @@ def _render_scan_active(window, stage: str | None = None, elapsed: float | None 
         return
     if getattr(window, "_hci_scan_terminal_stage", None):
         return
+    window._hci_scan_presentation_state = "active"
+    window._hci_scan_terminal_text = None
     stage = str(stage or getattr(window, "_hci_scan_stage_key", "connect"))
     window._hci_scan_stage_key = stage
     stage_label = _SCAN_STAGE_LABELS.get(stage, "处理扫描任务")
@@ -376,7 +378,72 @@ def _render_scan_terminal(
         if recent is not None:
             recent.set_title("× 同步失败")
 
+    window._hci_scan_presentation_state = terminal
+    window._hci_scan_terminal_text = text
     _set_scan_status_label(window, text)
+
+
+def _begin_scan_presentation(window, stage: str = "connect") -> None:
+    """Enter the explicit active state for scan and history-recheck tasks."""
+    if not _qt_dispatch_allowed(window=window):
+        return
+    window._hci_scan_terminal_stage = None
+    window._hci_scan_elapsed_frozen = None
+    window._hci_scan_terminal_text = None
+    window._hci_scan_presentation_state = "active"
+    window._hci_scan_stage_key = str(stage or "connect")
+    window._scan_stage_counts = {}
+    # Every explicit new task starts a fresh elapsed clock.  A previous
+    # terminal run may have left the old timestamp on the window.
+    window._scan_started_at = time.monotonic()
+    _render_scan_active(window, window._hci_scan_stage_key)
+
+
+def _render_history_recheck_terminal(window, result: dict | None = None) -> None:
+    """Render a history-recheck completion using the same terminal contract."""
+    result = result or {}
+    _render_scan_terminal(
+        window,
+        "complete",
+        elapsed=_scan_elapsed(window),
+        summary={
+            "scanned_headers": result.get("processed_emails", 0),
+            "classified_invoice": result.get("added_or_restored", 0),
+            "download_failed": result.get("failed", 0),
+        },
+        result=result,
+    )
+
+
+def _render_history_recheck_failed(window, reason: str) -> None:
+    """Render a history-recheck failure without losing its terminal state."""
+    _render_scan_terminal(
+        window,
+        "failed",
+        elapsed=_scan_elapsed(window),
+        reason=reason,
+    )
+
+
+def _sync_import_scan_state(window) -> None:
+    """Reapply authoritative active/terminal presentation after page refreshes."""
+    if window is None or not _qt_dispatch_allowed(window=window):
+        return
+    state = str(getattr(window, "_hci_scan_presentation_state", "idle") or "idle")
+    if state in {"complete", "failed", "cancelled"}:
+        terminal_text = str(getattr(window, "_hci_scan_terminal_text", "") or "")
+        if terminal_text:
+            _set_scan_status_label(window, terminal_text)
+        return
+    if state == "active":
+        _render_scan_active(window)
+
+
+def _sync_import_refresh_state(window) -> None:
+    if window is None or not _qt_dispatch_allowed(window=window):
+        return
+    _sync_import_primary_bridge(window)
+    _sync_import_scan_state(window)
 
 
 def _install_scan_status_presentation(window) -> None:
@@ -392,10 +459,10 @@ def _install_scan_status_presentation(window) -> None:
         def wrapped_start(self, *args, **kwargs):
             if not _qt_dispatch_allowed(window=self, page=page_ref()):
                 return None
-            self._hci_scan_terminal_stage = None
-            self._hci_scan_elapsed_frozen = None
-            self._hci_scan_stage_key = "connect"
-            return original_start(*args, **kwargs)
+            result = original_start(*args, **kwargs)
+            if getattr(self, "scan_worker", None) is not None:
+                _begin_scan_presentation(self, "connect")
+            return result
 
         window._scan_email_clicked = MethodType(wrapped_start, window)
 
@@ -429,7 +496,7 @@ def _install_scan_status_presentation(window) -> None:
             if not _qt_dispatch_allowed(window=self, page=page_ref()):
                 return None
             result = original_refresh(*args, **kwargs)
-            _render_scan_active(self)
+            _sync_import_scan_state(self)
             return result
 
         window._refresh_scan_elapsed = MethodType(wrapped_refresh, window)
@@ -607,7 +674,7 @@ def _install_import_refresh_bridge(window) -> None:
             return None
         result = original(*args, **kwargs)
         window_ref = weakref.ref(self)
-        QTimer.singleShot(0, lambda: _sync_import_primary_bridge(window_ref()))
+        QTimer.singleShot(0, lambda: _sync_import_refresh_state(window_ref()))
         return result
 
     window._refresh_imports_page = MethodType(wrapped, window)
@@ -660,6 +727,8 @@ def _install_scan_finish_closure(window) -> None:
     original = getattr(window, "_scan_email_finished", None)
     if not callable(original):
         return
+    imports_page = getattr(window, "imports_page", None)
+    page_ref = weakref.ref(imports_page) if imports_page is not None else lambda: None
 
     @wraps(original)
     def wrapped(self, res):
@@ -763,6 +832,8 @@ def apply_import_hci_closure(page: QWidget | None) -> None:
         return
 
     page.setProperty("hciV1ImportClosureApplied", True)
+    if not hasattr(window, "_hci_scan_presentation_state"):
+        window._hci_scan_presentation_state = "idle"
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
         recent.set_title("本次运行")
@@ -772,6 +843,7 @@ def apply_import_hci_closure(page: QWidget | None) -> None:
     _install_scan_status_presentation(window)
     _install_scan_finish_closure(window)
     _install_history_close_guard(window)
+    _sync_import_scan_state(window)
 
 
 def apply_task_flow_hci_closure(page: QWidget | None) -> None:

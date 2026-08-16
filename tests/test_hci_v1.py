@@ -386,6 +386,43 @@ class HciV1DesktopTests(unittest.TestCase):
         self.assertIn("同步失败", window.lbl_import_scan_status.text())
         self.assertIn("连接超时", window.lbl_import_scan_status.text())
 
+    def test_scan_finished_handler_preserves_terminal_state_through_refresh(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+
+            class FinishedWorker:
+                _trigger_btn = None
+                summary_logs = []
+
+            try:
+                window.scan_worker = FinishedWorker()
+                window._scan_started_at = time.monotonic() - 535.6
+                window._scan_email_finished(
+                    {
+                        "cancelled": False,
+                        "scanned": 800,
+                        "candidate": 39,
+                        "download_failed": 9,
+                    }
+                )
+                for _ in range(12):
+                    self.app.processEvents()
+
+                terminal_text = window.lbl_import_scan_status.text()
+                self.assertIn("同步完成", terminal_text)
+                self.assertNotIn("未开始", terminal_text)
+                self.assertNotIn("正在同步", terminal_text)
+
+                window._refresh_imports_page()
+                for _ in range(12):
+                    self.app.processEvents()
+                self.assertEqual(window.lbl_import_scan_status.text(), terminal_text)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_date_range_dialog_has_native_calendar_presets_and_validation(self):
         dialog = DateRangeDialog()
         today = QDate.currentDate()

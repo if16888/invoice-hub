@@ -689,6 +689,9 @@ def _install_import_label_refresh(window) -> None:
 
 
 def _history_recheck_finished(window, result: dict) -> None:
+    from .hci_v1_closure import _render_history_recheck_terminal
+
+    _render_history_recheck_terminal(window, result)
     worker = getattr(window, "_hci_history_worker", None)
     if worker is not None:
         worker.deleteLater()
@@ -731,6 +734,9 @@ def _history_recheck_finished(window, result: dict) -> None:
 
 
 def _history_recheck_failed(window, message: str) -> None:
+    from .hci_v1_closure import _render_history_recheck_failed
+
+    _render_history_recheck_failed(window, message)
     worker = getattr(window, "_hci_history_worker", None)
     if worker is not None:
         worker.deleteLater()
@@ -812,6 +818,9 @@ def _start_history_recheck(
     )
     try:
         worker.start()
+        from .hci_v1_closure import _begin_scan_presentation
+
+        _begin_scan_presentation(window, "query")
     except Exception:
         window._hci_history_worker = None
         _release_history_operation(window, worker)

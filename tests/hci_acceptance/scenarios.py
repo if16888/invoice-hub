@@ -24,6 +24,9 @@ from scripts.invoice_fetch.review_status import APPROVED, ERROR, IGNORED, TO_REV
 from scripts.invoice_fetch.gui.hci_v1 import (
     _enter_hci_continuous_review,
     _exit_hci_continuous_review,
+    _history_recheck_finished,
+    _start_history_recheck,
+    HistoryRecheckWorker,
 )
 
 from .assertions import (
@@ -738,64 +741,69 @@ def run_mail_02(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
 
 
 def run_mail_03(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
-    """MAIL-03: Complete — 注入 COMPLETE，验证 terminal presentation、counts、以及推进时钟后 elapsed 保持冻结."""
+    """MAIL-03: Complete — 走历史重检的真实启动/完成/刷新链路，验证终态不会回到 idle."""
     t0 = time.perf_counter()
     window._switch_main_page("imports")
     process_events()
 
-    window.scan_worker = type("FinishedWorker", (), {"_trigger_btn": None, "isRunning": lambda s: False})()
+    # Start the real bounded history-recheck handler, but keep the worker
+    # deterministic and offline.  The completion handler still performs the
+    # same worker cleanup, page refresh and deferred bridge callbacks as the
+    # native worker path.
+    with patch.object(HistoryRecheckWorker, "start", return_value=None):
+        _start_history_recheck(window, since="2026-08-01")
 
+    active_text = window.lbl_import_scan_status.text() if hasattr(window, "lbl_import_scan_status") else ""
     res = {
-        "cancelled": False,
-        "scanned": 800,
-        "candidate": 39,
-        "download_failed": 9,
-        "elapsed": 535.6,
+        "processed_emails": 800,
+        "added_or_restored": 39,
+        "failed": 9,
     }
+    _history_recheck_finished(window, res)
 
-    try:
-        from scripts.invoice_fetch.gui.hci_v1_closure import _render_scan_terminal
-        _render_scan_terminal(
-            window,
-            "complete",
-            elapsed=535.6,
-            summary={"scanned": 800, "classified_invoice": 39, "download_failed": 9},
-            result=res,
-        )
-    except ImportError:
-        window._scan_email_finished(res)
-
-    process_events()
-
+    # The worker is cleared by the real completion handler.  Process several
+    # bounded rounds so queued refresh and bridge callbacks cannot be skipped.
+    process_events(iterations=12)
     status_text = window.lbl_import_scan_status.text() if hasattr(window, "lbl_import_scan_status") else ""
+    worker_cleared = getattr(window, "_hci_history_worker", None) is None
 
-    # Advance clock and process UI events: terminal presentation and elapsed must remain frozen
+    # Advance the clock and process UI events: terminal presentation and
+    # elapsed must remain frozen after cleanup and page synchronization.
     window._scan_started_at = time.monotonic() - 9999.0
-    process_events()
-
+    process_events(iterations=12)
     post_tick_text = window.lbl_import_scan_status.text() if hasattr(window, "lbl_import_scan_status") else ""
 
     ui_expected = {
         "terminal_complete": True,
-        "contains_800": True,
-        "contains_39": True,
+        "active_before_finish": True,
+        "contains_processed_800": True,
+        "contains_added_39": True,
         "contains_failed_9": True,
+        "worker_cleared": True,
         "elapsed_frozen": True,
     }
     ui_actual = {
+        "active_text": active_text,
         "status_text": status_text,
         "post_tick_text": post_tick_text,
+        "worker_cleared": worker_cleared,
     }
 
     broken = None
-    if "完成" not in status_text:
+    if "正在" not in active_text and "查询" not in active_text and "重新检查" not in active_text:
+        broken = f"History recheck did not render an active state: '{active_text}'"
+    elif "完成" not in status_text:
         broken = f"Completed status '{status_text}' does not contain '完成'"
+    elif "未开始" in status_text:
+        broken = f"Completed status regressed to idle after refresh: '{status_text}'"
     elif "正在" in status_text:
         broken = f"Completed status '{status_text}' should not contain '正在'"
     elif "800" not in status_text or "39" not in status_text:
         broken = f"Completed status '{status_text}' missing summary counts (800, 39)"
     elif "失败 9 项" not in status_text:
         broken = f"Completed status '{status_text}' missing expected failure text '失败 9 项'"
+    elif not worker_cleared:
+        broken = "History recheck worker was not cleared by completion handler"
     elif status_text != post_tick_text:
         broken = f"Elapsed time not frozen after completion: before='{status_text}', after='{post_tick_text}'"
 
