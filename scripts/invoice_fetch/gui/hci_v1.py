@@ -14,7 +14,7 @@ window does not gain another page-specific implementation layer.
 from __future__ import annotations
 
 import weakref
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from functools import wraps
 from pathlib import Path
 from types import MethodType
@@ -27,15 +27,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QMessageBox,
+    QDialog,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
-    QInputDialog,
 )
 from shiboken6 import isValid
 
 from ..review_status import ERROR, TO_REVIEW
 from .design_tokens import DESIGN_V1_COLORS
+from .date_range_dialog import DateRangeDialog
 from .ui_components import SectionCard, make_badge, make_button
 
 
@@ -839,35 +840,11 @@ def _start_known_attachment_reprocess(window) -> None:
 
 
 def _start_custom_range_recheck(window) -> None:
-    default_since = (date.today() - timedelta(days=30)).isoformat()
-    since, ok = QInputDialog.getText(
-        window,
-        "重新检查指定时间范围",
-        "起始日期（YYYY-MM-DD）",
-        text=default_since,
-    )
-    if not ok:
+    dialog = DateRangeDialog(window)
+    if dialog.exec() != QDialog.Accepted:
         return
-    until, ok = QInputDialog.getText(
-        window,
-        "重新检查指定时间范围",
-        "结束日期（YYYY-MM-DD，可留空表示今天）",
-        text=date.today().isoformat(),
-    )
-    if not ok:
-        return
-    since = str(since or "").strip()
-    until = str(until or "").strip() or None
-    try:
-        start_date = datetime.strptime(since, "%Y-%m-%d").date()
-        end_date = datetime.strptime(until, "%Y-%m-%d").date() if until else date.today()
-    except ValueError:
-        QMessageBox.warning(window, "日期格式错误", "请输入 YYYY-MM-DD 格式的日期。")
-        return
-    if start_date > end_date:
-        QMessageBox.warning(window, "日期范围错误", "起始日期不能晚于结束日期。")
-        return
-    _start_history_recheck(window, since=since, until=end_date.isoformat())
+    since, until = dialog.date_range()
+    _start_history_recheck(window, since=since, until=until)
 
 
 def apply_import_hci_v1(page: QWidget | None) -> None:
@@ -965,6 +942,7 @@ def schedule_task_flow_hci_v1(page: QWidget | None) -> None:
 __all__ = [
     "HciTaskCard",
     "HistoryRecheckWorker",
+    "DateRangeDialog",
     "apply_dashboard_hci_v1",
     "apply_import_hci_v1",
     "apply_review_hci_v1",

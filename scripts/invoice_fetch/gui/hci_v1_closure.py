@@ -14,6 +14,7 @@ that must remain fail-safe regardless of later compatibility changes:
 
 from __future__ import annotations
 
+import time
 import weakref
 from functools import wraps
 from types import MethodType
@@ -111,6 +112,39 @@ def _move_to_next_review_row(window) -> None:
     table.selectRow(next_row)
 
 
+def _install_review_progress_refresh(window, page: QWidget) -> None:
+    """Refresh continuous-review progress after a successful DB mutation."""
+    if getattr(window, "_hci_review_progress_refresh_installed", False):
+        return
+    original = getattr(window, "_set_selected_status", None)
+    if not callable(original):
+        return
+
+    @wraps(original)
+    def wrapped(self, *args, **kwargs):
+        result = original(*args, **kwargs)
+        success = int((result or {}).get("success", 0) or 0) if isinstance(result, dict) else 0
+        if success > 0 and page.property("hciContinuousReview"):
+            # _set_selected_status has already committed the mutation and
+            # reloaded the filtered list when this callback is queued.
+            QTimer.singleShot(
+                0,
+                lambda target=self: _sync_review_progress_after_mutation(target),
+            )
+        return result
+
+    window._set_selected_status = MethodType(wrapped, window)
+    window._hci_review_progress_refresh_installed = True
+
+
+def _sync_review_progress_after_mutation(window) -> None:
+    if not isValid(window):
+        return
+    from .hci_v1 import _sync_review_hci
+
+    _sync_review_hci(window)
+
+
 def apply_review_hci_closure(page: QWidget | None) -> None:
     """Guard shortcuts and complete continuous-review navigation."""
     if page is None or not isValid(page) or page.property("hciV1ReviewClosureApplied"):
@@ -124,6 +158,7 @@ def apply_review_hci_closure(page: QWidget | None) -> None:
         return
 
     page.setProperty("hciV1ReviewClosureApplied", True)
+    _install_review_progress_refresh(window, page)
 
     # Disable the unguarded compatibility shortcuts created by the HCI layer.
     for attr in ("_hci_shortcut_e", "_hci_shortcut_g"):
@@ -178,6 +213,220 @@ def apply_review_hci_closure(page: QWidget | None) -> None:
 
         window._exit_hci_continuous_review = MethodType(guarded_exit, window)
         getattr(window, "btn_hci_exit_review").clicked.connect(btn_later.hide)
+
+
+_SCAN_STAGE_LABELS = {
+    "connect": "连接邮箱",
+    "tls": "建立安全连接",
+    "authenticate": "验证邮箱账号",
+    "query": "查询新邮件",
+    "query-start": "查询新邮件",
+    "query-progress": "查询新邮件",
+    "download": "下载附件",
+    "parse": "识别票据信息",
+    "save": "保存扫描结果",
+}
+
+
+def _format_scan_elapsed(seconds: float) -> str:
+    seconds = max(0.0, float(seconds or 0.0))
+    if seconds >= 60:
+        whole = int(seconds)
+        return f"{whole // 60}分{whole % 60:02d}秒"
+    return f"{seconds:.1f} 秒"
+
+
+def _scan_elapsed(window) -> float:
+    started = getattr(window, "_scan_started_at", None)
+    if not started:
+        return 0.0
+    return max(0.0, time.monotonic() - started)
+
+
+def _scan_failure_count(summary: dict) -> int:
+    return sum(
+        int(summary.get(key, 0) or 0)
+        for key in ("download_failed", "parse_failed", "link_failed")
+    )
+
+
+def _set_scan_status_label(window, text: str) -> None:
+    label = getattr(window, "lbl_import_scan_status", None)
+    if label is None:
+        return
+    label.setWordWrap(True)
+    label.setText(text)
+
+
+def _render_scan_active(window, stage: str | None = None, elapsed: float | None = None) -> None:
+    if getattr(window, "_hci_scan_terminal_stage", None):
+        return
+    stage = str(stage or getattr(window, "_hci_scan_stage_key", "connect"))
+    window._hci_scan_stage_key = stage
+    stage_label = _SCAN_STAGE_LABELS.get(stage, "处理扫描任务")
+    if elapsed is None:
+        elapsed = _scan_elapsed(window)
+    _set_scan_status_label(
+        window,
+        f"● 正在同步\n当前阶段：{stage_label}\n已运行 {_format_scan_elapsed(elapsed)}",
+    )
+
+
+def _render_scan_terminal(
+    window,
+    terminal: str,
+    *,
+    elapsed: float,
+    summary: dict | None = None,
+    result: dict | None = None,
+    reason: str = "",
+) -> None:
+    summary = summary or {}
+    result = result or {}
+    window._hci_scan_terminal_stage = terminal
+    window._hci_scan_elapsed_frozen = float(elapsed)
+    elapsed_text = _format_scan_elapsed(elapsed)
+
+    if terminal == "complete":
+        scanned = int(summary.get("scanned_headers") or summary.get("scanned") or 0)
+        classified = int(summary.get("classified_invoice") or 0)
+        failed = _scan_failure_count(summary)
+        text = (
+            "✓ 同步完成\n"
+            f"检查邮件 {scanned} 封 · 识别发票候选 {classified} · 失败 {failed} 项\n"
+            f"已运行 {elapsed_text}"
+        )
+        recent = getattr(window, "import_mail_recent_card", None)
+        if recent is not None:
+            recent.set_title("✓ 同步完成")
+    elif terminal == "cancelled":
+        counts = getattr(window, "_scan_stage_counts", {}) or {}
+        processed = counts.get("processed")
+        total = counts.get("total")
+        handled = f"{processed} / {total} 封" if total is not None else f"{processed or 0} 封"
+        text = f"同步已取消\n已处理：{handled}\n已运行 {elapsed_text}"
+        recent = getattr(window, "import_mail_recent_card", None)
+        if recent is not None:
+            recent.set_title("同步已取消")
+    else:
+        stage_label = _SCAN_STAGE_LABELS.get(
+            str(getattr(window, "_hci_scan_stage_key", "")),
+            "处理扫描任务",
+        )
+        safe_reason = str(reason or "请查看错误提示或失败明细。").strip()[:160]
+        text = f"× 同步失败\n阶段：{stage_label}\n原因：{safe_reason}\n已运行 {elapsed_text}"
+        recent = getattr(window, "import_mail_recent_card", None)
+        if recent is not None:
+            recent.set_title("× 同步失败")
+
+    _set_scan_status_label(window, text)
+
+
+def _install_scan_status_presentation(window) -> None:
+    """Make the existing scan lifecycle legible while it is still running."""
+    if getattr(window, "_hci_scan_status_presentation_installed", False):
+        return
+
+    original_start = getattr(window, "_scan_email_clicked", None)
+    if callable(original_start):
+        @wraps(original_start)
+        def wrapped_start(self, *args, **kwargs):
+            self._hci_scan_terminal_stage = None
+            self._hci_scan_elapsed_frozen = None
+            self._hci_scan_stage_key = "connect"
+            return original_start(*args, **kwargs)
+
+        window._scan_email_clicked = MethodType(wrapped_start, window)
+
+    original_stage = getattr(window, "_scan_stage_updated", None)
+    if callable(original_stage):
+        @wraps(original_stage)
+        def wrapped_stage(self, event, *args, **kwargs):
+            stage = str((event or {}).get("stage") or "") if isinstance(event, dict) else ""
+            if stage not in {"complete", "failed", "cancelled"}:
+                self._hci_scan_terminal_stage = None
+                self._hci_scan_elapsed_frozen = None
+                self._hci_scan_stage_key = stage or "connect"
+            result = original_stage(event, *args, **kwargs)
+            if stage not in {"complete", "failed", "cancelled"}:
+                event_elapsed = (
+                    int((event or {}).get("elapsed_ms") or 0) / 1000
+                    if isinstance(event, dict)
+                    else None
+                )
+                _render_scan_active(self, stage, max(_scan_elapsed(self), event_elapsed or 0.0))
+            return result
+
+        window._scan_stage_updated = MethodType(wrapped_stage, window)
+
+    original_refresh = getattr(window, "_refresh_scan_elapsed", None)
+    if callable(original_refresh):
+        @wraps(original_refresh)
+        def wrapped_refresh(self, *args, **kwargs):
+            result = original_refresh(*args, **kwargs)
+            _render_scan_active(self)
+            return result
+
+        window._refresh_scan_elapsed = MethodType(wrapped_refresh, window)
+
+    # The application connects its elapsed timer during window construction,
+    # before this closure replaces the bound method.  Add a weak overlay
+    # callback so that the original timer cannot overwrite the HCI status text.
+    elapsed_timer = getattr(window, "_scan_elapsed_timer", None)
+    if elapsed_timer is not None:
+        window_ref = weakref.ref(window)
+
+        def refresh_status_overlay() -> None:
+            target = window_ref()
+            if target is not None and isValid(target):
+                _render_scan_active(target)
+
+        elapsed_timer.timeout.connect(refresh_status_overlay)
+        window._hci_scan_elapsed_overlay = refresh_status_overlay
+
+    original_finished = getattr(window, "_scan_email_finished", None)
+    if callable(original_finished):
+        @wraps(original_finished)
+        def wrapped_finished(self, result, *args, **kwargs):
+            elapsed = _scan_elapsed(self)
+            cancelled = bool(isinstance(result, dict) and result.get("cancelled"))
+            outcome = original_finished(result, *args, **kwargs)
+            if cancelled:
+                _render_scan_terminal(
+                    self,
+                    "cancelled",
+                    elapsed=elapsed,
+                    result=result,
+                )
+            else:
+                _render_scan_terminal(
+                    self,
+                    "complete",
+                    elapsed=elapsed,
+                    summary=getattr(self, "_last_scan_summary", {}) or {},
+                    result=result,
+                )
+            return outcome
+
+        window._scan_email_finished = MethodType(wrapped_finished, window)
+
+    original_error = getattr(window, "_scan_email_error", None)
+    if callable(original_error):
+        @wraps(original_error)
+        def wrapped_error(self, message, *args, **kwargs):
+            elapsed = _scan_elapsed(self)
+            outcome = original_error(message, *args, **kwargs)
+            _render_scan_terminal(
+                self,
+                "failed",
+                elapsed=elapsed,
+                reason=str(message or ""),
+            )
+            return outcome
+
+        window._scan_email_error = MethodType(wrapped_error, window)
+
+    window._hci_scan_status_presentation_installed = True
 
 
 class _LegacyScanBridgeFilter(QObject):
@@ -297,10 +546,11 @@ def _sync_incremental_result(window, res: dict) -> None:
 
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
-        recent.set_title("本次运行")
+        recent.set_title("✓ 同步完成")
+        failed = _scan_failure_count(summary)
         recent.set_hint(
-            f"同步结果：检查 {scanned} 封邮件；新增 {new}，恢复 {restored}，"
-            f"已存在/重复 {duplicates}。"
+            f"检查邮件 {scanned} 封；识别发票候选 {int(summary.get('classified_invoice', 0) or 0)}；"
+            f"新增 {new}，恢复 {restored}，已存在/重复 {duplicates}，失败 {failed} 项。"
         )
 
     review = getattr(window, "btn_hci_import_review_result", None)
@@ -407,6 +657,7 @@ def apply_import_hci_closure(page: QWidget | None) -> None:
         recent.set_hint("同步结果会说明检查范围、找到多少票据，以及下一步可以做什么。")
     _install_import_primary_bridge(window)
     _install_import_refresh_bridge(window)
+    _install_scan_status_presentation(window)
     _install_scan_finish_closure(window)
     _install_history_close_guard(window)
 
