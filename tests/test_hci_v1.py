@@ -1,21 +1,30 @@
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+from PySide6.QtCore import QDate, QSignalBlocker
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QPushButton, QWidget
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.hci_v1 import (
+    DateRangeDialog,
     HciTaskCard,
     HistoryRecheckWorker,
+    _start_custom_range_recheck,
     _history_recheck_failed,
     _history_recheck_finished,
     _start_history_recheck,
+)
+from scripts.invoice_fetch.gui.hci_v1_closure import (
+    _render_scan_active,
+    _render_scan_terminal,
 )
 from scripts.invoice_fetch.gui.review_baseline_pipeline import (
     REVIEW_BASELINE_STAGES,
@@ -25,6 +34,7 @@ from scripts.invoice_fetch.hci_v1_services import (
     _enabled_mailbox_keys,
     recheck_known_email_history,
 )
+from scripts.invoice_fetch.review_status import APPROVED, ERROR, IGNORED, TO_REVIEW
 
 
 class HciV1PurePolicyTests(unittest.TestCase):
@@ -176,6 +186,79 @@ class HciV1DesktopTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_continuous_review_progress_refreshes_from_successful_mutations(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                for index in range(5):
+                    window.db.insert_invoice(
+                        {
+                            "invoice_number": f"HCI-{index}",
+                            "total_amount": "10.00",
+                            "seller_name": "Synthetic Seller",
+                            "invoice_date": "2026-08-01",
+                            "review_status": TO_REVIEW,
+                        }
+                    )
+                window.db._conn.commit()
+                window._is_first_load = False
+                window._switch_main_page("review")
+                window._change_filter(TO_REVIEW)
+                self.app.processEvents()
+                window._enter_hci_continuous_review()
+                self.app.processEvents()
+                self.assertIn("1 / 5", window.lbl_hci_review_progress.text())
+                self.assertIn("还剩 5", window.lbl_hci_review_progress.text())
+
+                with patch(
+                    "scripts.invoice_fetch.gui.app.QMessageBox.question",
+                    return_value=QMessageBox.Yes,
+                ):
+                    for status, expected in (
+                        (APPROVED, ("2 / 5", "还剩 4")),
+                        (IGNORED, ("3 / 5", "还剩 3")),
+                        (ERROR, ("4 / 5", "还剩 2")),
+                    ):
+                        window._ensure_single_row_selection(0)
+                        with QSignalBlocker(window.table):
+                            result = window._set_selected_status(status)
+                        self.assertEqual(result["success"], 1)
+                        self.app.processEvents()
+                        self.assertIn(expected[0], window.lbl_hci_review_progress.text())
+                        self.assertIn(expected[1], window.lbl_hci_review_progress.text())
+
+                    for expected in (("5 / 5", "还剩 1"), ("5 / 5", "本轮已完成")):
+                        window._ensure_single_row_selection(0)
+                        with QSignalBlocker(window.table):
+                            result = window._set_selected_status(APPROVED)
+                        self.assertEqual(result["success"], 1)
+                        self.app.processEvents()
+                        self.assertIn(expected[0], window.lbl_hci_review_progress.text())
+                        self.assertIn(expected[1], window.lbl_hci_review_progress.text())
+
+                window._exit_hci_continuous_review()
+                for index in range(2):
+                    window.db.insert_invoice(
+                        {
+                            "invoice_number": f"HCI-RESET-{index}",
+                            "total_amount": "10.00",
+                            "seller_name": "Synthetic Seller",
+                            "invoice_date": "2026-08-01",
+                            "review_status": TO_REVIEW,
+                        }
+                    )
+                window.db._conn.commit()
+                window._change_filter(TO_REVIEW)
+                window._enter_hci_continuous_review()
+                self.app.processEvents()
+                self.assertIn("1 / 2", window.lbl_hci_review_progress.text())
+                self.assertIn("还剩 2", window.lbl_hci_review_progress.text())
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
     def test_import_uses_visible_sync_cta_and_stable_scan_control(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
@@ -211,6 +294,191 @@ class HciV1DesktopTests(unittest.TestCase):
                 window.close()
                 window.deleteLater()
                 self.app.processEvents()
+
+    def test_continuous_review_progress_does_not_advance_on_failed_mutation(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.db.insert_invoice(
+                    {
+                        "invoice_number": "HCI-FAILED",
+                        "total_amount": "10.00",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-08-01",
+                        "review_status": TO_REVIEW,
+                    }
+                )
+                window.db._conn.commit()
+                window._is_first_load = False
+                window._switch_main_page("review")
+                window._change_filter(TO_REVIEW)
+                self.app.processEvents()
+                window._enter_hci_continuous_review()
+                window._ensure_single_row_selection(0)
+                with (
+                    patch(
+                        "scripts.invoice_fetch.gui.app.QMessageBox.question",
+                        return_value=QMessageBox.Yes,
+                    ),
+                    patch.object(window.db, "update_invoice_review_status", return_value=False),
+                ):
+                    result = window._set_selected_status(APPROVED)
+                self.assertEqual(result["success"], 0)
+                self.app.processEvents()
+                self.assertIn("1 / 1", window.lbl_hci_review_progress.text())
+                self.assertIn("还剩 1", window.lbl_hci_review_progress.text())
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_scan_hci_presentation_maps_active_and_terminal_states(self):
+        class RecentCard:
+            def __init__(self):
+                self.title = ""
+                self.hint = ""
+
+            def set_title(self, value):
+                self.title = value
+
+            def set_hint(self, value):
+                self.hint = value
+
+        recent = RecentCard()
+        window = SimpleNamespace(
+            lbl_import_scan_status=QLabel(),
+            import_mail_recent_card=recent,
+            _hci_scan_terminal_stage=None,
+            _scan_stage_counts={"processed": 4, "total": 10},
+            _scan_started_at=time.monotonic() - 493.7,
+        )
+        _render_scan_active(window, "download", 493.7)
+        self.assertIn("正在同步", window.lbl_import_scan_status.text())
+        self.assertIn("下载附件", window.lbl_import_scan_status.text())
+        self.assertIn("8分13秒", window.lbl_import_scan_status.text())
+        window._hci_scan_terminal_stage = None
+        _render_scan_active(window, "save", 535.6)
+        self.assertIn("保存扫描结果", window.lbl_import_scan_status.text())
+
+        _render_scan_terminal(
+            window,
+            "complete",
+            elapsed=535.6,
+            summary={
+                "scanned_headers": 800,
+                "classified_invoice": 39,
+                "download_failed": 9,
+            },
+        )
+        completed_text = window.lbl_import_scan_status.text()
+        self.assertIn("✓ 同步完成", completed_text)
+        self.assertNotIn("正在同步", completed_text)
+        self.assertIn("8分55秒", completed_text)
+        frozen = completed_text
+        _render_scan_active(window, "save", 900)
+        self.assertEqual(window.lbl_import_scan_status.text(), frozen)
+        self.assertEqual(recent.title, "✓ 同步完成")
+
+        _render_scan_terminal(window, "cancelled", elapsed=12.0, result={"cancelled": True})
+        self.assertIn("同步已取消", window.lbl_import_scan_status.text())
+        _render_scan_terminal(window, "failed", elapsed=13.0, reason="连接超时")
+        self.assertIn("同步失败", window.lbl_import_scan_status.text())
+        self.assertIn("连接超时", window.lbl_import_scan_status.text())
+
+    def test_scan_finished_handler_preserves_terminal_state_through_refresh(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+
+            class FinishedWorker:
+                _trigger_btn = None
+                summary_logs = []
+
+            try:
+                window.scan_worker = FinishedWorker()
+                window._scan_started_at = time.monotonic() - 535.6
+                window._scan_email_finished(
+                    {
+                        "cancelled": False,
+                        "scanned": 800,
+                        "candidate": 39,
+                        "download_failed": 9,
+                    }
+                )
+                for _ in range(12):
+                    self.app.processEvents()
+
+                terminal_text = window.lbl_import_scan_status.text()
+                self.assertIn("同步完成", terminal_text)
+                self.assertNotIn("未开始", terminal_text)
+                self.assertNotIn("正在同步", terminal_text)
+
+                window._refresh_imports_page()
+                for _ in range(12):
+                    self.app.processEvents()
+                self.assertEqual(window.lbl_import_scan_status.text(), terminal_text)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_date_range_dialog_has_native_calendar_presets_and_validation(self):
+        dialog = DateRangeDialog()
+        today = QDate.currentDate()
+        try:
+            self.assertEqual(dialog.end_date_edit.date(), today)
+            self.assertTrue(dialog.start_date_edit.calendarPopup())
+            self.assertTrue(dialog.end_date_edit.calendarPopup())
+
+            dialog._apply_preset("7d")
+            self.assertEqual(dialog.start_date_edit.date(), today.addDays(-7))
+            self.assertEqual(dialog.end_date_edit.date(), today)
+            dialog._apply_preset("30d")
+            self.assertEqual(dialog.start_date_edit.date(), today.addDays(-30))
+            dialog._apply_preset("3m")
+            self.assertEqual(dialog.start_date_edit.date(), today.addMonths(-3))
+
+            dialog.start_date_edit.setDate(today)
+            dialog.end_date_edit.setDate(today.addDays(-1))
+            dialog.accept()
+            self.assertEqual(dialog.result(), 0)
+            self.assertEqual(dialog.error_label.text(), "起始日期不能晚于结束日期。")
+
+            dialog.start_date_edit.setDate(today.addDays(-7))
+            dialog.end_date_edit.setDate(today)
+            dialog.accept()
+            self.assertEqual(dialog.result(), QDialog.Accepted)
+            self.assertEqual(
+                dialog.date_range(),
+                (today.addDays(-7).toString("yyyy-MM-dd"), today.toString("yyyy-MM-dd")),
+            )
+        finally:
+            dialog.close()
+
+    def test_custom_range_recheck_passes_dialog_iso_values_to_service(self):
+        window = QWidget()
+        try:
+            with (
+                patch("scripts.invoice_fetch.gui.hci_v1.DateRangeDialog") as dialog_cls,
+                patch("scripts.invoice_fetch.gui.hci_v1._start_history_recheck") as start,
+            ):
+                dialog_cls.return_value.exec.return_value = QDialog.Accepted
+                dialog_cls.return_value.date_range.return_value = (
+                    "2026-07-01",
+                    "2026-07-31",
+                )
+                _start_custom_range_recheck(window)
+
+            start.assert_called_once_with(
+                window,
+                since="2026-07-01",
+                until="2026-07-31",
+            )
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
 
     def test_history_recheck_owns_and_releases_data_operation_gate(self):
         with tempfile.TemporaryDirectory() as td:

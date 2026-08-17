@@ -339,7 +339,12 @@ def run_single_watchdog(timeout_seconds: int = 120, verbose: bool = True) -> tup
             )
         )
 
-    artifact_dir = PROJECT_ROOT / "artifacts" / "hci_acceptance"
+    artifact_override = os.environ.get("HCI_ARTIFACT_DIR")
+    artifact_dir = (
+        Path(artifact_override)
+        if artifact_override
+        else PROJECT_ROOT / "artifacts" / "hci_acceptance"
+    )
     json_path, md_path = write_report(report, artifact_dir)
 
     metrics = {
