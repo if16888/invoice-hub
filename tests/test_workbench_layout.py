@@ -950,7 +950,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
                 moved_sizes = window.left_splitter.sizes()
 
-                window.resize(1880, 1040)
+                # Keep the native height constant.  Changing height can
+                # legitimately reallocate a pane when the preview minimum is
+                # reached; this contract is specifically about a width reflow
+                # not resetting the user's vertical pane choice.
+                resized_width = max(window.minimumWidth(), window.width() - 40)
+                window.resize(resized_width, window.height())
                 QApplication.processEvents()
                 # Hosted Windows runners can deliver the final splitter/layout
                 # geometry one event-loop turn after the resize event.  Read
