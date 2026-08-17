@@ -51,8 +51,8 @@ jobs:
       - name: Verify CLI help output
         run: python -m scripts.invoice_fetch --help
 
-      - name: Run unit tests
-        run: python -m unittest discover -v -s tests -p "test_*.py"
+      - name: Run isolated unit tests
+        run: python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900
         env:
           INVOICE_HUB_TEST_MODE: "1"
 

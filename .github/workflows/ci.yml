@@ -45,7 +45,7 @@ jobs:
       - name: Run unit tests
         shell: pwsh
         run: |
-          python -m unittest discover -v -s tests -p "test_*.py" 2>&1 | Tee-Object -FilePath ci-test-output.txt
+          python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900 2>&1 | Tee-Object -FilePath ci-test-output.txt
           exit $LASTEXITCODE
 
       - name: Upload unit test output
