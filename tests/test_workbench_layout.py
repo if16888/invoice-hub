@@ -944,11 +944,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QTest.qWait(75)
                 QApplication.processEvents()
 
-                total_before = sum(window.left_splitter.sizes())
+                initial_sizes = window.left_splitter.sizes()
+                total_before = sum(initial_sizes)
                 window.left_splitter.setSizes([460, max(total_before - 460, 180)])
                 QApplication.processEvents()
                 moved_sizes = window.left_splitter.sizes()
-                moved_ratio = moved_sizes[0] / sum(moved_sizes)
 
                 window.resize(1880, 1040)
                 QApplication.processEvents()
@@ -958,9 +958,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QTest.qWait(50)
                 QApplication.processEvents()
                 resized_sizes = window.left_splitter.sizes()
-                resized_ratio = resized_sizes[0] / sum(resized_sizes)
 
-                self.assertAlmostEqual(resized_ratio, moved_ratio, delta=0.03)
+                # QSplitter preserves the user-adjusted pane in native pixels;
+                # the total available height can change across Windows hosts,
+                # so comparing ratios makes the test platform-dependent.
+                self.assertAlmostEqual(resized_sizes[0], moved_sizes[0], delta=8)
+                self.assertNotAlmostEqual(resized_sizes[0], initial_sizes[0], delta=8)
             finally:
                 window.db.close()
                 window.close()
