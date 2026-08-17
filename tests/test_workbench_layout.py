@@ -95,6 +95,7 @@ class TestClampVerticalSplit(unittest.TestCase):
 
 try:
     from PySide6.QtCore import Qt, QSettings
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QSizePolicy
     from scripts.invoice_fetch.gui.workbench_settings import workbench_settings
 
@@ -934,6 +935,13 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             try:
                 window.show()
                 window.resize(1920, 1080)
+                QApplication.processEvents()
+                # The review baseline installs the real vertical splitter and
+                # schedules one final 0-ms geometry normalization.  Wait for
+                # that user-visible initialization to settle before simulating
+                # a splitter drag; otherwise the callback can race the test's
+                # first read on slower Windows runners.
+                QTest.qWait(50)
                 QApplication.processEvents()
 
                 total_before = sum(window.left_splitter.sizes())

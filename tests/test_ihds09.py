@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QLineEdit, QPushButton
 from shiboken6 import isValid as is_qobject_valid
 
@@ -63,7 +64,15 @@ class IHDS09Tests(unittest.TestCase):
 
     def make_window(self, td):
         window = InvoiceReviewApp(Path(td) / "ihds09.db")
-        window.show(); self.app.processEvents()
+        window.show()
+        self.app.processEvents()
+        # Let the application's 50-ms deferred initialization and the queued
+        # page-normalization callbacks finish while this fixture's window and
+        # database are still valid.  A single processEvents() can return before
+        # newly queued timers on slower Windows runs, leaving their callbacks
+        # to overlap the next fixture's QApplication lifecycle.
+        QTest.qWait(75)
+        self.app.processEvents()
         return window
 
     def test_all_mobile_entries_open_embedded_task(self):
