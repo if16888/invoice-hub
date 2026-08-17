@@ -941,7 +941,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 # that user-visible initialization to settle before simulating
                 # a splitter drag; otherwise the callback can race the test's
                 # first read on slower Windows runners.
-                QTest.qWait(50)
+                QTest.qWait(75)
                 QApplication.processEvents()
 
                 total_before = sum(window.left_splitter.sizes())
