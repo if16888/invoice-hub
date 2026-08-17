@@ -1061,7 +1061,25 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 # QSplitter preserves the user-adjusted pane in native pixels;
                 # compare the actual user-selected pixel position rather than
                 # an impossible fixed target or a platform-dependent ratio.
-                self.assertAlmostEqual(resized_sizes[0], moved_sizes[0], delta=8)
+                self.assertAlmostEqual(
+                    resized_sizes[0],
+                    moved_sizes[0],
+                    delta=8,
+                    msg=(
+                        "user splitter position changed after width-only resize: "
+                        f"window={window.width()}x{window.height()}, "
+                        f"splitter={splitter.width()}x{splitter.height()}, "
+                        f"initial={initial_sizes}, moved={moved_sizes}, "
+                        f"resized={resized_sizes}, "
+                        f"upper_minmax=({record_widget.minimumHeight()},"
+                        f"{record_widget.maximumHeight()}), "
+                        f"preview_min={preview_widget.minimumHeight()}, "
+                        "baseline="
+                        f"{window.review_page.property('reviewBaselinePipelineApplied')}, "
+                        "scheduled="
+                        f"{window.review_page.property('reviewBaselinePipelineScheduled')}"
+                    ),
+                )
             finally:
                 window.db.close()
                 window.close()
