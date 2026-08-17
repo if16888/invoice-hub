@@ -1044,18 +1044,47 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     f"initial={initial_sizes}, moved={moved_sizes}",
                 )
 
-                # Keep the native height constant.  Changing height can
-                # legitimately reallocate a pane when the preview minimum is
-                # reached; this contract is specifically about a width reflow
-                # not resetting the user's vertical pane choice.
-                resized_width = max(window.minimumWidth(), window.width() - 40)
-                window.resize(resized_width, window.height())
+                # Keep the native height constant.  A large width delta can
+                # make the Windows window manager clamp the requested height
+                # to the available desktop, turning this into a height resize
+                # and legitimately rebalancing the panes.  Use the smallest
+                # feasible width change so this contract remains width-only.
+                before_resize_width = window.width()
+                before_resize_height = window.height()
+                if before_resize_width > window.minimumWidth():
+                    resized_width = before_resize_width - 1
+                else:
+                    screen = QApplication.primaryScreen()
+                    available_width = (
+                        screen.availableGeometry().width()
+                        if screen is not None
+                        else before_resize_width
+                    )
+                    resized_width = before_resize_width + 1
+                    self.assertLessEqual(
+                        resized_width,
+                        available_width,
+                        "native window has no feasible width-only resize: "
+                        f"window={before_resize_width}x{before_resize_height}, "
+                        f"minimum_width={window.minimumWidth()}, "
+                        f"available_width={available_width}",
+                    )
+                self.assertNotEqual(resized_width, before_resize_width)
+                window.resize(resized_width, before_resize_height)
                 QApplication.processEvents()
                 # Hosted Windows runners can deliver the final splitter/layout
                 # geometry one event-loop turn after the resize event.  Read
                 # the user-adjusted state only after that native layout pass.
                 QTest.qWait(50)
                 QApplication.processEvents()
+                self.assertEqual(
+                    window.height(),
+                    before_resize_height,
+                    "requested width-only resize changed the native window height: "
+                    f"before={before_resize_width}x{before_resize_height}, "
+                    f"after={window.width()}x{window.height()}, "
+                    f"requested_width={resized_width}",
+                )
                 resized_sizes = splitter.sizes()
 
                 # QSplitter preserves the user-adjusted pane in native pixels;
