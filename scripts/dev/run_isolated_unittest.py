@@ -17,6 +17,7 @@ from pathlib import Path
 
 _RAN_RE = re.compile(r"Ran (\d+) tests? in ")
 _SKIPPED_RE = re.compile(r"skipped=(\d+)")
+_MODULE_SKIP_RE = re.compile(r"unittest\.case\.SkipTest:\s*(.+)")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -74,6 +75,11 @@ def _run_module(module: str, timeout_seconds: int) -> tuple[int, str, int, int]:
         f"elapsed_ms={elapsed_ms} tests={ran} skipped={skipped}",
         flush=True,
     )
+    if process.returncode != 0:
+        module_skip = _MODULE_SKIP_RE.search(output)
+        if module_skip:
+            print(f"module_skip=1 reason={module_skip.group(1).strip()}", flush=True)
+            return 0, output, ran, max(skipped, 1)
     return process.returncode, output, ran, skipped
 
 
