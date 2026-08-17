@@ -952,6 +952,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 window.resize(1880, 1040)
                 QApplication.processEvents()
+                # Hosted Windows runners can deliver the final splitter/layout
+                # geometry one event-loop turn after the resize event.  Read
+                # the user-adjusted state only after that native layout pass.
+                QTest.qWait(50)
+                QApplication.processEvents()
                 resized_sizes = window.left_splitter.sizes()
                 resized_ratio = resized_sizes[0] / sum(resized_sizes)
 
