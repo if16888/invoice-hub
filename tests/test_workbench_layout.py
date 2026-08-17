@@ -1037,7 +1037,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     moved_positions,
                     "real splitter handle drag did not emit splitterMoved",
                 )
-                self.assertNotEqual(moved_sizes[0], initial_sizes[0])
+                self.assertNotEqual(
+                    moved_sizes[0],
+                    initial_sizes[0],
+                    "native handle drag did not move the record pane: "
+                    f"initial={initial_sizes}, moved={moved_sizes}",
+                )
 
                 # Keep the native height constant.  Changing height can
                 # legitimately reallocate a pane when the preview minimum is
