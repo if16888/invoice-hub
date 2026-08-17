@@ -94,9 +94,16 @@ class TestClampVerticalSplit(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 try:
-    from PySide6.QtCore import Qt, QSettings
+    from PySide6.QtCore import QPoint, Qt, QSettings
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QSizePolicy
+    from PySide6.QtWidgets import (
+        QApplication,
+        QComboBox,
+        QLineEdit,
+        QPushButton,
+        QSizePolicy,
+        QSplitter,
+    )
     from scripts.invoice_fetch.gui.workbench_settings import workbench_settings
 
     _HAS_PYSIDE6 = True
@@ -105,6 +112,7 @@ except ImportError:
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -933,27 +941,103 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
+                # Earlier integration cases may leave hidden top-level test
+                # windows alive in this shared QApplication. Close those
+                # stale Invoice Hub windows before exercising this window so
+                # their pending layout/timer work cannot affect the contract.
+                for other in QApplication.topLevelWidgets():
+                    if (
+                        other is not window
+                        and other.windowTitle().startswith("Invoice Hub")
+                    ):
+                        other.close()
+                        other.deleteLater()
+                QApplication.processEvents()
                 window.show()
+                window.showNormal()
+                window.raise_()
+                window.activateWindow()
                 window.resize(1920, 1080)
-                QApplication.processEvents()
-                # The review baseline installs the real vertical splitter and
-                # schedules one final 0-ms geometry normalization.  Wait for
-                # that user-visible initialization to settle before simulating
-                # a splitter drag; otherwise the callback can race the test's
-                # first read on slower Windows runners.
-                # Hosted Windows runners can take longer to deliver the
-                # splitter's deferred initial-size callback than a local
-                # desktop session.  Wait through that callback before the
-                # test simulates a user drag; otherwise the callback can
-                # legitimately overwrite the just-set user size later.
-                QTest.qWait(500)
-                QApplication.processEvents()
+                # Construction starts with a compatibility shim and then
+                # installs the real QSplitter from a deferred callback. Wait
+                # for the actual handle/geometry instead of assuming a fixed
+                # delay or interacting with the shim.
+                deadline = time.monotonic() + 2.0
+                splitter = None
+                while time.monotonic() < deadline:
+                    QApplication.processEvents()
+                    candidate = getattr(window, "left_splitter", None)
+                    middle = getattr(window, "middle_workspace", None)
+                    if middle is not None and middle.layout() is not None:
+                        middle.layout().activate()
+                    if candidate is not None:
+                        parent = candidate.parentWidget()
+                        if parent is not None and parent.layout() is not None:
+                            parent.layout().activate()
+                        candidate.updateGeometry()
+                    if (
+                        isinstance(candidate, QSplitter)
+                        and candidate.count() == 2
+                        and candidate.handle(1) is not None
+                        and candidate.height() >= candidate.minimumSizeHint().height()
+                        and sum(candidate.sizes())
+                        >= candidate.widget(0).minimumHeight()
+                        + candidate.widget(1).minimumHeight()
+                    ):
+                        splitter = candidate
+                        break
+                    QTest.qWait(20)
+                self.assertIsNotNone(
+                    splitter,
+                    "real vertical splitter handle did not become available",
+                )
+                assert splitter is not None
 
-                initial_sizes = window.left_splitter.sizes()
+                initial_sizes = splitter.sizes()
                 total_before = sum(initial_sizes)
-                window.left_splitter.setSizes([460, max(total_before - 460, 180)])
+                record_widget = splitter.widget(0)
+                preview_widget = splitter.widget(1)
+                record_min = int(record_widget.minimumHeight())
+                record_max = min(
+                    int(record_widget.maximumHeight()),
+                    total_before - int(preview_widget.minimumHeight()),
+                )
+                current_record = int(initial_sizes[0])
+                down_room = max(0, current_record - record_min)
+                up_room = max(0, record_max - current_record)
+                if down_room:
+                    delta = -min(40, down_room)
+                else:
+                    delta = min(40, up_room)
+                self.assertNotEqual(
+                    delta,
+                    0,
+                    "native splitter has no feasible user-adjustment range: "
+                    f"sizes={initial_sizes}, total={total_before}, "
+                    f"record_min={record_min}, record_max={record_max}",
+                )
+
+                moved_positions = []
+                splitter.splitterMoved.connect(
+                    lambda position, _index: moved_positions.append(int(position))
+                )
+                handle = splitter.handle(1)
+                start = handle.rect().center()
+                end = QPoint(start.x(), start.y() + delta)
+                # setSizes() changes pixels but does not establish the native
+                # user-adjusted state. Exercise the same handle path as a user.
+                QTest.mousePress(handle, Qt.LeftButton, pos=start)
+                QTest.qWait(20)
+                QTest.mouseMove(handle, end, 50)
+                QTest.mouseRelease(handle, Qt.LeftButton, pos=end)
                 QApplication.processEvents()
-                moved_sizes = window.left_splitter.sizes()
+                moved_sizes = splitter.sizes()
+
+                self.assertTrue(
+                    moved_positions,
+                    "real splitter handle drag did not emit splitterMoved",
+                )
+                self.assertNotEqual(moved_sizes[0], initial_sizes[0])
 
                 # Keep the native height constant.  Changing height can
                 # legitimately reallocate a pane when the preview minimum is
@@ -967,13 +1051,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 # the user-adjusted state only after that native layout pass.
                 QTest.qWait(50)
                 QApplication.processEvents()
-                resized_sizes = window.left_splitter.sizes()
+                resized_sizes = splitter.sizes()
 
                 # QSplitter preserves the user-adjusted pane in native pixels;
-                # the total available height can change across Windows hosts,
-                # so comparing ratios makes the test platform-dependent.
+                # compare the actual user-selected pixel position rather than
+                # an impossible fixed target or a platform-dependent ratio.
                 self.assertAlmostEqual(resized_sizes[0], moved_sizes[0], delta=8)
-                self.assertNotAlmostEqual(resized_sizes[0], initial_sizes[0], delta=8)
             finally:
                 window.db.close()
                 window.close()
