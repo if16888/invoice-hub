@@ -941,7 +941,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 # that user-visible initialization to settle before simulating
                 # a splitter drag; otherwise the callback can race the test's
                 # first read on slower Windows runners.
-                QTest.qWait(75)
+                # Hosted Windows runners can take longer to deliver the
+                # splitter's deferred initial-size callback than a local
+                # desktop session.  Wait through that callback before the
+                # test simulates a user drag; otherwise the callback can
+                # legitimately overwrite the just-set user size later.
+                QTest.qWait(500)
                 QApplication.processEvents()
 
                 initial_sizes = window.left_splitter.sizes()
