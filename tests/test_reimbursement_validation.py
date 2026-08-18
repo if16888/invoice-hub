@@ -68,6 +68,7 @@ class ReimbursementValidationTests(unittest.TestCase):
                     claim_id,
                     project_root=root,
                     runtime_dir=runtime,
+                    export_root=root / "exports",
                     reimbursement_config={
                         "buyer_name": "示例科技有限公司",
                         "strict_buyer_check": True,

@@ -106,7 +106,13 @@ class MvpExportEvidenceTests(unittest.TestCase):
                 })
                 db.add_invoice_to_claim(claim_id, invoice_id)
 
-                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+                export_dir = export_claim_package(
+                    db,
+                    claim_id,
+                    project_root,
+                    runtime_dir,
+                    export_root=project_root / "exports",
+                )
 
             self.assertTrue((export_dir / "attachments" / "2026-05-20_hotel_invoice.pdf").exists())
             self.assertTrue((export_dir / "attachments" / "2026-05-20_hotel_folio.pdf").exists())
@@ -198,7 +204,13 @@ class MvpExportEvidenceTests(unittest.TestCase):
                 db.add_invoice_to_claim(claim_id, fallback_id)
                 db.add_invoice_to_claim(claim_id, unknown_id)
 
-                export_dir = export_claim_package(db, claim_id, project_root, runtime_dir)
+                export_dir = export_claim_package(
+                    db,
+                    claim_id,
+                    project_root,
+                    runtime_dir,
+                    export_root=project_root / "exports",
+                )
 
             self.assertTrue((export_dir / "attachments" / "2026-05-21_meal_invoice.pdf").exists())
             self.assertTrue((export_dir / "attachments" / "2026-05-22_receipt.pdf").exists())

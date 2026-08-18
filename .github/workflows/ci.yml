@@ -13,13 +13,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: Validate source tree
+  source_gates:
+    name: Source gates
     runs-on: windows-latest
-    # The complete fresh-process suite currently needs more than 20 minutes
-    # on Windows hosted runners.  Keep the full test set and allow the
-    # following privacy/export/compile gates to run after it completes.
-    timeout-minutes: 45
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: "utf-8"
+      INVOICE_HUB_TEST_MODE: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+
+      - name: Verify CLI help output
+        run: python -m scripts.invoice_fetch --help
+
+      - name: Run repository privacy gate
+        run: python scripts/check_repo_privacy.py
+
+      - name: Run public export/source tree gate
+        run: python scripts/check_public_export.py .
+
+      - name: Compile-check Python sources
+        run: python -m compileall -q scripts/invoice_fetch
+
+  unit_tests:
+    name: Unit shard ${{ matrix.shard }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     env:
       PYTHONIOENCODING: "utf-8"
       INVOICE_HUB_TEST_MODE: "1"
@@ -38,40 +77,25 @@ jobs:
             requirements-build.txt
             requirements-test.txt
 
-      - name: Install Python dependencies
+      - name: Install application and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt -r requirements-test.txt
 
-      - name: Install test dependencies
-        run: pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements-test.txt
-
-      - name: Verify CLI help output
-        run: python -m scripts.invoice_fetch --help
-
-      - name: Run unit tests
+      - name: Run isolated unit-test shard
         shell: pwsh
         run: |
-          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_layout --module-timeout-seconds 900 2>&1 | Tee-Object -FilePath ci-test-output.txt
+          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_layout --module-timeout-seconds 900 --shard-count 3 --shard-index ${{ matrix.shard }} 2>&1 | Tee-Object -FilePath ci-test-output-${{ matrix.shard }}.txt
           exit $LASTEXITCODE
 
-      - name: Upload unit test output
+      - name: Upload unit-test shard output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-unit-test-output
-          path: ci-test-output.txt
+          name: ci-unit-test-output-${{ matrix.shard }}
+          path: ci-test-output-${{ matrix.shard }}.txt
           if-no-files-found: error
           retention-days: 3
-
-      - name: Run repository privacy gate
-        run: python scripts/check_repo_privacy.py
-
-      - name: Run public export/source tree gate
-        run: python scripts/check_public_export.py .
-
-      - name: Compile-check Python sources
-        run: python -m compileall -q scripts/invoice_fetch
 
   hci_acceptance:
     name: HCI acceptance lane
@@ -127,9 +151,6 @@ jobs:
   native_geometry_preflight:
     name: Native GUI geometry preflight (non-gating)
     runs-on: windows-latest
-    # A hosted desktop may be unable to satisfy the product's native GUI
-    # geometry contract.  Preserve that classification as evidence; do not
-    # turn it into a product pass or silently skip the contract.
     continue-on-error: true
     timeout-minutes: 15
     env:

@@ -291,28 +291,6 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.table.currentRow(), 0)
         self.assertEqual(window.current_invoice["invoice_number"], "HOTEL-A")
 
-    @unittest.skip("automatic paging replaced the removed load-all button")
-    def test_filtering_and_load_all_cover_rows_beyond_first_100(self):
-        rows = []
-        for index in range(130):
-            rows.append({
-                "invoice_number": f"ROW-{index:03d}",
-                "category": "目标" if index < 105 else "其他",
-                "expense_date": f"2026-06-{(index % 28) + 1:02d}",
-            })
-        window = self._make_window(rows)
-        self.assertEqual(window.table.rowCount(), 50)
-
-        window._set_column_filter("category", {"values": {"目标"}})
-
-        self.assertEqual(window.table.rowCount(), 50)
-        self.assertEqual(window._limited_first_load_total, 105)
-        self.assertIn("50 / 105", window._format_status_count_prefix())
-        self.assertFalse(window.btn_load_all.isHidden())
-        window._load_all_invoices_clicked()
-        self.assertEqual(window.table.rowCount(), 105)
-        self.assertTrue(all(row["category"] == "目标" for row in window.invoices_list))
-
     def test_review_and_material_status_are_visible_in_table(self):
         # 审核状态和资料状态都必须在表格中可见，不能只放 tooltip。
         window = self._make_window([
