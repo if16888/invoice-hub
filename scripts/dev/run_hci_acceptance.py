@@ -395,11 +395,13 @@ def run_parent_watchdog(repeat_count: int = 1, timeout_seconds: int = 120) -> in
     max_res_invoicehub = 0
     max_res_qtwebengine = 0
     max_res_threads = 0
+    last_metrics: dict = {}
 
     for i in range(1, repeat_count + 1):
         if repeat_count > 1:
             print(f"\n>>> [Run {i}/{repeat_count}] Starting...", flush=True)
         code, m = run_single_watchdog(timeout_seconds=timeout_seconds, verbose=(repeat_count == 1))
+        last_metrics = m
         if code == 0:
             total_pass += 1
             if repeat_count > 1:
@@ -435,12 +437,22 @@ def run_parent_watchdog(repeat_count: int = 1, timeout_seconds: int = 120) -> in
         print("=" * 60, flush=True)
 
     all_runs_accepted = total_pass == repeat_count and total_fail == 0
+    final_exit_code = 0 if all_runs_accepted else 1
+    if repeat_count == 1:
+        print(
+            "HCI_ACCEPTANCE_SUMMARY "
+            f"actual_scenarios={last_metrics.get('total', 0)} "
+            f"actual_passed={last_metrics.get('passed', 0)} "
+            f"actual_failed={last_metrics.get('failed', 0)} "
+            f"exit_code={final_exit_code}",
+            flush=True,
+        )
     if all_runs_accepted:
         print("HCI ACCEPTANCE: PASS\n", flush=True)
-        return 0
+        return final_exit_code
     else:
         print("HCI ACCEPTANCE: FAIL\n", flush=True)
-        return 1
+        return final_exit_code
 
 
 def main() -> None:

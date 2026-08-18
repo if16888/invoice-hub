@@ -23,14 +23,33 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-def _module_names(root: Path, pattern: str) -> list[str]:
+def _module_names(
+    root: Path,
+    pattern: str,
+    exclude_dirs: tuple[Path, ...] = (),
+    exclude_modules: tuple[str, ...] = (),
+) -> tuple[list[str], list[str]]:
     modules = []
+    excluded = []
+    resolved_excludes = tuple(path.resolve() for path in exclude_dirs)
     for path in sorted(root.rglob(pattern)):
         if not path.is_file() or path.name == "__init__.py":
             continue
+        resolved_path = path.resolve()
+        if any(
+            excluded_dir == resolved_path.parent
+            or excluded_dir in resolved_path.parents
+            for excluded_dir in resolved_excludes
+        ):
+            excluded.append(str(path.relative_to(root.parent).with_suffix("")))
+            continue
         relative = path.relative_to(root.parent).with_suffix("")
-        modules.append(".".join(relative.parts))
-    return modules
+        module = ".".join(relative.parts)
+        if module in exclude_modules:
+            excluded.append(module)
+            continue
+        modules.append(module)
+    return modules, excluded
 
 
 def _exit_hex(code: int) -> str:
@@ -75,11 +94,22 @@ def _run_module(module: str, timeout_seconds: int) -> tuple[int, str, int, int]:
         f"elapsed_ms={elapsed_ms} tests={ran} skipped={skipped}",
         flush=True,
     )
+    if process.returncode == 0 and ran == 0:
+        print(
+            f"ISOLATED TEST FAILURE: {module} reported zero executed tests; "
+            "the module is not valid release evidence.",
+            flush=True,
+        )
+        return 2, output, ran, skipped
     if process.returncode != 0:
         module_skip = _MODULE_SKIP_RE.search(output)
         if module_skip:
-            print(f"module_skip=1 reason={module_skip.group(1).strip()}", flush=True)
-            return 0, output, ran, max(skipped, 1)
+            print(
+                f"ISOLATED TEST FAILURE: {module} was skipped at module import: "
+                f"{module_skip.group(1).strip()}",
+                flush=True,
+            )
+            return 2, output, ran, skipped
     return process.returncode, output, ran, skipped
 
 
@@ -87,6 +117,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tests-dir", type=Path, default=Path("tests"))
     parser.add_argument("--pattern", default="test_*.py")
+    parser.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=["tests/hci_acceptance"],
+        help=(
+            "Test directory to exclude from the generic lane.  The HCI "
+            "acceptance lane owns tests/hci_acceptance explicitly."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-module",
+        action="append",
+        default=["tests.test_workbench_layout"],
+        help=(
+            "Native GUI module to exclude from the generic lane.  The "
+            "native geometry lane owns this module explicitly."
+        ),
+    )
     parser.add_argument("--module-timeout-seconds", type=int, default=900)
     args = parser.parse_args()
 
@@ -96,11 +144,26 @@ def main() -> int:
     if args.module_timeout_seconds <= 0:
         parser.error("--module-timeout-seconds must be positive")
 
-    modules = _module_names(tests_dir, args.pattern)
+    project_root = tests_dir.parent
+    exclude_dirs = tuple(
+        (project_root / Path(exclude_dir)).resolve()
+        for exclude_dir in args.exclude_dir
+    )
+    modules, excluded_modules = _module_names(
+        tests_dir,
+        args.pattern,
+        exclude_dirs=exclude_dirs,
+        exclude_modules=tuple(args.exclude_module),
+    )
     if not modules:
         parser.error(f"no test modules matched {args.pattern!r} under {tests_dir}")
 
     print(f"isolated_modules={len(modules)}", flush=True)
+    print(
+        "excluded_modules="
+        + (",".join(excluded_modules) if excluded_modules else "none"),
+        flush=True,
+    )
     total_tests = 0
     total_skipped = 0
     for module in modules:
@@ -116,6 +179,14 @@ def main() -> int:
                 flush=True,
             )
             return returncode if returncode > 0 else 1
+
+    if total_tests <= 0:
+        print(
+            "ISOLATED TEST FAILURE: generic lane executed zero tests; "
+            "no release evidence was produced.",
+            flush=True,
+        )
+        return 2
 
     print(
         f"ISOLATED TEST SUITE PASS: modules={len(modules)} "

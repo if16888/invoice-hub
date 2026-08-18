@@ -36,11 +36,15 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-build.txt
+            requirements-test.txt
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+
+      - name: Install test dependencies
+        run: pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements-test.txt
 
       - name: Verify CLI help output
         run: python -m scripts.invoice_fetch --help
@@ -48,7 +52,7 @@ jobs:
       - name: Run unit tests
         shell: pwsh
         run: |
-          python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900 2>&1 | Tee-Object -FilePath ci-test-output.txt
+          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_layout --module-timeout-seconds 900 2>&1 | Tee-Object -FilePath ci-test-output.txt
           exit $LASTEXITCODE
 
       - name: Upload unit test output
@@ -68,3 +72,101 @@ jobs:
 
       - name: Compile-check Python sources
         run: python -m compileall -q scripts/invoice_fetch
+
+  hci_acceptance:
+    name: HCI acceptance lane
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: "utf-8"
+      INVOICE_HUB_TEST_MODE: "1"
+      HCI_ARTIFACT_DIR: artifacts/hci_acceptance
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+            requirements-test.txt
+
+      - name: Install application and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt -r requirements-test.txt
+
+      - name: Run authoritative HCI acceptance
+        shell: pwsh
+        run: |
+          python scripts/dev/run_hci_acceptance.py 2>&1 | Tee-Object -FilePath hci-acceptance-output.txt
+          $code = $LASTEXITCODE
+          Write-Host "HCI authoritative exit code: $code"
+          exit $code
+
+      - name: Run HCI oracle contract tests
+        if: always()
+        run: python -m pytest -q tests/hci_acceptance/test_mutation_selftest.py tests/hci_acceptance/test_report_verdict.py
+
+      - name: Upload HCI acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hci-acceptance-evidence
+          path: |
+            hci-acceptance-output.txt
+            artifacts/hci_acceptance
+          if-no-files-found: warn
+          retention-days: 3
+
+  native_geometry_preflight:
+    name: Native GUI geometry preflight (non-gating)
+    runs-on: windows-latest
+    # A hosted desktop may be unable to satisfy the product's native GUI
+    # geometry contract.  Preserve that classification as evidence; do not
+    # turn it into a product pass or silently skip the contract.
+    continue-on-error: true
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: "utf-8"
+      INVOICE_HUB_TEST_MODE: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+
+      - name: Classify native GUI geometry
+        shell: pwsh
+        run: |
+          python scripts/dev/check_native_gui_geometry.py 2>&1 | Tee-Object -FilePath native-geometry-preflight.txt
+          $code = $LASTEXITCODE
+          Write-Host "Native geometry preflight exit code: $code"
+          exit $code
+
+      - name: Upload native geometry evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-geometry-preflight
+          path: native-geometry-preflight.txt
+          if-no-files-found: error
+          retention-days: 3

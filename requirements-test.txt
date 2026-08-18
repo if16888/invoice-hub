@@ -1,0 +1,3 @@
+# Test-only dependencies.  Production and packaging requirements stay in
+# requirements.txt and requirements-build.txt respectively.
+pytest>=8.0,<10
