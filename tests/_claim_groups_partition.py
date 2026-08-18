@@ -97,7 +97,7 @@ def _claim_quality_report_gui_prompt(self):
                 with patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", runtime_dir), patch(
                     "scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root
                 ), patch(
-                    "scripts.invoice_fetch.export_paths.resolve_export_directory",
+                    "scripts.invoice_fetch.gui.app.resolve_export_directory",
                     return_value=external_export_root,
                 ):
                     window = InvoiceReviewApp(db_path, splash=None)

@@ -19,6 +19,18 @@ from scripts.invoice_fetch import review_status
 
 
 class ClaimGroupsTests(unittest.TestCase):
+    def setUp(self):
+        self._test_export_root = Path(
+            tempfile.mkdtemp(prefix="invoice-hub-claim-exports-")
+        )
+        self._export_path_patch = patch(
+            "scripts.invoice_fetch.export_paths.resolve_export_directory",
+            return_value=self._test_export_root,
+        )
+        self._export_path_patch.start()
+        self.addCleanup(self._export_path_patch.stop)
+        self.addCleanup(shutil.rmtree, self._test_export_root, ignore_errors=True)
+
     def test_pending_evidence_helper_does_not_confuse_manual_review_types(self):
         self.assertTrue(is_pending_evidence_invoice({
             "invoice_type": "待关联证明材料",
@@ -3113,17 +3125,6 @@ class ClaimGroupsTests(unittest.TestCase):
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
-
-    def test_gui_category_dropdown_call_pattern(self):
-        # We dummy this line to keep exact naming matching
-        pass
-
-    def test_gui_category_dropdown_app_wrapper(self):
-        # Keep pattern matching
-        pass
-
-    def test_gui_category_dropdown_original_placeholder(self):
-        pass
 
     def test_gui_category_dropdown_reuses_existing_and_saved_custom_categories(self):
         try:
@@ -6828,6 +6829,7 @@ class ClaimGroupsTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as td:
                 project_root = Path(td) / "project"
                 runtime_dir = project_root / "runtime"
+                external_export_root = Path(td) / "user-exports"
                 db_path = runtime_dir / "invoices.db"
 
                 with InvoiceDB(db_path) as db:
@@ -6851,7 +6853,11 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     from scripts.invoice_fetch.gui.app import InvoiceReviewApp
                     with patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", runtime_dir), \
-                         patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root):
+                         patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root), \
+                         patch(
+                             "scripts.invoice_fetch.gui.app.resolve_export_directory",
+                             return_value=external_export_root,
+                         ):
                         window = InvoiceReviewApp(db_path, splash=None)
                         try:
                             window._update_document_preview = Mock()
@@ -6871,8 +6877,15 @@ class ClaimGroupsTests(unittest.TestCase):
 
                                 setText_calls = [c for c in mock_box_instance.setText.call_args_list]
                                 self.assertTrue(any("发现 1 个需确认项" in call[0][0] for call in setText_calls))
-                                self.assertTrue(any("exports/GUI QA Group_" in call[0][0] for call in setText_calls))
-                                self.assertFalse(any(str(td) in call[0][0] for call in setText_calls))
+                                combined = "\n".join(
+                                    call[0][0] for call in setText_calls if call[0]
+                                )
+                                self.assertIn("输出路径:", combined)
+                                self.assertNotIn("exports/GUI QA Group_", combined)
+                                self.assertNotIn(str(td), combined)
+                                self.assertNotIn(str(project_root), combined)
+                                self.assertNotIn(str(runtime_dir), combined)
+                                self.assertNotIn(str(external_export_root), combined)
 
                             # Scenario 2: 0 warnings (fix empty seller name)
                             db.update_invoice_fields(
