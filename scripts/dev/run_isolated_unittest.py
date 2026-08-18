@@ -129,14 +129,20 @@ def main() -> int:
     parser.add_argument(
         "--exclude-dir",
         action="append",
-        default=[],
-        help="Test directory owned by another lane and excluded from this run.",
+        default=["tests/hci_acceptance"],
+        help=(
+            "Test directory owned by another lane and excluded from this run. "
+            "HCI acceptance is excluded by default."
+        ),
     )
     parser.add_argument(
         "--exclude-module",
         action="append",
-        default=[],
-        help="Test module owned by another lane and excluded from this run.",
+        default=["tests.test_workbench_layout"],
+        help=(
+            "Test module owned by another lane and excluded from this run. "
+            "The native workbench contract is excluded by default."
+        ),
     )
     parser.add_argument("--module-timeout-seconds", type=int, default=900)
     parser.add_argument(
