@@ -16,7 +16,10 @@ jobs:
   validate:
     name: Validate source tree
     runs-on: windows-latest
-    timeout-minutes: 20
+    # The complete fresh-process suite currently needs more than 20 minutes
+    # on Windows hosted runners.  Keep the full test set and allow the
+    # following privacy/export/compile gates to run after it completes.
+    timeout-minutes: 45
     env:
       PYTHONIOENCODING: "utf-8"
       INVOICE_HUB_TEST_MODE: "1"
