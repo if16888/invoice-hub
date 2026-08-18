@@ -957,7 +957,38 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.showNormal()
                 window.raise_()
                 window.activateWindow()
-                window.resize(1920, 1080)
+                # Keep the test window inside the native desktop work area.
+                # On hosted Windows, requesting a 1920x1080 normal window on
+                # a smaller desktop can leave the window apparently at that
+                # size until the next resize, when the window manager restores
+                # it to the available geometry.  That turns a width-only
+                # request into an unrelated height resize before the product
+                # can be evaluated.
+                screen = QApplication.primaryScreen()
+                available = (
+                    screen.availableGeometry()
+                    if screen is not None
+                    else window.geometry()
+                )
+                target_width = min(1200, max(0, available.width() - 40))
+                target_height = min(900, max(0, available.height() - 10))
+                target_width = max(target_width, window.minimumWidth() + 1)
+                target_height = max(target_height, window.minimumHeight() + 1)
+                self.assertLessEqual(
+                    target_width,
+                    available.width(),
+                    "native desktop is narrower than the workbench minimum: "
+                    f"available={available.width()}x{available.height()}, "
+                    f"minimum={window.minimumWidth()}x{window.minimumHeight()}",
+                )
+                self.assertLessEqual(
+                    target_height,
+                    available.height(),
+                    "native desktop is shorter than the workbench minimum: "
+                    f"available={available.width()}x{available.height()}, "
+                    f"minimum={window.minimumWidth()}x{window.minimumHeight()}",
+                )
+                window.resize(target_width, target_height)
                 # Construction starts with a compatibility shim and then
                 # installs the real QSplitter from a deferred callback. Wait
                 # for the actual handle/geometry instead of assuming a fixed
