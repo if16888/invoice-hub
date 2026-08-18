@@ -13,37 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  apply_claim_quality_fix:
-    name: Apply claim-quality test correction (temporary)
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: windows-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout PR head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-
-      - name: Apply test-only correction
-        shell: pwsh
-        run: |
-          python scripts/dev/fix_claim_quality_test.py
-          $changed = git status --porcelain -- tests/test_claim_groups.py
-          if (-not $changed) {
-            Write-Host "No claim-quality correction remains."
-            exit 0
-          }
-          git diff --check
-          git diff -- tests/test_claim_groups.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- tests/test_claim_groups.py
-          git commit -m "test: preserve claim-quality GUI initialization contract"
-          git push origin "HEAD:${{ github.head_ref }}"
-
   source_gates:
     name: Source gates
     runs-on: windows-latest
