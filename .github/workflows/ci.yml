@@ -25,6 +25,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Temporary PR-local transfer aid: capture the large test modules so this
+      # hygiene pass can edit them without touching the user's shared worktree.
+      # Removed again before this PR leaves Draft.
+      - name: Upload test-hygiene source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-hygiene-source-snapshot
+          path: |
+            tests/test_claim_groups.py
+            tests/test_gui_column_filters.py
+            tests/test_ihds09.py
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
