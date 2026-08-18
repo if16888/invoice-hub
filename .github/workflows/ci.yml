@@ -13,6 +13,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  apply_test_hygiene:
+    name: Apply test hygiene round 2 (temporary)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Apply deterministic test-only migration
+        shell: pwsh
+        run: |
+          python scripts/dev/apply_test_hygiene_round2.py
+          $changed = git status --porcelain -- tests/test_claim_groups.py tests/test_gui_column_filters.py tests/test_ihds09.py
+          if (-not $changed) {
+            Write-Host "No hygiene changes remain; migration is idempotent."
+            exit 0
+          }
+          git diff --check
+          git diff --stat -- tests/test_claim_groups.py tests/test_gui_column_filters.py tests/test_ihds09.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- tests/test_claim_groups.py tests/test_gui_column_filters.py tests/test_ihds09.py
+          git commit -m "test: remove obsolete skips and merge duplicate GUI cases"
+          git push origin "HEAD:${{ github.head_ref }}"
+
   source_gates:
     name: Source gates
     runs-on: windows-latest
@@ -25,9 +56,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Temporary PR-local transfer aid: capture the large test modules so this
-      # hygiene pass can edit them without touching the user's shared worktree.
-      # Removed again before this PR leaves Draft.
+      # Temporary PR-local transfer aid. Removed before this PR leaves Draft.
       - name: Upload test-hygiene source snapshot
         uses: actions/upload-artifact@v4
         with:
