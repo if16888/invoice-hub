@@ -47,7 +47,10 @@ class IsolatedUnittestRunnerTests(unittest.TestCase):
             )
 
         self.assertEqual(modules, ["tests.test_a"])
-        self.assertCountEqual(excluded, ["tests.test_b", "tests/owned/test_c"])
+        self.assertCountEqual(
+            excluded,
+            ["tests.test_b", str(Path("tests") / "owned" / "test_c")],
+        )
         self.assertEqual(_select_shard(modules, 1, 0), ["tests.test_a"])
 
 
