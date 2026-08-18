@@ -19,6 +19,16 @@ _RAN_RE = re.compile(r"Ran (\d+) tests? in ")
 _SKIPPED_RE = re.compile(r"skipped=(\d+)")
 _MODULE_SKIP_RE = re.compile(r"unittest\.case\.SkipTest:\s*(.+)")
 
+# Keep the canonical module name for direct/local unittest compatibility while
+# letting isolated CI split the single largest module across fresh processes.
+_MODULE_EXPANSIONS = {
+    "tests.test_claim_groups": (
+        "tests.claim_groups_core",
+        "tests.claim_groups_gui",
+        "tests.claim_groups_mail",
+    ),
+}
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -50,6 +60,16 @@ def _module_names(
             continue
         modules.append(module)
     return modules, excluded
+
+
+def _expand_modules(modules: list[str]) -> list[str]:
+    """Expand known oversized modules into disjoint isolated-process owners."""
+    expanded = []
+    for module in modules:
+        expanded.extend(_MODULE_EXPANSIONS.get(module, (module,)))
+    if len(expanded) != len(set(expanded)):
+        raise ValueError("expanded unittest module list contains duplicates")
+    return expanded
 
 
 def _select_shard(modules: list[str], shard_count: int, shard_index: int) -> list[str]:
@@ -174,12 +194,13 @@ def main() -> int:
         (project_root / Path(exclude_dir)).resolve()
         for exclude_dir in args.exclude_dir
     )
-    all_modules, excluded_modules = _module_names(
+    discovered_modules, excluded_modules = _module_names(
         tests_dir,
         args.pattern,
         exclude_dirs=exclude_dirs,
         exclude_modules=tuple(args.exclude_module),
     )
+    all_modules = _expand_modules(discovered_modules)
     if not all_modules:
         parser.error(f"no test modules matched {args.pattern!r} under {tests_dir}")
 
@@ -189,7 +210,10 @@ def main() -> int:
             f"shard {args.shard_index}/{args.shard_count} contains no test modules"
         )
 
-    print(f"discovered_modules={len(all_modules)}", flush=True)
+    print(
+        f"discovered_modules={len(discovered_modules)} expanded_modules={len(all_modules)}",
+        flush=True,
+    )
     print(
         f"shard_index={args.shard_index} shard_count={args.shard_count} "
         f"isolated_modules={len(modules)}",
