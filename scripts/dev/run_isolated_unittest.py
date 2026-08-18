@@ -1,8 +1,8 @@
-"""Run every unittest module in a fresh Python process.
+"""Run unittest modules in fresh Python processes.
 
-This is intentionally fail-fast and does not retry a failed module.  Running
-modules in separate processes preserves the complete discovered test set while
-preventing Qt/PySide object graphs from accumulating across unrelated modules.
+Each module is executed exactly once, without retries. Optional deterministic
+sharding lets CI parallelize modules while preserving the Qt/PySide process
+isolation that prevents object graphs from accumulating across modules.
 """
 
 from __future__ import annotations
@@ -50,6 +50,15 @@ def _module_names(
             continue
         modules.append(module)
     return modules, excluded
+
+
+def _select_shard(modules: list[str], shard_count: int, shard_index: int) -> list[str]:
+    """Return one deterministic round-robin partition of an ordered module list."""
+    if shard_count <= 0:
+        raise ValueError("shard_count must be positive")
+    if shard_index < 0 or shard_index >= shard_count:
+        raise ValueError("shard_index must be in [0, shard_count)")
+    return modules[shard_index::shard_count]
 
 
 def _exit_hex(code: int) -> str:
@@ -120,22 +129,28 @@ def main() -> int:
     parser.add_argument(
         "--exclude-dir",
         action="append",
-        default=["tests/hci_acceptance"],
-        help=(
-            "Test directory to exclude from the generic lane.  The HCI "
-            "acceptance lane owns tests/hci_acceptance explicitly."
-        ),
+        default=[],
+        help="Test directory owned by another lane and excluded from this run.",
     )
     parser.add_argument(
         "--exclude-module",
         action="append",
-        default=["tests.test_workbench_layout"],
-        help=(
-            "Native GUI module to exclude from the generic lane.  The "
-            "native geometry lane owns this module explicitly."
-        ),
+        default=[],
+        help="Test module owned by another lane and excluded from this run.",
     )
     parser.add_argument("--module-timeout-seconds", type=int, default=900)
+    parser.add_argument(
+        "--shard-count",
+        type=int,
+        default=1,
+        help="Number of deterministic round-robin shards.",
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="Zero-based shard index to execute.",
+    )
     args = parser.parse_args()
 
     tests_dir = args.tests_dir.resolve()
@@ -143,27 +158,44 @@ def main() -> int:
         parser.error(f"tests directory does not exist: {tests_dir}")
     if args.module_timeout_seconds <= 0:
         parser.error("--module-timeout-seconds must be positive")
+    if args.shard_count <= 0:
+        parser.error("--shard-count must be positive")
+    if args.shard_index < 0 or args.shard_index >= args.shard_count:
+        parser.error("--shard-index must be in [0, shard-count)")
 
     project_root = tests_dir.parent
     exclude_dirs = tuple(
         (project_root / Path(exclude_dir)).resolve()
         for exclude_dir in args.exclude_dir
     )
-    modules, excluded_modules = _module_names(
+    all_modules, excluded_modules = _module_names(
         tests_dir,
         args.pattern,
         exclude_dirs=exclude_dirs,
         exclude_modules=tuple(args.exclude_module),
     )
-    if not modules:
+    if not all_modules:
         parser.error(f"no test modules matched {args.pattern!r} under {tests_dir}")
 
-    print(f"isolated_modules={len(modules)}", flush=True)
+    modules = _select_shard(all_modules, args.shard_count, args.shard_index)
+    if not modules:
+        parser.error(
+            f"shard {args.shard_index}/{args.shard_count} contains no test modules"
+        )
+
+    print(f"discovered_modules={len(all_modules)}", flush=True)
+    print(
+        f"shard_index={args.shard_index} shard_count={args.shard_count} "
+        f"isolated_modules={len(modules)}",
+        flush=True,
+    )
+    print("shard_modules=" + ",".join(modules), flush=True)
     print(
         "excluded_modules="
         + (",".join(excluded_modules) if excluded_modules else "none"),
         flush=True,
     )
+
     total_tests = 0
     total_skipped = 0
     for module in modules:
@@ -182,15 +214,15 @@ def main() -> int:
 
     if total_tests <= 0:
         print(
-            "ISOLATED TEST FAILURE: generic lane executed zero tests; "
+            "ISOLATED TEST FAILURE: selected shard executed zero tests; "
             "no release evidence was produced.",
             flush=True,
         )
         return 2
 
     print(
-        f"ISOLATED TEST SUITE PASS: modules={len(modules)} "
-        f"tests={total_tests} skipped={total_skipped}",
+        f"ISOLATED TEST SUITE PASS: shard={args.shard_index}/{args.shard_count} "
+        f"modules={len(modules)} tests={total_tests} skipped={total_skipped}",
         flush=True,
     )
     return 0
