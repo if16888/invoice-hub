@@ -2,7 +2,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.dev.run_isolated_unittest import _module_names, _select_shard
+from scripts.dev.run_isolated_unittest import (
+    _expand_modules,
+    _module_names,
+    _select_shard,
+)
 
 
 class IsolatedUnittestRunnerTests(unittest.TestCase):
@@ -28,6 +32,27 @@ class IsolatedUnittestRunnerTests(unittest.TestCase):
             _select_shard(["a"], 2, -1)
         with self.assertRaises(ValueError):
             _select_shard(["a"], 2, 2)
+
+    def test_heavy_module_expands_once_into_disjoint_process_owners(self):
+        modules = [
+            "tests.test_alpha",
+            "tests.test_claim_groups",
+            "tests.test_omega",
+        ]
+
+        expanded = _expand_modules(modules)
+
+        self.assertEqual(
+            expanded,
+            [
+                "tests.test_alpha",
+                "tests.claim_groups_core",
+                "tests.claim_groups_gui",
+                "tests.claim_groups_mail",
+                "tests.test_omega",
+            ],
+        )
+        self.assertEqual(len(expanded), len(set(expanded)))
 
     def test_module_exclusions_happen_before_sharding(self):
         with tempfile.TemporaryDirectory() as td:
