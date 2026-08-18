@@ -6836,6 +6836,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     inv_id = db.insert_invoice({
                         "invoice_number": "GUI001",
                         "total_amount": "100.00",
+                        "expense_date": "2026-06-01",
                         "seller_name": "",
                         "category": "交通",
                         "review_status": review_status.APPROVED,
@@ -6853,6 +6854,7 @@ class ClaimGroupsTests(unittest.TestCase):
                          patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root):
                         window = InvoiceReviewApp(db_path, splash=None)
                         try:
+                            window._update_document_preview = Mock()
                             window._deferred_init()
 
                             # Scenario 1: 1 warning (empty seller name)
