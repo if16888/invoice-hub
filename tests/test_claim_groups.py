@@ -6853,10 +6853,6 @@ class ClaimGroupsTests(unittest.TestCase):
                          patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root):
                         window = InvoiceReviewApp(db_path, splash=None)
                         try:
-                            # This test does not exercise embedded preview rendering.
-                            # Avoid opening the synthetic PDF so Windows can remove the
-                            # temporary directory deterministically.
-                            window._update_document_preview = Mock()
                             window._deferred_init()
 
                             # Scenario 1: 1 warning (empty seller name)
