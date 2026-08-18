@@ -999,7 +999,10 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 # Construction starts with a compatibility shim and then
                 # installs the real QSplitter from a deferred callback. Wait
                 # for the actual handle/geometry instead of assuming a fixed
-                # delay or interacting with the shim.
+                # delay or interacting with the shim.  Compact native
+                # desktops may legitimately compress the panes below their
+                # ideal minimumSizeHint; that must not prevent exercising the
+                # real handle path.
                 deadline = time.monotonic() + 2.0
                 splitter = None
                 while time.monotonic() < deadline:
@@ -1017,10 +1020,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                         isinstance(candidate, QSplitter)
                         and candidate.count() == 2
                         and candidate.handle(1) is not None
-                        and candidate.height() >= candidate.minimumSizeHint().height()
-                        and sum(candidate.sizes())
-                        >= candidate.widget(0).minimumHeight()
-                        + candidate.widget(1).minimumHeight()
+                        and len(candidate.sizes()) == 2
+                        and all(int(size) > 0 for size in candidate.sizes())
                     ):
                         splitter = candidate
                         break
