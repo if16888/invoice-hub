@@ -11,7 +11,9 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QLineEdit, QPushButton
+from shiboken6 import isValid as is_qobject_valid
 
 from scripts.invoice_fetch.gui.api_key_dialog import ApiKeyDialog
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp, ReviewViewState
@@ -36,20 +38,41 @@ class IHDS09Tests(unittest.TestCase):
         QWidget deletions queued eventually terminates the Windows Qt test
         process without a Python traceback.
         """
-        for widget in list(self.app.topLevelWidgets()):
-            if widget is None or widget is self.app:
+        widgets = [
+            widget
+            for widget in list(self.app.topLevelWidgets())
+            if widget is not None and widget is not self.app and is_qobject_valid(widget)
+        ]
+        # Let zero-delay callbacks queued by the just-closed window run while
+        # its QObject graph is still valid.  Scheduling deleteLater() first
+        # can let DeferredDelete win the event ordering and leave a queued
+        # callback holding a stale Shiboken wrapper.
+        for widget in widgets:
+            if not is_qobject_valid(widget):
                 continue
             close = getattr(widget, "close", None)
             if callable(close):
                 close()
-            widget.deleteLater()
         self.app.processEvents()
+
+        for widget in widgets:
+            if widget is None or widget is self.app or not is_qobject_valid(widget):
+                continue
+            widget.deleteLater()
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
         self.app.processEvents()
 
     def make_window(self, td):
         window = InvoiceReviewApp(Path(td) / "ihds09.db")
-        window.show(); self.app.processEvents()
+        window.show()
+        self.app.processEvents()
+        # Let the application's 50-ms deferred initialization and the queued
+        # page-normalization callbacks finish while this fixture's window and
+        # database are still valid.  A single processEvents() can return before
+        # newly queued timers on slower Windows runs, leaving their callbacks
+        # to overlap the next fixture's QApplication lifecycle.
+        QTest.qWait(75)
+        self.app.processEvents()
         return window
 
     def test_all_mobile_entries_open_embedded_task(self):
@@ -406,7 +429,16 @@ class IHDS09Tests(unittest.TestCase):
 
     def _close_mailbox_state_window(self, window):
         window._test_mailbox_patcher.stop()
-        window.close()
+        if is_qobject_valid(window):
+            window.close()
+        # This fixture removes its TemporaryDirectory immediately.  Complete
+        # the Qt close/deferred-delete cycle before removing the database
+        # directory so queued callbacks cannot target a half-torn-down window.
+        self.app.processEvents()
+        if is_qobject_valid(window):
+            window.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
         window._test_mailbox_td.cleanup()
 
     def test_mailbox_normal_account_hides_repair_credential(self):
