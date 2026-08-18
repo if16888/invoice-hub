@@ -218,6 +218,8 @@ class IHDS09Tests(unittest.TestCase):
                 self.assertEqual(window.settings_mailbox_list.width(), 280)
                 self.assertFalse(hasattr(window, "stat_box_overview"))
                 self.assertTrue(hasattr(window, "lbl_detail_email"))
+                self.assertTrue(hasattr(window, "lbl_detail_server"))
+                self.assertTrue(hasattr(window, "lbl_settings_mailbox_scan_result"))
             finally: window.close()
 
     def test_api_key_uses_custom_dialog_and_show_hide(self):
@@ -225,6 +227,8 @@ class IHDS09Tests(unittest.TestCase):
         self.assertEqual(dialog.txt_key.echoMode(), QLineEdit.Password)
         dialog.btn_show_hide.setChecked(True)
         self.assertEqual(dialog.txt_key.echoMode(), QLineEdit.Normal)
+        dialog.btn_show_hide.setChecked(False)
+        self.assertEqual(dialog.txt_key.echoMode(), QLineEdit.Password)
         self.assertTrue(is_visual_primary(dialog.btn_save_and_test))
         self.assertFalse(is_visual_primary(dialog.btn_save))
         dialog.close()
@@ -236,21 +240,6 @@ class IHDS09Tests(unittest.TestCase):
                 for page in (window.overview_page, window.imports_page, window.export_page, window.settings_page):
                     visible = [b for b in page.findChildren(QPushButton) if b.isVisible() and is_visual_primary(b)]
                     self.assertLessEqual(len(visible), 1)
-            finally: window.close()
-
-    def test_mailbox_page_uses_master_detail(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertEqual(window.settings_mailbox_list.width(), 280)
-                self.assertTrue(hasattr(window, "lbl_detail_server"))
-                self.assertTrue(hasattr(window, "lbl_settings_mailbox_scan_result"))
-            finally: window.close()
-
-    def test_mailbox_page_has_no_visible_summary_strip(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try: self.assertFalse(hasattr(window, "stat_box_overview"))
             finally: window.close()
 
     def test_mailbox_identity_is_not_repeated(self):
@@ -302,12 +291,6 @@ class IHDS09Tests(unittest.TestCase):
         source = inspect.getsource(InvoiceReviewApp._configure_settings_ai_key)
         self.assertIn("ApiKeyDialog", source)
         self.assertNotIn("QInputDialog", source)
-
-    def test_api_key_dialog_supports_show_hide(self):
-        dialog = ApiKeyDialog("DeepSeek")
-        dialog.btn_show_hide.setChecked(True); self.assertEqual(dialog.txt_key.echoMode(), QLineEdit.Normal)
-        dialog.btn_show_hide.setChecked(False); self.assertEqual(dialog.txt_key.echoMode(), QLineEdit.Password)
-        dialog.close()
 
     def test_api_key_dialog_has_save_and_test(self):
         """The verify/test button must be the unique primary action and have honest text."""

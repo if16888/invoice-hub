@@ -5190,72 +5190,6 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
-    @unittest.skip("cross-workflow toolbar widgets were replaced by QAction commands")
-    def test_gui_shell_version_about_and_more_menu_actions(self):
-        try:
-            from PySide6.QtWidgets import QApplication
-            import sys
-            app = QApplication.instance() or QApplication(sys.argv)
-
-            with tempfile.TemporaryDirectory() as td:
-                db_path = Path(td) / "test_gui_shell.db"
-                from scripts.invoice_fetch import APP_VERSION
-                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                window = InvoiceReviewApp(db_path, splash=None)
-                try:
-                    app.processEvents()
-                    self.assertIn(APP_VERSION, window.windowTitle())
-                    self.assertEqual(window.lbl_version.text(), APP_VERSION)
-
-                    expected = [
-                        "刷新数据",
-                        "扫码上传",
-                        "扫描邮箱",
-                        "导出当前视图",
-                        "打开数据目录",
-                        "打开导出目录",
-                        "打开日志目录",
-                        "复制诊断信息",
-                        "导出脱敏诊断包",
-                        "打开 GitHub Issues",
-                    ]
-                    actions = [a for a in window.more_menu.actions() if not a.isSeparator()]
-                    self.assertEqual([a.text() for a in actions], expected)
-                    forbidden_menu_prefixes = ("🔄", "📁", "🧾", "ℹ️", "💾", "❔", "⚙️")
-                    for action in actions:
-                        for prefix in forbidden_menu_prefixes:
-                            self.assertNotIn(prefix, action.text())
-                        self.assertFalse(action.icon().isNull(), action.text())
-
-                    about_text = window._about_text()
-                    self.assertIn("Invoice Hub", about_text)
-                    self.assertIn(f"Version: {APP_VERSION}", about_text)
-                    self.assertIn("本地优先的个人报销工作台", about_text)
-                    self.assertIn("本地数据目录：", about_text)
-                    self.assertNotIn("Build:", about_text)
-                    self.assertNotIn("Mode:", about_text)
-                    self.assertIsNotNone(window.action_import_local)
-                    self.assertIsNotNone(window.action_scan_email)
-                    self.assertEqual(window.btn_mobile_upload.property("variant"), "toolbar")
-                    self.assertIsNotNone(window.action_toolbar_export)
-                    self.assertIn("购买方", window.txt_search.placeholderText())
-                    self.assertIn("金额", window.txt_search.placeholderText())
-                    self.assertFalse(hasattr(window.btn_import_local, "parentWidget"))
-                    self.assertEqual(
-                        [window.action_import_local.text()],
-                        ["本地文件", "手机上传", "邮箱扫描"],
-                    )
-                finally:
-                    if hasattr(window, "db") and window.db is not None:
-                        window.db.close()
-                    window.close()
-                    window.deleteLater()
-                    app.processEvents()
-        except Exception as e:
-            if isinstance(e, (ImportError, RuntimeError)):
-                self.skipTest(f"Skipping GUI test: {e}")
-            raise
-
     def test_gui_more_menu_export_routes_to_export_page(self):
         try:
             from PySide6.QtWidgets import QApplication
@@ -6573,6 +6507,10 @@ class ClaimGroupsTests(unittest.TestCase):
                      patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", Path(td) / "project"):
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
+                        # Path-resolution behavior is independent of embedded PDF
+                        # rendering. Do not open the synthetic attachment in QPdfDocument;
+                        # that file handle would make Windows temp cleanup nondeterministic.
+                        window._update_document_preview = Mock()
                         window._deferred_init()
                         window.table.selectRow(0)
 
@@ -6585,13 +6523,17 @@ class ClaimGroupsTests(unittest.TestCase):
                         opened_path = Path(mock_open_local_path.call_args.args[0])
                         self.assertEqual(opened_path, attachment_file)
                     finally:
+                        if hasattr(window, "pdf_document") and window.pdf_document is not None:
+                            window.pdf_document.close()
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except (ImportError, RuntimeError, OSError) as e:
-            self.skipTest(f"Skipping GUI test: {e}")
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
 
     def test_gui_open_attachment_resolves_mainrepo_nested_relative_path(self):
         # Verify attachment opening resolves the repo's current nested relative path format.
@@ -6622,6 +6564,10 @@ class ClaimGroupsTests(unittest.TestCase):
                      patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", Path(td) / "project"):
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
+                        # Path-resolution behavior is independent of embedded PDF
+                        # rendering. Do not open the synthetic attachment in QPdfDocument;
+                        # that file handle would make Windows temp cleanup nondeterministic.
+                        window._update_document_preview = Mock()
                         window._deferred_init()
                         window.table.selectRow(0)
 
@@ -6634,13 +6580,17 @@ class ClaimGroupsTests(unittest.TestCase):
                         opened_path = Path(mock_open_local_path.call_args.args[0])
                         self.assertEqual(opened_path, attachment_file)
                     finally:
+                        if hasattr(window, "pdf_document") and window.pdf_document is not None:
+                            window.pdf_document.close()
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except (ImportError, RuntimeError, OSError) as e:
-            self.skipTest(f"Skipping GUI test: {e}")
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
 
     def test_gui_open_attachment_recovers_from_stale_filename_only_path(self):
         # Verify attachment opening can recover when the DB only stores a stale filename.
@@ -6671,6 +6621,10 @@ class ClaimGroupsTests(unittest.TestCase):
                      patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", Path(td) / "project"):
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
+                        # Path-resolution behavior is independent of embedded PDF
+                        # rendering. Do not open the synthetic attachment in QPdfDocument;
+                        # that file handle would make Windows temp cleanup nondeterministic.
+                        window._update_document_preview = Mock()
                         window._deferred_init()
                         window.table.selectRow(0)
 
@@ -6683,13 +6637,17 @@ class ClaimGroupsTests(unittest.TestCase):
                         opened_path = Path(mock_open_local_path.call_args.args[0])
                         self.assertEqual(opened_path, attachment_file)
                     finally:
+                        if hasattr(window, "pdf_document") and window.pdf_document is not None:
+                            window.pdf_document.close()
                         if hasattr(window, "db") and window.db is not None:
                             window.db.close()
                         window.close()
                         window.deleteLater()
                         app.processEvents()
-        except (ImportError, RuntimeError, OSError) as e:
-            self.skipTest(f"Skipping GUI test: {e}")
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
 
     def test_claim_quality_report_generation(self):
         """验证报销包质量检查报告生成逻辑及其各项检查点计数"""
@@ -6895,6 +6853,10 @@ class ClaimGroupsTests(unittest.TestCase):
                          patch("scripts.invoice_fetch.gui.app.PROJECT_ROOT", project_root):
                         window = InvoiceReviewApp(db_path, splash=None)
                         try:
+                            # This test does not exercise embedded preview rendering.
+                            # Avoid opening the synthetic PDF so Windows can remove the
+                            # temporary directory deterministically.
+                            window._update_document_preview = Mock()
                             window._deferred_init()
 
                             # Scenario 1: 1 warning (empty seller name)
@@ -6934,13 +6896,17 @@ class ClaimGroupsTests(unittest.TestCase):
                                 self.assertTrue(any("质量检查未发现需确认项" in call[0][0] for call in setText_calls))
 
                         finally:
+                            if hasattr(window, "pdf_document") and window.pdf_document is not None:
+                                window.pdf_document.close()
                             if hasattr(window, "db") and window.db is not None:
                                 window.db.close()
                             window.close()
                             window.deleteLater()
                             app.processEvents()
-        except (ImportError, RuntimeError, OSError) as e:
-            self.skipTest(f"Skipping GUI test: {e}")
+        except Exception as e:
+            if isinstance(e, (ImportError, RuntimeError)):
+                self.skipTest(f"Skipping GUI test: {e}")
+            raise
 
 
 if __name__ == "__main__":
