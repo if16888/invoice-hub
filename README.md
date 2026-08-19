@@ -12,9 +12,9 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 它不是企业费控系统，也不替代 Concur、飞书、钉钉、合思等企业报销平台；它专注于“提交之前”的个人整理环节。
 
-![Invoice Hub overview](docs/images/invoice-hub-overview.png)
+![Invoice Hub overview](docs/images/invoice-hub-overview-v2.svg)
 
-> 预览图使用合成/脱敏示例数据，不包含真实发票、邮箱、税号、金额、数据库、授权码或 API Key。
+> 概览图仅展示产品工作流与本地数据边界，不包含真实发票、邮箱、税号、金额、数据库、授权码或 API Key。
 
 ## 立即试用 Windows 版
 
