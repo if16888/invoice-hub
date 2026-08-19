@@ -2,9 +2,11 @@
 
 **本地优先的发票审核与报销整理工具。**
 
-| 当前公开下载版本 | 当前开发版本 | 状态 | 推荐 |
+| 当前公开稳定版 | 当前候选版本 | 发布状态 | 推荐 |
 | --- | --- | --- | --- |
-| [Invoice Hub v0.1.3](https://github.com/if16888/invoice-hub/releases/tag/v0.1.3) | Invoice Hub v0.1.5-rc1 | RC / 候选版 | 完成人工 Windows 安装、升级、卸载和真实工作流验收后再正式使用 |
+| [Invoice Hub v0.1.3](https://github.com/if16888/invoice-hub/releases/tag/v0.1.3) | Invoice Hub v0.1.5-rc7 | RC / 候选版 | 普通用户优先使用稳定版；RC7 仅用于发布候选验证，尚不能视为 stable |
+
+> **v0.1.5-rc7 发布状态：**代码级发布边界与静态检查已通过，但 Clean Windows user、真实 Setup/HCI/uninstall 实机验收仍处于 **NO-GO / BLOCKED**。当前没有证据确认存在发布阻断级产品缺陷，也尚不允许把 RC7 宣称为 v0.1.5 stable。
 
 Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交报销前，把散落在邮箱、本地文件夹和手机里的发票、收据、截图、证明材料整理成可审核、可归组、可导出的资料包。
 
@@ -18,15 +20,18 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 ### 普通用户优先
 
-请先打开 [GitHub Releases 官方页面](https://github.com/if16888/invoice-hub/releases)，并先阅读 [Windows 下载与安装安全说明](docs/windows-install.md)，再在 Assets 中选择适合的文件：
+请先打开 [GitHub Releases 官方页面](https://github.com/if16888/invoice-hub/releases)，并先阅读 [Windows 下载与安装安全说明](docs/windows-install.md)，再在 Assets 中选择适合的文件。
 
-- 推荐普通用户下载 `InvoiceHub-*-win64-setup.exe`，按提示安装后启动 `Invoice Hub`。
-- 想免安装试用时，下载 `InvoiceHub-*-win64-portable.zip`，解压后运行其中的程序。
-- `SHA256SUMS.txt` 是 SHA256 校验文件，用于确认下载文件没有损坏。
+- 普通用户优先使用当前稳定版。
+- 参与候选版验证时，可下载对应 RC 的 `InvoiceHub-*-win64-setup.exe`，按提示安装后启动 `Invoice Hub`。
+- 想免安装试用时，可下载对应版本的 `InvoiceHub-*-win64-portable.zip`，解压后运行其中的程序。
+- `SHA256SUMS.txt` 是 SHA256 校验文件，用于确认下载文件没有损坏或在传输中发生变化。
+
+> `v0.1.5-rc7` 目前仍是候选版。虽然官方资产完整性检查已通过，但真实 Clean Windows 用户下的 Setup、GUI/HCI 和卸载验收尚未闭环，不建议把 RC7 用作正式稳定版部署依据。
 
 安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑；确认流程符合预期后，再在本机导入自己的报销材料，并避免把运行数据上传到公开 Issue。
 
-Windows 打包版采用 PyInstaller onedir 方式发布。当前打包策略会随程序携带 Playwright Python driver，但不打包完整浏览器二进制；也默认不使用 UPX 压缩，以减少 Qt/PySide6 兼容问题和杀软误报概率。
+Windows 打包版采用 PyInstaller onedir 方式发布。当前打包策略会随程序携带 Playwright Python driver/Node 运行组件，但不打包 Chromium 等完整浏览器二进制；也默认不使用 UPX 压缩，以减少 Qt/PySide6 兼容问题和杀软误报概率。
 
 ### 开发者本地启动
 
@@ -55,7 +60,7 @@ python -m scripts.invoice_fetch --help
 python -m scripts.invoice_fetch --import-dir .\your_invoices_path
 ```
 
-邮箱授权码不应写入 `config.json`。桌面应用会优先从 Windows Credential Manager 读取本机凭据；如需手工配置，请参考项目文档中的凭据设置说明。
+邮箱授权码不应写入 `config.json`。桌面应用会优先从 Windows Credential Manager 读取当前 Windows 用户的本机凭据；如需手工配置，请参考项目文档中的凭据设置说明。
 
 ## 解决什么问题
 
@@ -92,19 +97,19 @@ Invoice Hub 试图把这些提交前的整理动作放在本机完成。
 
 - 桌面审核工作台：发票列表、搜索筛选、原件预览、字段编辑、审核状态、报销组操作，并在删除、恢复、关联、取消关联、重新解析和重新下载后尽量保留当前选中行和表格位置。
 - 邮箱扫描：支持 QQ、163/126 和自定义 IMAP 配置。
-- 邮件链接下载：可尝试从邮件中的发票下载链接或网页入口下载原件，该能力依赖 Playwright driver。
-- 本地导入：导入 PDF、OFD、图片和 ZIP，复制到本机运行目录后进入同一处理流程。
+- 邮件链接下载：可尝试从邮件中的发票下载链接或网页入口下载原件；浏览器自动化路径依赖 Playwright 运行链路以及可用的浏览器运行时。
+- 本地导入：导入 PDF、OFD、图片和 ZIP，复制到本机应用数据目录后进入同一处理流程。
 - 手机扫码上传：在局域网中从手机上传发票或证明材料。
 - 报销组导出：生成 Excel 台账、manifest 和附件包。
 - 隐私保护诊断：导出脱敏诊断包，便于反馈问题时避免泄露真实票据和密钥。
 
 ## 关于 Playwright
 
-Invoice Hub 可尝试从邮件中的发票下载链接自动获取原件。该能力依赖 Playwright 浏览器自动化组件，安装体积较大。
+Invoice Hub 可尝试从邮件中的发票下载链接自动获取原件。该能力使用 Playwright 浏览器自动化组件。
 
-当前 Windows 打包策略只携带 Playwright Python driver，不打包完整浏览器二进制；如果没有可用浏览器或对应能力不可用，仍可通过邮箱附件、本地导入或手动补充原件完成整理流程。
+当前 Windows 打包策略只携带 Playwright Python driver/Node 运行组件，不打包 Chromium 等完整浏览器二进制。因此，“Portable 包中没有 Chromium 可执行文件”本身不是异常；真正需要浏览器自动化的功能路径仍取决于运行环境是否具备可用浏览器或应用对应的降级处理。
 
-如果只需要本地导入、已有附件解析和手动补原件，可以先跳过浏览器下载能力。缺失原件时，应用会保留记录，用户可后续手工补充或重试下载。
+如果浏览器自动化能力不可用，仍可通过邮箱附件、本地导入或手动补充原件完成整理流程。缺失原件时，应用会保留记录，用户可后续手工补充或重试下载。
 
 ## 当前状态
 
@@ -112,48 +117,67 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 
 当前适合：个人先用少量真实或脱敏材料试跑导入 -> 审核 -> 归组 -> 导出闭环。
 
-当前不建议：一次性导入大量正式材料并完全依赖自动解析结果。
+当前不建议：一次性导入大量正式材料并完全依赖自动解析结果，也不建议把尚未完成实机安装验收的 RC 候选版视为稳定版。
 
 已覆盖的方向：
 
 - 本地优先的数据存储和导出。
 - 邮箱、本地目录、手机上传三类资料入口。
 - 发票/收据证据的解析、分类、去重、人工审核和报销组导出。
-- 发布前的隐私检查和打包检查。
+- 发布前的隐私检查、静态发布边界检查和打包检查。
 
 仍需谨慎对待：
 
 - 解析结果需要人工复核，不应直接视为财务事实。
 - 不提供企业审批流、自动报销、云同步或第三方报销平台自动提交。
+- RC 候选版只有在真实 Windows 安装、首次启动、HCI 和卸载验收闭环后，才具备进入 stable 决策的条件。
+
+## Windows 数据与凭据边界
+
+Frozen Windows 应用的默认数据边界与“运行目录”并不是同一个概念：
+
+- 数据库、配置和日志默认保存在当前 Windows 用户的 `%APPDATA%\InvoiceHub`。
+- 默认导出目录使用 Windows Known Folder API 获取，通常为 `Documents\Invoice Hub\Exports`；用户选择自定义目录后保持其自定义设置。
+- 邮箱授权码和 AI API Key 使用 Windows Credential Manager 保存，由 Windows 用户账户提供凭据隔离边界。
+- `INVOICE_HUB_RUNTIME_DIR` 只用于隔离对应的运行文件/运行上下文，不会创建独立的 Windows Credential Manager 安全边界。
+
+因此，在**同一个 Windows 用户**下使用不同 runtime 目录启动应用，仍可能读取该用户此前保存的 Invoice Hub 凭据，这是当前设计的预期行为，不代表读取了其他 Windows 用户的凭据。
+
+同样，卸载后重装也不等价于“全新 Windows 用户首次安装”：当前卸载策略不会主动删除用户 AppData、Documents 中的用户数据或 Windows Credential Manager 中的凭据。这样可以避免卸载误删个人数据，但意味着测试 clean-user installation 时必须使用真正的新 Windows 用户/凭据环境。
 
 ## 配置说明
 
 桌面端应用的“系统配置”现已升级为**系统配置中心**。它采用列表优先的布局，支持管理多个邮箱账号与多个 AI 模型配置。
 
 ### 1. 邮箱账号管理
-* 支持配置多个邮箱账号（保存在 `email_accounts` 列表中），可以对每个账号单独开启/停用、编辑或删除。
-* 每一个邮箱账号可单独设置扫描范围（如 `最近 3 个月` 或 `最近 12 个月`），防止不必要的旧邮件扫描。
-* 邮箱授权码/密码通过 Windows 凭据管理器（Credential Manager）进行本机安全存储，账号之间通过 Email 地址进行隔离。
+
+- 支持配置多个邮箱账号（保存在 `email_accounts` 列表中），可以对每个账号单独开启/停用、编辑或删除。
+- 每一个邮箱账号可单独设置扫描范围（如 `最近 3 个月` 或 `最近 12 个月`），防止不必要的旧邮件扫描。
+- 邮箱授权码/密码通过 Windows Credential Manager 进行本机安全存储；凭据处于当前 Windows 用户的安全边界内，账号之间按应用定义的凭据标识进行区分。
 
 ### 2. AI 模型配置
-* 支持保存多个 AI 配置（保存在 `ai_profiles` 列表中）。支持 DeepSeek 和 Gemini 接口。
-* 可以在列表中通过点击“设为当前”来快速切换当前生效的 AI 模型；也可以通过“停用”或删除当前生效的配置来全局关闭 AI 分析功能。
-* AI API Key 安全保存在 Windows 凭据管理器中，并通过 Profile ID 隔离（凭据名称格式为 `invoice-hub:ai-profile:<profile_id>`）。
+
+- 支持保存多个 AI 配置（保存在 `ai_profiles` 列表中）。支持 DeepSeek 和 Gemini 接口。
+- 可以在列表中通过点击“设为当前”来快速切换当前生效的 AI 模型；也可以通过“停用”或删除当前生效的配置来全局关闭 AI 分析功能。
+- AI API Key 保存在 Windows Credential Manager 中，并通过 Profile ID 区分（凭据名称格式为 `invoice-hub:ai-profile:<profile_id>`）；跨 Windows 用户的凭据隔离由操作系统账户边界提供。
 
 `config.example.json` 提供了包含多个邮箱及 AI 模版的完整参考。系统依旧兼容旧版的单邮箱和单 AI 配置，并在首次启动时自动备份旧配置。
 
 ## 隐私优先提示
 
 - 默认不上传发票原件、邮件正文、PDF 文本、图片、SQLite 数据库或 Excel 导出包。
-- 邮箱授权码或应用专用密码建议存入操作系统凭据管理器，不写入 `config.json`。
+- Frozen Windows 应用的数据库、配置和日志默认保存在当前用户 `%APPDATA%\InvoiceHub`；默认导出目录通常位于当前用户的 `Documents\Invoice Hub\Exports`。
+- 邮箱授权码或应用专用密码、AI API Key 应存入 Windows Credential Manager，不写入 `config.json`。
 - AI 分类默认关闭。显式启用 AI 时，仅发送脱敏后的邮件主题和发件人，不发送附件、PDF 文本、图片、数据库或 Excel。
-- 运行数据默认保存在本机 `runtime/`，不应提交到 Git 或上传到公开 Issue。
+- `INVOICE_HUB_RUNTIME_DIR` 不是凭据沙箱；同一 Windows 用户下的不同 runtime 仍共享该用户的 Credential Manager 安全边界。
+- 本机运行数据、导出包和任何凭据都不应提交到 Git 或上传到公开 Issue。
 
 ## 隐私与安全
 
-- 诊断包采用 allowlist，仅包含脱敏日志、脱敏配置、环境摘要和隐私扫描结果。
+- 诊断包采用 allowlist，仅包含允许导出的诊断字段，并对配置、日志、邮箱、URL 查询参数和秘密字段进行脱敏处理。
 - 公开仓库提供 `scripts/check_repo_privacy.py` 和 `scripts/check_public_export.py` 用于提交前检查。
 - `config.example.json` 只作为示例配置；真实账号、授权码和 API Key 不应提交。
+- Windows Credential Manager 以当前 Windows 用户为凭据安全边界；同用户重装保留凭据与跨 Windows 用户凭据隔离是两个不同的测试场景。
 
 更多说明见：
 
@@ -188,6 +212,7 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 ## 项目文档
 
 - [用户快速开始](docs/user-quickstart.md)
+- [Windows 下载与安装安全说明](docs/windows-install.md)
 - [开发架构设计](docs/architecture.md)
 - [项目开发路线](docs/roadmap.md)
 - [标准 IMAP 邮箱配置](docs/generic-imap-mailboxes.md)
