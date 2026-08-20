@@ -12,6 +12,7 @@ Run one process per scale factor, before QApplication exists, for example::
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import sys
@@ -181,6 +182,39 @@ def _validate_page_state(page: str, state: str) -> None:
     if state not in supported:
         expected = ", ".join(sorted(supported)) or "none"
         raise RuntimeError(f"unsupported capture state {page}:{state}; expected one of: {expected}")
+
+
+_MISSING_ATTRIBUTE = object()
+
+
+@contextmanager
+def _synthetic_credential_context(page: str, state: str):
+    """Keep capture construction away from the real Windows credential store.
+
+    ``settings_baseline`` binds ``has_auth_code`` at module import time, while
+    ``settings_dialog`` has historically used both direct and function-local
+    imports.  Patching only ``credentials.has_auth_code`` therefore does not
+    cover every already-bound consumer.  Keep this isolation scoped to the
+    synthetic capture and restore each target module exactly as it was found.
+    """
+    from scripts.invoice_fetch import credentials as credentials_module
+    from scripts.invoice_fetch.gui import settings_baseline, settings_dialog
+
+    def synthetic_has_auth_code(_address: str) -> bool:
+        return not (page == "imports" and state in {"empty", "missing-authorization"})
+
+    targets = (credentials_module, settings_baseline, settings_dialog)
+    originals = [(module, getattr(module, "has_auth_code", _MISSING_ATTRIBUTE)) for module in targets]
+    for module, _original in originals:
+        setattr(module, "has_auth_code", synthetic_has_auth_code)
+    try:
+        yield synthetic_has_auth_code
+    finally:
+        for module, original in reversed(originals):
+            if original is _MISSING_ATTRIBUTE:
+                delattr(module, "has_auth_code")
+            else:
+                setattr(module, "has_auth_code", original)
 
 
 def _apply_capture_state(window, app: QApplication, *, page: str, state: str, runtime: Path) -> None:
@@ -528,49 +562,44 @@ def main() -> int:
         # Imports deliberately occur after the runtime override above.
         from scripts.invoice_fetch.gui import app as app_module
         from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        from scripts.invoice_fetch import credentials as credentials_module
 
         QSettings.setDefaultFormat(QSettings.IniFormat)
         QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(Path(temp) / "qsettings"))
         original_config = app_module.load_config_safe
-        original_has_auth_code = credentials_module.has_auth_code
         app_module.load_config_safe = lambda: _synthetic_config(args.page, args.state)
-        credentials_module.has_auth_code = lambda _address: not (
-            args.page == "imports" and args.state in {"empty", "missing-authorization"}
-        )
         try:
-            app = QApplication.instance() or QApplication([])
-            _seed_database(runtime / "review.db", runtime, page=args.page, state=args.state)
-            window = InvoiceReviewApp(runtime / "review.db")
-            window.resize(args.width, args.height)
-            window.show(); window.raise_(); window.activateWindow()
-            _wait(app)
-            _open_page(window, args.page)
-            _wait(app)
-            if args.state == "nav-collapsed":
-                # Exercise the manual icon-only rail at the requested viewport
-                # on every page.  Previously this state only collapsed the
-                # review page by shrinking the whole window, so export-page
-                # sidebar regressions could not be captured faithfully.
-                window._nav_collapsed_manual = True
-                window._apply_workbench_metrics(args.width, args.height)
+            with _synthetic_credential_context(args.page, args.state):
+                app = QApplication.instance() or QApplication([])
+                _seed_database(runtime / "review.db", runtime, page=args.page, state=args.state)
+                window = InvoiceReviewApp(runtime / "review.db")
+                window.resize(args.width, args.height)
+                window.show(); window.raise_(); window.activateWindow()
                 _wait(app)
-            _apply_capture_state(window, app, page=args.page, state=args.state, runtime=runtime)
+                _open_page(window, args.page)
+                _wait(app)
+                if args.state == "nav-collapsed":
+                    # Exercise the manual icon-only rail at the requested viewport
+                    # on every page.  Previously this state only collapsed the
+                    # review page by shrinking the whole window, so export-page
+                    # sidebar regressions could not be captured faithfully.
+                    window._nav_collapsed_manual = True
+                    window._apply_workbench_metrics(args.width, args.height)
+                    _wait(app)
+                _apply_capture_state(window, app, page=args.page, state=args.state, runtime=runtime)
 
-            image = window.grab()
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            if image.isNull() or not image.save(str(args.output)) or not args.output.exists() or args.output.stat().st_size == 0:
-                raise RuntimeError(f"failed to save non-empty screenshot: {args.output}")
-            report = _geometry(window, args)
-            report["screenshot"] = str(args.output)
-            if args.geometry_output:
-                _append_geometry(args.geometry_output, report)
-            print(json.dumps(report, ensure_ascii=True))
-            window.db.close()
-            window.close(); window.deleteLater(); _wait(app, 100)
+                image = window.grab()
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                if image.isNull() or not image.save(str(args.output)) or not args.output.exists() or args.output.stat().st_size == 0:
+                    raise RuntimeError(f"failed to save non-empty screenshot: {args.output}")
+                report = _geometry(window, args)
+                report["screenshot"] = str(args.output)
+                if args.geometry_output:
+                    _append_geometry(args.geometry_output, report)
+                print(json.dumps(report, ensure_ascii=True))
+                window.db.close()
+                window.close(); window.deleteLater(); _wait(app, 100)
         finally:
             app_module.load_config_safe = original_config
-            credentials_module.has_auth_code = original_has_auth_code
     return 0
 
 
