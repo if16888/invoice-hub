@@ -274,7 +274,7 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
     if settings_tabs is None:
         return
     available_width = int(width or getattr(window, "width", lambda: 0)() or 0)
-    compact = available_width < 1180
+    compact = available_width < 1100
 
     settings_tabs.setMinimumWidth(0)
     settings_tabs.setMaximumWidth(_SETTINGS_MAX_WIDTH)
