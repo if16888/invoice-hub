@@ -49,6 +49,21 @@ STATES = (
     "disabled", "error", "export-ready", "export-blocked",
 )
 
+SUPPORTED_PAGE_STATES = {
+    "overview": {"default", "nav-collapsed"},
+    "review": {
+        "default", "buyer-mismatch", "buyer-match", "missing-original",
+        "loaded-next-page", "nav-collapsed", "empty",
+    },
+    "imports": {"empty", "configured", "missing-authorization", "error", "nav-collapsed"},
+    "export": {"empty", "export-blocked", "export-ready", "nav-collapsed"},
+    "settings-mailbox": {"default", "nav-collapsed"},
+    "settings-company": {"default", "nav-collapsed"},
+    "settings-ai": {"default", "nav-collapsed"},
+    "settings-data": {"default", "nav-collapsed"},
+    "settings-about": {"default", "nav-collapsed"},
+}
+
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -92,7 +107,7 @@ def _write_synthetic_invoice(path: Path) -> None:
         raise RuntimeError("could not create synthetic invoice preview")
 
 
-def _seed_database(db_path: Path, runtime: Path) -> None:
+def _seed_database(db_path: Path, runtime: Path, *, page: str, state: str) -> None:
     from scripts.invoice_fetch.db import InvoiceDB
 
     fixture_dir = runtime / "fixtures"
@@ -105,7 +120,10 @@ def _seed_database(db_path: Path, runtime: Path) -> None:
         "示例餐饮服务有限公司", "Very Long Synthetic Supplier Name Used To Verify Elision Behaviour Co., Ltd.",
     )
     start = date(2026, 7, 15)
+    invoice_ids = {}
     try:
+        if page == "review" and state == "empty":
+            return
         for index in range(259):
             approved = index >= 245
             has_original = index != 2
@@ -132,21 +150,100 @@ def _seed_database(db_path: Path, runtime: Path) -> None:
             })
             if invoice_id is None:
                 raise RuntimeError(f"failed to insert synthetic invoice {index}")
+            invoice_ids[index + 1] = invoice_id
+
+        if page == "export" and state in {"export-ready", "export-blocked"}:
+            claim_name = "2026 年 7 月差旅报销" if state == "export-ready" else "待补材料报销组"
+            claim_id = db.create_claim_group(claim_name, "2026-07-01", "2026-07-31")
+            invoice_number = 246 if state == "export-ready" else 1
+            if not db.add_invoice_to_claim(claim_id, invoice_ids[invoice_number]):
+                raise RuntimeError(f"failed to seed {state} claim group")
     finally:
         db.close()
 
 
-def _synthetic_config() -> dict:
-    return {
-        "email_accounts": [{
+def _synthetic_config(page: str = "review", state: str = "default") -> dict:
+    accounts = [] if page == "imports" and state == "empty" else [{
             "mailbox_key": "synthetic-mailbox", "name": "Synthetic Mailbox",
             "address": "synthetic@example.invalid", "provider": "custom", "enabled": True,
             "is_default": True, "imap": {"server": "imap.example.invalid", "port": 993, "ssl": True},
             "search": {"folder": "INBOX", "months_back": 3},
-        }],
+        }]
+    return {
+        "email_accounts": accounts,
         "reimbursement": {"buyer_name": "Default Test Company", "strict_buyer_check": True},
         "email": {}, "imap": {}, "search": {}, "ai_profiles": [], "ai": {},
     }
+
+
+def _validate_page_state(page: str, state: str) -> None:
+    supported = SUPPORTED_PAGE_STATES.get(page, set())
+    if state not in supported:
+        expected = ", ".join(sorted(supported)) or "none"
+        raise RuntimeError(f"unsupported capture state {page}:{state}; expected one of: {expected}")
+
+
+def _apply_capture_state(window, app: QApplication, *, page: str, state: str, runtime: Path) -> None:
+    if page == "review":
+        if state == "empty":
+            if window.table.rowCount() != 0 or window.invoices_list:
+                raise RuntimeError("review empty state still contains invoice rows")
+            if window.left_stack.currentWidget() is not window.empty_widget:
+                raise RuntimeError("review empty state did not select the empty result surface")
+            if window.right_stack.currentWidget() is not window.right_empty_widget:
+                raise RuntimeError("review empty state did not select the empty detail surface")
+        elif state == "buyer-mismatch":
+            _select_by_number(window, "DEMO-000002")
+        elif state == "buyer-match":
+            _select_by_number(window, "DEMO-000001")
+        elif state == "missing-original":
+            _select_by_number(window, "DEMO-000003")
+        elif state == "loaded-next-page":
+            _exercise_lazy_loading(window, app)
+        elif state in {"default", "nav-collapsed"}:
+            _select_by_number(window, "DEMO-000001")
+        _wait(app)
+        return
+
+    if page == "imports":
+        if state == "configured":
+            window._record_import_activity("mail", scanned=8, added=3, duplicates=5, failed=0, batch_id="configured")
+            window._last_scan_summary = {"scanned": 8, "new": 3, "duplicates": 5}
+        elif state == "error":
+            window._record_import_activity("mail", scanned=8, added=2, duplicates=4, failed=2, batch_id="error")
+            window._last_scan_summary = {"scanned": 8, "new": 2, "duplicates": 4, "parse_failed": 2}
+        window._refresh_imports_page()
+        _wait(app)
+        if state == "empty" and getattr(window, "mail_account_checkboxes", []):
+            raise RuntimeError("imports empty state still contains configured accounts")
+        if state == "configured" and window.btn_import_scan_selected.text() != "开始扫描":
+            raise RuntimeError("imports configured state is not scan-ready")
+        if state == "missing-authorization" and window.btn_import_scan_selected.text() != "补授权码":
+            raise RuntimeError("imports missing-authorization state is not visible")
+        if state == "error":
+            visible_copy = "\n".join(
+                label.text() for label in window.import_recent_content.findChildren(QLabel)
+                if label.isVisible()
+            )
+            if "失败 2" not in visible_copy:
+                raise RuntimeError("imports error state is not visible")
+        return
+
+    if page == "export":
+        if state == "export-ready":
+            export_dir = runtime / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            window._export_dir = str(export_dir)
+        window._refresh_export_page()
+        _wait(app)
+        has_groups = window.export_group_list.count() > 0
+        if state == "empty" and has_groups:
+            raise RuntimeError("export empty state still contains claim groups")
+        if state == "export-ready" and (not has_groups or not window.btn_run_export_page.isEnabled()):
+            raise RuntimeError("export-ready state did not enable package export")
+        if state == "export-blocked" and (not has_groups or window.btn_run_export_page.isEnabled()):
+            raise RuntimeError("export-blocked state did not expose a blocked claim group")
+        return
 
 
 def _wait(app: QApplication, milliseconds: int = 650) -> None:
@@ -320,6 +417,33 @@ def _geometry(window, args: argparse.Namespace) -> dict:
     failures.extend(f"visible control outside parent: {item['class']}:{item['objectName']} ({item['reason']})" for item in overflow)
     failures.extend(f"blank clickable control: {item}" for item in transparent_clickables)
 
+    visible_open_buttons = []
+    for button in window.findChildren(QAbstractButton):
+        if button.isVisible() and button.text().strip() == "打开":
+            global_rect = _global_rect(button)
+            attribute = next(
+                (
+                    name for name in ("btn_open_file", "btn_open_extra_files")
+                    if button is getattr(window, name, None)
+                    or button is getattr(getattr(window, "_detail_panel", None), name, None)
+                ),
+                "",
+            )
+            visible_open_buttons.append({
+                "attribute": attribute,
+                "objectName": button.objectName(),
+                "parent": button.parentWidget().objectName() if button.parentWidget() else "",
+                "rect": [global_rect.x(), global_rect.y(), global_rect.width(), global_rect.height()],
+            })
+    amount_label = getattr(window, "lbl_sum_amount", None)
+    amount_rect = _global_rect(amount_label) if amount_label is not None and amount_label.isVisible() else None
+    for item in visible_open_buttons:
+        if amount_rect is not None and amount_rect.intersects(QRect(*item["rect"])):
+            failures.append(
+                f"open action overlaps review amount: "
+                f"{item['attribute'] or item['objectName'] or item['parent']}"
+            )
+
     toolbar = window.workbench_top_toolbar
     forbidden = []
     for button in toolbar.findChildren(QAbstractButton):
@@ -362,6 +486,11 @@ def _geometry(window, args: argparse.Namespace) -> dict:
         "clipped_key_controls": clipped_key, "text_overflow_controls": text_overflow,
         "ignored_widgets": ignored,
         "ignored_widget_count": len(ignored),
+        "visible_open_buttons": visible_open_buttons,
+        "review_amount_global_rect": (
+            [amount_rect.x(), amount_rect.y(), amount_rect.width(), amount_rect.height()]
+            if amount_rect is not None else None
+        ),
         "fail_count": len(failures),
         "warn_count": 0,
         "forbidden_review_toolbar_actions": forbidden, "failures": failures,
@@ -385,6 +514,7 @@ def _append_geometry(path: Path, record: dict) -> None:
 
 def main() -> int:
     args = _args()
+    _validate_page_state(args.page, args.state)
     if args.width < 800 or args.height < 600:
         raise SystemExit("minimum screenshot size is 800x600")
     if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
@@ -398,14 +528,19 @@ def main() -> int:
         # Imports deliberately occur after the runtime override above.
         from scripts.invoice_fetch.gui import app as app_module
         from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+        from scripts.invoice_fetch import credentials as credentials_module
 
         QSettings.setDefaultFormat(QSettings.IniFormat)
         QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(Path(temp) / "qsettings"))
         original_config = app_module.load_config_safe
-        app_module.load_config_safe = _synthetic_config
+        original_has_auth_code = credentials_module.has_auth_code
+        app_module.load_config_safe = lambda: _synthetic_config(args.page, args.state)
+        credentials_module.has_auth_code = lambda _address: not (
+            args.page == "imports" and args.state in {"empty", "missing-authorization"}
+        )
         try:
             app = QApplication.instance() or QApplication([])
-            _seed_database(runtime / "review.db", runtime)
+            _seed_database(runtime / "review.db", runtime, page=args.page, state=args.state)
             window = InvoiceReviewApp(runtime / "review.db")
             window.resize(args.width, args.height)
             window.show(); window.raise_(); window.activateWindow()
@@ -420,22 +555,7 @@ def main() -> int:
                 window._nav_collapsed_manual = True
                 window._apply_workbench_metrics(args.width, args.height)
                 _wait(app)
-            if args.page == "review":
-                if args.state == "buyer-mismatch":
-                    _select_by_number(window, "DEMO-000002")
-                elif args.state == "buyer-match":
-                    _select_by_number(window, "DEMO-000001")
-                elif args.state == "missing-original":
-                    _select_by_number(window, "DEMO-000003")
-                elif args.state == "loaded-next-page":
-                    _exercise_lazy_loading(window, app)
-                elif args.state == "nav-collapsed":
-                    pass
-                else:
-                    _select_by_number(window, "DEMO-000001")
-                _wait(app)
-            elif args.state not in STATES:
-                raise RuntimeError(f"unsupported state: {args.state}")
+            _apply_capture_state(window, app, page=args.page, state=args.state, runtime=runtime)
 
             image = window.grab()
             args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -450,6 +570,7 @@ def main() -> int:
             window.close(); window.deleteLater(); _wait(app, 100)
         finally:
             app_module.load_config_safe = original_config
+            credentials_module.has_auth_code = original_has_auth_code
     return 0
 
 

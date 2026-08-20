@@ -79,6 +79,20 @@ class ReviewWorkspaceClosureTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_removed_legacy_evidence_action_cannot_float_over_summary(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                detail = window._detail_panel
+                self.assertIsNone(detail.original_card)
+                self.assertIsNone(detail.evidence_card)
+                detail.update_evidence_row([{"path": "synthetic-proof.png"}])
+                self.app.processEvents()
+                self.assertFalse(detail.btn_open_extra_files.isVisible())
+                self.assertIs(detail.btn_add_evidence.parentWidget(), detail.evidence_status_line)
+            finally:
+                window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

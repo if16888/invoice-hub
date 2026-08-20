@@ -884,6 +884,7 @@ if _HAS_QT:
             super().__init__(parent)
             self.setObjectName("WorkbenchTopIconButton")
             self.setText(text)
+            self.setAccessibleName("更多操作")
             self.setToolButtonStyle(Qt.ToolButtonTextOnly)
             self.setPopupMode(QToolButton.InstantPopup)
             self.setFixedSize(34, 34)

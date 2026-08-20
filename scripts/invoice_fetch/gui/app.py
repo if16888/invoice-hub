@@ -2417,7 +2417,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
             if not accounts:
                 lbl_empty = QLabel("暂无已启用邮箱账号。点击“管理”进入系统设置完成配置。")
-                lbl_empty.setStyleSheet("color: #94A3B8; font-size: 12px;")
+                lbl_empty.setStyleSheet("color: #667085; font-size: 12px;")
                 self.mail_checklist_layout.addWidget(lbl_empty)
             else:
                 for acc in accounts:
@@ -5003,7 +5003,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     elif col == 4 and seller:
                         item.setToolTip(seller)
                     elif col == 5 and inv_num:
-                        item.setForeground(QColor("#94A3B8"))
+                        item.setForeground(QColor("#667085"))
                         item.setToolTip(inv_num)
 
                     if combined_warning:

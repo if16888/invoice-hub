@@ -1825,7 +1825,10 @@ class InvoiceDetailPanel(QWidget):
             self.lbl_evidence_name.setVisible(True)
             self.lbl_evidence_missing.setVisible(False)
             self.btn_open_extra_files.setEnabled(True)
-            self.btn_open_extra_files.setVisible(True)
+            # The final review layout removes the legacy evidence card and
+            # preserves this button only as a compatibility callback target.
+            # Never surface an unlaid-out preserved widget over the summary.
+            self.btn_open_extra_files.setVisible(self.evidence_card is not None)
             self.btn_add_evidence.setEnabled(True)
             self.btn_add_evidence.setVisible(True)
         else:
@@ -3499,6 +3502,10 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.original_card = wrap_layout_in_card(self.original_row, "DetailOriginalRowCard")
+        # Legacy row kept for compatibility only.  Give it an explicit parent
+        # so children toggled visible by state updates cannot become stray
+        # top-level windows over the fixed summary header.
+        self.original_card.setParent(self.detail_files_section)
         self.original_card.hide()
         self.original_status_line = StatusLine("原件", "缺失")
         detail_files_layout.addWidget(self.original_status_line)
@@ -3735,6 +3742,10 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.evidence_card = wrap_layout_in_card(self.evidence_row, "DetailEvidenceRowCard")
+        # The active UI is evidence_status_line.  The compatibility card must
+        # remain a hidden child of the material section; without a parent its
+        # "打开" action can surface as a floating top-level button.
+        self.evidence_card.setParent(self.detail_files_section)
         self.evidence_card.hide()
         self.evidence_status_line = StatusLine("证明", "缺失")
         self.evidence_status_line.replace_action(self.btn_add_evidence)

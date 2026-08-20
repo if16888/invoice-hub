@@ -166,6 +166,14 @@ class TestStyleArchitectureStatic(unittest.TestCase):
         """SECONDARY_SHORTCUTS must be importable from ui_components."""
         from scripts.invoice_fetch.gui.ui_components import SECONDARY_SHORTCUTS  # noqa: F401
 
+    def test_detail_caption_uses_readable_information_color(self):
+        """Informative 11px detail text must not use the decorative light gray."""
+        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+
+        selector = APP_STYLESHEET.split("QLabel.DetailCaption {", 1)[1].split("}", 1)[0]
+        self.assertIn("#667085", selector)
+        self.assertNotIn("#94A3B8", selector)
+
 
 class TestStyleArchitectureLive(unittest.TestCase):
     """Live widget checks that require PySide6."""
@@ -196,6 +204,12 @@ class TestStyleArchitectureLive(unittest.TestCase):
             "",
             "ShortcutDisclosure must not set an inline stylesheet; use QSS properties",
         )
+
+    def test_more_menu_button_has_accessible_name(self):
+        from scripts.invoice_fetch.gui.ui_components import MoreMenuButton
+
+        button = MoreMenuButton()
+        self.assertEqual(button.accessibleName(), "更多操作")
 
 
 if __name__ == "__main__":
