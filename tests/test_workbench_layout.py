@@ -103,6 +103,7 @@ try:
         QPushButton,
         QSizePolicy,
         QSplitter,
+        QWidget,
     )
     from scripts.invoice_fetch.gui.workbench_settings import workbench_settings
 
@@ -947,7 +948,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 # their pending layout/timer work cannot affect the contract.
                 for other in QApplication.topLevelWidgets():
                     if (
-                        other is not window
+                        isinstance(other, QWidget)
+                        and other is not window
                         and other.windowTitle().startswith("Invoice Hub")
                     ):
                         other.close()
