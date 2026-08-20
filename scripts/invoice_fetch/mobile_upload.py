@@ -6,6 +6,7 @@ import hashlib
 import html
 import ipaddress
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -17,14 +18,49 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterable
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from urllib.parse import urlparse
 
 from .config import RUNTIME_DIR
+from .log_privacy import sanitize_log_message
+
+
+_log = logging.getLogger("invoice_fetch.mobile_upload")
 
 
 ALLOWED_UPLOAD_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
+
+
+def _redact_host(host: object) -> str:
+    """Keep logs useful for LAN diagnosis without recording a full address."""
+    value = str(host or "").strip()
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return "<redacted>"
+    if address.version == 4:
+        parts = value.split(".")
+        return ".".join(parts[:2] + ["x", "xxx"])
+    return "<ipv6:redacted>"
+
+
+def _redact_request_path(path: object) -> str:
+    """Drop query strings and replace every session token path segment."""
+    value = urlparse(str(path or "")).path or "/"
+    for prefix in ("/u/", "/api/upload/", "/api/status/"):
+        if value.startswith(prefix):
+            return f"{prefix}<redacted>"
+    return value
+
+
+def _safe_log_reason(reason: object, token: str = "") -> str:
+    value = str(reason or "").replace(token, "<redacted>") if token else str(reason or "")
+    value = sanitize_log_message(value)
+    value = re.sub(r"https?://\S+", "<url:redacted>", value)
+    return value[:240] or "unknown"
 
 
 @dataclass(frozen=True)
@@ -73,6 +109,9 @@ class MobileUploadServer:
         max_file_bytes: int = MAX_FILE_BYTES,
         max_total_bytes: int = MAX_TOTAL_BYTES,
         import_on_upload: bool = False,
+        interface_name: str = "",
+        network_priority: int = 50,
+        network_virtual: bool = False,
     ):
         self.runtime_dir = Path(runtime_dir)
         self.db_path = Path(db_path) if db_path else None
@@ -83,6 +122,9 @@ class MobileUploadServer:
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
         self.import_on_upload = import_on_upload
+        self.interface_name = str(interface_name or "")
+        self.network_priority = int(network_priority)
+        self.network_virtual = bool(network_virtual)
 
         self.session: MobileUploadSession | None = None
         self._httpd: ThreadingHTTPServer | None = None
@@ -90,42 +132,92 @@ class MobileUploadServer:
         self._lock = threading.Lock()
         self._files: list[dict] = []
         self._stats = {"accepted": 0, "duplicate": 0, "failed": 0, "imported": 0}
+        self._session_expired_logged = False
+        self._last_request_at: datetime | None = None
+        self._last_phone_access_at: datetime | None = None
+        self._phone_access_confirmed = False
+        self._local_self_check = "pending"
+        self._local_self_check_error = ""
 
     def start(self) -> MobileUploadSession:
         if self._httpd:
             return self.session  # type: ignore[return-value]
-
+        _log.info(
+            "[手机上传] selected network interface=%s public_host=%s bind_host=%s",
+            self.interface_name or "<fallback>",
+            _redact_host(self.host),
+            self.bind_host,
+        )
         token = secrets.token_urlsafe(18)
         now = datetime.now()
         batch_id = f"mobile_{now:%Y%m%d_%H%M%S}_{token[:6]}"
         session_dir = self.runtime_dir / "inbox" / "mobile_upload" / f"{now:%Y-%m-%d}" / batch_id
         original_dir = session_dir / "original"
-        original_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = session_dir / "manifest.json"
         expires_at = now + timedelta(seconds=self.ttl_seconds)
 
-        handler = self._make_handler()
-        self._httpd = ThreadingHTTPServer((self.bind_host, self.port), handler)
-        actual_port = int(self._httpd.server_address[1])
-        base_url = f"http://{self.host}:{actual_port}"
-        self.session = MobileUploadSession(
-            token=token,
-            batch_id=batch_id,
-            host=self.host,
-            port=actual_port,
-            base_url=base_url,
-            upload_url=f"{base_url}/u/{token}",
-            api_url=f"{base_url}/api/upload/{token}",
-            expires_at=expires_at,
-            session_dir=session_dir,
-            original_dir=original_dir,
-            manifest_path=manifest_path,
-        )
-        self._write_manifest()
+        try:
+            original_dir.mkdir(parents=True, exist_ok=True)
+            handler = self._make_handler()
+            self._httpd = ThreadingHTTPServer((self.bind_host, self.port), handler)
+            actual_port = int(self._httpd.server_address[1])
+            base_url = f"http://{self.host}:{actual_port}"
+            self.session = MobileUploadSession(
+                token=token,
+                batch_id=batch_id,
+                host=self.host,
+                port=actual_port,
+                base_url=base_url,
+                upload_url=f"{base_url}/u/{token}",
+                api_url=f"{base_url}/api/upload/{token}",
+                expires_at=expires_at,
+                session_dir=session_dir,
+                original_dir=original_dir,
+                manifest_path=manifest_path,
+            )
+            self._session_expired_logged = False
+            self._last_request_at = None
+            self._last_phone_access_at = None
+            self._phone_access_confirmed = False
+            self._local_self_check = "pending"
+            self._local_self_check_error = ""
+            self._write_manifest()
 
-        self._thread = threading.Thread(target=self._httpd.serve_forever, name="InvoiceHubMobileUpload", daemon=True)
-        self._thread.start()
-        return self.session
+            self._thread = threading.Thread(
+                target=self._httpd.serve_forever,
+                name="InvoiceHubMobileUpload",
+                daemon=True,
+            )
+            self._thread.start()
+            _log.info(
+                "[手机上传] server started bind=%s:%s public=%s:%s expires_at=%s token=<redacted>",
+                self.bind_host,
+                actual_port,
+                _redact_host(self.host),
+                actual_port,
+                expires_at.isoformat(timespec="seconds"),
+            )
+            _log.info(
+                "[手机上传] qr generated host=%s port=%s path=/u/<redacted>",
+                _redact_host(self.host),
+                actual_port,
+            )
+            return self.session
+        except Exception as exc:
+            _log.info(
+                "[手机上传] server start failed exception_type=%s reason=%s",
+                type(exc).__name__,
+                _safe_log_reason(exc, token),
+            )
+            httpd = self._httpd
+            self._httpd = None
+            if httpd is not None:
+                try:
+                    httpd.server_close()
+                except Exception:
+                    pass
+            self.session = None
+            raise
 
     def stop(self) -> None:
         httpd = self._httpd
@@ -136,9 +228,24 @@ class MobileUploadServer:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2)
         self._thread = None
+        if httpd is not None:
+            _log.info(
+                "[手机上传] server stop batch_id=<redacted>"
+            )
 
     def is_token_valid(self, token: str) -> bool:
-        return bool(self.session and token == self.session.token and datetime.now() <= self.session.expires_at and self._httpd)
+        if not self.session or not self._httpd or token != self.session.token:
+            return False
+        now = datetime.now()
+        if now > self.session.expires_at:
+            if not self._session_expired_logged:
+                self._session_expired_logged = True
+                _log.info(
+                    "[手机上传] session expired batch_id=<redacted> expires_at=%s",
+                    self.session.expires_at.isoformat(timespec="seconds"),
+                )
+            return False
+        return True
 
     def status(self) -> dict:
         with self._lock:
@@ -148,13 +255,114 @@ class MobileUploadServer:
                 "batch_id": self.session.batch_id if self.session else "",
                 "upload_url": self.session.upload_url if self.session else "",
                 "expires_at": self.session.expires_at.isoformat(timespec="seconds") if self.session else "",
+                "interface_name": self.interface_name,
+                "public_host": self.host,
+                "bind_host": self.bind_host,
+                "network_virtual": self.network_virtual,
+                "network_priority": self.network_priority,
+                "local_self_check": self._local_self_check,
+                "local_self_check_error": self._local_self_check_error,
+                "phone_access_confirmed": self._phone_access_confirmed,
+                "last_request_at": self._last_request_at.isoformat(timespec="seconds") if self._last_request_at else "",
+                "last_phone_access_at": self._last_phone_access_at.isoformat(timespec="seconds") if self._last_phone_access_at else "",
             }
+
+    def set_network_metadata(
+        self,
+        *,
+        interface_name: str = "",
+        priority: int = 50,
+        is_virtual: bool = False,
+    ) -> None:
+        self.interface_name = str(interface_name or "")
+        self.network_priority = int(priority)
+        self.network_virtual = bool(is_virtual)
+
+    def run_local_self_check(self, timeout: float = 1.5) -> bool:
+        """Check the selected public URL locally; never infer phone reachability."""
+        session = self.session
+        if session is None or self._httpd is None:
+            self._local_self_check = "fail"
+            self._local_self_check_error = "server_not_running"
+            return False
+        try:
+            request = urllib_request.Request(
+                session.upload_url,
+                headers={"User-Agent": "InvoiceHub/LocalSelfCheck", "X-InvoiceHub-Self-Check": "1"},
+            )
+            with urllib_request.urlopen(request, timeout=timeout) as response:
+                status = int(response.status)
+            self._local_self_check = "pass" if status == 200 else "fail"
+            self._local_self_check_error = "" if status == 200 else f"http_{status}"
+            _log.info("[手机上传] local self-check result=%s status=%s", self._local_self_check, status)
+        except urllib_error.HTTPError as exc:
+            self._local_self_check = "fail"
+            self._local_self_check_error = f"http_{exc.code}"
+            _log.info("[手机上传] local self-check result=fail status=%s", exc.code)
+        except Exception as exc:
+            self._local_self_check = "fail"
+            self._local_self_check_error = _safe_log_reason(exc, session.token)
+            _log.info(
+                "[手机上传] local self-check result=fail exception_type=%s reason=%s",
+                type(exc).__name__,
+                self._local_self_check_error,
+            )
+        return self._local_self_check == "pass"
+
+    def _record_request(
+        self,
+        method: str,
+        path: str,
+        client: str,
+        status: int,
+        *,
+        is_self_check: bool = False,
+    ) -> None:
+        now = datetime.now()
+        safe_path = _redact_request_path(path)
+        self._last_request_at = now
+        _log.info(
+            "[手机上传] request method=%s client=%s path=%s status=%s",
+            method,
+            _redact_host(client),
+            safe_path,
+            status,
+        )
+        if (
+            method == "GET"
+            and path.startswith("/u/")
+            and status == 200
+            and not is_self_check
+            and not _is_loopback_host(client)
+        ):
+            first_confirmation = not self._phone_access_confirmed
+            self._phone_access_confirmed = True
+            self._last_phone_access_at = now
+            if first_confirmation:
+                _log.info(
+                    "[手机上传] network access confirmed client=%s at=%s",
+                    _redact_host(client),
+                    now.strftime("%H:%M:%S"),
+                )
+
+    def _log_upload_result(self, result: dict) -> None:
+        imported = result.get("imported", 0)
+        if isinstance(imported, dict):
+            imported = sum(int(imported.get(key, 0) or 0) for key in ("added", "conflicts", "pending_manual", "duplicates"))
+        _log.info(
+            "[手机上传] upload result accepted=%s duplicate=%s failed=%s imported=%s",
+            int(result.get("accepted", 0) or 0),
+            int(result.get("duplicate", 0) or 0),
+            int(result.get("failed", 0) or 0),
+            int(imported or 0),
+        )
 
     def set_public_host(self, host: str) -> MobileUploadSession:
         """Update the public URL host while keeping the running listener and token."""
         host = (host or "").strip()
         if not host:
             raise ValueError("host is required")
+        old_host = self.host
         self.host = host
         if not self.session:
             raise RuntimeError("mobile upload server has not been started")
@@ -168,6 +376,14 @@ class MobileUploadServer:
             api_url=f"{base_url}/api/upload/{self.session.token}",
         )
         self._write_manifest()
+        self._local_self_check = "pending"
+        self._local_self_check_error = ""
+        _log.info(
+            "[手机上传] network changed old_public_host=%s new_public_host=%s bind_host=%s",
+            _redact_host(old_host),
+            _redact_host(host),
+            self.bind_host,
+        )
         return self.session
 
     def save_uploads(self, files: Iterable[UploadedFile]) -> dict:
@@ -262,13 +478,15 @@ class MobileUploadServer:
                 self._stats["imported"] += imported_count
                 self._write_manifest()
 
-        return {
+        result = {
             "accepted": accepted_now,
             "duplicate": duplicate_now,
             "failed": failed_now,
             "imported": imported,
             "batch_id": self.session.batch_id,
         }
+        self._log_upload_result(result)
+        return result
 
     def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> set[str]:
         if not self.db_path or not file_hashes:
@@ -332,8 +550,27 @@ class MobileUploadServer:
             def log_message(self, fmt, *args):  # pragma: no cover - keep desktop logs quiet
                 return
 
-            def do_GET(self):
+            def _begin_request(self):
                 parsed = urlparse(self.path)
+                self._request_path = parsed.path or "/"
+                self._request_self_check = self.headers.get("X-InvoiceHub-Self-Check") == "1"
+                self._request_logged = False
+                return parsed
+
+            def _log_response(self, status: int):
+                if self._request_logged:
+                    return
+                self._request_logged = True
+                owner._record_request(
+                    self.command,
+                    getattr(self, "_request_path", urlparse(self.path).path),
+                    self.client_address[0],
+                    status,
+                    is_self_check=bool(getattr(self, "_request_self_check", False)),
+                )
+
+            def do_GET(self):
+                parsed = self._begin_request()
                 token = _token_from_path(parsed.path, "/u/")
                 if token:
                     if not owner.is_token_valid(token):
@@ -353,21 +590,32 @@ class MobileUploadServer:
                 self._send_text(404, "Not found.")
 
             def do_POST(self):
-                token = _token_from_path(urlparse(self.path).path, "/api/upload/")
+                parsed = self._begin_request()
+                token = _token_from_path(parsed.path, "/api/upload/")
                 if not token or not owner.is_token_valid(token):
                     self._send_text(403, "Upload link expired or invalid.")
                     return
 
-                content_length = int(self.headers.get("Content-Length") or "0")
+                try:
+                    content_length = int(self.headers.get("Content-Length") or "0")
+                except ValueError:
+                    self._send_text(400, "Invalid content length.")
+                    return
                 if content_length > owner.max_total_bytes:
                     self._send_text(413, "Upload is too large.")
                     return
                 body = self.rfile.read(content_length)
                 files = _parse_multipart_upload(body, self.headers.get("Content-Type", ""))
-                result = owner.save_uploads(files)
+                try:
+                    result = owner.save_uploads(files)
+                except Exception:
+                    _log.info("[手机上传] upload processing failed exception_type=server_error")
+                    self._send_text(500, "Upload processing failed.")
+                    return
                 self._send_json(200, result)
 
             def _send_html(self, status: int, body: str):
+                self._log_response(status)
                 self.send_response(status)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
@@ -375,12 +623,14 @@ class MobileUploadServer:
 
             def _send_json(self, status: int, payload: dict):
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self._log_response(status)
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(body)
 
             def _send_text(self, status: int, body: str):
+                self._log_response(status)
                 self.send_response(status)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
@@ -400,6 +650,13 @@ _VIRTUAL_ADAPTER_MARKERS = (
     "tailscale",
     "vpn",
 )
+
+
+def _is_loopback_host(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(str(host or "")).is_loopback
+    except ValueError:
+        return False
 
 
 def _is_usable_ipv4(host: str) -> bool:
@@ -449,6 +706,18 @@ def build_upload_host_options(raw_addresses: Iterable[tuple[str, str]]) -> list[
         ))
     options.sort(key=lambda item: (item.priority, item.host))
     return options
+
+
+def log_upload_host_candidates(options: Iterable[UploadHostOption]) -> None:
+    """Write one safe diagnostic record per candidate considered for QR URLs."""
+    for option in options:
+        _log.info(
+            "[手机上传] network candidate interface=%s host=%s virtual=%s priority=%s",
+            option.interface_name or "<unnamed>",
+            _redact_host(option.host),
+            str(option.is_virtual).lower(),
+            option.priority,
+        )
 
 
 def enumerate_upload_hosts() -> list[UploadHostOption]:
