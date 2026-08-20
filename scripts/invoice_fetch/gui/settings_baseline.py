@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -32,6 +33,7 @@ _MAILBOX_LIST_WIDTH = 280
 _MAILBOX_ROW_HEIGHT = 68
 _MAILBOX_DETAIL_MIN_WIDTH = 560
 _MAILBOX_DETAIL_MAX_WIDTH = 760
+_PROFILE_LIST_WIDTH = 240
 _FIELD_LABEL_WIDTH = 104
 
 # Semantic palette from Design Baseline v1.0.
@@ -61,9 +63,12 @@ def apply_settings_baseline(page: QWidget) -> None:
         page_layout.setSpacing(_HEADER_CONTENT_GAP)
 
     settings_tabs.setMaximumWidth(_SETTINGS_MAX_WIDTH)
-    settings_tabs.setMinimumWidth(900)
+    settings_tabs.setMinimumWidth(0)
+    settings_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     if hasattr(settings_tabs, "nav_list"):
-        settings_tabs.nav_list.setFixedWidth(_SETTINGS_NAV_WIDTH)
+        settings_tabs.nav_list.setMinimumWidth(0)
+        settings_tabs.nav_list.setMaximumWidth(_SETTINGS_NAV_WIDTH)
+        settings_tabs.nav_list.setTextElideMode(Qt.ElideRight)
 
     _polish_page_header(window)
     _install_settings_styles(settings_tabs)
@@ -229,8 +234,9 @@ def _polish_mailbox_structure(window) -> None:
         return
 
     account_list.setObjectName("MailboxAccountList")
-    account_list.setFixedWidth(_MAILBOX_LIST_WIDTH)
-    account_list.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    account_list.setMinimumWidth(0)
+    account_list.setMaximumWidth(_MAILBOX_LIST_WIDTH)
+    account_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
     surface.setMinimumWidth(_MAILBOX_DETAIL_MIN_WIDTH)
     surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
@@ -254,6 +260,96 @@ def _polish_mailbox_structure(window) -> None:
         if not editor.property("mailboxTrailingStretchAdded"):
             editor.setProperty("mailboxTrailingStretchAdded", True)
             editor_layout.addStretch(1)
+
+
+def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
+    """Keep the settings surfaces inside the available logical pixel width.
+
+    The baseline remains the same at desktop widths.  Once the workbench is
+    narrower (which is common after Windows DPI scaling), the two-column
+    settings shells stack and all detail surfaces are allowed to shrink.  This
+    makes wrapping a layout decision instead of a clipping side effect.
+    """
+    settings_tabs = getattr(window, "settings_tabs", None)
+    if settings_tabs is None:
+        return
+    available_width = int(width or getattr(window, "width", lambda: 0)() or 0)
+    compact = available_width < 1180
+
+    settings_tabs.setMinimumWidth(0)
+    settings_tabs.setMaximumWidth(_SETTINGS_MAX_WIDTH)
+    settings_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    nav_list = getattr(settings_tabs, "nav_list", None)
+    if nav_list is not None:
+        nav_width = 132 if compact else _SETTINGS_NAV_WIDTH
+        nav_list.setMinimumWidth(nav_width)
+        nav_list.setMaximumWidth(nav_width)
+        nav_list.setFixedWidth(nav_width)
+
+    mailbox_shell = getattr(window, "settings_mailbox_shell", None)
+    mailbox_editor = getattr(window, "settings_mailbox_editor", None)
+    account_list = getattr(window, "settings_mailbox_list", None)
+    mailbox_surface = getattr(window, "mailbox_detail_surface", None)
+    if mailbox_shell is not None:
+        mailbox_shell.setDirection(QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
+    if account_list is not None:
+        if compact:
+            account_list.setMinimumWidth(0)
+            account_list.setMaximumWidth(16777215)
+            account_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        else:
+            account_list.setMinimumWidth(200)
+            account_list.setMaximumWidth(_MAILBOX_LIST_WIDTH)
+            account_list.setFixedWidth(_MAILBOX_LIST_WIDTH)
+            account_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+    if mailbox_editor is not None:
+        mailbox_editor.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+    if mailbox_surface is not None:
+        mailbox_surface.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+        mailbox_surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
+
+    ai_shell = getattr(window, "settings_ai_shell", None)
+    profile_list = getattr(window, "settings_ai_profile_list", None)
+    ai_surface = getattr(window, "settings_ai_detail_panel", None)
+    if ai_shell is not None:
+        ai_shell.setDirection(QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
+    if profile_list is not None:
+        if compact:
+            profile_list.setMinimumWidth(0)
+            profile_list.setMaximumWidth(16777215)
+            profile_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        else:
+            profile_list.setMinimumWidth(0)
+            profile_list.setMaximumWidth(_PROFILE_LIST_WIDTH)
+            profile_list.setFixedWidth(_PROFILE_LIST_WIDTH)
+            profile_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+    if ai_surface is not None:
+        ai_surface.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+        ai_surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
+
+    for attr in (
+        "lbl_settings_runtime",
+        "lbl_settings_privacy",
+        "lbl_settings_data",
+        "lbl_settings_about",
+    ):
+        surface = getattr(window, attr, None)
+        if surface is not None:
+            surface.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+            surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
+
+    label_width = 88 if compact else _FIELD_LABEL_WIDTH
+    for surface in settings_tabs.findChildren(QFrame):
+        for label in surface.findChildren(QLabel):
+            if label.property("class") in {"DetailFieldKey", "SettingsFieldKey"}:
+                label.setMinimumWidth(label_width)
+                label.setMaximumWidth(label_width)
+                label.setFixedWidth(label_width)
+
+    for layout_attr in ("mailbox_action_footer_layout", "settings_ai_footer_layout"):
+        footer_layout = getattr(window, layout_attr, None)
+        if footer_layout is not None:
+            footer_layout.setDirection(QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
 
 
 def _replace_mailbox_header(window, surface: QFrame, surface_layout: QVBoxLayout) -> None:
@@ -338,6 +434,7 @@ def _move_action_footer_into_surface(window, surface: QFrame, surface_layout: QV
     footer_layout = QHBoxLayout(footer)
     footer_layout.setContentsMargins(0, 4, 0, 0)
     footer_layout.setSpacing(8)
+    window.mailbox_action_footer_layout = footer_layout
 
     # The mutually exclusive primary actions stay first, then contextual
     # secondary actions, then More. Hidden actions do not reserve space.

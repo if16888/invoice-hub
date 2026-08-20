@@ -358,6 +358,7 @@ def _render_scan_terminal(
         recent = getattr(window, "import_mail_recent_card", None)
         if recent is not None:
             recent.set_title("✓ 同步完成")
+            recent.set_hint("本次同步结果按行展示检查、候选、新增、恢复、重复和失败数量。")
     elif terminal == "cancelled":
         counts = getattr(window, "_scan_stage_counts", {}) or {}
         processed = counts.get("processed")
@@ -367,6 +368,7 @@ def _render_scan_terminal(
         recent = getattr(window, "import_mail_recent_card", None)
         if recent is not None:
             recent.set_title("同步已取消")
+            recent.set_hint("本次同步已取消，已处理数量保留在结果明细中。")
     else:
         stage_label = _SCAN_STAGE_LABELS.get(
             str(getattr(window, "_hci_scan_stage_key", "")),
@@ -377,6 +379,7 @@ def _render_scan_terminal(
         recent = getattr(window, "import_mail_recent_card", None)
         if recent is not None:
             recent.set_title("× 同步失败")
+            recent.set_hint("同步失败；请查看结果明细和错误提示。")
 
     window._hci_scan_presentation_state = terminal
     window._hci_scan_terminal_text = text
@@ -708,11 +711,7 @@ def _sync_incremental_result(window, res: dict) -> None:
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
         recent.set_title("✓ 同步完成")
-        failed = _scan_failure_count(summary)
-        recent.set_hint(
-            f"检查邮件 {scanned} 封；识别发票候选 {int(summary.get('classified_invoice', 0) or 0)}；"
-            f"新增 {new}，恢复 {restored}，已存在/重复 {duplicates}，失败 {failed} 项。"
-        )
+        recent.set_hint("本次同步结果按行展示检查、候选、新增、恢复、重复和失败数量。")
 
     review = getattr(window, "btn_hci_import_review_result", None)
     if review is not None:
@@ -837,7 +836,7 @@ def apply_import_hci_closure(page: QWidget | None) -> None:
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
         recent.set_title("本次运行")
-        recent.set_hint("同步结果会说明检查范围、找到多少票据，以及下一步可以做什么。")
+        recent.set_hint("完成一次同步后，结果会按行展示真实处理数量。")
     _install_import_primary_bridge(window)
     _install_import_refresh_bridge(window)
     _install_scan_status_presentation(window)

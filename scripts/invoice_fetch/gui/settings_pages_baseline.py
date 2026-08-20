@@ -21,7 +21,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .ui_components import ElidedTextLabel, make_button
+from .ui_components import (
+    ElidedTextLabel,
+    MiddleElidedTextLabel,
+    WrappedTextLabel,
+    make_button,
+)
+from .settings_baseline import apply_settings_responsive_metrics
 
 SURFACE = "#FFFFFF"
 SURFACE_SECONDARY = "#F8FAFC"
@@ -39,6 +45,25 @@ FIELD_ALIASES = {
     "Version": "版本与构建",
     "版本": "版本与构建",
     "本地数据目录": "数据目录",
+}
+
+LONG_VALUE_FIELDS = {
+    "发送内容",
+    "本地保护",
+    "扫描规则",
+    "最近运行",
+    "最近扫描",
+    "最近错误",
+    "配置与日志",
+    "诊断包",
+    "产品定位",
+}
+PATH_VALUE_FIELDS = {
+    "数据库",
+    "日志目录",
+    "数据目录",
+    "备份目录",
+    "导出目录",
 }
 
 
@@ -111,7 +136,7 @@ class StructuredSettingsSurface(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self._raw_text = ""
         self._field_order = [key for key, _ in fields]
-        self.values: dict[str, ElidedTextLabel] = {}
+        self.values: dict[str, QLabel] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 14)
@@ -132,10 +157,15 @@ class StructuredSettingsSurface(QFrame):
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         for key, default in fields:
-            value = ElidedTextLabel(default, self)
+            if key in LONG_VALUE_FIELDS:
+                value = WrappedTextLabel(default, self)
+            elif key in PATH_VALUE_FIELDS:
+                value = MiddleElidedTextLabel(default, self)
+            else:
+                value = ElidedTextLabel(default, self)
             value.setProperty("class", "SettingsFieldValue")
             value.setToolTip("" if default in {"", "—"} else default)
-            value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            _configure_value_label(value, key)
             self.values[key] = value
             form.addRow(key, value)
             label = form.labelForField(value)
@@ -242,6 +272,18 @@ def _migrate_info_page(window, index: int, title: str, hint: str, attr: str, fie
     setattr(window, f"{attr}_surface", surface)
 
 
+def _configure_value_label(value: QLabel, key: str) -> None:
+    """Apply the text contract without changing the surrounding visual style."""
+    value.setMinimumHeight(0)
+    value.setMaximumHeight(16777215)
+    if key in LONG_VALUE_FIELDS:
+        value.setWordWrap(True)
+        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    else:
+        value.setWordWrap(False)
+        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+
+
 def _add_section(root: QVBoxLayout, parent: QWidget, title: str, rows):
     if root.count():
         root.addWidget(_divider(parent))
@@ -256,7 +298,7 @@ def _add_section(root: QVBoxLayout, parent: QWidget, title: str, rows):
     form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     for key, value in rows:
         value.setParent(parent)
-        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        _configure_value_label(value, key)
         form.addRow(key, value)
         label = form.labelForField(value)
         if label is not None:
@@ -303,9 +345,11 @@ def _migrate_ai_page(window) -> None:
     shell.setContentsMargins(0, 0, 0, 0)
     shell.setSpacing(16)
     shell.setAlignment(Qt.AlignTop)
-    profile_list.setFixedWidth(PROFILE_LIST_WIDTH)
-    profile_list.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+    profile_list.setMinimumWidth(0)
+    profile_list.setMaximumWidth(PROFILE_LIST_WIDTH)
+    profile_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
     shell.addWidget(profile_list, 0, Qt.AlignTop)
+    window.settings_ai_shell = shell
 
     surface = QFrame(page)
     surface.setObjectName("AISettingsDetailSurface")
@@ -346,6 +390,8 @@ def _migrate_ai_page(window) -> None:
     ])
     window.lbl_settings_ai_failure_status.setParent(surface)
     window.lbl_settings_ai_failure_status.setProperty("class", "SettingsInlineStatus")
+    window.lbl_settings_ai_failure_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    window.lbl_settings_ai_failure_status.setMaximumHeight(16777215)
     root.addWidget(window.lbl_settings_ai_failure_status)
     root.addWidget(_divider(surface))
     footer = QFrame(surface)
@@ -354,6 +400,7 @@ def _migrate_ai_page(window) -> None:
     footer_layout = QHBoxLayout(footer)
     footer_layout.setContentsMargins(0, 4, 0, 0)
     footer_layout.setSpacing(8)
+    window.settings_ai_footer_layout = footer_layout
     for action in actions:
         action.setParent(footer)
         footer_layout.addWidget(action)
@@ -470,6 +517,12 @@ def apply_remaining_settings_baseline(page: QWidget) -> None:
     _install_refresh_contract(window, page)
     window._refresh_settings_page()
     QTimer.singleShot(0, lambda: _normalize_ai(window))
+    apply_settings_responsive_metrics(window)
 
 
-__all__ = ["StructuredSettingsSurface", "apply_remaining_settings_baseline"]
+__all__ = [
+    "LONG_VALUE_FIELDS",
+    "PATH_VALUE_FIELDS",
+    "StructuredSettingsSurface",
+    "apply_remaining_settings_baseline",
+]
