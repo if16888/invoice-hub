@@ -253,6 +253,43 @@ if _HAS_QT:
     class ElidedTextLabel(ElidedValueLabel):
         """Semantic alias for long product text such as paths, names and IDs."""
 
+    class MiddleElidedValueLabel(ElidedValueLabel):
+        """Single-line value that preserves both ends of a path or identifier."""
+
+        def paintEvent(self, event):
+            painter = QPainter(self)
+            painter.setFont(self.font())
+            painter.setPen(self.palette().color(self.foregroundRole()))
+            text = self.fontMetrics().elidedText(self.text(), Qt.ElideMiddle, max(0, self.width()))
+            painter.drawText(self.rect(), self.alignment() or (Qt.AlignLeft | Qt.AlignVCenter), text)
+
+    class MiddleElidedTextLabel(MiddleElidedValueLabel):
+        """Semantic path/identifier label with a complete-value tooltip."""
+
+    class WrappedTextLabel(QLabel):
+        """Responsive explanatory text label whose height follows its width."""
+
+        def __init__(self, text: str = "", parent: QWidget | None = None):
+            super().__init__(parent)
+            self.setProperty("class", "WrappedText")
+            self.setWordWrap(True)
+            self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
+            self.set_value(text)
+
+        def set_value(self, text: str = "") -> None:
+            value = str(text or "—")
+            self.setText(value)
+            self.setToolTip("" if value == "—" else value)
+
+        def sizeHint(self):
+            hint = super().sizeHint()
+            if self.wordWrap() and self.width() > 0:
+                hint.setHeight(max(hint.height(), self.heightForWidth(self.width())))
+            return hint
+
     class CredentialValueLabel(ElidedValueLabel):
         """Never displays a secret; only a credential presence/status value."""
 
@@ -453,6 +490,7 @@ if _HAS_QT:
         def add_entry(self, when: str, title: str, summary: str, state: str = "muted") -> QWidget:
             row = QFrame(self)
             row.setProperty("class", "ActivityTimelineRow")
+            row.setProperty("state", state)
             layout = QHBoxLayout(row)
             layout.setContentsMargins(0, 8, 0, 8)
             layout.setSpacing(12)
@@ -467,6 +505,51 @@ if _HAS_QT:
             layout.addWidget(lbl_when)
             layout.addWidget(lbl_title, 1)
             layout.addWidget(lbl_summary, 1)
+            self._layout.addWidget(row)
+            return row
+
+        def add_structured_entry(
+            self,
+            when: str,
+            title: str,
+            fields: list[tuple[str, str]],
+            state: str = "muted",
+        ) -> QWidget:
+            """Add a responsive result card with one bounded value per row."""
+            row = QFrame(self)
+            row.setProperty("class", "ActivityTimelineRow")
+            row.setProperty("state", state)
+            root = QVBoxLayout(row)
+            root.setContentsMargins(0, 8, 0, 8)
+            root.setSpacing(5)
+
+            header = QHBoxLayout()
+            header.setContentsMargins(0, 0, 0, 0)
+            header.setSpacing(12)
+            lbl_when = QLabel(when, row)
+            lbl_when.setProperty("class", "ActivityTimelineWhen")
+            lbl_when.setMinimumWidth(72)
+            lbl_title = QLabel(title, row)
+            lbl_title.setProperty("class", "ActivityTimelineTitle")
+            header.addWidget(lbl_when)
+            header.addWidget(lbl_title, 1)
+            root.addLayout(header)
+
+            details = QFormLayout()
+            details.setContentsMargins(84, 0, 0, 0)
+            details.setHorizontalSpacing(12)
+            details.setVerticalSpacing(3)
+            details.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            details.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            for label_text, value_text in fields:
+                field_label = QLabel(str(label_text), row)
+                field_label.setProperty("class", "ActivityTimelineSummary")
+                field_value = QLabel(str(value_text), row)
+                field_value.setProperty("class", "ActivityTimelineSummary")
+                field_value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                field_value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+                details.addRow(field_label, field_value)
+            root.addLayout(details)
             self._layout.addWidget(row)
             return row
 

@@ -1349,6 +1349,20 @@ class SettingsDialog(QDialog):
         self.lbl_v5_ai_key_status = QLabel("Key 来源: 系统凭据管理器加密保存")
         self.lbl_v5_ai_health = QLabel("Key 健康度: 正常可用")
         self.lbl_v5_ai_active_state = QLabel("生效状态: 当前生效中 (本次会话可用)")
+        for detail_label in (
+            self.lbl_v5_ai_provider,
+            self.lbl_v5_ai_model,
+            self.lbl_v5_ai_key_status,
+            self.lbl_v5_ai_health,
+            self.lbl_v5_ai_active_state,
+        ):
+            detail_label.setWordWrap(True)
+            detail_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            detail_label.setMinimumHeight(0)
+            detail_label.setMaximumHeight(16777215)
+
+        ai_detail_layout.setColumnStretch(0, 1)
+        ai_detail_layout.setColumnStretch(1, 1)
 
         ai_detail_layout.addWidget(self.lbl_v5_ai_provider, 0, 0)
         ai_detail_layout.addWidget(self.lbl_v5_ai_model, 0, 1)

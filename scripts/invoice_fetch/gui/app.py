@@ -57,6 +57,7 @@ from .ui_components import (
     CompactStatCard,
     DangerZone,
     ElidedTextLabel,
+    MiddleElidedTextLabel,
     EntityList,
     EmptyStateCard,
     LogDrawer,
@@ -68,6 +69,7 @@ from .ui_components import (
     SectionCard,
     ShortcutDisclosure,
     SummaryStrip,
+    WrappedTextLabel,
     make_badge,
     make_button,
     make_filter_chip,
@@ -81,6 +83,7 @@ from .design_tokens import DESIGN_V1_COLORS
 from .api_key_dialog import ApiKeyDialog
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
+from .settings_baseline import apply_settings_responsive_metrics
 from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .workers import EmailScanWorker, ExportMigrationWorker, LocalImportWorker
@@ -155,9 +158,12 @@ class ImportActivity:
     source: str
     batch_id: str = ""
     scanned: int = 0
+    classified: int = 0
     added: int = 0
+    restored: int = 0
     duplicates: int = 0
     failed: int = 0
+    status: str = "complete"
 
 def _v1_badge(kind: str) -> dict[str, str]:
     c = DESIGN_V1_COLORS
@@ -880,6 +886,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 recent_width = 350 if w >= 1440 else 300
                 self.import_source_card.setFixedWidth(source_width)
                 self.import_mail_recent_card.setFixedWidth(recent_width)
+        if hasattr(self, "settings_tabs"):
+            apply_settings_responsive_metrics(self, w)
         if not self._left_splitter_sizes_initialized:
             self._left_splitter_sizes_initialized = True
 
@@ -2287,10 +2295,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         source: str,
         *,
         scanned: int = 0,
+        classified: int = 0,
         added: int = 0,
+        restored: int = 0,
         duplicates: int = 0,
         failed: int = 0,
         batch_id: str = "",
+        status: str = "complete",
     ) -> None:
         """Record a structured import outcome for the in-session result surface."""
         normalized_batch = str(batch_id or "").strip()
@@ -2302,9 +2313,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if existing is not None:
                 existing.occurred_at = datetime.now()
                 existing.scanned = max(0, int(scanned or 0))
+                existing.classified = max(0, int(classified or 0))
                 existing.added = max(0, int(added or 0))
+                existing.restored = max(0, int(restored or 0))
                 existing.duplicates = max(0, int(duplicates or 0))
                 existing.failed = max(0, int(failed or 0))
+                existing.status = str(status or "complete")
                 self._import_activities.remove(existing)
                 self._import_activities.insert(0, existing)
                 return
@@ -2315,9 +2329,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 source=source,
                 batch_id=normalized_batch,
                 scanned=max(0, int(scanned or 0)),
+                classified=max(0, int(classified or 0)),
                 added=max(0, int(added or 0)),
+                restored=max(0, int(restored or 0)),
                 duplicates=max(0, int(duplicates or 0)),
                 failed=max(0, int(failed or 0)),
+                status=str(status or "complete"),
             ),
         )
         del self._import_activities[10:]
@@ -2335,12 +2352,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         summary_parts.append(f"新增 {activity.added} 条")
         summary_parts.append(f"重复 {activity.duplicates} 条")
         summary_parts.append(f"失败 {activity.failed} 条")
-        state = "danger" if activity.failed else "success"
+        state = "danger" if activity.failed or activity.status == "failed" else "success"
         return (
             activity.occurred_at.strftime("%H:%M"),
             source_labels.get(activity.source, "导入"),
             " · ".join(summary_parts),
         )
+
+    @staticmethod
+    def _structured_import_fields(activity: ImportActivity) -> list[tuple[str, str]]:
+        """Return bounded, real-count rows for the import result card."""
+        fields: list[tuple[str, str]] = []
+        if activity.scanned:
+            fields.append(("检查邮件/文件", str(activity.scanned)))
+        if activity.classified:
+            fields.append(("识别发票候选", str(activity.classified)))
+        fields.append(("新增", str(activity.added)))
+        if activity.restored:
+            fields.append(("恢复", str(activity.restored)))
+        fields.append(("重复", str(activity.duplicates)))
+        fields.append(("失败", str(activity.failed)))
+        status_labels = {
+            "complete": "已完成",
+            "cancelled": "已取消",
+            "failed": "失败",
+        }
+        if activity.status != "complete":
+            fields.append(("状态", status_labels.get(activity.status, activity.status)))
+        return fields
 
     def _refresh_imports_page(self) -> None:
         from ..config import get_email_accounts
@@ -2358,11 +2397,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.import_recent_timeline.clear()
                 for activity in activities[:3]:
                     when, title, summary = self._format_import_activity(activity)
-                    self.import_recent_timeline.add_entry(
+                    timeline_state = "danger" if activity.failed or activity.status == "failed" else "success"
+                    self.import_recent_timeline.add_structured_entry(
                         when,
                         title,
-                        summary,
-                        state="danger" if activity.failed else "success",
+                        self._structured_import_fields(activity),
+                        state=timeline_state,
                     )
 
         if hasattr(self, "mail_checklist_layout"):
@@ -3568,13 +3608,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_mail_recent_card = SectionCard("本次运行", hint="显示本次启动应用后的最近 3 个导入批次。")
         self.import_mail_recent_card.setMinimumWidth(360)
         self.import_mail_recent_card.setMaximumWidth(420)
-        self.import_mail_recent_card.setMaximumHeight(320)
-        self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.import_recent_content = QWidget()
         self.import_recent_content_layout = QVBoxLayout(self.import_recent_content)
         self.import_recent_content_layout.setContentsMargins(0, 0, 0, 0)
         self.import_recent_state_stack = PageStateStack()
-        self.import_recent_state_stack.setMaximumHeight(180)
+        self.import_recent_state_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.import_recent_state_stack.set_empty_object_name("ImportRecentEmptyState")
         self.import_recent_timeline = ActivityTimeline()
         self.import_recent_content_layout.addWidget(self.import_recent_timeline)
@@ -3827,6 +3866,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         mailbox_shell = QHBoxLayout()
         mailbox_shell.setContentsMargins(0, 0, 0, 0)
         mailbox_shell.setSpacing(16)
+        self.settings_mailbox_shell = mailbox_shell
 
         # Saved Accounts List ONLY (Requirement 4)
         self.settings_mailbox_list = EntityList()
@@ -3837,6 +3877,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Read-Only Details Panel (Requirement 5 & 6)
         mailbox_editor = QWidget()
+        self.settings_mailbox_editor = mailbox_editor
         mailbox_editor.setMinimumWidth(560)
         mailbox_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         mailbox_editor_layout = QVBoxLayout(mailbox_editor)
@@ -3847,6 +3888,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
+        self.mailbox_action_footer_layout = action_row
         self.btn_settings_mailbox_edit_config = make_button("编辑", variant="secondary")
         self.btn_settings_mailbox_edit_config.clicked.connect(self._open_edit_mailbox_dialog)
 
@@ -3937,8 +3979,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_detail_port_security = ElidedTextLabel("—", self.mailbox_detail_surface)
         self.lbl_detail_is_default = QLabel("—", self.mailbox_detail_surface)
         self.lbl_detail_credential_status = QLabel("未配置", self.mailbox_detail_surface)
-        self.lbl_detail_scan_folder = ElidedTextLabel("—", self.mailbox_detail_surface)
-        self.lbl_detail_scan_range = ElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_scan_folder = MiddleElidedTextLabel("—", self.mailbox_detail_surface)
+        self.lbl_detail_scan_range = WrappedTextLabel("—", self.mailbox_detail_surface)
         self.lbl_detail_attachment_types = ElidedTextLabel("PDF / OFD / XML / 图片", self.mailbox_detail_surface)
         self.lbl_detail_scan_rule = self.lbl_detail_scan_range  # compatibility alias
         for label in (
@@ -7322,8 +7364,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         cancelled = bool(isinstance(res, dict) and res.get("cancelled"))
         self._finish_scan_ui(cancelled=cancelled)
         if cancelled:
+            counts = getattr(self, "_scan_stage_counts", {}) or {}
+            self._record_import_activity(
+                "mail",
+                scanned=int(counts.get("processed", 0) or 0),
+                status="cancelled",
+            )
             self.write_log("⏹ [邮箱扫描] 用户已取消，当前邮箱事务保持一致，未开始后续邮箱。")
             self.statusBar().showMessage("邮箱扫描已取消", 4000)
+            self._refresh_imports_page()
             return
         btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
@@ -7334,13 +7383,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._record_import_activity(
             "mail",
             scanned=summary.get("scanned") or summary.get("scanned_headers") or 0,
+            classified=summary.get("classified_invoice") or 0,
             added=summary.get("new") or summary.get("new_email_headers") or 0,
+            restored=summary.get("restored") or 0,
             duplicates=summary.get("duplicates") or 0,
             failed=(
                 int(summary.get("download_failed", 0) or 0)
                 + int(summary.get("parse_failed", 0) or 0)
                 + int(summary.get("link_failed", 0) or 0)
             ),
+            status="complete",
         )
         self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
         self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
@@ -7359,6 +7411,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _scan_email_error(self, err_msg: str):
         self._finish_scan_ui(cancelled=False)
+        self._record_import_activity("mail", failed=1, status="failed")
+        self._refresh_imports_page()
         btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
             orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))
@@ -7521,6 +7575,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 "mobile", scanned=scanned, added=added,
                 duplicates=duplicates, failed=failed,
                 batch_id=str(result.get("batch_id") or ""),
+                status="complete",
             )
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
@@ -7552,6 +7607,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             added=added,
             duplicates=duplicates,
             failed=failed,
+            status="complete",
         )
         self.write_log(
             f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"
@@ -7572,8 +7628,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _import_local_error(self, err_msg: str):
         self._end_data_operation("本地导入")
         self._clear_action_busy(self.btn_import_local, "导入")
+        self._record_import_activity("local", failed=1, status="failed")
         self.write_log(f"❌ [本地导入] 失败: {err_msg}")
         self.statusBar().showMessage("本地发票导入失败！", 4000)
+        self._refresh_imports_page()
         QMessageBox.critical(self, "错误", f"本地导入执行出错: {err_msg}")
 
     def _open_settings_dialog(self, sub_tab: int = 0):

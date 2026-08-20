@@ -27,14 +27,22 @@ class _MobileUploadStartWorker(QObject):
     @Slot()
     def run(self):
         try:
-            from ..mobile_upload import MobileUploadServer, enumerate_upload_hosts
+            from ..mobile_upload import MobileUploadServer, enumerate_upload_hosts, log_upload_host_candidates
             options = enumerate_upload_hosts()
-            selected = self.host or (options[0].host if options else None)
+            log_upload_host_candidates(options)
+            selected_option = next((option for option in options if option.host == self.host), None)
+            if selected_option is None and self.host is None and options:
+                selected_option = options[0]
+            selected = self.host or (selected_option.host if selected_option else None)
             server = MobileUploadServer(
                 runtime_dir=self.runtime_dir, db_path=self.db_path, host=selected,
                 port=0, import_on_upload=True,
+                interface_name=selected_option.interface_name if selected_option else "",
+                network_priority=selected_option.priority if selected_option else 50,
+                network_virtual=selected_option.is_virtual if selected_option else False,
             )
             session = server.start()
+            server.run_local_self_check()
             self.result = (server, session, options)
         except Exception as exc:
             self.error = str(exc)
@@ -168,7 +176,15 @@ class MobileUploadSessionController(QObject):
         if self.server is None:
             return None
         try:
+            option = next((item for item in self.host_options if item.host == host), None)
+            if option is not None:
+                self.server.set_network_metadata(
+                    interface_name=option.interface_name,
+                    priority=option.priority,
+                    is_virtual=option.is_virtual,
+                )
             self.session = self.server.set_public_host(host)
+            self.server.run_local_self_check()
             self.started.emit(self.session)
             return self.session
         except Exception as exc:
@@ -279,10 +295,32 @@ class MobileUploadSessionPanel(QFrame):
         details = QWidget(); form = QFormLayout(details); form.setContentsMargins(0, 0, 0, 0)
         self.txt_url = QLineEdit(); self.txt_url.setReadOnly(True)
         self.combo_upload_host = QComboBox(); self.combo_upload_host.currentIndexChanged.connect(self._host_changed)
-        self.lbl_service_address = QLabel("—"); self.lbl_stats = QLabel("成功 0 · 重复 0 · 失败 0 · 入库 0")
-        form.addRow("操作", QLabel("手机扫描二维码，在浏览器中选择文件上传。"))
-        form.addRow("上传 URL", self.txt_url); form.addRow("网络接口", self.combo_upload_host)
-        form.addRow("服务地址", self.lbl_service_address); form.addRow("本次上传", self.lbl_stats)
+        self.lbl_service_address = QLabel("—")
+        self.lbl_service_address.setWordWrap(True)
+        self.lbl_network_interface = QLabel("—")
+        self.lbl_network_interface.setWordWrap(True)
+        self.lbl_service_state = QLabel("运行中")
+        self.lbl_local_self_check = QLabel("检查中")
+        self.lbl_lan_client_access = QLabel("尚未确认")
+        self.lbl_last_access = QLabel("—")
+        self.lbl_lan_access_hint = QLabel(
+            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。"
+        )
+        self.lbl_lan_access_hint.setWordWrap(True)
+        self.lbl_stats = QLabel("成功 0 · 重复 0 · 失败 0 · 入库 0")
+        self.lbl_stats.setWordWrap(True)
+        operation = QLabel("手机扫描二维码，在浏览器中选择文件上传。")
+        operation.setWordWrap(True)
+        form.addRow("操作", operation)
+        form.addRow("上传 URL", self.txt_url); form.addRow("切换网络", self.combo_upload_host)
+        form.addRow("当前网络", self.lbl_network_interface)
+        form.addRow("服务状态", self.lbl_service_state)
+        form.addRow("服务地址", self.lbl_service_address)
+        form.addRow("本机访问", self.lbl_local_self_check)
+        form.addRow("局域网访问", self.lbl_lan_client_access)
+        form.addRow("最近访问", self.lbl_last_access)
+        form.addRow("访问提示", self.lbl_lan_access_hint)
+        form.addRow("本次上传", self.lbl_stats)
         body.addWidget(self.lbl_qr); body.addWidget(details, 1)
         footer = QHBoxLayout()
         self.btn_copy_url = make_button("复制链接", variant="secondary"); self.btn_copy_url.clicked.connect(self._copy_url)
@@ -323,18 +361,38 @@ class MobileUploadSessionPanel(QFrame):
         if selected_index >= 0:
             self.combo_upload_host.setCurrentIndex(selected_index)
         self.combo_upload_host.blockSignals(False)
-        self.txt_url.setText(session.upload_url); self.lbl_service_address.setText(f"{session.host}:{session.port}")
+        self.txt_url.setText(session.upload_url)
+        self.lbl_service_address.setText(f"bind 0.0.0.0:{session.port}\npublic {session.host}:{session.port}")
+        self.lbl_service_state.setText("运行中")
         try:
             pixmap = QPixmap(); pixmap.loadFromData(self.controller.qr_png(session.upload_url), "PNG")
             self.lbl_qr.setPixmap(pixmap.scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except Exception:
             self.lbl_qr.setText("二维码不可用\n请复制上传链接")
         self.stack.setCurrentWidget(self.active_page)
+        if self.controller.server is not None:
+            self._set_stats(self.controller.server.status())
 
     def _set_stats(self, stats):
         self.lbl_stats.setText("成功 {accepted} · 重复 {duplicate} · 失败 {failed} · 入库 {imported}".format(
             accepted=stats.get("accepted", 0), duplicate=stats.get("duplicate", 0),
             failed=stats.get("failed", 0), imported=stats.get("imported", 0)))
+        interface = str(stats.get("interface_name") or "").strip()
+        host = str(stats.get("public_host") or "").strip()
+        self.lbl_network_interface.setText(
+            f"{interface or '网络接口'} · {host}" if host else (interface or "自动检测")
+        )
+        self.lbl_local_self_check.setText({
+            "pass": "正常",
+            "fail": "失败",
+            "pending": "检查中",
+        }.get(str(stats.get("local_self_check") or "pending"), "检查中"))
+        confirmed = bool(stats.get("lan_client_access_confirmed"))
+        self.lbl_lan_client_access.setText("已确认" if confirmed else "尚未确认")
+        self.lbl_lan_access_hint.setVisible(not confirmed)
+        last_access = str(stats.get("last_lan_client_access_at") or "").strip()
+        self.lbl_last_access.setText(last_access[11:19] if len(last_access) >= 19 else (last_access or "—"))
+        self.lbl_service_state.setText("运行中" if stats.get("active", True) else "已停止")
 
     def _show_error(self, message):
         self.btn_start.setEnabled(True)
