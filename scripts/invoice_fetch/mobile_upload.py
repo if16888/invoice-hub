@@ -112,6 +112,7 @@ class MobileUploadServer:
         interface_name: str = "",
         network_priority: int = 50,
         network_virtual: bool = False,
+        local_host_addresses: Iterable[str] | None = None,
     ):
         self.runtime_dir = Path(runtime_dir)
         self.db_path = Path(db_path) if db_path else None
@@ -134,14 +135,24 @@ class MobileUploadServer:
         self._stats = {"accepted": 0, "duplicate": 0, "failed": 0, "imported": 0}
         self._session_expired_logged = False
         self._last_request_at: datetime | None = None
-        self._last_phone_access_at: datetime | None = None
-        self._phone_access_confirmed = False
+        self._last_lan_client_access_at: datetime | None = None
+        self._lan_client_access_confirmed = False
+        configured_addresses = local_host_addresses if local_host_addresses is not None else ()
+        self._configured_local_host_addresses = {
+            address
+            for address in (_normalize_ipv4_address(item) for item in configured_addresses)
+            if address
+        }
+        self._local_host_addresses = _collect_local_host_addresses(
+            (*self._configured_local_host_addresses, self.host)
+        )
         self._local_self_check = "pending"
         self._local_self_check_error = ""
 
     def start(self) -> MobileUploadSession:
         if self._httpd:
             return self.session  # type: ignore[return-value]
+        self.refresh_local_host_addresses()
         _log.info(
             "[手机上传] selected network interface=%s public_host=%s bind_host=%s",
             self.interface_name or "<fallback>",
@@ -175,12 +186,13 @@ class MobileUploadServer:
                 original_dir=original_dir,
                 manifest_path=manifest_path,
             )
-            self._session_expired_logged = False
-            self._last_request_at = None
-            self._last_phone_access_at = None
-            self._phone_access_confirmed = False
-            self._local_self_check = "pending"
-            self._local_self_check_error = ""
+            with self._lock:
+                self._session_expired_logged = False
+                self._last_request_at = None
+                self._last_lan_client_access_at = None
+                self._lan_client_access_confirmed = False
+                self._local_self_check = "pending"
+                self._local_self_check_error = ""
             self._write_manifest()
 
             self._thread = threading.Thread(
@@ -262,10 +274,19 @@ class MobileUploadServer:
                 "network_priority": self.network_priority,
                 "local_self_check": self._local_self_check,
                 "local_self_check_error": self._local_self_check_error,
-                "phone_access_confirmed": self._phone_access_confirmed,
+                "lan_client_access_confirmed": self._lan_client_access_confirmed,
                 "last_request_at": self._last_request_at.isoformat(timespec="seconds") if self._last_request_at else "",
-                "last_phone_access_at": self._last_phone_access_at.isoformat(timespec="seconds") if self._last_phone_access_at else "",
+                "last_lan_client_access_at": self._last_lan_client_access_at.isoformat(timespec="seconds") if self._last_lan_client_access_at else "",
             }
+
+    def refresh_local_host_addresses(self) -> set[str]:
+        """Refresh the addresses owned by this machine for access classification."""
+        addresses = _collect_local_host_addresses(
+            (*self._configured_local_host_addresses, self.host)
+        )
+        with self._lock:
+            self._local_host_addresses = addresses
+        return set(addresses)
 
     def set_network_metadata(
         self,
@@ -320,7 +341,25 @@ class MobileUploadServer:
     ) -> None:
         now = datetime.now()
         safe_path = _redact_request_path(path)
-        self._last_request_at = now
+        confirmation_log = False
+        normalized_client = _normalize_ipv4_address(client)
+        with self._lock:
+            self._last_request_at = now
+            valid_upload_page = (
+                self.session is not None
+                and _token_from_path(path, "/u/") == self.session.token
+            )
+            if (
+                method == "GET"
+                and valid_upload_page
+                and status == 200
+                and not is_self_check
+                and bool(normalized_client)
+                and normalized_client not in self._local_host_addresses
+            ):
+                confirmation_log = not self._lan_client_access_confirmed
+                self._lan_client_access_confirmed = True
+                self._last_lan_client_access_at = now
         _log.info(
             "[手机上传] request method=%s client=%s path=%s status=%s",
             method,
@@ -328,22 +367,12 @@ class MobileUploadServer:
             safe_path,
             status,
         )
-        if (
-            method == "GET"
-            and path.startswith("/u/")
-            and status == 200
-            and not is_self_check
-            and not _is_loopback_host(client)
-        ):
-            first_confirmation = not self._phone_access_confirmed
-            self._phone_access_confirmed = True
-            self._last_phone_access_at = now
-            if first_confirmation:
-                _log.info(
-                    "[手机上传] network access confirmed client=%s at=%s",
-                    _redact_host(client),
-                    now.strftime("%H:%M:%S"),
-                )
+        if confirmation_log:
+            _log.info(
+                "[手机上传] LAN client access confirmed client=%s at=%s",
+                _redact_host(client),
+                now.strftime("%H:%M:%S"),
+            )
 
     def _log_upload_result(self, result: dict) -> None:
         imported = result.get("imported", 0)
@@ -375,6 +404,7 @@ class MobileUploadServer:
             upload_url=f"{base_url}/u/{self.session.token}",
             api_url=f"{base_url}/api/upload/{self.session.token}",
         )
+        self.refresh_local_host_addresses()
         self._write_manifest()
         self._local_self_check = "pending"
         self._local_self_check_error = ""
@@ -741,6 +771,38 @@ def enumerate_upload_hosts() -> list[UploadHostOption]:
             raw = []
 
     return build_upload_host_options(raw)
+
+
+def _normalize_ipv4_address(value: object) -> str:
+    """Normalize IPv4 and IPv4-mapped IPv6 client addresses for comparisons."""
+    try:
+        address = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return ""
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return str(address) if address.version == 4 else ""
+
+
+def _collect_local_host_addresses(extra: Iterable[str] = ()) -> set[str]:
+    """Return loopback plus every usable IPv4 currently owned by this host."""
+    addresses = {"127.0.0.1"}
+    for value in extra:
+        normalized = _normalize_ipv4_address(value)
+        if normalized:
+            addresses.add(normalized)
+    try:
+        addresses.update(
+            normalized
+            for option in enumerate_upload_hosts()
+            if (normalized := _normalize_ipv4_address(option.host))
+        )
+    except Exception:
+        # Access classification must fail closed if adapter enumeration is
+        # temporarily unavailable; the selected host and loopback remain known.
+        pass
+    return addresses
 
 
 def get_lan_ip() -> str:

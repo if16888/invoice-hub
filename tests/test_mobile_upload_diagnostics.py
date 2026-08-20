@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,21 +87,104 @@ class MobileUploadDiagnosticsTests(unittest.TestCase):
             self.assertIn("path=/api/upload/<redacted> status=200", messages)
             self.assertIn("server stop", messages)
 
-    def test_local_self_check_does_not_confirm_phone_but_external_get_does(self):
+    def test_local_self_check_does_not_confirm_lan_client(self):
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0)
             session = server.start()
             self.addCleanup(server.stop)
             self.assertTrue(server.run_local_self_check())
-            self.assertFalse(server.status()["phone_access_confirmed"])
+            status = server.status()
+            self.assertFalse(status["lan_client_access_confirmed"])
+            self.assertFalse(status["last_lan_client_access_at"])
+            self.assertNotIn("phone_access_confirmed", status)
+
+    def test_selected_and_other_local_interface_gets_do_not_confirm_lan_client(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="192.168.1.50",
+                port=0,
+                local_host_addresses={"192.168.1.50", "10.0.0.20"},
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            for client in ("192.168.1.50", "10.0.0.20"):
+                server._record_request("GET", f"/u/{session.token}", client, 200)
+                self.assertFalse(server.status()["lan_client_access_confirmed"])
+
+            self.assertFalse(server.status()["last_lan_client_access_at"])
+
+    def test_external_valid_get_confirms_lan_client_and_uses_safe_log(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="192.168.1.50",
+                port=0,
+                local_host_addresses={"192.168.1.50", "10.0.0.20"},
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
 
             with self.assertLogs("invoice_fetch.mobile_upload", level="INFO") as captured:
                 server._record_request("GET", f"/u/{session.token}", "192.168.1.80", 200)
-            self.assertTrue(server.status()["phone_access_confirmed"])
-            self.assertTrue(server.status()["last_phone_access_at"])
+            status = server.status()
+            self.assertTrue(status["lan_client_access_confirmed"])
+            self.assertTrue(status["last_lan_client_access_at"])
             messages = "\n".join(record.getMessage() for record in captured.records)
             self.assertNotIn(session.token, messages)
-            self.assertIn("network access confirmed", messages)
+            self.assertIn("LAN client access confirmed", messages)
+            self.assertNotIn("phone_access_confirmed", messages)
+
+    def test_invalid_get_and_post_do_not_confirm_lan_client(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="192.168.1.50",
+                port=0,
+                local_host_addresses={"192.168.1.50"},
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            with self.assertLogs("invoice_fetch.mobile_upload", level="INFO") as captured:
+                server._record_request("GET", "/u/not-the-token", "192.168.1.80", 200)
+                server._record_request("GET", "/u/not-the-token", "192.168.1.80", 403)
+                server._record_request("POST", f"/api/upload/{session.token}", "192.168.1.80", 200)
+
+            status = server.status()
+            self.assertFalse(status["lan_client_access_confirmed"])
+            self.assertFalse(status["last_lan_client_access_at"])
+            messages = "\n".join(record.getMessage() for record in captured.records)
+            self.assertIn("method=GET", messages)
+            self.assertIn("status=403", messages)
+            self.assertIn("method=POST", messages)
+            self.assertNotIn("LAN client access confirmed", messages)
+
+    def test_request_status_updates_are_synchronized(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="192.168.1.50",
+                port=0,
+                local_host_addresses={"192.168.1.50", "10.0.0.20"},
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            clients = ["192.168.1.50", "10.0.0.20", "192.168.1.80"] * 8
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                list(executor.map(
+                    lambda client: server._record_request(
+                        "GET", f"/u/{session.token}", client, 200,
+                    ),
+                    clients,
+                ))
+
+            status = server.status()
+            self.assertTrue(status["lan_client_access_confirmed"])
+            self.assertTrue(status["last_request_at"])
+            self.assertTrue(status["last_lan_client_access_at"])
 
     def test_expiry_network_change_and_stop_are_observable(self):
         with tempfile.TemporaryDirectory() as td:
