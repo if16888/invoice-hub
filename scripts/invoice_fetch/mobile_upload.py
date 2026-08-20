@@ -837,24 +837,34 @@ def _upload_page(session: MobileUploadSession) -> str:
 
     /* WeChat tip banner */
     .wechat-tip {{ background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; display: none; }}
-    .wechat-tip .tip-icon {{ font-size: 18px; margin-right: 6px; vertical-align: middle; }}
+    .wechat-tip .tip-icon {{ display: inline-flex; width: 20px; height: 20px; border: 1px solid #B45309; border-radius: 50%; align-items: center; justify-content: center; margin-right: 6px; vertical-align: middle; color: #92400E; font-size: 12px; font-weight: 700; }}
+    .wechat-tip .tip-icon::before {{ content: "i"; }}
     .wechat-tip .tip-text {{ font-size: 13px; color: #92400E; line-height: 1.5; }}
 
     /* Upload entries */
     .upload-entry {{ display: flex; align-items: center; background: #f9fafb; border: 1.5px dashed #d1d5db; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; cursor: pointer; transition: border-color 0.2s, background 0.2s; position: relative; overflow: hidden; }}
     .upload-entry:active {{ background: #eff6ff; border-color: #93c5fd; }}
-    .upload-entry .entry-icon {{ font-size: 28px; margin-right: 14px; flex-shrink: 0; }}
+    .upload-entry .entry-icon {{ display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 34px; border: 1px solid #BFDBFE; border-radius: 8px; background: #EFF6FF; color: #2563EB; font-size: 12px; font-weight: 700; letter-spacing: .04em; margin-right: 14px; flex-shrink: 0; }}
     .upload-entry .entry-title {{ font-size: 15px; font-weight: 600; color: #1e293b; }}
     .upload-entry .entry-desc {{ font-size: 12px; color: #64748b; margin-top: 2px; }}
     .upload-entry input[type="file"] {{ position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }}
 
-    /* File list */
+    /* File confirmation list */
     .file-list {{ margin-top: 8px; }}
-    .file-list-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }}
+    .file-list-header {{ display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }}
     .file-list-header span {{ font-size: 14px; font-weight: 600; color: #374151; }}
-    .file-list-clear {{ font-size: 13px; color: #dc2626; border: none; background: none; cursor: pointer; padding: 4px 8px; }}
-    .file-item {{ font-size: 13px; color: #4b5563; padding: 4px 0; border-bottom: 1px solid #f3f4f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    .no-files {{ font-size: 13px; color: #9ca3af; text-align: center; padding: 8px 0; }}
+    .file-list-clear {{ font-size: 13px; color: #2563EB; border: 1px solid #BFDBFE; border-radius: 7px; background: #EFF6FF; cursor: pointer; padding: 5px 8px; flex-shrink: 0; }}
+    .file-list-clear:active {{ background: #DBEAFE; }}
+    .file-item {{ display: flex; align-items: center; gap: 9px; padding: 8px 0; border-bottom: 1px solid #f3f4f6; min-width: 0; }}
+    .file-thumb {{ width: 46px; height: 46px; border-radius: 7px; border: 1px solid #E5E7EB; background: #F8FAFC; color: #64748B; display: flex; align-items: center; justify-content: center; flex: 0 0 46px; font-size: 11px; font-weight: 700; }}
+    .file-thumb img {{ width: 100%; height: 100%; border-radius: 6px; object-fit: cover; display: block; }}
+    .file-meta {{ min-width: 0; flex: 1; }}
+    .file-name {{ font-size: 13px; color: #334155; font-weight: 600; overflow-wrap: anywhere; }}
+    .file-detail {{ font-size: 12px; color: #64748B; margin-top: 2px; }}
+    .file-remove {{ font-size: 12px; color: #2563EB; border: 1px solid #CBD5E1; border-radius: 6px; background: #fff; cursor: pointer; padding: 5px 7px; flex: 0 0 auto; }}
+    .file-remove:active {{ background: #F1F5F9; }}
+    .selection-hint {{ font-size: 12px; color: #64748B; margin: 4px 0 8px; }}
+    .no-files {{ font-size: 13px; color: #64748b; text-align: center; padding: 8px 0; }}
 
     /* Buttons */
     .btn-upload {{ width: 100%; padding: 14px; border: none; border-radius: 10px; background: #2563eb; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s; }}
@@ -864,6 +874,8 @@ def _upload_page(session: MobileUploadSession) -> str:
     /* Result */
     #result {{ white-space: pre-wrap; font-size: 13px; color: #374151; min-height: 20px; }}
     .uploading {{ color: #2563eb; font-weight: 600; }}
+    .result-success {{ color: #166534; }}
+    .result-error {{ color: #B91C1C; }}
 
     /* Tips */
     .tips {{ font-size: 12px; color: #6b7280; line-height: 1.7; }}
@@ -871,6 +883,14 @@ def _upload_page(session: MobileUploadSession) -> str:
 
     .batch-info {{ font-size: 13px; color: #6b7280; }}
     .batch-info strong {{ color: #374151; }}
+    @media (max-width: 360px) {{
+      body {{ padding: 12px 10px 24px; }}
+      .card {{ padding: 13px; }}
+      .upload-entry {{ padding: 12px; }}
+      .upload-entry .entry-icon {{ width: 38px; margin-right: 10px; }}
+      .upload-entry .entry-title {{ font-size: 14px; }}
+      .file-remove {{ padding-left: 6px; padding-right: 6px; }}
+    }}
   </style>
 </head>
 <body>
@@ -882,13 +902,13 @@ def _upload_page(session: MobileUploadSession) -> str:
   </div>
 
   <div class="wechat-tip" id="wechatTip">
-    <span class="tip-icon">💡</span>
+    <span class="tip-icon" aria-hidden="true"></span>
     <span class="tip-text">当前在微信内打开。为便于选择 PDF/OFD/下载文件，建议点击右上角 <strong>⋯</strong>，选择「在浏览器打开」。<br>上传图片/拍照可直接使用。</span>
   </div>
 
   <div class="card">
     <div class="upload-entry" id="entryFile">
-      <div class="entry-icon">📄</div>
+      <div class="entry-icon" aria-hidden="true">PDF</div>
       <div>
         <div class="entry-title">选择 PDF/OFD/文件</div>
         <div class="entry-desc">适合电子发票、滴滴行程单、酒店水单、下载文件</div>
@@ -897,7 +917,7 @@ def _upload_page(session: MobileUploadSession) -> str:
     </div>
 
     <div class="upload-entry" id="entryGallery">
-      <div class="entry-icon">🖼️</div>
+      <div class="entry-icon" aria-hidden="true">IMG</div>
       <div>
         <div class="entry-title">选择相册图片</div>
         <div class="entry-desc">适合截图、照片、小票图片</div>
@@ -906,7 +926,7 @@ def _upload_page(session: MobileUploadSession) -> str:
     </div>
 
     <div class="upload-entry" id="entryCamera">
-      <div class="entry-icon">📷</div>
+      <div class="entry-icon" aria-hidden="true">CAM</div>
       <div>
         <div class="entry-title">拍照上传</div>
         <div class="entry-desc">适合纸质票据、现场小票</div>
@@ -919,6 +939,7 @@ def _upload_page(session: MobileUploadSession) -> str:
         <span id="fileCount">已选 0 个文件</span>
         <button class="file-list-clear" id="btnClear" type="button">清空重选</button>
       </div>
+      <div class="selection-hint" id="selectionHint">已选文件会显示名称、类型和大小。</div>
       <div id="fileListItems"></div>
     </div>
 
@@ -926,7 +947,7 @@ def _upload_page(session: MobileUploadSession) -> str:
   </div>
 
   <div class="card">
-    <div id="result" class="no-files">选择文件后点击「开始上传」。</div>
+    <div id="result" class="no-files" aria-live="polite">尚未选择文件。选中 PDF/OFD/图片后，这里会显示确认信息。</div>
   </div>
 
   <div class="card tips">
@@ -952,37 +973,99 @@ def _upload_page(session: MobileUploadSession) -> str:
   const fileListSection = document.getElementById('fileListSection');
   const fileListItems = document.getElementById('fileListItems');
   const fileCount = document.getElementById('fileCount');
+  const selectionHint = document.getElementById('selectionHint');
   const btnClear = document.getElementById('btnClear');
   const btnUpload = document.getElementById('btnUpload');
   const result = document.getElementById('result');
 
-  // Collect files from all inputs
+  // Collect files from all inputs and show an explicit confirmation row.
   let pendingFiles = [];
+  let previewUrls = [];
+  let isUploading = false;
+
+  function formatBytes(bytes) {{
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }}
+
+  function fileKind(file) {{
+    const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.pdf') || file.type === 'application/pdf') return 'PDF';
+    if (name.endsWith('.ofd')) return 'OFD';
+    if ((file.type || '').startsWith('image/')) return '图片';
+    return '文件';
+  }}
+
+  function clearPreviews() {{
+    previewUrls.forEach(function(url) {{ URL.revokeObjectURL(url); }});
+    previewUrls = [];
+  }}
 
   function collectFiles(input) {{
     for (const f of input.files) {{
-      // Avoid exact duplicates by name+size
-      if (!pendingFiles.some(p => p.name === f.name && p.size === f.size)) {{
+      if (!pendingFiles.some(p => p.name === f.name && p.size === f.size && p.lastModified === f.lastModified)) {{
         pendingFiles.push(f);
       }}
     }}
     renderFileList();
   }}
 
+  function removeFile(index) {{
+    pendingFiles.splice(index, 1);
+    renderFileList();
+  }}
+
   function renderFileList() {{
+    clearPreviews();
     if (pendingFiles.length === 0) {{
       fileListSection.style.display = 'none';
       btnUpload.disabled = true;
       return;
     }}
     fileListSection.style.display = 'block';
-    btnUpload.disabled = false;
-    fileCount.textContent = '已选 ' + pendingFiles.length + ' 个文件';
+    btnUpload.disabled = isUploading;
+    fileCount.textContent = '已选 ' + pendingFiles.length + ' 个文件' + (pendingFiles.length > 1 ? ' · 可多选上传' : '');
+    selectionHint.textContent = pendingFiles.length === 1 ? '请确认这是要上传的文件。' : '请确认以下文件后再开始上传。';
     fileListItems.innerHTML = '';
-    pendingFiles.forEach(function(f) {{
+    pendingFiles.forEach(function(f, index) {{
       const div = document.createElement('div');
       div.className = 'file-item';
-      div.textContent = f.name;
+      const kind = fileKind(f);
+      const thumb = document.createElement('div');
+      thumb.className = 'file-thumb';
+      if (kind === '图片') {{
+        const url = URL.createObjectURL(f);
+        previewUrls.push(url);
+        const image = document.createElement('img');
+        image.src = url;
+        image.alt = '图片预览：' + f.name;
+        thumb.appendChild(image);
+      }} else {{
+        thumb.textContent = kind;
+        thumb.setAttribute('aria-hidden', 'true');
+      }}
+
+      const meta = document.createElement('div');
+      meta.className = 'file-meta';
+      const name = document.createElement('div');
+      name.className = 'file-name';
+      name.textContent = f.name || '未命名文件';
+      const detail = document.createElement('div');
+      detail.className = 'file-detail';
+      detail.textContent = kind + ' · ' + formatBytes(f.size);
+      meta.appendChild(name);
+      meta.appendChild(detail);
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'file-remove';
+      remove.textContent = '移除';
+      remove.setAttribute('aria-label', '移除 ' + (f.name || '文件'));
+      remove.addEventListener('click', function() {{ removeFile(index); }});
+      div.appendChild(thumb);
+      div.appendChild(meta);
+      div.appendChild(remove);
       fileListItems.appendChild(div);
     }});
   }}
@@ -997,15 +1080,17 @@ def _upload_page(session: MobileUploadSession) -> str:
     inputGallery.value = '';
     inputCamera.value = '';
     renderFileList();
-    result.textContent = '选择文件后点击「开始上传」。';
+    result.textContent = '尚未选择文件。选中 PDF/OFD/图片后，这里会显示确认信息。';
     result.className = 'no-files';
   }});
 
   btnUpload.addEventListener('click', async function() {{
-    if (pendingFiles.length === 0) {{
+    if (pendingFiles.length === 0 || isUploading) {{
       result.textContent = '请先选择文件或拍照。';
+      result.className = 'result-error';
       return;
     }}
+    isUploading = true;
     btnUpload.disabled = true;
     result.textContent = '正在上传 ' + pendingFiles.length + ' 个文件...';
     result.className = 'uploading';
@@ -1013,9 +1098,13 @@ def _upload_page(session: MobileUploadSession) -> str:
       const data = new FormData();
       pendingFiles.forEach(function(f) {{ data.append('files', f); }});
       const response = await fetch('/api/upload/{html.escape(session.token)}', {{ method: 'POST', body: data }});
-      const payload = await response.json();
-      result.className = '';
-      result.textContent = '✅ 成功：' + payload.accepted + '\\n🔁 重复：' + payload.duplicate + '\\n❌ 失败：' + payload.failed;
+      let payload = {{}};
+      try {{ payload = await response.json(); }} catch (_) {{ payload = {{}}; }}
+      if (!response.ok) {{
+        throw new Error(payload.message || ('HTTP ' + response.status));
+      }}
+      result.className = 'result-success';
+      result.textContent = '上传完成\\n已接收：' + (payload.accepted || 0) + '\\n重复：' + (payload.duplicate || 0) + '\\n失败：' + (payload.failed || 0) + '\\n文件已交给桌面端处理。';
       // Reset for next batch
       pendingFiles = [];
       inputFile.value = '';
@@ -1023,9 +1112,12 @@ def _upload_page(session: MobileUploadSession) -> str:
       inputCamera.value = '';
       renderFileList();
     }} catch (err) {{
-      result.className = '';
-      result.textContent = '上传失败: ' + err.message;
-      btnUpload.disabled = false;
+      result.className = 'result-error';
+      result.textContent = '上传失败：' + err.message;
+      btnUpload.disabled = pendingFiles.length === 0;
+    }} finally {{
+      isUploading = false;
+      btnUpload.disabled = pendingFiles.length === 0;
     }}
   }});
 }})();

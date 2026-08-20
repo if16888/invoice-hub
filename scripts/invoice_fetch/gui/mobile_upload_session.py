@@ -303,6 +303,10 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_local_self_check = QLabel("检查中")
         self.lbl_phone_access = QLabel("尚未确认")
         self.lbl_last_access = QLabel("—")
+        self.lbl_phone_access_hint = QLabel(
+            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。"
+        )
+        self.lbl_phone_access_hint.setWordWrap(True)
         self.lbl_stats = QLabel("成功 0 · 重复 0 · 失败 0 · 入库 0")
         self.lbl_stats.setWordWrap(True)
         operation = QLabel("手机扫描二维码，在浏览器中选择文件上传。")
@@ -315,6 +319,7 @@ class MobileUploadSessionPanel(QFrame):
         form.addRow("本机访问", self.lbl_local_self_check)
         form.addRow("局域网访问", self.lbl_phone_access)
         form.addRow("最近访问", self.lbl_last_access)
+        form.addRow("访问提示", self.lbl_phone_access_hint)
         form.addRow("本次上传", self.lbl_stats)
         body.addWidget(self.lbl_qr); body.addWidget(details, 1)
         footer = QHBoxLayout()
@@ -384,6 +389,7 @@ class MobileUploadSessionPanel(QFrame):
         }.get(str(stats.get("local_self_check") or "pending"), "检查中"))
         confirmed = bool(stats.get("phone_access_confirmed"))
         self.lbl_phone_access.setText("已确认" if confirmed else "尚未确认")
+        self.lbl_phone_access_hint.setVisible(not confirmed)
         last_access = str(stats.get("last_phone_access_at") or "").strip()
         self.lbl_last_access.setText(last_access[11:19] if len(last_access) >= 19 else (last_access or "—"))
         self.lbl_service_state.setText("运行中" if stats.get("active", True) else "已停止")
