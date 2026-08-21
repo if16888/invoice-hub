@@ -8,6 +8,7 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel, QMessageBox, QLineEdit, QSpinBox, QComboBox
+from shiboken6 import isValid
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
@@ -18,6 +19,21 @@ TEST_DB_PATH = Path("test.db")
 
 
 class TestMailboxV5UI(unittest.TestCase):
+
+    def tearDown(self):
+        # This module historically left many top-level InvoiceReviewApp and
+        # SettingsDialog instances alive.  Their deferred Qt callbacks can
+        # starve the next module's mobile-upload worker in the full suite.
+        widgets = [
+            widget
+            for widget in list(app.topLevelWidgets())
+            if widget is not None and isValid(widget)
+        ]
+        for widget in widgets:
+            close = getattr(widget, "close", None)
+            if isValid(widget) and callable(close):
+                close()
+        app.processEvents()
 
     def setUp(self):
         QMessageBox.information = lambda *args, **kwargs: QMessageBox.Ok
