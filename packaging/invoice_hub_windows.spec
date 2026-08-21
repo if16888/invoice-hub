@@ -62,6 +62,7 @@ _hiddenimports = [
     "keyring",
     "keyring.backends",
     "keyring.backends.Windows",
+    "scripts.invoice_fetch.windows_firewall",
     "qrcode",
     "qrcode.image.pil",
     "PIL",
