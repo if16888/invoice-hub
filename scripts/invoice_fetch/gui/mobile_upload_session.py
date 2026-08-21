@@ -8,12 +8,17 @@ from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, QThread, QTime
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QFormLayout, QFrame, QHBoxLayout,
-    QLabel, QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout,
-    QWidget,
+    QLabel, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 
 from ..config import RUNTIME_DIR
-from .ui_components import MiddleElidedTextLabel, make_badge, make_button
+from .ui_components import (
+    MiddleElidedTextLabel,
+    WrappedTextLabel,
+    make_badge,
+    make_button,
+)
 
 
 class _MobileUploadStartWorker(QObject):
@@ -354,14 +359,12 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_local_self_check = self._responsive_label("检查中")
         self.lbl_lan_client_access = self._responsive_label("尚未确认")
         self.lbl_last_access = self._responsive_label("—")
-        self.lbl_lan_access_hint = QLabel(
+        self.lbl_lan_access_hint = WrappedTextLabel(
             "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。"
         )
-        self.lbl_lan_access_hint.setWordWrap(True)
         self.lbl_lan_access_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.lbl_firewall_state = self._responsive_label("检查中")
-        self.lbl_firewall_hint = QLabel("")
-        self.lbl_firewall_hint.setWordWrap(True)
+        self.lbl_firewall_hint = WrappedTextLabel("")
         self.lbl_firewall_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.btn_firewall_authorize = make_button("允许手机访问", variant="secondary")
         self.btn_firewall_authorize.clicked.connect(self._request_firewall_access)
@@ -385,7 +388,16 @@ class MobileUploadSessionPanel(QFrame):
         form.addRow("访问提示", self.lbl_lan_access_hint)
         form.addRow("Windows 防火墙", firewall_details)
         form.addRow("本次上传", self.lbl_stats)
-        body.addWidget(self.lbl_qr); body.addWidget(details, 1)
+        details_scroll = QScrollArea(page)
+        details_scroll.setObjectName("MobileUploadDetailsScroll")
+        details_scroll.setFrameShape(QFrame.NoFrame)
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        details_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        details_scroll.setWidget(details)
+        self._active_details_scroll = details_scroll
+        body.addWidget(self.lbl_qr, 0, Qt.AlignTop)
+        body.addWidget(details_scroll, 1)
         footer = QBoxLayout(QBoxLayout.LeftToRight)
         self._active_footer_layout = footer
         self.btn_copy_url = make_button("复制链接", variant="secondary"); self.btn_copy_url.clicked.connect(self._copy_url)
@@ -478,11 +490,8 @@ class MobileUploadSessionPanel(QFrame):
 
     @staticmethod
     def _responsive_label(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setWordWrap(True)
+        label = WrappedTextLabel(text)
         label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        label.setMinimumHeight(0)
-        label.setMaximumHeight(16777215)
         return label
 
     def _set_firewall_status(self, status):
@@ -499,7 +508,7 @@ class MobileUploadSessionPanel(QFrame):
             button_visible = True
         elif state == "supported" and development_mode:
             summary = "开发运行模式"
-            hint = "开发运行不会自动创建持久防火墙规则；请用正式构建验证手机访问。"
+            hint = "当前为开发运行模式，请手动允许测试端口或使用正式构建验证。"
             button_visible = False
         elif state == "non_windows":
             summary = "当前系统不支持"
@@ -568,4 +577,5 @@ class MobileUploadSessionPanel(QFrame):
         self._active_details_form.setRowWrapPolicy(
             QFormLayout.WrapAllRows if narrow else QFormLayout.WrapLongRows
         )
+        self._active_details_scroll.setMinimumHeight(0)
         self.lbl_qr.setAlignment(Qt.AlignCenter)

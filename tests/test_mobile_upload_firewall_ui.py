@@ -7,12 +7,14 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QBoxLayout, QFormLayout
 
 from scripts.invoice_fetch.gui.mobile_upload_session import (
     MobileUploadSessionController,
     MobileUploadSessionPanel,
 )
+from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.windows_firewall import FirewallState, FirewallStatus
 
 
@@ -26,7 +28,15 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
         panel = MobileUploadSessionPanel(controller)
         panel.show()
         self.app.processEvents()
-        self.addCleanup(panel.close)
+
+        def cleanup():
+            panel.close()
+            panel.deleteLater()
+            controller.deleteLater()
+            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.app.processEvents()
+
+        self.addCleanup(cleanup)
         return controller, panel
 
     def activate(self, controller, panel):
@@ -77,6 +87,46 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                 panel._active_details_form.rowWrapPolicy(),
                 QFormLayout.WrapLongRows,
             )
+
+    def test_import_workspace_keeps_narrow_details_scrollable_and_footer_clear(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = InvoiceReviewApp(Path(td) / "invoices.db")
+            window.resize(1366, 768)
+            window.show()
+            window._switch_main_page("imports")
+            window._set_import_source_selected("mobile")
+            controller = window.mobile_upload_controller
+            controller.host_options = [SimpleNamespace(label="WLAN", host="192.168.1.50")]
+            session = SimpleNamespace(
+                upload_url="http://192.168.1.50:43210/u/synthetic-review",
+                host="192.168.1.50",
+                port=43210,
+            )
+            with patch.object(controller, "qr_png", return_value=b""):
+                controller.started.emit(session)
+            self.app.processEvents()
+            panel = window.mobile_upload_panel
+            self.assertGreaterEqual(
+                panel._active_details_scroll.geometry().top(),
+                panel.lbl_qr.geometry().bottom(),
+            )
+            self.assertGreaterEqual(
+                panel._active_footer_layout.geometry().top(),
+                panel._active_details_scroll.geometry().bottom(),
+            )
+            self.assertGreater(panel._active_details.height(), panel._active_details_scroll.height())
+            for label in (
+                panel.lbl_service_address,
+                panel.lbl_lan_access_hint,
+                panel.lbl_firewall_hint,
+                panel.lbl_stats,
+            ):
+                self.assertGreater(label.height(), 0)
+            window.close()
+            self.app.processEvents()
+            window.deleteLater()
+            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.app.processEvents()
 
     def test_firewall_allowed_does_not_confirm_lan_access(self):
         with tempfile.TemporaryDirectory() as td:
