@@ -339,7 +339,9 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.table.item(0, 2).textAlignment(), int(Qt.AlignCenter | Qt.AlignVCenter))
         self.assertEqual(window.table.item(0, 3).textAlignment(), int(Qt.AlignRight | Qt.AlignVCenter))
         self.assertEqual(window.table.item(0, 3).text(), "28.90")
-        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#94a3b8")
+        # Invoice numbers are informative text, so keep normal-text contrast
+        # instead of the decorative-only #94A3B8 gray.
+        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#667085")
 
     def test_default_headers_are_clean_without_dropdown_arrows(self):
         window = self._make_window([

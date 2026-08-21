@@ -597,7 +597,7 @@ QLabel.DetailSeller {
     font-weight: 700;
 }
 QLabel.DetailCaption {
-    color: #94A3B8;
+    color: #667085;
     font-size: 11px;
     font-weight: 400;
 }
