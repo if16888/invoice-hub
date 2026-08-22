@@ -124,7 +124,7 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
                 self.assertTrue(window._data_operation_gate.try_acquire("邮箱扫描"))
                 with patch.object(QMessageBox, "critical", return_value=QMessageBox.Ok):
                     window._scan_email_error("synthetic failure")
-                self.assertEqual(window._data_operation_gate.busy_reason(), "")
+                self.assertEqual(gate.busy_reason(), "")
             finally:
                 window.close()
 
@@ -144,7 +144,11 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
             with patch("scripts.invoice_fetch.gui.mobile_upload_session.QThread.start"):
                 controller.start()
             server = SimpleNamespace(stop=lambda: None)
-            controller._start_succeeded(server, SimpleNamespace(host="127.0.0.1"), [])
+            controller._start_succeeded(
+                server,
+                SimpleNamespace(host="127.0.0.1", port=43210),
+                [],
+            )
             self.assertEqual(gate.busy_reason(), "手机上传")
             controller.stop()
             self.assertEqual(gate.busy_reason(), "")
