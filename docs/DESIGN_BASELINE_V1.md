@@ -3,6 +3,12 @@
 This document is the product UI source of truth for the desktop application.
 Implementation convenience, legacy test structure, or individual page preferences must not override it.
 
+> v0.1.6 mobile-upload and compact-layout amendments are frozen in
+> [`docs/design/2026-08-22-v0.1.6-interaction-freeze.md`](design/2026-08-22-v0.1.6-interaction-freeze.md).
+> For the surfaces explicitly covered there, that addendum supersedes the
+> corresponding historical v1.0 interaction details without rewriting this
+> baseline.
+
 ## Product character
 
 Invoice Hub is an **quiet, trustworthy, compact personal reimbursement workspace**.
@@ -147,9 +153,15 @@ At 100%, 125% and 150%:
 - button text is complete;
 - badges do not clip or wrap;
 - navigation collapse leaves no text residue;
-- field labels do not wrap unexpectedly;
-- action footer remains one line;
-- long names, emails, paths and models elide with a tooltip.
+- field labels do not wrap unexpectedly at normal desktop widths;
+- long names, emails, paths and models elide with a tooltip when they are single-line values;
+- explanatory values may wrap and grow vertically rather than clip;
+- when the logical width is genuinely constrained, Settings list/detail regions may stack and action footers may reflow instead of forcing a clipped one-line layout;
+- no responsive mode may solve the problem by overlapping controls or shrinking text below the baseline.
+
+The original one-line footer remains the preferred normal-desktop layout; the
+v0.1.6 compact amendment explicitly allows reflow where Windows scaling or a
+narrow logical viewport would otherwise clip content.
 
 ## Implementation order
 
