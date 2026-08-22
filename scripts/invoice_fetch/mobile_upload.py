@@ -120,6 +120,30 @@ class MobileUploadSession:
     manifest_path: Path
 
 
+def public_upload_result(result: dict) -> dict:
+    """Project internal upload results to public HTTP statistics.
+
+    Database invoice row IDs and internal structures are strictly kept off
+    public HTTP interfaces.
+    """
+    imported_val = result.get("imported", 0)
+    if isinstance(imported_val, dict):
+        imported_count = int(
+            imported_val.get("added", 0)
+            + imported_val.get("conflicts", 0)
+            + imported_val.get("pending_manual", 0)
+        )
+    else:
+        imported_count = int(imported_val or 0)
+    return {
+        "accepted": int(result.get("accepted", 0) or 0),
+        "duplicate": int(result.get("duplicate", 0) or 0),
+        "failed": int(result.get("failed", 0) or 0),
+        "imported": imported_count,
+        "batch_id": str(result.get("batch_id", "") or ""),
+    }
+
+
 class MobileUploadServer:
     """Small HTTP server used by the desktop app for one LAN upload session."""
 
@@ -669,7 +693,7 @@ class MobileUploadServer:
                     _log.info("[手机上传] upload processing failed exception_type=server_error")
                     self._send_text(500, "Upload processing failed.")
                     return
-                self._send_json(200, result)
+                self._send_json(200, public_upload_result(result))
 
             def _send_html(self, status: int, body: str):
                 self._log_response(status)
