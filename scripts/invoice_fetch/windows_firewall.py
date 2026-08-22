@@ -142,6 +142,11 @@ def _is_allow(value: object) -> bool:
     return _as_text(value).casefold() in {"allow", "2"}
 
 
+def _is_any_local_port(value: object) -> bool:
+    """Accept only the exact any-port value used by the creation contract."""
+    return _as_text(value).replace(" ", "").casefold() == "any"
+
+
 def _programs(value: object) -> set[str]:
     if isinstance(value, (list, tuple, set)):
         values: Iterable[object] = value
@@ -211,9 +216,13 @@ def _query_firewall_rules() -> list[dict[str, Any]]:
     return []
 
 
-def _status_from_rule(rule: dict[str, Any], executable: Path) -> FirewallStatus:
+def _status_from_rule(
+    rule: dict[str, Any],
+    executable: Path,
+    state: FirewallState = FirewallState.RULE_PRESENT,
+) -> FirewallStatus:
     return FirewallStatus(
-        state=FirewallState.RULE_PRESENT,
+        state=state,
         executable_path=str(executable),
         enabled=_is_enabled(rule.get("Enabled")),
         direction=_as_text(rule.get("Direction")),
@@ -254,6 +263,7 @@ def get_mobile_upload_firewall_status(
         )
 
     executable_key = _path_key(executable)
+    disabled_current_executable_rule: dict[str, Any] | None = None
     for rule in rules:
         programs = _programs(rule.get("Program"))
         # The application filter must be exactly the current packaged
@@ -262,28 +272,31 @@ def get_mobile_upload_firewall_status(
         if programs != {executable_key}:
             continue
         if not _is_enabled(rule.get("Enabled")):
-            return FirewallStatus(
-                FirewallState.RULE_DISABLED,
-                executable_path=str(executable),
-                enabled=False,
-                direction=_as_text(rule.get("Direction")),
-                action=_as_text(rule.get("Action")),
-                protocol=_as_text(rule.get("Protocol")),
-                profile=_as_text(rule.get("Profile")),
-                program=_as_text(rule.get("Program")),
-            )
+            # Keep scanning: Windows can return more than one rule with this
+            # DisplayName, and a later enabled complete rule wins.
+            if disabled_current_executable_rule is None:
+                disabled_current_executable_rule = rule
+            continue
         if (
             _is_inbound(rule.get("Direction"))
             and _is_allow(rule.get("Action"))
             and _is_tcp(rule.get("Protocol"))
             and _is_private_only_profile(rule.get("Profile"))
+            and _is_any_local_port(rule.get("LocalPort"))
         ):
             return _status_from_rule(rule, executable)
+
+    if disabled_current_executable_rule is not None:
+        return _status_from_rule(
+            disabled_current_executable_rule,
+            executable,
+            FirewallState.RULE_DISABLED,
+        )
 
     return FirewallStatus(
         FirewallState.RULE_MISSING,
         executable_path=str(executable),
-        reason="no enabled private inbound TCP rule targets the current executable",
+        reason="no enabled private inbound TCP any-port rule targets the current executable",
     )
 
 

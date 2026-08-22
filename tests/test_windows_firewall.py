@@ -68,12 +68,58 @@ class WindowsFirewallContractTests(unittest.TestCase):
                     self.assertEqual(status.state, FirewallState.RULE_MISSING)
                     self.assertFalse(status.is_allowed)
 
+    def test_single_port_rule_is_not_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = self.make_executable(td)
+            status = self.status_for(
+                executable,
+                [_rule(str(executable), local_port="56475")],
+            )
+            self.assertEqual(status.state, FirewallState.RULE_MISSING)
+            self.assertFalse(status.is_allowed)
+
+    def test_old_single_port_rule_and_new_any_rule_is_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = self.make_executable(td)
+            status = self.status_for(
+                executable,
+                [
+                    _rule(str(executable), local_port="56475"),
+                    _rule(str(executable), local_port="Any"),
+                ],
+            )
+            self.assertEqual(status.state, FirewallState.RULE_PRESENT)
+
     def test_disabled_rule_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as td:
             executable = self.make_executable(td)
             status = self.status_for(executable, [_rule(str(executable), enabled="False")])
             self.assertEqual(status.state, FirewallState.RULE_DISABLED)
             self.assertFalse(status.is_allowed)
+
+    def test_disabled_rule_before_enabled_valid_rule_is_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = self.make_executable(td)
+            status = self.status_for(
+                executable,
+                [
+                    _rule(str(executable), enabled="False"),
+                    _rule(str(executable), enabled="True", local_port="Any"),
+                ],
+            )
+            self.assertEqual(status.state, FirewallState.RULE_PRESENT)
+
+    def test_enabled_valid_rule_before_disabled_rule_is_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = self.make_executable(td)
+            status = self.status_for(
+                executable,
+                [
+                    _rule(str(executable), enabled="True", local_port="Any"),
+                    _rule(str(executable), enabled="False"),
+                ],
+            )
+            self.assertEqual(status.state, FirewallState.RULE_PRESENT)
 
     def test_stale_or_wrong_program_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as td:
