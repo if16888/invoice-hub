@@ -117,6 +117,25 @@ class TestPublicExportCheck(unittest.TestCase):
 
             self.assertEqual(find_public_export_issues(root), [])
 
+    def test_allows_vendored_pdfjs_runtime_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_minimal_public_tree(root)
+            asset_root = root / "scripts" / "invoice_fetch" / "web_assets" / "pdfjs"
+            asset_root.mkdir(parents=True, exist_ok=True)
+            for name in (
+                Path("pdf.min.mjs"),
+                Path("pdf.worker.min.mjs"),
+                Path("cmaps") / "CMap.bcmap",
+                Path("standard_fonts") / "FoxitSerif.pfb",
+                Path("standard_fonts") / "LiberationSans.ttf",
+            ):
+                path = asset_root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"synthetic PDF.js asset")
+
+            self.assertEqual(find_public_export_issues(root), [])
+
     def test_ignores_git_and_pycache_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

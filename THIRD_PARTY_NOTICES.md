@@ -17,6 +17,7 @@ replace the license texts distributed by those projects.
 | beautifulsoup4 | HTML parsing | MIT |
 | keyring | OS credential-store integration | MIT |
 | qrcode / Pillow | Local QR upload page support | BSD-style / HPND-style licenses |
+| PDF.js 4.10.38 | Offline PDF page-count and canvas preview in the mobile upload page | Apache-2.0; vendored browser assets under `scripts/invoice_fetch/web_assets/pdfjs/` |
 | cryptography | Secure primitives used by dependencies/keyring backends | Apache-2.0 OR BSD-3-Clause |
 | PyInstaller | Windows one-dir packaging | GPLv2-or-later with PyInstaller exception |
 | Inno Setup | Optional Windows installer generation | Inno Setup license |
@@ -32,6 +33,15 @@ Users may obtain Qt and Qt for Python source and license information from:
 - https://www.qt.io/download
 - https://doc.qt.io/qtforpython-6/
 - https://www.qt.io/licensing/open-source-lgpl-obligations
+
+## Vendored PDF.js
+
+The mobile upload page vendors the fixed PDF.js 4.10.38 browser runtime and
+offline CMap/standard-font data under
+`scripts/invoice_fetch/web_assets/pdfjs/`. It is used locally over the Invoice
+Hub LAN session; the page does not load PDF.js or PDF data from a CDN or a
+third-party service. The corresponding Apache-2.0 license is distributed as
+`scripts/invoice_fetch/web_assets/pdfjs/LICENSE`.
 
 ## Packaged License Files
 

@@ -476,7 +476,7 @@ class MobileUploadTests(unittest.TestCase):
             self.assertIn('capture="environment"', page_html)
 
     def test_upload_page_has_entry_descriptions(self):
-        """Each entry should have a descriptive subtitle."""
+        """Each compact source action should expose an accessible purpose."""
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0)
             session = server.start()
@@ -485,9 +485,10 @@ class MobileUploadTests(unittest.TestCase):
             with urllib.request.urlopen(session.upload_url, timeout=5) as resp:
                 page_html = resp.read().decode("utf-8")
 
-            self.assertIn("适合电子发票、滴滴行程单、酒店水单、下载文件", page_html)
-            self.assertIn("适合截图、照片、小票图片", page_html)
-            self.assertIn("适合纸质票据、现场小票", page_html)
+            self.assertIn('aria-label="选择 PDF/OFD/文件"', page_html)
+            self.assertIn('aria-label="选择相册图片"', page_html)
+            self.assertIn('aria-label="拍照上传"', page_html)
+            self.assertIn("min-height:54px", page_html)
 
     def test_upload_page_has_wechat_browser_tip(self):
         """Page must contain WeChat in-app browser detection and tip text."""
@@ -504,7 +505,7 @@ class MobileUploadTests(unittest.TestCase):
             self.assertIn("wechatTip", page_html)
 
     def test_upload_page_has_file_list_preview_elements(self):
-        """Page must contain file list preview UI elements."""
+        """Page must contain the selected-file review UI and sticky upload CTA."""
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0)
             session = server.start()
@@ -513,9 +514,14 @@ class MobileUploadTests(unittest.TestCase):
             with urllib.request.urlopen(session.upload_url, timeout=5) as resp:
                 page_html = resp.read().decode("utf-8")
 
-            self.assertIn("fileListSection", page_html)
+            self.assertIn("pendingSection", page_html)
+            self.assertIn("fileListItems", page_html)
+            self.assertIn("file-card", page_html)
+            self.assertIn("previewModal", page_html)
             self.assertIn("清空重选", page_html)
-            self.assertIn("开始上传", page_html)
+            self.assertIn("uploadBar", page_html)
+            self.assertIn("btnUpload", page_html)
+            self.assertIn("上传", page_html)
 
     def test_upload_page_has_usage_tips(self):
         """Page must include practical usage guidance for workers."""
@@ -535,7 +541,7 @@ class MobileUploadTests(unittest.TestCase):
             self.assertIn("ofd", page_html)
 
     def test_upload_page_supports_ofd_format_in_tips(self):
-        """The format list in tips should mention OFD alongside PDF."""
+        """The OFD card must explain that browser content preview is unsupported."""
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0)
             session = server.start()
@@ -544,7 +550,8 @@ class MobileUploadTests(unittest.TestCase):
             with urllib.request.urlopen(session.upload_url, timeout=5) as resp:
                 page_html = resp.read().decode("utf-8")
 
-            self.assertIn("pdf、ofd", page_html)
+            self.assertIn("OFD", page_html)
+            self.assertIn("手机浏览器暂不支持内容预览", page_html)
 
     def test_gui_exposes_mobile_upload_button_and_dialog(self):
         try:

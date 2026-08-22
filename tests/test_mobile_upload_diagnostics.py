@@ -87,6 +87,35 @@ class MobileUploadDiagnosticsTests(unittest.TestCase):
             self.assertIn("path=/api/upload/<redacted> status=200", messages)
             self.assertIn("server stop", messages)
 
+    def test_vendored_pdfjs_assets_are_served_locally_and_path_is_allowlisted(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            with urllib.request.urlopen(
+                session.base_url + "/assets/pdfjs/pdf.min.mjs", timeout=5
+            ) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), "text/javascript")
+                self.assertIn(b"Mozilla Foundation", response.read(4096))
+
+            with urllib.request.urlopen(
+                session.base_url + "/assets/pdfjs/pdf.worker.min.mjs", timeout=5
+            ) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), "text/javascript")
+
+            with self.assertRaises(urllib.error.HTTPError) as missing:
+                urllib.request.urlopen(
+                    session.base_url + "/assets/pdfjs/../mobile_upload.py", timeout=5
+                )
+            self.assertEqual(missing.exception.code, 404)
+
     def test_local_self_check_does_not_confirm_lan_client(self):
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0)
