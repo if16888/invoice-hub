@@ -88,6 +88,17 @@ class MobileUploadPageContractTests(unittest.TestCase):
             page.index("fetch(UPLOAD_URL"),
         )
 
+    def test_pdf_review_allows_user_zoom_and_hides_internal_batch_id(self):
+        page = self._page()
+        self.assertIn("width=device-width", page)
+        self.assertIn("initial-scale=1", page)
+        self.assertIn("viewport-fit=cover", page)
+        self.assertNotIn("user-scalable=no", page)
+        self.assertNotIn("maximum-scale=1", page)
+        self.assertIn("可使用浏览器/系统手势放大", page)
+        self.assertRegex(page, r"链接约 \d+ 分钟后失效")
+        self.assertNotIn("批次 mobile_", page)
+
     def test_upload_feedback_is_in_page_and_no_emoji_or_alert(self):
         page = self._page()
         self.assertIn("result-success", page)
@@ -101,7 +112,7 @@ class MobileUploadPageContractTests(unittest.TestCase):
         page = self._page()
         self.assertIn("@media (max-width:360px)", page)
         self.assertIn("width=device-width", page)
-        self.assertIn("user-scalable=no", page)
+        self.assertNotIn("user-scalable=no", page)
         self.assertIn("entry-icon", page)
         self.assertIn("overflow-x:hidden", page)
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", page)
