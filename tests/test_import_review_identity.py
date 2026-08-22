@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 import unittest
@@ -11,8 +12,10 @@ from PySide6.QtWidgets import QApplication, QPushButton, QMessageBox
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp, ImportActivity
-from scripts.invoice_fetch.mobile_upload import public_upload_result, UploadedFile
+from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+from scripts.invoice_fetch.mobile_upload import MobileUploadServer, public_upload_result, UploadedFile
 from scripts.invoice_fetch.review_status import APPROVED, TO_REVIEW
+from scripts.invoice_fetch.services import import_local_directory
 
 
 class ImportReviewIdentityTests(unittest.TestCase):
@@ -380,6 +383,205 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 window._return_from_review_scope()
                 self.app.processEvents()
                 self.assertEqual(window._review_scope_ids, ())
+            finally:
+                window.close()
+
+    def test_e2e_a_local_soft_delete_restore(self):
+        """E2E A: Local soft delete restore - id in restored & review, excluded from new_ids."""
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "invoices.db"
+            import_dir = Path(td) / "import_inbox"
+            import_dir.mkdir(parents=True)
+            file_path = import_dir / "invoice_restore_a.pdf"
+            file_path.write_bytes(b"%PDF-1.4 synthetic restore invoice a")
+            file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+
+            with InvoiceDB(db_path) as db:
+                inv_id = db.insert_invoice({
+                    "invoice_number": "RESTORE-A-001",
+                    "total_amount": "123.45",
+                    "seller_name": "商户A",
+                    "invoice_date": "2026-08-22",
+                    "file_hash": file_hash,
+                    "review_status": TO_REVIEW,
+                })
+                self.assertTrue(db.soft_delete_invoice(inv_id))
+
+            mock_parsed = InvoiceInfo(
+                invoice_number="RESTORE-A-001",
+                total_amount="123.45",
+                seller_name="商户A",
+                invoice_date="2026-08-22",
+                parse_success=True,
+            )
+            with patch("scripts.invoice_fetch.__main__.InvoiceParser.parse_pdf", return_value=mock_parsed):
+                stats = import_local_directory(import_dir, db_path)
+
+            self.assertNotIn(inv_id, stats["new_invoice_ids"])
+            self.assertIn(inv_id, stats["restored_invoice_ids"])
+            self.assertIn(inv_id, stats["review_invoice_ids"])
+            with InvoiceDB(db_path) as db:
+                row = db.get_invoice(inv_id)
+                self.assertEqual(row["is_deleted"], 0)
+
+    def test_e2e_b_existing_invoice_evidence_update(self):
+        """E2E B: Existing to_review invoice receiving evidence is not added to new, restored or review IDs."""
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "invoices.db"
+            import_dir = Path(td) / "import_inbox"
+            import_dir.mkdir(parents=True)
+            evid_path = import_dir / "trip_itinerary.pdf"
+            evid_path.write_bytes(b"%PDF-1.4 synthetic trip itinerary evidence")
+
+            with InvoiceDB(db_path) as db:
+                inv_id = db.insert_invoice({
+                    "invoice_number": "DIDI-ORDER-123",
+                    "total_amount": "56.00",
+                    "seller_name": "滴滴出行",
+                    "invoice_date": "2026-08-22",
+                    "invoice_type": "电子发票",
+                    "review_status": TO_REVIEW,
+                })
+
+            mock_parsed = InvoiceInfo(
+                invoice_number="DIDI-ORDER-123",
+                total_amount="56.00",
+                seller_name="滴滴出行",
+                invoice_date="2026-08-22",
+                invoice_type="行程单",
+                parse_success=True,
+            )
+            with patch("scripts.invoice_fetch.__main__.InvoiceParser.parse_pdf", return_value=mock_parsed):
+                stats = import_local_directory(import_dir, db_path)
+
+            self.assertNotIn(inv_id, stats["new_invoice_ids"])
+            self.assertNotIn(inv_id, stats["restored_invoice_ids"])
+            self.assertNotIn(inv_id, stats["review_invoice_ids"])
+
+    def test_e2e_c_mobile_duplicate_restore(self):
+        """E2E C: Mobile duplicate restore returns restored ID in internal result, but strictly redacts HTTP result."""
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            content = b"%PDF-1.4 synthetic mobile duplicate payload"
+            digest = hashlib.sha256(content).hexdigest()
+
+            with InvoiceDB(db_path) as db:
+                inv_id = db.insert_invoice({
+                    "invoice_number": "MOBILE-RESTORE-C",
+                    "total_amount": "88.88",
+                    "seller_name": "手机商户",
+                    "file_hash": digest,
+                    "review_status": TO_REVIEW,
+                })
+                self.assertTrue(db.soft_delete_invoice(inv_id))
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            # First upload to establish known hash in session
+            server.save_uploads([UploadedFile("first.pdf", content, "application/pdf")])
+            # Soft delete the invoice in DB
+            with InvoiceDB(db_path) as db:
+                self.assertTrue(db.soft_delete_invoice(inv_id))
+            # Second upload of same duplicate hash triggers duplicate restore
+            internal_result = server.save_uploads([UploadedFile("second.pdf", content, "application/pdf")])
+
+            self.assertIn(inv_id, internal_result["restored_invoice_ids"])
+            self.assertIn(inv_id, internal_result["review_invoice_ids"])
+
+            http_result = public_upload_result(internal_result)
+            self.assertNotIn("new_invoice_ids", http_result)
+            self.assertNotIn("restored_invoice_ids", http_result)
+            self.assertNotIn("review_invoice_ids", http_result)
+            self.assertNotIn("invoice_id", http_result)
+            self.assertEqual(set(http_result.keys()), {"accepted", "duplicate", "failed", "imported", "batch_id"})
+
+    def test_e2e_d_approved_restored_record(self):
+        """E2E D: Restoring an approved invoice includes id in restored_invoice_ids but NOT in review_invoice_ids."""
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "invoices.db"
+            import_dir = Path(td) / "import_inbox"
+            import_dir.mkdir(parents=True)
+            file_path = import_dir / "invoice_approved_d.pdf"
+            file_path.write_bytes(b"%PDF-1.4 synthetic approved restore invoice d")
+            file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+
+            with InvoiceDB(db_path) as db:
+                inv_id = db.insert_invoice({
+                    "invoice_number": "APPROVED-D-001",
+                    "total_amount": "99.00",
+                    "seller_name": "已通过商户",
+                    "invoice_date": "2026-08-22",
+                    "file_hash": file_hash,
+                    "review_status": APPROVED,
+                })
+                self.assertTrue(db.soft_delete_invoice(inv_id))
+
+            mock_parsed = InvoiceInfo(
+                invoice_number="APPROVED-D-001",
+                total_amount="99.00",
+                seller_name="已通过商户",
+                invoice_date="2026-08-22",
+                parse_success=True,
+            )
+            with patch("scripts.invoice_fetch.__main__.InvoiceParser.parse_pdf", return_value=mock_parsed):
+                stats = import_local_directory(import_dir, db_path)
+
+            self.assertNotIn(inv_id, stats["new_invoice_ids"])
+            self.assertIn(inv_id, stats["restored_invoice_ids"])
+            self.assertNotIn(inv_id, stats["review_invoice_ids"])
+            with InvoiceDB(db_path) as db:
+                row = db.get_invoice(inv_id)
+                self.assertEqual(row["is_deleted"], 0)
+                self.assertEqual(row["review_status"], APPROVED)
+
+    def test_scope_copy_pure_new_vs_contains_restored(self):
+        """Test scope banner copy: '本次新增 · N 张待确认' vs '本次导入 · N 张待确认'."""
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                n1 = window.db.insert_invoice({
+                    "invoice_number": "N-1",
+                    "total_amount": "10.00",
+                    "seller_name": "S1",
+                    "review_status": TO_REVIEW,
+                })
+                n2 = window.db.insert_invoice({
+                    "invoice_number": "N-2",
+                    "total_amount": "20.00",
+                    "seller_name": "S2",
+                    "review_status": TO_REVIEW,
+                })
+                r1 = window.db.insert_invoice({
+                    "invoice_number": "R-1",
+                    "total_amount": "30.00",
+                    "seller_name": "S3",
+                    "review_status": TO_REVIEW,
+                })
+
+                # Pure new
+                window._record_import_activity("local", added=2, new_invoice_ids=[n1, n2], review_invoice_ids=[n1, n2])
+                window._open_new_invoice_review()
+                self.app.processEvents()
+                self.assertEqual(window.lbl_review_scope.text(), "本次新增 · 2 张待确认")
+
+                # Clear scope
+                window._return_from_review_scope()
+                self.app.processEvents()
+
+                # Contains restored
+                window._record_import_activity("local", added=1, restored=1, new_invoice_ids=[n1], review_invoice_ids=[n1, r1])
+                window._open_new_invoice_review()
+                self.app.processEvents()
+                self.assertEqual(window.lbl_review_scope.text(), "本次导入 · 2 张待确认")
             finally:
                 window.close()
 

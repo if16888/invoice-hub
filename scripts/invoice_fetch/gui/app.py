@@ -546,6 +546,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._import_activities: list[ImportActivity] = []
         self._review_scope_ids: tuple[int, ...] = ()
         self._review_scope_total = 0
+        self._review_scope_has_restored = False
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
@@ -2353,6 +2354,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         self._review_scope_ids = pending_ids
         self._review_scope_total = len(activity.review_invoice_ids)
+        self._review_scope_has_restored = bool(activity.restored > 0 or any(rid not in activity.new_invoice_ids for rid in activity.review_invoice_ids))
         self.current_filter_status = TO_REVIEW
         self._switch_main_page("review", preserve_review_scope=True)
         self._load_invoices()
@@ -2362,6 +2364,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         self._review_scope_ids = ()
         self._review_scope_total = 0
+        self._review_scope_has_restored = False
         if reload and getattr(self, "db", None) and self.db.is_open:
             self._load_invoices()
 
@@ -2377,8 +2380,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             completion.hide()
             return
         pending = sum(1 for row in self.db.list_invoices_by_ids(scope_ids) if (row.get("review_status") or TO_REVIEW) == TO_REVIEW) if scope_ids else 0
+        has_restored = bool(getattr(self, "_review_scope_has_restored", False))
         if pending:
-            label.setText(f"本次新增 · {pending} 张待确认")
+            prefix = "本次导入" if has_restored else "本次新增"
+            label.setText(f"{prefix} · {pending} 张待确认")
             label.show()
             completion.hide()
         else:
@@ -2645,7 +2650,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Record a structured import outcome for the in-session result surface."""
         normalized_batch = str(batch_id or "").strip()
         normalized_new_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in new_invoice_ids if int(invoice_id) > 0))
-        normalized_added = len(normalized_new_ids) if new_invoice_ids else max(0, int(added or 0))
+        normalized_added = max(0, int(added or 0))
         # review_invoice_ids defaults to new_invoice_ids when not provided.
         if review_invoice_ids is None:
             normalized_review_ids = normalized_new_ids

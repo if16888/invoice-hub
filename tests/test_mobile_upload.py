@@ -57,7 +57,7 @@ class MobileUploadTests(unittest.TestCase):
                 )
                 row = db.get_invoice(invoice_id)
 
-            self.assertEqual(restored, {"synthetic-restore-hash"})
+            self.assertEqual(restored, [invoice_id])
             self.assertEqual(row["is_deleted"], 0)
             self.assertTrue(row["updated_at"])
             self.assertNotEqual(row["updated_at"], "2000-01-01 00:00:00")

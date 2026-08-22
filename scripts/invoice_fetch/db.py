@@ -548,12 +548,12 @@ class InvoiceDB:
         row = self._conn.execute(sql, (file_hash,)).fetchone()
         return dict(row) if row else None
 
-    def restore_deleted_invoices_by_file_hashes(self, file_hashes: set[str]) -> set[str]:
+    def restore_deleted_invoices_by_file_hashes(self, file_hashes: set[str]) -> list[int]:
         """Restore soft-deleted invoices matching any supplied file hash."""
         normalized = {str(value or "").strip() for value in file_hashes}
         normalized.discard("")
         if not normalized:
-            return set()
+            return []
 
         placeholders = ", ".join("?" for _ in normalized)
         rows = self._conn.execute(
@@ -562,7 +562,7 @@ class InvoiceDB:
             tuple(sorted(normalized)),
         ).fetchall()
         if not rows:
-            return set()
+            return []
 
         invoice_ids = [int(row["id"]) for row in rows]
         id_placeholders = ", ".join("?" for _ in invoice_ids)
@@ -578,7 +578,7 @@ class InvoiceDB:
             tuple(invoice_ids),
         )
         self._conn.commit()
-        return {str(row["file_hash"]) for row in rows}
+        return invoice_ids
 
     def find_receipt_by_source(
         self,

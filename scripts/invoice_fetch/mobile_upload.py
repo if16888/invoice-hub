@@ -473,6 +473,8 @@ class MobileUploadServer:
         known_hashes = self._known_hashes()
         accepted_paths: list[Path] = []
         duplicate_records_by_hash: dict[str, list[dict]] = {}
+        restored_invoice_ids: list[int] = []
+        review_invoice_ids: list[int] = []
 
         with self._lock:
             for item in files:
@@ -527,14 +529,25 @@ class MobileUploadServer:
                 known_hashes.add(digest)
                 accepted_paths.append(dest)
                 self._files.append(record)
-
+ 
             if duplicate_records_by_hash and self.import_on_upload and self.db_path:
-                restored_hashes = self._restore_deleted_invoices_by_hashes(
-                    set(duplicate_records_by_hash)
-                )
-                for digest in restored_hashes:
-                    for record in duplicate_records_by_hash.get(digest, []):
-                        record["reason"] = "sha256_already_uploaded_restored_deleted_record"
+                from . import review_status
+                from .db import InvoiceDB
+
+                with InvoiceDB(self.db_path) as db:
+                    restored_ids = db.restore_deleted_invoices_by_file_hashes(
+                        set(duplicate_records_by_hash)
+                    )
+                    if restored_ids:
+                        restored_invoice_ids.extend(restored_ids)
+                        for rid in restored_ids:
+                            inv = db.get_invoice(rid)
+                            if inv:
+                                digest = inv.get("file_hash")
+                                for record in duplicate_records_by_hash.get(digest, []):
+                                    record["reason"] = "sha256_already_uploaded_restored_deleted_record"
+                                if (inv.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW:
+                                    review_invoice_ids.append(rid)
 
             self._stats["accepted"] += accepted_now
             self._stats["duplicate"] += duplicate_now
@@ -542,8 +555,17 @@ class MobileUploadServer:
             self._write_manifest()
 
         imported = 0
+        new_ids: list[int] = []
         if accepted_paths and self.import_on_upload and self.db_path:
             imported = self._import_accepted_files(accepted_paths)
+            if isinstance(imported, dict):
+                new_ids = list(imported.get("new_invoice_ids", ()))
+                for rid in imported.get("restored_invoice_ids", ()):
+                    if rid not in restored_invoice_ids:
+                        restored_invoice_ids.append(rid)
+                for rid in imported.get("review_invoice_ids", ()):
+                    if rid not in review_invoice_ids:
+                        review_invoice_ids.append(rid)
             with self._lock:
                 imported_count = (
                     imported.get("added", 0) +
@@ -554,19 +576,26 @@ class MobileUploadServer:
                 self._stats["imported"] += imported_count
                 self._write_manifest()
 
+        for rid in new_ids:
+            if rid not in review_invoice_ids:
+                review_invoice_ids.append(rid)
+
         result = {
             "accepted": accepted_now,
             "duplicate": duplicate_now,
             "failed": failed_now,
             "imported": imported,
             "batch_id": self.session.batch_id,
+            "new_invoice_ids": tuple(dict.fromkeys(new_ids)),
+            "restored_invoice_ids": tuple(dict.fromkeys(restored_invoice_ids)),
+            "review_invoice_ids": tuple(dict.fromkeys(review_invoice_ids)),
         }
         self._log_upload_result(result)
         return result
 
-    def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> set[str]:
+    def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> list[int]:
         if not self.db_path or not file_hashes:
-            return set()
+            return []
         from .db import InvoiceDB
 
         with InvoiceDB(self.db_path) as db:
