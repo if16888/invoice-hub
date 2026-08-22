@@ -2324,22 +2324,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         ) or bool(getattr(controller, "is_starting", False))
 
         self.imports_workspace_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        if w < 1200:
-            # The whole import workspace is stacked at this width, so the
-            # mobile panel gets the full task row instead of a narrow column.
-            self.import_task_stack.setMinimumWidth(0)
-            self.import_task_stack.setMaximumWidth(16777215)
-            return
-
-        self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
-        if mobile_active:
+        workspace_scroll = getattr(self, "imports_workspace_scroll", None)
+        if workspace_scroll is not None and workspace_scroll.viewport() is not None:
+            page_width = workspace_scroll.viewport().width()
+        else:
             page_width = self.imports_page.width() if hasattr(self, "imports_page") else 0
-            if page_width <= 0:
-                page_width = max(0, w - (56 if w <= 1366 else 180) - 48)
-            # TaskFlowPageLayout keeps 24px horizontal margins on both sides.
-            # Allocate only the width inside those margins so the summary card
-            # never runs beyond the native window edge.
-            workspace_width = max(0, page_width - 48)
+        if page_width <= 0:
+            # Before the first layout pass the page has no native width yet.
+            # This fallback is corrected by the queued resize/layout pass.
+            page_width = max(0, w - (56 if w <= 1366 else 180) - 48)
+        # TaskFlowPageLayout keeps 24px horizontal margins on both sides.
+        workspace_width = max(0, page_width - 48)
+
+        if mobile_active:
             source_width = 152 if w <= 1366 else (160 if w <= 1440 else 184)
             recent_width = 250 if w <= 1366 else (260 if w <= 1440 else 300)
             # SectionCard content margins consume part of the task width; a
@@ -2348,10 +2345,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             task_minimum = 760
             minimum_workspace = task_minimum + source_width + recent_width + 24
             if workspace_width < minimum_workspace:
-                # At the smallest desktop window the outer workspace must
-                # stack before the child can become narrow.  The mobile panel
-                # still receives the full task row and remains two-column.
+                # The parent owns the responsive breakpoint.  Once the source
+                # and recent cards move above/below the task, the task receives
+                # the full actual Imports content width instead of inheriting a
+                # narrow width from a still-horizontal row.
                 self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+                self.imports_shell_layout.setStretch(1, 0)
                 self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
                 self.import_source_card.setMinimumWidth(0)
                 self.import_source_card.setMaximumWidth(16777215)
@@ -2361,8 +2360,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
                 self.import_mail_recent_card.setMinimumWidth(0)
                 self.import_mail_recent_card.setMaximumWidth(16777215)
-                self.imports_workspace_host.setMinimumWidth(0)
+                host_target = min(1440, workspace_width)
+                self.imports_workspace_host.setMinimumWidth(host_target)
+                task_target = min(900, workspace_width)
+                self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                self.import_task_stack.setMinimumWidth(task_target)
+                self.import_task_stack.setMaximumWidth(task_target or 16777215)
+                self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                self.imports_shell_layout.setAlignment(
+                    self.import_task_stack,
+                    Qt.AlignHCenter | Qt.AlignTop,
+                )
+                self.imports_workspace_host.updateGeometry()
+                self.import_task_stack.updateGeometry()
                 return
+            self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+            self.imports_shell_layout.setStretch(1, 1)
             available_for_task = workspace_width - source_width - recent_width - 24
             task_maximum = max(task_minimum, min(900, available_for_task))
             host_target = min(
@@ -2380,12 +2393,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             self.import_task_stack.setMinimumWidth(task_minimum)
             self.import_task_stack.setMaximumWidth(task_maximum)
+            self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
             self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
             self.import_mail_recent_card.setMinimumWidth(recent_width)
             self.import_mail_recent_card.setMaximumWidth(recent_width)
             self.import_mail_recent_card.setFixedWidth(recent_width)
         else:
+            if w < 1200:
+                self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+                self.imports_shell_layout.setStretch(1, 0)
+                self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_task_stack.setMinimumWidth(0)
+                self.import_task_stack.setMaximumWidth(16777215)
+                self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_source_card.setMinimumWidth(0)
+                self.import_source_card.setMaximumWidth(16777215)
+                self.import_mail_recent_card.setMinimumWidth(0)
+                self.import_mail_recent_card.setMaximumWidth(16777215)
+                self.imports_workspace_host.setMinimumWidth(0)
+                self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.imports_workspace_host.updateGeometry()
+                self.import_task_stack.updateGeometry()
+                return
+            self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+            self.imports_shell_layout.setStretch(1, 1)
             self.imports_workspace_host.setMinimumWidth(0)
             self.import_task_stack.setMinimumWidth(0)
             self.import_task_stack.setMaximumWidth(900)
@@ -2395,6 +2428,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.import_mail_recent_card.setMinimumWidth(360)
             self.import_mail_recent_card.setMaximumWidth(420)
             self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         self.imports_workspace_host.updateGeometry()
         self.import_task_stack.updateGeometry()
@@ -3742,13 +3776,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.imports_workspace_host.setMaximumWidth(1440)
         self.imports_workspace_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.imports_workspace_host.setLayout(shell)
-        workspace_row = QHBoxLayout()
-        workspace_row.setContentsMargins(0, 0, 0, 0)
-        workspace_row.addStretch(1)
-        workspace_row.addWidget(self.imports_workspace_host, 1)
-        workspace_row.addStretch(1)
-        layout.addLayout(workspace_row, 0)
-        layout.addStretch(1)
+        workspace_scroll = QScrollArea(page)
+        workspace_scroll.setObjectName("ImportsWorkspaceScroll")
+        workspace_scroll.setFrameShape(QFrame.NoFrame)
+        workspace_scroll.setWidgetResizable(True)
+        workspace_scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        workspace_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        workspace_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        workspace_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        workspace_scroll.setWidget(self.imports_workspace_host)
+        layout.addWidget(workspace_scroll, 1)
+        self.imports_workspace_content = self.imports_workspace_host
+        self.imports_workspace_scroll = workspace_scroll
         self.imports_shell_layout = shell
         self._refresh_imports_page()
         return page

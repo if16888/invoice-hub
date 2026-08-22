@@ -417,12 +417,10 @@ class MobileUploadSessionPanel(QFrame):
         qr_column.setContentsMargins(0, 0, 0, 0)
         qr_column.setSpacing(8)
         self.lbl_qr = QLabel(); self.lbl_qr.setObjectName("MobileUploadQr")
-        self.lbl_qr.setAlignment(Qt.AlignCenter); self.lbl_qr.setFixedSize(240, 240)
+        self.lbl_qr.setAlignment(Qt.AlignCenter); self.lbl_qr.setFixedSize(220, 220)
         self.btn_copy_url = make_button("复制链接", variant="secondary")
         self.btn_copy_url.clicked.connect(self._copy_url)
         qr_column.addWidget(self.lbl_qr, 0, Qt.AlignHCenter | Qt.AlignTop)
-        qr_column.addWidget(self.btn_copy_url, 0, Qt.AlignHCenter)
-        qr_column.addStretch(1)
 
         details = QWidget(); details.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         details_layout = QVBoxLayout(details)
@@ -438,10 +436,11 @@ class MobileUploadSessionPanel(QFrame):
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self._active_details = details
         self._active_details_form = form
-        self.txt_url = MiddleElidedTextLabel("—", details)
+        self.txt_url = MiddleElidedTextLabel("—", page)
         self.txt_url.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.txt_url.setToolTip("")
-        qr_column.insertWidget(2, self.txt_url)
+        qr_column.addWidget(self.txt_url)
+        qr_column.addStretch(1)
         self.combo_upload_host = QComboBox(); self.combo_upload_host.currentIndexChanged.connect(self._host_changed)
         self.combo_upload_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.lbl_service_address = self._responsive_label("—")
@@ -524,6 +523,7 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_change_network = make_button("更换网络", variant="ghost"); self.btn_change_network.clicked.connect(self.combo_upload_host.showPopup)
         self.btn_stop = make_button("停止服务", variant="secondary"); self.btn_stop.setProperty("danger", True); self.btn_stop.clicked.connect(self.controller.stop)
         footer.addWidget(self.lbl_lan_access_hint, 1)
+        footer.addWidget(self.btn_copy_url, 0)
         footer.addWidget(self.btn_change_network, 0)
         footer.addWidget(self.btn_stop, 0)
         layout.addLayout(header); layout.addLayout(body, 1); layout.addLayout(footer)
@@ -572,7 +572,7 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_service_state.setText("运行中")
         try:
             pixmap = QPixmap(); pixmap.loadFromData(self.controller.qr_png(session.upload_url), "PNG")
-            self.lbl_qr.setPixmap(pixmap.scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.lbl_qr.setPixmap(pixmap.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except Exception:
             self.lbl_qr.setText("二维码不可用\n请复制上传链接")
         self.stack.setCurrentWidget(self.active_page)

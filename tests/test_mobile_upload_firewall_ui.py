@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, QPoint, QRect
 from PySide6.QtWidgets import QApplication, QBoxLayout, QFormLayout
 
 from scripts.invoice_fetch.gui.mobile_upload_session import (
@@ -50,6 +50,89 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
         with patch.object(controller, "qr_png", return_value=b""):
             controller.started.emit(session)
         self.app.processEvents()
+
+    @staticmethod
+    def rect_in(widget, ancestor):
+        return QRect(widget.mapTo(ancestor, QPoint(0, 0)), widget.size())
+
+    def assert_active_geometry_contract(self, panel):
+        page = panel.active_page
+        qr = self.rect_in(panel.lbl_qr, page)
+        url = self.rect_in(panel.txt_url, page)
+        details = self.rect_in(panel._active_details, page)
+        footer = QRect(panel._active_footer_layout.geometry())
+        copy = self.rect_in(panel.btn_copy_url, page)
+        change = self.rect_in(panel.btn_change_network, page)
+        stop = self.rect_in(panel.btn_stop, page)
+        regions = {
+            "qr": qr,
+            "url": url,
+            "details": details,
+            "footer": footer,
+            "copy": copy,
+            "change": change,
+            "stop": stop,
+        }
+        for name, rect in regions.items():
+            self.assertTrue(
+                page.rect().contains(rect.topLeft())
+                and page.rect().contains(rect.bottomRight()),
+                f"{name} escaped active page: {rect} / {page.rect()}",
+            )
+        for left_name, left_rect in regions.items():
+            for right_name, right_rect in regions.items():
+                if left_name >= right_name:
+                    continue
+                if left_name == "url" and right_name in {"copy", "change", "stop"}:
+                    continue
+                if right_name == "url" and left_name in {"copy", "change", "stop"}:
+                    continue
+                if left_name == "footer" or right_name == "footer":
+                    continue
+                self.assertFalse(
+                    left_rect.intersects(right_rect),
+                    f"{left_name} intersects {right_name}: {left_rect} / {right_rect}",
+                )
+        self.assertGreaterEqual(url.top(), qr.bottom())
+        self.assertEqual(change.center().y(), stop.center().y())
+
+    def test_medium_imports_mobile_parent_owns_full_task_width_without_overlap(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = InvoiceReviewApp(Path(td) / "invoices.db")
+            window.resize(1276, 875)
+            window.show()
+            window._switch_main_page("imports")
+            window._set_import_source_selected("mobile")
+            controller = window.mobile_upload_controller
+            controller.host_options = [SimpleNamespace(label="WLAN", host="192.168.1.50")]
+            session = SimpleNamespace(
+                upload_url="http://192.168.1.50:43210/u/synthetic-review",
+                host="192.168.1.50",
+                port=43210,
+            )
+            with patch.object(controller, "qr_png", return_value=b""):
+                controller.started.emit(session)
+            self.app.processEvents()
+            self.app.processEvents()
+            self.app.processEvents()
+            panel = window.mobile_upload_panel
+            self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+            self.assertGreaterEqual(window.import_task_stack.width(), 840)
+            self.assertGreaterEqual(panel.width(), 720)
+            self.assertEqual(panel._active_body_layout.direction(), QBoxLayout.LeftToRight)
+            self.assertEqual(panel._active_footer_layout.direction(), QBoxLayout.LeftToRight)
+            self.assertTrue(panel._active_tech_details.isHidden())
+            self.assert_active_geometry_contract(panel)
+
+            panel._active_tech_toggle.click()
+            self.app.processEvents()
+            self.assertTrue(panel._active_tech_details.isVisible())
+            self.assert_active_geometry_contract(panel)
+            window.close()
+            self.app.processEvents()
+            window.deleteLater()
+            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.app.processEvents()
 
     def test_clicked_bool_is_not_forwarded_as_host(self):
         with tempfile.TemporaryDirectory() as td:
