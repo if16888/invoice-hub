@@ -34,15 +34,10 @@ class _MobileUploadStartWorker(QObject):
     def run(self):
         try:
             from ..mobile_upload import MobileUploadServer, enumerate_upload_hosts, log_upload_host_candidates
-            from ..windows_firewall import (
-                clear_mobile_upload_dev_firewall_access,
-                get_current_development_executable,
-            )
-            development_executable = get_current_development_executable()
-            if development_executable is not None:
-                cleanup = clear_mobile_upload_dev_firewall_access(development_executable)
-                if not cleanup.success:
-                    raise RuntimeError(cleanup.message or "无法安全清理开发测试防火墙规则")
+
+            # Starting the service is deliberately read-only with respect to
+            # Windows Firewall. Any packaged/dev firewall mutation must come
+            # from an explicit user action in the panel.
             options = enumerate_upload_hosts()
             log_upload_host_candidates(options)
             selected_option = next((option for option in options if option.host == self.host), None)
@@ -72,6 +67,7 @@ class MobileUploadSessionController(QObject):
     upload_received = Signal(dict)
     firewall_status_changed = Signal(object)
     firewall_action_finished = Signal(object)
+    dev_firewall_status_changed = Signal(object)
     dev_firewall_action_finished = Signal(object)
     failed = Signal(str)
     stopped = Signal()
@@ -92,9 +88,10 @@ class MobileUploadSessionController(QObject):
         self._start_thread = None
         self._start_worker = None
         self.firewall_status = None
+        self.dev_firewall_status = None
         self._dev_firewall_rule_active = False
+        self._dev_firewall_rule_present = False
         self._dev_firewall_port = None
-        self._dev_firewall_cleanup_warning = ""
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_status)
@@ -161,9 +158,6 @@ class MobileUploadSessionController(QObject):
         self.session = session
         self.host_options = list(options)
         self._last_total = 0
-        self._dev_firewall_rule_active = False
-        self._dev_firewall_port = None
-        self._dev_firewall_cleanup_warning = ""
         self.refresh_firewall_status()
         self.timer.start()
         self.started.emit(session)
@@ -175,9 +169,6 @@ class MobileUploadSessionController(QObject):
         self.session = None
         self._release_operation_gate()
         self.failed.emit(message)
-        # If shutdown() timed out and set _stop_requested while the thread was
-        # still running, the closeEvent is stuck with _close_pending=True waiting
-        # for `stopped`.  Emit it now so the window can finish closing.
         if self._stop_requested:
             self._stop_requested = False
             self.stopped.emit()
@@ -194,8 +185,6 @@ class MobileUploadSessionController(QObject):
         try:
             self.operation_gate.release(self._operation_name)
         except RuntimeError:
-            # Window shutdown may have already released the gate after waiting
-            # for the start worker; cleanup must remain idempotent.
             pass
 
     def set_public_host(self, host: str):
@@ -219,7 +208,9 @@ class MobileUploadSessionController(QObject):
 
     def refresh_firewall_status(self):
         from ..windows_firewall import (
+            get_current_development_executable,
             get_current_invoicehub_executable,
+            get_mobile_upload_dev_firewall_status,
             get_mobile_upload_firewall_status,
         )
 
@@ -227,6 +218,24 @@ class MobileUploadSessionController(QObject):
             get_current_invoicehub_executable()
         )
         self.firewall_status_changed.emit(self.firewall_status)
+
+        current_port = self.session.port if self.session is not None else None
+        self.dev_firewall_status = get_mobile_upload_dev_firewall_status(
+            get_current_development_executable(),
+            current_port,
+        )
+        dev_data = self.dev_firewall_status.as_dict()
+        self._dev_firewall_rule_present = dev_data.get("state") in {
+            "rule_present", "rule_disabled", "unknown"
+        }
+        local_port = str(dev_data.get("local_port") or "").strip()
+        self._dev_firewall_port = int(local_port) if local_port.isdigit() else None
+        self._dev_firewall_rule_active = bool(
+            self.session is not None
+            and dev_data.get("state") == "rule_present"
+            and self._dev_firewall_port == int(self.session.port)
+        )
+        self.dev_firewall_status_changed.emit(self.dev_firewall_status)
         return self.firewall_status
 
     def request_firewall_access(self):
@@ -249,7 +258,10 @@ class MobileUploadSessionController(QObject):
         status = dict(self.server.status())
         if self.firewall_status is not None:
             status["firewall"] = self.firewall_status.as_dict()
+        if self.dev_firewall_status is not None:
+            status["dev_firewall"] = self.dev_firewall_status.as_dict()
         status["dev_firewall_active"] = self._dev_firewall_rule_active
+        status["dev_firewall_present"] = self._dev_firewall_rule_present
         status["dev_firewall_port"] = self._dev_firewall_port
         self.stats_changed.emit(status)
         total = sum(int(status.get(k, 0) or 0) for k in ("accepted", "duplicate", "failed", "imported"))
@@ -260,14 +272,14 @@ class MobileUploadSessionController(QObject):
     def stop(self):
         if self._starting:
             self._stop_requested = True
-        if self._dev_firewall_rule_active:
-            self._clear_dev_firewall_access()
+        # Stopping the service must never trigger UAC or mutate firewall state.
         if self.server is not None:
             self.server.stop()
         self.server = None
         self.session = None
         self.timer.stop()
         self._release_operation_gate()
+        self.refresh_firewall_status()
         self.stopped.emit()
 
     def request_dev_firewall_access(self):
@@ -284,13 +296,12 @@ class MobileUploadSessionController(QObject):
             get_current_development_executable(),
             current_port,
         )
-        if result.success:
-            self._dev_firewall_rule_active = True
-            self._dev_firewall_port = current_port
+        self.refresh_firewall_status()
         self.dev_firewall_action_finished.emit(result)
         return result
 
-    def _clear_dev_firewall_access(self):
+    def request_dev_firewall_cleanup(self):
+        """Explicitly remove marker-owned dev rules after user confirmation."""
         from ..windows_firewall import (
             clear_mobile_upload_dev_firewall_access,
             get_current_development_executable,
@@ -299,12 +310,7 @@ class MobileUploadSessionController(QObject):
         result = clear_mobile_upload_dev_firewall_access(
             get_current_development_executable()
         )
-        if result.success:
-            self._dev_firewall_rule_active = False
-            self._dev_firewall_port = None
-            self._dev_firewall_cleanup_warning = ""
-        else:
-            self._dev_firewall_cleanup_warning = result.message or "开发测试规则清理失败"
+        self.refresh_firewall_status()
         self.dev_firewall_action_finished.emit(result)
         return result
 
@@ -354,6 +360,7 @@ class MobileUploadSessionPanel(QFrame):
         controller.stats_changed.connect(self._set_stats)
         controller.firewall_status_changed.connect(self._set_firewall_status)
         controller.firewall_action_finished.connect(self._firewall_action_finished)
+        controller.dev_firewall_status_changed.connect(self._set_dev_firewall_status)
         controller.dev_firewall_action_finished.connect(self._dev_firewall_action_finished)
         controller.failed.connect(self._show_error)
         controller.stopped.connect(self.show_idle)
@@ -373,12 +380,17 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_idle_firewall_authorize = make_button("允许手机访问", variant="secondary")
         self.btn_idle_firewall_authorize.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.btn_idle_firewall_authorize.clicked.connect(self._request_firewall_access)
+        self.btn_idle_dev_firewall_cleanup = make_button("清理开发测试授权", variant="secondary")
+        self.btn_idle_dev_firewall_cleanup.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.btn_idle_dev_firewall_cleanup.clicked.connect(self._request_dev_firewall_cleanup)
+        self.btn_idle_dev_firewall_cleanup.setVisible(False)
         self.btn_start = make_button("启动手机上传", variant="primary")
         self.btn_start.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.btn_start.clicked.connect(lambda _checked=False: self.controller.start())
         layout.addWidget(title); layout.addWidget(desc); layout.addWidget(self.lbl_idle_network)
         layout.addWidget(self.lbl_idle_firewall)
         layout.addWidget(self.btn_idle_firewall_authorize, 0, Qt.AlignLeft)
+        layout.addWidget(self.btn_idle_dev_firewall_cleanup, 0, Qt.AlignLeft)
         layout.addWidget(self.btn_start, 0, Qt.AlignLeft); layout.addStretch(1)
         return page
 
@@ -433,8 +445,6 @@ class MobileUploadSessionPanel(QFrame):
         self.combo_upload_host = QComboBox(); self.combo_upload_host.currentIndexChanged.connect(self._host_changed)
         self.combo_upload_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.lbl_service_address = self._responsive_label("—")
-        # Retained as a compatibility/status field, but raw bind/public
-        # addresses belong only in the collapsed technical-details section.
         self.lbl_service_address.setVisible(False)
         self.lbl_network_interface = self._responsive_label("—")
         self.lbl_service_state = self._responsive_label("运行中")
@@ -455,6 +465,9 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_firewall_authorize.clicked.connect(self._request_firewall_access)
         self.btn_dev_firewall = make_button("允许本次开发测试", variant="secondary")
         self.btn_dev_firewall.clicked.connect(self._request_dev_firewall_access)
+        self.btn_dev_firewall_cleanup = make_button("清理开发测试授权", variant="secondary")
+        self.btn_dev_firewall_cleanup.clicked.connect(self._request_dev_firewall_cleanup)
+        self.btn_dev_firewall_cleanup.setVisible(False)
         firewall_details = QWidget(details)
         firewall_layout = QVBoxLayout(firewall_details)
         firewall_layout.setContentsMargins(0, 0, 0, 0)
@@ -463,6 +476,7 @@ class MobileUploadSessionPanel(QFrame):
         firewall_layout.addWidget(self.lbl_firewall_hint)
         firewall_layout.addWidget(self.btn_firewall_authorize, 0, Qt.AlignLeft)
         firewall_layout.addWidget(self.btn_dev_firewall, 0, Qt.AlignLeft)
+        firewall_layout.addWidget(self.btn_dev_firewall_cleanup, 0, Qt.AlignLeft)
         self.lbl_stats = self._responsive_label("成功 0 · 重复 0 · 失败 0 · 入库 0")
         form.addRow("当前网络", self.lbl_network_interface)
         form.addRow("本机访问", self.lbl_local_self_check)
@@ -533,15 +547,8 @@ class MobileUploadSessionPanel(QFrame):
     def show_idle(self):
         self.btn_start.setEnabled(True)
         self.btn_dev_firewall.setVisible(False)
-        cleanup_warning = str(
-            getattr(self.controller, "_dev_firewall_cleanup_warning", "") or ""
-        ).strip()
-        if cleanup_warning:
-            self.lbl_idle_firewall.setText(
-                f"Windows 防火墙：开发测试规则清理失败。{cleanup_warning}"
-            )
-            self.lbl_idle_firewall.setToolTip(cleanup_warning)
         self.stack.setCurrentWidget(self.idle_page)
+        self.controller.refresh_firewall_status()
         self._apply_import_workspace_hint()
 
     def show_starting(self):
@@ -571,6 +578,7 @@ class MobileUploadSessionPanel(QFrame):
         self.stack.setCurrentWidget(self.active_page)
         self._apply_responsive_layout()
         self._apply_import_workspace_hint()
+        self.controller.refresh_firewall_status()
         if self.controller.server is not None:
             self._set_stats(self.controller.server.status())
 
@@ -609,7 +617,9 @@ class MobileUploadSessionPanel(QFrame):
         if isinstance(firewall, dict):
             self._set_firewall_status(firewall)
             self.lbl_tech_firewall.setText(str(firewall.get("state") or "unknown"))
-        self._update_dev_firewall_button(bool(stats.get("dev_firewall_active")))
+        dev_firewall = stats.get("dev_firewall")
+        if isinstance(dev_firewall, dict):
+            self._set_dev_firewall_status(dev_firewall)
 
     def _show_error(self, message):
         self.btn_start.setEnabled(True)
@@ -645,7 +655,7 @@ class MobileUploadSessionPanel(QFrame):
             button_visible = True
         elif state == "supported" and development_mode:
             summary = "开发运行模式"
-            hint = "不会创建持久 Any-Port 规则；可选择只允许当前手机上传端口进行本次开发测试。"
+            hint = "不会创建持久 Any-Port 规则；开发测试授权只针对当前 Python 和当前端口。"
             button_visible = False
         elif state == "non_windows":
             summary = "当前系统不支持"
@@ -664,9 +674,41 @@ class MobileUploadSessionPanel(QFrame):
             self.lbl_firewall_hint.setText(hint)
             self.btn_firewall_authorize.setVisible(button_visible)
             self.btn_firewall_authorize.setEnabled(button_visible)
-            self._update_dev_firewall_button(
-                bool(getattr(self.controller, "_dev_firewall_rule_active", False))
-            )
+            self._update_dev_firewall_buttons()
+
+    def _set_dev_firewall_status(self, status):
+        self._dev_firewall_status = status
+        data = status.as_dict() if hasattr(status, "as_dict") else dict(status or {})
+        state = str(data.get("state") or "unknown")
+        development_mode = bool(data.get("development_mode"))
+        local_port = str(data.get("local_port") or "").strip()
+        current_port = str(self.controller.session.port) if self.controller.session is not None else ""
+        current_rule = state == "rule_present" and local_port and local_port == current_port
+        rule_present = state in {"rule_present", "rule_disabled", "unknown"}
+
+        if development_mode and state == "rule_present":
+            if current_rule:
+                summary = f"本次开发测试已允许 · TCP {local_port}"
+                hint = "仅当前 Python、Private 网络和当前端口生效。停止服务不会自动修改防火墙。"
+            else:
+                summary = f"检测到旧开发测试授权{f' · TCP {local_port}' if local_port else ''}"
+                hint = "旧随机端口不等于当前会话授权。请先显式清理，再允许当前端口。"
+            if hasattr(self, "lbl_firewall_state"):
+                self.lbl_firewall_state.setText(summary)
+                self.lbl_firewall_hint.setText(hint)
+            self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}")
+        elif development_mode and state == "rule_disabled":
+            if hasattr(self, "lbl_firewall_state"):
+                self.lbl_firewall_state.setText("开发测试授权已禁用")
+                self.lbl_firewall_hint.setText("请显式清理后，再允许当前手机上传端口。")
+            self.lbl_idle_firewall.setText("Windows 防火墙：开发测试授权已禁用")
+        elif development_mode and state == "unknown":
+            if hasattr(self, "lbl_firewall_state"):
+                self.lbl_firewall_state.setText("开发测试授权状态异常")
+                self.lbl_firewall_hint.setText(data.get("reason") or "请检查或显式清理开发测试授权。")
+            self.lbl_idle_firewall.setText("Windows 防火墙：开发测试授权状态异常")
+        self.btn_idle_dev_firewall_cleanup.setVisible(development_mode and rule_present)
+        self._update_dev_firewall_buttons()
 
     def _firewall_action_finished(self, result):
         self._set_firewall_status(result.status)
@@ -678,33 +720,36 @@ class MobileUploadSessionPanel(QFrame):
             )
 
     def _dev_firewall_action_finished(self, result):
-        if not hasattr(self, "lbl_firewall_state"):
-            return
         if result is None:
             return
-        if result.success:
-            self.lbl_firewall_state.setText("本次开发测试已允许")
-            self.lbl_firewall_hint.setText(result.message or "仅当前端口的 Private TCP 入站规则已启用。")
-        else:
-            self.lbl_firewall_state.setText("开发测试未授权")
-            self.lbl_firewall_hint.setText(result.message or "未创建开发测试规则。")
-        self._update_dev_firewall_button(
-            bool(getattr(self.controller, "_dev_firewall_rule_active", False))
-        )
+        if hasattr(self, "lbl_firewall_hint") and result.message:
+            self.lbl_firewall_hint.setText(result.message)
+        self._update_dev_firewall_buttons()
 
-    def _update_dev_firewall_button(self, rule_active: bool = False):
+    def _update_dev_firewall_buttons(self):
         if not hasattr(self, "btn_dev_firewall"):
             return
-        status = getattr(self, "_firewall_status", None)
-        data = status.as_dict() if hasattr(status, "as_dict") else dict(status or {})
-        development_mode = bool(data.get("development_mode"))
+        formal_status = getattr(self, "_firewall_status", None)
+        formal_data = formal_status.as_dict() if hasattr(formal_status, "as_dict") else dict(formal_status or {})
+        development_mode = bool(formal_data.get("development_mode"))
+        dev_status = getattr(self, "_dev_firewall_status", None)
+        dev_data = dev_status.as_dict() if hasattr(dev_status, "as_dict") else dict(dev_status or {})
+        dev_state = str(dev_data.get("state") or "rule_missing")
+        local_port = str(dev_data.get("local_port") or "").strip()
         server_ready = self.controller.server is not None and self.controller.session is not None
+        current_port = str(self.controller.session.port) if self.controller.session is not None else ""
+        current_rule = dev_state == "rule_present" and local_port and local_port == current_port
+        stale_or_cleanup_needed = dev_state in {"rule_present", "rule_disabled", "unknown"} and not current_rule
+
         visible = development_mode and server_ready
         self.btn_dev_firewall.setVisible(visible)
-        self.btn_dev_firewall.setEnabled(visible and not rule_active)
+        self.btn_dev_firewall.setEnabled(visible and not current_rule and not stale_or_cleanup_needed)
         self.btn_dev_firewall.setText(
-            "本次开发测试已允许" if rule_active else "允许本次开发测试"
+            "本次开发测试已允许" if current_rule else "允许本次开发测试"
         )
+        cleanup_visible = development_mode and dev_state in {"rule_present", "rule_disabled", "unknown"}
+        self.btn_dev_firewall_cleanup.setVisible(cleanup_visible)
+        self.btn_idle_dev_firewall_cleanup.setVisible(development_mode and cleanup_visible)
 
     def _request_firewall_access(self):
         status = getattr(self, "_firewall_status", None)
@@ -735,7 +780,7 @@ class MobileUploadSessionPanel(QFrame):
             self,
             "允许本次开发测试",
             f"将请求 Windows 管理员授权，仅允许当前开发解释器访问本次上传端口 "
-            f"{self.controller.session.port}，规则在停止服务时删除。是否继续？",
+            f"{self.controller.session.port}。停止服务不会自动修改防火墙；如需删除，请使用“清理开发测试授权”。是否继续？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -744,6 +789,28 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_dev_firewall.setEnabled(False)
         self.lbl_firewall_hint.setText("正在请求本次开发测试授权…")
         self.controller.request_dev_firewall_access()
+
+    def _request_dev_firewall_cleanup(self):
+        status = getattr(self, "_dev_firewall_status", None)
+        data = status.as_dict() if hasattr(status, "as_dict") else dict(status or {})
+        if str(data.get("state") or "rule_missing") == "rule_missing":
+            return
+        answer = QMessageBox.question(
+            self,
+            "清理开发测试授权",
+            "将请求 Windows 管理员授权，仅删除 Invoice Hub 标记且属于当前开发解释器的开发测试规则。是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.btn_dev_firewall_cleanup.setEnabled(False)
+        self.btn_idle_dev_firewall_cleanup.setEnabled(False)
+        if hasattr(self, "lbl_firewall_hint"):
+            self.lbl_firewall_hint.setText("正在清理开发测试授权…")
+        self.controller.request_dev_firewall_cleanup()
+        self.btn_dev_firewall_cleanup.setEnabled(True)
+        self.btn_idle_dev_firewall_cleanup.setEnabled(True)
 
     def _toggle_technical_details(self, expanded: bool):
         self._active_tech_details.setVisible(expanded)
@@ -754,9 +821,6 @@ class MobileUploadSessionPanel(QFrame):
         apply_layout = getattr(parent, "_apply_import_workspace_layout", None)
         if callable(apply_layout):
             apply_layout()
-            # The parent may receive a resize pass after the stacked page
-            # changes.  Reapply once after that pass so its normal metrics
-            # cannot overwrite the mobile-active allocation.
             QTimer.singleShot(0, apply_layout)
 
     def resizeEvent(self, event):
@@ -766,10 +830,6 @@ class MobileUploadSessionPanel(QFrame):
     def _apply_responsive_layout(self):
         if not hasattr(self, "_active_body_layout"):
             return
-        # The parent Import Workspace owns the desktop allocation.  This
-        # local breakpoint is only for a genuinely narrow embedded surface;
-        # it must not be derived from a scroll area's width or its own size
-        # hint, which creates a vertical-layout feedback loop on desktop.
         narrow = self.width() < 720
         self._active_body_layout.setDirection(
             QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight
