@@ -585,6 +585,174 @@ class ImportReviewIdentityTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_e2e_e_mobile_direct_restored_result_reaches_gui_scoped_review(self):
+        """E2E E: Mobile direct restored result reaches GUI scoped review and isolates items."""
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            content_to_review = b"%PDF-1.4 mobile to_review duplicate payload"
+            digest_to_review = hashlib.sha256(content_to_review).hexdigest()
+            content_approved = b"%PDF-1.4 mobile approved duplicate payload"
+            digest_approved = hashlib.sha256(content_approved).hexdigest()
+
+            with InvoiceDB(db_path) as db:
+                h_id = db.insert_invoice({
+                    "invoice_number": "HIST-NOT-SCOPED",
+                    "total_amount": "50.00",
+                    "seller_name": "历史发票",
+                    "review_status": TO_REVIEW,
+                })
+                r_id = db.insert_invoice({
+                    "invoice_number": "MOBILE-RESTORED-TO-REVIEW",
+                    "total_amount": "99.99",
+                    "seller_name": "手机恢复商户",
+                    "file_hash": digest_to_review,
+                    "review_status": TO_REVIEW,
+                })
+                appr_id = db.insert_invoice({
+                    "invoice_number": "MOBILE-RESTORED-APPROVED",
+                    "total_amount": "88.88",
+                    "seller_name": "手机审批商户",
+                    "file_hash": digest_approved,
+                    "review_status": APPROVED,
+                })
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            # Establish hashes in session
+            server.save_uploads([
+                UploadedFile("r.pdf", content_to_review, "application/pdf"),
+                UploadedFile("a.pdf", content_approved, "application/pdf"),
+            ])
+
+            # Soft delete both in DB
+            with InvoiceDB(db_path) as db:
+                self.assertTrue(db.soft_delete_invoice(r_id))
+                self.assertTrue(db.soft_delete_invoice(appr_id))
+
+            # Duplicate upload 1: approved duplicate restore
+            res_appr = server.save_uploads([UploadedFile("a2.pdf", content_approved, "application/pdf")])
+            self.assertIn(appr_id, res_appr["restored_invoice_ids"])
+            self.assertNotIn(appr_id, res_appr["review_invoice_ids"])
+
+            # Test window with approved restore -> no review CTA
+            window = self.make_window(runtime_dir)
+            try:
+                window._mobile_upload_finished(res_appr)
+                window._refresh_overview_page()
+                self.assertTrue(window.btn_overview_new_review.isHidden())
+                window._refresh_imports_page()
+                self.assertTrue(window.btn_import_recent_review.isHidden())
+
+                # Duplicate upload 2: to_review duplicate restore
+                res_to_rev = server.save_uploads([UploadedFile("r2.pdf", content_to_review, "application/pdf")])
+                self.assertIn(r_id, res_to_rev["restored_invoice_ids"])
+                self.assertIn(r_id, res_to_rev["review_invoice_ids"])
+
+                window._mobile_upload_finished(res_to_rev)
+                self.assertEqual(len(window._import_activities), 1)
+                act = window._import_activities[0]
+                self.assertEqual(act.restored, 1)
+                self.assertEqual(act.review_invoice_ids, (r_id,))
+                self.assertEqual(act.new_invoice_ids, ())
+
+                window._refresh_overview_page()
+                self.assertEqual(window.btn_overview_new_review.text(), "处理本次 1 张")
+                self.assertFalse(window.btn_overview_new_review.isHidden())
+
+                window._refresh_imports_page()
+                self.assertEqual(window.btn_import_recent_review.text(), "处理本次 1 张")
+                self.assertFalse(window.btn_import_recent_review.isHidden())
+
+                # Click review CTA and check scope isolation
+                window._open_new_invoice_review()
+                self.app.processEvents()
+
+                visible_ids = {int(inv["id"]) for inv in window.invoices_list}
+                self.assertEqual(visible_ids, {r_id})
+                self.assertNotIn(h_id, visible_ids)
+                self.assertNotIn(appr_id, visible_ids)
+                self.assertEqual(window.lbl_review_scope.text(), "本次导入 · 1 张待确认")
+            finally:
+                window.close()
+
+    def test_e2e_f_error_conflict_created_identity_is_not_review_identity(self):
+        """E2E F: Conflict/error rows are created but excluded from review_invoice_ids in local and mobile imports."""
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            import_dir = Path(td) / "import_inbox"
+            import_dir.mkdir(parents=True)
+
+            # Insert an existing invoice
+            with InvoiceDB(db_path) as db:
+                existing_id = db.insert_invoice({
+                    "invoice_number": "CONFLICT-001",
+                    "total_amount": "100.00",
+                    "seller_name": "原商户A",
+                    "invoice_date": "2026-08-01",
+                    "review_status": TO_REVIEW,
+                })
+
+            # Create a conflicting file with same invoice number but different seller/amount
+            file_path = import_dir / "conflict_invoice.pdf"
+            file_path.write_bytes(b"%PDF-1.4 conflict payload")
+            mock_parsed = InvoiceInfo(
+                invoice_number="CONFLICT-001",
+                total_amount="200.00",
+                seller_name="冲突商户B",
+                invoice_date="2026-08-22",
+                parse_success=True,
+            )
+
+            # 1. Local import test
+            with patch("scripts.invoice_fetch.invoice_parser.InvoiceParser.parse_pdf", return_value=mock_parsed):
+                stats = import_local_directory(import_dir, db_path)
+
+            self.assertEqual(stats["conflicts"], 1)
+            self.assertEqual(len(stats["new_invoice_ids"]), 1)
+            conflict_id = stats["new_invoice_ids"][0]
+            self.assertNotEqual(conflict_id, existing_id)
+            # Crucial assertion: conflict row is created, but NOT in review_invoice_ids!
+            self.assertNotIn(conflict_id, stats["review_invoice_ids"])
+
+            with InvoiceDB(db_path) as db:
+                row = db.get_invoice(conflict_id)
+                self.assertEqual(row["review_status"], "error")
+
+            # 2. Mobile import test
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            mock_mob = InvoiceInfo(
+                invoice_number="CONFLICT-001",
+                total_amount="300.00",
+                seller_name="冲突商户C",
+                invoice_date="2026-08-22",
+                parse_success=True,
+            )
+            with patch("scripts.invoice_fetch.invoice_parser.InvoiceParser.parse_pdf", return_value=mock_mob):
+                internal_result = server.save_uploads([UploadedFile("mobile_conflict.pdf", b"%PDF-1.4 mob conflict", "application/pdf")])
+
+            self.assertEqual(len(internal_result["new_invoice_ids"]), 1)
+            mob_conflict_id = internal_result["new_invoice_ids"][0]
+            self.assertNotIn(mob_conflict_id, internal_result["review_invoice_ids"])
+
 
 if __name__ == "__main__":
     unittest.main()

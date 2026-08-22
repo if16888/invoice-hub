@@ -576,10 +576,6 @@ class MobileUploadServer:
                 self._stats["imported"] += imported_count
                 self._write_manifest()
 
-        for rid in new_ids:
-            if rid not in review_invoice_ids:
-                review_invoice_ids.append(rid)
-
         result = {
             "accepted": accepted_now,
             "duplicate": duplicate_now,

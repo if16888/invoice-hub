@@ -7985,18 +7985,41 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _mobile_upload_finished(self, result: dict):
         imported = result.get("imported", {})
         imported_stats = imported if isinstance(imported, dict) else {}
-        added = int(imported_stats.get("added", result.get("added", imported or 0)) or 0)
+        added = int(imported_stats.get("added", result.get("added", imported if isinstance(imported, int) else 0)) or 0)
         duplicates = int(result.get("duplicate", result.get("duplicates", 0)) or 0)
         failed = int(result.get("failed", 0) or 0)
         scanned = int(result.get("accepted", 0) or 0) + duplicates + failed
-        new_ids = imported_stats.get("new_invoice_ids", ())
-        review_ids = imported_stats.get("review_invoice_ids", new_ids)
-        restored = int(imported_stats.get("restored", 0) or 0)
+        new_ids = result.get(
+            "new_invoice_ids",
+            imported_stats.get("new_invoice_ids", ())
+        )
+        review_ids = result.get(
+            "review_invoice_ids",
+            imported_stats.get("review_invoice_ids", new_ids)
+        )
+        restored_ids = result.get(
+            "restored_invoice_ids",
+            imported_stats.get("restored_invoice_ids", ())
+        )
+        imported_restored = int(imported_stats.get("restored", 0) or 0)
+        restored_id_tuple = tuple(dict.fromkeys(
+            int(rid) for rid in restored_ids if int(rid) > 0
+        ))
+        if imported_restored > 0:
+            imported_restored_ids = set(imported_stats.get("restored_invoice_ids", ()))
+            direct_restored_count = sum(1 for rid in restored_id_tuple if rid not in imported_restored_ids)
+            restored = imported_restored + direct_restored_count
+        else:
+            restored = len(restored_id_tuple)
+
         if added or duplicates or failed or restored or review_ids:
             self._record_import_activity(
-                "mobile", scanned=scanned, added=added,
+                "mobile",
+                scanned=scanned,
+                added=added,
                 restored=restored,
-                duplicates=duplicates, failed=failed,
+                duplicates=duplicates,
+                failed=failed,
                 batch_id=str(result.get("batch_id") or ""),
                 status="complete",
                 new_invoice_ids=new_ids,

@@ -2062,7 +2062,7 @@ def _import_local_pdf(
                 invoice_id=row_id,
                 created=True,
                 restored=False,
-                reviewable=True,
+                reviewable=False,
             )
 
     category, extra_type, extra_required = _classify(
