@@ -91,9 +91,11 @@ class IHDS08Tests(unittest.TestCase):
             try:
                 window._apply_workbench_metrics(1100, 800)
                 self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.TopToBottom)
                 self.assertEqual(window.import_task_stack.maximumWidth(), 16777215)
                 window._apply_workbench_metrics(1600, 900)
-                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.LeftToRight)
                 self.assertEqual(window.import_task_stack.maximumWidth(), 900)
             finally: window.close()
 

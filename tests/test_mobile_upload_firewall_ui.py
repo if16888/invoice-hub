@@ -244,45 +244,47 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             window.show()
             window._switch_main_page("imports")
             window._set_import_source_selected("mobile")
-            controller = window.mobile_upload_controller
-            controller.host_options = [SimpleNamespace(label="WLAN", host="192.168.1.50")]
-            session = SimpleNamespace(
-                upload_url="http://192.168.1.50:43210/u/synthetic-review",
-                host="192.168.1.50",
-                port=43210,
-            )
-            with patch.object(controller, "qr_png", return_value=b""):
-                controller.started.emit(session)
-            self.app.processEvents()
-            self.app.processEvents()
-            panel = window.mobile_upload_panel
-            self.assertIsNone(panel._active_details_scroll)
-            self.assertGreaterEqual(panel.width(), 720)
-            self.assertEqual(panel._active_body_layout.direction(), QBoxLayout.LeftToRight)
-            self.assertLess(window.import_source_card.width(), 220)
-            self.assertGreaterEqual(window.import_task_stack.width(), 760)
-            self.assertTrue(panel._active_tech_details.isHidden())
-            self.assertFalse(panel.lbl_service_address.isVisible())
-            self.assertEqual(
-                panel.btn_change_network.geometry().center().y(),
-                panel.btn_stop.geometry().center().y(),
-            )
-            self.assertLess(
-                panel._active_footer_layout.geometry().top(),
-                panel.height(),
-            )
-            for label in (
-                panel.lbl_network_interface,
-                panel.lbl_lan_access_hint,
-                panel.lbl_firewall_hint,
-                panel.lbl_stats,
-            ):
-                self.assertGreater(label.height(), 0)
-            window.close()
-            self.app.processEvents()
-            window.deleteLater()
-            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
-            self.app.processEvents()
+            try:
+                controller = window.mobile_upload_controller
+                controller.host_options = [SimpleNamespace(label="WLAN", host="192.168.1.50")]
+                session = SimpleNamespace(
+                    upload_url="http://192.168.1.50:43210/u/synthetic-review",
+                    host="192.168.1.50",
+                    port=43210,
+                )
+                with patch.object(controller, "qr_png", return_value=b""):
+                    controller.started.emit(session)
+                self.app.processEvents()
+                self.app.processEvents()
+                panel = window.mobile_upload_panel
+                self.assertIsNone(panel._active_details_scroll)
+                self.assertGreaterEqual(panel.width(), 720)
+                self.assertEqual(panel._active_body_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertGreaterEqual(window.import_source_card.width(), 760)
+                self.assertGreaterEqual(window.import_task_stack.width(), 760)
+                self.assertTrue(panel._active_tech_details.isHidden())
+                self.assertFalse(panel.lbl_service_address.isVisible())
+                self.assertEqual(
+                    panel.btn_change_network.geometry().center().y(),
+                    panel.btn_stop.geometry().center().y(),
+                )
+                self.assertLess(
+                    panel._active_footer_layout.geometry().top(),
+                    panel.height(),
+                )
+                for label in (
+                    panel.lbl_network_interface,
+                    panel.lbl_lan_access_hint,
+                    panel.lbl_firewall_hint,
+                    panel.lbl_stats,
+                ):
+                    self.assertGreater(label.height(), 0)
+            finally:
+                window.close()
+                self.app.processEvents()
+                window.deleteLater()
+                self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+                self.app.processEvents()
 
     def test_firewall_allowed_does_not_confirm_lan_access(self):
         with tempfile.TemporaryDirectory() as td:

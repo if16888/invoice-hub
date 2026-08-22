@@ -753,6 +753,21 @@ if _HAS_QT:
             self.lbl_hint.setText(hint)
             self.lbl_hint.setVisible(bool(hint))
 
+    class AdaptiveStackedWidget(QStackedWidget):
+        """Stacked widget that dynamically reports the sizeHint of the currently active widget."""
+
+        def sizeHint(self) -> QSize:
+            current = self.currentWidget()
+            if current is not None:
+                return current.sizeHint()
+            return super().sizeHint()
+
+        def minimumSizeHint(self) -> QSize:
+            current = self.currentWidget()
+            if current is not None:
+                return current.minimumSizeHint()
+            return super().minimumSizeHint()
+
     class CommandBar(QFrame):
         """Horizontal action bar wrapper used inside workbench pages."""
 
