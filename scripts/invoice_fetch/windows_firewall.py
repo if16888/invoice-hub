@@ -1,10 +1,10 @@
 """Safe, explicit Windows Firewall integration for mobile upload.
 
 The mobile upload listener deliberately remains independent from this module.
-Starting an upload session never changes firewall state.  A packaged user may
-request a narrowly scoped rule after an explicit confirmation and UAC prompt.
-Source/dev runs are intentionally read-only so tests and developer builds do
-not leave persistent Windows Firewall rules behind.
+Starting or stopping an upload session never changes firewall state. A packaged
+user may request a narrowly scoped rule after an explicit confirmation and UAC
+prompt. Source/dev runs may opt in to a current-port-only rule, but every
+firewall mutation remains an explicit user action.
 """
 
 from __future__ import annotations
@@ -56,6 +56,7 @@ class FirewallStatus:
     protocol: str = ""
     profile: str = ""
     program: str = ""
+    local_port: str = ""
 
     @property
     def is_allowed(self) -> bool:
@@ -74,6 +75,7 @@ class FirewallStatus:
             "protocol": self.protocol,
             "profile": self.profile,
             "program": self.program,
+            "local_port": self.local_port,
             "is_allowed": self.is_allowed,
         }
 
@@ -107,13 +109,7 @@ def get_current_invoicehub_executable() -> Path | None:
 
 
 def get_current_development_executable() -> Path | None:
-    """Return the interpreter that may receive a session-scoped dev rule.
-
-    Development runs are deliberately kept separate from the packaged
-    ``InvoiceHub.exe`` contract.  The returned path is only used with a
-    caller-supplied, single mobile-upload port and the rule is removed when
-    the session ends.
-    """
+    """Return the interpreter eligible for a current-port-only dev rule."""
     if not is_windows():
         return None
     candidate = Path(sys.executable)
@@ -161,7 +157,7 @@ def _is_allow(value: object) -> bool:
 
 
 def _is_any_local_port(value: object) -> bool:
-    """Accept only the exact any-port value used by the creation contract."""
+    """Accept only the exact any-port value used by the packaged contract."""
     return _as_text(value).replace(" ", "").casefold() == "any"
 
 
@@ -175,7 +171,7 @@ def _programs(value: object) -> set[str]:
 
 def _query_environment(rule_name: str = FIREWALL_RULE_NAME) -> dict[str, str]:
     # Values travel through the process environment rather than being
-    # interpolated into PowerShell source.  This keeps paths with spaces and
+    # interpolated into PowerShell source. This keeps paths with spaces and
     # shell metacharacters data, not executable command text.
     return {
         **os.environ,
@@ -238,27 +234,31 @@ def _status_from_rule(
     rule: dict[str, Any],
     executable: Path,
     state: FirewallState = FirewallState.RULE_PRESENT,
+    *,
+    development_mode: bool = False,
+    reason: str = "",
+    rule_name: str = FIREWALL_RULE_NAME,
 ) -> FirewallStatus:
     return FirewallStatus(
         state=state,
         executable_path=str(executable),
+        development_mode=development_mode,
+        reason=reason,
+        rule_name=rule_name,
         enabled=_is_enabled(rule.get("Enabled")),
         direction=_as_text(rule.get("Direction")),
         action=_as_text(rule.get("Action")),
         protocol=_as_text(rule.get("Protocol")),
         profile=_as_text(rule.get("Profile")),
         program=_as_text(rule.get("Program")),
+        local_port=_as_text(rule.get("LocalPort")),
     )
 
 
 def get_mobile_upload_firewall_status(
     executable_path: Path | str | None = None,
 ) -> FirewallStatus:
-    """Inspect only the stable Invoice Hub mobile-upload rule.
-
-    ``executable_path`` is optional so source/dev builds can be represented in
-    the UI without ever querying or mutating a developer machine's firewall.
-    """
+    """Inspect only the stable Invoice Hub mobile-upload rule."""
     if not is_windows():
         return FirewallStatus(FirewallState.NON_WINDOWS)
 
@@ -284,14 +284,9 @@ def get_mobile_upload_firewall_status(
     disabled_current_executable_rule: dict[str, Any] | None = None
     for rule in rules:
         programs = _programs(rule.get("Program"))
-        # The application filter must be exactly the current packaged
-        # executable.  A rule that also targets another program is broader
-        # than the consent text and is not accepted.
         if programs != {executable_key}:
             continue
         if not _is_enabled(rule.get("Enabled")):
-            # Keep scanning: Windows can return more than one rule with this
-            # DisplayName, and a later enabled complete rule wins.
             if disabled_current_executable_rule is None:
                 disabled_current_executable_rule = rule
             continue
@@ -333,8 +328,6 @@ def build_firewall_add_rule_args(executable_path: Path | str) -> list[str]:
         "enable=yes",
         "profile=Private",
         "protocol=TCP",
-        # The listener deliberately uses a random port.  The rule is therefore
-        # program-scoped, Private-only, and never a Program=Any global rule.
         "localport=Any",
     ]
 
@@ -384,7 +377,7 @@ def build_development_firewall_add_rule_args(
 
 
 def build_development_firewall_delete_rule_args() -> list[str]:
-    """Build the narrow marker-owned cleanup command for dev-session rules."""
+    """Build the marker-owned cleanup command for explicit dev cleanup."""
     return [
         "advfirewall",
         "firewall",
@@ -455,7 +448,6 @@ def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
 
 
 def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
-    """Run the formal packaged rule command through an explicit UAC prompt."""
     return _run_elevated_netsh_args(build_firewall_add_rule_args(executable_path))
 
 
@@ -465,6 +457,7 @@ def _development_status(
     *,
     enabled: bool | None = None,
     reason: str = "",
+    local_port: str = "",
 ) -> FirewallStatus:
     return FirewallStatus(
         state=state,
@@ -473,6 +466,7 @@ def _development_status(
         reason=reason,
         rule_name=DEV_FIREWALL_RULE_NAME,
         enabled=enabled,
+        local_port=local_port,
     )
 
 
@@ -486,16 +480,109 @@ def _is_owned_development_rule(rule: dict[str, Any]) -> bool:
     return all(Path(program).name.casefold() in _DEVELOPMENT_EXECUTABLE_NAMES for program in programs)
 
 
+def _is_valid_development_rule(rule: dict[str, Any], executable: Path) -> bool:
+    port = _validated_mobile_port(_as_text(rule.get("LocalPort")))
+    return (
+        _is_owned_development_rule(rule)
+        and _programs(rule.get("Program")) == {_path_key(executable)}
+        and _is_enabled(rule.get("Enabled"))
+        and _is_inbound(rule.get("Direction"))
+        and _is_allow(rule.get("Action"))
+        and _is_tcp(rule.get("Protocol"))
+        and _is_private_only_profile(rule.get("Profile"))
+        and port is not None
+    )
+
+
+def get_mobile_upload_dev_firewall_status(
+    executable_path: Path | str | None = None,
+    current_port: int | str | None = None,
+) -> FirewallStatus:
+    """Read development-rule state without mutating Windows Firewall.
+
+    A rule for a previous random port remains visible as ``RULE_PRESENT`` with
+    its ``local_port`` so the UI can offer an explicit cleanup action. It is
+    never treated as authorization for a different current session port.
+    """
+    if not is_windows():
+        return _development_status(FirewallState.NON_WINDOWS)
+    executable = _development_executable_path(executable_path)
+    if executable is None:
+        return _development_status(
+            FirewallState.SUPPORTED,
+            reason="current process is not a supported development executable",
+        )
+    try:
+        rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        return _development_status(
+            FirewallState.UNKNOWN,
+            executable,
+            reason=f"development firewall query unavailable: {type(exc).__name__}",
+        )
+
+    marker_rules = [
+        rule for rule in rules
+        if _as_text(rule.get("DisplayName")) == DEV_FIREWALL_RULE_NAME
+    ]
+    if not marker_rules:
+        return _development_status(FirewallState.RULE_MISSING, executable)
+    if not all(_is_owned_development_rule(rule) for rule in marker_rules):
+        return _development_status(
+            FirewallState.UNKNOWN,
+            executable,
+            reason="marker rule contains an unrelated program",
+        )
+
+    executable_key = _path_key(executable)
+    current_rules = [
+        rule for rule in marker_rules
+        if _programs(rule.get("Program")) == {executable_key}
+    ]
+    if not current_rules:
+        return _development_status(
+            FirewallState.RULE_MISSING,
+            executable,
+            reason="marker rules belong to a different development executable",
+        )
+
+    disabled_rule: dict[str, Any] | None = None
+    for rule in current_rules:
+        if not _is_enabled(rule.get("Enabled")):
+            disabled_rule = disabled_rule or rule
+            continue
+        if _is_valid_development_rule(rule, executable):
+            local_port = _as_text(rule.get("LocalPort"))
+            requested_port = _validated_mobile_port(current_port)
+            stale = requested_port is not None and local_port != str(requested_port)
+            return _status_from_rule(
+                rule,
+                executable,
+                development_mode=True,
+                reason="stale development session port" if stale else "",
+                rule_name=DEV_FIREWALL_RULE_NAME,
+            )
+
+    if disabled_rule is not None:
+        return _status_from_rule(
+            disabled_rule,
+            executable,
+            FirewallState.RULE_DISABLED,
+            development_mode=True,
+            reason="development rule is disabled",
+            rule_name=DEV_FIREWALL_RULE_NAME,
+        )
+    return _development_status(
+        FirewallState.UNKNOWN,
+        executable,
+        reason="development marker rule does not match the Private/TCP/current-executable contract",
+    )
+
+
 def clear_mobile_upload_dev_firewall_access(
     executable_path: Path | str | None = None,
 ) -> FirewallActionResult:
-    """Delete only Invoice Hub's marker-owned development-session rules.
-
-    The query is deliberately performed before the elevated delete.  A rule
-    with the marker but an unrelated program is treated as unsafe to remove;
-    the function then returns failure and never silently leaves the caller
-    believing that cleanup succeeded.
-    """
+    """Explicitly delete only marker rules owned by the current dev executable."""
     if not is_windows():
         return FirewallActionResult(
             True,
@@ -537,15 +624,20 @@ def clear_mobile_upload_dev_firewall_access(
             _development_status(FirewallState.RULE_MISSING, executable),
             "无遗留开发测试规则。",
         )
-    if not all(_is_owned_development_rule(rule) for rule in marker_rules):
+    executable_key = _path_key(executable)
+    if not all(
+        _is_owned_development_rule(rule)
+        and _programs(rule.get("Program")) == {executable_key}
+        for rule in marker_rules
+    ):
         return FirewallActionResult(
             False,
             _development_status(
                 FirewallState.UNKNOWN,
                 executable,
-                reason="marker rule contains an unrelated program",
+                reason="marker rule is not exclusively owned by the current development executable",
             ),
-            "发现无法确认归属的开发测试规则，未执行删除。",
+            "发现无法确认由当前开发解释器创建的测试规则，未执行删除。",
         )
 
     success, reason = _run_elevated_netsh_args(build_development_firewall_delete_rule_args())
@@ -592,7 +684,7 @@ def request_mobile_upload_dev_firewall_access(
     executable_path: Path | str | None,
     port: int,
 ) -> FirewallActionResult:
-    """Create a temporary Private/TCP rule for the current upload port only."""
+    """Explicitly create a Private/TCP rule for the current dev port only."""
     if not is_windows():
         return FirewallActionResult(
             False,
@@ -612,9 +704,36 @@ def request_mobile_upload_dev_firewall_access(
             "仅允许对当前开发解释器和当前手机上传端口授权。",
         )
 
-    cleanup = clear_mobile_upload_dev_firewall_access(executable)
-    if not cleanup.success:
-        return cleanup
+    existing = get_mobile_upload_dev_firewall_status(executable, validated_port)
+    if existing.state is FirewallState.RULE_PRESENT:
+        if existing.local_port == str(validated_port):
+            return FirewallActionResult(
+                True,
+                existing,
+                f"本次开发测试已允许 · Private · TCP {validated_port}",
+                uac_requested=False,
+            )
+        return FirewallActionResult(
+            False,
+            existing,
+            "检测到旧开发测试授权，请先显式清理后再允许当前端口。",
+            uac_requested=False,
+        )
+    if existing.state is FirewallState.RULE_DISABLED:
+        return FirewallActionResult(
+            False,
+            existing,
+            "检测到已禁用的开发测试授权，请先显式清理后再允许当前端口。",
+            uac_requested=False,
+        )
+    if existing.state is FirewallState.UNKNOWN:
+        return FirewallActionResult(
+            False,
+            existing,
+            "无法安全确认现有开发测试授权，请先检查或显式清理。",
+            uac_requested=False,
+        )
+
     success, reason = _run_elevated_netsh_args(
         build_development_firewall_add_rule_args(executable, validated_port)
     )
@@ -625,53 +744,18 @@ def request_mobile_upload_dev_firewall_access(
             f"开发测试规则未创建：{reason or 'UAC 未完成'}",
             uac_requested=True,
         )
-    try:
-        rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        return FirewallActionResult(
-            False,
-            _development_status(
-                FirewallState.UNKNOWN,
-                executable,
-                reason=f"development rule verification unavailable: {type(exc).__name__}",
-            ),
-            f"开发测试规则创建后无法复核：{type(exc).__name__}",
-            uac_requested=True,
-        )
 
-    executable_key = _path_key(executable)
-    valid = next(
-        (
-            rule for rule in rules
-            if _is_owned_development_rule(rule)
-            and _programs(rule.get("Program")) == {executable_key}
-            and _is_enabled(rule.get("Enabled"))
-            and _is_inbound(rule.get("Direction"))
-            and _is_allow(rule.get("Action"))
-            and _is_tcp(rule.get("Protocol"))
-            and _is_private_only_profile(rule.get("Profile"))
-            and _as_text(rule.get("LocalPort")).replace(" ", "") == str(validated_port)
-        ),
-        None,
-    )
-    if valid is None:
+    status = get_mobile_upload_dev_firewall_status(executable, validated_port)
+    if status.state is not FirewallState.RULE_PRESENT or status.local_port != str(validated_port):
         return FirewallActionResult(
             False,
-            _development_status(
-                FirewallState.RULE_MISSING,
-                executable,
-                reason="created development rule did not match the current port contract",
-            ),
+            status,
             "开发测试规则创建后未通过当前端口复核。",
             uac_requested=True,
         )
     return FirewallActionResult(
         True,
-        _development_status(
-            FirewallState.RULE_PRESENT,
-            executable,
-            enabled=True,
-        ),
+        status,
         f"本次开发测试已允许 · Private · TCP {validated_port}",
         uac_requested=True,
     )
@@ -724,7 +808,9 @@ __all__ = [
     "clear_mobile_upload_dev_firewall_access",
     "get_current_development_executable",
     "get_current_invoicehub_executable",
+    "get_mobile_upload_dev_firewall_status",
     "get_mobile_upload_firewall_status",
     "is_windows",
+    "request_mobile_upload_dev_firewall_access",
     "request_mobile_upload_firewall_access",
 ]
