@@ -11,6 +11,7 @@ from scripts.invoice_fetch.windows_firewall import (
     build_development_firewall_delete_rule_args,
     build_firewall_add_rule_args,
     clear_mobile_upload_dev_firewall_access,
+    get_mobile_upload_dev_firewall_status,
     get_mobile_upload_firewall_status,
     request_mobile_upload_dev_firewall_access,
     request_mobile_upload_firewall_access,
@@ -68,6 +69,21 @@ class WindowsFirewallContractTests(unittest.TestCase):
             return_value=rules,
         ):
             return get_mobile_upload_firewall_status(executable)
+
+    def dev_status_for(
+        self,
+        executable: Path,
+        rules: list[dict[str, str]],
+        current_port: int | None = 43210,
+    ):
+        with patch(
+            "scripts.invoice_fetch.windows_firewall.is_windows",
+            return_value=True,
+        ), patch(
+            "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+            return_value=rules,
+        ):
+            return get_mobile_upload_dev_firewall_status(executable, current_port)
 
     def test_private_inbound_tcp_current_executable_is_present(self):
         with tempfile.TemporaryDirectory() as td:
@@ -204,7 +220,32 @@ class WindowsFirewallContractTests(unittest.TestCase):
                 ["advfirewall", "firewall", "delete", "rule", f"name={DEV_FIREWALL_RULE_NAME}"],
             )
 
-    def test_dev_rule_request_cleans_marker_owned_old_rule_and_verifies_new_port(self):
+    def test_dev_status_marks_previous_random_port_as_stale(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            status = self.dev_status_for(
+                executable,
+                [_dev_rule(str(executable), "40000")],
+                current_port=43210,
+            )
+        self.assertEqual(status.state, FirewallState.RULE_PRESENT)
+        self.assertEqual(status.local_port, "40000")
+        self.assertEqual(status.reason, "stale development session port")
+
+    def test_dev_status_marks_other_python_path_as_stale_not_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "current" / "python.exe"
+            old_executable = Path(td) / "old" / "python.exe"
+            status = self.dev_status_for(
+                executable,
+                [_dev_rule(str(old_executable), "40000")],
+                current_port=43210,
+            )
+        self.assertEqual(status.state, FirewallState.RULE_PRESENT)
+        self.assertEqual(status.reason, "stale development executable")
+        self.assertEqual(status.local_port, "40000")
+
+    def test_dev_request_does_not_mutate_when_stale_rule_exists(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "python.exe"
             with patch(
@@ -212,26 +253,72 @@ class WindowsFirewallContractTests(unittest.TestCase):
                 return_value=True,
             ), patch(
                 "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
-                side_effect=[
-                    [_dev_rule(str(executable), "40000")],
-                    [],
-                    [_dev_rule(str(executable), "43210")],
-                ],
+                return_value=[_dev_rule(str(executable), "40000")],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+            ) as run_elevated:
+                result = request_mobile_upload_dev_firewall_access(executable, 43210)
+        self.assertFalse(result.success)
+        self.assertFalse(result.uac_requested)
+        self.assertIn("先显式清理", result.message)
+        run_elevated.assert_not_called()
+
+    def test_dev_request_reuses_exact_current_port_without_uac(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                return_value=[_dev_rule(str(executable), "43210")],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+            ) as run_elevated:
+                result = request_mobile_upload_dev_firewall_access(executable, 43210)
+        self.assertTrue(result.success)
+        self.assertFalse(result.uac_requested)
+        self.assertIn("TCP 43210", result.message)
+        run_elevated.assert_not_called()
+
+    def test_dev_request_without_existing_rule_uses_one_explicit_elevated_add(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                side_effect=[[], [_dev_rule(str(executable), "43210")]],
             ), patch(
                 "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
                 return_value=(True, ""),
             ) as run_elevated:
                 result = request_mobile_upload_dev_firewall_access(executable, 43210)
         self.assertTrue(result.success)
-        self.assertEqual(result.status.state, FirewallState.RULE_PRESENT)
-        self.assertTrue(result.status.development_mode)
-        self.assertIn("TCP 43210", result.message)
-        self.assertEqual(run_elevated.call_count, 2)
-        self.assertEqual(
-            run_elevated.call_args_list[0].args[0],
-            build_development_firewall_delete_rule_args(),
-        )
-        self.assertIn("localport=43210", run_elevated.call_args_list[1].args[0])
+        self.assertTrue(result.uac_requested)
+        self.assertEqual(run_elevated.call_count, 1)
+        self.assertIn("localport=43210", run_elevated.call_args.args[0])
+
+    def test_explicit_dev_cleanup_can_remove_marker_owned_old_python_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            current = Path(td) / "current" / "python.exe"
+            old = Path(td) / "old" / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                side_effect=[[_dev_rule(str(old), "40000")], []],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                return_value=(True, ""),
+            ) as run_elevated:
+                result = clear_mobile_upload_dev_firewall_access(current)
+        self.assertTrue(result.success)
+        self.assertTrue(result.uac_requested)
+        self.assertEqual(run_elevated.call_count, 1)
+        self.assertEqual(run_elevated.call_args.args[0], build_development_firewall_delete_rule_args())
 
     def test_dev_cleanup_refuses_marker_rule_with_unrelated_program(self):
         with patch(
