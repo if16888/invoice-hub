@@ -165,6 +165,7 @@ class ImportActivity:
     failed: int = 0
     status: str = "complete"
     new_invoice_ids: tuple[int, ...] = ()
+    review_invoice_ids: tuple[int, ...] = ()
 
 def _v1_badge(kind: str) -> dict[str, str]:
     c = DESIGN_V1_COLORS
@@ -2281,10 +2282,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_value_labels["export_ready"].set_value(f"{metrics['export_ready']} 组")
         activity, new_pending = self._latest_new_invoice_activity()
         if activity is not None and new_pending:
-            self.lbl_overview_recent_imports.setText(
-                f"本次新增 {activity.added} 张，其中 {len(new_pending)} 张待确认。"
-            )
-            self.btn_overview_new_review.setText(f"处理新增 {len(new_pending)} 张")
+            has_restored = bool(activity.restored or (set(activity.review_invoice_ids) - set(activity.new_invoice_ids)))
+            total_review = len(activity.review_invoice_ids)
+            if has_restored:
+                self.lbl_overview_recent_imports.setText(
+                    f"本次导入/恢复共 {total_review} 张，其中 {len(new_pending)} 张待确认。"
+                )
+                self.btn_overview_new_review.setText(f"处理本次 {len(new_pending)} 张")
+            else:
+                self.lbl_overview_recent_imports.setText(
+                    f"本次新增 {activity.added} 张，其中 {len(new_pending)} 张待确认。"
+                )
+                self.btn_overview_new_review.setText(f"处理新增 {len(new_pending)} 张")
             self.btn_overview_new_review.setVisible(True)
             self.btn_overview_history_review.setText("继续历史待办")
         else:
@@ -2317,16 +2326,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.overview_timeline.add_entry("今天", "待办更新", f"待审核 {metrics['to_review']} 张")
             self.overview_timeline.add_entry("当前", "报销组", f"可导出 {metrics['export_ready']} 组 · 本月 ¥{metrics['month_total']:.2f}")
 
+    def _remaining_review_ids(self, activity: ImportActivity) -> tuple[int, ...]:
+        """Return IDs from the activity's review set that still need processing."""
+        review_ids = activity.review_invoice_ids
+        if not review_ids:
+            return ()
+        try:
+            rows = self.db.list_invoices_by_ids(review_ids, include_deleted=False)
+        except Exception:
+            return ()
+        return tuple(int(row["id"]) for row in rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW)
+
     def _latest_new_invoice_activity(self) -> tuple[ImportActivity | None, tuple[int, ...]]:
         """Return the latest import with identities and its live review work."""
         for activity in getattr(self, "_import_activities", []):
-            if not activity.new_invoice_ids:
+            if not activity.review_invoice_ids:
                 continue
-            try:
-                rows = self.db.list_invoices_by_ids(activity.new_invoice_ids, include_deleted=False)
-            except Exception:
-                return activity, ()
-            pending = tuple(int(row["id"]) for row in rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW)
+            pending = self._remaining_review_ids(activity)
             return activity, pending
         return None, ()
 
@@ -2336,7 +2352,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._refresh_overview_page()
             return
         self._review_scope_ids = pending_ids
-        self._review_scope_total = len(activity.new_invoice_ids)
+        self._review_scope_total = len(activity.review_invoice_ids)
         self.current_filter_status = TO_REVIEW
         self._switch_main_page("review", preserve_review_scope=True)
         self._load_invoices()
@@ -2366,7 +2382,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             label.show()
             completion.hide()
         else:
-            label.setText(f"本次新增 {total} 张已处理完成")
+            label.setText("本次已处理完成")
             label.show()
             completion.show()
 
@@ -2394,13 +2410,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._apply_import_workspace_layout()
 
     def _apply_import_workspace_layout(self, width: int | None = None) -> None:
-        """Give complex mobile upload content ownership of desktop width.
-
-        The source selector and recent-run summary remain available, but the
-        mobile task receives an explicit usable minimum before its own
-        internal layout is evaluated.  This prevents a child width breakpoint
-        from shrinking its parent and feeding back into a vertical strip.
-        """
+        """Apply responsive 3-column, medium 2-row, or narrow stacked layout."""
         required = (
             "imports_shell_layout",
             "import_source_card",
@@ -2411,22 +2421,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not all(hasattr(self, name) for name in required):
             return
         w = width if width is not None and width > 0 else (self.width() or 1440)
-        panel = getattr(self, "mobile_upload_panel", None)
-        controller = getattr(self, "mobile_upload_controller", None)
-        active_widgets = set()
-        if panel is not None:
-            active_widgets = {
-                getattr(panel, "active_page", None),
-                getattr(panel, "starting_page", None),
-            }
-        mobile_active = (
-            getattr(self, "_selected_import_source", "") == "mobile"
-            and (
-                panel.stack.currentWidget() in active_widgets
-                if panel is not None and hasattr(panel, "stack")
-                else False
-            )
-        ) or bool(getattr(controller, "is_starting", False))
+        has_main_row = hasattr(self, "import_main_row_layout")
 
         self.imports_workspace_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         workspace_scroll = getattr(self, "imports_workspace_scroll", None)
@@ -2435,59 +2430,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         else:
             page_width = self.imports_page.width() if hasattr(self, "imports_page") else 0
         if page_width <= 0:
-            # Before the first layout pass the page has no native width yet.
-            # This fallback is corrected by the queued resize/layout pass.
             page_width = max(0, w - (56 if w <= 1366 else 180) - 48)
-        # TaskFlowPageLayout keeps 24px horizontal margins on both sides.
         workspace_width = max(0, page_width - 48)
 
-        if mobile_active:
-            source_width = 152 if w <= 1366 else (160 if w <= 1440 else 184)
-            recent_width = 250 if w <= 1366 else (260 if w <= 1440 else 300)
-            # SectionCard content margins consume part of the task width; a
-            # 760px task allocation leaves the embedded panel at >=720px,
-            # which is the desktop two-column contract.
-            task_minimum = 760
-            minimum_workspace = task_minimum + source_width + recent_width + 24
-            if workspace_width < minimum_workspace:
-                # The parent owns the responsive breakpoint.  Once the source
-                # and recent cards move above/below the task, the task receives
-                # the full actual Imports content width instead of inheriting a
-                # narrow width from a still-horizontal row.
-                self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
-                self.imports_shell_layout.setStretch(1, 0)
-                self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-                self.import_source_card.setMinimumWidth(0)
-                self.import_source_card.setMaximumWidth(16777215)
-                self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
-                self.import_task_stack.setMinimumWidth(0)
-                self.import_task_stack.setMaximumWidth(16777215)
-                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-                self.import_mail_recent_card.setMinimumWidth(0)
-                self.import_mail_recent_card.setMaximumWidth(16777215)
-                host_target = min(1440, workspace_width)
-                self.imports_workspace_host.setMinimumWidth(host_target)
-                task_target = min(900, workspace_width)
-                self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                self.import_task_stack.setMinimumWidth(task_target)
-                self.import_task_stack.setMaximumWidth(task_target or 16777215)
-                self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                self.imports_shell_layout.setAlignment(
-                    self.import_task_stack,
-                    Qt.AlignHCenter | Qt.AlignTop,
-                )
-                self.imports_workspace_host.updateGeometry()
-                self.import_task_stack.updateGeometry()
-                return
+        # 1. Wide Desktop (>= 1200px): 3 columns horizontal
+        if w >= 1200:
             self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+            self.imports_shell_layout.setStretch(0, 0)
             self.imports_shell_layout.setStretch(1, 1)
-            available_for_task = workspace_width - source_width - recent_width - 24
-            task_maximum = max(task_minimum, min(900, available_for_task))
-            host_target = min(
-                1440,
-                max(task_minimum + source_width + recent_width + 24, workspace_width),
-            )
-            self.imports_workspace_host.setMinimumWidth(host_target)
+
+            source_width = 248 if w <= 1366 else 260
+            recent_width = 320 if w <= 1366 else 340
 
             self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
             self.import_source_card.setMinimumWidth(source_width)
@@ -2495,48 +2448,88 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.import_source_card.setFixedWidth(source_width)
             self.import_source_card.body_layout.setDirection(QBoxLayout.TopToBottom)
 
+            if has_main_row:
+                self.import_main_row_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_main_row_layout.setStretch(0, 1)
+                self.import_main_row_layout.setStretch(1, 0)
+
             self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            self.import_task_stack.setMinimumWidth(task_minimum)
-            self.import_task_stack.setMaximumWidth(task_maximum)
-            self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            self.import_task_stack.setMinimumWidth(0)
+            self.import_task_stack.setMaximumWidth(900)
+            self.import_local_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_mail_accounts_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
             self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
             self.import_mail_recent_card.setMinimumWidth(recent_width)
             self.import_mail_recent_card.setMaximumWidth(recent_width)
             self.import_mail_recent_card.setFixedWidth(recent_width)
-        else:
-            if w < 1200:
-                self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
-                self.imports_shell_layout.setStretch(1, 0)
-                self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
-                self.import_task_stack.setMinimumWidth(0)
-                self.import_task_stack.setMaximumWidth(16777215)
-                self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-                self.import_source_card.setMinimumWidth(0)
-                self.import_source_card.setMaximumWidth(16777215)
-                self.import_mail_recent_card.setMinimumWidth(0)
-                self.import_mail_recent_card.setMaximumWidth(16777215)
-                self.imports_workspace_host.setMinimumWidth(0)
-                self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-                self.imports_workspace_host.updateGeometry()
-                self.import_task_stack.updateGeometry()
-                return
-            self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
-            self.imports_shell_layout.setStretch(1, 1)
+
             self.imports_workspace_host.setMinimumWidth(0)
+
+        # 2. Medium Desktop (900px - 1199px): Source compact horizontal top, Task & Recent side-by-side
+        elif w >= 900:
+            self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+            self.imports_shell_layout.setStretch(0, 0)
+            self.imports_shell_layout.setStretch(1, 1)
+
+            self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_source_card.setMinimumWidth(0)
+            self.import_source_card.setMaximumWidth(16777215)
+            self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
+
+            if has_main_row:
+                self.import_main_row_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_main_row_layout.setStretch(0, 1)
+                self.import_main_row_layout.setStretch(1, 0)
+
+            self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             self.import_task_stack.setMinimumWidth(0)
-            self.import_task_stack.setMaximumWidth(900)
-            self.import_source_card.setMinimumWidth(260)
-            self.import_source_card.setMaximumWidth(300)
-            self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
-            self.import_mail_recent_card.setMinimumWidth(360)
-            self.import_mail_recent_card.setMaximumWidth(420)
-            self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self.import_task_stack.setMaximumWidth(16777215)
+            self.import_local_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
             self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_mail_accounts_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
+            self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self.import_mail_recent_card.setMinimumWidth(300)
+            self.import_mail_recent_card.setMaximumWidth(340)
+            self.import_mail_recent_card.setFixedWidth(320)
+
+            self.imports_workspace_host.setMinimumWidth(0)
+
+        # 3. Narrow / Compact (< 900px): Vertical stack, all Maximum / Preferred without blank expansion
+        else:
+            self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+            self.imports_shell_layout.setStretch(0, 0)
+            self.imports_shell_layout.setStretch(1, 0)
+
+            self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_source_card.setMinimumWidth(0)
+            self.import_source_card.setMaximumWidth(16777215)
+            self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight if w >= 600 else QBoxLayout.TopToBottom)
+
+            if has_main_row:
+                self.import_main_row_layout.setDirection(QBoxLayout.TopToBottom)
+                self.import_main_row_layout.setStretch(0, 0)
+                self.import_main_row_layout.setStretch(1, 0)
+
+            self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_task_stack.setMinimumWidth(0)
+            self.import_task_stack.setMaximumWidth(16777215)
+            self.import_local_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_mail_accounts_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
+            self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            self.import_mail_recent_card.setMinimumWidth(0)
+            self.import_mail_recent_card.setMaximumWidth(16777215)
+
+            self.imports_workspace_host.setMinimumWidth(0)
 
         self.imports_workspace_host.updateGeometry()
         self.import_task_stack.updateGeometry()
+        if has_main_row:
+            self.import_main_row.updateGeometry()
 
     def _run_import_primary_action(self) -> None:
         """Keep the import page primary action truthful for the chosen account."""
@@ -2558,11 +2551,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         batch_id: str = "",
         status: str = "complete",
         new_invoice_ids: tuple[int, ...] | list[int] = (),
+        review_invoice_ids: tuple[int, ...] | list[int] | None = None,
     ) -> None:
         """Record a structured import outcome for the in-session result surface."""
         normalized_batch = str(batch_id or "").strip()
         normalized_new_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in new_invoice_ids if int(invoice_id) > 0))
         normalized_added = len(normalized_new_ids) if new_invoice_ids else max(0, int(added or 0))
+        # review_invoice_ids defaults to new_invoice_ids when not provided.
+        if review_invoice_ids is None:
+            normalized_review_ids = normalized_new_ids
+        else:
+            normalized_review_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in review_invoice_ids if int(invoice_id) > 0))
         if normalized_batch:
             existing = next(
                 (activity for activity in self._import_activities if activity.batch_id == normalized_batch),
@@ -2578,6 +2577,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 existing.failed = max(0, int(failed or 0))
                 existing.status = str(status or "complete")
                 existing.new_invoice_ids = normalized_new_ids
+                existing.review_invoice_ids = normalized_review_ids
                 self._import_activities.remove(existing)
                 self._import_activities.insert(0, existing)
                 return
@@ -2595,6 +2595,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 failed=max(0, int(failed or 0)),
                 status=str(status or "complete"),
                 new_invoice_ids=normalized_new_ids,
+                review_invoice_ids=normalized_review_ids,
             ),
         )
         del self._import_activities[10:]
@@ -2664,6 +2665,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         self._structured_import_fields(activity),
                         state=timeline_state,
                     )
+            latest_act, pending_ids = self._latest_new_invoice_activity()
+            if hasattr(self, "btn_import_recent_review"):
+                if latest_act is not None and pending_ids:
+                    has_restored = bool(latest_act.restored or (set(latest_act.review_invoice_ids) - set(latest_act.new_invoice_ids)))
+                    if has_restored:
+                        btn_text = f"处理本次 {len(pending_ids)} 张"
+                    else:
+                        btn_text = f"处理新增 {len(pending_ids)} 张"
+                    self.btn_import_recent_review.setText(btn_text)
+                    self.btn_import_recent_review.show()
+                else:
+                    self.btn_import_recent_review.hide()
 
         if hasattr(self, "mail_checklist_layout"):
             while self.mail_checklist_layout.count():
@@ -3866,25 +3879,41 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for task_page in self._import_task_pages.values():
             self.import_task_stack.addWidget(task_page)
         self.import_task_stack.setCurrentWidget(self.import_mail_accounts_card)
-        shell.addWidget(self.import_task_stack, 1)
-        shell.setAlignment(self.import_task_stack, Qt.AlignTop)
 
         self.import_mail_recent_card = SectionCard("本次运行", hint="显示本次启动应用后的最近 3 个导入批次。")
-        self.import_mail_recent_card.setMinimumWidth(360)
-        self.import_mail_recent_card.setMaximumWidth(420)
+        self.import_mail_recent_card.setMinimumWidth(300)
+        self.import_mail_recent_card.setMaximumWidth(360)
         self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.import_recent_content = QWidget()
         self.import_recent_content_layout = QVBoxLayout(self.import_recent_content)
         self.import_recent_content_layout.setContentsMargins(0, 0, 0, 0)
+        self.import_recent_content_layout.setSpacing(8)
         self.import_recent_state_stack = PageStateStack()
         self.import_recent_state_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.import_recent_state_stack.set_empty_object_name("ImportRecentEmptyState")
         self.import_recent_timeline = ActivityTimeline()
         self.import_recent_content_layout.addWidget(self.import_recent_timeline)
+        self.btn_import_recent_review = make_button("处理新增", variant="primary")
+        self.btn_import_recent_review.setObjectName("btn_import_recent_review")
+        self.btn_import_recent_review.clicked.connect(self._open_new_invoice_review)
+        self.btn_import_recent_review.hide()
+        self.import_recent_content_layout.addWidget(self.btn_import_recent_review)
         self.import_recent_state_stack.set_content(self.import_recent_content)
         self.import_mail_recent_card.body_layout.addWidget(self.import_recent_state_stack)
-        shell.addWidget(self.import_mail_recent_card, 0)
-        shell.setAlignment(self.import_mail_recent_card, Qt.AlignTop)
+
+        self.import_main_row = QWidget()
+        self.import_main_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.import_main_row_layout = QHBoxLayout(self.import_main_row)
+        self.import_main_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.import_main_row_layout.setSpacing(12)
+        self.import_main_row_layout.setAlignment(Qt.AlignTop)
+        self.import_main_row_layout.addWidget(self.import_task_stack, 1)
+        self.import_main_row_layout.addWidget(self.import_mail_recent_card, 0)
+        self.import_main_row_layout.setAlignment(self.import_task_stack, Qt.AlignTop)
+        self.import_main_row_layout.setAlignment(self.import_mail_recent_card, Qt.AlignTop)
+
+        shell.addWidget(self.import_main_row, 1)
+        shell.setAlignment(self.import_main_row, Qt.AlignTop)
 
         self.imports_workspace_host = QWidget()
         self.imports_workspace_host.setMaximumWidth(1440)
@@ -7664,18 +7693,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.statusBar().showMessage("邮箱扫描已取消", 4000)
             self._refresh_imports_page()
             return
-        btn = getattr(self.scan_worker, "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
+        btn = getattr(getattr(self, "scan_worker", None), "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
             orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))
             self._clear_action_busy(btn, orig_text)
-        summary = self._build_scan_summary(res, getattr(self.scan_worker, "summary_logs", []))
+        summary = self._build_scan_summary(res, getattr(getattr(self, "scan_worker", None), "summary_logs", []))
         self._last_scan_summary = summary
+        new_ids = res.get("new_invoice_ids", ()) if isinstance(res, dict) else ()
+        review_ids = res.get("review_invoice_ids", new_ids) if isinstance(res, dict) else new_ids
         self._record_import_activity(
             "mail",
             scanned=summary.get("scanned") or summary.get("scanned_headers") or 0,
             classified=summary.get("classified_invoice") or 0,
             added=summary.get("new") or summary.get("new_email_headers") or 0,
-            restored=summary.get("restored") or 0,
+            restored=summary.get("restored") or summary.get("restored_deleted") or 0,
             duplicates=summary.get("duplicates") or 0,
             failed=(
                 int(summary.get("download_failed", 0) or 0)
@@ -7683,7 +7714,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 + int(summary.get("link_failed", 0) or 0)
             ),
             status="complete",
-            new_invoice_ids=res.get("new_invoice_ids", ()) if isinstance(res, dict) else (),
+            new_invoice_ids=new_ids,
+            review_invoice_ids=review_ids,
         )
         self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
         self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
@@ -7863,13 +7895,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         duplicates = int(result.get("duplicate", result.get("duplicates", 0)) or 0)
         failed = int(result.get("failed", 0) or 0)
         scanned = int(result.get("accepted", 0) or 0) + duplicates + failed
-        if added or duplicates or failed:
+        new_ids = imported_stats.get("new_invoice_ids", ())
+        review_ids = imported_stats.get("review_invoice_ids", new_ids)
+        restored = int(imported_stats.get("restored", 0) or 0)
+        if added or duplicates or failed or restored or review_ids:
             self._record_import_activity(
                 "mobile", scanned=scanned, added=added,
+                restored=restored,
                 duplicates=duplicates, failed=failed,
                 batch_id=str(result.get("batch_id") or ""),
                 status="complete",
-                new_invoice_ids=imported_stats.get("new_invoice_ids", ()),
+                new_invoice_ids=new_ids,
+                review_invoice_ids=review_ids,
             )
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
@@ -7896,13 +7933,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         conflicts = stats.get("conflicts", 0)
         pending_manual = stats.get("pending_manual", 0)
         failed = stats.get("failed", 0)
+        restored = stats.get("restored", 0)
+        new_ids = stats.get("new_invoice_ids", ())
+        review_ids = stats.get("review_invoice_ids", new_ids)
         self._record_import_activity(
             "local",
             added=added,
+            restored=restored,
             duplicates=duplicates,
             failed=failed,
             status="complete",
-            new_invoice_ids=stats.get("new_invoice_ids", ()),
+            new_invoice_ids=new_ids,
+            review_invoice_ids=review_ids,
         )
         self.write_log(
             f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"

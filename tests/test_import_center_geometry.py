@@ -1,0 +1,103 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QBoxLayout, QSizePolicy
+
+from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+
+class ImportCenterGeometryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def make_window(self, td):
+        window = InvoiceReviewApp(Path(td) / "invoices.db")
+        window.show()
+        self.app.processEvents()
+        return window
+
+    def test_test9_import_responsive_geometry_across_window_sizes(self):
+        """TEST 9: Verify responsive layout states for Wide, Medium, and Narrow desktop viewports."""
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._switch_main_page("imports")
+                self.app.processEvents()
+
+                # 1. Wide Desktop (1440x900)
+                window.resize(1440, 900)
+                window._apply_import_workspace_layout(1440)
+                self.app.processEvents()
+
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertEqual(window.import_source_card.body_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_source_card.width(), 260)
+                self.assertLessEqual(window.import_task_stack.maximumWidth(), 900)
+                self.assertIn(window.import_mail_recent_card.width(), [320, 340, 360])
+
+                # 2. Medium Desktop (1100x800)
+                window.resize(1100, 800)
+                window._apply_import_workspace_layout(1100)
+                self.app.processEvents()
+
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_source_card.body_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.LeftToRight)
+
+                # 3. Narrow Desktop (800x600)
+                window.resize(800, 600)
+                window._apply_import_workspace_layout(800)
+                self.app.processEvents()
+
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_task_stack.sizePolicy().verticalPolicy(), QSizePolicy.Maximum)
+                self.assertEqual(window.import_mail_recent_card.sizePolicy().verticalPolicy(), QSizePolicy.Maximum)
+            finally:
+                window.close()
+
+    def test_test10_mobile_desktop_responsive_geometry_qr_size(self):
+        """TEST 10: Mobile QR code preserves readable dimensions without text overlapping."""
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._select_import_source("mobile")
+                self.app.processEvents()
+
+                panel = window.mobile_upload_panel
+                session = SimpleNamespace(
+                    upload_url="http://192.168.1.100:8080/u/test_token_12345678",
+                    host="192.168.1.100",
+                    port=8080,
+                )
+                with patch.object(panel.controller, "qr_png", return_value=b"fake_qr_png"):
+                    panel.controller.started.emit(session)
+                self.app.processEvents()
+
+                # At 1440x900 (Wide)
+                window.resize(1440, 900)
+                panel.resize(760, 500)
+                self.app.processEvents()
+                self.assertGreaterEqual(panel.lbl_qr.width(), 200)
+                self.assertGreaterEqual(panel.lbl_qr.height(), 200)
+
+                # At 1100x800 (Medium)
+                window.resize(1100, 800)
+                panel.resize(600, 500)
+                self.app.processEvents()
+                self.assertGreaterEqual(panel.lbl_qr.width(), 200)
+                self.assertGreaterEqual(panel.lbl_qr.height(), 200)
+            finally:
+                window.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
