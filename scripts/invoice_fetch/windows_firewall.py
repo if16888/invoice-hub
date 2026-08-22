@@ -30,6 +30,7 @@ _ELEVATED_TIMEOUT_SECONDS = 30
 _SEE_MASK_NOCLOSEPROCESS = 0x00000040
 _WAIT_OBJECT_0 = 0x00000000
 _WAIT_TIMEOUT = 0x00000102
+_SW_HIDE = 0
 
 
 class FirewallState(str, Enum):
@@ -90,6 +91,21 @@ class FirewallActionResult:
 
 def is_windows() -> bool:
     return sys.platform.startswith("win")
+
+
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Return Windows-only flags that keep helper consoles out of the GUI."""
+
+    if not is_windows():
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= int(getattr(subprocess, "STARTF_USESHOWWINDOW", 0))
+    startupinfo.wShowWindow = int(getattr(subprocess, "SW_HIDE", _SW_HIDE))
+    return {
+        "creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+        "startupinfo": startupinfo,
+    }
 
 
 def _is_invoicehub_executable(path: Path | str | None) -> bool:
@@ -219,6 +235,8 @@ def _query_firewall_rules(rule_name: str = FIREWALL_RULE_NAME) -> list[dict[str,
             check=False,
             timeout=_POWERSHELL_TIMEOUT_SECONDS,
             env=_query_environment(rule_name),
+            shell=False,
+            **_hidden_subprocess_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("PowerShell firewall query timed out") from exc
@@ -422,7 +440,7 @@ def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
         info.lpVerb = "runas"
         info.lpFile = _NETSH
         info.lpParameters = arguments
-        info.nShow = 1
+        info.nShow = _SW_HIDE
         if not shell32.ShellExecuteExW(ctypes.byref(info)):
             error_code = ctypes.get_last_error()
             return False, f"UAC rejected or ShellExecuteExW failed ({error_code})"

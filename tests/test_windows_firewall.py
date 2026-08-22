@@ -1,8 +1,11 @@
+import ctypes
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import scripts.invoice_fetch.windows_firewall as firewall
 from scripts.invoice_fetch.windows_firewall import (
     DEV_FIREWALL_RULE_NAME,
     FIREWALL_RULE_NAME,
@@ -381,6 +384,99 @@ class WindowsFirewallContractTests(unittest.TestCase):
             result = request_mobile_upload_firewall_access()
         self.assertEqual(status.state, FirewallState.NON_WINDOWS)
         self.assertEqual(result.status.state, FirewallState.NON_WINDOWS)
+
+
+class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
+    def test_non_windows_hidden_subprocess_kwargs_are_empty(self):
+        with patch.object(firewall, "is_windows", return_value=False):
+            self.assertEqual(firewall._hidden_subprocess_kwargs(), {})
+
+    def test_windows_firewall_query_uses_hidden_argv_subprocess(self):
+        startupinfo = SimpleNamespace(dwFlags=0, wShowWindow=99)
+        completed = SimpleNamespace(returncode=0, stdout="[]")
+        with patch.object(firewall, "is_windows", return_value=True), patch.object(
+            firewall.subprocess,
+            "STARTUPINFO",
+            return_value=startupinfo,
+        ), patch.object(firewall.subprocess, "run", return_value=completed) as run:
+            rules = firewall._query_firewall_rules("Synthetic Rule")
+
+        self.assertEqual(rules, [])
+        args, kwargs = run.call_args
+        self.assertIsInstance(args[0], list)
+        self.assertEqual(kwargs["shell"], False)
+        self.assertEqual(kwargs["creationflags"], firewall.subprocess.CREATE_NO_WINDOW)
+        self.assertIs(kwargs["startupinfo"], startupinfo)
+        self.assertTrue(startupinfo.dwFlags & firewall.subprocess.STARTF_USESHOWWINDOW)
+        self.assertEqual(startupinfo.wShowWindow, firewall.subprocess.SW_HIDE)
+
+    def test_elevated_netsh_hides_child_console_but_keeps_runas(self):
+        captured = {}
+
+        class FakeShell32:
+            def ShellExecuteExW(self, info_pointer):
+                info = ctypes.cast(
+                    info_pointer,
+                    ctypes.POINTER(firewall._ShellExecuteInfo),
+                ).contents
+                captured["verb"] = info.lpVerb
+                captured["file"] = info.lpFile
+                captured["parameters"] = info.lpParameters
+                captured["mask"] = info.fMask
+                captured["show"] = info.nShow
+                info.hProcess = 0x1234
+                return 1
+
+        class FakeKernel32:
+            def WaitForSingleObject(self, handle, timeout):
+                captured["handle"] = handle
+                captured["timeout"] = timeout
+                return firewall._WAIT_OBJECT_0
+
+            def GetExitCodeProcess(self, handle, exit_code_pointer):
+                ctypes.cast(
+                    exit_code_pointer,
+                    ctypes.POINTER(ctypes.c_ulong),
+                ).contents.value = 0
+                return 1
+
+            def CloseHandle(self, handle):
+                captured["closed"] = handle
+                return 1
+
+        windll = SimpleNamespace(shell32=FakeShell32(), kernel32=FakeKernel32())
+        with patch.object(firewall, "is_windows", return_value=True), patch.object(
+            firewall.ctypes,
+            "windll",
+            windll,
+        ):
+            success, reason = firewall._run_elevated_netsh_args(
+                ["advfirewall", "firewall", "add", "rule", "name=Invoice Hub"]
+            )
+
+        self.assertTrue(success)
+        self.assertEqual(reason, "")
+        self.assertEqual(captured["verb"], "runas")
+        self.assertEqual(captured["file"], firewall._NETSH)
+        self.assertEqual(captured["show"], firewall._SW_HIDE)
+        self.assertTrue(captured["mask"] & firewall._SEE_MASK_NOCLOSEPROCESS)
+        self.assertIn("advfirewall", captured["parameters"])
+        self.assertEqual(captured["closed"], 0x1234)
+
+    def test_elevated_netsh_failure_is_fail_closed(self):
+        class FakeShell32:
+            def ShellExecuteExW(self, _info_pointer):
+                return 0
+
+        with patch.object(firewall, "is_windows", return_value=True), patch.object(
+            firewall.ctypes,
+            "windll",
+            SimpleNamespace(shell32=FakeShell32(), kernel32=SimpleNamespace()),
+        ), patch.object(firewall.ctypes, "get_last_error", return_value=5):
+            success, reason = firewall._run_elevated_netsh_args(["advfirewall"])
+
+        self.assertFalse(success)
+        self.assertIn("ShellExecuteExW failed", reason)
 
 
 if __name__ == "__main__":
