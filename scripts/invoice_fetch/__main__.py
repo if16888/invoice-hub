@@ -2036,7 +2036,27 @@ def _import_local_directory(
                 files.append(candidate)
         files.sort()
 
-    stats = {"added": 0, "duplicates": 0, "conflicts": 0, "pending_manual": 0, "failed": 0}
+    stats = {
+        "added": 0,
+        "duplicates": 0,
+        "conflicts": 0,
+        "pending_manual": 0,
+        "failed": 0,
+        "new_invoice_ids": [],
+    }
+    existing_invoice_ids = {
+        int(invoice["id"])
+        for invoice in db.get_all_invoices(include_deleted=True)
+    }
+
+    def record_outcome(status: str, row_id: int | None) -> None:
+        key = status + "s" if status in ("duplicate", "conflict") else status
+        stats[key] += 1
+        # Only the successful INSERT contract is a new invoice identity.
+        # Restores, duplicate metadata refreshes and manual/evidence records
+        # deliberately never enter this list.
+        if status == "added" and row_id is not None and int(row_id) not in existing_invoice_ids:
+            stats["new_invoice_ids"].append(int(row_id))
     if not files:
         _log.warning("本地导入目录没有发现 PDF/OFD/ZIP: %s", mask_path(root))
         return stats
@@ -2054,22 +2074,19 @@ def _import_local_directory(
                 if not extracted:
                     copied = _copy_local_file_to_staging(src, staging_dir)
                     status, row_id = _insert_local_exception(db, copied, src.name, "ZIP中未发现可处理 ofd/pdf 文件", categories)
-                    key = status + "s" if status in ("duplicate", "conflict") else status
-                    stats[key] += 1
+                    record_outcome(status, row_id)
                     continue
                 for extracted_file in extracted:
                     if extracted_file.suffix.lower() == ".pdf":
                         status, row_id = _import_local_pdf(src.name, extracted_file, db, parser, categories, att_dir)
-                        key = status + "s" if status in ("duplicate", "conflict") else status
-                        stats[key] += 1
+                        record_outcome(status, row_id)
                     else:
                         status, row_id = _insert_local_exception(
                             db, extracted_file, extracted_file.name,
                             "本地导入暂不支持OFD解析，请人工处理",
                             categories,
                         )
-                        key = status + "s" if status in ("duplicate", "conflict") else status
-                        stats[key] += 1
+                        record_outcome(status, row_id)
                 continue
 
             working_file = src if preserve_source_path else _copy_local_file_to_staging(src, staging_dir)
@@ -2083,8 +2100,7 @@ def _import_local_directory(
                     att_dir,
                     preserve_source_path=preserve_source_path,
                 )
-                key = status + "s" if status in ("duplicate", "conflict") else status
-                stats[key] += 1
+                record_outcome(status, row_id)
             elif ext in {".png", ".jpg", ".jpeg", ".heic"}:
                 evidence_result = _import_local_evidence(
                     db=db,
@@ -2104,8 +2120,7 @@ def _import_local_directory(
                     )
                 else:
                     status, row_id = evidence_result
-                key = status + "s" if status in ("duplicate", "conflict") else status
-                stats[key] += 1
+                record_outcome(status, row_id)
             else:
                 evidence_result = _import_local_evidence(
                     db=db,
@@ -2123,12 +2138,13 @@ def _import_local_directory(
                     )
                 else:
                     status, row_id = evidence_result
-                key = status + "s" if status in ("duplicate", "conflict") else status
-                stats[key] += 1
+                record_outcome(status, row_id)
         except Exception as exc:
             _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
             stats["failed"] += 1
 
+    # The public count follows the same identity source as the dashboard CTA.
+    stats["added"] = len(stats["new_invoice_ids"])
     total_recorded = stats["added"] + stats["conflicts"] + stats["pending_manual"]
     _log.info("本地导入完成: 入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d)",
               total_recorded, stats["added"], stats["duplicates"], stats["conflicts"], stats["failed"])
@@ -3900,6 +3916,10 @@ def _scan_mailboxes_with_db(
     parse_failed = 0
     ai_auth_failed = False
     ai_pending_classification = 0
+    # Identity is derived from actual rows inserted during this scan, never
+    # from timestamps or an inferred count.  This excludes restores and
+    # duplicate/metadata-only outcomes by construction.
+    invoice_ids_before_scan = {int(inv["id"]) for inv in db.get_all_invoices(include_deleted=True)}
 
     account_contexts: list[dict] = []
     for account in accounts:
@@ -4193,12 +4213,19 @@ def _scan_mailboxes_with_db(
     link_dl.close()
     accounts_failed = len(failed_account_keys)
     accounts_success = max(0, accounts_total - accounts_failed)
+    new_invoice_ids = tuple(
+        int(inv["id"])
+        for inv in db.get_all_invoices(include_deleted=True)
+        if int(inv["id"]) not in invoice_ids_before_scan
+    )
+    new_invoice_records = len(new_invoice_ids)
     return {
         "scanned": scanned_headers,
         "scanned_headers": scanned_headers,
         "new_email_headers": new_email_headers,
         "new": new_invoice_records,
         "new_invoice_records": new_invoice_records,
+        "new_invoice_ids": new_invoice_ids,
         "restored_deleted": restored_deleted,
         "classified_invoice": classified_invoice,
         "downloaded": downloaded_emails,

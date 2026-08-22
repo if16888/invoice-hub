@@ -164,6 +164,7 @@ class ImportActivity:
     duplicates: int = 0
     failed: int = 0
     status: str = "complete"
+    new_invoice_ids: tuple[int, ...] = ()
 
 def _v1_badge(kind: str) -> dict[str, str]:
     c = DESIGN_V1_COLORS
@@ -542,6 +543,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._first_load_notice = None
         self._last_scan_summary = {}
         self._import_activities: list[ImportActivity] = []
+        self._review_scope_ids: tuple[int, ...] = ()
+        self._review_scope_total = 0
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
@@ -794,7 +797,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         w = width if (width is not None and width > 0) else (self.width() if self.width() > 0 else 1440)
         h = height if (height is not None and height > 0) else (self.height() if self.height() > 0 else 900)
         metrics = metrics_for_size(w, h)
-        if w <= 1366 or self._nav_collapsed_manual is None:
+        # Preserve the automatic compact default, while honouring an explicit
+        # user choice even in a medium-width desktop window.  Imports needs
+        # both states to remain usable: collapsing reclaims space, but an
+        # expanded navigation rail must not make the mobile task fall back to
+        # its narrow embedded layout.
+        if self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
@@ -805,7 +813,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
         )
         self.txt_search.setPlaceholderText(search_placeholder)
-        nav_width = SIDEBAR_COLLAPSED_WIDTH if nav_collapsed else metrics.nav_width
+        nav_width = (
+            SIDEBAR_COLLAPSED_WIDTH
+            if nav_collapsed
+            else max(metrics.nav_width, SIDEBAR_EXPANDED_WIDTH)
+        )
         self.workbench_nav.setMaximumWidth(16777215)
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
@@ -898,7 +910,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _toggle_workbench_nav_collapsed(self):
         w = self.width() or 1150
         metrics = metrics_for_size(w, self.height() or 850)
-        if w <= 1366 or self._nav_collapsed_manual is None:
+        if self._nav_collapsed_manual is None:
             nav_collapsed = metrics.nav_collapsed
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
@@ -1143,6 +1155,28 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "逐张确认原件、状态和报销组，处理完成后再进入导出。",
         )
         main_layout.addWidget(self.review_header)
+        self.lbl_review_scope = QLabel()
+        self.lbl_review_scope.setObjectName("ReviewScopeChip")
+        self.lbl_review_scope.setStyleSheet(
+            "color: #175CD3; background: #EFF8FF; border: 1px solid #B2DDFF; "
+            "border-radius: 8px; padding: 5px 8px; font-size: 12px;"
+        )
+        self.lbl_review_scope.hide()
+        main_layout.addWidget(self.lbl_review_scope, 0, Qt.AlignLeft)
+        self.review_scope_completion = QWidget()
+        completion_layout = QHBoxLayout(self.review_scope_completion)
+        completion_layout.setContentsMargins(0, 0, 0, 0)
+        completion_layout.setSpacing(8)
+        completion_layout.addWidget(QLabel("本次新增已处理完成。"))
+        btn_scope_dashboard = make_button("返回今日工作台", variant="secondary")
+        btn_scope_dashboard.clicked.connect(self._return_from_review_scope)
+        btn_scope_history = make_button("继续处理历史待办", variant="primary")
+        btn_scope_history.clicked.connect(self._continue_historical_review)
+        completion_layout.addWidget(btn_scope_dashboard)
+        completion_layout.addWidget(btn_scope_history)
+        completion_layout.addStretch(1)
+        self.review_scope_completion.hide()
+        main_layout.addWidget(self.review_scope_completion)
 
         self.search_reload_timer = QTimer(self)
         self.search_reload_timer.setSingleShot(True)
@@ -2128,6 +2162,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         if getattr(self, "_column_filter_popup", None) is not None:
             self._column_filter_popup.close()
+        if getattr(self, "_review_scope_ids", ()) or getattr(self, "_review_scope_total", 0):
+            self._return_from_review_scope()
 
     def _register_shortcut(self, target_widget, store: dict[str, QShortcut], sequence: str, action, *, guarded: bool = True) -> None:
         shortcut = QShortcut(QKeySequence(sequence), target_widget)
@@ -2158,17 +2194,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except Exception:
             return None
 
-        today = datetime.now().strftime("%Y-%m-%d")
         month_prefix = datetime.now().strftime("%Y-%m")
-        today_imported = 0
         needs_fix = 0
         month_total = Decimal("0")
         export_ready = 0
 
         for inv in invoices:
-            created_at = str(inv.get("created_at") or "")
-            if created_at[:10] == today:
-                today_imported += 1
             quality = self._get_invoice_quality(inv)
             if quality in {"待补全", "缺原件", "缺证明", "未识别"}:
                 needs_fix += 1
@@ -2197,7 +2228,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             export_ready = 0
 
         return {
-            "today_imported": today_imported,
+            "today_imported": 0,
             "to_review": self.db.count_invoices_for_status(TO_REVIEW),
             "error": self.db.count_invoices_for_status(ERROR),
             "needs_fix": needs_fix,
@@ -2248,9 +2279,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_value_labels["error"].set_value(f"{metrics['error']} 张")
         self.overview_value_labels["needs_fix"].set_value(f"{metrics['needs_fix']} 张")
         self.overview_value_labels["export_ready"].set_value(f"{metrics['export_ready']} 组")
-        self.lbl_overview_recent_imports.setText(
-            f"继续审核 {metrics['to_review']} 张发票。"
-        )
+        activity, new_pending = self._latest_new_invoice_activity()
+        if activity is not None and new_pending:
+            self.lbl_overview_recent_imports.setText(
+                f"本次新增 {activity.added} 张，其中 {len(new_pending)} 张待确认。"
+            )
+            self.btn_overview_new_review.setText(f"处理新增 {len(new_pending)} 张")
+            self.btn_overview_new_review.setVisible(True)
+            self.btn_overview_history_review.setText("继续历史待办")
+        else:
+            self.lbl_overview_recent_imports.setText(f"继续审核 {metrics['to_review']} 张发票。")
+            self.btn_overview_new_review.setVisible(False)
+            self.btn_overview_history_review.setText("开始审核")
         self.lbl_overview_health.setText(
             f"待审核 {metrics['to_review']} 张 / 异常 {metrics['error']} 张 / 待补全 {metrics['needs_fix']} 张。"
         )
@@ -2268,11 +2308,76 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "overview_timeline"):
             self.overview_timeline.clear()
             last_scan = getattr(self, "_last_scan_summary", {}) or {}
-            if last_scan:
+            if activity is not None:
+                when, source, description = self._format_import_activity(activity)
+                self.overview_timeline.add_entry(when, source, description)
+            elif last_scan:
                 self.overview_timeline.add_entry("最近", "邮箱扫描", self._format_scan_result_for_people(last_scan).replace("最近扫描：", ""))
             else:
-                self.overview_timeline.add_entry("今天", "待办更新", f"新增 {metrics['today_imported']} 张 · 待审核 {metrics['to_review']} 张")
+                self.overview_timeline.add_entry("今天", "待办更新", f"待审核 {metrics['to_review']} 张")
             self.overview_timeline.add_entry("当前", "报销组", f"可导出 {metrics['export_ready']} 组 · 本月 ¥{metrics['month_total']:.2f}")
+
+    def _latest_new_invoice_activity(self) -> tuple[ImportActivity | None, tuple[int, ...]]:
+        """Return the latest import with identities and its live review work."""
+        for activity in getattr(self, "_import_activities", []):
+            if not activity.new_invoice_ids:
+                continue
+            try:
+                rows = self.db.list_invoices_by_ids(activity.new_invoice_ids, include_deleted=False)
+            except Exception:
+                return activity, ()
+            pending = tuple(int(row["id"]) for row in rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW)
+            return activity, pending
+        return None, ()
+
+    def _open_new_invoice_review(self) -> None:
+        activity, pending_ids = self._latest_new_invoice_activity()
+        if activity is None or not pending_ids:
+            self._refresh_overview_page()
+            return
+        self._review_scope_ids = pending_ids
+        self._review_scope_total = len(activity.new_invoice_ids)
+        self.current_filter_status = TO_REVIEW
+        self._switch_main_page("review", preserve_review_scope=True)
+        self._load_invoices()
+
+    def _clear_review_scope(self, *, reload: bool = True) -> None:
+        if not getattr(self, "_review_scope_ids", ()) and not getattr(self, "_review_scope_total", 0):
+            return
+        self._review_scope_ids = ()
+        self._review_scope_total = 0
+        if reload and getattr(self, "db", None) and self.db.is_open:
+            self._load_invoices()
+
+    def _update_review_scope_ui(self) -> None:
+        label = getattr(self, "lbl_review_scope", None)
+        completion = getattr(self, "review_scope_completion", None)
+        if label is None or completion is None:
+            return
+        scope_ids = tuple(getattr(self, "_review_scope_ids", ()))
+        total = int(getattr(self, "_review_scope_total", 0) or 0)
+        if not scope_ids and not total:
+            label.hide()
+            completion.hide()
+            return
+        pending = sum(1 for row in self.db.list_invoices_by_ids(scope_ids) if (row.get("review_status") or TO_REVIEW) == TO_REVIEW) if scope_ids else 0
+        if pending:
+            label.setText(f"本次新增 · {pending} 张待确认")
+            label.show()
+            completion.hide()
+        else:
+            label.setText(f"本次新增 {total} 张已处理完成")
+            label.show()
+            completion.show()
+
+    def _return_from_review_scope(self) -> None:
+        self._clear_review_scope(reload=False)
+        self._switch_main_page("overview")
+
+    def _continue_historical_review(self) -> None:
+        self._clear_review_scope(reload=False)
+        self._switch_main_page("review")
+        self._load_invoices()
 
     def _select_import_source(self, source: str) -> None:
         """Select an import task; business actions stay inside that task."""
@@ -2452,9 +2557,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         failed: int = 0,
         batch_id: str = "",
         status: str = "complete",
+        new_invoice_ids: tuple[int, ...] | list[int] = (),
     ) -> None:
         """Record a structured import outcome for the in-session result surface."""
         normalized_batch = str(batch_id or "").strip()
+        normalized_new_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in new_invoice_ids if int(invoice_id) > 0))
+        normalized_added = len(normalized_new_ids) if new_invoice_ids else max(0, int(added or 0))
         if normalized_batch:
             existing = next(
                 (activity for activity in self._import_activities if activity.batch_id == normalized_batch),
@@ -2464,11 +2572,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 existing.occurred_at = datetime.now()
                 existing.scanned = max(0, int(scanned or 0))
                 existing.classified = max(0, int(classified or 0))
-                existing.added = max(0, int(added or 0))
+                existing.added = normalized_added
                 existing.restored = max(0, int(restored or 0))
                 existing.duplicates = max(0, int(duplicates or 0))
                 existing.failed = max(0, int(failed or 0))
                 existing.status = str(status or "complete")
+                existing.new_invoice_ids = normalized_new_ids
                 self._import_activities.remove(existing)
                 self._import_activities.insert(0, existing)
                 return
@@ -2480,11 +2589,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 batch_id=normalized_batch,
                 scanned=max(0, int(scanned or 0)),
                 classified=max(0, int(classified or 0)),
-                added=max(0, int(added or 0)),
+                added=normalized_added,
                 restored=max(0, int(restored or 0)),
                 duplicates=max(0, int(duplicates or 0)),
                 failed=max(0, int(failed or 0)),
                 status=str(status or "complete"),
+                new_invoice_ids=normalized_new_ids,
             ),
         )
         del self._import_activities[10:]
@@ -3592,9 +3702,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_overview_next_actions.setStyleSheet("color: #475467; font-size: 12px; line-height: 1.5;")
         self.lbl_overview_next_actions.setWordWrap(True)
         lc_layout.addWidget(self.lbl_overview_next_actions)
-        btn_jump_review = make_button("开始审核", variant="primary")
-        btn_jump_review.clicked.connect(lambda: self._switch_main_page("review"))
-        lc_layout.addWidget(btn_jump_review)
+        self.btn_overview_new_review = make_button("处理新增", variant="primary")
+        self.btn_overview_new_review.clicked.connect(self._open_new_invoice_review)
+        self.btn_overview_new_review.hide()
+        lc_layout.addWidget(self.btn_overview_new_review)
+        self.btn_overview_history_review = make_button("开始审核", variant="secondary")
+        self.btn_overview_history_review.clicked.connect(lambda: self._switch_main_page("review"))
+        lc_layout.addWidget(self.btn_overview_history_review)
 
         right_card = SectionCard("关注项", hint="只显示会阻塞审核或导出的事项。")
         rc_layout = right_card.body_layout
@@ -3612,7 +3726,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_state_stack = PageStateStack()
         self.overview_state_stack.set_content(body_frame)
         layout.addWidget(self.overview_state_stack, 0)
-        self.overview_activity_card = SectionCard("最近活动")
+        self.overview_activity_card = SectionCard("今日动态", hint="保留最近导入、审核和导出活动，方便确认刚刚发生了什么。")
         self.overview_timeline = ActivityTimeline()
         self.overview_activity_card.body_layout.addWidget(self.overview_timeline)
         layout.addWidget(self.overview_activity_card, 0)
@@ -4404,7 +4518,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 )
         self.btn_run_export_page.setEnabled(is_ready)
 
-    def _switch_main_page(self, page_key: str, sub_tab: int = 0) -> None:
+    def _switch_main_page(self, page_key: str, sub_tab: int = 0, *, preserve_review_scope: bool = False) -> None:
         if not hasattr(self, "center_stack") or self.center_stack is None:
             return
         page_index_map = {
@@ -4438,7 +4552,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 btn.clearFocus()
 
         if page_key == "overview":
+            self._clear_review_scope(reload=False)
             self._refresh_overview_page()
+        elif page_key == "review" and not preserve_review_scope:
+            self._clear_review_scope()
         elif page_key == "imports":
             self._refresh_imports_page()
         elif page_key == "export":
@@ -4946,7 +5063,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         try:
             include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
-            if is_default_view:
+            scope_ids = tuple(getattr(self, "_review_scope_ids", ()))
+            if scope_ids:
+                display_source = self.db.list_invoices_by_ids(
+                    scope_ids,
+                    status=self.current_filter_status if is_default_view else None,
+                    include_deleted=include_deleted,
+                )
+                scoped_rows = self.db.list_invoices_by_ids(scope_ids, include_deleted=include_deleted)
+                counts = {
+                    "all": len(scoped_rows),
+                    TO_REVIEW: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW),
+                    APPROVED: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == APPROVED),
+                    IGNORED: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == IGNORED),
+                    ERROR: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == ERROR),
+                }
+            elif is_default_view:
                 # Optimized path: avoid loading all records
                 display_source = self.db.list_invoices(
                     status=self.current_filter_status,
@@ -5021,6 +5153,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     counts[rev_status] += 1
 
         self._update_filter_counts(counts)
+        self._update_review_scope_ui()
 
         # 4. Filter by review status
         displayed_invoices = filtered_invoices
@@ -6924,6 +7057,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 summary_parts.append(f"失败 {result['other_failed']} 条")
             self.statusBar().showMessage("；".join(summary_parts), 4000)
             self._load_invoices()
+            self._refresh_overview_page()
 
             num_rows = self.table.rowCount()
             if num_rows > 0:
@@ -7549,6 +7683,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 + int(summary.get("link_failed", 0) or 0)
             ),
             status="complete",
+            new_invoice_ids=res.get("new_invoice_ids", ()) if isinstance(res, dict) else (),
         )
         self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
         self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
@@ -7722,7 +7857,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._set_import_source_selected("mobile")
 
     def _mobile_upload_finished(self, result: dict):
-        added = int(result.get("imported", result.get("added", 0)) or 0)
+        imported = result.get("imported", {})
+        imported_stats = imported if isinstance(imported, dict) else {}
+        added = int(imported_stats.get("added", result.get("added", imported or 0)) or 0)
         duplicates = int(result.get("duplicate", result.get("duplicates", 0)) or 0)
         failed = int(result.get("failed", 0) or 0)
         scanned = int(result.get("accepted", 0) or 0) + duplicates + failed
@@ -7732,6 +7869,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 duplicates=duplicates, failed=failed,
                 batch_id=str(result.get("batch_id") or ""),
                 status="complete",
+                new_invoice_ids=imported_stats.get("new_invoice_ids", ()),
             )
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
@@ -7764,6 +7902,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             duplicates=duplicates,
             failed=failed,
             status="complete",
+            new_invoice_ids=stats.get("new_invoice_ids", ()),
         )
         self.write_log(
             f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"

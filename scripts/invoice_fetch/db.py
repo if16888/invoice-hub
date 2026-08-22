@@ -1025,6 +1025,46 @@ class InvoiceDB:
         rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def list_invoices_by_ids(
+        self,
+        invoice_ids: list[int] | tuple[int, ...],
+        *,
+        status: str | None = None,
+        include_deleted: bool = False,
+    ) -> list[dict]:
+        """Return the requested invoices through the normal query layer.
+
+        The caller owns the transient scope, while this database boundary owns
+        parameterisation and deleted/status semantics.  Preserve the supplied
+        ID order so a just-imported batch remains stable during review.
+        """
+        if status is not None and status not in review_status.ALL_STATUSES:
+            raise ValueError(f"Invalid review status: '{status}'. Must be one of {review_status.ALL_STATUSES}")
+        normalized_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in invoice_ids if int(invoice_id) > 0))
+        if not normalized_ids:
+            return []
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        query = f"""
+            SELECT i.*, cg.name AS claim_name
+            FROM invoices i
+            LEFT JOIN (
+                SELECT invoice_id, MAX(claim_id) AS claim_id
+                FROM claim_group_items
+                GROUP BY invoice_id
+            ) cgi ON i.id = cgi.invoice_id
+            LEFT JOIN claim_groups cg ON cgi.claim_id = cg.id
+            WHERE i.id IN ({placeholders})
+        """
+        params: list[object] = list(normalized_ids)
+        if not include_deleted:
+            query += " AND i.is_deleted = 0"
+        if status is not None:
+            query += " AND i.review_status = ?"
+            params.append(status)
+        rows = self._conn.execute(query, params).fetchall()
+        by_id = {int(row["id"]): dict(row) for row in rows}
+        return [by_id[invoice_id] for invoice_id in normalized_ids if invoice_id in by_id]
+
     def count_invoices(self, include_deleted: bool = False) -> int:
         if include_deleted:
             row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices").fetchone()

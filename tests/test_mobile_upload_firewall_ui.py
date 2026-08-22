@@ -134,6 +134,48 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             self.app.sendPostedEvents(None, QEvent.DeferredDelete)
             self.app.processEvents()
 
+    def test_medium_imports_mobile_geometry_survives_expanded_and_collapsed_sidebar(self):
+        """Manual navigation choice must not shrink the active mobile task."""
+
+        for nav_collapsed in (False, True):
+            with self.subTest(nav_collapsed=nav_collapsed), tempfile.TemporaryDirectory() as td:
+                window = InvoiceReviewApp(Path(td) / "invoices.db")
+                try:
+                    window.resize(1276, 875)
+                    window.show()
+                    # The initial show restores persisted preferences.  Apply
+                    # the explicit user choice afterwards, matching the
+                    # sidebar toggle's observable lifecycle.
+                    window._nav_collapsed_manual = nav_collapsed
+                    window._apply_workbench_metrics(1276, 875)
+                    window._switch_main_page("imports")
+                    window._set_import_source_selected("mobile")
+                    controller = window.mobile_upload_controller
+                    controller.host_options = [SimpleNamespace(label="WLAN", host="192.168.1.50")]
+                    session = SimpleNamespace(
+                        upload_url="http://192.168.1.50:43210/u/synthetic-review",
+                        host="192.168.1.50",
+                        port=43210,
+                    )
+                    with patch.object(controller, "qr_png", return_value=b""):
+                        controller.started.emit(session)
+                    for _ in range(3):
+                        self.app.processEvents()
+
+                    panel = window.mobile_upload_panel
+                    expected_nav_width = 56 if nav_collapsed else 180
+                    self.assertEqual(window.workbench_nav.width(), expected_nav_width)
+                    self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                    self.assertGreaterEqual(panel.width(), 720)
+                    self.assertEqual(panel._active_body_layout.direction(), QBoxLayout.LeftToRight)
+                    self.assert_active_geometry_contract(panel)
+                finally:
+                    window.close()
+                    self.app.processEvents()
+                    window.deleteLater()
+                    self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+                    self.app.processEvents()
+
     def test_clicked_bool_is_not_forwarded_as_host(self):
         with tempfile.TemporaryDirectory() as td:
             controller, panel = self.make_panel(td)

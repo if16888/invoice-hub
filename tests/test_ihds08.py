@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QBoxLayout, QPushButton
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary
+from scripts.invoice_fetch.review_status import APPROVED, TO_REVIEW
 
 
 class IHDS08Tests(unittest.TestCase):
@@ -142,6 +143,62 @@ class IHDS08Tests(unittest.TestCase):
             try:
                 window._mobile_upload_finished({"accepted": 0, "imported": 0, "duplicate": 0, "failed": 0})
                 self.assertEqual(window._import_activities, [])
+            finally: window.close()
+
+    def test_mobile_upload_activity_preserves_real_new_invoice_ids(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._mobile_upload_finished({
+                    "accepted": 2,
+                    "imported": {"added": 1, "new_invoice_ids": [42]},
+                    "duplicate": 1,
+                    "failed": 0,
+                })
+                activity = window._import_activities[0]
+                self.assertEqual(activity.added, 1)
+                self.assertEqual(activity.new_invoice_ids, (42,))
+            finally: window.close()
+
+    def test_dashboard_new_invoice_scope_is_live_and_never_includes_history(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                def add(number):
+                    return window.db.insert_invoice({
+                        "invoice_number": number,
+                        "total_amount": "10.00",
+                        "seller_name": "测试商户",
+                        "invoice_date": "2026-08-22",
+                        "review_status": TO_REVIEW,
+                    })
+
+                history_id = add("history-001")
+                new_ids = (add("new-001"), add("new-002"), add("new-003"), add("new-004"))
+                window._record_import_activity("local", added=4, new_invoice_ids=new_ids)
+                window._refresh_overview_page()
+                self.assertFalse(window.btn_overview_new_review.isHidden())
+                self.assertEqual(window.btn_overview_new_review.text(), "处理新增 4 张")
+
+                window._open_new_invoice_review()
+                self.app.processEvents()
+                self.assertEqual({int(item["id"]) for item in window.invoices_list}, set(new_ids))
+                self.assertNotIn(history_id, {int(item["id"]) for item in window.invoices_list})
+                self.assertIn("本次新增", window.lbl_review_scope.text())
+
+                self.assertTrue(window.db.update_invoice_review_status(new_ids[0], APPROVED))
+                self.assertTrue(window.db.update_invoice_review_status(new_ids[1], APPROVED))
+                window._load_invoices()
+                window._refresh_overview_page()
+                self.assertEqual(window.btn_overview_new_review.text(), "处理新增 2 张")
+                self.assertEqual({int(item["id"]) for item in window.invoices_list}, set(new_ids[2:]))
+
+                for invoice_id in new_ids[2:]:
+                    self.assertTrue(window.db.update_invoice_review_status(invoice_id, APPROVED))
+                window._load_invoices()
+                self.assertTrue(window.review_scope_completion.isVisible())
+                window._continue_historical_review()
+                self.assertIn(history_id, {int(item["id"]) for item in window.invoices_list})
             finally: window.close()
 
     def test_legacy_dialog_close_does_not_stop_shared_session(self):
