@@ -109,8 +109,13 @@ def get_current_invoicehub_executable() -> Path | None:
 
 
 def get_current_development_executable() -> Path | None:
-    """Return the interpreter eligible for a current-port-only dev rule."""
-    if not is_windows():
+    """Return the interpreter eligible for a current-port-only dev rule.
+
+    Test/HCI processes must never inspect or mutate the host Windows Firewall.
+    Their firewall behavior is covered by contract tests that pass an explicit
+    synthetic executable to the pure helpers below.
+    """
+    if not is_windows() or os.environ.get("INVOICE_HUB_TEST_MODE") == "1":
         return None
     candidate = Path(sys.executable)
     if candidate.name.casefold() not in _DEVELOPMENT_EXECUTABLE_NAMES:
@@ -198,22 +203,25 @@ if ($null -eq $result) { '[]' } else { @($result) | ConvertTo-Json -Compress }
 
 
 def _query_firewall_rules(rule_name: str = FIREWALL_RULE_NAME) -> list[dict[str, Any]]:
-    completed = subprocess.run(
-        [
-            _POWERSHELL,
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            _QUERY_SCRIPT,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=_POWERSHELL_TIMEOUT_SECONDS,
-        env=_query_environment(rule_name),
-    )
+    try:
+        completed = subprocess.run(
+            [
+                _POWERSHELL,
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                _QUERY_SCRIPT,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_POWERSHELL_TIMEOUT_SECONDS,
+            env=_query_environment(rule_name),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("PowerShell firewall query timed out") from exc
     if completed.returncode != 0:
         raise RuntimeError(f"PowerShell exited with code {completed.returncode}")
     raw = (completed.stdout or "").strip()
@@ -394,7 +402,7 @@ class _ShellExecuteInfo(ctypes.Structure):
         ("hInstApp", ctypes.c_void_p),
         ("lpIDList", ctypes.c_void_p),
         ("lpClass", ctypes.c_wchar_p),
-        ("hkeyClass", ctypes.c_wchar_p),
+        ("hkeyClass", ctypes.c_void_p),
         ("dwHotKey", ctypes.c_ulong),
         ("hIcon", ctypes.c_void_p),
         ("hProcess", ctypes.c_void_p),
@@ -492,9 +500,10 @@ def get_mobile_upload_dev_firewall_status(
 ) -> FirewallStatus:
     """Read development-rule state without mutating Windows Firewall.
 
-    Any Invoice Hub-owned development marker remains visible even when it was
-    created by another Python path or a previous random port. That prevents a
-    new rule from being stacked on top of stale state without explicit cleanup.
+    Passive app construction has no active upload port, so it must not shell
+    out to Windows Firewall. Once a real source-run upload session exists,
+    read-only rule inspection is allowed so stale/current-port state can be
+    shown truthfully. Explicit allow/cleanup remains the only mutation path.
     """
     if not is_windows():
         return _development_status(FirewallState.NON_WINDOWS)
@@ -503,6 +512,13 @@ def get_mobile_upload_dev_firewall_status(
         return _development_status(
             FirewallState.SUPPORTED,
             reason="current process is not a supported development executable",
+        )
+    requested_port = _validated_mobile_port(current_port)
+    if requested_port is None:
+        return _development_status(
+            FirewallState.SUPPORTED,
+            executable,
+            reason="development firewall state is checked only for an active upload port",
         )
     try:
         rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
@@ -549,8 +565,7 @@ def get_mobile_upload_dev_firewall_status(
             continue
         if _is_valid_development_rule(rule, executable):
             local_port = _as_text(rule.get("LocalPort"))
-            requested_port = _validated_mobile_port(current_port)
-            stale = requested_port is not None and local_port != str(requested_port)
+            stale = local_port != str(requested_port)
             return _status_from_rule(
                 rule,
                 executable,
