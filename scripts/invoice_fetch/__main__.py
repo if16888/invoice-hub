@@ -52,11 +52,35 @@ _log = logging.getLogger("invoice_fetch")
 _log.addFilter(PrivacyLogFilter())
 
 
+class ProcessEmailResult(int):
+    """Structured integer return value preserving exact batch identities."""
+
+    new_invoice_ids: tuple[int, ...]
+    review_invoice_ids: tuple[int, ...]
+    restored_invoice_ids: tuple[int, ...]
+
+    def __new__(
+        cls,
+        value: int,
+        new_invoice_ids: tuple[int, ...] | list[int] = (),
+        review_invoice_ids: tuple[int, ...] | list[int] = (),
+        restored_invoice_ids: tuple[int, ...] | list[int] = (),
+    ):
+        obj = super().__new__(cls, max(0, int(value or 0)))
+        obj.new_invoice_ids = tuple(dict.fromkeys(int(i) for i in new_invoice_ids if int(i) > 0))
+        obj.review_invoice_ids = tuple(dict.fromkeys(int(i) for i in review_invoice_ids if int(i) > 0))
+        obj.restored_invoice_ids = tuple(dict.fromkeys(int(i) for i in restored_invoice_ids if int(i) > 0))
+        return obj
+
+
 @dataclass(frozen=True)
 class PendingEmailResult:
     """Structured pending-email outcome with legacy truthiness compatibility."""
 
     status: str
+    new_invoice_ids: tuple[int, ...] = ()
+    review_invoice_ids: tuple[int, ...] = ()
+    restored_invoice_ids: tuple[int, ...] = ()
 
     def __bool__(self) -> bool:
         return self.status in {
@@ -1224,6 +1248,18 @@ def _match_email_extras_to_invoices(
 
 
 
+@dataclass(frozen=True)
+class LocalImportItemResult:
+    status: str
+    invoice_id: int | None = None
+    created: bool = False
+    restored: bool = False
+    reviewable: bool = False
+
+    def __iter__(self):
+        return iter((self.status, self.invoice_id))
+
+
 def _import_local_evidence(
     db: InvoiceDB,
     parsed,
@@ -1231,7 +1267,7 @@ def _import_local_evidence(
     source_name: str,
     categories: dict,
     preserve_source_path: bool = False,
-) -> tuple[str, int | None] | None:
+) -> LocalImportItemResult | None:
     """Attach strong-matched evidence or retain it as a pending-link record."""
     if not _is_evidence_document(parsed, file_path, source_name):
         return None
@@ -1249,7 +1285,22 @@ def _import_local_evidence(
                 file_path.unlink()
             except OSError:
                 pass
-        return ("added", matching_invoice["id"]) if attached else ("duplicate", None)
+        if attached:
+            return LocalImportItemResult(
+                status="duplicate",
+                invoice_id=matching_invoice["id"],
+                created=False,
+                restored=False,
+                reviewable=False,
+            )
+        else:
+            return LocalImportItemResult(
+                status="duplicate",
+                invoice_id=None,
+                created=False,
+                restored=False,
+                reviewable=False,
+            )
 
     parse_note = str(getattr(parsed, "parse_note", "") or "")
     if match_status == "multiple":
@@ -1577,6 +1628,7 @@ def _restore_existing_invoice_if_deleted(db: InvoiceDB, existing: dict, context:
     if db.restore_invoice(existing["id"]):
         existing = dict(existing)
         existing["is_deleted"] = 0
+        existing["_was_restored"] = True
         _log.info("  已恢复已删除的重复发票(%s): %s", context, mask_invoice_number(existing.get("invoice_number", "")))
     return existing
 
@@ -1632,14 +1684,22 @@ def _insert_local_exception(
     note: str,
     categories: dict,
     invoice_type: str = "本地导入待处理",
-) -> tuple[str, int | None]:
+) -> LocalImportItemResult:
     file_hash = _sha256_file(file_path) if file_path.exists() else ""
     existing_by_hash = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
     if existing_by_hash:
         existing_by_hash = _restore_existing_invoice_if_deleted(db, existing_by_hash, "本地导入")
-        if int(existing_by_hash.get("is_deleted") or 0) == 0 and existing_by_hash.get("attachment_path"):
+        is_restored = bool(existing_by_hash.get("_was_restored"))
+        is_rev = (existing_by_hash.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW
+        if int(existing_by_hash.get("is_deleted") or 0) == 0 and not is_restored and existing_by_hash.get("attachment_path"):
             _log.info("  本地导入跳过重复文件: %s", mask_filename(original_name))
-            return "duplicate", None
+            return LocalImportItemResult(
+                status="duplicate",
+                invoice_id=None,
+                created=False,
+                restored=False,
+                reviewable=False,
+            )
         category, _, _ = _classify(original_name, "local import", "", categories)
         import_date = datetime.now().strftime("%Y-%m-%d")
         att_dir = RUNTIME_DIR / "attachments"
@@ -1654,7 +1714,13 @@ def _insert_local_exception(
         )
         db.update_invoice_file_paths(existing_by_hash["id"], attachment_path=attachment_path)
         _log.info("  本地导入恢复已删除待处理文件: %s", mask_filename(original_name))
-        return "pending_manual", existing_by_hash["id"]
+        return LocalImportItemResult(
+            status="restored" if is_restored else "duplicate",
+            invoice_id=existing_by_hash["id"],
+            created=False,
+            restored=is_restored,
+            reviewable=(is_rev if is_restored else False),
+        )
 
     category, extra_type, extra_required = _classify(original_name, "local import", "", categories)
     import_date = datetime.now().strftime("%Y-%m-%d")
@@ -1695,7 +1761,13 @@ def _insert_local_exception(
         "file_hash": file_hash,
     }
     row_id = db.insert_invoice(rec)
-    return "pending_manual", row_id
+    return LocalImportItemResult(
+        status="pending_manual",
+        invoice_id=row_id,
+        created=True,
+        restored=False,
+        reviewable=True,
+    )
 
 
 def _import_local_pdf(
@@ -1706,7 +1778,7 @@ def _import_local_pdf(
     categories: dict,
     att_dir: Path,
     preserve_source_path: bool = False,
-) -> tuple[str, int | None]:
+) -> LocalImportItemResult:
     file_hash = _sha256_file(file_path) if file_path.exists() else ""
     existing_by_hash = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
 
@@ -1723,19 +1795,19 @@ def _import_local_pdf(
         return evidence_result
 
     if not info.parse_success:
-        status, row_id = _insert_local_exception(
+        return _insert_local_exception(
             db=db,
             file_path=file_path,
             original_name=source_name,
             note=info.parse_note or "本地导入PDF解析失败",
             categories=categories,
         )
-        return status, row_id
 
     # If duplicate file hash, check if it's a re-import of the exact same record or a new file
     if existing_by_hash:
         existing_by_hash = _restore_existing_invoice_if_deleted(db, existing_by_hash, "本地导入")
-        # Check if we should update it
+        is_restored = bool(existing_by_hash.get("_was_restored"))
+        is_rev = (existing_by_hash.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW
         category, extra_type, extra_required = _classify(
             f"{source_name} {info.invoice_type or ''}", "local import",
             info.seller_name or "", categories,
@@ -1768,9 +1840,21 @@ def _import_local_pdf(
                 mask_invoice_number(info.invoice_number),
                 mask_filename(source_name),
             )
-            return "added", existing_by_hash["id"]
+            return LocalImportItemResult(
+                status="restored" if is_restored else "duplicate",
+                invoice_id=existing_by_hash["id"],
+                created=False,
+                restored=is_restored,
+                reviewable=(is_rev if is_restored else False),
+            )
         _log.info("  本地导入跳过重复文件: %s", mask_filename(source_name))
-        return "duplicate", None
+        return LocalImportItemResult(
+            status="restored" if is_restored else "duplicate",
+            invoice_id=(existing_by_hash["id"] if is_restored else None),
+            created=False,
+            restored=is_restored,
+            reviewable=(is_rev if is_restored else False),
+        )
 
     # A bilingual or regenerated receipt can have different bytes and omit
     # different optional fields. Its provider order ID remains the stable key.
@@ -1780,6 +1864,8 @@ def _import_local_pdf(
             existing_receipt = _restore_existing_invoice_if_deleted(
                 db, existing_receipt, "本地导入收据"
             )
+            is_restored = bool(existing_receipt.get("_was_restored"))
+            is_rev = (existing_receipt.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW
             category, extra_type, extra_required = _classify(
                 f"{source_name} {info.invoice_type or ''}", "local import",
                 info.seller_name or existing_receipt.get("seller_name") or "", categories,
@@ -1813,8 +1899,20 @@ def _import_local_pdf(
                     existing_receipt["id"],
                     mask_filename(source_name),
                 )
-                return "added", existing_receipt["id"]
-            return "duplicate", None
+                return LocalImportItemResult(
+                    status="restored" if is_restored else "duplicate",
+                    invoice_id=existing_receipt["id"],
+                    created=False,
+                    restored=is_restored,
+                    reviewable=(is_rev if is_restored else False),
+                )
+            return LocalImportItemResult(
+                status="restored" if is_restored else "duplicate",
+                invoice_id=(existing_receipt["id"] if is_restored else None),
+                created=False,
+                restored=is_restored,
+                reviewable=(is_rev if is_restored else False),
+            )
 
     # Check for duplicate by the full invoice uniqueness key.
     existing_by_fields = db.find_invoice_by_unique_fields(
@@ -1822,12 +1920,9 @@ def _import_local_pdf(
     )
     if existing_by_fields:
         existing_by_fields = _restore_existing_invoice_if_deleted(db, existing_by_fields, "本地导入")
-        # If it matches number, amount, and seller_name, it's a duplicate.
-        # But wait, is it the exact same record we are reimporting?
-        # If the file path / hash differs, it's a duplicate transaction/file.
-        # However, if we are reimporting and it matches existing, we should allow update.
+        is_restored = bool(existing_by_fields.get("_was_restored"))
+        is_rev = (existing_by_fields.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW
         if existing_by_fields.get("seller_name") == info.seller_name:
-            # Check if this file is a re-import of the exact same path
             att_path = existing_by_fields.get("attachment_path")
             if att_path:
                 full_att_path = RUNTIME_DIR / att_path
@@ -1858,7 +1953,13 @@ def _import_local_pdf(
                         parse_note=info.parse_note or "本地导入",
                         item_name=info.item_name,
                     )
-                    return "added", existing_by_fields["id"]
+                    return LocalImportItemResult(
+                        status="restored" if is_restored else "duplicate",
+                        invoice_id=existing_by_fields["id"],
+                        created=False,
+                        restored=is_restored,
+                        reviewable=(is_rev if is_restored else False),
+                    )
 
             if info.invoice_type == "网约车电子收据":
                 attached = _attach_evidence_to_invoice(db, existing_by_fields, file_path)
@@ -1868,7 +1969,13 @@ def _import_local_pdf(
                         existing_by_fields["id"],
                         mask_filename(source_name),
                     )
-                    return "added", existing_by_fields["id"]
+                    return LocalImportItemResult(
+                        status="restored" if is_restored else "duplicate",
+                        invoice_id=existing_by_fields["id"],
+                        created=False,
+                        restored=is_restored,
+                        reviewable=(is_rev if is_restored else False),
+                    )
 
             _log.info(
                 "  本地导入跳过重复发票: %s (%s)",
@@ -1880,7 +1987,13 @@ def _import_local_pdf(
                     file_path.unlink()
             except OSError:
                 pass
-            return "duplicate", None
+            return LocalImportItemResult(
+                status="restored" if is_restored else "duplicate",
+                invoice_id=(existing_by_fields["id"] if is_restored else None),
+                created=False,
+                restored=is_restored,
+                reviewable=(is_rev if is_restored else False),
+            )
 
     # Check for conflict: same number but different amount/seller/date
     existing_same_num = db.find_invoice_by_number(info.invoice_number)
@@ -1944,7 +2057,13 @@ def _import_local_pdf(
                 "item_name": info.item_name,
             }
             row_id = db.insert_invoice(rec)
-            return "conflict", row_id
+            return LocalImportItemResult(
+                status="conflict",
+                invoice_id=row_id,
+                created=True,
+                restored=False,
+                reviewable=False,
+            )
 
     category, extra_type, extra_required = _classify(
         f"{source_name} {info.invoice_type or ''}", "local import",
@@ -1995,7 +2114,13 @@ def _import_local_pdf(
         "item_name": info.item_name,
     }
     row_id = db.insert_invoice(rec)
-    return "added", row_id
+    return LocalImportItemResult(
+        status="added",
+        invoice_id=row_id,
+        created=True,
+        restored=False,
+        reviewable=True,
+    )
 
 
 def _extract_local_zip(src: Path, att_dir: Path) -> list[Path]:
@@ -2036,7 +2161,33 @@ def _import_local_directory(
                 files.append(candidate)
         files.sort()
 
-    stats = {"added": 0, "duplicates": 0, "conflicts": 0, "pending_manual": 0, "failed": 0}
+    stats = {
+        "added": 0,
+        "duplicates": 0,
+        "conflicts": 0,
+        "pending_manual": 0,
+        "failed": 0,
+        "restored": 0,
+        "new_invoice_ids": [],
+        "review_invoice_ids": [],
+        "restored_invoice_ids": [],
+    }
+
+    def record_item_result(res: LocalImportItemResult) -> None:
+        if res.status in stats:
+            stats[res.status] += 1
+        else:
+            key = res.status + "s" if res.status in ("duplicate", "conflict") else res.status
+            stats[key] += 1
+        if res.invoice_id is not None:
+            rid = int(res.invoice_id)
+            if res.created and rid not in stats["new_invoice_ids"]:
+                stats["new_invoice_ids"].append(rid)
+            if res.restored and rid not in stats["restored_invoice_ids"]:
+                stats["restored_invoice_ids"].append(rid)
+            if res.reviewable and rid not in stats["review_invoice_ids"]:
+                stats["review_invoice_ids"].append(rid)
+
     if not files:
         _log.warning("本地导入目录没有发现 PDF/OFD/ZIP: %s", mask_path(root))
         return stats
@@ -2053,28 +2204,25 @@ def _import_local_directory(
                 extracted = _extract_local_zip(src, att_dir)
                 if not extracted:
                     copied = _copy_local_file_to_staging(src, staging_dir)
-                    status, row_id = _insert_local_exception(db, copied, src.name, "ZIP中未发现可处理 ofd/pdf 文件", categories)
-                    key = status + "s" if status in ("duplicate", "conflict") else status
-                    stats[key] += 1
+                    res = _insert_local_exception(db, copied, src.name, "ZIP中未发现可处理 ofd/pdf 文件", categories)
+                    record_item_result(res)
                     continue
                 for extracted_file in extracted:
                     if extracted_file.suffix.lower() == ".pdf":
-                        status, row_id = _import_local_pdf(src.name, extracted_file, db, parser, categories, att_dir)
-                        key = status + "s" if status in ("duplicate", "conflict") else status
-                        stats[key] += 1
+                        res = _import_local_pdf(src.name, extracted_file, db, parser, categories, att_dir)
+                        record_item_result(res)
                     else:
-                        status, row_id = _insert_local_exception(
+                        res = _insert_local_exception(
                             db, extracted_file, extracted_file.name,
                             "本地导入暂不支持OFD解析，请人工处理",
                             categories,
                         )
-                        key = status + "s" if status in ("duplicate", "conflict") else status
-                        stats[key] += 1
+                        record_item_result(res)
                 continue
 
             working_file = src if preserve_source_path else _copy_local_file_to_staging(src, staging_dir)
             if ext == ".pdf":
-                status, row_id = _import_local_pdf(
+                res = _import_local_pdf(
                     src.name,
                     working_file,
                     db,
@@ -2083,8 +2231,7 @@ def _import_local_directory(
                     att_dir,
                     preserve_source_path=preserve_source_path,
                 )
-                key = status + "s" if status in ("duplicate", "conflict") else status
-                stats[key] += 1
+                record_item_result(res)
             elif ext in {".png", ".jpg", ".jpeg", ".heic"}:
                 evidence_result = _import_local_evidence(
                     db=db,
@@ -2095,7 +2242,7 @@ def _import_local_directory(
                     preserve_source_path=preserve_source_path,
                 )
                 if evidence_result is None:
-                    status, row_id = _insert_local_exception(
+                    res = _insert_local_exception(
                         db,
                         working_file,
                         src.name,
@@ -2103,9 +2250,8 @@ def _import_local_directory(
                         categories,
                     )
                 else:
-                    status, row_id = evidence_result
-                key = status + "s" if status in ("duplicate", "conflict") else status
-                stats[key] += 1
+                    res = evidence_result
+                record_item_result(res)
             else:
                 evidence_result = _import_local_evidence(
                     db=db,
@@ -2116,18 +2262,21 @@ def _import_local_directory(
                     preserve_source_path=preserve_source_path,
                 )
                 if evidence_result is None:
-                    status, row_id = _insert_local_exception(
+                    res = _insert_local_exception(
                         db, working_file, src.name,
                         "本地导入暂不支持OFD解析，请人工处理",
                         categories,
                     )
                 else:
-                    status, row_id = evidence_result
-                key = status + "s" if status in ("duplicate", "conflict") else status
-                stats[key] += 1
+                    res = evidence_result
+                record_item_result(res)
         except Exception as exc:
             _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
             stats["failed"] += 1
+
+    stats["new_invoice_ids"] = list(stats["new_invoice_ids"])
+    stats["restored_invoice_ids"] = list(stats["restored_invoice_ids"])
+    stats["review_invoice_ids"] = list(stats["review_invoice_ids"])
 
     total_recorded = stats["added"] + stats["conflicts"] + stats["pending_manual"]
     _log.info("本地导入完成: 入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d)",
@@ -2400,6 +2549,26 @@ def _process_email(
     metadata_refreshed_recorded = False
     file_restored_recorded = False
     recorded = 0
+    new_invoice_ids: list[int] = []
+    review_invoice_ids: list[int] = []
+    restored_invoice_ids: list[int] = []
+
+    def _track_inserted(row_id: int | None, rev_status: str = review_status.TO_REVIEW) -> None:
+        if row_id is not None and int(row_id) > 0:
+            rid = int(row_id)
+            if rid not in new_invoice_ids:
+                new_invoice_ids.append(rid)
+            if rev_status == review_status.TO_REVIEW and rid not in review_invoice_ids:
+                review_invoice_ids.append(rid)
+
+    def _track_restored(existing_record: dict) -> None:
+        if existing_record and existing_record.get("_was_restored") and existing_record.get("id"):
+            rid = int(existing_record["id"])
+            if rid not in restored_invoice_ids:
+                restored_invoice_ids.append(rid)
+            if (existing_record.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW:
+                if rid not in review_invoice_ids:
+                    review_invoice_ids.append(rid)
 
     def set_process_outcome(status: str) -> None:
         try:
@@ -2417,6 +2586,7 @@ def _process_email(
         )
         if row_id:
             recorded += 1
+            _track_inserted(row_id)
             manual_required_recorded = True
             try:
                 kept_paths.add(str(Path(att.file_path).resolve()))
@@ -2457,6 +2627,7 @@ def _process_email(
         )
         if row_id:
             recorded += 1
+            _track_inserted(row_id)
             manual_required_recorded = True
             try:
                 kept_paths.add(str(Path(dl.file_path).resolve()))
@@ -2521,6 +2692,7 @@ def _process_email(
                         )
                         if row_id:
                             recorded += 1
+                            _track_inserted(row_id)
                             _log.info("  已入库海外凭证/收据: %s", mask_filename(dl.filename))
                         continue
                     if dl.source_type == "invoice_page_pdf_fallback":
@@ -2536,6 +2708,7 @@ def _process_email(
                 if existing:
                     was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "链接下载")
+                    _track_restored(existing)
                     existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
                     repaired_attachment_path = ""
                     category, extra_type, extra_req = _classify(
@@ -2719,6 +2892,7 @@ def _process_email(
                 row_id = db.insert_invoice(rec)
                 if row_id:
                     file_restored_recorded = True
+                    _track_inserted(row_id)
                     invoice_extras = extras_for_invoice(info)
                     if invoice_extras:
                         _attach_email_extras_to_invoice(
@@ -2764,6 +2938,7 @@ def _process_email(
                 recorded += 1
                 if row_id is not None:
                     kept_paths.add(str(Path(att.file_path).resolve()))
+                    _track_inserted(row_id)
                 _log.info("  已处理解析失败PDF作为证明材料(邮箱路径): %s, 结果=%s, ID=%s",
                           mask_filename(att.original_name), status, row_id)
                 continue
@@ -2781,6 +2956,7 @@ def _process_email(
                 )
                 if row_id:
                     recorded += 1
+                    _track_inserted(row_id)
                     _log.info("  已入库海外凭证/收据: %s", mask_filename(att.original_name))
                 continue
 
@@ -2792,6 +2968,7 @@ def _process_email(
         if existing:
             was_deleted = int(existing.get("is_deleted") or 0) == 1
             existing = _restore_existing_invoice_if_deleted(db, existing, "附件")
+            _track_restored(existing)
             cat, extra_type, extra_req = _classify(
                 msg.subject, msg.sender, info.seller_name, categories,
                 item_name=info.item_name, invoice_type=info.invoice_type,
@@ -2972,6 +3149,7 @@ def _process_email(
         row_id = db.insert_invoice(rec)
         if row_id:
             file_restored_recorded = True
+            _track_inserted(row_id)
             if invoice_extras:
                 _attach_email_extras_to_invoice(
                     db=db,
@@ -3018,6 +3196,7 @@ def _process_email(
                 recorded += 1
                 if row_id is not None:
                     processed_id = row_id
+                    _track_inserted(row_id)
                 else:
                     if file_hash:
                         existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
@@ -3047,6 +3226,7 @@ def _process_email(
                 )
                 if row_id:
                     recorded += 1
+                    _track_inserted(row_id)
                     kept_paths.add(str(file_path.resolve()))
                     _log.info("  已入库独立水单/收据(海外凭证): %s", mask_filename(att.original_name))
                     continue
@@ -3055,6 +3235,7 @@ def _process_email(
             existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True) if file_hash else None
             if existing:
                 existing = _restore_existing_invoice_if_deleted(db, existing, "证明材料")
+                _track_restored(existing)
                 if not existing.get("attachment_path"):
                     db.update_invoice_file_paths(existing["id"], attachment_path=_runtime_relative(file_path))
                 processed_id = existing["id"]
@@ -3087,6 +3268,7 @@ def _process_email(
                     "mailbox_key": mailbox_key,
                 }
                 processed_id = db.insert_invoice(rec)
+                _track_inserted(processed_id)
 
             recorded += 1
             kept_paths.add(str(file_path.resolve()))
@@ -3110,6 +3292,7 @@ def _process_email(
         )
         if row_id:
             recorded += 1
+            _track_inserted(row_id)
             kept_paths.add(str(Path(att.file_path).resolve()))
             _log.info("  图片待识别已入库: %s", mask_filename(att.original_name))
 
@@ -3140,6 +3323,7 @@ def _process_email(
                 if existing:
                     was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
+                    _track_restored(existing)
                     if _refresh_invoice_from_parse(
                         db,
                         existing,
@@ -3165,24 +3349,25 @@ def _process_email(
                         if not was_deleted:
                             _log_existing_invoice_duplicate(existing, "subject_body_invoice_number")
                     set_process_outcome("metadata_refreshed" if recorded else "duplicate")
-                    return recorded
+                    return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
             existing = _find_existing_invoice_for_parse(db, "", amount, seller, include_deleted=True)
             if existing:
                 was_deleted = int(existing.get("is_deleted") or 0) == 1
                 existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
+                _track_restored(existing)
                 if not was_deleted:
                     _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                     _log_existing_invoice_duplicate(existing, "subject_body_seller_amount")
                 recorded += 1
                 set_process_outcome("duplicate")
-                return recorded
+                return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
             if db.is_duplicate(dedup_key, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                 recorded += 1
                 set_process_outcome("duplicate")
-                return recorded
+                return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
             rec = {
                 "invoice_number": inv_num,
@@ -3213,6 +3398,7 @@ def _process_email(
             if row_id:
                 recorded += 1
                 manual_required_recorded = True
+                _track_inserted(row_id)
                 _log.info("  📝 从主题/正文提取: %s — 待手动下载", redact_text(dedup_key, "dedup_key"))
 
     # Clean up any leftover attachment files that were not successfully kept
@@ -3255,7 +3441,7 @@ def _process_email(
         process_outcome = "no_candidate_link"
     set_process_outcome(process_outcome)
 
-    return recorded
+    return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
 
 # ── Subcommand Handlers ───────────────────────────────────────────────
@@ -3900,6 +4086,9 @@ def _scan_mailboxes_with_db(
     parse_failed = 0
     ai_auth_failed = False
     ai_pending_classification = 0
+    scan_new_invoice_ids: list[int] = []
+    scan_review_invoice_ids: list[int] = []
+    scan_restored_invoice_ids: list[int] = []
 
     account_contexts: list[dict] = []
     for account in accounts:
@@ -4095,6 +4284,16 @@ def _scan_mailboxes_with_db(
                                 )
                                 if outcome_status == "manual_required" and after_pending_manual <= before_pending_manual:
                                     pending_manual += 1
+                                if isinstance(outcome, PendingEmailResult):
+                                    for nid in outcome.new_invoice_ids:
+                                        if nid not in scan_new_invoice_ids:
+                                            scan_new_invoice_ids.append(nid)
+                                    for rid in outcome.review_invoice_ids:
+                                        if rid not in scan_review_invoice_ids:
+                                            scan_review_invoice_ids.append(rid)
+                                    for sid in outcome.restored_invoice_ids:
+                                        if sid not in scan_restored_invoice_ids:
+                                            scan_restored_invoice_ids.append(sid)
                                 new_delta = max(
                                     0,
                                     after_total_count - before_total_count,
@@ -4193,12 +4392,22 @@ def _scan_mailboxes_with_db(
     link_dl.close()
     accounts_failed = len(failed_account_keys)
     accounts_success = max(0, accounts_total - accounts_failed)
+    new_invoice_ids = tuple(scan_new_invoice_ids)
+    review_invoice_ids = tuple(scan_review_invoice_ids)
+    restored_invoice_ids = tuple(scan_restored_invoice_ids)
+    if new_invoice_ids:
+        new_invoice_records = len(new_invoice_ids)
+    if restored_invoice_ids:
+        restored_deleted = len(restored_invoice_ids)
     return {
         "scanned": scanned_headers,
         "scanned_headers": scanned_headers,
         "new_email_headers": new_email_headers,
         "new": new_invoice_records,
         "new_invoice_records": new_invoice_records,
+        "new_invoice_ids": new_invoice_ids,
+        "review_invoice_ids": review_invoice_ids,
+        "restored_invoice_ids": restored_invoice_ids,
         "restored_deleted": restored_deleted,
         "classified_invoice": classified_invoice,
         "downloaded": downloaded_emails,
@@ -4434,6 +4643,9 @@ def _handle_pending_email(
         mailbox_key=row.get("mailbox_key", "legacy"),
         config=config,
     )
+    new_ids = getattr(recorded, "new_invoice_ids", ())
+    review_ids = getattr(recorded, "review_invoice_ids", ())
+    restored_ids = getattr(recorded, "restored_invoice_ids", ())
     process_outcome = str(
         getattr(link_dl, "last_process_outcome", "") or ""
     )
@@ -4445,8 +4657,18 @@ def _handle_pending_email(
             "manual_required",
             "duplicate",
         }:
-            return PendingEmailResult(process_outcome)
-        return PendingEmailResult("recorded")
+            return PendingEmailResult(
+                process_outcome,
+                new_invoice_ids=new_ids,
+                review_invoice_ids=review_ids,
+                restored_invoice_ids=restored_ids,
+            )
+        return PendingEmailResult(
+            "recorded",
+            new_invoice_ids=new_ids,
+            review_invoice_ids=review_ids,
+            restored_invoice_ids=restored_ids,
+        )
 
     if process_outcome in {
         "no_candidate_link",
@@ -4454,7 +4676,12 @@ def _handle_pending_email(
         "parse_failed",
         "duplicate",
     }:
-        return PendingEmailResult(process_outcome)
+        return PendingEmailResult(
+            process_outcome,
+            new_invoice_ids=new_ids,
+            review_invoice_ids=review_ids,
+            restored_invoice_ids=restored_ids,
+        )
 
     diagnostics = getattr(link_dl, "last_download_diagnostics", {}) or {}
     candidate_links = int(diagnostics.get("candidate_links", 0) or 0)

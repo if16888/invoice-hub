@@ -130,6 +130,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
 
             self.assertEqual(count.get("added"), 1)
+            self.assertEqual(len(count.get("new_invoice_ids", [])), 1)
+            self.assertEqual(count["added"], len(count["new_invoice_ids"]))
             self.assertTrue(src.exists())
             self.assertEqual(rows[0]["invoice_number"], "12345678")
             self.assertEqual(rows[0]["mail_subject"], "本地导入: train_invoice.pdf")
@@ -281,7 +283,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
 
             self.assertEqual(count1.get("added"), 1)
-            self.assertEqual(count2.get("added"), 1)
+            self.assertEqual(count2.get("added"), 0)
+            self.assertEqual(count2.get("new_invoice_ids"), [])
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["invoice_number"], "12345678")
             self.assertEqual(rows[0]["is_deleted"], 0)
@@ -395,7 +398,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
                 updated = db.get_invoice(invoice_id)
 
-            self.assertEqual(stats["added"], 1)
+            self.assertEqual(stats["added"], 0)
+            self.assertEqual(stats["new_invoice_ids"], [])
             self.assertEqual(len(rows), 1)
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
@@ -467,7 +471,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 )
                 updated = db.get_invoice(invoice_id)
 
-            self.assertEqual(first["added"], 1)
+            self.assertEqual(first["added"], 0)
+            self.assertEqual(first["new_invoice_ids"], [])
             self.assertEqual(second["duplicates"], 1)
             self.assertEqual(len(json.loads(updated["extra_paths"])), 1)
 
@@ -496,6 +501,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
 
             self.assertEqual(stats["added"], 1)
+            self.assertEqual(len(stats["new_invoice_ids"]), 1)
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["invoice_type"], "增值税电子普通发票")
             self.assertEqual(json.loads(rows[0]["extra_paths"]), [])
@@ -523,7 +529,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
                 updated = db.get_invoice(invoice_id)
 
-            self.assertEqual(stats["added"], 1)
+            self.assertEqual(stats["added"], 0)
+            self.assertEqual(stats["new_invoice_ids"], [])
             self.assertEqual(len(rows), 1)
             self.assertEqual(len(json.loads(updated["extra_paths"])), 1)
 
@@ -861,7 +868,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(rows[0]["total_amount"], "18.40")
             self.assertEqual(rows[0]["category"], "出租车")
             self.assertEqual(first_stats["added"], 1)
-            self.assertEqual(second_stats["added"], 1)
+            self.assertEqual(second_stats["added"], 0)
+            self.assertEqual(second_stats["new_invoice_ids"], [])
             self.assertEqual(second_stats["conflicts"], 0)
             self.assertEqual(len(json.loads(rows[0]["extra_paths"])), 1)
 
@@ -2252,7 +2260,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
                 updated = db.get_invoice(invoice_id)
 
-            self.assertEqual(stats["added"], 1)
+            self.assertEqual(stats["added"], 0)
+            self.assertEqual(stats["new_invoice_ids"], [])
             self.assertEqual(len(rows), 1)
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
@@ -2480,7 +2489,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 rows = db.get_all_invoices()
                 updated = db.get_invoice(invoice_id)
 
-            self.assertEqual(stats["added"], 1)
+            self.assertEqual(stats["added"], 0)
+            self.assertEqual(stats["new_invoice_ids"], [])
             self.assertEqual(len(rows), 1)
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)
@@ -2684,7 +2694,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 )
                 updated = db.get_invoice(invoice_id)
 
-            self.assertEqual(stats1["added"], 1)
+            self.assertEqual(stats1["added"], 0)
+            self.assertEqual(stats1["new_invoice_ids"], [])
             self.assertEqual(stats2["duplicates"], 1)
             extra_paths = json.loads(updated["extra_paths"])
             self.assertEqual(len(extra_paths), 1)

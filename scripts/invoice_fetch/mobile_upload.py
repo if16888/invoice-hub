@@ -33,6 +33,16 @@ ALLOWED_UPLOAD_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 
+_PDFJS_ASSET_ROOT = Path(__file__).resolve().parent / "web_assets" / "pdfjs"
+_PDFJS_ASSET_PREFIX = "/assets/pdfjs/"
+_PDFJS_ALLOWED_ROOTS = {"pdf.min.mjs", "pdf.worker.min.mjs", "cmaps", "standard_fonts"}
+_PDFJS_CONTENT_TYPES = {
+    ".mjs": "text/javascript; charset=utf-8",
+    ".bcmap": "application/octet-stream",
+    ".pfb": "application/octet-stream",
+    ".ttf": "font/ttf",
+}
+
 
 def _redact_host(host: object) -> str:
     """Keep logs useful for LAN diagnosis without recording a full address."""
@@ -61,6 +71,22 @@ def _safe_log_reason(reason: object, token: str = "") -> str:
     value = sanitize_log_message(value)
     value = re.sub(r"https?://\S+", "<url:redacted>", value)
     return value[:240] or "unknown"
+
+
+def _resolve_pdfjs_asset(path: str) -> Path | None:
+    """Resolve only the vendored PDF.js files, never arbitrary local paths."""
+    if not str(path or "").startswith(_PDFJS_ASSET_PREFIX):
+        return None
+    relative = str(path)[len(_PDFJS_ASSET_PREFIX):].replace("\\", "/")
+    parts = tuple(part for part in relative.split("/") if part)
+    if not parts or parts[0] not in _PDFJS_ALLOWED_ROOTS:
+        return None
+    candidate = (_PDFJS_ASSET_ROOT.joinpath(*parts)).resolve(strict=False)
+    try:
+        candidate.relative_to(_PDFJS_ASSET_ROOT.resolve(strict=False))
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
 
 
 @dataclass(frozen=True)
@@ -92,6 +118,30 @@ class MobileUploadSession:
     session_dir: Path
     original_dir: Path
     manifest_path: Path
+
+
+def public_upload_result(result: dict) -> dict:
+    """Project internal upload results to public HTTP statistics.
+
+    Database invoice row IDs and internal structures are strictly kept off
+    public HTTP interfaces.
+    """
+    imported_val = result.get("imported", 0)
+    if isinstance(imported_val, dict):
+        imported_count = int(
+            imported_val.get("added", 0)
+            + imported_val.get("conflicts", 0)
+            + imported_val.get("pending_manual", 0)
+        )
+    else:
+        imported_count = int(imported_val or 0)
+    return {
+        "accepted": int(result.get("accepted", 0) or 0),
+        "duplicate": int(result.get("duplicate", 0) or 0),
+        "failed": int(result.get("failed", 0) or 0),
+        "imported": imported_count,
+        "batch_id": str(result.get("batch_id", "") or ""),
+    }
 
 
 class MobileUploadServer:
@@ -172,6 +222,7 @@ class MobileUploadServer:
             handler = self._make_handler()
             self._httpd = ThreadingHTTPServer((self.bind_host, self.port), handler)
             actual_port = int(self._httpd.server_address[1])
+            self.port = actual_port
             base_url = f"http://{self.host}:{actual_port}"
             self.session = MobileUploadSession(
                 token=token,
@@ -241,9 +292,7 @@ class MobileUploadServer:
             self._thread.join(timeout=2)
         self._thread = None
         if httpd is not None:
-            _log.info(
-                "[手机上传] server stop batch_id=<redacted>"
-            )
+            _log.info("[手机上传] server stop batch_id=<redacted>")
 
     def is_token_valid(self, token: str) -> bool:
         if not self.session or not self._httpd or token != self.session.token:
@@ -280,7 +329,6 @@ class MobileUploadServer:
             }
 
     def refresh_local_host_addresses(self) -> set[str]:
-        """Refresh the addresses owned by this machine for access classification."""
         addresses = _collect_local_host_addresses(
             (*self._configured_local_host_addresses, self.host)
         )
@@ -300,7 +348,6 @@ class MobileUploadServer:
         self.network_virtual = bool(is_virtual)
 
     def run_local_self_check(self, timeout: float = 1.5) -> bool:
-        """Check the selected public URL locally; never infer phone reachability."""
         session = self.session
         if session is None or self._httpd is None:
             self._local_self_check = "fail"
@@ -387,7 +434,6 @@ class MobileUploadServer:
         )
 
     def set_public_host(self, host: str) -> MobileUploadSession:
-        """Update the public URL host while keeping the running listener and token."""
         host = (host or "").strip()
         if not host:
             raise ValueError("host is required")
@@ -427,6 +473,8 @@ class MobileUploadServer:
         known_hashes = self._known_hashes()
         accepted_paths: list[Path] = []
         duplicate_records_by_hash: dict[str, list[dict]] = {}
+        restored_invoice_ids: list[int] = []
+        review_invoice_ids: list[int] = []
 
         with self._lock:
             for item in files:
@@ -481,14 +529,25 @@ class MobileUploadServer:
                 known_hashes.add(digest)
                 accepted_paths.append(dest)
                 self._files.append(record)
-
+ 
             if duplicate_records_by_hash and self.import_on_upload and self.db_path:
-                restored_hashes = self._restore_deleted_invoices_by_hashes(
-                    set(duplicate_records_by_hash)
-                )
-                for digest in restored_hashes:
-                    for record in duplicate_records_by_hash.get(digest, []):
-                        record["reason"] = "sha256_already_uploaded_restored_deleted_record"
+                from . import review_status
+                from .db import InvoiceDB
+
+                with InvoiceDB(self.db_path) as db:
+                    restored_ids = db.restore_deleted_invoices_by_file_hashes(
+                        set(duplicate_records_by_hash)
+                    )
+                    if restored_ids:
+                        restored_invoice_ids.extend(restored_ids)
+                        for rid in restored_ids:
+                            inv = db.get_invoice(rid)
+                            if inv:
+                                digest = inv.get("file_hash")
+                                for record in duplicate_records_by_hash.get(digest, []):
+                                    record["reason"] = "sha256_already_uploaded_restored_deleted_record"
+                                if (inv.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW:
+                                    review_invoice_ids.append(rid)
 
             self._stats["accepted"] += accepted_now
             self._stats["duplicate"] += duplicate_now
@@ -496,8 +555,17 @@ class MobileUploadServer:
             self._write_manifest()
 
         imported = 0
+        new_ids: list[int] = []
         if accepted_paths and self.import_on_upload and self.db_path:
             imported = self._import_accepted_files(accepted_paths)
+            if isinstance(imported, dict):
+                new_ids = list(imported.get("new_invoice_ids", ()))
+                for rid in imported.get("restored_invoice_ids", ()):
+                    if rid not in restored_invoice_ids:
+                        restored_invoice_ids.append(rid)
+                for rid in imported.get("review_invoice_ids", ()):
+                    if rid not in review_invoice_ids:
+                        review_invoice_ids.append(rid)
             with self._lock:
                 imported_count = (
                     imported.get("added", 0) +
@@ -514,13 +582,16 @@ class MobileUploadServer:
             "failed": failed_now,
             "imported": imported,
             "batch_id": self.session.batch_id,
+            "new_invoice_ids": tuple(dict.fromkeys(new_ids)),
+            "restored_invoice_ids": tuple(dict.fromkeys(restored_invoice_ids)),
+            "review_invoice_ids": tuple(dict.fromkeys(review_invoice_ids)),
         }
         self._log_upload_result(result)
         return result
 
-    def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> set[str]:
+    def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> list[int]:
         if not self.db_path or not file_hashes:
-            return set()
+            return []
         from .db import InvoiceDB
 
         with InvoiceDB(self.db_path) as db:
@@ -577,7 +648,7 @@ class MobileUploadServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):  # pragma: no cover - keep desktop logs quiet
+            def log_message(self, fmt, *args):
                 return
 
             def _begin_request(self):
@@ -601,6 +672,11 @@ class MobileUploadServer:
 
             def do_GET(self):
                 parsed = self._begin_request()
+                asset = _resolve_pdfjs_asset(parsed.path)
+                if asset is not None:
+                    self._send_asset(200, asset)
+                    return
+
                 token = _token_from_path(parsed.path, "/u/")
                 if token:
                     if not owner.is_token_valid(token):
@@ -642,7 +718,7 @@ class MobileUploadServer:
                     _log.info("[手机上传] upload processing failed exception_type=server_error")
                     self._send_text(500, "Upload processing failed.")
                     return
-                self._send_json(200, result)
+                self._send_json(200, public_upload_result(result))
 
             def _send_html(self, status: int, body: str):
                 self._log_response(status)
@@ -665,6 +741,23 @@ class MobileUploadServer:
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(body.encode("utf-8"))
+
+            def _send_asset(self, status: int, path: Path):
+                try:
+                    body = path.read_bytes()
+                except OSError:
+                    self._send_text(404, "Not found.")
+                    return
+                self._log_response(status)
+                self.send_response(status)
+                self.send_header(
+                    "Content-Type",
+                    _PDFJS_CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream"),
+                )
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
         return Handler
 
@@ -715,7 +808,6 @@ def _host_priority(interface_name: str, host: str) -> int:
 
 
 def build_upload_host_options(raw_addresses: Iterable[tuple[str, str]]) -> list[UploadHostOption]:
-    """Build sorted selectable IPv4 hosts for the QR upload URL."""
     seen: set[str] = set()
     options: list[UploadHostOption] = []
     for interface_name, host in raw_addresses:
@@ -739,7 +831,6 @@ def build_upload_host_options(raw_addresses: Iterable[tuple[str, str]]) -> list[
 
 
 def log_upload_host_candidates(options: Iterable[UploadHostOption]) -> None:
-    """Write one safe diagnostic record per candidate considered for QR URLs."""
     for option in options:
         _log.info(
             "[手机上传] network candidate interface=%s host=%s virtual=%s priority=%s",
@@ -774,7 +865,6 @@ def enumerate_upload_hosts() -> list[UploadHostOption]:
 
 
 def _normalize_ipv4_address(value: object) -> str:
-    """Normalize IPv4 and IPv4-mapped IPv6 client addresses for comparisons."""
     try:
         address = ipaddress.ip_address(str(value or "").strip())
     except ValueError:
@@ -786,7 +876,6 @@ def _normalize_ipv4_address(value: object) -> str:
 
 
 def _collect_local_host_addresses(extra: Iterable[str] = ()) -> set[str]:
-    """Return loopback plus every usable IPv4 currently owned by this host."""
     addresses = {"127.0.0.1"}
     for value in extra:
         normalized = _normalize_ipv4_address(value)
@@ -799,8 +888,6 @@ def _collect_local_host_addresses(extra: Iterable[str] = ()) -> set[str]:
             if (normalized := _normalize_ipv4_address(option.host))
         )
     except Exception:
-        # Access classification must fail closed if adapter enumeration is
-        # temporarily unavailable; the selected host and loopback remain known.
         pass
     return addresses
 
@@ -883,306 +970,664 @@ def _parse_multipart_upload(body: bytes, content_type: str) -> list[UploadedFile
 
 
 def _upload_page(session: MobileUploadSession) -> str:
-    title = "Invoice Hub 手机上传"
-    return f"""<!doctype html>
+    remaining_seconds = max(0, int((session.expires_at - datetime.now()).total_seconds()))
+    remaining_minutes = max(1, (remaining_seconds + 59) // 60)
+    expiry_hint = f"链接约 {remaining_minutes} 分钟后失效"
+    page = """<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>{title}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Invoice Hub</title>
   <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif; background: #f5f6f8; color: #1a1a2e; line-height: 1.6; padding: 16px 16px 32px; }}
-    main {{ max-width: 520px; margin: 0 auto; }}
-    h1 {{ font-size: 20px; font-weight: 700; margin-bottom: 4px; }}
-    .card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 12px; }}
+    :root { color-scheme: light; --blue:#2563eb; --blue-dark:#1d4ed8; --ink:#172033; --muted:#64748b; --line:#e2e8f0; --surface:#fff; --canvas:#f4f7fb; --danger:#b91c1c; --success:#166534; }
+    *, *::before, *::after { box-sizing:border-box; }
+    html { min-width:320px; background:var(--canvas); }
+    body { margin:0; min-width:320px; min-height:100vh; overflow-x:hidden; background:var(--canvas); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif; line-height:1.45; padding:16px 14px calc(24px + env(safe-area-inset-bottom)); }
+    body.modal-open { overflow:hidden; }
+    button, label { touch-action:manipulation; }
+    button:focus-visible, label:focus-within { outline:3px solid #93c5fd; outline-offset:2px; }
+    main { width:100%; max-width:560px; margin:0 auto; padding-bottom:4px; }
+    .page-header { margin:2px 2px 14px; }
+    h1 { margin:0; font-size:24px; line-height:1.2; letter-spacing:-.02em; }
+    .host-line { margin-top:5px; color:var(--muted); font-size:14px; overflow-wrap:anywhere; }
+    .host-line strong { color:#334155; font-weight:650; }
+    .session-meta { display:flex; flex-wrap:wrap; gap:5px 12px; margin-top:9px; color:#94a3b8; font-size:11px; }
+    .surface { margin-bottom:12px; padding:14px; background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:0 2px 8px rgba(15,23,42,.035); }
+    h2 { margin:0; font-size:16px; line-height:1.3; }
+    .section-note { margin:5px 0 11px; color:var(--muted); font-size:12px; }
 
-    /* WeChat tip banner */
-    .wechat-tip {{ background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; display: none; }}
-    .wechat-tip .tip-icon {{ display: inline-flex; width: 20px; height: 20px; border: 1px solid #B45309; border-radius: 50%; align-items: center; justify-content: center; margin-right: 6px; vertical-align: middle; color: #92400E; font-size: 12px; font-weight: 700; }}
-    .wechat-tip .tip-icon::before {{ content: "i"; }}
-    .wechat-tip .tip-text {{ font-size: 13px; color: #92400E; line-height: 1.5; }}
+    .wechat-tip { display:none; margin:0 0 12px; padding:9px 11px; color:#854d0e; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; cursor:pointer; text-align:left; }
+    .wechat-tip.is-visible { display:block; }
+    .wechat-summary { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; font-weight:650; line-height:1.35; }
+    .wechat-summary .arrow { flex:0 0 auto; font-size:19px; line-height:1; }
+    .wechat-details { margin-top:7px; padding-top:7px; border-top:1px solid #fcd34d; font-size:12px; font-weight:400; line-height:1.55; }
 
-    /* Upload entries */
-    .upload-entry {{ display: flex; align-items: center; background: #f9fafb; border: 1.5px dashed #d1d5db; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; cursor: pointer; transition: border-color 0.2s, background 0.2s; position: relative; overflow: hidden; }}
-    .upload-entry:active {{ background: #eff6ff; border-color: #93c5fd; }}
-    .upload-entry .entry-icon {{ display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 34px; border: 1px solid #BFDBFE; border-radius: 8px; background: #EFF6FF; color: #2563EB; font-size: 12px; font-weight: 700; letter-spacing: .04em; margin-right: 14px; flex-shrink: 0; }}
-    .upload-entry .entry-title {{ font-size: 15px; font-weight: 600; color: #1e293b; }}
-    .upload-entry .entry-desc {{ font-size: 12px; color: #64748b; margin-top: 2px; }}
-    .upload-entry input[type="file"] {{ position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }}
+    .source-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    .source-action { position:relative; display:flex; min-width:0; min-height:54px; flex-direction:column; align-items:center; justify-content:center; gap:2px; padding:6px 3px; color:#1e3a8a; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; cursor:pointer; text-align:center; }
+    .source-action:active { background:#dbeafe; border-color:#93c5fd; }
+    .source-action input[type=file] { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+    .entry-icon { display:inline-flex; flex:0 0 auto; width:22px; height:22px; align-items:center; justify-content:center; border:1px solid #93c5fd; border-radius:6px; color:#1d4ed8; background:#fff; font-size:8px; font-weight:800; letter-spacing:.02em; }
+    .entry-title { min-width:0; max-width:100%; font-size:13px; font-weight:700; line-height:1.15; overflow-wrap:anywhere; }
+    .source-note { margin:10px 1px 0; color:var(--muted); font-size:11px; text-align:center; }
 
-    /* File confirmation list */
-    .file-list {{ margin-top: 8px; }}
-    .file-list-header {{ display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }}
-    .file-list-header span {{ font-size: 14px; font-weight: 600; color: #374151; }}
-    .file-list-clear {{ font-size: 13px; color: #2563EB; border: 1px solid #BFDBFE; border-radius: 7px; background: #EFF6FF; cursor: pointer; padding: 5px 8px; flex-shrink: 0; }}
-    .file-list-clear:active {{ background: #DBEAFE; }}
-    .file-item {{ display: flex; align-items: center; gap: 9px; padding: 8px 0; border-bottom: 1px solid #f3f4f6; min-width: 0; }}
-    .file-thumb {{ width: 46px; height: 46px; border-radius: 7px; border: 1px solid #E5E7EB; background: #F8FAFC; color: #64748B; display: flex; align-items: center; justify-content: center; flex: 0 0 46px; font-size: 11px; font-weight: 700; }}
-    .file-thumb img {{ width: 100%; height: 100%; border-radius: 6px; object-fit: cover; display: block; }}
-    .file-meta {{ min-width: 0; flex: 1; }}
-    .file-name {{ font-size: 13px; color: #334155; font-weight: 600; overflow-wrap: anywhere; }}
-    .file-detail {{ font-size: 12px; color: #64748B; margin-top: 2px; }}
-    .file-remove {{ font-size: 12px; color: #2563EB; border: 1px solid #CBD5E1; border-radius: 6px; background: #fff; cursor: pointer; padding: 5px 7px; flex: 0 0 auto; }}
-    .file-remove:active {{ background: #F1F5F9; }}
-    .selection-hint {{ font-size: 12px; color: #64748B; margin: 4px 0 8px; }}
-    .no-files {{ font-size: 13px; color: #64748b; text-align: center; padding: 8px 0; }}
+    .pending-section[hidden], .upload-bar[hidden], #result[hidden], .preview-modal[hidden], .wechat-details[hidden] { display:none; }
+    .pending-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+    .clear-button { min-height:40px; padding:7px 10px; color:#1d4ed8; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; font-size:12px; cursor:pointer; }
+    .selection-hint { margin:-1px 0 9px; color:var(--muted); font-size:12px; }
+    .file-list { display:grid; gap:8px; }
+    .file-card { display:grid; grid-template-columns:76px minmax(0,1fr) auto; gap:10px; align-items:center; min-width:0; padding:9px; border:1px solid #e2e8f0; border-radius:11px; background:#fbfdff; }
+    .file-preview { display:flex; width:76px; height:76px; align-items:center; justify-content:center; overflow:hidden; padding:0; color:#1d4ed8; background:#eff6ff; border:1px solid #bfdbfe; border-radius:9px; cursor:pointer; }
+    .file-preview:disabled { cursor:wait; opacity:.78; }
+    .file-preview img { display:block; width:100%; height:100%; object-fit:cover; }
+    .file-preview .pdf-thumb { width:100%; height:100%; object-fit:contain; background:#fff; }
+    .file-preview-label { padding:4px; color:#475569; font-size:11px; font-weight:700; line-height:1.2; }
+    .file-preview-error { padding:4px; color:var(--danger); font-size:11px; line-height:1.25; }
+    .file-meta { min-width:0; }
+    .file-detail { color:#475569; font-size:12px; line-height:1.35; overflow-wrap:anywhere; }
+    .file-name { display:-webkit-box; overflow:hidden; color:#1e293b; font-size:13px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+    .file-note { margin-top:4px; color:#b45309; font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
+    .remove-button, .review-button { min-height:40px; padding:7px 9px; border-radius:8px; font-size:12px; cursor:pointer; white-space:nowrap; }
+    .remove-button { color:#1d4ed8; background:#fff; border:1px solid #cbd5e1; }
+    .review-button { margin-top:6px; color:#1d4ed8; background:#eff6ff; border:1px solid #bfdbfe; }
+    .remove-button:active, .review-button:active, .clear-button:active { background:#dbeafe; }
 
-    /* Buttons */
-    .btn-upload {{ width: 100%; padding: 14px; border: none; border-radius: 10px; background: #2563eb; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s; }}
-    .btn-upload:disabled {{ background: #93c5fd; cursor: not-allowed; }}
-    .btn-upload:active:not(:disabled) {{ background: #1d4ed8; }}
+    .upload-bar { position:sticky; bottom:0; z-index:5; display:flex; align-items:center; gap:10px; min-height:64px; margin:0 auto 12px; padding:10px 10px calc(10px + env(safe-area-inset-bottom)); background:rgba(255,255,255,.96); border:1px solid #cbd5e1; border-radius:13px; box-shadow:0 -5px 18px rgba(15,23,42,.10); backdrop-filter:blur(8px); }
+    .upload-summary { min-width:0; flex:1; color:#334155; font-size:13px; font-weight:650; overflow-wrap:anywhere; }
+    .btn-upload { flex:0 0 auto; min-width:92px; min-height:44px; padding:9px 14px; color:#fff; background:var(--blue); border:0; border-radius:9px; font-size:15px; font-weight:750; cursor:pointer; }
+    .btn-upload:active:not(:disabled) { background:var(--blue-dark); }
+    .btn-upload:disabled { color:#dbeafe; background:#93c5fd; cursor:not-allowed; }
 
-    /* Result */
-    #result {{ white-space: pre-wrap; font-size: 13px; color: #374151; min-height: 20px; }}
-    .uploading {{ color: #2563eb; font-weight: 600; }}
-    .result-success {{ color: #166534; }}
-    .result-error {{ color: #B91C1C; }}
+    #result { margin-bottom:12px; padding:11px 13px; white-space:pre-wrap; border-radius:10px; font-size:13px; line-height:1.5; }
+    #result.uploading { color:#1d4ed8; background:#eff6ff; border:1px solid #bfdbfe; }
+    #result.result-success { color:var(--success); background:#f0fdf4; border:1px solid #bbf7d0; }
+    #result.result-error { color:var(--danger); background:#fef2f2; border:1px solid #fecaca; }
+    .tips { color:#64748b; font-size:12px; line-height:1.65; }
+    .tips summary { color:#475569; cursor:pointer; font-weight:650; }
+    .tips ul { margin:8px 0 0 18px; }
+    .tips li { margin-bottom:4px; }
 
-    /* Tips */
-    .tips {{ font-size: 12px; color: #6b7280; line-height: 1.7; }}
-    .tips li {{ margin-bottom: 4px; }}
-
-    .batch-info {{ font-size: 13px; color: #6b7280; }}
-    .batch-info strong {{ color: #374151; }}
-    @media (max-width: 360px) {{
-      body {{ padding: 12px 10px 24px; }}
-      .card {{ padding: 13px; }}
-      .upload-entry {{ padding: 12px; }}
-      .upload-entry .entry-icon {{ width: 38px; margin-right: 10px; }}
-      .upload-entry .entry-title {{ font-size: 14px; }}
-      .file-remove {{ padding-left: 6px; padding-right: 6px; }}
-    }}
+    .preview-modal { position:fixed; inset:0; z-index:20; display:flex; align-items:stretch; justify-content:center; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); background:rgba(15,23,42,.72); }
+    .preview-sheet { display:flex; width:min(100%,620px); min-height:100%; flex-direction:column; background:#0f172a; color:#f8fafc; }
+    .preview-header { display:flex; min-height:58px; align-items:center; gap:9px; padding:8px 12px; border-bottom:1px solid #334155; }
+    .preview-back { min-height:42px; padding:7px 8px; color:#dbeafe; background:transparent; border:0; font-size:15px; cursor:pointer; }
+    .preview-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:650; }
+    .preview-page-indicator { flex:0 0 auto; color:#cbd5e1; font-size:12px; }
+    .preview-stage { position:relative; display:flex; min-height:0; flex:1; align-items:center; justify-content:center; overflow:auto; padding:14px 10px; }
+    .preview-stage canvas { display:block; max-width:100%; height:auto; background:#fff; box-shadow:0 3px 12px rgba(0,0,0,.25); }
+    .preview-stage img { display:block; max-width:100%; max-height:100%; object-fit:contain; }
+    .preview-loading, .preview-error { padding:20px; color:#cbd5e1; text-align:center; font-size:13px; }
+    .preview-error { color:#fecaca; }
+    .preview-footer { display:flex; gap:10px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #334155; }
+    .preview-nav { flex:1; min-height:44px; color:#e0f2fe; background:#1e40af; border:1px solid #60a5fa; border-radius:9px; font-size:14px; cursor:pointer; }
+    .preview-nav:disabled { color:#64748b; background:#1e293b; border-color:#334155; cursor:not-allowed; }
+    @media (max-width:360px) {
+      body { padding-left:10px; padding-right:10px; }
+      .surface { padding:12px; }
+      .file-card { grid-template-columns:64px minmax(0,1fr) auto; gap:7px; padding:8px; }
+      .file-preview { width:64px; height:64px; }
+      .remove-button, .review-button { padding-left:7px; padding-right:7px; }
+      .upload-summary { font-size:12px; }
+      .btn-upload { min-width:82px; padding-left:10px; padding-right:10px; }
+    }
   </style>
 </head>
-<body>
+<body data-upload-state="EMPTY">
 <main>
-  <h1>{title}</h1>
-  <div class="card batch-info">
-    <div>上传批次：<strong>{html.escape(session.batch_id)}</strong></div>
-    <div>有效期至：{html.escape(session.expires_at.strftime("%Y-%m-%d %H:%M:%S"))}</div>
+  <header class="page-header">
+    <h1>Invoice Hub</h1>
+    <div class="host-line">上传到电脑 · <strong>__HOST__</strong></div>
+    <div class="session-meta"><span>__EXPIRY_HINT__</span></div>
+  </header>
+
+  <div class="wechat-tip" id="wechatTip" role="button" tabindex="0" aria-expanded="false">
+    <div class="wechat-summary"><span>微信内 PDF 选择受限，建议在浏览器打开</span><span class="arrow" aria-hidden="true">›</span></div>
+    <div class="wechat-details" id="wechatDetails" hidden>点击微信右上角「⋯」，选择「在浏览器打开」。图片/拍照可以继续在微信内使用；需要选择 PDF/OFD 时请使用系统浏览器。</div>
   </div>
 
-  <div class="wechat-tip" id="wechatTip">
-    <span class="tip-icon" aria-hidden="true"></span>
-    <span class="tip-text">当前在微信内打开。为便于选择 PDF/OFD/下载文件，建议点击右上角 <strong>⋯</strong>，选择「在浏览器打开」。<br>上传图片/拍照可直接使用。</span>
+  <section class="surface source-section" aria-labelledby="sourceTitle">
+    <h2 id="sourceTitle">添加材料</h2>
+    <p class="section-note">选择来源后，文件会先留在手机本地，确认无误再上传。</p>
+    <div class="source-actions">
+      <label class="source-action upload-entry" id="entryFile" aria-label="选择 PDF/OFD/文件">
+        <span class="entry-icon" aria-hidden="true">文件</span><span class="entry-title">选择文件</span>
+        <input id="inputFile" type="file" multiple accept=".pdf,.ofd,application/pdf,application/octet-stream">
+      </label>
+      <label class="source-action upload-entry" id="entryGallery" aria-label="选择相册图片">
+        <span class="entry-icon" aria-hidden="true">相册</span><span class="entry-title">相册</span>
+        <input id="inputGallery" type="file" multiple accept="image/jpeg,image/png,image/heic,image/*">
+      </label>
+      <label class="source-action upload-entry" id="entryCamera" aria-label="拍照上传">
+        <span class="entry-icon" aria-hidden="true">拍照</span><span class="entry-title">拍照</span>
+        <input id="inputCamera" type="file" accept="image/*" capture="environment">
+      </label>
+    </div>
+    <p class="source-note">支持 PDF、OFD、JPG、JPEG、PNG、HEIC</p>
+  </section>
+
+  <section class="surface pending-section" id="pendingSection" hidden aria-labelledby="pendingTitle">
+    <div class="pending-heading">
+      <h2 id="pendingTitle">待上传 · 0</h2>
+      <button class="clear-button" id="btnClear" type="button">清空重选</button>
+    </div>
+    <p class="selection-hint" id="selectionHint">文件仍保留在手机本地。</p>
+    <div class="file-list" id="fileListItems"></div>
+  </section>
+
+  <div id="result" hidden role="status" aria-live="polite"></div>
+
+  <div class="upload-bar" id="uploadBar" hidden>
+    <span class="upload-summary" id="uploadSummary">已选 0 个</span>
+    <button class="btn-upload" id="btnUpload" type="button" disabled>上传</button>
   </div>
 
-  <div class="card">
-    <div class="upload-entry" id="entryFile">
-      <div class="entry-icon" aria-hidden="true">PDF</div>
-      <div>
-        <div class="entry-title">选择 PDF/OFD/文件</div>
-        <div class="entry-desc">适合电子发票、滴滴行程单、酒店水单、下载文件</div>
-      </div>
-      <input id="inputFile" type="file" multiple accept=".pdf,.ofd,application/pdf,application/octet-stream">
-    </div>
-
-    <div class="upload-entry" id="entryGallery">
-      <div class="entry-icon" aria-hidden="true">IMG</div>
-      <div>
-        <div class="entry-title">选择相册图片</div>
-        <div class="entry-desc">适合截图、照片、小票图片</div>
-      </div>
-      <input id="inputGallery" type="file" multiple accept="image/jpeg,image/png,image/heic,image/*">
-    </div>
-
-    <div class="upload-entry" id="entryCamera">
-      <div class="entry-icon" aria-hidden="true">CAM</div>
-      <div>
-        <div class="entry-title">拍照上传</div>
-        <div class="entry-desc">适合纸质票据、现场小票</div>
-      </div>
-      <input id="inputCamera" type="file" accept="image/*" capture="environment">
-    </div>
-
-    <div class="file-list" id="fileListSection" style="display:none;">
-      <div class="file-list-header">
-        <span id="fileCount">已选 0 个文件</span>
-        <button class="file-list-clear" id="btnClear" type="button">清空重选</button>
-      </div>
-      <div class="selection-hint" id="selectionHint">已选文件会显示名称、类型和大小。</div>
-      <div id="fileListItems"></div>
-    </div>
-
-    <button class="btn-upload" id="btnUpload" type="button" disabled>开始上传</button>
-  </div>
-
-  <div class="card">
-    <div id="result" class="no-files" aria-live="polite">尚未选择文件。选中 PDF/OFD/图片后，这里会显示确认信息。</div>
-  </div>
-
-  <div class="card tips">
+  <details class="surface tips">
+    <summary>使用提示</summary>
     <ul>
-      <li>支持 pdf、ofd、jpg、jpeg、png、heic 格式。</li>
-      <li>如果发票在微信聊天中，请先将文件保存到手机「文件/下载」目录，再通过上方入口选择。</li>
-      <li>手机和电脑需要在同一 Wi-Fi / 局域网。</li>
-      <li>如打不开页面，请回到电脑端扫码窗口切换正确 IP，或检查 Windows 防火墙是否允许专用网络访问。</li>
+      <li>PDF 会在手机本地读取页数并生成第一页预览，不会在点击上传前发送到电脑。</li>
+      <li>PDF 预览默认适应屏幕宽度，可使用浏览器/系统手势放大检查金额、号码和税号。</li>
+      <li>OFD 手机浏览器暂不支持内容预览，上传后可在 Invoice Hub 中查看。</li>
+      <li>如果发票在微信聊天中，请先保存到手机「文件/下载」，或在微信内点击「在浏览器打开」。</li>
+      <li>手机和电脑需要在同一 Wi-Fi / 局域网；打不开时请检查 Windows 防火墙专用网络权限。</li>
       <li>请勿上传与报销无关的私人照片。</li>
     </ul>
-  </div>
+  </details>
 </main>
-<script>
-(function() {{
-  // WeChat in-app browser detection
-  if (/MicroMessenger/i.test(navigator.userAgent)) {{
-    document.getElementById('wechatTip').style.display = 'block';
-  }}
 
-  const inputFile = document.getElementById('inputFile');
-  const inputGallery = document.getElementById('inputGallery');
-  const inputCamera = document.getElementById('inputCamera');
-  const fileListSection = document.getElementById('fileListSection');
-  const fileListItems = document.getElementById('fileListItems');
-  const fileCount = document.getElementById('fileCount');
-  const selectionHint = document.getElementById('selectionHint');
-  const btnClear = document.getElementById('btnClear');
-  const btnUpload = document.getElementById('btnUpload');
-  const result = document.getElementById('result');
+<div class="preview-modal" id="previewModal" hidden>
+  <div class="preview-sheet" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+    <header class="preview-header">
+      <button class="preview-back" id="previewBack" type="button">‹ 返回</button>
+      <span class="preview-title" id="previewTitle">文件预览</span>
+      <span class="preview-page-indicator" id="previewPageIndicator">1 / 1</span>
+    </header>
+    <div class="preview-stage" id="previewStage">
+      <div class="preview-loading" id="previewLoading" hidden>正在生成预览…</div>
+      <div class="preview-error" id="previewError" hidden>无法预览，但仍可移除/重新选择。</div>
+      <canvas id="previewCanvas" hidden></canvas>
+      <img id="previewImage" alt="" hidden>
+    </div>
+    <footer class="preview-footer" id="previewFooter">
+      <button class="preview-nav" id="previewPrev" type="button">上一页</button>
+      <button class="preview-nav" id="previewNext" type="button">下一页</button>
+    </footer>
+  </div>
+</div>
 
-  // Collect files from all inputs and show an explicit confirmation row.
-  let pendingFiles = [];
-  let previewUrls = [];
-  let isUploading = false;
+<script type="module">
+const PDFJS_BASE = "/assets/pdfjs/";
+const PDFJS_CMAP_URL = PDFJS_BASE + "cmaps/";
+const PDFJS_FONT_URL = PDFJS_BASE + "standard_fonts/";
+const UPLOAD_URL = "/api/upload/__TOKEN__";
+const STATES = Object.freeze(["EMPTY", "SELECTED", "PREVIEWING", "UPLOADING", "SUCCESS", "PARTIAL", "FAILURE"]);
 
-  function formatBytes(bytes) {{
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  }}
+const inputFile = document.getElementById("inputFile");
+const inputGallery = document.getElementById("inputGallery");
+const inputCamera = document.getElementById("inputCamera");
+const wechatTip = document.getElementById("wechatTip");
+const wechatDetails = document.getElementById("wechatDetails");
+const pendingSection = document.getElementById("pendingSection");
+const pendingTitle = document.getElementById("pendingTitle");
+const fileListItems = document.getElementById("fileListItems");
+const selectionHint = document.getElementById("selectionHint");
+const btnClear = document.getElementById("btnClear");
+const uploadBar = document.getElementById("uploadBar");
+const uploadSummary = document.getElementById("uploadSummary");
+const btnUpload = document.getElementById("btnUpload");
+const result = document.getElementById("result");
+const previewModal = document.getElementById("previewModal");
+const previewBack = document.getElementById("previewBack");
+const previewTitle = document.getElementById("previewTitle");
+const previewPageIndicator = document.getElementById("previewPageIndicator");
+const previewStage = document.getElementById("previewStage");
+const previewLoading = document.getElementById("previewLoading");
+const previewError = document.getElementById("previewError");
+const previewCanvas = document.getElementById("previewCanvas");
+const previewImage = document.getElementById("previewImage");
+const previewFooter = document.getElementById("previewFooter");
+const previewPrev = document.getElementById("previewPrev");
+const previewNext = document.getElementById("previewNext");
 
-  function fileKind(file) {{
-    const name = (file.name || '').toLowerCase();
-    if (name.endsWith('.pdf') || file.type === 'application/pdf') return 'PDF';
-    if (name.endsWith('.ofd')) return 'OFD';
-    if ((file.type || '').startsWith('image/')) return '图片';
-    return '文件';
-  }}
+let uploadState = "EMPTY";
+let pendingFiles = [];
+let isUploading = false;
+let pdfJsPromise = null;
+let activePreview = null;
+let activePreviewPage = 1;
+let renderSerial = 0;
 
-  function clearPreviews() {{
-    previewUrls.forEach(function(url) {{ URL.revokeObjectURL(url); }});
-    previewUrls = [];
-  }}
+function setState(next) {
+  if (!STATES.includes(next)) throw new Error("Unknown upload state");
+  uploadState = next;
+  document.body.dataset.uploadState = next;
+}
 
-  function collectFiles(input) {{
-    for (const f of input.files) {{
-      if (!pendingFiles.some(p => p.name === f.name && p.size === f.size && p.lastModified === f.lastModified)) {{
-        pendingFiles.push(f);
-      }}
-    }}
-    renderFileList();
-  }}
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
 
-  function removeFile(index) {{
-    pendingFiles.splice(index, 1);
-    renderFileList();
-  }}
+function fileKind(file) {
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".pdf") || file.type === "application/pdf") return "PDF";
+  if (name.endsWith(".ofd")) return "OFD";
+  if ((file.type || "").startsWith("image/")) return "图片";
+  return "文件";
+}
 
-  function renderFileList() {{
-    clearPreviews();
-    if (pendingFiles.length === 0) {{
-      fileListSection.style.display = 'none';
-      btnUpload.disabled = true;
-      return;
-    }}
-    fileListSection.style.display = 'block';
-    btnUpload.disabled = isUploading;
-    fileCount.textContent = '已选 ' + pendingFiles.length + ' 个文件' + (pendingFiles.length > 1 ? ' · 可多选上传' : '');
-    selectionHint.textContent = pendingFiles.length === 1 ? '请确认这是要上传的文件。' : '请确认以下文件后再开始上传。';
-    fileListItems.innerHTML = '';
-    pendingFiles.forEach(function(f, index) {{
-      const div = document.createElement('div');
-      div.className = 'file-item';
-      const kind = fileKind(f);
-      const thumb = document.createElement('div');
-      thumb.className = 'file-thumb';
-      if (kind === '图片') {{
-        const url = URL.createObjectURL(f);
-        previewUrls.push(url);
-        const image = document.createElement('img');
-        image.src = url;
-        image.alt = '图片预览：' + f.name;
-        thumb.appendChild(image);
-      }} else {{
-        thumb.textContent = kind;
-        thumb.setAttribute('aria-hidden', 'true');
-      }}
+function fileKey(file) {
+  return [file.name || "", file.size || 0, file.lastModified || 0, file.type || ""].join("\u0000");
+}
 
-      const meta = document.createElement('div');
-      meta.className = 'file-meta';
-      const name = document.createElement('div');
-      name.className = 'file-name';
-      name.textContent = f.name || '未命名文件';
-      const detail = document.createElement('div');
-      detail.className = 'file-detail';
-      detail.textContent = kind + ' · ' + formatBytes(f.size);
-      meta.appendChild(name);
-      meta.appendChild(detail);
+function displayFileName(name) {
+  const value = name || "未命名文件";
+  const dot = value.lastIndexOf(".");
+  const extension = dot > 0 ? value.slice(dot) : "";
+  if (value.length <= 36) return value;
+  const stem = extension ? value.slice(0, -extension.length) : value;
+  const headLength = Math.max(8, 36 - extension.length - 1);
+  return stem.slice(0, headLength) + "…" + extension;
+}
 
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'file-remove';
-      remove.textContent = '移除';
-      remove.setAttribute('aria-label', '移除 ' + (f.name || '文件'));
-      remove.addEventListener('click', function() {{ removeFile(index); }});
-      div.appendChild(thumb);
-      div.appendChild(meta);
-      div.appendChild(remove);
-      fileListItems.appendChild(div);
-    }});
-  }}
+function setResult(kind, message) {
+  result.hidden = false;
+  result.className = kind;
+  result.textContent = message;
+}
 
-  inputFile.addEventListener('change', function() {{ collectFiles(this); }});
-  inputGallery.addEventListener('change', function() {{ collectFiles(this); }});
-  inputCamera.addEventListener('change', function() {{ collectFiles(this); }});
+function clearResult() {
+  result.hidden = true;
+  result.textContent = "";
+  result.className = "";
+}
 
-  btnClear.addEventListener('click', function() {{
-    pendingFiles = [];
-    inputFile.value = '';
-    inputGallery.value = '';
-    inputCamera.value = '';
-    renderFileList();
-    result.textContent = '尚未选择文件。选中 PDF/OFD/图片后，这里会显示确认信息。';
-    result.className = 'no-files';
-  }});
+function hasPreviewBlocker() {
+  return pendingFiles.some((record) => record.previewState === "loading" || record.previewState === "error");
+}
 
-  btnUpload.addEventListener('click', async function() {{
-    if (pendingFiles.length === 0 || isUploading) {{
-      result.textContent = '请先选择文件或拍照。';
-      result.className = 'result-error';
-      return;
-    }}
-    isUploading = true;
+function canUpload() {
+  return pendingFiles.length > 0 && !isUploading && !hasPreviewBlocker();
+}
+
+function destroyRecord(record) {
+  if (record.imageUrl) URL.revokeObjectURL(record.imageUrl);
+  if (record.pdfDocument && record.pdfDocument.destroy) {
+    try { record.pdfDocument.destroy(); } catch (_) { /* already released */ }
+  }
+}
+
+function updateSelectionUi() {
+  const count = pendingFiles.length;
+  pendingSection.hidden = count === 0;
+  uploadBar.hidden = count === 0;
+  if (count === 0) {
     btnUpload.disabled = true;
-    result.textContent = '正在上传 ' + pendingFiles.length + ' 个文件...';
-    result.className = 'uploading';
-    try {{
-      const data = new FormData();
-      pendingFiles.forEach(function(f) {{ data.append('files', f); }});
-      const response = await fetch('/api/upload/{html.escape(session.token)}', {{ method: 'POST', body: data }});
-      let payload = {{}};
-      try {{ payload = await response.json(); }} catch (_) {{ payload = {{}}; }}
-      if (!response.ok) {{
-        throw new Error(payload.message || ('HTTP ' + response.status));
-      }}
-      result.className = 'result-success';
-      result.textContent = '上传完成\\n已接收：' + (payload.accepted || 0) + '\\n重复：' + (payload.duplicate || 0) + '\\n失败：' + (payload.failed || 0) + '\\n文件已交给桌面端处理。';
-      // Reset for next batch
-      pendingFiles = [];
-      inputFile.value = '';
-      inputGallery.value = '';
-      inputCamera.value = '';
-      renderFileList();
-    }} catch (err) {{
-      result.className = 'result-error';
-      result.textContent = '上传失败：' + err.message;
-      btnUpload.disabled = pendingFiles.length === 0;
-    }} finally {{
-      isUploading = false;
-      btnUpload.disabled = pendingFiles.length === 0;
-    }}
-  }});
-}})();
+    return;
+  }
+  const totalBytes = pendingFiles.reduce((sum, record) => sum + record.file.size, 0);
+  pendingTitle.textContent = "待上传 · " + count;
+  uploadSummary.textContent = "已选 " + count + " 个 · " + formatBytes(totalBytes);
+  btnUpload.textContent = count > 1 ? "上传 " + count + " 个" : "上传";
+  btnUpload.disabled = !canUpload();
+  if (hasPreviewBlocker()) {
+    selectionHint.textContent = pendingFiles.some((record) => record.previewState === "error")
+      ? "有 PDF 无法预览，请移除后重新选择；预览失败不会静默上传。"
+      : "正在生成 PDF 首页预览，完成内容确认后才可上传。";
+  } else {
+    selectionHint.textContent = "文件仍保留在手机本地；点击缩略图可查看完整内容。";
+  }
+}
+
+function makePreviewButton(record) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "file-preview";
+  button.setAttribute("aria-label", "预览 " + (record.file.name || "文件"));
+  if (record.kind === "图片" && record.imageUrl) {
+    const image = document.createElement("img");
+    image.src = record.imageUrl;
+    image.alt = "图片预览：" + (record.file.name || "文件");
+    button.appendChild(image);
+  } else if (record.kind === "PDF" && record.thumbnailUrl) {
+    const image = document.createElement("img");
+    image.className = "pdf-thumb";
+    image.src = record.thumbnailUrl;
+    image.alt = "PDF 第一页预览：" + (record.file.name || "文件");
+    button.appendChild(image);
+  } else if (record.previewState === "error") {
+    const label = document.createElement("span");
+    label.className = "file-preview-error";
+    label.textContent = "无法预览";
+    button.appendChild(label);
+  } else {
+    const label = document.createElement("span");
+    label.className = "file-preview-label";
+    label.textContent = record.previewState === "loading" ? "读取中…" : record.kind;
+    button.appendChild(label);
+  }
+  button.disabled = record.previewState === "loading";
+  if (record.kind !== "OFD") {
+    button.addEventListener("click", () => openPreview(record));
+  } else {
+    button.disabled = true;
+    button.setAttribute("aria-label", "OFD 暂不支持手机预览");
+  }
+  return button;
+}
+
+function renderFileList() {
+  fileListItems.replaceChildren();
+  pendingFiles.forEach((record, index) => {
+    const card = document.createElement("article");
+    card.className = "file-card";
+    card.dataset.fileKind = record.kind;
+    const preview = makePreviewButton(record);
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
+    const detail = document.createElement("div");
+    detail.className = "file-detail";
+    let detailText = record.kind + " · " + formatBytes(record.file.size);
+    if (record.kind === "PDF") {
+      detailText = record.pageCount ? "PDF · " + record.pageCount + " 页 · " + formatBytes(record.file.size) : "PDF · 正在读取页数 · " + formatBytes(record.file.size);
+    }
+    detail.textContent = detailText;
+    const name = document.createElement("div");
+    name.className = "file-name";
+    const fullName = record.file.name || "未命名文件";
+    name.textContent = displayFileName(fullName);
+    name.title = fullName;
+    name.setAttribute("aria-label", fullName);
+    meta.appendChild(detail);
+    meta.appendChild(name);
+    if (record.kind === "OFD") {
+      const note = document.createElement("div");
+      note.className = "file-note";
+      note.textContent = "手机浏览器暂不支持内容预览，上传后可在 Invoice Hub 中查看。";
+      meta.appendChild(note);
+    } else if (record.kind === "PDF" && record.previewState === "error") {
+      const note = document.createElement("div");
+      note.className = "file-note";
+      note.textContent = "无法预览，但仍可移除/重新选择。";
+      meta.appendChild(note);
+    }
+    if (record.kind === "PDF" && record.previewState === "ready") {
+      const review = document.createElement("button");
+      review.type = "button";
+      review.className = "review-button";
+      review.textContent = "查看 PDF";
+      review.addEventListener("click", () => openPreview(record));
+      meta.appendChild(review);
+    } else if (record.kind === "图片") {
+      const review = document.createElement("button");
+      review.type = "button";
+      review.className = "review-button";
+      review.textContent = "查看图片";
+      review.addEventListener("click", () => openPreview(record));
+      meta.appendChild(review);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-button";
+    remove.textContent = "移除";
+    remove.setAttribute("aria-label", "移除 " + (record.file.name || "文件"));
+    remove.addEventListener("click", () => removeFile(index));
+    card.appendChild(preview);
+    card.appendChild(meta);
+    card.appendChild(remove);
+    fileListItems.appendChild(card);
+  });
+  updateSelectionUi();
+}
+
+async function getPdfJs() {
+  if (!pdfJsPromise) {
+    pdfJsPromise = import(PDFJS_BASE + "pdf.min.mjs").then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_BASE + "pdf.worker.min.mjs";
+      return pdfjs;
+    });
+  }
+  return pdfJsPromise;
+}
+
+async function preparePdf(record) {
+  record.previewState = "loading";
+  renderFileList();
+  try {
+    const pdfjs = await getPdfJs();
+    const loadingTask = pdfjs.getDocument({
+      data: await record.file.arrayBuffer(),
+      cMapUrl: PDFJS_CMAP_URL,
+      cMapPacked: true,
+      standardFontDataUrl: PDFJS_FONT_URL,
+    });
+    record.pdfDocument = await loadingTask.promise;
+    record.pageCount = record.pdfDocument.numPages;
+    const page = await record.pdfDocument.getPage(1);
+    const viewport = page.getViewport({ scale: 1 });
+    const scale = Math.min(1, 86 / Math.max(viewport.width, 1));
+    const canvas = document.createElement("canvas");
+    const thumbViewport = page.getViewport({ scale });
+    canvas.width = Math.ceil(thumbViewport.width);
+    canvas.height = Math.ceil(thumbViewport.height);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: thumbViewport }).promise;
+    record.thumbnailUrl = canvas.toDataURL("image/jpeg", .82);
+    record.previewState = "ready";
+  } catch (error) {
+    record.previewState = "error";
+    record.previewError = error instanceof Error ? error.message : "PDF preview failed";
+  }
+  renderFileList();
+}
+
+function collectFiles(input) {
+  const incoming = Array.from(input.files || []);
+  const newRecords = [];
+  incoming.forEach((file) => {
+    const key = fileKey(file);
+    if (!pendingFiles.some((record) => record.key === key)) {
+      const kind = fileKind(file);
+      const record = {
+        file,
+        key,
+        kind,
+        previewState: kind === "PDF" ? "loading" : "ready",
+        pageCount: kind === "图片" ? 1 : null,
+        imageUrl: kind === "图片" ? URL.createObjectURL(file) : "",
+        thumbnailUrl: "",
+        pdfDocument: null,
+        previewError: "",
+      };
+      pendingFiles.push(record);
+      newRecords.push(record);
+    }
+  });
+  if (newRecords.length === 0) return;
+  setState("SELECTED");
+  clearResult();
+  renderFileList();
+  newRecords.filter((record) => record.kind === "PDF").forEach(preparePdf);
+}
+
+function removeFile(index) {
+  const record = pendingFiles[index];
+  if (!record) return;
+  if (activePreview === record) closePreview();
+  destroyRecord(record);
+  pendingFiles.splice(index, 1);
+  if (pendingFiles.length === 0) setState("EMPTY");
+  renderFileList();
+}
+
+function resetSelection() {
+  pendingFiles.forEach(destroyRecord);
+  pendingFiles = [];
+  inputFile.value = "";
+  inputGallery.value = "";
+  inputCamera.value = "";
+  setState("EMPTY");
+  renderFileList();
+  clearResult();
+}
+
+function showPreviewError() {
+  previewLoading.hidden = true;
+  previewCanvas.hidden = true;
+  previewImage.hidden = true;
+  previewError.hidden = false;
+  previewPageIndicator.textContent = "—";
+}
+
+async function renderPdfPage(record, pageNumber) {
+  if (!record.pdfDocument || activePreview !== record) return;
+  const serial = ++renderSerial;
+  activePreviewPage = pageNumber;
+  previewLoading.hidden = false;
+  previewError.hidden = true;
+  previewCanvas.hidden = true;
+  previewImage.hidden = true;
+  previewPageIndicator.textContent = pageNumber + " / " + record.pageCount;
+  previewPrev.disabled = pageNumber <= 1;
+  previewNext.disabled = pageNumber >= record.pageCount;
+  try {
+    const page = await record.pdfDocument.getPage(pageNumber);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const maxWidth = Math.max(280, previewStage.clientWidth - 24);
+    const scale = Math.min(2.5, maxWidth / Math.max(baseViewport.width, 1));
+    const viewport = page.getViewport({ scale });
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    previewCanvas.width = Math.ceil(viewport.width * dpr);
+    previewCanvas.height = Math.ceil(viewport.height * dpr);
+    previewCanvas.style.width = Math.ceil(viewport.width) + "px";
+    previewCanvas.style.height = Math.ceil(viewport.height) + "px";
+    const context = previewCanvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+    await page.render({
+      canvasContext: context,
+      viewport,
+      transform: dpr === 1 ? null : [dpr, 0, 0, dpr, 0, 0],
+    }).promise;
+    if (serial !== renderSerial || activePreview !== record) return;
+    previewLoading.hidden = true;
+    previewCanvas.hidden = false;
+  } catch (_) {
+    if (serial !== renderSerial) return;
+    record.previewState = "error";
+    showPreviewError();
+    updateSelectionUi();
+  }
+}
+
+function openPreview(record) {
+  if (record.kind === "OFD") return;
+  activePreview = record;
+  activePreviewPage = 1;
+  setState("PREVIEWING");
+  previewModal.hidden = false;
+  document.body.classList.add("modal-open");
+  previewTitle.textContent = record.file.name || "文件预览";
+  previewTitle.title = record.file.name || "文件预览";
+  previewImage.hidden = true;
+  previewCanvas.hidden = true;
+  previewError.hidden = true;
+  previewLoading.hidden = false;
+  previewFooter.hidden = record.kind !== "PDF" || record.previewState !== "ready";
+  if (record.kind === "图片") {
+    previewLoading.hidden = true;
+    previewImage.src = record.imageUrl;
+    previewImage.alt = "图片预览：" + (record.file.name || "文件");
+    previewImage.hidden = false;
+    previewPageIndicator.textContent = "1 / 1";
+    previewPrev.disabled = true;
+    previewNext.disabled = true;
+  } else if (record.previewState === "ready") {
+    renderPdfPage(record, 1);
+  } else {
+    showPreviewError();
+  }
+}
+
+function closePreview() {
+  renderSerial++;
+  previewModal.hidden = true;
+  document.body.classList.remove("modal-open");
+  activePreview = null;
+  setState(pendingFiles.length ? "SELECTED" : "EMPTY");
+}
+
+function toggleWechatTip() {
+  const expanded = wechatTip.getAttribute("aria-expanded") === "true";
+  wechatTip.setAttribute("aria-expanded", String(!expanded));
+  wechatDetails.hidden = expanded;
+  wechatTip.classList.toggle("is-expanded", !expanded);
+}
+
+inputFile.addEventListener("change", () => collectFiles(inputFile));
+inputGallery.addEventListener("change", () => collectFiles(inputGallery));
+inputCamera.addEventListener("change", () => collectFiles(inputCamera));
+btnClear.addEventListener("click", resetSelection);
+wechatTip.addEventListener("click", toggleWechatTip);
+wechatTip.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleWechatTip(); }
+});
+previewBack.addEventListener("click", closePreview);
+previewPrev.addEventListener("click", () => {
+  if (activePreview && activePreview.kind === "PDF" && activePreviewPage > 1) renderPdfPage(activePreview, activePreviewPage - 1);
+});
+previewNext.addEventListener("click", () => {
+  if (activePreview && activePreview.kind === "PDF" && activePreviewPage < activePreview.pageCount) renderPdfPage(activePreview, activePreviewPage + 1);
+});
+window.addEventListener("resize", () => {
+  if (activePreview && activePreview.kind === "PDF" && !previewModal.hidden) renderPdfPage(activePreview, activePreviewPage);
+});
+
+btnUpload.addEventListener("click", async () => {
+  if (!canUpload()) {
+    if (hasPreviewBlocker()) setResult("result-error", "请先完成 PDF 预览检查；无法预览的 PDF 请移除后重新选择。");
+    return;
+  }
+  isUploading = true;
+  setState("UPLOADING");
+  updateSelectionUi();
+  setResult("uploading", "正在上传 " + pendingFiles.length + " 个文件…");
+  try {
+    const data = new FormData();
+    pendingFiles.forEach((record) => data.append("files", record.file, record.file.name));
+    const response = await fetch(UPLOAD_URL, { method: "POST", body: data });
+    let payload = {};
+    try { payload = await response.json(); } catch (_) { payload = {}; }
+    if (!response.ok) throw new Error(payload.message || ("HTTP " + response.status));
+    const failed = Number(payload.failed || 0);
+    const accepted = Number(payload.accepted || 0);
+    const duplicate = Number(payload.duplicate || 0);
+    setState(failed > 0 ? "PARTIAL" : "SUCCESS");
+    setResult(failed > 0 ? "result-error" : "result-success", failed > 0
+      ? "部分上传完成\\n已接收：" + accepted + "\\n重复：" + duplicate + "\\n失败：" + failed + "\\n请检查桌面端结果。"
+      : "上传完成\\n已接收：" + accepted + "\\n重复：" + duplicate + "\\n文件已交给桌面端处理。");
+    pendingFiles.forEach(destroyRecord);
+    pendingFiles = [];
+    inputFile.value = "";
+    inputGallery.value = "";
+    inputCamera.value = "";
+    renderFileList();
+  } catch (error) {
+    setState("FAILURE");
+    setResult("result-error", "上传失败：" + (error instanceof Error ? error.message : "网络错误"));
+  } finally {
+    isUploading = false;
+    updateSelectionUi();
+  }
+});
+
+if (/MicroMessenger/i.test(navigator.userAgent)) wechatTip.classList.add("is-visible");
+setState("EMPTY");
+updateSelectionUi();
 </script>
 </body>
 </html>"""
+    return (
+        page.replace("__HOST__", html.escape(str(session.host), quote=True))
+        .replace("__EXPIRY_HINT__", html.escape(expiry_hint, quote=True))
+        .replace("__TOKEN__", html.escape(str(session.token), quote=True))
+    )

@@ -42,6 +42,9 @@ _datas = [
     # GUI assets (logo, icons)
     (str(_root / "scripts" / "invoice_fetch" / "gui" / "assets"),
      "scripts/invoice_fetch/gui/assets"),
+    # Mobile upload PDF.js runtime and its offline font/CMap data.
+    (str(_root / "scripts" / "invoice_fetch" / "web_assets"),
+     "scripts/invoice_fetch/web_assets"),
     # Playwright Python driver (playwright.exe + node.exe, ~100 MB)
     (str(_pw_driver), "playwright/driver"),
 ]
@@ -62,6 +65,7 @@ _hiddenimports = [
     "keyring",
     "keyring.backends",
     "keyring.backends.Windows",
+    "scripts.invoice_fetch.windows_firewall",
     "qrcode",
     "qrcode.image.pil",
     "PIL",

@@ -413,6 +413,11 @@ class TestPyInstallerSpecIntegrity(unittest.TestCase):
         src = self._spec_path().read_text(encoding="utf-8")
         self.assertIn("invoice_fetch_desktop", src)
 
+    def test_spec_includes_local_mobile_pdfjs_assets(self):
+        src = self._spec_path().read_text(encoding="utf-8")
+        self.assertIn('"scripts" / "invoice_fetch" / "web_assets"', src)
+        self.assertIn('"scripts/invoice_fetch/web_assets"', src)
+
     def test_spec_excludes_runtime_and_private(self):
         """Spec must NOT bundle runtime/, config.json, private/, or tests/."""
         src = self._spec_path().read_text(encoding="utf-8")
@@ -455,6 +460,22 @@ class TestStartupProbeIsolated(unittest.TestCase):
             # Check that background scanner threads or mobile servers are not running
             self.assertFalse(hasattr(app, "mail_thread") or getattr(app, "mail_thread", None) is not None)
             self.assertFalse(hasattr(app, "server_thread") or getattr(app, "server_thread", None) is not None)
+
+    def test_startup_probe_has_no_invalid_qfont_point_size_warning(self):
+        """The source/dev desktop startup must never pass -1 to QFont.setPointSize."""
+        env = os.environ.copy()
+        env.pop("QT_QPA_PLATFORM", None)
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.invoice_fetch", "desktop", "--startup-probe"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        combined = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, combined)
+        self.assertNotIn("QFont::setPointSize: Point size <= 0", combined)
 
 
 
@@ -702,8 +723,20 @@ class TestReleaseReadinessFiles(unittest.TestCase):
 
     def test_third_party_notices_cover_packaging_and_qt(self):
         src = (PROJECT_ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
-        for token in ("PySide6", "Qt", "Playwright", "PyInstaller", "Inno Setup"):
+        for token in (
+            "PySide6",
+            "Qt",
+            "Playwright",
+            "PyInstaller",
+            "Inno Setup",
+            "PDF.js 4.10.38",
+            "scripts/invoice_fetch/web_assets/pdfjs/LICENSE",
+        ):
             self.assertIn(token, src)
+
+        pdfjs_license = PROJECT_ROOT / "scripts" / "invoice_fetch" / "web_assets" / "pdfjs" / "LICENSE"
+        self.assertTrue(pdfjs_license.exists())
+        self.assertIn("Apache License", pdfjs_license.read_text(encoding="utf-8"))
 
     def test_qt_license_files_exist(self):
         for rel in ("licenses/LGPL-3.0.txt", "licenses/GPL-3.0.txt"):

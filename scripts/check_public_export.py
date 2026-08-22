@@ -98,6 +98,7 @@ FORBIDDEN_SUFFIXES = {
 ALLOW_SUFFIX_UNDER = {
     "docs/images": {".png"},
     "scripts/invoice_fetch/gui/assets": {".png", ".ico", ".svg"},
+    "scripts/invoice_fetch/web_assets/pdfjs": {".mjs", ".bcmap", ".pfb", ".ttf"},
     "tests/fixtures/synthetic": {".pdf", ".png", ".jpg", ".jpeg", ".zip", ".xlsx"},
 }
 
