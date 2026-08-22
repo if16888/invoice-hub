@@ -2078,15 +2078,19 @@ def _import_local_directory(
     }
 
     def record_outcome(status: str, row_id: int | None) -> None:
+        if row_id is not None and int(row_id) in existing_invoice_ids:
+            rid = int(row_id)
+            if rid not in stats["review_invoice_ids"]:
+                stats["review_invoice_ids"].append(rid)
+            return
         key = status + "s" if status in ("duplicate", "conflict") else status
         stats[key] += 1
         if row_id is not None:
             rid = int(row_id)
-            if rid not in existing_invoice_ids:
-                if status in ("added", "conflict", "pending_manual") and rid not in stats["new_invoice_ids"]:
-                    stats["new_invoice_ids"].append(rid)
-                if rid not in stats["review_invoice_ids"]:
-                    stats["review_invoice_ids"].append(rid)
+            if status in ("added", "conflict", "pending_manual") and rid not in stats["new_invoice_ids"]:
+                stats["new_invoice_ids"].append(rid)
+            if rid not in stats["review_invoice_ids"]:
+                stats["review_invoice_ids"].append(rid)
     if not files:
         _log.warning("本地导入目录没有发现 PDF/OFD/ZIP: %s", mask_path(root))
         return stats
@@ -2173,8 +2177,6 @@ def _import_local_directory(
             _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
             stats["failed"] += 1
 
-    # The public count follows the same identity source as the dashboard CTA.
-    stats["added"] = len(stats["new_invoice_ids"])
     total_recorded = stats["added"] + stats["conflicts"] + stats["pending_manual"]
     _log.info("本地导入完成: 入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d)",
               total_recorded, stats["added"], stats["duplicates"], stats["conflicts"], stats["failed"])
@@ -4292,7 +4294,10 @@ def _scan_mailboxes_with_db(
     new_invoice_ids = tuple(scan_new_invoice_ids)
     review_invoice_ids = tuple(scan_review_invoice_ids)
     restored_invoice_ids = tuple(scan_restored_invoice_ids)
-    new_invoice_records = len(new_invoice_ids)
+    if new_invoice_ids:
+        new_invoice_records = len(new_invoice_ids)
+    if restored_invoice_ids:
+        restored_deleted = len(restored_invoice_ids)
     return {
         "scanned": scanned_headers,
         "scanned_headers": scanned_headers,
@@ -4302,7 +4307,7 @@ def _scan_mailboxes_with_db(
         "new_invoice_ids": new_invoice_ids,
         "review_invoice_ids": review_invoice_ids,
         "restored_invoice_ids": restored_invoice_ids,
-        "restored_deleted": len(restored_invoice_ids) if restored_invoice_ids else restored_deleted,
+        "restored_deleted": restored_deleted,
         "classified_invoice": classified_invoice,
         "downloaded": downloaded_emails,
         "downloaded_emails": downloaded_emails,

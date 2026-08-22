@@ -2433,6 +2433,95 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             page_width = max(0, w - (56 if w <= 1366 else 180) - 48)
         workspace_width = max(0, page_width - 48)
 
+        panel = getattr(self, "mobile_upload_panel", None)
+        controller = getattr(self, "mobile_upload_controller", None)
+        active_widgets = set()
+        if panel is not None:
+            active_widgets = {
+                getattr(panel, "active_page", None),
+                getattr(panel, "starting_page", None),
+            }
+        mobile_active = (
+            getattr(self, "_selected_import_source", "") == "mobile"
+            and (
+                panel.stack.currentWidget() in active_widgets
+                if panel is not None and hasattr(panel, "stack")
+                else False
+            )
+        ) or bool(getattr(controller, "is_starting", False))
+
+        if mobile_active:
+            source_width = 152 if w <= 1366 else (160 if w <= 1440 else 184)
+            recent_width = 250 if w <= 1366 else (260 if w <= 1440 else 300)
+            task_minimum = 760
+            minimum_workspace = task_minimum + source_width + recent_width + 24
+            if workspace_width < minimum_workspace:
+                self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+                self.imports_shell_layout.setStretch(0, 0)
+                self.imports_shell_layout.setStretch(1, 0)
+                self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_source_card.setMinimumWidth(0)
+                self.import_source_card.setMaximumWidth(16777215)
+                self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_task_stack.setMinimumWidth(0)
+                self.import_task_stack.setMaximumWidth(16777215)
+                if has_main_row:
+                    self.import_main_row_layout.setDirection(QBoxLayout.LeftToRight if w >= 900 else QBoxLayout.TopToBottom)
+                    self.import_main_row_layout.setStretch(0, 1)
+                    self.import_main_row_layout.setStretch(1, 0)
+                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_mail_recent_card.setMinimumWidth(0)
+                self.import_mail_recent_card.setMaximumWidth(16777215)
+                host_target = min(1440, workspace_width)
+                self.imports_workspace_host.setMinimumWidth(host_target)
+                task_target = min(900, workspace_width)
+                self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                self.import_task_stack.setMinimumWidth(task_target)
+                self.import_task_stack.setMaximumWidth(task_target or 16777215)
+                self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                self.imports_shell_layout.setAlignment(
+                    self.import_task_stack,
+                    Qt.AlignHCenter | Qt.AlignTop,
+                )
+                self.imports_workspace_host.updateGeometry()
+                self.import_task_stack.updateGeometry()
+                return
+
+            self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+            self.imports_shell_layout.setStretch(0, 0)
+            self.imports_shell_layout.setStretch(1, 1)
+            available_for_task = workspace_width - source_width - recent_width - 24
+            task_maximum = max(task_minimum, min(900, available_for_task))
+            host_target = min(
+                1440,
+                max(task_minimum + source_width + recent_width + 24, workspace_width),
+            )
+            self.imports_workspace_host.setMinimumWidth(host_target)
+
+            self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+            self.import_source_card.setMinimumWidth(source_width)
+            self.import_source_card.setMaximumWidth(source_width)
+            self.import_source_card.setFixedWidth(source_width)
+            self.import_source_card.body_layout.setDirection(QBoxLayout.TopToBottom)
+
+            if has_main_row:
+                self.import_main_row_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_main_row_layout.setStretch(0, 1)
+                self.import_main_row_layout.setStretch(1, 0)
+
+            self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            self.import_task_stack.setMinimumWidth(task_minimum)
+            self.import_task_stack.setMaximumWidth(task_maximum)
+            self.import_mobile_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+            self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self.import_mail_recent_card.setMinimumWidth(recent_width)
+            self.import_mail_recent_card.setMaximumWidth(recent_width)
+            self.import_mail_recent_card.setFixedWidth(recent_width)
+            self.imports_workspace_host.updateGeometry()
+            self.import_task_stack.updateGeometry()
+            return
+
         # 1. Wide Desktop (>= 1200px): 3 columns horizontal
         if w >= 1200:
             self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
