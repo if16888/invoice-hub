@@ -198,10 +198,6 @@ class MobileUploadServer:
             handler = self._make_handler()
             self._httpd = ThreadingHTTPServer((self.bind_host, self.port), handler)
             actual_port = int(self._httpd.server_address[1])
-            # Keep the public server object aligned with the session when the
-            # caller requested an ephemeral port (port=0).  UI actions such
-            # as the source-run firewall opt-in must use the actual listener
-            # port, never the pre-bind sentinel.
             self.port = actual_port
             base_url = f"http://{self.host}:{actual_port}"
             self.session = MobileUploadSession(
@@ -272,9 +268,7 @@ class MobileUploadServer:
             self._thread.join(timeout=2)
         self._thread = None
         if httpd is not None:
-            _log.info(
-                "[手机上传] server stop batch_id=<redacted>"
-            )
+            _log.info("[手机上传] server stop batch_id=<redacted>")
 
     def is_token_valid(self, token: str) -> bool:
         if not self.session or not self._httpd or token != self.session.token:
@@ -311,7 +305,6 @@ class MobileUploadServer:
             }
 
     def refresh_local_host_addresses(self) -> set[str]:
-        """Refresh the addresses owned by this machine for access classification."""
         addresses = _collect_local_host_addresses(
             (*self._configured_local_host_addresses, self.host)
         )
@@ -331,7 +324,6 @@ class MobileUploadServer:
         self.network_virtual = bool(is_virtual)
 
     def run_local_self_check(self, timeout: float = 1.5) -> bool:
-        """Check the selected public URL locally; never infer phone reachability."""
         session = self.session
         if session is None or self._httpd is None:
             self._local_self_check = "fail"
@@ -418,7 +410,6 @@ class MobileUploadServer:
         )
 
     def set_public_host(self, host: str) -> MobileUploadSession:
-        """Update the public URL host while keeping the running listener and token."""
         host = (host or "").strip()
         if not host:
             raise ValueError("host is required")
@@ -608,7 +599,7 @@ class MobileUploadServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):  # pragma: no cover - keep desktop logs quiet
+            def log_message(self, fmt, *args):
                 return
 
             def _begin_request(self):
@@ -768,7 +759,6 @@ def _host_priority(interface_name: str, host: str) -> int:
 
 
 def build_upload_host_options(raw_addresses: Iterable[tuple[str, str]]) -> list[UploadHostOption]:
-    """Build sorted selectable IPv4 hosts for the QR upload URL."""
     seen: set[str] = set()
     options: list[UploadHostOption] = []
     for interface_name, host in raw_addresses:
@@ -792,7 +782,6 @@ def build_upload_host_options(raw_addresses: Iterable[tuple[str, str]]) -> list[
 
 
 def log_upload_host_candidates(options: Iterable[UploadHostOption]) -> None:
-    """Write one safe diagnostic record per candidate considered for QR URLs."""
     for option in options:
         _log.info(
             "[手机上传] network candidate interface=%s host=%s virtual=%s priority=%s",
@@ -827,7 +816,6 @@ def enumerate_upload_hosts() -> list[UploadHostOption]:
 
 
 def _normalize_ipv4_address(value: object) -> str:
-    """Normalize IPv4 and IPv4-mapped IPv6 client addresses for comparisons."""
     try:
         address = ipaddress.ip_address(str(value or "").strip())
     except ValueError:
@@ -839,7 +827,6 @@ def _normalize_ipv4_address(value: object) -> str:
 
 
 def _collect_local_host_addresses(extra: Iterable[str] = ()) -> set[str]:
-    """Return loopback plus every usable IPv4 currently owned by this host."""
     addresses = {"127.0.0.1"}
     for value in extra:
         normalized = _normalize_ipv4_address(value)
@@ -852,8 +839,6 @@ def _collect_local_host_addresses(extra: Iterable[str] = ()) -> set[str]:
             if (normalized := _normalize_ipv4_address(option.host))
         )
     except Exception:
-        # Access classification must fail closed if adapter enumeration is
-        # temporarily unavailable; the selected host and loopback remain known.
         pass
     return addresses
 
@@ -936,11 +921,14 @@ def _parse_multipart_upload(body: bytes, content_type: str) -> list[UploadedFile
 
 
 def _upload_page(session: MobileUploadSession) -> str:
+    remaining_seconds = max(0, int((session.expires_at - datetime.now()).total_seconds()))
+    remaining_minutes = max(1, (remaining_seconds + 59) // 60)
+    expiry_hint = f"链接约 {remaining_minutes} 分钟后失效"
     page = """<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Invoice Hub</title>
   <style>
     :root { color-scheme: light; --blue:#2563eb; --blue-dark:#1d4ed8; --ink:#172033; --muted:#64748b; --line:#e2e8f0; --surface:#fff; --canvas:#f4f7fb; --danger:#b91c1c; --success:#166534; }
@@ -1040,7 +1028,7 @@ def _upload_page(session: MobileUploadSession) -> str:
   <header class="page-header">
     <h1>Invoice Hub</h1>
     <div class="host-line">上传到电脑 · <strong>__HOST__</strong></div>
-    <div class="session-meta"><span>批次 __BATCH_ID__</span><span>有效期至 __EXPIRES_AT__</span></div>
+    <div class="session-meta"><span>__EXPIRY_HINT__</span></div>
   </header>
 
   <div class="wechat-tip" id="wechatTip" role="button" tabindex="0" aria-expanded="false">
@@ -1088,6 +1076,7 @@ def _upload_page(session: MobileUploadSession) -> str:
     <summary>使用提示</summary>
     <ul>
       <li>PDF 会在手机本地读取页数并生成第一页预览，不会在点击上传前发送到电脑。</li>
+      <li>PDF 预览默认适应屏幕宽度，可使用浏览器/系统手势放大检查金额、号码和税号。</li>
       <li>OFD 手机浏览器暂不支持内容预览，上传后可在 Invoice Hub 中查看。</li>
       <li>如果发票在微信聊天中，请先保存到手机「文件/下载」，或在微信内点击「在浏览器打开」。</li>
       <li>手机和电脑需要在同一 Wi-Fi / 局域网；打不开时请检查 Windows 防火墙专用网络权限。</li>
@@ -1590,7 +1579,6 @@ updateSelectionUi();
 </html>"""
     return (
         page.replace("__HOST__", html.escape(str(session.host), quote=True))
-        .replace("__BATCH_ID__", html.escape(str(session.batch_id), quote=True))
-        .replace("__EXPIRES_AT__", html.escape(session.expires_at.strftime("%Y-%m-%d %H:%M:%S"), quote=True))
+        .replace("__EXPIRY_HINT__", html.escape(expiry_hint, quote=True))
         .replace("__TOKEN__", html.escape(str(session.token), quote=True))
     )
