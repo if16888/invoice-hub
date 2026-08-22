@@ -554,16 +554,51 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
         self.assertIn("advfirewall", captured["parameters"])
         self.assertEqual(captured["closed"], 0x1234)
 
-    def test_build_development_firewall_replace_powershell_script(self):
+    def test_build_development_firewall_replace_powershell_script_has_mutation_time_ownership_guard(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "python.exe"
             script = firewall.build_development_firewall_replace_powershell_script(executable, 43210)
             self.assertIn("$ErrorActionPreference = 'Stop'", script)
-            self.assertIn(firewall.DEV_FIREWALL_RULE_NAME, script)
-            self.assertIn("Remove-NetFirewallRule", script)
-            self.assertIn("New-NetFirewallRule", script)
-            self.assertIn("43210", script)
-            self.assertIn(str(executable.resolve(strict=False)), script)
+            self.assertIn(f"'{firewall.DEV_FIREWALL_RULE_NAME}'", script)
+            self.assertNotIn(f"'{firewall.FIREWALL_RULE_NAME}'", script)
+            self.assertNotIn(f'"{firewall.FIREWALL_RULE_NAME}"', script)
+
+            # Ownership pre-validation before any mutation
+            self.assertIn("@('python.exe', 'pythonw.exe', 'pytest.exe')", script)
+            self.assertIn("Get-NetFirewallApplicationFilter", script)
+            self.assertIn("[System.IO.Path]::GetFileName($prog).ToLowerInvariant()", script)
+            self.assertIn("throw", script)
+
+            # Check that validation loop comes strictly BEFORE Remove-NetFirewallRule
+            validation_idx = script.index("foreach ($rule in $existing)")
+            throw_idx = script.index("throw")
+            remove_idx = script.index("Remove-NetFirewallRule")
+            add_idx = script.index("New-NetFirewallRule")
+            self.assertLess(validation_idx, throw_idx)
+            self.assertLess(throw_idx, remove_idx)
+            self.assertLess(remove_idx, add_idx)
+
+    def test_dev_request_allows_replace_for_old_pythonw_or_pytest_rules(self):
+        with tempfile.TemporaryDirectory() as td:
+            old_executable = Path(td) / "old" / "pytest.exe"
+            current_executable = Path(td) / "current" / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                side_effect=[
+                    [_dev_rule(str(old_executable), "40000")],
+                    [_dev_rule(str(current_executable), "43210")],
+                ],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
+                return_value=(True, ""),
+            ) as run_pwsh:
+                result = request_mobile_upload_dev_firewall_access(current_executable, 43210)
+        self.assertTrue(result.success)
+        self.assertEqual(run_pwsh.call_count, 1)
+        self.assertEqual(result.status.local_port, "43210")
 
     def test_run_elevated_powershell_script_passes_encoded_command_and_hides_console(self):
         captured = {}

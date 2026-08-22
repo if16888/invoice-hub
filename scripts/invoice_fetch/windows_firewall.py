@@ -417,14 +417,32 @@ def build_development_firewall_replace_powershell_script(
     executable_path: Path | str,
     port: int,
 ) -> str:
-    """Return an in-memory PowerShell script that atomically replaces dev rules in a single elevation."""
+    """Return an in-memory PowerShell script that safely validates and replaces dev rules in a single elevation."""
     executable_text = str(Path(executable_path).resolve(strict=False))
     escaped_exe = executable_text.replace("'", "''")
     escaped_rule = DEV_FIREWALL_RULE_NAME.replace("'", "''")
+    allowed_list_literal = "@('python.exe', 'pythonw.exe', 'pytest.exe')"
     return (
         "$ErrorActionPreference = 'Stop'\n"
         f"$ruleName = '{escaped_rule}'\n"
+        f"$allowedPrograms = {allowed_list_literal}\n"
         "$existing = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)\n"
+        "foreach ($rule in $existing) {\n"
+        "    $apps = @(Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $rule -ErrorAction Stop)\n"
+        "    if ($apps.Count -eq 0) {\n"
+        "        throw 'Development firewall rule has no associated application filter.'\n"
+        "    }\n"
+        "    foreach ($app in $apps) {\n"
+        "        $prog = [string]$app.Program\n"
+        "        if ([string]::IsNullOrWhiteSpace($prog)) {\n"
+        "            throw 'Development firewall rule has empty program path.'\n"
+        "        }\n"
+        "        $baseName = [System.IO.Path]::GetFileName($prog).ToLowerInvariant()\n"
+        "        if (-not ($allowedPrograms -contains $baseName)) {\n"
+        "            throw \"Development firewall rule contains an unrelated program: $prog\"\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
         "if ($existing.Count -gt 0) {\n"
         "    Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop\n"
         "}\n"
@@ -509,7 +527,6 @@ def _run_elevated_powershell_script(script: str) -> tuple[bool, str]:
 
 
 def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
-    return _run_elevated_netsh_args(build_firewall_add_rule_args(executable_path))
     return _run_elevated_netsh_args(build_firewall_add_rule_args(executable_path))
 
 
