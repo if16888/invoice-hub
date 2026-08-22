@@ -9,12 +9,12 @@ firewall mutation remains an explicit user action.
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
 import os
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -408,15 +408,28 @@ def build_development_firewall_delete_rule_args() -> list[str]:
     ]
 
 
-def build_development_firewall_replace_rule_script(
+def _encode_powershell_command(script: str) -> str:
+    """Encode a PowerShell script string as base64-encoded UTF-16LE for -EncodedCommand."""
+    return base64.b64encode(script.encode("utf-16le")).decode("ascii")
+
+
+def build_development_firewall_replace_powershell_script(
     executable_path: Path | str,
     port: int,
-) -> list[list[str]]:
-    """Return the ordered [delete_args, add_args] commands for single-elevation replacement."""
-    return [
-        build_development_firewall_delete_rule_args(),
-        build_development_firewall_add_rule_args(executable_path, port),
-    ]
+) -> str:
+    """Return an in-memory PowerShell script that atomically replaces dev rules in a single elevation."""
+    executable_text = str(Path(executable_path).resolve(strict=False))
+    escaped_exe = executable_text.replace("'", "''")
+    escaped_rule = DEV_FIREWALL_RULE_NAME.replace("'", "''")
+    return (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$ruleName = '{escaped_rule}'\n"
+        "$existing = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)\n"
+        "if ($existing.Count -gt 0) {\n"
+        "    Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop\n"
+        "}\n"
+        f"New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Profile Private -Protocol TCP -LocalPort {int(port)} -Program '{escaped_exe}' -ErrorAction Stop | Out-Null\n"
+    )
 
 
 class _ShellExecuteInfo(ctypes.Structure):
@@ -439,7 +452,7 @@ class _ShellExecuteInfo(ctypes.Structure):
     ]
 
 
-def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
+def _run_elevated_process(file_path: str, args: list[str]) -> tuple[bool, str]:
     if not is_windows():
         return False, "non-Windows platform"
     try:
@@ -450,7 +463,7 @@ def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
         info.cbSize = ctypes.sizeof(info)
         info.fMask = _SEE_MASK_NOCLOSEPROCESS
         info.lpVerb = "runas"
-        info.lpFile = _NETSH
+        info.lpFile = file_path
         info.lpParameters = arguments
         info.nShow = _SW_HIDE
         if not shell32.ShellExecuteExW(ctypes.byref(info)):
@@ -472,41 +485,31 @@ def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
             return False, "firewall command exit status unavailable"
         kernel32.CloseHandle(info.hProcess)
         if int(exit_code.value) != 0:
-            return False, f"netsh exited with code {int(exit_code.value)}"
+            return False, f"{Path(file_path).name} exited with code {int(exit_code.value)}"
         return True, ""
     except (AttributeError, OSError, TypeError, ValueError) as exc:
         return False, f"{type(exc).__name__}"
 
 
-def _run_elevated_netsh_commands(commands: list[list[str]]) -> tuple[bool, str]:
-    if not is_windows():
-        return False, "non-Windows platform"
-    if not commands:
-        return True, ""
-    if len(commands) == 1:
-        return _run_elevated_netsh_args(commands[0])
-    script_content = "\n".join(subprocess.list2cmdline(cmd) for cmd in commands) + "\n"
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="ascii",
-            errors="replace",
-            suffix=".netsh",
-            delete=False,
-        ) as f:
-            f.write(script_content)
-            temp_path = f.name
-        return _run_elevated_netsh_args(["-f", temp_path])
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
+def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
+    return _run_elevated_process(_NETSH, args)
+
+
+def _run_elevated_powershell_script(script: str) -> tuple[bool, str]:
+    encoded_cmd = _encode_powershell_command(script)
+    args = [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encoded_cmd,
+    ]
+    return _run_elevated_process(_POWERSHELL, args)
 
 
 def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
+    return _run_elevated_netsh_args(build_firewall_add_rule_args(executable_path))
     return _run_elevated_netsh_args(build_firewall_add_rule_args(executable_path))
 
 
@@ -744,6 +747,31 @@ def clear_mobile_upload_dev_firewall_access(
     )
 
 
+def _is_exact_development_contract(
+    rule: dict[str, Any],
+    executable: Path,
+    port: int,
+) -> bool:
+    """Verify that a rule strictly matches the development firewall contract."""
+    if _as_text(rule.get("DisplayName")) != DEV_FIREWALL_RULE_NAME:
+        return False
+    if _programs(rule.get("Program")) != {_path_key(executable)}:
+        return False
+    if _is_enabled(rule.get("Enabled")) is not True:
+        return False
+    if _as_text(rule.get("Direction")).casefold() != "inbound":
+        return False
+    if _as_text(rule.get("Action")).casefold() != "allow":
+        return False
+    if _as_text(rule.get("Profile")).casefold() != "private":
+        return False
+    if _as_text(rule.get("Protocol")).casefold() != "tcp":
+        return False
+    if _as_text(rule.get("LocalPort")) != str(port):
+        return False
+    return True
+
+
 def request_mobile_upload_dev_firewall_access(
     executable_path: Path | str | None,
     port: int,
@@ -800,35 +828,23 @@ def request_mobile_upload_dev_firewall_access(
             uac_requested=False,
         )
 
-    executable_key = _path_key(executable)
-    current_rules = [
-        rule for rule in marker_rules
-        if _programs(rule.get("Program")) == {executable_key}
-    ]
+    # Exact current rule check: if exactly 1 matching contract rule already exists, no-op
+    if len(marker_rules) == 1 and _is_exact_development_contract(marker_rules[0], executable, validated_port):
+        return FirewallActionResult(
+            True,
+            _status_from_rule(
+                marker_rules[0],
+                executable,
+                development_mode=True,
+                rule_name=DEV_FIREWALL_RULE_NAME,
+            ),
+            f"本次开发测试已允许 · Private · TCP {validated_port}",
+            uac_requested=False,
+        )
 
-    # If the active rule already exists for the exact requested port, no-op
-    for rule in current_rules:
-        if _is_valid_development_rule(rule, executable):
-            if _as_text(rule.get("LocalPort")) == str(validated_port):
-                return FirewallActionResult(
-                    True,
-                    _status_from_rule(
-                        rule,
-                        executable,
-                        development_mode=True,
-                        rule_name=DEV_FIREWALL_RULE_NAME,
-                    ),
-                    f"本次开发测试已允许 · Private · TCP {validated_port}",
-                    uac_requested=False,
-                )
-
-    # Single elevation: if old dev rule exists, replace (delete + add). Otherwise, add.
-    if marker_rules:
-        commands = build_development_firewall_replace_rule_script(executable, validated_port)
-        success, reason = _run_elevated_netsh_commands(commands)
-    else:
-        add_args = build_development_firewall_add_rule_args(executable, validated_port)
-        success, reason = _run_elevated_netsh_args(add_args)
+    # Single-elevation in-memory replacement via PowerShell -EncodedCommand
+    script = build_development_firewall_replace_powershell_script(executable, validated_port)
+    success, reason = _run_elevated_powershell_script(script)
 
     if not success:
         return FirewallActionResult(
@@ -838,18 +854,58 @@ def request_mobile_upload_dev_firewall_access(
             uac_requested=True,
         )
 
-    status = get_mobile_upload_dev_firewall_status(executable, validated_port)
-    if (
-        status.state is not FirewallState.RULE_PRESENT
-        or status.reason
-        or status.local_port != str(validated_port)
-    ):
+    # Strict postcondition verification: exactly 1 matching contract rule must remain
+    try:
+        rules_after = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         return FirewallActionResult(
             False,
-            status,
-            "开发测试规则配置后未通过当前端口复核。",
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason=f"post-elevation query failed: {type(exc).__name__}",
+            ),
+            "开发测试规则配置后无法复核状态。",
             uac_requested=True,
         )
+
+    marker_rules_after = [
+        rule for rule in rules_after
+        if _as_text(rule.get("DisplayName")) == DEV_FIREWALL_RULE_NAME
+    ]
+
+    if len(marker_rules_after) != 1:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason=f"expected exactly 1 development rule after configuration, found {len(marker_rules_after)}",
+            ),
+            f"开发测试规则配置后规则数量不符（预期 1，实际 {len(marker_rules_after)}）。",
+            uac_requested=True,
+        )
+
+    target_rule = marker_rules_after[0]
+    if not _is_exact_development_contract(target_rule, executable, validated_port):
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason="development rule does not satisfy strict contract requirements",
+            ),
+            "开发测试规则配置后未通过严格规则契约复核。",
+            uac_requested=True,
+        )
+
+    status = _status_from_rule(
+        target_rule,
+        executable,
+        state=FirewallState.RULE_PRESENT,
+        development_mode=True,
+        rule_name=DEV_FIREWALL_RULE_NAME,
+    )
     return FirewallActionResult(
         True,
         status,
@@ -901,7 +957,7 @@ __all__ = [
     "build_firewall_add_rule_args",
     "build_development_firewall_add_rule_args",
     "build_development_firewall_delete_rule_args",
-    "build_development_firewall_replace_rule_script",
+    "build_development_firewall_replace_powershell_script",
     "clear_mobile_upload_dev_firewall_access",
     "get_current_development_executable",
     "get_current_invoicehub_executable",

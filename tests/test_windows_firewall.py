@@ -1,3 +1,4 @@
+import base64
 import ctypes
 import tempfile
 import unittest
@@ -248,7 +249,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
         self.assertEqual(status.reason, "stale development executable")
         self.assertEqual(status.local_port, "40000")
 
-    def test_dev_request_replaces_stale_rule_with_single_elevation(self):
+    def test_dev_request_replaces_stale_rule_with_single_elevation_powershell(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "python.exe"
             with patch(
@@ -261,7 +262,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
                     [_dev_rule(str(executable), "43210")],
                 ],
             ), patch(
-                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
                 return_value=(True, ""),
             ) as run_elevated:
                 result = request_mobile_upload_dev_firewall_access(executable, 43210)
@@ -269,7 +270,13 @@ class WindowsFirewallContractTests(unittest.TestCase):
         self.assertTrue(result.uac_requested)
         self.assertEqual(result.status.local_port, "43210")
         self.assertEqual(run_elevated.call_count, 1)
-        self.assertEqual(run_elevated.call_args.args[0][0], "-f")
+        script_arg = run_elevated.call_args.args[0]
+        self.assertIn("$ErrorActionPreference = 'Stop'", script_arg)
+        self.assertIn("Remove-NetFirewallRule", script_arg)
+        self.assertIn("New-NetFirewallRule", script_arg)
+        self.assertIn("43210", script_arg)
+        self.assertIn("Private", script_arg)
+        self.assertIn("TCP", script_arg)
 
     def test_dev_request_replace_failure_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as td:
@@ -284,12 +291,53 @@ class WindowsFirewallContractTests(unittest.TestCase):
                     [_dev_rule(str(executable), "40000")],  # delete failed, still stale
                 ],
             ), patch(
-                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
                 return_value=(True, ""),
             ) as run_elevated:
                 result = request_mobile_upload_dev_firewall_access(executable, 43210)
         self.assertFalse(result.success)
-        self.assertIn("未通过当前端口复核", result.message)
+        self.assertIn("未通过严格规则契约复核", result.message)
+
+    def test_dev_request_elevation_failure_fails_immediately(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                return_value=[_dev_rule(str(executable), "40000")],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
+                return_value=(False, "powershell.exe exited with code 1"),
+            ) as run_elevated:
+                result = request_mobile_upload_dev_firewall_access(executable, 43210)
+        self.assertFalse(result.success)
+        self.assertTrue(result.uac_requested)
+        self.assertIn("开发测试规则配置未完成", result.message)
+
+    def test_dev_request_fails_if_stale_and_current_rules_coexist(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                side_effect=[
+                    [_dev_rule(str(executable), "40000")],
+                    [
+                        _dev_rule(str(executable), "40000"),
+                        _dev_rule(str(executable), "43210"),
+                    ],
+                ],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
+                return_value=(True, ""),
+            ):
+                result = request_mobile_upload_dev_firewall_access(executable, 43210)
+        self.assertFalse(result.success)
+        self.assertIn("规则数量不符", result.message)
 
     def test_dev_request_refuses_marker_rule_with_unrelated_program(self):
         with tempfile.TemporaryDirectory() as td:
@@ -301,7 +349,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
                 "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
                 return_value=[_dev_rule("C:/OtherApp/other.exe", "40000")],
             ), patch(
-                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
             ) as run_elevated:
                 result = request_mobile_upload_dev_firewall_access(executable, 43210)
         self.assertFalse(result.success)
@@ -319,7 +367,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
                 "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
                 return_value=[_dev_rule(str(executable), "43210")],
             ), patch(
-                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
             ) as run_elevated:
                 result = request_mobile_upload_dev_firewall_access(executable, 43210)
         self.assertTrue(result.success)
@@ -327,7 +375,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
         self.assertIn("TCP 43210", result.message)
         run_elevated.assert_not_called()
 
-    def test_dev_request_without_existing_rule_uses_one_explicit_elevated_add(self):
+    def test_dev_request_without_existing_rule_uses_one_explicit_elevated_powershell(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "python.exe"
             with patch(
@@ -337,14 +385,14 @@ class WindowsFirewallContractTests(unittest.TestCase):
                 "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
                 side_effect=[[], [_dev_rule(str(executable), "43210")]],
             ), patch(
-                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
                 return_value=(True, ""),
             ) as run_elevated:
                 result = request_mobile_upload_dev_firewall_access(executable, 43210)
         self.assertTrue(result.success)
         self.assertTrue(result.uac_requested)
         self.assertEqual(run_elevated.call_count, 1)
-        self.assertIn("localport=43210", run_elevated.call_args.args[0])
+        self.assertIn("43210", run_elevated.call_args.args[0])
 
     def test_explicit_dev_cleanup_can_remove_marker_owned_old_python_rule(self):
         with tempfile.TemporaryDirectory() as td:
@@ -506,31 +554,96 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
         self.assertIn("advfirewall", captured["parameters"])
         self.assertEqual(captured["closed"], 0x1234)
 
-    def test_build_development_firewall_replace_rule_script(self):
+    def test_build_development_firewall_replace_powershell_script(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "python.exe"
-            script = firewall.build_development_firewall_replace_rule_script(executable, 43210)
-            self.assertEqual(len(script), 2)
-            self.assertEqual(script[0], firewall.build_development_firewall_delete_rule_args())
-            self.assertEqual(script[1], firewall.build_development_firewall_add_rule_args(executable, 43210))
+            script = firewall.build_development_firewall_replace_powershell_script(executable, 43210)
+            self.assertIn("$ErrorActionPreference = 'Stop'", script)
+            self.assertIn(firewall.DEV_FIREWALL_RULE_NAME, script)
+            self.assertIn("Remove-NetFirewallRule", script)
+            self.assertIn("New-NetFirewallRule", script)
+            self.assertIn("43210", script)
+            self.assertIn(str(executable.resolve(strict=False)), script)
 
-    def test_run_elevated_netsh_commands_delegates_single_or_writes_script(self):
+    def test_run_elevated_powershell_script_passes_encoded_command_and_hides_console(self):
+        captured = {}
+
+        class FakeShell32:
+            def ShellExecuteExW(self, info_pointer):
+                info = ctypes.cast(
+                    info_pointer,
+                    ctypes.POINTER(firewall._ShellExecuteInfo),
+                ).contents
+                captured["verb"] = info.lpVerb
+                captured["file"] = info.lpFile
+                captured["parameters"] = info.lpParameters
+                captured["mask"] = info.fMask
+                captured["show"] = info.nShow
+                info.hProcess = 0x5678
+                return 1
+
+        class FakeKernel32:
+            def WaitForSingleObject(self, handle, timeout):
+                captured["handle"] = handle
+                captured["timeout"] = timeout
+                return firewall._WAIT_OBJECT_0
+
+            def GetExitCodeProcess(self, handle, exit_code_pointer):
+                ctypes.cast(
+                    exit_code_pointer,
+                    ctypes.POINTER(ctypes.c_ulong),
+                ).contents.value = 0
+                return 1
+
+            def CloseHandle(self, handle):
+                captured["closed"] = handle
+                return 1
+
+        windll = SimpleNamespace(shell32=FakeShell32(), kernel32=FakeKernel32())
         with patch.object(firewall, "is_windows", return_value=True), patch.object(
-            firewall, "_run_elevated_netsh_args", return_value=(True, "")
-        ) as run_args:
-            # Single command -> direct args delegation
-            cmd1 = ["advfirewall", "firewall", "delete"]
-            success, reason = firewall._run_elevated_netsh_commands([cmd1])
-            self.assertTrue(success)
-            self.assertEqual(run_args.call_count, 1)
-            self.assertEqual(run_args.call_args.args[0], cmd1)
+            firewall.ctypes,
+            "windll",
+            windll,
+        ):
+            script = "Write-Host 'test'"
+            success, reason = firewall._run_elevated_powershell_script(script)
 
-            # Multiple commands -> script delegation with -f
-            cmd2 = ["advfirewall", "firewall", "add"]
-            success, reason = firewall._run_elevated_netsh_commands([cmd1, cmd2])
-            self.assertTrue(success)
-            self.assertEqual(run_args.call_count, 2)
-            self.assertEqual(run_args.call_args.args[0][0], "-f")
+        self.assertTrue(success)
+        self.assertEqual(reason, "")
+        self.assertEqual(captured["verb"], "runas")
+        self.assertEqual(captured["file"], firewall._POWERSHELL)
+        self.assertEqual(captured["show"], firewall._SW_HIDE)
+        self.assertTrue(captured["mask"] & firewall._SEE_MASK_NOCLOSEPROCESS)
+        self.assertIn("-EncodedCommand", captured["parameters"])
+        self.assertEqual(captured["closed"], 0x5678)
+
+        # Verify decoded parameter matches UTF-16LE
+        parts = captured["parameters"].split()
+        idx = parts.index("-EncodedCommand")
+        b64_str = parts[idx + 1]
+        decoded = base64.b64decode(b64_str.encode("ascii")).decode("utf-16le")
+        self.assertEqual(decoded, script)
+
+    def test_dev_replace_uses_no_tempfile_or_netsh_f(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                side_effect=[
+                    [_dev_rule(str(executable), "40000")],
+                    [_dev_rule(str(executable), "43210")],
+                ],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_powershell_script",
+                return_value=(True, ""),
+            ) as run_pwsh:
+                result = request_mobile_upload_dev_firewall_access(executable, 43210)
+        self.assertTrue(result.success)
+        self.assertEqual(run_pwsh.call_count, 1)
+        self.assertFalse(hasattr(firewall, "tempfile"))
 
 
 if __name__ == "__main__":
