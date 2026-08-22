@@ -402,7 +402,7 @@ class _ShellExecuteInfo(ctypes.Structure):
         ("hInstApp", ctypes.c_void_p),
         ("lpIDList", ctypes.c_void_p),
         ("lpClass", ctypes.c_wchar_p),
-        ("hkeyClass", ctypes.c_void_p),
+        ("hkeyClass", ctypes.c_wchar_p),
         ("dwHotKey", ctypes.c_ulong),
         ("hIcon", ctypes.c_void_p),
         ("hProcess", ctypes.c_void_p),
