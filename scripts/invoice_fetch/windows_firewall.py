@@ -536,7 +536,7 @@ def get_mobile_upload_dev_firewall_status(
         return _status_from_rule(
             stale,
             executable,
-            FirewallState.RULE_PRESENT,
+            FirewallState.UNKNOWN,
             development_mode=True,
             reason="stale development executable",
             rule_name=DEV_FIREWALL_RULE_NAME,
