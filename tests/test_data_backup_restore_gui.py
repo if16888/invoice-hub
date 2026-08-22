@@ -124,7 +124,7 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
                 self.assertTrue(window._data_operation_gate.try_acquire("邮箱扫描"))
                 with patch.object(QMessageBox, "critical", return_value=QMessageBox.Ok):
                     window._scan_email_error("synthetic failure")
-                self.assertEqual(gate.busy_reason(), "")
+                self.assertEqual(window._data_operation_gate.busy_reason(), "")
             finally:
                 window.close()
 
