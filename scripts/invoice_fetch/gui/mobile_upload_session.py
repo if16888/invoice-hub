@@ -462,7 +462,7 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_firewall_hint.setWordWrap(True)
         self.btn_firewall_authorize = make_button("允许手机访问", variant="secondary")
         self.btn_firewall_authorize.clicked.connect(self._request_firewall_access)
-        self.btn_dev_firewall = make_button("允许本次开发测试", variant="secondary")
+        self.btn_dev_firewall = make_button("允许本次访问", variant="secondary")
         self.btn_dev_firewall.clicked.connect(self._request_dev_firewall_access)
         self.btn_dev_firewall_cleanup = make_button("清理开发测试授权", variant="secondary")
         self.btn_dev_firewall_cleanup.clicked.connect(self._request_dev_firewall_cleanup)
@@ -475,7 +475,6 @@ class MobileUploadSessionPanel(QFrame):
         firewall_layout.addWidget(self.lbl_firewall_hint)
         firewall_layout.addWidget(self.btn_firewall_authorize, 0, Qt.AlignLeft)
         firewall_layout.addWidget(self.btn_dev_firewall, 0, Qt.AlignLeft)
-        firewall_layout.addWidget(self.btn_dev_firewall_cleanup, 0, Qt.AlignLeft)
         self.lbl_stats = self._responsive_label("成功 0 · 重复 0 · 失败 0 · 入库 0")
         form.addRow("当前网络", self.lbl_network_interface)
         form.addRow("本机访问", self.lbl_local_self_check)
@@ -510,6 +509,7 @@ class MobileUploadSessionPanel(QFrame):
         tech_form.addRow("虚拟接口", self.lbl_tech_virtual)
         tech_form.addRow("本机检查原始状态", self.lbl_tech_local_self_check)
         tech_form.addRow("防火墙原始状态", self.lbl_tech_firewall)
+        tech_form.addRow("清理授权", self.btn_dev_firewall_cleanup)
         self._active_tech_details.setVisible(False)
         details_layout.addWidget(self._active_tech_toggle, 0, Qt.AlignLeft)
         details_layout.addWidget(self._active_tech_details)
@@ -654,7 +654,7 @@ class MobileUploadSessionPanel(QFrame):
             hint = "允许后仅对当前正式程序开放 Private 网络 TCP 入站访问。"
             button_visible = True
         elif state == "supported" and development_mode:
-            summary = "开发运行模式"
+            summary = "本次访问尚未允许"
             hint = "不会创建持久 Any-Port 规则；开发测试授权只针对当前 Python 和当前端口。"
             button_visible = False
         elif state == "non_windows":
@@ -688,25 +688,30 @@ class MobileUploadSessionPanel(QFrame):
 
         if development_mode and state == "rule_present":
             if current_rule:
-                summary = f"本次开发测试已允许 · TCP {local_port}"
-                hint = "仅当前 Python、Private 网络和当前端口生效。停止服务不会自动修改防火墙。"
+                summary = "本次访问已允许"
+                hint = f"仅当前 Python、Private 网络和当前端口（TCP {local_port}）生效。停止服务不会自动修改防火墙。"
             else:
-                summary = f"检测到旧开发测试授权{f' · TCP {local_port}' if local_port else ''}"
-                hint = "旧随机端口不等于当前会话授权。请先显式清理，再允许当前端口。"
+                summary = "本次访问尚未允许"
+                hint = f"检测到上次开发测试端口（TCP {local_port}）。点击“允许本次访问”将自动更新为当前端口。"
             if hasattr(self, "lbl_firewall_state"):
                 self.lbl_firewall_state.setText(summary)
                 self.lbl_firewall_hint.setText(hint)
             self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}")
         elif development_mode and state == "rule_disabled":
             if hasattr(self, "lbl_firewall_state"):
-                self.lbl_firewall_state.setText("开发测试授权已禁用")
-                self.lbl_firewall_hint.setText("请显式清理后，再允许当前手机上传端口。")
-            self.lbl_idle_firewall.setText("Windows 防火墙：开发测试授权已禁用")
+                self.lbl_firewall_state.setText("本次访问尚未允许")
+                self.lbl_firewall_hint.setText("开发测试规则处于禁用状态。点击“允许本次访问”将重新启用并更新为当前端口。")
+            self.lbl_idle_firewall.setText("Windows 防火墙：本次访问尚未允许")
+        elif development_mode and state == "rule_missing":
+            if hasattr(self, "lbl_firewall_state"):
+                self.lbl_firewall_state.setText("本次访问尚未允许")
+                self.lbl_firewall_hint.setText("未授权。点击“允许本次访问”以开放当前端口的局域网入站。")
+            self.lbl_idle_firewall.setText("Windows 防火墙：本次访问尚未允许")
         elif development_mode and state == "unknown":
             if hasattr(self, "lbl_firewall_state"):
-                self.lbl_firewall_state.setText("开发测试授权状态异常")
-                self.lbl_firewall_hint.setText(data.get("reason") or "请检查或显式清理开发测试授权。")
-            self.lbl_idle_firewall.setText("Windows 防火墙：开发测试授权状态异常")
+                self.lbl_firewall_state.setText("本次访问尚未允许")
+                self.lbl_firewall_hint.setText(data.get("reason") or "无法确认开发测试授权状态。")
+            self.lbl_idle_firewall.setText("Windows 防火墙：本次访问尚未允许")
         self.btn_idle_dev_firewall_cleanup.setVisible(development_mode and rule_present)
         self._update_dev_firewall_buttons()
 
@@ -739,13 +744,12 @@ class MobileUploadSessionPanel(QFrame):
         server_ready = self.controller.server is not None and self.controller.session is not None
         current_port = str(self.controller.session.port) if self.controller.session is not None else ""
         current_rule = dev_state == "rule_present" and local_port and local_port == current_port
-        stale_or_cleanup_needed = dev_state in {"rule_present", "rule_disabled", "unknown"} and not current_rule
 
         visible = development_mode and server_ready
         self.btn_dev_firewall.setVisible(visible)
-        self.btn_dev_firewall.setEnabled(visible and not current_rule and not stale_or_cleanup_needed)
+        self.btn_dev_firewall.setEnabled(visible and not current_rule)
         self.btn_dev_firewall.setText(
-            "本次开发测试已允许" if current_rule else "允许本次开发测试"
+            "本次访问已允许" if current_rule else "允许本次访问"
         )
         cleanup_visible = development_mode and dev_state in {"rule_present", "rule_disabled", "unknown"}
         self.btn_dev_firewall_cleanup.setVisible(cleanup_visible)
@@ -776,18 +780,24 @@ class MobileUploadSessionPanel(QFrame):
     def _request_dev_firewall_access(self):
         if self.controller.server is None or self.controller.session is None:
             return
+        dev_status = getattr(self, "_dev_firewall_status", None)
+        dev_data = dev_status.as_dict() if hasattr(dev_status, "as_dict") else dict(dev_status or {})
+        local_port = str(dev_data.get("local_port") or "").strip()
+        current_port = str(self.controller.session.port)
+        stale_note = f"（并将替换上次开发测试的端口 TCP {local_port}）" if local_port and local_port != current_port else ""
+
         answer = QMessageBox.question(
             self,
-            "允许本次开发测试",
-            f"将请求 Windows 管理员授权，仅允许当前开发解释器访问本次上传端口 "
-            f"{self.controller.session.port}。停止服务不会自动修改防火墙；如需删除，请使用“清理开发测试授权”。是否继续？",
+            "允许本次访问",
+            f"将请求 Windows 管理员授权，仅允许当前开发解释器访问本次手机上传端口 "
+            f"TCP {current_port}{stale_note}。\n停止服务不会自动修改防火墙。是否继续？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if answer != QMessageBox.Yes:
             return
         self.btn_dev_firewall.setEnabled(False)
-        self.lbl_firewall_hint.setText("正在请求本次开发测试授权…")
+        self.lbl_firewall_hint.setText("正在请求本次访问授权…")
         self.controller.request_dev_firewall_access()
 
     def _request_dev_firewall_cleanup(self):

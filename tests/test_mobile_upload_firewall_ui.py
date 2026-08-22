@@ -320,7 +320,7 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             panel._set_firewall_status(
                 FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
             )
-            self.assertEqual(panel.lbl_firewall_state.text(), "开发运行模式")
+            self.assertEqual(panel.lbl_firewall_state.text(), "本次访问尚未允许")
             self.assertTrue(panel.btn_firewall_authorize.isHidden())
 
     def test_dev_firewall_button_requires_running_server_and_current_port(self):
@@ -345,9 +345,9 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             )
             self.assertFalse(panel.btn_dev_firewall.isHidden())
             self.assertTrue(panel.btn_dev_firewall.isEnabled())
-            self.assertEqual(panel.btn_dev_firewall.text(), "允许本次开发测试")
+            self.assertEqual(panel.btn_dev_firewall.text(), "允许本次访问")
 
-    def test_stale_dev_rule_requires_explicit_cleanup(self):
+    def test_stale_dev_rule_allows_direct_allow_action(self):
         with tempfile.TemporaryDirectory() as td:
             controller, panel = self.make_panel(td)
             controller.server = SimpleNamespace(port=43210)
@@ -364,9 +364,10 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                     reason="stale development session port",
                 )
             )
-            self.assertFalse(panel.btn_dev_firewall.isEnabled())
+            self.assertTrue(panel.btn_dev_firewall.isEnabled())
+            self.assertEqual(panel.btn_dev_firewall.text(), "允许本次访问")
             self.assertFalse(panel.btn_dev_firewall_cleanup.isHidden())
-            self.assertIn("旧开发测试授权", panel.lbl_firewall_state.text())
+            self.assertEqual(panel.lbl_firewall_state.text(), "本次访问尚未允许")
 
     def test_current_dev_rule_is_not_equated_with_packaged_rule(self):
         with tempfile.TemporaryDirectory() as td:
@@ -384,9 +385,9 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                     local_port="43210",
                 )
             )
-            self.assertEqual(panel.btn_dev_firewall.text(), "本次开发测试已允许")
+            self.assertEqual(panel.btn_dev_firewall.text(), "本次访问已允许")
             self.assertFalse(panel.btn_dev_firewall.isEnabled())
-            self.assertIn("TCP 43210", panel.lbl_firewall_state.text())
+            self.assertEqual(panel.lbl_firewall_state.text(), "本次访问已允许")
             self.assertTrue(panel.btn_firewall_authorize.isHidden())
 
 

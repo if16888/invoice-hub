@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -407,6 +408,17 @@ def build_development_firewall_delete_rule_args() -> list[str]:
     ]
 
 
+def build_development_firewall_replace_rule_script(
+    executable_path: Path | str,
+    port: int,
+) -> list[list[str]]:
+    """Return the ordered [delete_args, add_args] commands for single-elevation replacement."""
+    return [
+        build_development_firewall_delete_rule_args(),
+        build_development_firewall_add_rule_args(executable_path, port),
+    ]
+
+
 class _ShellExecuteInfo(ctypes.Structure):
     _fields_ = [
         ("cbSize", ctypes.c_ulong),
@@ -464,6 +476,34 @@ def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
         return True, ""
     except (AttributeError, OSError, TypeError, ValueError) as exc:
         return False, f"{type(exc).__name__}"
+
+
+def _run_elevated_netsh_commands(commands: list[list[str]]) -> tuple[bool, str]:
+    if not is_windows():
+        return False, "non-Windows platform"
+    if not commands:
+        return True, ""
+    if len(commands) == 1:
+        return _run_elevated_netsh_args(commands[0])
+    script_content = "\n".join(subprocess.list2cmdline(cmd) for cmd in commands) + "\n"
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="ascii",
+            errors="replace",
+            suffix=".netsh",
+            delete=False,
+        ) as f:
+            f.write(script_content)
+            temp_path = f.name
+        return _run_elevated_netsh_args(["-f", temp_path])
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
@@ -708,7 +748,7 @@ def request_mobile_upload_dev_firewall_access(
     executable_path: Path | str | None,
     port: int,
 ) -> FirewallActionResult:
-    """Explicitly create a Private/TCP rule for the current dev port only."""
+    """Explicitly create or replace a Private/TCP rule for the current dev port."""
     if not is_windows():
         return FirewallActionResult(
             False,
@@ -728,44 +768,73 @@ def request_mobile_upload_dev_firewall_access(
             "仅允许对当前开发解释器和当前手机上传端口授权。",
         )
 
-    existing = get_mobile_upload_dev_firewall_status(executable, validated_port)
-    if existing.state is FirewallState.RULE_PRESENT:
-        if not existing.reason and existing.local_port == str(validated_port):
-            return FirewallActionResult(
-                True,
-                existing,
-                f"本次开发测试已允许 · Private · TCP {validated_port}",
-                uac_requested=False,
-            )
+    try:
+        rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         return FirewallActionResult(
             False,
-            existing,
-            "检测到旧开发测试授权，请先显式清理后再允许当前端口。",
-            uac_requested=False,
-        )
-    if existing.state is FirewallState.RULE_DISABLED:
-        return FirewallActionResult(
-            False,
-            existing,
-            "检测到已禁用的开发测试授权，请先显式清理后再允许当前端口。",
-            uac_requested=False,
-        )
-    if existing.state is FirewallState.UNKNOWN:
-        return FirewallActionResult(
-            False,
-            existing,
-            "无法安全确认现有开发测试授权，请先检查或显式清理。",
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason=f"development firewall query unavailable: {type(exc).__name__}",
+            ),
+            f"无法安全确认现有开发测试授权：{type(exc).__name__}",
             uac_requested=False,
         )
 
-    success, reason = _run_elevated_netsh_args(
-        build_development_firewall_add_rule_args(executable, validated_port)
-    )
+    marker_rules = [
+        rule for rule in rules
+        if _as_text(rule.get("DisplayName")) == DEV_FIREWALL_RULE_NAME
+    ]
+
+    # Safety: ensure existing dev rules belong to supported development interpreters
+    if marker_rules and not all(_is_owned_development_rule(rule) for rule in marker_rules):
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason="marker rule contains an unrelated program",
+            ),
+            "发现同名但无法确认由 Invoice Hub 开发测试创建的规则，未执行修改。",
+            uac_requested=False,
+        )
+
+    executable_key = _path_key(executable)
+    current_rules = [
+        rule for rule in marker_rules
+        if _programs(rule.get("Program")) == {executable_key}
+    ]
+
+    # If the active rule already exists for the exact requested port, no-op
+    for rule in current_rules:
+        if _is_valid_development_rule(rule, executable):
+            if _as_text(rule.get("LocalPort")) == str(validated_port):
+                return FirewallActionResult(
+                    True,
+                    _status_from_rule(
+                        rule,
+                        executable,
+                        development_mode=True,
+                        rule_name=DEV_FIREWALL_RULE_NAME,
+                    ),
+                    f"本次开发测试已允许 · Private · TCP {validated_port}",
+                    uac_requested=False,
+                )
+
+    # Single elevation: if old dev rule exists, replace (delete + add). Otherwise, add.
+    if marker_rules:
+        commands = build_development_firewall_replace_rule_script(executable, validated_port)
+        success, reason = _run_elevated_netsh_commands(commands)
+    else:
+        add_args = build_development_firewall_add_rule_args(executable, validated_port)
+        success, reason = _run_elevated_netsh_args(add_args)
+
     if not success:
         return FirewallActionResult(
             False,
             _development_status(FirewallState.RULE_MISSING, executable, reason=reason),
-            f"开发测试规则未创建：{reason or 'UAC 未完成'}",
+            f"开发测试规则配置未完成：{reason or 'UAC 未完成'}",
             uac_requested=True,
         )
 
@@ -778,7 +847,7 @@ def request_mobile_upload_dev_firewall_access(
         return FirewallActionResult(
             False,
             status,
-            "开发测试规则创建后未通过当前端口复核。",
+            "开发测试规则配置后未通过当前端口复核。",
             uac_requested=True,
         )
     return FirewallActionResult(
@@ -832,6 +901,7 @@ __all__ = [
     "build_firewall_add_rule_args",
     "build_development_firewall_add_rule_args",
     "build_development_firewall_delete_rule_args",
+    "build_development_firewall_replace_rule_script",
     "clear_mobile_upload_dev_firewall_access",
     "get_current_development_executable",
     "get_current_invoicehub_executable",
