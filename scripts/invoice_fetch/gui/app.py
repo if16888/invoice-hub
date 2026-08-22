@@ -2450,39 +2450,37 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
         # Min-content rules for side-by-side placement of Task Card and Recent Run Card:
-        # - Task card min comfortable width >= 780
+        # - When mobile is active, mobile card needs comfortable width >= 900
+        # - For other tasks (mail, local, idle mobile), task card min width >= 780
         # - Recent run card min width >= 300
         # - Gap between cards >= 20
-        # Total min width required >= 1100
-        task_min_comfortable_width = 780
-        recent_min_comfortable_width = 300
+        recent_min = 300
         gap = 20
-        min_side_by_side_workspace_width = (
-            task_min_comfortable_width + recent_min_comfortable_width + gap
-        )
+        if current_source == "mobile" and mobile_active:
+            task_min = 900
+        else:
+            task_min = 780
 
-        # Rule C: Vertical stacking must be used when:
-        # 1) mobile_active
-        # 2) local_file source
-        # 3) mobile source
-        # 4) Medium width where available workspace width < 1100
-        # Rule D: Only when workspace width is large enough and source is mail may they be side-by-side.
-        force_vertical_stack = (
-            mobile_active
-            or current_source in ("local", "mobile")
-            or workspace_width < min_side_by_side_workspace_width
-        )
+        min_side_by_side_workspace_width = task_min + recent_min + gap
+
+        # Pure min-content based decision:
+        # If workspace_width < min_side_by_side_workspace_width, vertically stack.
+        # Otherwise, when ample space is available, allow Task + Recent side-by-side.
+        force_vertical_stack = workspace_width < min_side_by_side_workspace_width
 
         if not force_vertical_stack and has_main_row:
-            # Wide desktop (source=mail with ample width): Side-by-side
+            # Wide desktop (ample width for side-by-side):
             self.import_main_row_layout.setDirection(QBoxLayout.LeftToRight)
             self.import_main_row_layout.setStretch(0, 1)
             self.import_main_row_layout.setStretch(1, 0)
             self.import_main_row_layout.setAlignment(Qt.AlignTop)
 
-            self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            self.import_task_stack.setMinimumWidth(task_min_comfortable_width)
-            self.import_task_stack.setMaximumWidth(900)
+            if current_source == "local":
+                self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            else:
+                self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            self.import_task_stack.setMinimumWidth(task_min)
+            self.import_task_stack.setMaximumWidth(16777215 if current_source == "mobile" else 900)
 
             recent_width = 320 if workspace_width <= 1250 else 340
             self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)

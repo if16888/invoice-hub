@@ -11,12 +11,26 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QBoxLayout, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.workbench_settings import (
+    sync_workbench_settings,
+    workbench_settings,
+)
 
 
 class ImportCenterGeometryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        s = workbench_settings()
+        s.remove("nav_collapsed_manual")
+        sync_workbench_settings(s)
+
+    def tearDown(self):
+        s = workbench_settings()
+        s.remove("nav_collapsed_manual")
+        sync_workbench_settings(s)
 
     def make_window(self, td):
         window = InvoiceReviewApp(Path(td) / "invoices.db")
@@ -70,9 +84,11 @@ class ImportCenterGeometryTests(unittest.TestCase):
             try:
                 window._switch_main_page("imports")
                 window.resize(1276, 875)
+                window._nav_collapsed_manual = False
+                window._apply_workbench_metrics(1276, 875)
                 self.app.processEvents()
 
-                # 1. Source = mobile at 1276x875 with expanded sidebar
+                # 1. Source = mobile at 1276x875 with expanded sidebar (mobile active)
                 window._select_import_source("mobile")
                 panel = window.mobile_upload_panel
                 session = SimpleNamespace(
@@ -105,6 +121,57 @@ class ImportCenterGeometryTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     window.import_mail_recent_card.y(),
                     window.import_task_stack.y() + window.import_task_stack.height() - 10,
+                )
+            finally:
+                window.close()
+
+    def test_imports_workspace_layout_wide_desktop_1920x1080(self):
+        """Verify 1920x1080 wide desktop layout allows side-by-side for mobile and local tasks."""
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._switch_main_page("imports")
+                window.resize(1920, 1080)
+                window._nav_collapsed_manual = False
+                window._apply_workbench_metrics(1920, 1080)
+                self.app.processEvents()
+
+                # 1. Source = mobile at 1920x1080 with expanded sidebar (mobile active)
+                window._select_import_source("mobile")
+                panel = window.mobile_upload_panel
+                session = SimpleNamespace(
+                    upload_url="http://192.168.1.100:8080/u/test_token_12345678",
+                    host="192.168.1.100",
+                    port=8080,
+                )
+                with patch.object(panel.controller, "qr_png", return_value=b"fake_qr_png"):
+                    panel.controller.started.emit(session)
+                window._apply_import_workspace_layout(1920)
+                self.app.processEvents()
+
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertGreaterEqual(window.import_task_stack.width(), 900)
+                self.assertGreaterEqual(window.import_mail_recent_card.width(), 300)
+                # Side-by-side: recent card x is to the right of task stack
+                self.assertGreaterEqual(
+                    window.import_mail_recent_card.x(),
+                    window.import_task_stack.x() + window.import_task_stack.width() - 1,
+                )
+
+                # 2. Source = local at 1920x1080 with expanded sidebar
+                window._select_import_source("local")
+                window._apply_import_workspace_layout(1920)
+                self.app.processEvents()
+
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertGreaterEqual(window.import_task_stack.width(), 780)
+                self.assertLess(window.import_local_task_card.height(), 300)
+                self.assertGreaterEqual(window.import_mail_recent_card.width(), 300)
+                self.assertGreaterEqual(
+                    window.import_mail_recent_card.x(),
+                    window.import_task_stack.x() + window.import_task_stack.width() - 1,
                 )
             finally:
                 window.close()
