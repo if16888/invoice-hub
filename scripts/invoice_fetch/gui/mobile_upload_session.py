@@ -8,8 +8,8 @@ from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, QThread, QTime
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QFormLayout, QFrame, QHBoxLayout,
-    QLabel, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QLabel, QMessageBox, QPushButton, QSizePolicy, QStackedWidget,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..config import RUNTIME_DIR
@@ -34,6 +34,15 @@ class _MobileUploadStartWorker(QObject):
     def run(self):
         try:
             from ..mobile_upload import MobileUploadServer, enumerate_upload_hosts, log_upload_host_candidates
+            from ..windows_firewall import (
+                clear_mobile_upload_dev_firewall_access,
+                get_current_development_executable,
+            )
+            development_executable = get_current_development_executable()
+            if development_executable is not None:
+                cleanup = clear_mobile_upload_dev_firewall_access(development_executable)
+                if not cleanup.success:
+                    raise RuntimeError(cleanup.message or "无法安全清理开发测试防火墙规则")
             options = enumerate_upload_hosts()
             log_upload_host_candidates(options)
             selected_option = next((option for option in options if option.host == self.host), None)
@@ -63,6 +72,7 @@ class MobileUploadSessionController(QObject):
     upload_received = Signal(dict)
     firewall_status_changed = Signal(object)
     firewall_action_finished = Signal(object)
+    dev_firewall_action_finished = Signal(object)
     failed = Signal(str)
     stopped = Signal()
 
@@ -82,6 +92,9 @@ class MobileUploadSessionController(QObject):
         self._start_thread = None
         self._start_worker = None
         self.firewall_status = None
+        self._dev_firewall_rule_active = False
+        self._dev_firewall_port = None
+        self._dev_firewall_cleanup_warning = ""
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_status)
@@ -148,6 +161,9 @@ class MobileUploadSessionController(QObject):
         self.session = session
         self.host_options = list(options)
         self._last_total = 0
+        self._dev_firewall_rule_active = False
+        self._dev_firewall_port = None
+        self._dev_firewall_cleanup_warning = ""
         self.refresh_firewall_status()
         self.timer.start()
         self.started.emit(session)
@@ -233,6 +249,8 @@ class MobileUploadSessionController(QObject):
         status = dict(self.server.status())
         if self.firewall_status is not None:
             status["firewall"] = self.firewall_status.as_dict()
+        status["dev_firewall_active"] = self._dev_firewall_rule_active
+        status["dev_firewall_port"] = self._dev_firewall_port
         self.stats_changed.emit(status)
         total = sum(int(status.get(k, 0) or 0) for k in ("accepted", "duplicate", "failed", "imported"))
         if total and total != self._last_total:
@@ -242,6 +260,8 @@ class MobileUploadSessionController(QObject):
     def stop(self):
         if self._starting:
             self._stop_requested = True
+        if self._dev_firewall_rule_active:
+            self._clear_dev_firewall_access()
         if self.server is not None:
             self.server.stop()
         self.server = None
@@ -249,6 +269,44 @@ class MobileUploadSessionController(QObject):
         self.timer.stop()
         self._release_operation_gate()
         self.stopped.emit()
+
+    def request_dev_firewall_access(self):
+        """Explicitly allow only the current source-run upload port."""
+        if self.server is None or self.session is None:
+            return None
+        from ..windows_firewall import (
+            get_current_development_executable,
+            request_mobile_upload_dev_firewall_access,
+        )
+
+        current_port = int(self.session.port)
+        result = request_mobile_upload_dev_firewall_access(
+            get_current_development_executable(),
+            current_port,
+        )
+        if result.success:
+            self._dev_firewall_rule_active = True
+            self._dev_firewall_port = current_port
+        self.dev_firewall_action_finished.emit(result)
+        return result
+
+    def _clear_dev_firewall_access(self):
+        from ..windows_firewall import (
+            clear_mobile_upload_dev_firewall_access,
+            get_current_development_executable,
+        )
+
+        result = clear_mobile_upload_dev_firewall_access(
+            get_current_development_executable()
+        )
+        if result.success:
+            self._dev_firewall_rule_active = False
+            self._dev_firewall_port = None
+            self._dev_firewall_cleanup_warning = ""
+        else:
+            self._dev_firewall_cleanup_warning = result.message or "开发测试规则清理失败"
+        self.dev_firewall_action_finished.emit(result)
+        return result
 
     def shutdown(self, timeout_ms: int = 5000):
         """Release the owned service before the application closes its DB."""
@@ -277,7 +335,7 @@ class MobileUploadSessionPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("MobileUploadSessionPanel")
         self.controller = controller
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
@@ -296,6 +354,7 @@ class MobileUploadSessionPanel(QFrame):
         controller.stats_changed.connect(self._set_stats)
         controller.firewall_status_changed.connect(self._set_firewall_status)
         controller.firewall_action_finished.connect(self._firewall_action_finished)
+        controller.dev_firewall_action_finished.connect(self._dev_firewall_action_finished)
         controller.failed.connect(self._show_error)
         controller.stopped.connect(self.show_idle)
         controller.refresh_firewall_status()
@@ -334,28 +393,52 @@ class MobileUploadSessionPanel(QFrame):
 
     def _build_active(self):
         page = QWidget(self)
-        page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(10)
         header = QHBoxLayout(); title = QLabel("手机扫码上传"); title.setProperty("class", "SectionTitle")
         self.status_badge = make_badge("运行中", "success")
         header.addWidget(title); header.addWidget(self.status_badge); header.addStretch(1)
         body = QBoxLayout(QBoxLayout.LeftToRight); body.setSpacing(16)
         self._active_body_layout = body
+
+        qr_column = QVBoxLayout()
+        qr_column.setContentsMargins(0, 0, 0, 0)
+        qr_column.setSpacing(8)
         self.lbl_qr = QLabel(); self.lbl_qr.setObjectName("MobileUploadQr")
         self.lbl_qr.setAlignment(Qt.AlignCenter); self.lbl_qr.setFixedSize(240, 240)
+        self.btn_copy_url = make_button("复制链接", variant="secondary")
+        self.btn_copy_url.clicked.connect(self._copy_url)
+        qr_column.addWidget(self.lbl_qr, 0, Qt.AlignHCenter | Qt.AlignTop)
+        qr_column.addWidget(self.btn_copy_url, 0, Qt.AlignHCenter)
+        qr_column.addStretch(1)
+
         details = QWidget(); details.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        form = QFormLayout(details); form.setContentsMargins(0, 0, 0, 0)
+        details_layout = QVBoxLayout(details)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(8)
+        connection_title = QLabel("连接状态")
+        connection_title.setProperty("class", "SectionTitle")
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(7)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self._active_details = details
         self._active_details_form = form
         self.txt_url = MiddleElidedTextLabel("—", details)
         self.txt_url.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.txt_url.setToolTip("")
+        qr_column.insertWidget(2, self.txt_url)
         self.combo_upload_host = QComboBox(); self.combo_upload_host.currentIndexChanged.connect(self._host_changed)
         self.combo_upload_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.lbl_service_address = self._responsive_label("—")
+        # Retained as a compatibility/status field, but raw bind/public
+        # addresses belong only in the collapsed technical-details section.
+        self.lbl_service_address.setVisible(False)
         self.lbl_network_interface = self._responsive_label("—")
         self.lbl_service_state = self._responsive_label("运行中")
+        self.lbl_service_state.setVisible(False)
         self.lbl_local_self_check = self._responsive_label("检查中")
         self.lbl_lan_client_access = self._responsive_label("尚未确认")
         self.lbl_last_access = self._responsive_label("—")
@@ -363,11 +446,15 @@ class MobileUploadSessionPanel(QFrame):
             "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。"
         )
         self.lbl_lan_access_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_lan_access_hint.setWordWrap(True)
         self.lbl_firewall_state = self._responsive_label("检查中")
         self.lbl_firewall_hint = WrappedTextLabel("")
         self.lbl_firewall_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_firewall_hint.setWordWrap(True)
         self.btn_firewall_authorize = make_button("允许手机访问", variant="secondary")
         self.btn_firewall_authorize.clicked.connect(self._request_firewall_access)
+        self.btn_dev_firewall = make_button("允许本次开发测试", variant="secondary")
+        self.btn_dev_firewall.clicked.connect(self._request_dev_firewall_access)
         firewall_details = QWidget(details)
         firewall_layout = QVBoxLayout(firewall_details)
         firewall_layout.setContentsMargins(0, 0, 0, 0)
@@ -375,36 +462,57 @@ class MobileUploadSessionPanel(QFrame):
         firewall_layout.addWidget(self.lbl_firewall_state)
         firewall_layout.addWidget(self.lbl_firewall_hint)
         firewall_layout.addWidget(self.btn_firewall_authorize, 0, Qt.AlignLeft)
+        firewall_layout.addWidget(self.btn_dev_firewall, 0, Qt.AlignLeft)
         self.lbl_stats = self._responsive_label("成功 0 · 重复 0 · 失败 0 · 入库 0")
-        operation = self._responsive_label("手机扫描二维码，在浏览器中选择文件上传。")
-        form.addRow("操作", operation)
-        form.addRow("上传 URL", self.txt_url); form.addRow("切换网络", self.combo_upload_host)
         form.addRow("当前网络", self.lbl_network_interface)
-        form.addRow("服务状态", self.lbl_service_state)
-        form.addRow("服务地址", self.lbl_service_address)
         form.addRow("本机访问", self.lbl_local_self_check)
+        form.addRow("Windows 防火墙", firewall_details)
         form.addRow("局域网访问", self.lbl_lan_client_access)
         form.addRow("最近访问", self.lbl_last_access)
-        form.addRow("访问提示", self.lbl_lan_access_hint)
-        form.addRow("Windows 防火墙", firewall_details)
+        form.addRow("切换网络", self.combo_upload_host)
         form.addRow("本次上传", self.lbl_stats)
-        details_scroll = QScrollArea(page)
-        details_scroll.setObjectName("MobileUploadDetailsScroll")
-        details_scroll.setFrameShape(QFrame.NoFrame)
-        details_scroll.setWidgetResizable(True)
-        details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        details_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        details_scroll.setWidget(details)
-        self._active_details_scroll = details_scroll
-        body.addWidget(self.lbl_qr, 0, Qt.AlignTop)
-        body.addWidget(details_scroll, 1)
+        details_layout.addWidget(connection_title)
+        details_layout.addLayout(form)
+
+        self._active_tech_toggle = QToolButton(details)
+        self._active_tech_toggle.setText("技术详情  ＋")
+        self._active_tech_toggle.setCheckable(True)
+        self._active_tech_toggle.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._active_tech_toggle.setAutoRaise(True)
+        self._active_tech_toggle.toggled.connect(self._toggle_technical_details)
+        self._active_tech_details = QWidget(details)
+        tech_form = QFormLayout(self._active_tech_details)
+        tech_form.setContentsMargins(8, 0, 0, 0)
+        tech_form.setHorizontalSpacing(12)
+        tech_form.setVerticalSpacing(4)
+        self.lbl_tech_bind = self._responsive_label("—")
+        self.lbl_tech_public = self._responsive_label("—")
+        self.lbl_tech_priority = self._responsive_label("—")
+        self.lbl_tech_virtual = self._responsive_label("—")
+        self.lbl_tech_local_self_check = self._responsive_label("—")
+        self.lbl_tech_firewall = self._responsive_label("—")
+        tech_form.addRow("绑定地址", self.lbl_tech_bind)
+        tech_form.addRow("公开地址", self.lbl_tech_public)
+        tech_form.addRow("网络优先级", self.lbl_tech_priority)
+        tech_form.addRow("虚拟接口", self.lbl_tech_virtual)
+        tech_form.addRow("本机检查原始状态", self.lbl_tech_local_self_check)
+        tech_form.addRow("防火墙原始状态", self.lbl_tech_firewall)
+        self._active_tech_details.setVisible(False)
+        details_layout.addWidget(self._active_tech_toggle, 0, Qt.AlignLeft)
+        details_layout.addWidget(self._active_tech_details)
+        details_layout.addStretch(1)
+
+        self._active_details_scroll = None
+        body.addLayout(qr_column, 0)
+        body.addWidget(details, 1)
         footer = QBoxLayout(QBoxLayout.LeftToRight)
         self._active_footer_layout = footer
-        self.btn_copy_url = make_button("复制链接", variant="secondary"); self.btn_copy_url.clicked.connect(self._copy_url)
         self.btn_change_network = make_button("更换网络", variant="ghost"); self.btn_change_network.clicked.connect(self.combo_upload_host.showPopup)
         self.btn_stop = make_button("停止服务", variant="secondary"); self.btn_stop.setProperty("danger", True); self.btn_stop.clicked.connect(self.controller.stop)
-        footer.addWidget(self.btn_copy_url); footer.addWidget(self.btn_change_network); footer.addStretch(1); footer.addWidget(self.btn_stop)
-        layout.addLayout(header); layout.addLayout(body); layout.addLayout(footer)
+        footer.addWidget(self.lbl_lan_access_hint, 1)
+        footer.addWidget(self.btn_change_network, 0)
+        footer.addWidget(self.btn_stop, 0)
+        layout.addLayout(header); layout.addLayout(body, 1); layout.addLayout(footer)
         return page
 
     def _build_error(self):
@@ -424,11 +532,22 @@ class MobileUploadSessionPanel(QFrame):
 
     def show_idle(self):
         self.btn_start.setEnabled(True)
+        self.btn_dev_firewall.setVisible(False)
+        cleanup_warning = str(
+            getattr(self.controller, "_dev_firewall_cleanup_warning", "") or ""
+        ).strip()
+        if cleanup_warning:
+            self.lbl_idle_firewall.setText(
+                f"Windows 防火墙：开发测试规则清理失败。{cleanup_warning}"
+            )
+            self.lbl_idle_firewall.setToolTip(cleanup_warning)
         self.stack.setCurrentWidget(self.idle_page)
+        self._apply_import_workspace_hint()
 
     def show_starting(self):
         self.btn_start.setEnabled(False)
         self.stack.setCurrentWidget(self.starting_page)
+        self._apply_import_workspace_hint()
 
     def _show_active(self, session):
         self.combo_upload_host.blockSignals(True); self.combo_upload_host.clear()
@@ -441,6 +560,8 @@ class MobileUploadSessionPanel(QFrame):
         self.txt_url.set_value(session.upload_url)
         self.txt_url.setToolTip(session.upload_url)
         self.lbl_service_address.setText(f"bind 0.0.0.0:{session.port}\npublic {session.host}:{session.port}")
+        self.lbl_tech_bind.setText(f"0.0.0.0:{session.port}")
+        self.lbl_tech_public.setText(f"{session.host}:{session.port}")
         self.lbl_service_state.setText("运行中")
         try:
             pixmap = QPixmap(); pixmap.loadFromData(self.controller.qr_png(session.upload_url), "PNG")
@@ -449,6 +570,7 @@ class MobileUploadSessionPanel(QFrame):
             self.lbl_qr.setText("二维码不可用\n请复制上传链接")
         self.stack.setCurrentWidget(self.active_page)
         self._apply_responsive_layout()
+        self._apply_import_workspace_hint()
         if self.controller.server is not None:
             self._set_stats(self.controller.server.status())
 
@@ -472,14 +594,29 @@ class MobileUploadSessionPanel(QFrame):
         last_access = str(stats.get("last_lan_client_access_at") or "").strip()
         self.lbl_last_access.setText(last_access[11:19] if len(last_access) >= 19 else (last_access or "—"))
         self.lbl_service_state.setText("运行中" if stats.get("active", True) else "已停止")
+        self.lbl_tech_bind.setText(
+            f"{stats.get('bind_host') or '—'}:{self.controller.session.port}"
+            if self.controller.session is not None else "—"
+        )
+        self.lbl_tech_public.setText(
+            f"{host}:{self.controller.session.port}"
+            if host and self.controller.session is not None else "—"
+        )
+        self.lbl_tech_priority.setText(str(stats.get("network_priority", "—")))
+        self.lbl_tech_virtual.setText("是" if stats.get("network_virtual") else "否")
+        self.lbl_tech_local_self_check.setText(str(stats.get("local_self_check") or "pending"))
         firewall = stats.get("firewall")
         if isinstance(firewall, dict):
             self._set_firewall_status(firewall)
+            self.lbl_tech_firewall.setText(str(firewall.get("state") or "unknown"))
+        self._update_dev_firewall_button(bool(stats.get("dev_firewall_active")))
 
     def _show_error(self, message):
         self.btn_start.setEnabled(True)
+        self.btn_dev_firewall.setVisible(False)
         self.lbl_error.setText(message or "未找到可用网络，或端口启动失败。")
         self.stack.setCurrentWidget(self.error_page)
+        self._apply_import_workspace_hint()
 
     def _copy_url(self):
         QApplication.clipboard().setText(self.txt_url.text())
@@ -508,7 +645,7 @@ class MobileUploadSessionPanel(QFrame):
             button_visible = True
         elif state == "supported" and development_mode:
             summary = "开发运行模式"
-            hint = "当前为开发运行模式，请手动允许测试端口或使用正式构建验证。"
+            hint = "不会创建持久 Any-Port 规则；可选择只允许当前手机上传端口进行本次开发测试。"
             button_visible = False
         elif state == "non_windows":
             summary = "当前系统不支持"
@@ -527,6 +664,9 @@ class MobileUploadSessionPanel(QFrame):
             self.lbl_firewall_hint.setText(hint)
             self.btn_firewall_authorize.setVisible(button_visible)
             self.btn_firewall_authorize.setEnabled(button_visible)
+            self._update_dev_firewall_button(
+                bool(getattr(self.controller, "_dev_firewall_rule_active", False))
+            )
 
     def _firewall_action_finished(self, result):
         self._set_firewall_status(result.status)
@@ -536,6 +676,35 @@ class MobileUploadSessionPanel(QFrame):
                 if result.message
                 else "未授权。"
             )
+
+    def _dev_firewall_action_finished(self, result):
+        if not hasattr(self, "lbl_firewall_state"):
+            return
+        if result is None:
+            return
+        if result.success:
+            self.lbl_firewall_state.setText("本次开发测试已允许")
+            self.lbl_firewall_hint.setText(result.message or "仅当前端口的 Private TCP 入站规则已启用。")
+        else:
+            self.lbl_firewall_state.setText("开发测试未授权")
+            self.lbl_firewall_hint.setText(result.message or "未创建开发测试规则。")
+        self._update_dev_firewall_button(
+            bool(getattr(self.controller, "_dev_firewall_rule_active", False))
+        )
+
+    def _update_dev_firewall_button(self, rule_active: bool = False):
+        if not hasattr(self, "btn_dev_firewall"):
+            return
+        status = getattr(self, "_firewall_status", None)
+        data = status.as_dict() if hasattr(status, "as_dict") else dict(status or {})
+        development_mode = bool(data.get("development_mode"))
+        server_ready = self.controller.server is not None and self.controller.session is not None
+        visible = development_mode and server_ready
+        self.btn_dev_firewall.setVisible(visible)
+        self.btn_dev_firewall.setEnabled(visible and not rule_active)
+        self.btn_dev_firewall.setText(
+            "本次开发测试已允许" if rule_active else "允许本次开发测试"
+        )
 
     def _request_firewall_access(self):
         status = getattr(self, "_firewall_status", None)
@@ -559,6 +728,37 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_firewall_hint.setText("正在请求 Windows 授权…")
         self.controller.request_firewall_access()
 
+    def _request_dev_firewall_access(self):
+        if self.controller.server is None or self.controller.session is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "允许本次开发测试",
+            f"将请求 Windows 管理员授权，仅允许当前开发解释器访问本次上传端口 "
+            f"{self.controller.session.port}，规则在停止服务时删除。是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.btn_dev_firewall.setEnabled(False)
+        self.lbl_firewall_hint.setText("正在请求本次开发测试授权…")
+        self.controller.request_dev_firewall_access()
+
+    def _toggle_technical_details(self, expanded: bool):
+        self._active_tech_details.setVisible(expanded)
+        self._active_tech_toggle.setText("技术详情  －" if expanded else "技术详情  ＋")
+
+    def _apply_import_workspace_hint(self):
+        parent = self.window()
+        apply_layout = getattr(parent, "_apply_import_workspace_layout", None)
+        if callable(apply_layout):
+            apply_layout()
+            # The parent may receive a resize pass after the stacked page
+            # changes.  Reapply once after that pass so its normal metrics
+            # cannot overwrite the mobile-active allocation.
+            QTimer.singleShot(0, apply_layout)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_responsive_layout()
@@ -566,8 +766,11 @@ class MobileUploadSessionPanel(QFrame):
     def _apply_responsive_layout(self):
         if not hasattr(self, "_active_body_layout"):
             return
-        available_width = self.active_page.width() or self.width()
-        narrow = available_width < 700
+        # The parent Import Workspace owns the desktop allocation.  This
+        # local breakpoint is only for a genuinely narrow embedded surface;
+        # it must not be derived from a scroll area's width or its own size
+        # hint, which creates a vertical-layout feedback loop on desktop.
+        narrow = self.width() < 720
         self._active_body_layout.setDirection(
             QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight
         )
@@ -577,5 +780,4 @@ class MobileUploadSessionPanel(QFrame):
         self._active_details_form.setRowWrapPolicy(
             QFormLayout.WrapAllRows if narrow else QFormLayout.WrapLongRows
         )
-        self._active_details_scroll.setMinimumHeight(0)
         self.lbl_qr.setAlignment(Qt.AlignCenter)

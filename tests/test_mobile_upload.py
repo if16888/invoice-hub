@@ -336,6 +336,7 @@ class MobileUploadTests(unittest.TestCase):
             server = MobileUploadServer(runtime_dir=runtime_dir, host="127.0.0.1", port=0)
             session = server.start()
             self.addCleanup(server.stop)
+            self.assertEqual(server.port, session.port)
 
             with urllib.request.urlopen(session.upload_url, timeout=5) as resp:
                 page_html = resp.read().decode("utf-8")

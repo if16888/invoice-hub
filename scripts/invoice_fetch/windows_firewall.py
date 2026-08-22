@@ -21,6 +21,8 @@ from typing import Any, Iterable
 
 
 FIREWALL_RULE_NAME = "Invoice Hub Mobile Upload"
+DEV_FIREWALL_RULE_NAME = "Invoice Hub Mobile Upload Dev Session"
+_DEVELOPMENT_EXECUTABLE_NAMES = {"python.exe", "pythonw.exe", "pytest.exe"}
 _POWERSHELL = "powershell.exe"
 _NETSH = "netsh.exe"
 _POWERSHELL_TIMEOUT_SECONDS = 8
@@ -104,6 +106,22 @@ def get_current_invoicehub_executable() -> Path | None:
     return candidate.resolve(strict=False)
 
 
+def get_current_development_executable() -> Path | None:
+    """Return the interpreter that may receive a session-scoped dev rule.
+
+    Development runs are deliberately kept separate from the packaged
+    ``InvoiceHub.exe`` contract.  The returned path is only used with a
+    caller-supplied, single mobile-upload port and the rule is removed when
+    the session ends.
+    """
+    if not is_windows():
+        return None
+    candidate = Path(sys.executable)
+    if candidate.name.casefold() not in _DEVELOPMENT_EXECUTABLE_NAMES:
+        return None
+    return candidate.resolve(strict=False)
+
+
 def _path_key(value: object) -> str:
     text = os.path.expandvars(str(value or "")).strip().strip('"')
     if not text:
@@ -155,13 +173,13 @@ def _programs(value: object) -> set[str]:
     return {_path_key(item) for item in values if _path_key(item)}
 
 
-def _query_environment() -> dict[str, str]:
+def _query_environment(rule_name: str = FIREWALL_RULE_NAME) -> dict[str, str]:
     # Values travel through the process environment rather than being
     # interpolated into PowerShell source.  This keeps paths with spaces and
     # shell metacharacters data, not executable command text.
     return {
         **os.environ,
-        "INVOICE_HUB_FIREWALL_RULE_NAME": FIREWALL_RULE_NAME,
+        "INVOICE_HUB_FIREWALL_RULE_NAME": rule_name,
     }
 
 
@@ -186,7 +204,7 @@ if ($null -eq $result) { '[]' } else { @($result) | ConvertTo-Json -Compress }
 """
 
 
-def _query_firewall_rules() -> list[dict[str, Any]]:
+def _query_firewall_rules(rule_name: str = FIREWALL_RULE_NAME) -> list[dict[str, Any]]:
     completed = subprocess.run(
         [
             _POWERSHELL,
@@ -201,7 +219,7 @@ def _query_firewall_rules() -> list[dict[str, Any]]:
         text=True,
         check=False,
         timeout=_POWERSHELL_TIMEOUT_SECONDS,
-        env=_query_environment(),
+        env=_query_environment(rule_name),
     )
     if completed.returncode != 0:
         raise RuntimeError(f"PowerShell exited with code {completed.returncode}")
@@ -321,6 +339,61 @@ def build_firewall_add_rule_args(executable_path: Path | str) -> list[str]:
     ]
 
 
+def _development_executable_path(executable_path: Path | str | None) -> Path | None:
+    if executable_path is None:
+        return get_current_development_executable()
+    executable = Path(executable_path).resolve(strict=False)
+    if executable.name.casefold() not in _DEVELOPMENT_EXECUTABLE_NAMES:
+        return None
+    return executable
+
+
+def _validated_mobile_port(port: int | str | None) -> int | None:
+    try:
+        value = int(port)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return value if 1 <= value <= 65535 else None
+
+
+def build_development_firewall_add_rule_args(
+    executable_path: Path | str,
+    port: int,
+) -> list[str]:
+    """Build a Private-only rule for exactly one source-session port."""
+    executable = _development_executable_path(executable_path)
+    validated_port = _validated_mobile_port(port)
+    if executable is None:
+        raise ValueError("development firewall rules require python.exe/pythonw.exe/pytest.exe")
+    if validated_port is None:
+        raise ValueError("mobile upload port must be between 1 and 65535")
+    return [
+        "advfirewall",
+        "firewall",
+        "add",
+        "rule",
+        f"name={DEV_FIREWALL_RULE_NAME}",
+        "dir=in",
+        "action=allow",
+        f"program={executable}",
+        "enable=yes",
+        "profile=Private",
+        "protocol=TCP",
+        f"localport={validated_port}",
+    ]
+
+
+def build_development_firewall_delete_rule_args() -> list[str]:
+    """Build the narrow marker-owned cleanup command for dev-session rules."""
+    return [
+        "advfirewall",
+        "firewall",
+        "delete",
+        "rule",
+        f"name={DEV_FIREWALL_RULE_NAME}",
+    ]
+
+
 class _ShellExecuteInfo(ctypes.Structure):
     _fields_ = [
         ("cbSize", ctypes.c_ulong),
@@ -341,14 +414,14 @@ class _ShellExecuteInfo(ctypes.Structure):
     ]
 
 
-def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
-    """Run netsh through ShellExecuteExW so Windows presents a UAC prompt."""
+def _run_elevated_netsh_args(args: list[str]) -> tuple[bool, str]:
+    """Run a narrowly constructed netsh command with an explicit UAC prompt."""
     if not is_windows():
         return False, "non-Windows platform"
     try:
         shell32 = ctypes.windll.shell32
         kernel32 = ctypes.windll.kernel32
-        arguments = subprocess.list2cmdline(build_firewall_add_rule_args(executable_path))
+        arguments = subprocess.list2cmdline(args)
         info = _ShellExecuteInfo()
         info.cbSize = ctypes.sizeof(info)
         info.fMask = _SEE_MASK_NOCLOSEPROCESS
@@ -379,6 +452,229 @@ def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
         return True, ""
     except (AttributeError, OSError, TypeError, ValueError) as exc:
         return False, f"{type(exc).__name__}"
+
+
+def _run_elevated_netsh(executable_path: Path) -> tuple[bool, str]:
+    """Run the formal packaged rule command through an explicit UAC prompt."""
+    return _run_elevated_netsh_args(build_firewall_add_rule_args(executable_path))
+
+
+def _development_status(
+    state: FirewallState,
+    executable: Path | None = None,
+    *,
+    enabled: bool | None = None,
+    reason: str = "",
+) -> FirewallStatus:
+    return FirewallStatus(
+        state=state,
+        executable_path=str(executable) if executable is not None else "",
+        development_mode=True,
+        reason=reason,
+        rule_name=DEV_FIREWALL_RULE_NAME,
+        enabled=enabled,
+    )
+
+
+def _is_owned_development_rule(rule: dict[str, Any]) -> bool:
+    """Accept only marker rules that target a Python development executable."""
+    if _as_text(rule.get("DisplayName")) != DEV_FIREWALL_RULE_NAME:
+        return False
+    programs = _programs(rule.get("Program"))
+    if not programs:
+        return False
+    return all(Path(program).name.casefold() in _DEVELOPMENT_EXECUTABLE_NAMES for program in programs)
+
+
+def clear_mobile_upload_dev_firewall_access(
+    executable_path: Path | str | None = None,
+) -> FirewallActionResult:
+    """Delete only Invoice Hub's marker-owned development-session rules.
+
+    The query is deliberately performed before the elevated delete.  A rule
+    with the marker but an unrelated program is treated as unsafe to remove;
+    the function then returns failure and never silently leaves the caller
+    believing that cleanup succeeded.
+    """
+    if not is_windows():
+        return FirewallActionResult(
+            True,
+            _development_status(FirewallState.NON_WINDOWS),
+            "非 Windows，无需清理开发测试规则。",
+        )
+
+    executable = _development_executable_path(executable_path)
+    if executable is None:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                reason="current process is not a supported development executable",
+            ),
+            "无法安全识别当前开发解释器，未清理防火墙规则。",
+        )
+
+    try:
+        rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason=f"development firewall cleanup query unavailable: {type(exc).__name__}",
+            ),
+            f"无法确认开发测试规则归属，未清理：{type(exc).__name__}",
+        )
+
+    marker_rules = [
+        rule for rule in rules
+        if _as_text(rule.get("DisplayName")) == DEV_FIREWALL_RULE_NAME
+    ]
+    if not marker_rules:
+        return FirewallActionResult(
+            True,
+            _development_status(FirewallState.RULE_MISSING, executable),
+            "无遗留开发测试规则。",
+        )
+    if not all(_is_owned_development_rule(rule) for rule in marker_rules):
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason="marker rule contains an unrelated program",
+            ),
+            "发现无法确认归属的开发测试规则，未执行删除。",
+        )
+
+    success, reason = _run_elevated_netsh_args(build_development_firewall_delete_rule_args())
+    if not success:
+        return FirewallActionResult(
+            False,
+            _development_status(FirewallState.RULE_PRESENT, executable, reason=reason),
+            f"开发测试规则未清理：{reason or 'UAC 未完成'}",
+            uac_requested=True,
+        )
+    try:
+        remaining = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason=f"cleanup verification unavailable: {type(exc).__name__}",
+            ),
+            f"开发测试规则删除后无法复核：{type(exc).__name__}",
+            uac_requested=True,
+        )
+    if any(_as_text(rule.get("DisplayName")) == DEV_FIREWALL_RULE_NAME for rule in remaining):
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.RULE_PRESENT,
+                executable,
+                reason="marker rule remains after delete",
+            ),
+            "开发测试规则仍然存在，未将清理标记为成功。",
+            uac_requested=True,
+        )
+    return FirewallActionResult(
+        True,
+        _development_status(FirewallState.RULE_MISSING, executable),
+        "开发测试规则已清理。",
+        uac_requested=True,
+    )
+
+
+def request_mobile_upload_dev_firewall_access(
+    executable_path: Path | str | None,
+    port: int,
+) -> FirewallActionResult:
+    """Create a temporary Private/TCP rule for the current upload port only."""
+    if not is_windows():
+        return FirewallActionResult(
+            False,
+            _development_status(FirewallState.NON_WINDOWS),
+            "Windows 防火墙集成仅支持 Windows。",
+        )
+    executable = _development_executable_path(executable_path)
+    validated_port = _validated_mobile_port(port)
+    if executable is None or validated_port is None:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.SUPPORTED,
+                executable,
+                reason="development executable and one valid mobile port are required",
+            ),
+            "仅允许对当前开发解释器和当前手机上传端口授权。",
+        )
+
+    cleanup = clear_mobile_upload_dev_firewall_access(executable)
+    if not cleanup.success:
+        return cleanup
+    success, reason = _run_elevated_netsh_args(
+        build_development_firewall_add_rule_args(executable, validated_port)
+    )
+    if not success:
+        return FirewallActionResult(
+            False,
+            _development_status(FirewallState.RULE_MISSING, executable, reason=reason),
+            f"开发测试规则未创建：{reason or 'UAC 未完成'}",
+            uac_requested=True,
+        )
+    try:
+        rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.UNKNOWN,
+                executable,
+                reason=f"development rule verification unavailable: {type(exc).__name__}",
+            ),
+            f"开发测试规则创建后无法复核：{type(exc).__name__}",
+            uac_requested=True,
+        )
+
+    executable_key = _path_key(executable)
+    valid = next(
+        (
+            rule for rule in rules
+            if _is_owned_development_rule(rule)
+            and _programs(rule.get("Program")) == {executable_key}
+            and _is_enabled(rule.get("Enabled"))
+            and _is_inbound(rule.get("Direction"))
+            and _is_allow(rule.get("Action"))
+            and _is_tcp(rule.get("Protocol"))
+            and _is_private_only_profile(rule.get("Profile"))
+            and _as_text(rule.get("LocalPort")).replace(" ", "") == str(validated_port)
+        ),
+        None,
+    )
+    if valid is None:
+        return FirewallActionResult(
+            False,
+            _development_status(
+                FirewallState.RULE_MISSING,
+                executable,
+                reason="created development rule did not match the current port contract",
+            ),
+            "开发测试规则创建后未通过当前端口复核。",
+            uac_requested=True,
+        )
+    return FirewallActionResult(
+        True,
+        _development_status(
+            FirewallState.RULE_PRESENT,
+            executable,
+            enabled=True,
+        ),
+        f"本次开发测试已允许 · Private · TCP {validated_port}",
+        uac_requested=True,
+    )
 
 
 def request_mobile_upload_firewall_access(
@@ -417,11 +713,16 @@ def request_mobile_upload_firewall_access(
 
 
 __all__ = [
+    "DEV_FIREWALL_RULE_NAME",
     "FIREWALL_RULE_NAME",
     "FirewallActionResult",
     "FirewallState",
     "FirewallStatus",
     "build_firewall_add_rule_args",
+    "build_development_firewall_add_rule_args",
+    "build_development_firewall_delete_rule_args",
+    "clear_mobile_upload_dev_firewall_access",
+    "get_current_development_executable",
     "get_current_invoicehub_executable",
     "get_mobile_upload_firewall_status",
     "is_windows",

@@ -461,6 +461,22 @@ class TestStartupProbeIsolated(unittest.TestCase):
             self.assertFalse(hasattr(app, "mail_thread") or getattr(app, "mail_thread", None) is not None)
             self.assertFalse(hasattr(app, "server_thread") or getattr(app, "server_thread", None) is not None)
 
+    def test_startup_probe_has_no_invalid_qfont_point_size_warning(self):
+        """The source/dev desktop startup must never pass -1 to QFont.setPointSize."""
+        env = os.environ.copy()
+        env.pop("QT_QPA_PLATFORM", None)
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.invoice_fetch", "desktop", "--startup-probe"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        combined = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, combined)
+        self.assertNotIn("QFont::setPointSize: Point size <= 0", combined)
+
 
 
 class TestGithubWorkflowExists(unittest.TestCase):

@@ -219,7 +219,8 @@ class QueueBadgeDelegate(QStyledItemDelegate):
         painter.setPen(text_color)
         font = painter.font()
         font.setBold(True)
-        font.setPointSize(max(8, font.pointSize() - 1))
+        base_point_size = font.pointSize()
+        font.setPointSize(max(8, base_point_size - 1) if base_point_size > 0 else 8)
         painter.setFont(font)
         painter.drawText(badge_rect.adjusted(6, 0, -6, 0), Qt.AlignCenter, text)
         painter.restore()
@@ -870,12 +871,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
                 self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
                 self.import_task_stack.setMaximumWidth(16777215)
+                self.import_task_stack.setMinimumWidth(0)
                 self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
                 self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
                 self.import_source_card.setMinimumWidth(0)
                 self.import_source_card.setMaximumWidth(16777215)
                 self.import_mail_recent_card.setMinimumWidth(0)
                 self.import_mail_recent_card.setMaximumWidth(16777215)
+                self.imports_workspace_host.setMinimumWidth(0)
             else:
                 self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
                 self.import_source_card.body_layout.setDirection(QBoxLayout.TopToBottom)
@@ -886,6 +889,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 recent_width = 350 if w >= 1440 else 300
                 self.import_source_card.setFixedWidth(source_width)
                 self.import_mail_recent_card.setFixedWidth(recent_width)
+            self._apply_import_workspace_layout(w)
         if hasattr(self, "settings_tabs"):
             apply_settings_responsive_metrics(self, w)
         if not self._left_splitter_sizes_initialized:
@@ -2282,6 +2286,118 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             task_page = getattr(self, "_import_task_pages", {}).get(source)
             if task_page is not None:
                 self.import_task_stack.setCurrentWidget(task_page)
+        self._apply_import_workspace_layout()
+
+    def _apply_import_workspace_layout(self, width: int | None = None) -> None:
+        """Give complex mobile upload content ownership of desktop width.
+
+        The source selector and recent-run summary remain available, but the
+        mobile task receives an explicit usable minimum before its own
+        internal layout is evaluated.  This prevents a child width breakpoint
+        from shrinking its parent and feeding back into a vertical strip.
+        """
+        required = (
+            "imports_shell_layout",
+            "import_source_card",
+            "import_task_stack",
+            "import_mail_recent_card",
+            "imports_workspace_host",
+        )
+        if not all(hasattr(self, name) for name in required):
+            return
+        w = width if width is not None and width > 0 else (self.width() or 1440)
+        panel = getattr(self, "mobile_upload_panel", None)
+        controller = getattr(self, "mobile_upload_controller", None)
+        active_widgets = set()
+        if panel is not None:
+            active_widgets = {
+                getattr(panel, "active_page", None),
+                getattr(panel, "starting_page", None),
+            }
+        mobile_active = (
+            getattr(self, "_selected_import_source", "") == "mobile"
+            and (
+                panel.stack.currentWidget() in active_widgets
+                if panel is not None and hasattr(panel, "stack")
+                else False
+            )
+        ) or bool(getattr(controller, "is_starting", False))
+
+        self.imports_workspace_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        if w < 1200:
+            # The whole import workspace is stacked at this width, so the
+            # mobile panel gets the full task row instead of a narrow column.
+            self.import_task_stack.setMinimumWidth(0)
+            self.import_task_stack.setMaximumWidth(16777215)
+            return
+
+        self.imports_shell_layout.setDirection(QBoxLayout.LeftToRight)
+        if mobile_active:
+            page_width = self.imports_page.width() if hasattr(self, "imports_page") else 0
+            if page_width <= 0:
+                page_width = max(0, w - (56 if w <= 1366 else 180) - 48)
+            # TaskFlowPageLayout keeps 24px horizontal margins on both sides.
+            # Allocate only the width inside those margins so the summary card
+            # never runs beyond the native window edge.
+            workspace_width = max(0, page_width - 48)
+            source_width = 152 if w <= 1366 else (160 if w <= 1440 else 184)
+            recent_width = 250 if w <= 1366 else (260 if w <= 1440 else 300)
+            # SectionCard content margins consume part of the task width; a
+            # 760px task allocation leaves the embedded panel at >=720px,
+            # which is the desktop two-column contract.
+            task_minimum = 760
+            minimum_workspace = task_minimum + source_width + recent_width + 24
+            if workspace_width < minimum_workspace:
+                # At the smallest desktop window the outer workspace must
+                # stack before the child can become narrow.  The mobile panel
+                # still receives the full task row and remains two-column.
+                self.imports_shell_layout.setDirection(QBoxLayout.TopToBottom)
+                self.import_source_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_source_card.setMinimumWidth(0)
+                self.import_source_card.setMaximumWidth(16777215)
+                self.import_source_card.body_layout.setDirection(QBoxLayout.LeftToRight)
+                self.import_task_stack.setMinimumWidth(0)
+                self.import_task_stack.setMaximumWidth(16777215)
+                self.import_mail_recent_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+                self.import_mail_recent_card.setMinimumWidth(0)
+                self.import_mail_recent_card.setMaximumWidth(16777215)
+                self.imports_workspace_host.setMinimumWidth(0)
+                return
+            available_for_task = workspace_width - source_width - recent_width - 24
+            task_maximum = max(task_minimum, min(900, available_for_task))
+            host_target = min(
+                1440,
+                max(task_minimum + source_width + recent_width + 24, workspace_width),
+            )
+            self.imports_workspace_host.setMinimumWidth(host_target)
+
+            self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+            self.import_source_card.setMinimumWidth(source_width)
+            self.import_source_card.setMaximumWidth(source_width)
+            self.import_source_card.setFixedWidth(source_width)
+            self.import_source_card.body_layout.setDirection(QBoxLayout.TopToBottom)
+
+            self.import_task_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            self.import_task_stack.setMinimumWidth(task_minimum)
+            self.import_task_stack.setMaximumWidth(task_maximum)
+
+            self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self.import_mail_recent_card.setMinimumWidth(recent_width)
+            self.import_mail_recent_card.setMaximumWidth(recent_width)
+            self.import_mail_recent_card.setFixedWidth(recent_width)
+        else:
+            self.imports_workspace_host.setMinimumWidth(0)
+            self.import_task_stack.setMinimumWidth(0)
+            self.import_task_stack.setMaximumWidth(900)
+            self.import_source_card.setMinimumWidth(260)
+            self.import_source_card.setMaximumWidth(300)
+            self.import_source_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+            self.import_mail_recent_card.setMinimumWidth(360)
+            self.import_mail_recent_card.setMaximumWidth(420)
+            self.import_mail_recent_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+
+        self.imports_workspace_host.updateGeometry()
+        self.import_task_stack.updateGeometry()
 
     def _run_import_primary_action(self) -> None:
         """Keep the import page primary action truthful for the chosen account."""
@@ -3624,6 +3740,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.imports_workspace_host = QWidget()
         self.imports_workspace_host.setMaximumWidth(1440)
+        self.imports_workspace_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.imports_workspace_host.setLayout(shell)
         workspace_row = QHBoxLayout()
         workspace_row.setContentsMargins(0, 0, 0, 0)

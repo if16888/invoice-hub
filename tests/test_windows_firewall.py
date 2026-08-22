@@ -4,10 +4,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.invoice_fetch.windows_firewall import (
+    DEV_FIREWALL_RULE_NAME,
     FIREWALL_RULE_NAME,
     FirewallState,
+    build_development_firewall_add_rule_args,
+    build_development_firewall_delete_rule_args,
     build_firewall_add_rule_args,
+    clear_mobile_upload_dev_firewall_access,
     get_mobile_upload_firewall_status,
+    request_mobile_upload_dev_firewall_access,
     request_mobile_upload_firewall_access,
 )
 
@@ -31,6 +36,19 @@ def _rule(
         "Program": program,
         "Protocol": protocol,
         "LocalPort": local_port,
+    }
+
+
+def _dev_rule(program: str, port: str = "43210", *, enabled: str = "True") -> dict[str, str]:
+    return {
+        "DisplayName": DEV_FIREWALL_RULE_NAME,
+        "Enabled": enabled,
+        "Direction": "Inbound",
+        "Action": "Allow",
+        "Profile": "Private",
+        "Program": program,
+        "Protocol": "TCP",
+        "LocalPort": port,
     }
 
 
@@ -169,6 +187,65 @@ class WindowsFirewallContractTests(unittest.TestCase):
                     self.assertFalse(result.success)
                     self.assertEqual(result.status.state, FirewallState.SUPPORTED)
                     self.assertTrue(result.status.development_mode)
+        run_elevated.assert_not_called()
+
+    def test_dev_rule_is_current_port_only_and_never_any_port(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            args = build_development_firewall_add_rule_args(executable, 43210)
+            self.assertIn(f"name={DEV_FIREWALL_RULE_NAME}", args)
+            self.assertIn(f"program={executable.resolve()}", args)
+            self.assertIn("localport=43210", args)
+            self.assertNotIn("localport=Any", args)
+            self.assertIn("profile=Private", args)
+            self.assertIn("protocol=TCP", args)
+            self.assertEqual(
+                build_development_firewall_delete_rule_args(),
+                ["advfirewall", "firewall", "delete", "rule", f"name={DEV_FIREWALL_RULE_NAME}"],
+            )
+
+    def test_dev_rule_request_cleans_marker_owned_old_rule_and_verifies_new_port(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.is_windows",
+                return_value=True,
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+                side_effect=[
+                    [_dev_rule(str(executable), "40000")],
+                    [],
+                    [_dev_rule(str(executable), "43210")],
+                ],
+            ), patch(
+                "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+                return_value=(True, ""),
+            ) as run_elevated:
+                result = request_mobile_upload_dev_firewall_access(executable, 43210)
+        self.assertTrue(result.success)
+        self.assertEqual(result.status.state, FirewallState.RULE_PRESENT)
+        self.assertTrue(result.status.development_mode)
+        self.assertIn("TCP 43210", result.message)
+        self.assertEqual(run_elevated.call_count, 2)
+        self.assertEqual(
+            run_elevated.call_args_list[0].args[0],
+            build_development_firewall_delete_rule_args(),
+        )
+        self.assertIn("localport=43210", run_elevated.call_args_list[1].args[0])
+
+    def test_dev_cleanup_refuses_marker_rule_with_unrelated_program(self):
+        with patch(
+            "scripts.invoice_fetch.windows_firewall.is_windows",
+            return_value=True,
+        ), patch(
+            "scripts.invoice_fetch.windows_firewall._query_firewall_rules",
+            return_value=[_dev_rule("C:/OtherApp/other.exe")],
+        ), patch(
+            "scripts.invoice_fetch.windows_firewall._run_elevated_netsh_args",
+        ) as run_elevated:
+            result = clear_mobile_upload_dev_firewall_access(Path("python.exe"))
+        self.assertFalse(result.success)
+        self.assertIn("未执行删除", result.message)
         run_elevated.assert_not_called()
 
     def test_uac_rejection_keeps_rule_unauthorized(self):

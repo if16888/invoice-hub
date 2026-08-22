@@ -198,6 +198,11 @@ class MobileUploadServer:
             handler = self._make_handler()
             self._httpd = ThreadingHTTPServer((self.bind_host, self.port), handler)
             actual_port = int(self._httpd.server_address[1])
+            # Keep the public server object aligned with the session when the
+            # caller requested an ephemeral port (port=0).  UI actions such
+            # as the source-run firewall opt-in must use the actual listener
+            # port, never the pre-bind sentinel.
+            self.port = actual_port
             base_url = f"http://{self.host}:{actual_port}"
             self.session = MobileUploadSession(
                 token=token,

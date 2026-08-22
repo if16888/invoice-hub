@@ -61,7 +61,7 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                 self.assertEqual(call.args, ())
                 self.assertEqual(call.kwargs, {})
 
-    def test_active_qr_card_stacks_without_squeezing_details(self):
+    def test_active_qr_card_uses_vertical_contract_only_for_narrow_embedded_surface(self):
         with tempfile.TemporaryDirectory() as td:
             controller, panel = self.make_panel(td)
             self.activate(controller, panel)
@@ -75,6 +75,7 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                 panel._active_details_form.rowWrapPolicy(),
                 QFormLayout.WrapAllRows,
             )
+            self.assertIsNone(panel._active_details_scroll)
             self.assertTrue(panel.lbl_service_address.wordWrap())
             self.assertTrue(panel.lbl_firewall_hint.wordWrap())
             panel.resize(900, 900)
@@ -88,7 +89,7 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                 QFormLayout.WrapLongRows,
             )
 
-    def test_import_workspace_keeps_narrow_details_scrollable_and_footer_clear(self):
+    def test_import_workspace_gives_active_mobile_main_area_desktop_width(self):
         with tempfile.TemporaryDirectory() as td:
             window = InvoiceReviewApp(Path(td) / "invoices.db")
             window.resize(1366, 768)
@@ -105,18 +106,25 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             with patch.object(controller, "qr_png", return_value=b""):
                 controller.started.emit(session)
             self.app.processEvents()
+            self.app.processEvents()
             panel = window.mobile_upload_panel
-            self.assertGreaterEqual(
-                panel._active_details_scroll.geometry().top(),
-                panel.lbl_qr.geometry().bottom(),
+            self.assertIsNone(panel._active_details_scroll)
+            self.assertGreaterEqual(panel.width(), 720)
+            self.assertEqual(panel._active_body_layout.direction(), QBoxLayout.LeftToRight)
+            self.assertLess(window.import_source_card.width(), 220)
+            self.assertGreaterEqual(window.import_task_stack.width(), 760)
+            self.assertTrue(panel._active_tech_details.isHidden())
+            self.assertFalse(panel.lbl_service_address.isVisible())
+            self.assertEqual(
+                panel.btn_change_network.geometry().center().y(),
+                panel.btn_stop.geometry().center().y(),
             )
-            self.assertGreaterEqual(
+            self.assertLess(
                 panel._active_footer_layout.geometry().top(),
-                panel._active_details_scroll.geometry().bottom(),
+                panel.height(),
             )
-            self.assertGreater(panel._active_details.height(), panel._active_details_scroll.height())
             for label in (
-                panel.lbl_service_address,
+                panel.lbl_network_interface,
                 panel.lbl_lan_access_hint,
                 panel.lbl_firewall_hint,
                 panel.lbl_stats,
@@ -164,6 +172,22 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             )
             self.assertEqual(panel.lbl_firewall_state.text(), "开发运行模式")
             self.assertTrue(panel.btn_firewall_authorize.isHidden())
+
+    def test_dev_firewall_button_requires_running_server_and_current_port(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, panel = self.make_panel(td)
+            self.activate(controller, panel)
+            panel._set_firewall_status(
+                FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
+            )
+            self.assertTrue(panel.btn_dev_firewall.isHidden())
+            controller.server = SimpleNamespace(port=43210)
+            controller.session = SimpleNamespace(port=43210)
+            panel._set_firewall_status(
+                FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
+            )
+            self.assertFalse(panel.btn_dev_firewall.isHidden())
+            self.assertEqual(panel.btn_dev_firewall.text(), "允许本次开发测试")
 
 
 if __name__ == "__main__":
