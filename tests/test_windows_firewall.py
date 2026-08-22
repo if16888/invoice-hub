@@ -232,7 +232,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
         self.assertEqual(status.local_port, "40000")
         self.assertEqual(status.reason, "stale development session port")
 
-    def test_dev_status_marks_other_python_path_as_stale_not_missing(self):
+    def test_dev_status_marks_other_python_path_as_unknown_stale(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "current" / "python.exe"
             old_executable = Path(td) / "old" / "python.exe"
@@ -241,7 +241,7 @@ class WindowsFirewallContractTests(unittest.TestCase):
                 [_dev_rule(str(old_executable), "40000")],
                 current_port=43210,
             )
-        self.assertEqual(status.state, FirewallState.RULE_PRESENT)
+        self.assertEqual(status.state, FirewallState.UNKNOWN)
         self.assertEqual(status.reason, "stale development executable")
         self.assertEqual(status.local_port, "40000")
 
