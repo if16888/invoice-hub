@@ -1,3 +1,4 @@
+import inspect
 import os
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QBoxLayout, QFormLayout
 from scripts.invoice_fetch.gui.mobile_upload_session import (
     MobileUploadSessionController,
     MobileUploadSessionPanel,
+    _MobileUploadStartWorker,
 )
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.windows_firewall import FirewallState, FirewallStatus
@@ -60,6 +62,27 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             for call in start.call_args_list:
                 self.assertEqual(call.args, ())
                 self.assertEqual(call.kwargs, {})
+
+    def test_start_worker_does_not_mutate_windows_firewall(self):
+        source = inspect.getsource(_MobileUploadStartWorker.run)
+        self.assertNotIn("clear_mobile_upload_dev_firewall_access", source)
+        self.assertNotIn("request_mobile_upload_dev_firewall_access", source)
+        self.assertNotIn("request_mobile_upload_firewall_access", source)
+
+    def test_stop_does_not_clear_dev_firewall_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _panel = self.make_panel(td)
+            server = SimpleNamespace(stop=lambda: None)
+            controller.server = server
+            controller.session = SimpleNamespace(port=43210)
+            controller._dev_firewall_rule_active = True
+            with patch(
+                "scripts.invoice_fetch.windows_firewall.clear_mobile_upload_dev_firewall_access"
+            ) as clear_rule, patch.object(controller, "refresh_firewall_status"):
+                controller.stop()
+            clear_rule.assert_not_called()
+            self.assertIsNone(controller.server)
+            self.assertIsNone(controller.session)
 
     def test_active_qr_card_uses_vertical_contract_only_for_narrow_embedded_surface(self):
         with tempfile.TemporaryDirectory() as td:
@@ -183,11 +206,61 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             self.assertTrue(panel.btn_dev_firewall.isHidden())
             controller.server = SimpleNamespace(port=43210)
             controller.session = SimpleNamespace(port=43210)
+            panel._set_dev_firewall_status(
+                FirewallStatus(
+                    FirewallState.RULE_MISSING,
+                    development_mode=True,
+                    rule_name="Invoice Hub Mobile Upload Dev Session",
+                )
+            )
             panel._set_firewall_status(
                 FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
             )
             self.assertFalse(panel.btn_dev_firewall.isHidden())
+            self.assertTrue(panel.btn_dev_firewall.isEnabled())
             self.assertEqual(panel.btn_dev_firewall.text(), "允许本次开发测试")
+
+    def test_stale_dev_rule_requires_explicit_cleanup(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, panel = self.make_panel(td)
+            controller.server = SimpleNamespace(port=43210)
+            controller.session = SimpleNamespace(port=43210)
+            panel._set_firewall_status(
+                FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
+            )
+            panel._set_dev_firewall_status(
+                FirewallStatus(
+                    FirewallState.RULE_PRESENT,
+                    development_mode=True,
+                    rule_name="Invoice Hub Mobile Upload Dev Session",
+                    local_port="40000",
+                    reason="stale development session port",
+                )
+            )
+            self.assertFalse(panel.btn_dev_firewall.isEnabled())
+            self.assertFalse(panel.btn_dev_firewall_cleanup.isHidden())
+            self.assertIn("旧开发测试授权", panel.lbl_firewall_state.text())
+
+    def test_current_dev_rule_is_not_equated_with_packaged_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, panel = self.make_panel(td)
+            controller.server = SimpleNamespace(port=43210)
+            controller.session = SimpleNamespace(port=43210)
+            panel._set_firewall_status(
+                FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
+            )
+            panel._set_dev_firewall_status(
+                FirewallStatus(
+                    FirewallState.RULE_PRESENT,
+                    development_mode=True,
+                    rule_name="Invoice Hub Mobile Upload Dev Session",
+                    local_port="43210",
+                )
+            )
+            self.assertEqual(panel.btn_dev_firewall.text(), "本次开发测试已允许")
+            self.assertFalse(panel.btn_dev_firewall.isEnabled())
+            self.assertIn("TCP 43210", panel.lbl_firewall_state.text())
+            self.assertTrue(panel.btn_firewall_authorize.isHidden())
 
 
 if __name__ == "__main__":
