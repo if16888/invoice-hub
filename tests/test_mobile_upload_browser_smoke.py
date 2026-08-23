@@ -122,7 +122,10 @@ class MobileUploadBrowserSmokeTests(unittest.TestCase):
                     headless=True,
                     executable_path=str(executable),
                 )
-                context = browser.new_context(viewport={"width": 390, "height": 844})
+                context = browser.new_context(
+                    viewport={"width": 390, "height": 844},
+                    device_scale_factor=3,
+                )
                 page = context.new_page()
                 page.on(
                     "request",
@@ -160,6 +163,14 @@ class MobileUploadBrowserSmokeTests(unittest.TestCase):
                     page.locator(".review-button").click()
                     page.locator("#previewModal").wait_for(state="visible")
                     page.locator("#previewCanvas").wait_for(state="visible")
+                    render_metrics = page.locator("#previewCanvas").evaluate(
+                        "canvas => ({"
+                        " ratio: canvas.width / parseFloat(canvas.style.width),"
+                        " dpr: window.devicePixelRatio"
+                        "})"
+                    )
+                    expected_scale = max(2, min(float(render_metrics["dpr"]), 3))
+                    self.assertGreaterEqual(float(render_metrics["ratio"]), expected_scale - 0.1)
                     self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/1 · 页 1/2")
                     page.locator("#previewNext").click()
                     page.wait_for_function(

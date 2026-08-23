@@ -78,10 +78,10 @@ class MobileUploadDialog(QDialog):
         self.lbl_failed = QLabel("0")
         self.lbl_imported = QLabel("0")
         stats_layout.addRow("批次:", self.lbl_batch)
-        stats_layout.addRow("成功:", self.lbl_accepted)
+        stats_layout.addRow("接收:", self.lbl_accepted)
+        stats_layout.addRow("新增:", self.lbl_imported)
         stats_layout.addRow("重复:", self.lbl_duplicate)
         stats_layout.addRow("失败:", self.lbl_failed)
-        stats_layout.addRow("入库:", self.lbl_imported)
         layout.addWidget(stats_box)
 
         button_row = QHBoxLayout()
@@ -182,11 +182,13 @@ class MobileUploadDialog(QDialog):
         self._apply_status(self.server.status())
 
     def _apply_status(self, status):
-        self.lbl_accepted.setText(str(status.get("accepted", 0)))
-        self.lbl_duplicate.setText(str(status.get("duplicate", 0)))
-        self.lbl_failed.setText(str(status.get("failed", 0)))
-        self.lbl_imported.setText(str(status.get("imported", 0)))
-        total = sum(int(status.get(k, 0) or 0) for k in ("accepted", "duplicate", "failed", "imported"))
+        self.lbl_accepted.setText(str(status.get("received", status.get("accepted", 0))))
+        duplicate_total = int(status.get("duplicate", 0) or 0) + int(status.get("business_duplicate", 0) or 0)
+        self.lbl_duplicate.setText(str(duplicate_total))
+        failed_total = int(status.get("failed", 0) or 0) + int(status.get("import_failed", 0) or 0)
+        self.lbl_failed.setText(str(failed_total))
+        self.lbl_imported.setText(str(status.get("created", status.get("imported", 0))))
+        total = int(status.get("received", status.get("accepted", 0)) or 0) + failed_total
         if total and total != self._last_status_total:
             self._last_status_total = total
 

@@ -135,11 +135,33 @@ def public_upload_result(result: dict) -> dict:
         )
     else:
         imported_count = int(imported_val or 0)
+    import_stats = imported_val if isinstance(imported_val, dict) else {}
+    upload_duplicate = int(result.get("upload_duplicate", result.get("duplicate", 0)) or 0)
+    received = int(
+        result.get(
+            "received",
+            int(result.get("accepted", 0) or 0) + upload_duplicate,
+        ) or 0
+    )
+    upload_failed = int(result.get("upload_failed", result.get("failed", 0)) or 0)
+    created = int(result.get("created", import_stats.get("added", 0)) or 0)
+    restored = int(result.get("restored", import_stats.get("restored", 0)) or 0)
+    business_duplicate = int(
+        result.get("business_duplicate", import_stats.get("duplicates", 0)) or 0
+    )
+    import_failed = int(result.get("import_failed", import_stats.get("failed", 0)) or 0)
     return {
         "accepted": int(result.get("accepted", 0) or 0),
-        "duplicate": int(result.get("duplicate", 0) or 0),
-        "failed": int(result.get("failed", 0) or 0),
+        "duplicate": upload_duplicate + business_duplicate,
+        "failed": upload_failed + import_failed,
         "imported": imported_count,
+        "received": received,
+        "created": created,
+        "restored": restored,
+        "upload_duplicate": upload_duplicate,
+        "business_duplicate": business_duplicate,
+        "upload_failed": upload_failed,
+        "import_failed": import_failed,
         "batch_id": str(result.get("batch_id", "") or ""),
     }
 
@@ -182,7 +204,23 @@ class MobileUploadServer:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._files: list[dict] = []
-        self._stats = {"accepted": 0, "duplicate": 0, "failed": 0, "imported": 0}
+        self._stats = {
+            "accepted": 0,
+            "duplicate": 0,
+            "failed": 0,
+            "imported": 0,
+            "received": 0,
+            "created": 0,
+            "restored": 0,
+            "business_duplicate": 0,
+            "conflict": 0,
+            "pending_manual": 0,
+            "import_failed": 0,
+            "duplicate_outcomes": [],
+            "new_invoice_ids": [],
+            "restored_invoice_ids": [],
+            "review_invoice_ids": [],
+        }
         self._session_expired_logged = False
         self._last_request_at: datetime | None = None
         self._last_lan_client_access_at: datetime | None = None
@@ -198,6 +236,7 @@ class MobileUploadServer:
         )
         self._local_self_check = "pending"
         self._local_self_check_error = ""
+        self._last_upload_result: dict = {}
 
     def start(self) -> MobileUploadSession:
         if self._httpd:
@@ -310,12 +349,19 @@ class MobileUploadServer:
 
     def status(self) -> dict:
         with self._lock:
+            expired = bool(self.session and datetime.now() > self.session.expires_at)
             return {
                 **self._stats,
+                "duplicate_outcomes": list(self._stats["duplicate_outcomes"]),
+                "new_invoice_ids": list(self._stats["new_invoice_ids"]),
+                "restored_invoice_ids": list(self._stats["restored_invoice_ids"]),
+                "review_invoice_ids": list(self._stats["review_invoice_ids"]),
+                "last_upload_result": dict(self._last_upload_result),
                 "active": bool(self._httpd),
                 "batch_id": self.session.batch_id if self.session else "",
                 "upload_url": self.session.upload_url if self.session else "",
                 "expires_at": self.session.expires_at.isoformat(timespec="seconds") if self.session else "",
+                "expired": expired,
                 "interface_name": self.interface_name,
                 "public_host": self.host,
                 "bind_host": self.bind_host,
@@ -422,15 +468,16 @@ class MobileUploadServer:
             )
 
     def _log_upload_result(self, result: dict) -> None:
-        imported = result.get("imported", 0)
-        if isinstance(imported, dict):
-            imported = sum(int(imported.get(key, 0) or 0) for key in ("added", "conflicts", "pending_manual", "duplicates"))
+        public = public_upload_result(result)
         _log.info(
-            "[手机上传] upload result accepted=%s duplicate=%s failed=%s imported=%s",
-            int(result.get("accepted", 0) or 0),
-            int(result.get("duplicate", 0) or 0),
-            int(result.get("failed", 0) or 0),
-            int(imported or 0),
+            "[手机上传] upload result received=%s created=%s duplicate=%s failed=%s "
+            "upload_duplicate=%s business_duplicate=%s",
+            public["received"],
+            public["created"],
+            public["duplicate"],
+            public["failed"],
+            public["upload_duplicate"],
+            public["business_duplicate"],
         )
 
     def set_public_host(self, host: str) -> MobileUploadSession:
@@ -552,6 +599,7 @@ class MobileUploadServer:
             self._stats["accepted"] += accepted_now
             self._stats["duplicate"] += duplicate_now
             self._stats["failed"] += failed_now
+            self._stats["received"] += accepted_now + duplicate_now
             self._write_manifest()
 
         imported = 0
@@ -571,21 +619,58 @@ class MobileUploadServer:
                     imported.get("added", 0) +
                     imported.get("conflicts", 0) +
                     imported.get("pending_manual", 0) +
-                    imported.get("duplicates", 0)
+                    imported.get("restored", 0)
                 ) if isinstance(imported, dict) else imported
                 self._stats["imported"] += imported_count
+                if isinstance(imported, dict):
+                    self._stats["created"] += int(imported.get("added", 0) or 0)
+                    self._stats["restored"] += int(imported.get("restored", 0) or 0)
+                    self._stats["business_duplicate"] += int(imported.get("duplicates", 0) or 0)
+                    self._stats["conflict"] += int(imported.get("conflicts", 0) or 0)
+                    self._stats["pending_manual"] += int(imported.get("pending_manual", 0) or 0)
+                    self._stats["import_failed"] += int(imported.get("failed", 0) or 0)
+                    self._stats["duplicate_outcomes"].extend(imported.get("duplicate_outcomes", ()))
+                for key, values in (
+                    ("new_invoice_ids", new_ids),
+                    ("restored_invoice_ids", restored_invoice_ids),
+                    ("review_invoice_ids", review_invoice_ids),
+                ):
+                    for invoice_id in values:
+                        if invoice_id not in self._stats[key]:
+                            self._stats[key].append(invoice_id)
                 self._write_manifest()
+
+        with self._lock:
+            for key, values in (
+                ("new_invoice_ids", new_ids),
+                ("restored_invoice_ids", restored_invoice_ids),
+                ("review_invoice_ids", review_invoice_ids),
+            ):
+                for invoice_id in values:
+                    if invoice_id not in self._stats[key]:
+                        self._stats[key].append(invoice_id)
+            self._write_manifest()
 
         result = {
             "accepted": accepted_now,
             "duplicate": duplicate_now,
             "failed": failed_now,
             "imported": imported,
+            "received": accepted_now + duplicate_now,
+            "created": int(imported.get("added", 0) or 0) if isinstance(imported, dict) else int(imported or 0),
+            "restored": int(imported.get("restored", 0) or 0) if isinstance(imported, dict) else 0,
+            "upload_duplicate": duplicate_now,
+            "business_duplicate": int(imported.get("duplicates", 0) or 0) if isinstance(imported, dict) else 0,
+            "upload_failed": failed_now,
+            "import_failed": int(imported.get("failed", 0) or 0) if isinstance(imported, dict) else 0,
+            "duplicate_outcomes": list(imported.get("duplicate_outcomes", ())) if isinstance(imported, dict) else [],
             "batch_id": self.session.batch_id,
             "new_invoice_ids": tuple(dict.fromkeys(new_ids)),
             "restored_invoice_ids": tuple(dict.fromkeys(restored_invoice_ids)),
             "review_invoice_ids": tuple(dict.fromkeys(review_invoice_ids)),
         }
+        with self._lock:
+            self._last_upload_result = dict(result)
         self._log_upload_result(result)
         return result
 
@@ -1056,6 +1141,8 @@ def _upload_page(session: MobileUploadSession) -> str:
     .preview-stage { position:relative; display:flex; min-height:0; flex:1; align-items:center; justify-content:center; overflow:auto; padding:14px 10px; }
     .preview-stage canvas { display:block; max-width:100%; height:auto; background:#fff; box-shadow:0 3px 12px rgba(0,0,0,.25); }
     .preview-stage img { display:block; max-width:100%; max-height:100%; object-fit:contain; }
+    .preview-stage canvas[hidden], .preview-stage img[hidden],
+    .preview-loading[hidden], .preview-error[hidden], .preview-footer[hidden] { display:none !important; }
     .preview-loading, .preview-error { padding:20px; color:#cbd5e1; text-align:center; font-size:13px; }
     .preview-error { color:#fecaca; }
     .preview-footer { display:flex; gap:10px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #334155; }
@@ -1200,6 +1287,13 @@ let previewTouchStart = null;
 
 const SWIPE_THRESHOLD_PX = 64;
 const SWIPE_DIRECTION_RATIO = 1.2;
+const PDF_RENDER_DPR_CAP = 3;
+const PDF_RENDER_DPR_FLOOR = 2;
+const PDF_THUMBNAIL_CSS_WIDTH = 86;
+
+function pdfRenderDpr() {
+  return Math.max(PDF_RENDER_DPR_FLOOR, Math.min(window.devicePixelRatio || 1, PDF_RENDER_DPR_CAP));
+}
 
 function setState(next) {
   if (!STATES.includes(next)) throw new Error("Unknown upload state");
@@ -1485,13 +1579,17 @@ async function preparePdf(record) {
     record.pageCount = record.pdfDocument.numPages;
     const page = await record.pdfDocument.getPage(1);
     const viewport = page.getViewport({ scale: 1 });
-    const scale = Math.min(1, 86 / Math.max(viewport.width, 1));
+    const cssScale = Math.min(1, PDF_THUMBNAIL_CSS_WIDTH / Math.max(viewport.width, 1));
+    const dpr = pdfRenderDpr();
     const canvas = document.createElement("canvas");
-    const thumbViewport = page.getViewport({ scale });
-    canvas.width = Math.ceil(thumbViewport.width);
-    canvas.height = Math.ceil(thumbViewport.height);
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport: thumbViewport }).promise;
-    record.thumbnailUrl = canvas.toDataURL("image/jpeg", .82);
+    const cssViewport = page.getViewport({ scale: cssScale });
+    const renderViewport = page.getViewport({ scale: cssScale * dpr });
+    canvas.width = Math.ceil(renderViewport.width);
+    canvas.height = Math.ceil(renderViewport.height);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: renderViewport }).promise;
+    record.thumbnailUrl = canvas.toDataURL("image/jpeg", .92);
+    record.thumbnailWidth = Math.ceil(cssViewport.width);
+    record.thumbnailHeight = Math.ceil(cssViewport.height);
     record.previewState = "ready";
     if (activePreview !== record) releasePdfDocument(record);
   } catch (error) {
@@ -1588,7 +1686,7 @@ async function renderPdfPage(record, pageNumber) {
     const maxWidth = Math.max(280, previewStage.clientWidth - 24);
     const scale = Math.min(2.5, maxWidth / Math.max(baseViewport.width, 1));
     const viewport = page.getViewport({ scale });
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = pdfRenderDpr();
     previewCanvas.width = Math.ceil(viewport.width * dpr);
     previewCanvas.height = Math.ceil(viewport.height * dpr);
     previewCanvas.style.width = Math.ceil(viewport.width) + "px";
@@ -1783,12 +1881,13 @@ btnUpload.addEventListener("click", async () => {
     try { payload = await response.json(); } catch (_) { payload = {}; }
     if (!response.ok) throw new Error(payload.message || ("HTTP " + response.status));
     const failed = Number(payload.failed || 0);
-    const accepted = Number(payload.accepted || 0);
+    const received = Number(payload.received ?? payload.accepted ?? 0);
+    const created = Number(payload.created || 0);
     const duplicate = Number(payload.duplicate || 0);
     setState(failed > 0 ? "PARTIAL" : "SUCCESS");
     setResult(failed > 0 ? "result-error" : "result-success", failed > 0
-      ? "部分上传完成\\n已接收：" + accepted + "\\n重复：" + duplicate + "\\n失败：" + failed + "\\n请检查桌面端结果。"
-      : "上传完成\\n已接收：" + accepted + "\\n重复：" + duplicate + "\\n文件已交给桌面端处理。");
+      ? "部分处理完成\\n接收：" + received + "\\n新增：" + created + "\\n重复：" + duplicate + "\\n失败：" + failed + "\\n请检查桌面端结果。"
+      : "处理完成\\n接收：" + received + "\\n新增：" + created + "\\n重复：" + duplicate + "\\n失败：0");
     pendingFiles.forEach(destroyRecord);
     pendingFiles = [];
     inputFile.value = "";

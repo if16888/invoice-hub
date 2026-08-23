@@ -162,6 +162,72 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertEqual(activity.new_invoice_ids, (42,))
             finally: window.close()
 
+    def test_mobile_upload_with_review_ids_opens_exact_new_review_scope(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                new_ids = tuple(window.db.insert_invoice({
+                    "invoice_number": f"mobile-new-{index}",
+                    "total_amount": "10.00",
+                    "seller_name": "测试商户",
+                    "invoice_date": "2026-08-23",
+                    "review_status": TO_REVIEW,
+                }) for index in range(4))
+                window._mobile_upload_finished({
+                    "received": 5,
+                    "created": 4,
+                    "business_duplicate": 1,
+                    "imported": {
+                        "added": 4,
+                        "duplicates": 1,
+                        "new_invoice_ids": new_ids,
+                        "review_invoice_ids": new_ids,
+                        "duplicate_outcomes": [{
+                            "source_name": "duplicate.pdf",
+                            "existing_invoice_id": new_ids[0],
+                            "duplicate_kind": "invoice_identity",
+                            "reason_flags": {"file_hash_match": False},
+                        }],
+                    },
+                    "new_invoice_ids": new_ids,
+                    "review_invoice_ids": new_ids,
+                })
+                self.app.processEvents()
+
+                self.assertIs(window.center_stack.currentWidget(), window.review_page)
+                self.assertEqual({int(item["id"]) for item in window.invoices_list}, set(new_ids))
+                self.assertIn("本次新增 4 张", window.lbl_review_scope.text())
+                self.assertIn("重复跳过 1 张", window.lbl_review_scope.text())
+                self.assertFalse(window.btn_review_scope_duplicates.isHidden())
+            finally: window.close()
+
+    def test_duplicate_only_mobile_batch_clears_stale_review_scope_and_stays_in_imports(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window._review_scope_ids = (101, 102, 103, 104)
+                window._review_scope_total = 4
+                window._mobile_upload_finished({
+                    "received": 5,
+                    "created": 0,
+                    "business_duplicate": 5,
+                    "duplicate_outcomes": [{
+                        "source_name": f"duplicate-{index}.pdf",
+                        "existing_invoice_id": index,
+                        "duplicate_kind": "exact_file",
+                        "reason_flags": {"file_hash_match": True},
+                    } for index in range(1, 6)],
+                })
+                self.app.processEvents()
+
+                self.assertEqual(window._review_scope_ids, ())
+                self.assertEqual(window._review_scope_total, 0)
+                self.assertIs(window.center_stack.currentWidget(), window.imports_page)
+                self.assertEqual(window._import_activities[0].added, 0)
+                self.assertEqual(window._import_activities[0].duplicates, 5)
+                self.assertFalse(window.btn_import_recent_duplicates.isHidden())
+            finally: window.close()
+
     def test_dashboard_new_invoice_scope_is_live_and_never_includes_history(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)

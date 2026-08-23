@@ -167,6 +167,7 @@ class ImportActivity:
     status: str = "complete"
     new_invoice_ids: tuple[int, ...] = ()
     review_invoice_ids: tuple[int, ...] = ()
+    duplicate_outcomes: tuple[dict, ...] = ()
 
 def _v1_badge(kind: str) -> dict[str, str]:
     c = DESIGN_V1_COLORS
@@ -1144,6 +1145,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self.lbl_review_scope.hide()
         main_layout.addWidget(self.lbl_review_scope, 0, Qt.AlignLeft)
+        self.btn_review_scope_duplicates = make_button("查看重复项", variant="secondary")
+        self.btn_review_scope_duplicates.clicked.connect(self._show_duplicate_outcomes)
+        self.btn_review_scope_duplicates.hide()
+        main_layout.addWidget(self.btn_review_scope_duplicates, 0, Qt.AlignLeft)
         self.review_scope_completion = QWidget()
         completion_layout = QHBoxLayout(self.review_scope_completion)
         completion_layout.setContentsMargins(0, 0, 0, 0)
@@ -2334,6 +2339,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._review_scope_ids = pending_ids
         self._review_scope_total = len(activity.review_invoice_ids)
         self._review_scope_has_restored = bool(activity.restored > 0 or any(rid not in activity.new_invoice_ids for rid in activity.review_invoice_ids))
+        self._review_scope_duplicate_outcomes = tuple(activity.duplicate_outcomes)
         self.current_filter_status = TO_REVIEW
         self._switch_main_page("review", preserve_review_scope=True)
         self._load_invoices()
@@ -2344,6 +2350,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._review_scope_ids = ()
         self._review_scope_total = 0
         self._review_scope_has_restored = False
+        self._review_scope_duplicate_outcomes = ()
         if reload and getattr(self, "db", None) and self.db.is_open:
             self._load_invoices()
 
@@ -2357,18 +2364,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not scope_ids and not total:
             label.hide()
             completion.hide()
+            if hasattr(self, "btn_review_scope_duplicates"):
+                self.btn_review_scope_duplicates.hide()
             return
         pending = sum(1 for row in self.db.list_invoices_by_ids(scope_ids) if (row.get("review_status") or TO_REVIEW) == TO_REVIEW) if scope_ids else 0
         has_restored = bool(getattr(self, "_review_scope_has_restored", False))
         if pending:
             prefix = "本次导入" if has_restored else "本次新增"
-            label.setText(f"{prefix} · {pending} 张待确认")
+            duplicate_count = len(getattr(self, "_review_scope_duplicate_outcomes", ()))
+            if duplicate_count:
+                label.setText(
+                    f"{prefix} {total} 张 · {pending} 张待确认 · 重复跳过 {duplicate_count} 张"
+                )
+            else:
+                label.setText(f"{prefix} · {pending} 张待确认")
             label.show()
             completion.hide()
         else:
             label.setText("本次已处理完成")
             label.show()
             completion.show()
+        if hasattr(self, "btn_review_scope_duplicates"):
+            self.btn_review_scope_duplicates.setVisible(
+                bool(getattr(self, "_review_scope_duplicate_outcomes", ()))
+            )
 
     def _return_from_review_scope(self) -> None:
         self._clear_review_scope(reload=False)
@@ -2537,11 +2556,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         status: str = "complete",
         new_invoice_ids: tuple[int, ...] | list[int] = (),
         review_invoice_ids: tuple[int, ...] | list[int] | None = None,
+        duplicate_outcomes: tuple[dict, ...] | list[dict] = (),
     ) -> None:
         """Record a structured import outcome for the in-session result surface."""
         normalized_batch = str(batch_id or "").strip()
         normalized_new_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in new_invoice_ids if int(invoice_id) > 0))
         normalized_added = max(0, int(added or 0))
+        normalized_duplicate_outcomes = tuple(
+            dict(outcome) for outcome in duplicate_outcomes if isinstance(outcome, dict)
+        )
         # review_invoice_ids defaults to new_invoice_ids when not provided.
         if review_invoice_ids is None:
             normalized_review_ids = normalized_new_ids
@@ -2563,6 +2586,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 existing.status = str(status or "complete")
                 existing.new_invoice_ids = normalized_new_ids
                 existing.review_invoice_ids = normalized_review_ids
+                existing.duplicate_outcomes = normalized_duplicate_outcomes
                 self._import_activities.remove(existing)
                 self._import_activities.insert(0, existing)
                 return
@@ -2581,6 +2605,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 status=str(status or "complete"),
                 new_invoice_ids=normalized_new_ids,
                 review_invoice_ids=normalized_review_ids,
+                duplicate_outcomes=normalized_duplicate_outcomes,
             ),
         )
         del self._import_activities[10:]
@@ -2594,7 +2619,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         }
         summary_parts = []
         if activity.scanned:
-            summary_parts.append(f"扫描 {activity.scanned} 封")
+            unit = "接收" if activity.source == "mobile" else "扫描"
+            summary_parts.append(f"{unit} {activity.scanned} {'个' if activity.source == 'mobile' else '封'}")
         summary_parts.append(f"新增 {activity.added} 条")
         summary_parts.append(f"重复 {activity.duplicates} 条")
         summary_parts.append(f"失败 {activity.failed} 条")
@@ -2662,6 +2688,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self.btn_import_recent_review.show()
                 else:
                     self.btn_import_recent_review.hide()
+            if hasattr(self, "btn_import_recent_duplicates"):
+                latest = activities[0] if activities else None
+                duplicate_count = len(latest.duplicate_outcomes) if latest is not None else 0
+                self.btn_import_recent_duplicates.setText(
+                    f"查看重复项（{duplicate_count}）" if duplicate_count else "查看重复项"
+                )
+                self.btn_import_recent_duplicates.setVisible(duplicate_count > 0)
 
         if hasattr(self, "mail_checklist_layout"):
             while self.mail_checklist_layout.count():
@@ -2747,6 +2780,47 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.import_mail_accounts_card.set_hint(
                     "默认账号需要授权码" if default_requires_auth else "默认账号已就绪，可直接开始扫描。"
                 )
+    @staticmethod
+    def _show_duplicate_outcomes(self) -> None:
+        outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
+        if not outcomes:
+            activities = list(getattr(self, "_import_activities", ()))
+            outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
+        if not outcomes:
+            QMessageBox.information(self, "重复项", "本次运行没有重复项。")
+            return
+
+        kind_labels = {
+            "exact_file": "文件内容完全相同",
+            "invoice_identity": "发票业务身份一致",
+            "receipt_version": "同一收据的不同版本",
+            "evidence_duplicate": "证明材料已关联",
+        }
+        flag_labels = {
+            "invoice_number_match": "发票号码一致",
+            "total_amount_match": "价税合计一致",
+            "seller_name_match": "销售方一致",
+            "invoice_date_match": "开票日期一致",
+        }
+        sections = []
+        for index, outcome in enumerate(outcomes, start=1):
+            flags = dict(outcome.get("reason_flags") or {})
+            lines = [
+                f"重复文件 {index}",
+                str(outcome.get("source_name") or "未命名文件"),
+                f"匹配已有记录：发票 #{int(outcome.get('existing_invoice_id') or 0)}",
+                f"重复类型：{kind_labels.get(str(outcome.get('duplicate_kind') or ''), '重复记录')}",
+                "判定依据：",
+            ]
+            for key, label_text in flag_labels.items():
+                lines.append(("✓ " if flags.get(key) else "△ ") + label_text)
+            if flags.get("file_hash_match"):
+                lines.append("✓ 文件内容完全相同")
+            else:
+                lines.append("△ 文件内容不同，但发票业务身份一致；可能为同一发票的不同下载版本")
+            sections.append("\n".join(lines))
+        QMessageBox.information(self, "重复项详情", "\n\n".join(sections))
+
     @staticmethod
     def _format_scan_result_for_people(summary: dict) -> str:
         """Turn internal scan counters into one product-facing summary line."""
@@ -3883,6 +3957,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_import_recent_review.clicked.connect(self._open_new_invoice_review)
         self.btn_import_recent_review.hide()
         self.import_recent_content_layout.addWidget(self.btn_import_recent_review)
+        self.btn_import_recent_duplicates = make_button("查看重复项", variant="secondary")
+        self.btn_import_recent_duplicates.setObjectName("btn_import_recent_duplicates")
+        self.btn_import_recent_duplicates.clicked.connect(self._show_duplicate_outcomes)
+        self.btn_import_recent_duplicates.hide()
+        self.import_recent_content_layout.addWidget(self.btn_import_recent_duplicates)
         self.import_recent_state_stack.set_content(self.import_recent_content)
         self.import_mail_recent_card.body_layout.addWidget(self.import_recent_state_stack)
 
@@ -7874,12 +7953,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._set_import_source_selected("mobile")
 
     def _mobile_upload_finished(self, result: dict):
+        latest_result = result.get("last_upload_result")
+        if isinstance(latest_result, dict) and latest_result:
+            result = latest_result
         imported = result.get("imported", {})
         imported_stats = imported if isinstance(imported, dict) else {}
-        added = int(imported_stats.get("added", result.get("added", imported if isinstance(imported, int) else 0)) or 0)
-        duplicates = int(result.get("duplicate", result.get("duplicates", 0)) or 0)
-        failed = int(result.get("failed", 0) or 0)
-        scanned = int(result.get("accepted", 0) or 0) + duplicates + failed
+        added = int(result.get("created", imported_stats.get("added", result.get("added", imported if isinstance(imported, int) else 0))) or 0)
+        upload_duplicates = int(result.get("upload_duplicate", result.get("duplicate", 0)) or 0)
+        business_duplicates = int(result.get("business_duplicate", imported_stats.get("duplicates", 0)) or 0)
+        duplicates = upload_duplicates + business_duplicates
+        upload_failed = int(result.get("upload_failed", result.get("failed", 0)) or 0)
+        import_failed = int(result.get("import_failed", imported_stats.get("failed", 0)) or 0)
+        failed = upload_failed + import_failed
+        scanned = int(
+            result.get(
+                "received",
+                int(result.get("accepted", 0) or 0) + upload_duplicates,
+            ) or 0
+        )
         new_ids = result.get(
             "new_invoice_ids",
             imported_stats.get("new_invoice_ids", ())
@@ -7915,6 +8006,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 status="complete",
                 new_invoice_ids=new_ids,
                 review_invoice_ids=review_ids,
+                duplicate_outcomes=result.get(
+                    "duplicate_outcomes",
+                    imported_stats.get("duplicate_outcomes", ()),
+                ),
             )
         self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
         self._load_invoices()
@@ -7922,6 +8017,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_overview_page()
         self._refresh_imports_page()
         self._refresh_settings_page()
+        if review_ids:
+            self._open_new_invoice_review()
+        else:
+            self._clear_review_scope(reload=False)
+            self._switch_main_page("imports")
+            self._set_import_source_selected("mobile")
 
     def _format_local_import_summary(self, stats: dict) -> str:
         return (

@@ -209,6 +209,47 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             self.assertIsNone(controller.server)
             self.assertIsNone(controller.session)
 
+    def test_expired_session_stops_server_releases_state_and_prompts_restart(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, panel = self.make_panel(td)
+            stopped = []
+            server = SimpleNamespace(
+                status=lambda: {
+                    "expired": True,
+                    "received": 0,
+                    "failed": 0,
+                    "import_failed": 0,
+                },
+                stop=lambda: stopped.append(True),
+            )
+            controller.server = server
+            controller.session = SimpleNamespace(port=43210)
+            controller.session_expired.connect(lambda: None)
+
+            controller.refresh_status()
+            self.app.processEvents()
+
+            self.assertEqual(stopped, [True])
+            self.assertIsNone(controller.server)
+            self.assertIsNone(controller.session)
+            self.assertIs(panel.stack.currentWidget(), panel.idle_page)
+            self.assertFalse(panel.lbl_idle_notice.isHidden())
+            self.assertIn("二维码已过期", panel.lbl_idle_notice.text())
+            self.assertEqual(panel.btn_start.text(), "重新生成二维码")
+
+    def test_mobile_stats_use_business_outcome_labels(self):
+        with tempfile.TemporaryDirectory() as td:
+            _controller, panel = self.make_panel(td)
+            panel._set_stats({
+                "received": 5,
+                "created": 4,
+                "duplicate": 0,
+                "business_duplicate": 1,
+                "failed": 0,
+                "import_failed": 0,
+            })
+            self.assertEqual(panel.lbl_stats.text(), "接收 5 · 新增 4 · 重复 1 · 失败 0")
+
     def test_active_qr_card_uses_vertical_contract_only_for_narrow_embedded_surface(self):
         with tempfile.TemporaryDirectory() as td:
             controller, panel = self.make_panel(td)

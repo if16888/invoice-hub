@@ -363,6 +363,51 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["file_hash"])
 
+    def test_semantic_duplicate_with_different_bytes_keeps_auditable_existing_id(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            import_dir = base / "local_invoices"
+            import_dir.mkdir()
+            (import_dir / "invoice-01.pdf").write_bytes(b"%PDF- first representation")
+            (import_dir / "invoice-02.pdf").write_bytes(b"%PDF- second representation")
+            info = InvoiceInfo(
+                invoice_number="SYN-IDENTITY-001",
+                invoice_date="2026-08-22",
+                total_amount="42.00",
+                seller_name="Synthetic Seller",
+                buyer_name="Synthetic Buyer",
+                invoice_type="电子发票",
+                parse_success=True,
+            )
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                stats = cli._import_local_directory(
+                    import_dir,
+                    db,
+                    StaticParser(info),
+                    {},
+                    runtime / "attachments",
+                )
+
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(stats["duplicates"], 1)
+            self.assertEqual(len(stats["review_invoice_ids"]), 1)
+            self.assertEqual(len(stats["duplicate_outcomes"]), 1)
+            outcome = stats["duplicate_outcomes"][0]
+            self.assertGreater(outcome["existing_invoice_id"], 0)
+            self.assertEqual(outcome["duplicate_kind"], "invoice_identity")
+            self.assertEqual(
+                outcome["reason_flags"],
+                {
+                    "invoice_number_match": True,
+                    "total_amount_match": True,
+                    "seller_name_match": True,
+                    "invoice_date_match": True,
+                    "file_hash_match": False,
+                },
+            )
+
     def test_local_evidence_matching_existing_invoice_attaches_without_new_row(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

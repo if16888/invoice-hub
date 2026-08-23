@@ -1255,9 +1255,70 @@ class LocalImportItemResult:
     created: bool = False
     restored: bool = False
     reviewable: bool = False
+    source_name: str = ""
+    duplicate_kind: str = ""
+    match_flags: tuple[tuple[str, bool], ...] = ()
 
     def __iter__(self):
         return iter((self.status, self.invoice_id))
+
+    def duplicate_outcome(self) -> dict | None:
+        if self.status != "duplicate" or self.invoice_id is None:
+            return None
+        return {
+            "source_name": self.source_name,
+            "existing_invoice_id": int(self.invoice_id),
+            "duplicate_kind": self.duplicate_kind or "invoice_identity",
+            "reason_flags": dict(self.match_flags),
+        }
+
+
+def _duplicate_item_result(
+    existing: dict,
+    source_name: str,
+    *,
+    duplicate_kind: str,
+    parsed=None,
+    file_hash: str = "",
+    restored: bool = False,
+    reviewable: bool = False,
+) -> LocalImportItemResult:
+    """Keep a privacy-safe explanation for a duplicate import decision."""
+    flags = {
+        "invoice_number_match": bool(
+            parsed is not None
+            and getattr(parsed, "invoice_number", "")
+            and existing.get("invoice_number") == getattr(parsed, "invoice_number", "")
+        ),
+        "total_amount_match": bool(
+            parsed is not None
+            and getattr(parsed, "total_amount", "")
+            and existing.get("total_amount") == getattr(parsed, "total_amount", "")
+        ),
+        "seller_name_match": bool(
+            parsed is not None
+            and getattr(parsed, "seller_name", "")
+            and existing.get("seller_name") == getattr(parsed, "seller_name", "")
+        ),
+        "invoice_date_match": bool(
+            parsed is not None
+            and getattr(parsed, "invoice_date", "")
+            and existing.get("invoice_date") == getattr(parsed, "invoice_date", "")
+        ),
+        "file_hash_match": bool(
+            file_hash and existing.get("file_hash") == file_hash
+        ),
+    }
+    return LocalImportItemResult(
+        status="restored" if restored else "duplicate",
+        invoice_id=int(existing["id"]),
+        created=False,
+        restored=restored,
+        reviewable=(reviewable if restored else False),
+        source_name=source_name,
+        duplicate_kind=duplicate_kind,
+        match_flags=tuple(flags.items()),
+    )
 
 
 def _import_local_evidence(
@@ -1286,20 +1347,20 @@ def _import_local_evidence(
             except OSError:
                 pass
         if attached:
-            return LocalImportItemResult(
-                status="duplicate",
-                invoice_id=matching_invoice["id"],
-                created=False,
-                restored=False,
-                reviewable=False,
+            return _duplicate_item_result(
+                matching_invoice,
+                source_name,
+                duplicate_kind="evidence_duplicate",
+                parsed=parsed,
+                file_hash=_sha256_file(file_path) if file_path.exists() else "",
             )
         else:
-            return LocalImportItemResult(
-                status="duplicate",
-                invoice_id=None,
-                created=False,
-                restored=False,
-                reviewable=False,
+            return _duplicate_item_result(
+                matching_invoice,
+                source_name,
+                duplicate_kind="evidence_duplicate",
+                parsed=parsed,
+                file_hash=_sha256_file(file_path) if file_path.exists() else "",
             )
 
     parse_note = str(getattr(parsed, "parse_note", "") or "")
@@ -1693,12 +1754,11 @@ def _insert_local_exception(
         is_rev = (existing_by_hash.get("review_status") or review_status.TO_REVIEW) == review_status.TO_REVIEW
         if int(existing_by_hash.get("is_deleted") or 0) == 0 and not is_restored and existing_by_hash.get("attachment_path"):
             _log.info("  本地导入跳过重复文件: %s", mask_filename(original_name))
-            return LocalImportItemResult(
-                status="duplicate",
-                invoice_id=None,
-                created=False,
-                restored=False,
-                reviewable=False,
+            return _duplicate_item_result(
+                existing_by_hash,
+                original_name,
+                duplicate_kind="exact_file",
+                file_hash=file_hash,
             )
         category, _, _ = _classify(original_name, "local import", "", categories)
         import_date = datetime.now().strftime("%Y-%m-%d")
@@ -1714,12 +1774,13 @@ def _insert_local_exception(
         )
         db.update_invoice_file_paths(existing_by_hash["id"], attachment_path=attachment_path)
         _log.info("  本地导入恢复已删除待处理文件: %s", mask_filename(original_name))
-        return LocalImportItemResult(
-            status="restored" if is_restored else "duplicate",
-            invoice_id=existing_by_hash["id"],
-            created=False,
+        return _duplicate_item_result(
+            existing_by_hash,
+            original_name,
+            duplicate_kind="exact_file",
+            file_hash=file_hash,
             restored=is_restored,
-            reviewable=(is_rev if is_restored else False),
+            reviewable=is_rev,
         )
 
     category, extra_type, extra_required = _classify(original_name, "local import", "", categories)
@@ -1840,20 +1901,24 @@ def _import_local_pdf(
                 mask_invoice_number(info.invoice_number),
                 mask_filename(source_name),
             )
-            return LocalImportItemResult(
-                status="restored" if is_restored else "duplicate",
-                invoice_id=existing_by_hash["id"],
-                created=False,
+            return _duplicate_item_result(
+                existing_by_hash,
+                source_name,
+                duplicate_kind="exact_file",
+                parsed=info,
+                file_hash=file_hash,
                 restored=is_restored,
-                reviewable=(is_rev if is_restored else False),
+                reviewable=is_rev,
             )
         _log.info("  本地导入跳过重复文件: %s", mask_filename(source_name))
-        return LocalImportItemResult(
-            status="restored" if is_restored else "duplicate",
-            invoice_id=(existing_by_hash["id"] if is_restored else None),
-            created=False,
+        return _duplicate_item_result(
+            existing_by_hash,
+            source_name,
+            duplicate_kind="exact_file",
+            parsed=info,
+            file_hash=file_hash,
             restored=is_restored,
-            reviewable=(is_rev if is_restored else False),
+            reviewable=is_rev,
         )
 
     # A bilingual or regenerated receipt can have different bytes and omit
@@ -1899,19 +1964,23 @@ def _import_local_pdf(
                     existing_receipt["id"],
                     mask_filename(source_name),
                 )
-                return LocalImportItemResult(
-                    status="restored" if is_restored else "duplicate",
-                    invoice_id=existing_receipt["id"],
-                    created=False,
+                return _duplicate_item_result(
+                    existing_receipt,
+                    source_name,
+                    duplicate_kind="receipt_version",
+                    parsed=info,
+                    file_hash=file_hash,
                     restored=is_restored,
-                    reviewable=(is_rev if is_restored else False),
+                    reviewable=is_rev,
                 )
-            return LocalImportItemResult(
-                status="restored" if is_restored else "duplicate",
-                invoice_id=(existing_receipt["id"] if is_restored else None),
-                created=False,
+            return _duplicate_item_result(
+                existing_receipt,
+                source_name,
+                duplicate_kind="receipt_version",
+                parsed=info,
+                file_hash=file_hash,
                 restored=is_restored,
-                reviewable=(is_rev if is_restored else False),
+                reviewable=is_rev,
             )
 
     # Check for duplicate by the full invoice uniqueness key.
@@ -1953,12 +2022,14 @@ def _import_local_pdf(
                         parse_note=info.parse_note or "本地导入",
                         item_name=info.item_name,
                     )
-                    return LocalImportItemResult(
-                        status="restored" if is_restored else "duplicate",
-                        invoice_id=existing_by_fields["id"],
-                        created=False,
+                    return _duplicate_item_result(
+                        existing_by_fields,
+                        source_name,
+                        duplicate_kind="exact_file",
+                        parsed=info,
+                        file_hash=file_hash,
                         restored=is_restored,
-                        reviewable=(is_rev if is_restored else False),
+                        reviewable=is_rev,
                     )
 
             if info.invoice_type == "网约车电子收据":
@@ -1969,12 +2040,14 @@ def _import_local_pdf(
                         existing_by_fields["id"],
                         mask_filename(source_name),
                     )
-                    return LocalImportItemResult(
-                        status="restored" if is_restored else "duplicate",
-                        invoice_id=existing_by_fields["id"],
-                        created=False,
+                    return _duplicate_item_result(
+                        existing_by_fields,
+                        source_name,
+                        duplicate_kind="receipt_version",
+                        parsed=info,
+                        file_hash=file_hash,
                         restored=is_restored,
-                        reviewable=(is_rev if is_restored else False),
+                        reviewable=is_rev,
                     )
 
             _log.info(
@@ -1987,12 +2060,14 @@ def _import_local_pdf(
                     file_path.unlink()
             except OSError:
                 pass
-            return LocalImportItemResult(
-                status="restored" if is_restored else "duplicate",
-                invoice_id=(existing_by_fields["id"] if is_restored else None),
-                created=False,
+            return _duplicate_item_result(
+                existing_by_fields,
+                source_name,
+                duplicate_kind="invoice_identity",
+                parsed=info,
+                file_hash=file_hash,
                 restored=is_restored,
-                reviewable=(is_rev if is_restored else False),
+                reviewable=is_rev,
             )
 
     # Check for conflict: same number but different amount/seller/date
@@ -2171,6 +2246,7 @@ def _import_local_directory(
         "new_invoice_ids": [],
         "review_invoice_ids": [],
         "restored_invoice_ids": [],
+        "duplicate_outcomes": [],
     }
 
     def record_item_result(res: LocalImportItemResult) -> None:
@@ -2187,6 +2263,9 @@ def _import_local_directory(
                 stats["restored_invoice_ids"].append(rid)
             if res.reviewable and rid not in stats["review_invoice_ids"]:
                 stats["review_invoice_ids"].append(rid)
+        duplicate_outcome = res.duplicate_outcome()
+        if duplicate_outcome is not None:
+            stats["duplicate_outcomes"].append(duplicate_outcome)
 
     if not files:
         _log.warning("本地导入目录没有发现 PDF/OFD/ZIP: %s", mask_path(root))

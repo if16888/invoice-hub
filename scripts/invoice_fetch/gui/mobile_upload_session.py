@@ -71,6 +71,7 @@ class MobileUploadSessionController(QObject):
     dev_firewall_action_finished = Signal(object)
     failed = Signal(str)
     stopped = Signal()
+    session_expired = Signal()
 
     def __init__(self, db_path: Path, parent=None, runtime_dir: Path = RUNTIME_DIR, operation_gate=None):
         super().__init__(parent)
@@ -85,6 +86,7 @@ class MobileUploadSessionController(QObject):
         self._last_total = 0
         self._starting = False
         self._stop_requested = False
+        self._session_expired_handled = False
         self._start_thread = None
         self._start_worker = None
         self.firewall_status = None
@@ -158,6 +160,7 @@ class MobileUploadSessionController(QObject):
         self.session = session
         self.host_options = list(options)
         self._last_total = 0
+        self._session_expired_handled = False
         self.refresh_firewall_status()
         self.timer.start()
         self.started.emit(session)
@@ -264,7 +267,22 @@ class MobileUploadSessionController(QObject):
         status["dev_firewall_present"] = self._dev_firewall_rule_present
         status["dev_firewall_port"] = self._dev_firewall_port
         self.stats_changed.emit(status)
-        total = sum(int(status.get(k, 0) or 0) for k in ("accepted", "duplicate", "failed", "imported"))
+        if status.get("expired") and not self._session_expired_handled:
+            self._session_expired_handled = True
+            server = self.server
+            self.server = None
+            self.session = None
+            self.timer.stop()
+            if server is not None:
+                server.stop()
+            self._release_operation_gate()
+            self.session_expired.emit()
+            return
+        total = (
+            int(status.get("received", status.get("accepted", 0)) or 0)
+            + int(status.get("failed", 0) or 0)
+            + int(status.get("import_failed", 0) or 0)
+        )
         if total and total != self._last_total:
             self._last_total = total
             self.upload_received.emit(status)
@@ -364,6 +382,7 @@ class MobileUploadSessionPanel(QFrame):
         controller.dev_firewall_action_finished.connect(self._dev_firewall_action_finished)
         controller.failed.connect(self._show_error)
         controller.stopped.connect(self.show_idle)
+        controller.session_expired.connect(self._show_expired)
         controller.refresh_firewall_status()
 
     def _build_idle(self):
@@ -377,6 +396,9 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_idle_firewall = QLabel("Windows 防火墙：检查中")
         self.lbl_idle_firewall.setWordWrap(True)
         self.lbl_idle_firewall.setProperty("class", "SectionHint")
+        self.lbl_idle_notice = WrappedTextLabel("")
+        self.lbl_idle_notice.setProperty("class", "SectionHint")
+        self.lbl_idle_notice.hide()
         self.btn_idle_firewall_authorize = make_button("允许手机访问", variant="secondary")
         self.btn_idle_firewall_authorize.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.btn_idle_firewall_authorize.clicked.connect(self._request_firewall_access)
@@ -387,7 +409,7 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_start = make_button("启动手机上传", variant="primary")
         self.btn_start.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.btn_start.clicked.connect(lambda _checked=False: self.controller.start())
-        layout.addWidget(title); layout.addWidget(desc); layout.addWidget(self.lbl_idle_network)
+        layout.addWidget(title); layout.addWidget(desc); layout.addWidget(self.lbl_idle_notice); layout.addWidget(self.lbl_idle_network)
         layout.addWidget(self.lbl_idle_firewall)
         layout.addWidget(self.btn_idle_firewall_authorize, 0, Qt.AlignLeft)
         layout.addWidget(self.btn_idle_dev_firewall_cleanup, 0, Qt.AlignLeft)
@@ -475,7 +497,7 @@ class MobileUploadSessionPanel(QFrame):
         firewall_layout.addWidget(self.lbl_firewall_hint)
         firewall_layout.addWidget(self.btn_firewall_authorize, 0, Qt.AlignLeft)
         firewall_layout.addWidget(self.btn_dev_firewall, 0, Qt.AlignLeft)
-        self.lbl_stats = self._responsive_label("成功 0 · 重复 0 · 失败 0 · 入库 0")
+        self.lbl_stats = self._responsive_label("接收 0 · 新增 0 · 重复 0 · 失败 0")
         form.addRow("当前网络", self.lbl_network_interface)
         form.addRow("本机访问", self.lbl_local_self_check)
         form.addRow("Windows 防火墙", firewall_details)
@@ -546,7 +568,20 @@ class MobileUploadSessionPanel(QFrame):
 
     def show_idle(self):
         self.btn_start.setEnabled(True)
+        self.btn_start.setText("启动手机上传")
+        self.lbl_idle_notice.hide()
         self.btn_dev_firewall.setVisible(False)
+        self.stack.setCurrentWidget(self.idle_page)
+        self.controller.refresh_firewall_status()
+        self._apply_import_workspace_hint()
+
+    def _show_expired(self):
+        self.btn_start.setEnabled(True)
+        self.btn_start.setText("重新生成二维码")
+        self.lbl_idle_notice.setText(
+            "二维码已过期，上传服务已自动停止。请重新生成二维码后再扫码。"
+        )
+        self.lbl_idle_notice.show()
         self.stack.setCurrentWidget(self.idle_page)
         self.controller.refresh_firewall_status()
         self._apply_import_workspace_hint()
@@ -583,9 +618,14 @@ class MobileUploadSessionPanel(QFrame):
             self._set_stats(self.controller.server.status())
 
     def _set_stats(self, stats):
-        self.lbl_stats.setText("成功 {accepted} · 重复 {duplicate} · 失败 {failed} · 入库 {imported}".format(
-            accepted=stats.get("accepted", 0), duplicate=stats.get("duplicate", 0),
-            failed=stats.get("failed", 0), imported=stats.get("imported", 0)))
+        duplicate_total = int(stats.get("duplicate", 0) or 0) + int(stats.get("business_duplicate", 0) or 0)
+        failed_total = int(stats.get("failed", 0) or 0) + int(stats.get("import_failed", 0) or 0)
+        self.lbl_stats.setText("接收 {received} · 新增 {created} · 重复 {duplicate} · 失败 {failed}".format(
+            received=stats.get("received", stats.get("accepted", 0)),
+            created=stats.get("created", stats.get("imported", 0)),
+            duplicate=duplicate_total,
+            failed=failed_total,
+        ))
         interface = str(stats.get("interface_name") or "").strip()
         host = str(stats.get("public_host") or "").strip()
         self.lbl_network_interface.setText(

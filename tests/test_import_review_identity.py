@@ -112,19 +112,28 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 "added": 2,
                 "conflicts": 0,
                 "pending_manual": 0,
+                "duplicates": 1,
                 "new_invoice_ids": [101, 102],
                 "review_invoice_ids": [101, 102],
+                "duplicate_outcomes": [{
+                    "source_name": "copy.pdf",
+                    "existing_invoice_id": 101,
+                    "duplicate_kind": "invoice_identity",
+                    "reason_flags": {"file_hash_match": False},
+                }],
             },
             "batch_id": "mobile_20260822_120000_abc",
         }
         sanitized = public_upload_result(internal_result)
         self.assertEqual(sanitized["accepted"], 2)
-        self.assertEqual(sanitized["duplicate"], 1)
+        self.assertEqual(sanitized["duplicate"], 2)
+        self.assertEqual(sanitized["received"], 3)
         self.assertEqual(sanitized["failed"], 0)
         self.assertEqual(sanitized["imported"], 2)
         self.assertEqual(sanitized["batch_id"], "mobile_20260822_120000_abc")
         self.assertNotIn("new_invoice_ids", sanitized)
         self.assertNotIn("review_invoice_ids", sanitized)
+        self.assertNotIn("duplicate_outcomes", sanitized)
 
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
@@ -134,6 +143,11 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 act = window._import_activities[0]
                 self.assertEqual(act.new_invoice_ids, (101, 102))
                 self.assertEqual(act.review_invoice_ids, (101, 102))
+                self.assertEqual(act.duplicates, 2)
+                self.assertEqual(len(act.duplicate_outcomes), 1)
+                window._refresh_imports_page()
+                self.assertFalse(window.btn_import_recent_duplicates.isHidden())
+                self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（1）")
             finally:
                 window.close()
 
@@ -502,7 +516,14 @@ class ImportReviewIdentityTests(unittest.TestCase):
             self.assertNotIn("restored_invoice_ids", http_result)
             self.assertNotIn("review_invoice_ids", http_result)
             self.assertNotIn("invoice_id", http_result)
-            self.assertEqual(set(http_result.keys()), {"accepted", "duplicate", "failed", "imported", "batch_id"})
+        self.assertEqual(
+            set(http_result.keys()),
+            {
+                "accepted", "duplicate", "failed", "imported", "received",
+                "created", "restored", "upload_duplicate", "business_duplicate",
+                "upload_failed", "import_failed", "batch_id",
+            },
+        )
 
     def test_e2e_d_approved_restored_record(self):
         """E2E D: Restoring an approved invoice includes id in restored_invoice_ids but NOT in review_invoice_ids."""

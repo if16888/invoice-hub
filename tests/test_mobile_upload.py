@@ -15,6 +15,7 @@ from scripts.invoice_fetch.mobile_upload import (
     MobileUploadServer,
     UploadedFile,
     build_upload_host_options,
+    public_upload_result,
 )
 
 
@@ -287,7 +288,85 @@ class MobileUploadTests(unittest.TestCase):
                 ])
 
             self.assertEqual(result["imported"], imported)
-            self.assertEqual(server.status()["imported"], 5)
+            # Business duplicates were received and processed, but were not
+            # inserted into the database.
+            self.assertEqual(server.status()["imported"], 4)
+            self.assertEqual(server.status()["business_duplicate"], 1)
+            self.assertEqual(server.status()["import_failed"], 3)
+
+    def test_five_received_files_report_four_created_and_one_business_duplicate(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                db_path=Path(td) / "runtime" / "invoices.db",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+            outcome = {
+                "source_name": "invoice-copy.pdf",
+                "existing_invoice_id": 42,
+                "duplicate_kind": "invoice_identity",
+                "reason_flags": {
+                    "invoice_number_match": True,
+                    "total_amount_match": True,
+                    "seller_name_match": True,
+                    "invoice_date_match": True,
+                    "file_hash_match": False,
+                },
+            }
+            imported = {
+                "added": 4,
+                "restored": 0,
+                "conflicts": 0,
+                "pending_manual": 0,
+                "duplicates": 1,
+                "failed": 0,
+                "new_invoice_ids": [1, 2, 3, 4],
+                "review_invoice_ids": [1, 2, 3, 4],
+                "duplicate_outcomes": [outcome],
+            }
+            files = [
+                UploadedFile(f"invoice-{index}.pdf", f"unique-{index}".encode(), "application/pdf")
+                for index in range(5)
+            ]
+            with patch.object(server, "_import_accepted_files", return_value=imported):
+                result = server.save_uploads(files)
+
+            public = public_upload_result(result)
+            self.assertEqual(public["received"], 5)
+            self.assertEqual(public["created"], 4)
+            self.assertEqual(public["duplicate"], 1)
+            self.assertEqual(public["failed"], 0)
+            self.assertNotIn("duplicate_outcomes", public)
+            self.assertEqual(server.status()["imported"], 4)
+            self.assertEqual(server.status()["duplicate_outcomes"], [outcome])
+
+    def test_exact_file_transport_duplicate_is_counted_without_becoming_created(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                db_path=Path(td) / "runtime" / "invoices.db",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+            imported = {"added": 4, "duplicates": 0, "failed": 0}
+            files = [
+                UploadedFile(f"invoice-{index}.pdf", f"unique-{index}".encode(), "application/pdf")
+                for index in range(4)
+            ] + [UploadedFile("invoice-copy.pdf", b"unique-0", "application/pdf")]
+            with patch.object(server, "_import_accepted_files", return_value=imported):
+                result = server.save_uploads(files)
+
+            public = public_upload_result(result)
+            self.assertEqual(public["received"], 5)
+            self.assertEqual(public["created"], 4)
+            self.assertEqual(public["duplicate"], 1)
 
     def test_sequential_uploads_import_only_newly_accepted_files(self):
         with tempfile.TemporaryDirectory() as td:
@@ -391,6 +470,7 @@ class MobileUploadTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(session.upload_url, timeout=5)
             self.assertEqual(ctx.exception.code, 403)
+            self.assertTrue(server.status()["expired"])
 
     # ---------- New tests for three-entry UX, OFD/HEIC, WeChat tip ----------
 
@@ -523,6 +603,11 @@ class MobileUploadTests(unittest.TestCase):
             self.assertIn("uploadBar", page_html)
             self.assertIn("btnUpload", page_html)
             self.assertIn("上传", page_html)
+            self.assertIn("const PDF_RENDER_DPR_CAP = 3", page_html)
+            self.assertIn("const PDF_RENDER_DPR_FLOOR = 2", page_html)
+            self.assertIn("scale: cssScale * dpr", page_html)
+            self.assertIn('toDataURL("image/jpeg", .92)', page_html)
+            self.assertIn(".preview-stage canvas[hidden]", page_html)
 
     def test_upload_page_has_usage_tips(self):
         """Page must include practical usage guidance for workers."""
