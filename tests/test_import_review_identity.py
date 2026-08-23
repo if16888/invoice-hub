@@ -107,7 +107,21 @@ class ImportReviewIdentityTests(unittest.TestCase):
         internal_result = {
             "accepted": 2,
             "duplicate": 1,
+            "upload_duplicate": 1,
+            "business_duplicate": 1,
             "failed": 0,
+            "duplicate_outcomes": [{
+                "source_name": "exact-copy.pdf",
+                "existing_invoice_id": None,
+                "duplicate_kind": "exact_file",
+                "duplicate_source": "upload_hash",
+                "reason_flags": {"file_hash_match": True},
+            }, {
+                "source_name": "copy.pdf",
+                "existing_invoice_id": 101,
+                "duplicate_kind": "invoice_identity",
+                "reason_flags": {"file_hash_match": False},
+            }],
             "imported": {
                 "added": 2,
                 "conflicts": 0,
@@ -144,10 +158,10 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 self.assertEqual(act.new_invoice_ids, (101, 102))
                 self.assertEqual(act.review_invoice_ids, (101, 102))
                 self.assertEqual(act.duplicates, 2)
-                self.assertEqual(len(act.duplicate_outcomes), 1)
+                self.assertEqual(len(act.duplicate_outcomes), 2)
                 window._refresh_imports_page()
                 self.assertFalse(window.btn_import_recent_duplicates.isHidden())
-                self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（1）")
+                self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（2）")
             finally:
                 window.close()
 
@@ -703,7 +717,9 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 self.assertEqual(visible_ids, {r_id})
                 self.assertNotIn(h_id, visible_ids)
                 self.assertNotIn(appr_id, visible_ids)
-                self.assertEqual(window.lbl_review_scope.text(), "本次导入 · 1 张待确认")
+                self.assertIn("本次导入 1 张", window.lbl_review_scope.text())
+                self.assertIn("1 张待确认", window.lbl_review_scope.text())
+                self.assertIn("重复跳过 1 张", window.lbl_review_scope.text())
             finally:
                 window.close()
 

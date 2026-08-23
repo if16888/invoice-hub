@@ -134,7 +134,18 @@ class IHDS08Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                window._mobile_upload_finished({"accepted": 4, "imported": 2, "duplicate": 1, "failed": 1})
+                window._mobile_upload_finished({
+                    "accepted": 4,
+                    "imported": 2,
+                    "duplicate": 1,
+                    "failed": 1,
+                    "duplicate_outcomes": [{
+                        "source_name": "duplicate.pdf",
+                        "existing_invoice_id": None,
+                        "duplicate_kind": "exact_file",
+                        "reason_flags": {"file_hash_match": True},
+                    }],
+                })
                 activity = window._import_activities[0]
                 self.assertEqual((activity.added, activity.duplicates, activity.failed), (2, 1, 1))
             finally: window.close()
@@ -156,6 +167,12 @@ class IHDS08Tests(unittest.TestCase):
                     "imported": {"added": 1, "new_invoice_ids": [42]},
                     "duplicate": 1,
                     "failed": 0,
+                    "duplicate_outcomes": [{
+                        "source_name": "duplicate.pdf",
+                        "existing_invoice_id": None,
+                        "duplicate_kind": "exact_file",
+                        "reason_flags": {"file_hash_match": True},
+                    }],
                 })
                 activity = window._import_activities[0]
                 self.assertEqual(activity.added, 1)
@@ -172,22 +189,31 @@ class IHDS08Tests(unittest.TestCase):
                     "seller_name": "测试商户",
                     "invoice_date": "2026-08-23",
                     "review_status": TO_REVIEW,
-                }) for index in range(4))
+                }) for index in range(2))
+                duplicate_outcomes = [{
+                    "source_name": "exact-copy.pdf",
+                    "existing_invoice_id": None,
+                    "duplicate_kind": "exact_file",
+                    "duplicate_source": "upload_hash",
+                    "reason_flags": {"file_hash_match": True},
+                }, *[{
+                    "source_name": f"business-copy-{index}.pdf",
+                    "existing_invoice_id": new_ids[index],
+                    "duplicate_kind": "invoice_identity",
+                    "reason_flags": {"invoice_number_match": True, "file_hash_match": False},
+                } for index in range(2)]]
                 window._mobile_upload_finished({
                     "received": 5,
-                    "created": 4,
-                    "business_duplicate": 1,
+                    "created": 2,
+                    "upload_duplicate": 1,
+                    "business_duplicate": 2,
+                    "duplicate_outcomes": duplicate_outcomes,
                     "imported": {
-                        "added": 4,
-                        "duplicates": 1,
+                        "added": 2,
+                        "duplicates": 2,
                         "new_invoice_ids": new_ids,
                         "review_invoice_ids": new_ids,
-                        "duplicate_outcomes": [{
-                            "source_name": "duplicate.pdf",
-                            "existing_invoice_id": new_ids[0],
-                            "duplicate_kind": "invoice_identity",
-                            "reason_flags": {"file_hash_match": False},
-                        }],
+                        "duplicate_outcomes": duplicate_outcomes[1:],
                     },
                     "new_invoice_ids": new_ids,
                     "review_invoice_ids": new_ids,
@@ -196,10 +222,29 @@ class IHDS08Tests(unittest.TestCase):
 
                 self.assertIs(window.center_stack.currentWidget(), window.review_page)
                 self.assertEqual({int(item["id"]) for item in window.invoices_list}, set(new_ids))
-                self.assertIn("本次新增 4 张", window.lbl_review_scope.text())
-                self.assertIn("重复跳过 1 张", window.lbl_review_scope.text())
+                self.assertIn("本次新增 2 张", window.lbl_review_scope.text())
+                self.assertIn("重复跳过 3 张", window.lbl_review_scope.text())
                 self.assertFalse(window.btn_review_scope_duplicates.isHidden())
-                self.assertEqual(window.btn_import_recent_review.text(), "审核本批 4 张")
+                self.assertEqual(window.btn_import_recent_review.text(), "审核本批 2 张")
+                window._refresh_imports_page()
+                self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（3）")
+
+                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                    window.btn_review_scope_duplicates.click()
+                    self.app.processEvents()
+                    information.assert_called_once()
+                    self.assertIs(information.call_args.args[0], window)
+                    self.assertEqual(information.call_args.args[2].count("重复文件 "), 3)
+                    self.assertNotIn("发票 #0", information.call_args.args[2])
+
+                window._switch_main_page("imports")
+                self.app.processEvents()
+                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                    window.btn_import_recent_duplicates.click()
+                    self.app.processEvents()
+                    information.assert_called_once()
+                    self.assertIs(information.call_args.args[0], window)
+                    self.assertEqual(information.call_args.args[2].count("重复文件 "), 3)
             finally: window.close()
 
     def test_duplicate_only_mobile_batch_clears_stale_review_scope_and_stays_in_imports(self):
@@ -229,6 +274,46 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertFalse(window.btn_import_recent_duplicates.isHidden())
                 self.assertTrue(window.btn_import_recent_review.isHidden())
             finally: window.close()
+
+    def test_next_duplicate_batch_replaces_import_dialog_outcomes(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                def outcomes(prefix, count):
+                    return [{
+                        "source_name": f"{prefix}-{index}.pdf",
+                        "existing_invoice_id": index,
+                        "duplicate_kind": "exact_file",
+                        "reason_flags": {"file_hash_match": True},
+                    } for index in range(1, count + 1)]
+
+                window._mobile_upload_finished({
+                    "batch_id": "batch-a",
+                    "received": 3,
+                    "upload_duplicate": 3,
+                    "duplicate_outcomes": outcomes("batch-a", 3),
+                })
+                window._mobile_upload_finished({
+                    "batch_id": "batch-b",
+                    "received": 1,
+                    "upload_duplicate": 1,
+                    "duplicate_outcomes": outcomes("batch-b", 1),
+                })
+                self.app.processEvents()
+
+                self.assertEqual(len(window._import_activities), 2)
+                self.assertEqual(len(window._import_activities[0].duplicate_outcomes), 1)
+                self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（1）")
+                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                    window.btn_import_recent_duplicates.click()
+                    self.app.processEvents()
+                    information.assert_called_once()
+                    detail = information.call_args.args[2]
+                    self.assertEqual(detail.count("重复文件 "), 1)
+                    self.assertIn("batch-b-1.pdf", detail)
+                    self.assertNotIn("batch-a", detail)
+            finally:
+                window.close()
 
     def test_next_mobile_batch_replaces_stale_scope_and_processing_cta(self):
         with tempfile.TemporaryDirectory() as td:
@@ -268,6 +353,12 @@ class IHDS08Tests(unittest.TestCase):
                     "received": 4,
                     "created": 3,
                     "business_duplicate": 1,
+                    "duplicate_outcomes": [{
+                        "source_name": "second-duplicate.pdf",
+                        "existing_invoice_id": second_ids[0],
+                        "duplicate_kind": "invoice_identity",
+                        "reason_flags": {"invoice_number_match": True},
+                    }],
                     "new_invoice_ids": second_ids,
                     "review_invoice_ids": second_ids,
                 })

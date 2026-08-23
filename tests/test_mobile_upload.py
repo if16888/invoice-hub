@@ -213,6 +213,12 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual([item["batch_id"] for item in completed], [result_a["batch_id"], result_b["batch_id"]])
             self.assertNotEqual(result_a["batch_id"], result_b["batch_id"])
             self.assertEqual([item["result_seq"] for item in completed], [1, 2])
+            self.assertEqual(len(result_a["duplicate_outcomes"]), 3)
+            self.assertEqual(len(result_b["duplicate_outcomes"]), 1)
+            self.assertTrue(all(
+                item["duplicate_kind"] == "exact_file"
+                for item in result_a["duplicate_outcomes"] + result_b["duplicate_outcomes"]
+            ))
             log_text = "\n".join(captured.output)
             for result in (result_a, result_b):
                 self.assertIn(f"batch started batch_id={result['batch_id']}", log_text)
@@ -402,6 +408,12 @@ class MobileUploadTests(unittest.TestCase):
                 "pending_manual": 2,
                 "duplicates": 1,
                 "failed": 3,
+                "duplicate_outcomes": [{
+                    "source_name": "business-duplicate.pdf",
+                    "existing_invoice_id": 8,
+                    "duplicate_kind": "invoice_identity",
+                    "reason_flags": {"invoice_number_match": True},
+                }],
             }
             with patch.object(server, "_import_accepted_files", return_value=imported):
                 result = server.save_uploads([
@@ -415,6 +427,39 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual(server.status()["imported"], 4)
             self.assertEqual(server.status()["business_duplicate"], 1)
             self.assertEqual(server.status()["import_failed"], 3)
+
+    def test_duplicate_outcome_mismatch_warning_contains_counts_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                db_path=Path(td) / "runtime" / "invoices.db",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+            imported = {
+                "added": 0,
+                "duplicates": 1,
+                "failed": 0,
+                "duplicate_outcomes": [],
+            }
+
+            with self.assertLogs("invoice_fetch.mobile_upload", level="WARNING") as captured, patch.object(
+                server,
+                "_import_accepted_files",
+                return_value=imported,
+            ):
+                server.save_uploads([
+                    UploadedFile("synthetic.pdf", b"synthetic payload", "application/pdf"),
+                ])
+
+            self.assertEqual(len(captured.records), 1)
+            self.assertIn(
+                "duplicate outcome count mismatch expected=1 actual=0",
+                captured.records[0].getMessage(),
+            )
 
     def test_five_received_files_report_four_created_and_one_business_duplicate(self):
         with tempfile.TemporaryDirectory() as td:
@@ -489,6 +534,108 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual(public["received"], 5)
             self.assertEqual(public["created"], 4)
             self.assertEqual(public["duplicate"], 1)
+            self.assertEqual(len(result["duplicate_outcomes"]), 1)
+            outcome = result["duplicate_outcomes"][0]
+            self.assertEqual(outcome["source_name"], "invoice-copy.pdf")
+            self.assertIsNone(outcome["existing_invoice_id"])
+            self.assertEqual(outcome["duplicate_kind"], "exact_file")
+            self.assertEqual(outcome["duplicate_source"], "upload_hash")
+            self.assertEqual(outcome["reason_flags"], {"file_hash_match": True})
+
+    def test_upload_and_business_duplicates_share_one_complete_audit_result(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=runtime_dir / "invoices.db",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+            known_payload = b"known exact duplicate"
+            server._files.append({
+                "status": "accepted",
+                "sha256": hashlib.sha256(known_payload).hexdigest(),
+            })
+            business_outcomes = [{
+                "source_name": f"business-{index}.pdf",
+                "existing_invoice_id": 40 + index,
+                "duplicate_kind": "invoice_identity",
+                "reason_flags": {"invoice_number_match": True},
+            } for index in range(2)]
+            imported = {
+                "added": 2,
+                "restored": 0,
+                "conflicts": 0,
+                "pending_manual": 0,
+                "duplicates": 2,
+                "failed": 0,
+                "new_invoice_ids": [1, 2],
+                "review_invoice_ids": [1, 2],
+                "duplicate_outcomes": business_outcomes,
+            }
+            files = [
+                UploadedFile("exact-copy.pdf", known_payload, "application/pdf"),
+                *[
+                    UploadedFile(f"candidate-{index}.pdf", f"candidate-{index}".encode(), "application/pdf")
+                    for index in range(4)
+                ],
+            ]
+
+            with self.assertLogs("invoice_fetch.mobile_upload", level="INFO") as captured, patch.object(
+                server,
+                "_import_accepted_files",
+                return_value=imported,
+            ):
+                result = server.save_uploads(files)
+
+            public = public_upload_result(result)
+            self.assertEqual(
+                (public["received"], public["created"], public["duplicate"], public["failed"]),
+                (5, 2, 3, 0),
+            )
+            self.assertEqual(result["upload_duplicate"], 1)
+            self.assertEqual(result["business_duplicate"], 2)
+            self.assertEqual(len(result["duplicate_outcomes"]), 3)
+            self.assertEqual(result["duplicate_outcomes"][0]["duplicate_kind"], "exact_file")
+            self.assertEqual(result["duplicate_outcomes"][1:], business_outcomes)
+            self.assertNotIn("duplicate outcome count mismatch", "\n".join(captured.output))
+            self.assertEqual(server.status()["duplicate_outcomes"], result["duplicate_outcomes"])
+
+    def test_exact_file_duplicate_outcome_links_existing_invoice_when_available(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            payload = b"existing exact duplicate"
+            digest = hashlib.sha256(payload).hexdigest()
+            with InvoiceDB(db_path) as db:
+                invoice_id = db.insert_invoice({
+                    "invoice_number": "SYNTHETIC-EXACT-1",
+                    "total_amount": "10.00",
+                    "seller_name": "Synthetic Seller",
+                    "invoice_date": "2026-08-23",
+                    "file_hash": digest,
+                })
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+            server._files.append({"status": "accepted", "sha256": digest})
+
+            result = server.save_uploads([
+                UploadedFile("existing-copy.pdf", payload, "application/pdf"),
+            ])
+
+            self.assertEqual(result["upload_duplicate"], 1)
+            self.assertEqual(len(result["duplicate_outcomes"]), 1)
+            self.assertEqual(result["duplicate_outcomes"][0]["existing_invoice_id"], invoice_id)
 
     def test_sequential_uploads_import_only_newly_accepted_files(self):
         with tempfile.TemporaryDirectory() as td:

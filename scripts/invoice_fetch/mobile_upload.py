@@ -558,6 +558,8 @@ class MobileUploadServer:
         known_hashes = self._known_hashes()
         accepted_paths: list[Path] = []
         duplicate_records_by_hash: dict[str, list[dict]] = {}
+        upload_duplicate_outcomes: list[dict] = []
+        existing_invoice_ids_by_hash: dict[str, int] = {}
         restored_invoice_ids: list[int] = []
         review_invoice_ids: list[int] = []
 
@@ -620,6 +622,13 @@ class MobileUploadServer:
                 from .db import InvoiceDB
 
                 with InvoiceDB(self.db_path) as db:
+                    for digest in duplicate_records_by_hash:
+                        existing = db.find_invoice_by_file_hash(
+                            digest,
+                            include_deleted=True,
+                        )
+                        if existing and int(existing.get("id") or 0) > 0:
+                            existing_invoice_ids_by_hash[digest] = int(existing["id"])
                     restored_ids = db.restore_deleted_invoices_by_file_hashes(
                         set(duplicate_records_by_hash)
                     )
@@ -672,7 +681,6 @@ class MobileUploadServer:
                     self._stats["conflict"] += int(imported.get("conflicts", 0) or 0)
                     self._stats["pending_manual"] += int(imported.get("pending_manual", 0) or 0)
                     self._stats["import_failed"] += int(imported.get("failed", 0) or 0)
-                    self._stats["duplicate_outcomes"].extend(imported.get("duplicate_outcomes", ()))
                 for key, values in (
                     ("new_invoice_ids", new_ids),
                     ("restored_invoice_ids", restored_invoice_ids),
@@ -683,7 +691,29 @@ class MobileUploadServer:
                             self._stats[key].append(invoice_id)
                 self._write_manifest()
 
+        if duplicate_records_by_hash:
+            for digest, records in duplicate_records_by_hash.items():
+                existing_invoice_id = existing_invoice_ids_by_hash.get(digest)
+                upload_duplicate_outcomes.extend(
+                    {
+                        "source_name": str(record.get("original_filename") or "未命名文件"),
+                        "existing_invoice_id": existing_invoice_id,
+                        "duplicate_kind": "exact_file",
+                        "duplicate_source": "upload_hash",
+                        "reason_flags": {"file_hash_match": True},
+                    }
+                    for record in records
+                )
+
+        business_duplicate_outcomes = (
+            list(imported.get("duplicate_outcomes", ()))
+            if isinstance(imported, dict)
+            else []
+        )
+        duplicate_outcomes = upload_duplicate_outcomes + business_duplicate_outcomes
+
         with self._lock:
+            self._stats["duplicate_outcomes"].extend(duplicate_outcomes)
             for key, values in (
                 ("new_invoice_ids", new_ids),
                 ("restored_invoice_ids", restored_invoice_ids),
@@ -693,6 +723,16 @@ class MobileUploadServer:
                     if invoice_id not in self._stats[key]:
                         self._stats[key].append(invoice_id)
             self._write_manifest()
+
+        expected_duplicate_outcomes = duplicate_now + (
+            int(imported.get("duplicates", 0) or 0) if isinstance(imported, dict) else 0
+        )
+        if expected_duplicate_outcomes != len(duplicate_outcomes):
+            _log.warning(
+                "[手机上传] duplicate outcome count mismatch expected=%s actual=%s",
+                expected_duplicate_outcomes,
+                len(duplicate_outcomes),
+            )
 
         result = {
             "accepted": accepted_now,
@@ -707,7 +747,7 @@ class MobileUploadServer:
             "pending_manual": int(imported.get("pending_manual", 0) or 0) if isinstance(imported, dict) else 0,
             "upload_failed": failed_now,
             "import_failed": int(imported.get("failed", 0) or 0) if isinstance(imported, dict) else 0,
-            "duplicate_outcomes": list(imported.get("duplicate_outcomes", ())) if isinstance(imported, dict) else [],
+            "duplicate_outcomes": duplicate_outcomes,
             "batch_id": upload_batch_id,
             "session_batch_id": self.session.batch_id,
             "new_invoice_ids": tuple(dict.fromkeys(new_ids)),

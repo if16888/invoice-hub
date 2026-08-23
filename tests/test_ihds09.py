@@ -371,7 +371,12 @@ class IHDS09Tests(unittest.TestCase):
                     "new_invoice_ids": [5, 6, 7],
                     "restored_invoice_ids": [],
                     "review_invoice_ids": [5, 6, 7],
-                    "duplicate_outcomes": [],
+                    "duplicate_outcomes": [{
+                        "source_name": "poll-duplicate.pdf",
+                        "existing_invoice_id": 4,
+                        "duplicate_kind": "invoice_identity",
+                        "reason_flags": {"invoice_number_match": True},
+                    }],
                 }
 
             try:

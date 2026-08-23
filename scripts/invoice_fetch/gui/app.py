@@ -2814,10 +2814,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.import_mail_accounts_card.set_hint(
                     "默认账号需要授权码" if default_requires_auth else "默认账号已就绪，可直接开始扫描。"
                 )
-    @staticmethod
-    def _show_duplicate_outcomes(self) -> None:
-        outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
-        if not outcomes:
+    def _show_duplicate_outcomes(self, _checked: bool = False) -> None:
+        sender = self.sender()
+        review_button = getattr(self, "btn_review_scope_duplicates", None)
+        import_button = getattr(self, "btn_import_recent_duplicates", None)
+        if sender is review_button:
+            outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
+        elif sender is import_button:
+            activities = list(getattr(self, "_import_activities", ()))
+            outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
+        elif (
+            getattr(self, "center_stack", None) is not None
+            and self.center_stack.currentWidget() is getattr(self, "review_page", None)
+        ):
+            outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
+        else:
             activities = list(getattr(self, "_import_activities", ()))
             outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
         if not outcomes:
@@ -2839,19 +2850,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         sections = []
         for index, outcome in enumerate(outcomes, start=1):
             flags = dict(outcome.get("reason_flags") or {})
+            duplicate_kind = str(outcome.get("duplicate_kind") or "")
+            existing_invoice_id = int(outcome.get("existing_invoice_id") or 0)
             lines = [
                 f"重复文件 {index}",
                 str(outcome.get("source_name") or "未命名文件"),
-                f"匹配已有记录：发票 #{int(outcome.get('existing_invoice_id') or 0)}",
-                f"重复类型：{kind_labels.get(str(outcome.get('duplicate_kind') or ''), '重复记录')}",
-                "判定依据：",
             ]
-            for key, label_text in flag_labels.items():
-                lines.append(("✓ " if flags.get(key) else "△ ") + label_text)
-            if flags.get("file_hash_match"):
+            if existing_invoice_id > 0:
+                lines.append(f"匹配已有记录：发票 #{existing_invoice_id}")
+            elif duplicate_kind == "exact_file":
+                lines.append("匹配结果：与此前已上传文件内容完全相同")
+            lines.extend((
+                f"重复类型：{kind_labels.get(duplicate_kind, '重复记录')}",
+                "判定依据：",
+            ))
+            if duplicate_kind == "exact_file" and flags.get("file_hash_match"):
                 lines.append("✓ 文件内容完全相同")
+                lines.append("业务字段：未重新解析（文件内容已完全一致）")
             else:
-                lines.append("△ 文件内容不同，但发票业务身份一致；可能为同一发票的不同下载版本")
+                for key, label_text in flag_labels.items():
+                    lines.append(("✓ " if flags.get(key) else "△ ") + label_text)
+                if flags.get("file_hash_match"):
+                    lines.append("✓ 文件内容完全相同")
+                else:
+                    lines.append("△ 文件内容不同，但发票业务身份一致；可能为同一发票的不同下载版本")
             sections.append("\n".join(lines))
         QMessageBox.information(self, "重复项详情", "\n\n".join(sections))
 
@@ -8008,6 +8030,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         upload_failed = int(result.get("upload_failed", result.get("failed", 0)) or 0)
         import_failed = int(result.get("import_failed", imported_stats.get("failed", 0)) or 0)
         failed = upload_failed + import_failed
+        duplicate_outcomes = tuple(result.get(
+            "duplicate_outcomes",
+            imported_stats.get("duplicate_outcomes", ()),
+        ))
+        if duplicates != len(duplicate_outcomes):
+            _log.warning(
+                "[手机上传] duplicate outcome count mismatch expected=%s actual=%s",
+                duplicates,
+                len(duplicate_outcomes),
+            )
         scanned = int(
             result.get(
                 "received",
@@ -8050,10 +8082,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 status="complete",
                 new_invoice_ids=new_ids,
                 review_invoice_ids=review_ids,
-                duplicate_outcomes=result.get(
-                    "duplicate_outcomes",
-                    imported_stats.get("duplicate_outcomes", ()),
-                ),
+                duplicate_outcomes=duplicate_outcomes,
             )
             _log.info(
                 "[手机上传] run history appended batch_id=%s",
