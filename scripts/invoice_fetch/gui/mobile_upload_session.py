@@ -2,6 +2,7 @@
 """Shared controller and embedded surface for mobile upload sessions."""
 
 from io import BytesIO
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, QThread, QTimer, Slot
@@ -19,6 +20,9 @@ from .ui_components import (
     make_badge,
     make_button,
 )
+
+
+_log = logging.getLogger("invoice_fetch.mobile_upload")
 
 
 class _MobileUploadStartWorker(QObject):
@@ -64,7 +68,8 @@ class MobileUploadSessionController(QObject):
     starting = Signal()
     started = Signal(object)
     stats_changed = Signal(dict)
-    upload_received = Signal(dict)
+    upload_batch_started = Signal(dict)
+    upload_batch_completed = Signal(dict)
     firewall_status_changed = Signal(object)
     firewall_action_finished = Signal(object)
     dev_firewall_status_changed = Signal(object)
@@ -83,7 +88,8 @@ class MobileUploadSessionController(QObject):
         self.server = None
         self.session = None
         self.host_options = []
-        self._last_total = 0
+        self._last_completed_upload_seq = 0
+        self._active_upload_batch_id = ""
         self._starting = False
         self._stop_requested = False
         self._session_expired_handled = False
@@ -159,7 +165,8 @@ class MobileUploadSessionController(QObject):
         self.server = server
         self.session = session
         self.host_options = list(options)
-        self._last_total = 0
+        self._last_completed_upload_seq = 0
+        self._active_upload_batch_id = ""
         self._session_expired_handled = False
         self.refresh_firewall_status()
         self.timer.start()
@@ -266,7 +273,12 @@ class MobileUploadSessionController(QObject):
         status["dev_firewall_active"] = self._dev_firewall_rule_active
         status["dev_firewall_present"] = self._dev_firewall_rule_present
         status["dev_firewall_port"] = self._dev_firewall_port
+        active_batch_id = str(status.get("active_upload_batch_id") or "")
+        if active_batch_id and active_batch_id != self._active_upload_batch_id:
+            self._active_upload_batch_id = active_batch_id
+            self.upload_batch_started.emit({"batch_id": active_batch_id})
         self.stats_changed.emit(status)
+        self._emit_completed_batches(status)
         if status.get("expired") and not self._session_expired_handled:
             self._session_expired_handled = True
             server = self.server
@@ -275,24 +287,55 @@ class MobileUploadSessionController(QObject):
             self.timer.stop()
             if server is not None:
                 server.stop()
+                self._emit_completed_batches(server=server)
             self._release_operation_gate()
             self.session_expired.emit()
             return
-        total = (
-            int(status.get("received", status.get("accepted", 0)) or 0)
-            + int(status.get("failed", 0) or 0)
-            + int(status.get("import_failed", 0) or 0)
+
+    def _emit_completed_batches(self, status: dict | None = None, *, server=None) -> None:
+        server = server or self.server
+        if server is None:
+            return
+        snapshot = dict(
+            status
+            or (server.status() if hasattr(server, "status") else {})
         )
-        if total and total != self._last_total:
-            self._last_total = total
-            self.upload_received.emit(status)
+        completed_seq = int(snapshot.get("completed_upload_seq", 0) or 0)
+        completed = list(server.drain_completed_upload_results())
+        if not completed and completed_seq > self._last_completed_upload_seq:
+            latest = snapshot.get("last_upload_result")
+            if isinstance(latest, dict) and latest:
+                completed = [dict(latest)]
+        for result in completed:
+            result_seq = int(result.get("result_seq", 0) or 0)
+            if result_seq and result_seq <= self._last_completed_upload_seq:
+                continue
+            batch_id = str(result.get("batch_id") or "")
+            _log.info(
+                "[手机上传] gui batch completed emitted batch_id=%s",
+                batch_id or "<missing>",
+            )
+            self.upload_batch_completed.emit(dict(result))
+            if result_seq:
+                self._last_completed_upload_seq = result_seq
+            else:
+                self._last_completed_upload_seq += 1
+        self._last_completed_upload_seq = max(
+            self._last_completed_upload_seq,
+            completed_seq,
+        )
+        if not snapshot.get("upload_in_progress"):
+            self._active_upload_batch_id = ""
 
     def stop(self):
         if self._starting:
             self._stop_requested = True
         # Stopping the service must never trigger UAC or mutate firewall state.
         if self.server is not None:
-            self.server.stop()
+            server = self.server
+            self._emit_completed_batches(server=server)
+            server.stop()
+            self._emit_completed_batches(server=server)
         self.server = None
         self.session = None
         self.timer.stop()
@@ -463,7 +506,7 @@ class MobileUploadSessionPanel(QFrame):
         self.txt_url.setToolTip("")
         qr_column.addWidget(self.txt_url)
         qr_column.addStretch(1)
-        self.combo_upload_host = QComboBox(); self.combo_upload_host.currentIndexChanged.connect(self._host_changed)
+        self.combo_upload_host = QComboBox(); self.combo_upload_host.activated.connect(self._host_changed)
         self.combo_upload_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.lbl_service_address = self._responsive_label("—")
         self.lbl_service_address.setVisible(False)
@@ -618,14 +661,25 @@ class MobileUploadSessionPanel(QFrame):
             self._set_stats(self.controller.server.status())
 
     def _set_stats(self, stats):
-        duplicate_total = int(stats.get("duplicate", 0) or 0) + int(stats.get("business_duplicate", 0) or 0)
-        failed_total = int(stats.get("failed", 0) or 0) + int(stats.get("import_failed", 0) or 0)
-        self.lbl_stats.setText("接收 {received} · 新增 {created} · 重复 {duplicate} · 失败 {failed}".format(
-            received=stats.get("received", stats.get("accepted", 0)),
-            created=stats.get("created", stats.get("imported", 0)),
-            duplicate=duplicate_total,
-            failed=failed_total,
-        ))
+        latest = stats.get("last_upload_result")
+        current = latest if isinstance(latest, dict) and latest else stats
+        if stats.get("upload_in_progress"):
+            self.lbl_stats.setText("正在处理本批上传…")
+        else:
+            imported = current.get("imported", {})
+            imported_stats = imported if isinstance(imported, dict) else {}
+            duplicate_total = int(current.get("upload_duplicate", current.get("duplicate", 0)) or 0) + int(
+                current.get("business_duplicate", imported_stats.get("duplicates", 0)) or 0
+            )
+            failed_total = int(current.get("upload_failed", current.get("failed", 0)) or 0) + int(
+                current.get("import_failed", imported_stats.get("failed", 0)) or 0
+            )
+            self.lbl_stats.setText("接收 {received} · 新增 {created} · 重复 {duplicate} · 失败 {failed}".format(
+                received=current.get("received", current.get("accepted", 0)),
+                created=current.get("created", imported_stats.get("added", current.get("imported", 0))),
+                duplicate=duplicate_total,
+                failed=failed_total,
+            ))
         interface = str(stats.get("interface_name") or "").strip()
         host = str(stats.get("public_host") or "").strip()
         self.lbl_network_interface.setText(
@@ -671,7 +725,7 @@ class MobileUploadSessionPanel(QFrame):
     def _copy_url(self):
         QApplication.clipboard().setText(self.txt_url.text())
 
-    def _host_changed(self):
+    def _host_changed(self, _index: int = -1):
         host = self.combo_upload_host.currentData()
         if host: self.controller.set_public_host(str(host))
 

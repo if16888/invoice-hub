@@ -679,18 +679,20 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 self.assertIn(r_id, res_to_rev["review_invoice_ids"])
 
                 window._mobile_upload_finished(res_to_rev)
-                self.assertEqual(len(window._import_activities), 1)
+                # Each completed POST owns a distinct immutable run-history row,
+                # even when both uploads share one QR-code session.
+                self.assertEqual(len(window._import_activities), 2)
                 act = window._import_activities[0]
                 self.assertEqual(act.restored, 1)
                 self.assertEqual(act.review_invoice_ids, (r_id,))
                 self.assertEqual(act.new_invoice_ids, ())
 
                 window._refresh_overview_page()
-                self.assertEqual(window.btn_overview_new_review.text(), "处理本次 1 张")
+                self.assertEqual(window.btn_overview_new_review.text(), "审核本批 1 张")
                 self.assertFalse(window.btn_overview_new_review.isHidden())
 
                 window._refresh_imports_page()
-                self.assertEqual(window.btn_import_recent_review.text(), "处理本次 1 张")
+                self.assertEqual(window.btn_import_recent_review.text(), "审核本批 1 张")
                 self.assertFalse(window.btn_import_recent_review.isHidden())
 
                 # Click review CTA and check scope isolation

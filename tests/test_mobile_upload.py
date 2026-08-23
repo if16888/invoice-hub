@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import os
 import tempfile
@@ -6,6 +7,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -119,6 +121,10 @@ class MobileUploadTests(unittest.TestCase):
             ("Docker vEthernet", "172.18.0.1"),
             ("Wi-Fi", "172.20.10.5"),
             ("Ethernet", "192.168.1.9"),
+            ("singbox_tun", "172.18.1.2"),
+            ("sing-box TUN", "172.19.1.2"),
+            ("WireGuard Tunnel", "10.9.0.2"),
+            ("TAP Adapter", "10.8.0.2"),
             ("Loopback", "127.0.0.1"),
             ("APIPA", "169.254.1.2"),
             ("WSL", "172.22.64.1"),
@@ -133,6 +139,122 @@ class MobileUploadTests(unittest.TestCase):
         virtual_hosts = {opt.host for opt in options if opt.is_virtual}
         self.assertIn("172.18.0.1", virtual_hosts)
         self.assertIn("172.22.64.1", virtual_hosts)
+        self.assertIn("172.18.1.2", virtual_hosts)
+        self.assertIn("172.19.1.2", virtual_hosts)
+        self.assertIn("10.9.0.2", virtual_hosts)
+        self.assertIn("10.8.0.2", virtual_hosts)
+
+    def test_each_post_queues_one_distinct_finalized_result(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            duplicate_payloads = [b"known-a", b"known-b", b"known-c"]
+            server._files.extend(
+                {
+                    "status": "accepted",
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+                for payload in duplicate_payloads
+            )
+            batch_a_files = [
+                UploadedFile(f"duplicate-{index}.pdf", payload, "application/pdf")
+                for index, payload in enumerate(duplicate_payloads)
+            ]
+            batch_b_files = [
+                UploadedFile("duplicate-again.pdf", duplicate_payloads[0], "application/pdf"),
+                *[
+                    UploadedFile(
+                        f"new-{index}.pdf",
+                        f"new-{index}".encode("ascii"),
+                        "application/pdf",
+                    )
+                    for index in range(6)
+                ],
+            ]
+            imported = {
+                "added": 6,
+                "duplicates": 0,
+                "conflicts": 0,
+                "pending_manual": 0,
+                "failed": 0,
+                "restored": 0,
+                "new_invoice_ids": [],
+                "restored_invoice_ids": [],
+                "review_invoice_ids": [],
+                "duplicate_outcomes": [],
+            }
+            with self.assertLogs("invoice_fetch.mobile_upload", level="INFO") as captured, patch.object(
+                server,
+                "_import_accepted_files",
+                return_value=imported,
+            ):
+                result_a = server.save_uploads(batch_a_files)
+                result_b = server.save_uploads(batch_b_files)
+
+            self.assertEqual(
+                (result_a["received"], result_a["created"], result_a["upload_duplicate"], result_a["import_failed"]),
+                (3, 0, 3, 0),
+            )
+            self.assertEqual(
+                (result_b["received"], result_b["created"], result_b["upload_duplicate"], result_b["import_failed"]),
+                (7, 6, 1, 0),
+            )
+            completed = server.drain_completed_upload_results()
+            self.assertEqual([item["batch_id"] for item in completed], [result_a["batch_id"], result_b["batch_id"]])
+            self.assertNotEqual(result_a["batch_id"], result_b["batch_id"])
+            self.assertEqual([item["result_seq"] for item in completed], [1, 2])
+            log_text = "\n".join(captured.output)
+            for result in (result_a, result_b):
+                self.assertIn(f"batch started batch_id={result['batch_id']}", log_text)
+                self.assertIn(f"batch finalized batch_id={result['batch_id']}", log_text)
+            self.assertIn(f"batch importing batch_id={result_b['batch_id']}", log_text)
+            self.assertEqual(server.drain_completed_upload_results(), [])
+            status = server.status()
+            self.assertEqual(status["completed_upload_seq"], 2)
+            self.assertEqual(status["last_upload_result"], result_b)
+            self.assertFalse(status["upload_in_progress"])
+            self.assertEqual(
+                (status["received"], status["created"], status["duplicate"], status["failed"]),
+                (10, 6, 4, 0),
+            )
+
+    def test_rapid_concurrent_posts_are_serialized_without_lost_completion(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=False,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            def upload(index: int):
+                return server.save_uploads([
+                    UploadedFile(
+                        f"rapid-{index}.pdf",
+                        f"rapid-payload-{index}".encode("ascii"),
+                        "application/pdf",
+                    )
+                ])
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(upload, (1, 2)))
+
+            completed = server.drain_completed_upload_results()
+            self.assertEqual(len(completed), 2)
+            self.assertEqual({item["batch_id"] for item in completed}, {item["batch_id"] for item in results})
+            self.assertEqual(server.status()["received"], 2)
 
     def test_mobile_upload_server_can_switch_public_host_without_rotating_token(self):
         with tempfile.TemporaryDirectory() as td:

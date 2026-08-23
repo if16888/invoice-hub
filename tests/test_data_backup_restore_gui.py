@@ -143,7 +143,10 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
 
             with patch("scripts.invoice_fetch.gui.mobile_upload_session.QThread.start"):
                 controller.start()
-            server = SimpleNamespace(stop=lambda: None)
+            server = SimpleNamespace(
+                stop=lambda: None,
+                drain_completed_upload_results=lambda: [],
+            )
             controller._start_succeeded(
                 server,
                 SimpleNamespace(host="127.0.0.1", port=43210),

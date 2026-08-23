@@ -13,6 +13,7 @@ import re
 import secrets
 import socket
 import threading
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -203,6 +204,7 @@ class MobileUploadServer:
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._upload_lock = threading.Lock()
         self._files: list[dict] = []
         self._stats = {
             "accepted": 0,
@@ -236,7 +238,10 @@ class MobileUploadServer:
         )
         self._local_self_check = "pending"
         self._local_self_check_error = ""
+        self._completed_upload_seq = 0
         self._last_upload_result: dict = {}
+        self._completed_upload_results: list[dict] = []
+        self._active_upload_batch_id = ""
 
     def start(self) -> MobileUploadSession:
         if self._httpd:
@@ -356,7 +361,6 @@ class MobileUploadServer:
                 "new_invoice_ids": list(self._stats["new_invoice_ids"]),
                 "restored_invoice_ids": list(self._stats["restored_invoice_ids"]),
                 "review_invoice_ids": list(self._stats["review_invoice_ids"]),
-                "last_upload_result": dict(self._last_upload_result),
                 "active": bool(self._httpd),
                 "batch_id": self.session.batch_id if self.session else "",
                 "upload_url": self.session.upload_url if self.session else "",
@@ -372,7 +376,18 @@ class MobileUploadServer:
                 "lan_client_access_confirmed": self._lan_client_access_confirmed,
                 "last_request_at": self._last_request_at.isoformat(timespec="seconds") if self._last_request_at else "",
                 "last_lan_client_access_at": self._last_lan_client_access_at.isoformat(timespec="seconds") if self._last_lan_client_access_at else "",
+                "completed_upload_seq": self._completed_upload_seq,
+                "last_upload_result": deepcopy(self._last_upload_result),
+                "upload_in_progress": bool(self._active_upload_batch_id),
+                "active_upload_batch_id": self._active_upload_batch_id,
             }
+
+    def drain_completed_upload_results(self) -> list[dict]:
+        """Return each finalized POST result exactly once as an isolated snapshot."""
+        with self._lock:
+            completed = deepcopy(self._completed_upload_results)
+            self._completed_upload_results.clear()
+        return completed
 
     def refresh_local_host_addresses(self) -> set[str]:
         addresses = _collect_local_host_addresses(
@@ -470,8 +485,9 @@ class MobileUploadServer:
     def _log_upload_result(self, result: dict) -> None:
         public = public_upload_result(result)
         _log.info(
-            "[手机上传] upload result received=%s created=%s duplicate=%s failed=%s "
+            "[手机上传] batch finalized batch_id=%s received=%s created=%s duplicate=%s failed=%s "
             "upload_duplicate=%s business_duplicate=%s",
+            public["batch_id"],
             public["received"],
             public["created"],
             public["duplicate"],
@@ -510,6 +526,28 @@ class MobileUploadServer:
         return self.session
 
     def save_uploads(self, files: Iterable[UploadedFile]) -> dict:
+        items = tuple(files)
+        with self._upload_lock:
+            upload_batch_id = f"upload_{secrets.token_hex(4)}"
+            with self._lock:
+                self._active_upload_batch_id = upload_batch_id
+            _log.info(
+                "[手机上传] batch started batch_id=%s received=%s",
+                upload_batch_id,
+                len(items),
+            )
+            try:
+                return self._save_uploads_locked(items, upload_batch_id)
+            finally:
+                with self._lock:
+                    if self._active_upload_batch_id == upload_batch_id:
+                        self._active_upload_batch_id = ""
+
+    def _save_uploads_locked(
+        self,
+        files: tuple[UploadedFile, ...],
+        upload_batch_id: str,
+    ) -> dict:
         if not self.session:
             raise RuntimeError("mobile upload server has not been started")
 
@@ -605,6 +643,11 @@ class MobileUploadServer:
         imported = 0
         new_ids: list[int] = []
         if accepted_paths and self.import_on_upload and self.db_path:
+            _log.info(
+                "[手机上传] batch importing batch_id=%s received=%s",
+                upload_batch_id,
+                accepted_now + duplicate_now,
+            )
             imported = self._import_accepted_files(accepted_paths)
             if isinstance(imported, dict):
                 new_ids = list(imported.get("new_invoice_ids", ()))
@@ -661,18 +704,26 @@ class MobileUploadServer:
             "restored": int(imported.get("restored", 0) or 0) if isinstance(imported, dict) else 0,
             "upload_duplicate": duplicate_now,
             "business_duplicate": int(imported.get("duplicates", 0) or 0) if isinstance(imported, dict) else 0,
+            "pending_manual": int(imported.get("pending_manual", 0) or 0) if isinstance(imported, dict) else 0,
             "upload_failed": failed_now,
             "import_failed": int(imported.get("failed", 0) or 0) if isinstance(imported, dict) else 0,
             "duplicate_outcomes": list(imported.get("duplicate_outcomes", ())) if isinstance(imported, dict) else [],
-            "batch_id": self.session.batch_id,
+            "batch_id": upload_batch_id,
+            "session_batch_id": self.session.batch_id,
             "new_invoice_ids": tuple(dict.fromkeys(new_ids)),
             "restored_invoice_ids": tuple(dict.fromkeys(restored_invoice_ids)),
             "review_invoice_ids": tuple(dict.fromkeys(review_invoice_ids)),
         }
         with self._lock:
-            self._last_upload_result = dict(result)
-        self._log_upload_result(result)
-        return result
+            next_result_seq = self._completed_upload_seq + 1
+            result["result_seq"] = next_result_seq
+            finalized = deepcopy(result)
+            self._log_upload_result(finalized)
+            self._last_upload_result = finalized
+            self._completed_upload_results.append(finalized)
+            self._completed_upload_seq = next_result_seq
+            self._active_upload_batch_id = ""
+        return finalized
 
     def _restore_deleted_invoices_by_hashes(self, file_hashes: set[str]) -> list[int]:
         if not self.db_path or not file_hashes:
@@ -857,6 +908,11 @@ _VIRTUAL_ADAPTER_MARKERS = (
     "vmware",
     "tailscale",
     "vpn",
+    "singbox",
+    "sing-box",
+    "wireguard",
+    "tun",
+    "tap",
 )
 
 

@@ -197,7 +197,10 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
     def test_stop_does_not_clear_dev_firewall_rule(self):
         with tempfile.TemporaryDirectory() as td:
             controller, _panel = self.make_panel(td)
-            server = SimpleNamespace(stop=lambda: None)
+            server = SimpleNamespace(
+                stop=lambda: None,
+                drain_completed_upload_results=lambda: [],
+            )
             controller.server = server
             controller.session = SimpleNamespace(port=43210)
             controller._dev_firewall_rule_active = True
@@ -221,6 +224,7 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                     "import_failed": 0,
                 },
                 stop=lambda: stopped.append(True),
+                drain_completed_upload_results=lambda: [],
             )
             controller.server = server
             controller.session = SimpleNamespace(port=43210)

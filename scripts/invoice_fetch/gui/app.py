@@ -546,6 +546,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._first_load_notice = None
         self._last_scan_summary = {}
         self._import_activities: list[ImportActivity] = []
+        self._mobile_upload_processing = False
         self._review_scope_ids: tuple[int, ...] = ()
         self._review_scope_total = 0
         self._review_scope_has_restored = False
@@ -2266,10 +2267,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_value_labels["needs_fix"].set_value(f"{metrics['needs_fix']} 张")
         self.overview_value_labels["export_ready"].set_value(f"{metrics['export_ready']} 组")
         activity, new_pending = self._latest_new_invoice_activity()
-        if activity is not None and new_pending:
+        if self._mobile_upload_processing:
+            self.lbl_overview_recent_imports.setText("正在处理本批手机上传，完成后可进入审核。")
+            self.btn_overview_new_review.setText("正在处理本批上传…")
+            self.btn_overview_new_review.setEnabled(False)
+            self.btn_overview_new_review.setVisible(True)
+            self.btn_overview_history_review.setText("继续历史待办")
+        elif activity is not None and new_pending:
             has_restored = bool(activity.restored or (set(activity.review_invoice_ids) - set(activity.new_invoice_ids)))
             total_review = len(activity.review_invoice_ids)
-            if has_restored:
+            if activity.source == "mobile":
+                self.lbl_overview_recent_imports.setText(
+                    f"本批手机上传共 {total_review} 张待审核记录。"
+                )
+                self.btn_overview_new_review.setText(f"审核本批 {len(new_pending)} 张")
+            elif has_restored:
                 self.lbl_overview_recent_imports.setText(
                     f"本次导入/恢复共 {total_review} 张，其中 {len(new_pending)} 张待确认。"
                 )
@@ -2280,9 +2292,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 )
                 self.btn_overview_new_review.setText(f"处理新增 {len(new_pending)} 张")
             self.btn_overview_new_review.setVisible(True)
+            self.btn_overview_new_review.setEnabled(True)
             self.btn_overview_history_review.setText("继续历史待办")
         else:
             self.lbl_overview_recent_imports.setText(f"继续审核 {metrics['to_review']} 张发票。")
+            self.btn_overview_new_review.setEnabled(True)
             self.btn_overview_new_review.setVisible(False)
             self.btn_overview_history_review.setText("开始审核")
         self.lbl_overview_health.setText(
@@ -2335,6 +2349,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         activity, pending_ids = self._latest_new_invoice_activity()
         if activity is None or not pending_ids:
             self._refresh_overview_page()
+            return
+        self._open_import_activity_review(activity, pending_ids=pending_ids)
+
+    def _open_import_activity_review(
+        self,
+        activity: ImportActivity,
+        *,
+        pending_ids: tuple[int, ...] | None = None,
+    ) -> None:
+        if pending_ids is None:
+            pending_ids = self._remaining_review_ids(activity)
+        if not pending_ids:
+            self._clear_review_scope(reload=False)
             return
         self._review_scope_ids = pending_ids
         self._review_scope_total = len(activity.review_invoice_ids)
@@ -2557,7 +2584,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         new_invoice_ids: tuple[int, ...] | list[int] = (),
         review_invoice_ids: tuple[int, ...] | list[int] | None = None,
         duplicate_outcomes: tuple[dict, ...] | list[dict] = (),
-    ) -> None:
+    ) -> ImportActivity:
         """Record a structured import outcome for the in-session result surface."""
         normalized_batch = str(batch_id or "").strip()
         normalized_new_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in new_invoice_ids if int(invoice_id) > 0))
@@ -2589,26 +2616,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 existing.duplicate_outcomes = normalized_duplicate_outcomes
                 self._import_activities.remove(existing)
                 self._import_activities.insert(0, existing)
-                return
-        self._import_activities.insert(
-            0,
-            ImportActivity(
-                occurred_at=datetime.now(),
-                source=source,
-                batch_id=normalized_batch,
-                scanned=max(0, int(scanned or 0)),
-                classified=max(0, int(classified or 0)),
-                added=normalized_added,
-                restored=max(0, int(restored or 0)),
-                duplicates=max(0, int(duplicates or 0)),
-                failed=max(0, int(failed or 0)),
-                status=str(status or "complete"),
-                new_invoice_ids=normalized_new_ids,
-                review_invoice_ids=normalized_review_ids,
-                duplicate_outcomes=normalized_duplicate_outcomes,
-            ),
+                return existing
+        activity = ImportActivity(
+            occurred_at=datetime.now(),
+            source=source,
+            batch_id=normalized_batch,
+            scanned=max(0, int(scanned or 0)),
+            classified=max(0, int(classified or 0)),
+            added=normalized_added,
+            restored=max(0, int(restored or 0)),
+            duplicates=max(0, int(duplicates or 0)),
+            failed=max(0, int(failed or 0)),
+            status=str(status or "complete"),
+            new_invoice_ids=normalized_new_ids,
+            review_invoice_ids=normalized_review_ids,
+            duplicate_outcomes=normalized_duplicate_outcomes,
         )
+        self._import_activities.insert(0, activity)
         del self._import_activities[10:]
+        return activity
 
     @staticmethod
     def _format_import_activity(activity: ImportActivity) -> tuple[str, str, str]:
@@ -2678,15 +2704,23 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     )
             latest_act, pending_ids = self._latest_new_invoice_activity()
             if hasattr(self, "btn_import_recent_review"):
-                if latest_act is not None and pending_ids:
+                if self._mobile_upload_processing:
+                    self.btn_import_recent_review.setText("正在处理本批上传…")
+                    self.btn_import_recent_review.setEnabled(False)
+                    self.btn_import_recent_review.show()
+                elif latest_act is not None and pending_ids:
                     has_restored = bool(latest_act.restored or (set(latest_act.review_invoice_ids) - set(latest_act.new_invoice_ids)))
-                    if has_restored:
+                    if latest_act.source == "mobile":
+                        btn_text = f"审核本批 {len(pending_ids)} 张"
+                    elif has_restored:
                         btn_text = f"处理本次 {len(pending_ids)} 张"
                     else:
                         btn_text = f"处理新增 {len(pending_ids)} 张"
                     self.btn_import_recent_review.setText(btn_text)
+                    self.btn_import_recent_review.setEnabled(True)
                     self.btn_import_recent_review.show()
                 else:
+                    self.btn_import_recent_review.setEnabled(True)
                     self.btn_import_recent_review.hide()
             if hasattr(self, "btn_import_recent_duplicates"):
                 latest = activities[0] if activities else None
@@ -3923,7 +3957,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             operation_gate=self._data_operation_gate,
         )
         self.mobile_upload_panel = MobileUploadSessionPanel(self.mobile_upload_controller)
-        self.mobile_upload_controller.upload_received.connect(self._mobile_upload_finished)
+        self.mobile_upload_controller.upload_batch_started.connect(self._mobile_upload_started)
+        self.mobile_upload_controller.upload_batch_completed.connect(self._mobile_upload_finished)
         self.mobile_upload_controller.stopped.connect(self._retry_close_after_mobile_shutdown)
         self.import_mobile_task_card.body_layout.addWidget(self.mobile_upload_panel)
 
@@ -7952,10 +7987,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._switch_main_page("imports")
         self._set_import_source_selected("mobile")
 
+    def _mobile_upload_started(self, result: dict):
+        self._mobile_upload_processing = True
+        _log.info(
+            "[手机上传] gui batch processing batch_id=%s",
+            str(result.get("batch_id") or "<missing>"),
+        )
+        self._refresh_overview_page()
+        self._refresh_imports_page()
+
     def _mobile_upload_finished(self, result: dict):
-        latest_result = result.get("last_upload_result")
-        if isinstance(latest_result, dict) and latest_result:
-            result = latest_result
+        self._mobile_upload_processing = False
+        self._clear_review_scope(reload=False)
         imported = result.get("imported", {})
         imported_stats = imported if isinstance(imported, dict) else {}
         added = int(result.get("created", imported_stats.get("added", result.get("added", imported if isinstance(imported, int) else 0))) or 0)
@@ -7994,8 +8037,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         else:
             restored = len(restored_id_tuple)
 
+        activity = None
         if added or duplicates or failed or restored or review_ids:
-            self._record_import_activity(
+            activity = self._record_import_activity(
                 "mobile",
                 scanned=scanned,
                 added=added,
@@ -8011,16 +8055,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     imported_stats.get("duplicate_outcomes", ()),
                 ),
             )
-        self.write_log("📱 [扫码上传] 手机上传批次已更新，正在刷新发票列表。")
+            _log.info(
+                "[手机上传] run history appended batch_id=%s",
+                str(result.get("batch_id") or "<missing>"),
+            )
+        self.write_log("📱 [扫码上传] 手机上传批次已完成，正在刷新发票列表。")
         self._load_invoices()
         self._load_claims()
         self._refresh_overview_page()
         self._refresh_imports_page()
         self._refresh_settings_page()
-        if review_ids:
-            self._open_new_invoice_review()
+        if review_ids and activity is not None:
+            self._open_import_activity_review(activity)
         else:
-            self._clear_review_scope(reload=False)
             self._switch_main_page("imports")
             self._set_import_source_selected("mobile")
 

@@ -1,9 +1,12 @@
 import os
+import hashlib
 import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -22,7 +25,9 @@ from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary, make_button
 from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel, ReadOnlyDetailPanel
+from scripts.invoice_fetch.mobile_upload import MobileUploadServer, UploadedFile
 from tests.gui_geometry_helpers import collect_visible_geometry_failures
+from tests.test_mobile_upload import _multipart_body
 
 
 class IHDS09Tests(unittest.TestCase):
@@ -102,7 +107,7 @@ class IHDS09Tests(unittest.TestCase):
                 calls = []
                 for name in ("_load_invoices", "_load_claims", "_refresh_overview_page", "_refresh_imports_page", "_refresh_settings_page"):
                     setattr(window, name, lambda n=name: calls.append(n))
-                window.mobile_upload_controller.upload_received.emit({
+                window.mobile_upload_controller.upload_batch_completed.emit({
                     "batch_id": "batch-1", "accepted": 1, "imported": 1,
                     "duplicate": 0, "failed": 0,
                 })
@@ -114,6 +119,293 @@ class IHDS09Tests(unittest.TestCase):
                 self.assertGreaterEqual(len(calls), 5)
                 self.assertTrue(set(("_load_invoices", "_load_claims", "_refresh_overview_page", "_refresh_imports_page", "_refresh_settings_page")) <= set(calls))
             finally: window.close()
+
+    def test_two_finalized_mobile_batches_create_two_history_rows_and_latest_status(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                batch_a = {
+                    "result_seq": 1,
+                    "batch_id": "upload-a",
+                    "received": 3,
+                    "created": 0,
+                    "upload_duplicate": 3,
+                    "business_duplicate": 0,
+                    "upload_failed": 0,
+                    "import_failed": 0,
+                }
+                batch_b = {
+                    "result_seq": 2,
+                    "batch_id": "upload-b",
+                    "received": 7,
+                    "created": 6,
+                    "upload_duplicate": 1,
+                    "business_duplicate": 0,
+                    "upload_failed": 0,
+                    "import_failed": 0,
+                }
+
+                class FakeServer:
+                    def __init__(self):
+                        self.completed = [batch_a, batch_b]
+
+                    def status(self):
+                        return {
+                            "received": 10,
+                            "created": 6,
+                            "duplicate": 4,
+                            "business_duplicate": 0,
+                            "failed": 0,
+                            "import_failed": 0,
+                            "active": True,
+                            "completed_upload_seq": 2,
+                            "last_upload_result": batch_b,
+                            "upload_in_progress": False,
+                        }
+
+                    def drain_completed_upload_results(self):
+                        completed, self.completed = self.completed, []
+                        return completed
+
+                controller = window.mobile_upload_controller
+                controller.server = FakeServer()
+                controller.session = SimpleNamespace(port=43210)
+                with self.assertLogs(level="INFO") as captured:
+                    controller.refresh_status()
+                self.app.processEvents()
+
+                self.assertEqual(len(window._import_activities), 2)
+                observed = {
+                    activity.batch_id: (
+                        activity.scanned,
+                        activity.added,
+                        activity.duplicates,
+                        activity.failed,
+                    )
+                    for activity in window._import_activities
+                }
+                self.assertEqual(observed["upload-a"], (3, 0, 3, 0))
+                self.assertEqual(observed["upload-b"], (7, 6, 1, 0))
+                self.assertEqual(
+                    window.mobile_upload_panel.lbl_stats.text(),
+                    "接收 7 · 新增 6 · 重复 1 · 失败 0",
+                )
+                log_text = "\n".join(captured.output)
+                for batch_id in ("upload-a", "upload-b"):
+                    self.assertIn(
+                        f"gui batch completed emitted batch_id={batch_id}",
+                        log_text,
+                    )
+                    self.assertIn(
+                        f"run history appended batch_id={batch_id}",
+                        log_text,
+                    )
+                controller.refresh_status()
+                self.app.processEvents()
+                self.assertEqual(len(window._import_activities), 2)
+            finally:
+                window.mobile_upload_controller.server = None
+                window.close()
+
+    def test_mobile_intermediate_refreshes_do_not_create_run_history(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                server = SimpleNamespace(
+                    status=lambda: {
+                        "received": 10,
+                        "created": 0,
+                        "duplicate": 3,
+                        "business_duplicate": 0,
+                        "failed": 0,
+                        "import_failed": 0,
+                        "active": True,
+                    },
+                    drain_completed_upload_results=lambda: [],
+                )
+                controller = window.mobile_upload_controller
+                controller.server = server
+                controller.session = SimpleNamespace(port=43210)
+
+                for _ in range(3):
+                    controller.refresh_status()
+                    window._load_invoices()
+                    self.app.processEvents()
+
+                self.assertEqual(window._import_activities, [])
+            finally:
+                window.mobile_upload_controller.server = None
+                window.close()
+
+    def test_real_http_two_batch_lifecycle_reaches_two_gui_history_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            runtime_dir = Path(td) / "mobile-runtime"
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=window.db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            session = server.start()
+            try:
+                duplicate_payloads = [b"known-a", b"known-b", b"known-c"]
+                server._files.extend(
+                    {
+                        "status": "accepted",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                    for payload in duplicate_payloads
+                )
+                controller = window.mobile_upload_controller
+                controller.server = server
+                controller.session = session
+                controller.timer.stop()
+
+                imported = {
+                    "added": 6,
+                    "duplicates": 0,
+                    "conflicts": 0,
+                    "pending_manual": 0,
+                    "failed": 0,
+                    "restored": 0,
+                    "new_invoice_ids": [],
+                    "restored_invoice_ids": [],
+                    "review_invoice_ids": [],
+                    "duplicate_outcomes": [],
+                }
+
+                def post(files):
+                    body, boundary = _multipart_body(files)
+                    request = urllib.request.Request(
+                        session.api_url,
+                        data=body,
+                        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        return json.loads(response.read().decode("utf-8"))
+
+                with self.assertLogs(level="INFO") as captured, patch.object(
+                    server,
+                    "_import_accepted_files",
+                    return_value=imported,
+                ):
+                    result_a = post([
+                        (f"duplicate-{index}.pdf", payload, "application/pdf")
+                        for index, payload in enumerate(duplicate_payloads)
+                    ])
+                    controller.refresh_status()
+                    self.app.processEvents()
+
+                    result_b = post([
+                        ("duplicate-again.pdf", duplicate_payloads[0], "application/pdf"),
+                        *[
+                            (
+                                f"new-{index}.pdf",
+                                f"new-{index}".encode("ascii"),
+                                "application/pdf",
+                            )
+                            for index in range(6)
+                        ],
+                    ])
+                    controller.refresh_status()
+                    self.app.processEvents()
+
+                self.assertEqual(
+                    (result_a["received"], result_a["created"], result_a["duplicate"], result_a["failed"]),
+                    (3, 0, 3, 0),
+                )
+                self.assertEqual(
+                    (result_b["received"], result_b["created"], result_b["duplicate"], result_b["failed"]),
+                    (7, 6, 1, 0),
+                )
+                self.assertEqual(len(window._import_activities), 2)
+                self.assertEqual(
+                    window.mobile_upload_panel.lbl_stats.text(),
+                    "接收 7 · 新增 6 · 重复 1 · 失败 0",
+                )
+
+                log_text = "\n".join(captured.output)
+                for batch_id in (result_a["batch_id"], result_b["batch_id"]):
+                    finalized = log_text.index(f"batch finalized batch_id={batch_id}")
+                    emitted = log_text.index(f"gui batch completed emitted batch_id={batch_id}")
+                    appended = log_text.index(f"run history appended batch_id={batch_id}")
+                    self.assertLess(finalized, emitted)
+                    self.assertLess(emitted, appended)
+            finally:
+                window.mobile_upload_controller.server = None
+                window.mobile_upload_controller.session = None
+                server.stop()
+                window.close()
+
+    def test_polling_during_import_emits_only_after_finalized_sequence(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                db_path=Path(td) / "invoices.db",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            session = server.start()
+            controller = MobileUploadSessionController(Path(td) / "invoices.db")
+            controller.server = server
+            controller.session = session
+            entered_import = threading.Event()
+            release_import = threading.Event()
+            emissions = []
+            controller.upload_batch_completed.connect(lambda result: emissions.append(dict(result)))
+
+            def blocked_import(_paths):
+                entered_import.set()
+                self.assertTrue(release_import.wait(timeout=10))
+                return {
+                    "added": 3,
+                    "duplicates": 1,
+                    "conflicts": 0,
+                    "pending_manual": 0,
+                    "failed": 0,
+                    "restored": 0,
+                    "new_invoice_ids": [5, 6, 7],
+                    "restored_invoice_ids": [],
+                    "review_invoice_ids": [5, 6, 7],
+                    "duplicate_outcomes": [],
+                }
+
+            try:
+                files = [
+                    UploadedFile(f"poll-{index}.pdf", f"payload-{index}".encode(), "application/pdf")
+                    for index in range(4)
+                ]
+                with patch.object(server, "_import_accepted_files", side_effect=blocked_import):
+                    worker = threading.Thread(target=server.save_uploads, args=(files,))
+                    worker.start()
+                    self.assertTrue(entered_import.wait(timeout=10))
+
+                    mid_status = server.status()
+                    self.assertEqual(mid_status["received"], 4)
+                    self.assertTrue(mid_status["upload_in_progress"])
+                    self.assertEqual(mid_status["completed_upload_seq"], 0)
+                    controller.refresh_status()
+                    self.assertEqual(emissions, [])
+
+                    release_import.set()
+                    worker.join(timeout=10)
+                    self.assertFalse(worker.is_alive())
+
+                controller.refresh_status()
+                self.assertEqual(len(emissions), 1)
+                self.assertEqual(emissions[0]["result_seq"], 1)
+                self.assertEqual(emissions[0]["review_invoice_ids"], (5, 6, 7))
+                controller.refresh_status()
+                self.assertEqual(len(emissions), 1)
+            finally:
+                release_import.set()
+                controller.server = None
+                controller.session = None
+                server.stop()
 
     def test_mobile_panel_has_idle_starting_active_error_states(self):
         with tempfile.TemporaryDirectory() as td:
@@ -159,6 +451,11 @@ class IHDS09Tests(unittest.TestCase):
                 with patch.object(controller, "qr_png", return_value=b""):
                     controller.started.emit(session)
                 self.assertEqual(window.mobile_upload_panel.combo_upload_host.currentData(), session.host)
+                with patch.object(controller, "set_public_host") as switch_host:
+                    window.mobile_upload_panel.combo_upload_host.setCurrentIndex(0)
+                    self.assertFalse(switch_host.called)
+                    window.mobile_upload_panel.combo_upload_host.activated.emit(0)
+                    switch_host.assert_called_once_with("172.16.0.1")
             finally: window.close()
 
     def test_shutdown_waits_for_start_thread(self):

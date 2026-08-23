@@ -199,6 +199,7 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertIn("本次新增 4 张", window.lbl_review_scope.text())
                 self.assertIn("重复跳过 1 张", window.lbl_review_scope.text())
                 self.assertFalse(window.btn_review_scope_duplicates.isHidden())
+                self.assertEqual(window.btn_import_recent_review.text(), "审核本批 4 张")
             finally: window.close()
 
     def test_duplicate_only_mobile_batch_clears_stale_review_scope_and_stays_in_imports(self):
@@ -226,7 +227,63 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertEqual(window._import_activities[0].added, 0)
                 self.assertEqual(window._import_activities[0].duplicates, 5)
                 self.assertFalse(window.btn_import_recent_duplicates.isHidden())
+                self.assertTrue(window.btn_import_recent_review.isHidden())
             finally: window.close()
+
+    def test_next_mobile_batch_replaces_stale_scope_and_processing_cta(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                first_ids = tuple(window.db.insert_invoice({
+                    "invoice_number": f"mobile-first-{index}",
+                    "total_amount": "10.00",
+                    "seller_name": "测试商户",
+                    "invoice_date": "2026-08-23",
+                    "review_status": TO_REVIEW,
+                }) for index in range(4))
+                second_ids = tuple(window.db.insert_invoice({
+                    "invoice_number": f"mobile-second-{index}",
+                    "total_amount": "20.00",
+                    "seller_name": "测试商户",
+                    "invoice_date": "2026-08-23",
+                    "review_status": TO_REVIEW,
+                }) for index in range(3))
+
+                window._mobile_upload_finished({
+                    "batch_id": "upload-first",
+                    "received": 4,
+                    "created": 3,
+                    "pending_manual": 1,
+                    "new_invoice_ids": first_ids[:3],
+                    "review_invoice_ids": first_ids,
+                })
+                window._switch_main_page("imports")
+                window._set_import_source_selected("mobile")
+                window._mobile_upload_started({"batch_id": "upload-second"})
+                self.assertEqual(window.btn_import_recent_review.text(), "正在处理本批上传…")
+                self.assertFalse(window.btn_import_recent_review.isEnabled())
+
+                window._mobile_upload_finished({
+                    "batch_id": "upload-second",
+                    "received": 4,
+                    "created": 3,
+                    "business_duplicate": 1,
+                    "new_invoice_ids": second_ids,
+                    "review_invoice_ids": second_ids,
+                })
+                self.app.processEvents()
+
+                self.assertEqual(window._review_scope_ids, second_ids)
+                self.assertEqual(window._review_scope_total, 3)
+                self.assertEqual(
+                    {int(item["id"]) for item in window.invoices_list},
+                    set(second_ids),
+                )
+                self.assertFalse(set(first_ids) & {int(item["id"]) for item in window.invoices_list})
+                self.assertEqual(window.btn_import_recent_review.text(), "审核本批 3 张")
+                self.assertTrue(window.btn_import_recent_review.isEnabled())
+            finally:
+                window.close()
 
     def test_dashboard_new_invoice_scope_is_live_and_never_includes_history(self):
         with tempfile.TemporaryDirectory() as td:
