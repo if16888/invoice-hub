@@ -159,12 +159,18 @@ class TestStyleArchitectureStatic(unittest.TestCase):
         )
 
     def test_core_shortcuts_tuple_is_exported(self):
-        """CORE_SHORTCUTS must be importable from ui_components."""
-        from scripts.invoice_fetch.gui.ui_components import CORE_SHORTCUTS  # noqa: F401
+        """CORE_SHORTCUTS must be importable from ui_components and non-empty."""
+        from scripts.invoice_fetch.gui.ui_components import CORE_SHORTCUTS
+
+        self.assertIsInstance(CORE_SHORTCUTS, tuple)
+        self.assertGreater(len(CORE_SHORTCUTS), 0)
 
     def test_secondary_shortcuts_tuple_is_exported(self):
-        """SECONDARY_SHORTCUTS must be importable from ui_components."""
-        from scripts.invoice_fetch.gui.ui_components import SECONDARY_SHORTCUTS  # noqa: F401
+        """SECONDARY_SHORTCUTS must be importable from ui_components and non-empty."""
+        from scripts.invoice_fetch.gui.ui_components import SECONDARY_SHORTCUTS
+
+        self.assertIsInstance(SECONDARY_SHORTCUTS, tuple)
+        self.assertGreater(len(SECONDARY_SHORTCUTS), 0)
 
     def test_detail_caption_uses_readable_information_color(self):
         """Informative 11px detail text must not use the decorative light gray."""

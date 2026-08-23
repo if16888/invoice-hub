@@ -100,7 +100,11 @@ class TestCompactStatCard(unittest.TestCase):
         from scripts.invoice_fetch.gui.ui_components import CompactStatCard
 
         card = CompactStatCard("全部", "0")
-        _ = card.clicked  # must not raise AttributeError
+        self.assertTrue(hasattr(card, "clicked"))
+        received = []
+        card.clicked.connect(lambda: received.append(True))
+        card.clicked.emit()
+        self.assertEqual(len(received), 1)
 
 
 class TestSummaryStrip(unittest.TestCase):

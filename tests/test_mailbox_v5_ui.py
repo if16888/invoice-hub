@@ -2,6 +2,7 @@
 """UI unit tests for V5 Email Account Settings visible workflow and AI Config details."""
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from copy import deepcopy
@@ -15,7 +16,6 @@ from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxCon
 from scripts.invoice_fetch.config import load_config_safe, get_email_accounts, _normalize_default_email_account, _select_primary_email_account
 
 app = QApplication.instance() or QApplication(sys.argv)
-TEST_DB_PATH = Path("test.db")
 
 
 class TestMailboxV5UI(unittest.TestCase):
@@ -36,10 +36,19 @@ class TestMailboxV5UI(unittest.TestCase):
         app.processEvents()
 
     def setUp(self):
-        QMessageBox.information = lambda *args, **kwargs: QMessageBox.Ok
-        QMessageBox.warning = lambda *args, **kwargs: QMessageBox.Ok
-        QMessageBox.critical = lambda *args, **kwargs: QMessageBox.Ok
-        QMessageBox.question = lambda *args, **kwargs: QMessageBox.Yes
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp_dir.cleanup)
+        self.db_path = Path(self._temp_dir.name) / "test.db"
+
+        for method_name, ret_val in (
+            ("information", QMessageBox.Ok),
+            ("warning", QMessageBox.Ok),
+            ("critical", QMessageBox.Ok),
+            ("question", QMessageBox.Yes),
+        ):
+            p = patch.object(QMessageBox, method_name, return_value=ret_val)
+            p.start()
+            self.addCleanup(p.stop)
 
         self.cfg = deepcopy(load_config_safe())
         self.cfg["email"] = {}
@@ -93,7 +102,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_import_center_uses_more_menu_for_low_frequency_actions(self):
         """IHDS-06: low-frequency account and failure actions are not duplicated."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
@@ -153,7 +162,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_import_scan_selected_uses_checked_accounts(self):
         """P1-2 Test: Start scanning selected accounts reads checked checkbox account keys."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
@@ -166,7 +175,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_sidebar_settings_does_not_show_legacy_settings_page(self):
         """P1-1 Test: Switching to settings opens full SettingsDialog without legacy split."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
 
         self.assertTrue(hasattr(window, "_switch_main_page"))
@@ -174,7 +183,7 @@ class TestMailboxV5UI(unittest.TestCase):
     def test_import_scan_default_passes_only_default_key(self):
         """Final P0 Test: Scan default email only passes default account key."""
         from unittest.mock import patch
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
@@ -195,7 +204,7 @@ class TestMailboxV5UI(unittest.TestCase):
         orig_start = EmailScanWorker.start
         EmailScanWorker.start = lambda self: None
 
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
@@ -214,7 +223,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_import_scan_selected_no_checked_accounts_warns(self):
         """Final P0 Test: Unchecking all accounts triggers warning without scanning."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
@@ -231,7 +240,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_settings_page_does_not_open_nested_settings_dialog(self):
         """V11 Test 1: Switching to settings page does not launch nested modal SettingsDialog."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
 
         opened_dialogs = []
@@ -245,7 +254,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_settings_single_authoritative_surface(self):
         """V11 Test 2: In-window settings_page is the single authoritative UI surface."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
 
         window._switch_main_page("settings")
@@ -256,7 +265,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_mailbox_overview_uses_master_detail_without_summary_duplication(self):
         """IHDS-09: account identity and status live in the master-detail surface."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
 
@@ -266,7 +275,7 @@ class TestMailboxV5UI(unittest.TestCase):
 
     def test_mailbox_saved_accounts_use_single_add_menu(self):
         """IHDS-06: provider presets only exist inside the add-account menu."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
 
@@ -276,7 +285,7 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(window.settings_mailbox_list.count(), 2)
 
     def test_mailbox_detail_is_read_only_by_default(self):
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
         mailbox_tab = window.settings_tabs.widget(0)
@@ -293,7 +302,7 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertIsInstance(window.lbl_detail_scan_rule, QLabel)
 
     def test_mailbox_detail_has_no_save_cancel_buttons(self):
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
         mailbox_tab = window.settings_tabs.widget(1)
@@ -310,7 +319,7 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(mailbox_detail_combos, [])
 
     def test_edit_config_opens_single_task_dialog(self):
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
         window.settings_mailbox_list.setCurrentRow(0)
@@ -327,7 +336,7 @@ class TestMailboxV5UI(unittest.TestCase):
         save_entry.assert_called_once()
 
     def test_add_credential_separate_from_detail(self):
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window._desktop_settings_cfg = deepcopy(self.cfg)
         window._refresh_settings_mailbox_page()
         window.settings_mailbox_list.setCurrentRow(0)

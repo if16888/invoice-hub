@@ -79,7 +79,7 @@ class GenericImapConfigTests(unittest.TestCase):
             load_config(path)
 
     def test_validate_config_gui_accepts_custom_imap(self):
-        validate_config_gui({
+        result = validate_config_gui({
             "email": {
                 "provider": "custom",
                 "address": "user@example.com"
@@ -92,6 +92,7 @@ class GenericImapConfigTests(unittest.TestCase):
             "search": {"months_back": 3},
             "ai": {"provider": "none"},
         })
+        self.assertIsNone(result)
 
     def test_load_config_safe_normalizes_provider_without_raising(self):
         path = self._write_config({
@@ -223,7 +224,7 @@ class GenericImapConfigTests(unittest.TestCase):
             })
 
     def test_validate_config_gui_accepts_multi_account_mailboxes(self):
-        validate_config_gui({
+        result = validate_config_gui({
             "email_accounts": [
                 {
                     "name": "Primary QQ",
@@ -241,6 +242,7 @@ class GenericImapConfigTests(unittest.TestCase):
             ],
             "ai": {"provider": "none"},
         })
+        self.assertIsNone(result)
 
     def test_config_example_loads_multi_account_samples(self):
         config_path = Path("config.example.json")
@@ -300,7 +302,7 @@ class GenericImapConfigTests(unittest.TestCase):
             self.assertNotIn("enabled", saved["ai"])
 
     def test_ai_provider_none_does_not_affect_validation(self):
-        validate_config_gui({
+        result = validate_config_gui({
             "email": {
                 "provider": "qq",
                 "address": "user@qq.com"
@@ -312,6 +314,7 @@ class GenericImapConfigTests(unittest.TestCase):
             "search": {"months_back": 3},
             "ai": {"provider": "none", "model": ""}
         })
+        self.assertIsNone(result)
 
     def test_gmail_preset_fills_server_and_port(self):
         path = self._write_config({
