@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QWidget
 
+from scripts.invoice_fetch import APP_VERSION
 from tests.test_settings_dialog import SettingsDialogTestMixin
 
 
@@ -68,10 +69,10 @@ class SettingsCenterShellTests(SettingsDialogTestMixin, unittest.TestCase):
             self.assertEqual(button.property("class"), "SettingsNavButton")
             self.assertEqual(button.styleSheet().strip(), "")
 
-    def test_about_page_does_not_hardcode_016_version(self):
+    def test_about_page_uses_central_version_metadata(self):
         dialog = self._make_dialog()
         dialog._show_settings_home("about")
-        self.assertNotIn("v0.1.6", dialog.lbl_about_settings.text())
+        self.assertIn(f"Invoice Hub 设置中心 {APP_VERSION}", dialog.lbl_about_settings.text())
 
     def test_data_page_exposes_privacy_hint_for_local_paths(self):
         dialog = self._make_dialog()
