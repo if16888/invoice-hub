@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import RUNTIME_DIR
+from .performance_probe import emit_performance_event
 from .ui_components import (
     MiddleElidedTextLabel,
     WrappedTextLabel,
@@ -315,6 +316,7 @@ class MobileUploadSessionController(QObject):
                 "[手机上传] gui batch completed emitted batch_id=%s",
                 batch_id or "<missing>",
             )
+            emit_performance_event("upload_complete", "T0_worker_done", outcome="success")
             self.upload_batch_completed.emit(dict(result))
             if result_seq:
                 self._last_completed_upload_seq = result_seq
