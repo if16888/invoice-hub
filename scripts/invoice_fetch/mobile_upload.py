@@ -1052,7 +1052,7 @@ def _upload_page(session: MobileUploadSession) -> str:
     .preview-header { display:flex; min-height:58px; align-items:center; gap:9px; padding:8px 12px; border-bottom:1px solid #334155; }
     .preview-back { min-height:42px; padding:7px 8px; color:#dbeafe; background:transparent; border:0; font-size:15px; cursor:pointer; }
     .preview-title { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:650; }
-    .preview-page-indicator { flex:0 0 auto; color:#cbd5e1; font-size:12px; }
+    .preview-page-indicator { min-width:0; flex:0 1 auto; max-width:46%; overflow:hidden; color:#cbd5e1; font-size:11px; text-align:right; text-overflow:ellipsis; white-space:nowrap; }
     .preview-stage { position:relative; display:flex; min-height:0; flex:1; align-items:center; justify-content:center; overflow:auto; padding:14px 10px; }
     .preview-stage canvas { display:block; max-width:100%; height:auto; background:#fff; box-shadow:0 3px 12px rgba(0,0,0,.25); }
     .preview-stage img { display:block; max-width:100%; max-height:100%; object-fit:contain; }
@@ -1139,7 +1139,7 @@ def _upload_page(session: MobileUploadSession) -> str:
     <header class="preview-header">
       <button class="preview-back" id="previewBack" type="button">‹ 返回</button>
       <span class="preview-title" id="previewTitle">文件预览</span>
-      <span class="preview-page-indicator" id="previewPageIndicator">1 / 1</span>
+      <span class="preview-page-indicator" id="previewPageIndicator" role="status" aria-live="polite" aria-label="当前文件预览位置">文件 1/1 · 页 1/1</span>
     </header>
     <div class="preview-stage" id="previewStage">
       <div class="preview-loading" id="previewLoading" hidden>正在生成预览…</div>
@@ -1148,8 +1148,8 @@ def _upload_page(session: MobileUploadSession) -> str:
       <img id="previewImage" alt="" hidden>
     </div>
     <footer class="preview-footer" id="previewFooter">
-      <button class="preview-nav" id="previewPrev" type="button">上一页</button>
-      <button class="preview-nav" id="previewNext" type="button">下一页</button>
+      <button class="preview-nav" id="previewPrev" type="button" aria-label="上一页或上一个文件">上一项</button>
+      <button class="preview-nav" id="previewNext" type="button" aria-label="下一页或下一个文件">下一项</button>
     </footer>
   </div>
 </div>
@@ -1193,8 +1193,13 @@ let pendingFiles = [];
 let isUploading = false;
 let pdfJsPromise = null;
 let activePreview = null;
+let activePreviewIndex = -1;
 let activePreviewPage = 1;
 let renderSerial = 0;
+let previewTouchStart = null;
+
+const SWIPE_THRESHOLD_PX = 64;
+const SWIPE_DIRECTION_RATIO = 1.2;
 
 function setState(next) {
   if (!STATES.includes(next)) throw new Error("Unknown upload state");
@@ -1250,11 +1255,47 @@ function canUpload() {
   return pendingFiles.length > 0 && !isUploading && !hasPreviewBlocker();
 }
 
-function destroyRecord(record) {
-  if (record.imageUrl) URL.revokeObjectURL(record.imageUrl);
-  if (record.pdfDocument && record.pdfDocument.destroy) {
+function previewPageTotal(record) {
+  if (record && record.kind === "PDF" && record.previewState === "ready" && record.pageCount > 0) {
+    return record.pageCount;
+  }
+  return 1;
+}
+
+function previewPositionLabel(fileIndex, pageIndex, pageTotal) {
+  return "文件 " + (fileIndex + 1) + "/" + pendingFiles.length + " · 页 " + pageIndex + "/" + pageTotal;
+}
+
+function updatePreviewControls(fileIndex, pageIndex) {
+  const record = pendingFiles[fileIndex];
+  if (!record || pendingFiles.length === 0) return;
+  const pageTotal = previewPageTotal(record);
+  const normalizedPage = Math.min(Math.max(pageIndex, 1), pageTotal);
+  const label = previewPositionLabel(fileIndex, normalizedPage, pageTotal);
+  previewPageIndicator.textContent = label;
+  previewPageIndicator.setAttribute(
+    "aria-label",
+    "当前第 " + (fileIndex + 1) + " 个文件，共 " + pendingFiles.length
+      + " 个文件；第 " + normalizedPage + " 页，共 " + pageTotal + " 页"
+  );
+  previewPrev.disabled = fileIndex <= 0 && normalizedPage <= 1;
+  previewNext.disabled = fileIndex >= pendingFiles.length - 1 && normalizedPage >= pageTotal;
+  previewPrev.setAttribute("aria-label", "上一页或上一个文件");
+  previewNext.setAttribute("aria-label", "下一页或下一个文件");
+}
+
+function releasePdfDocument(record) {
+  if (!record || !record.pdfDocument) return;
+  if (record.pdfDocument.destroy) {
     try { record.pdfDocument.destroy(); } catch (_) { /* already released */ }
   }
+  record.pdfDocument = null;
+}
+
+function destroyRecord(record) {
+  if (record.imageUrl) URL.revokeObjectURL(record.imageUrl);
+  record.releaseWhenIdle = true;
+  releasePdfDocument(record);
 }
 
 function updateSelectionUi() {
@@ -1365,6 +1406,13 @@ function renderFileList() {
       review.textContent = "查看图片";
       review.addEventListener("click", () => openPreview(record));
       meta.appendChild(review);
+    } else if (record.kind === "OFD") {
+      const review = document.createElement("button");
+      review.type = "button";
+      review.className = "review-button";
+      review.textContent = "查看 OFD";
+      review.addEventListener("click", () => openPreview(record));
+      meta.appendChild(review);
     }
     const remove = document.createElement("button");
     remove.type = "button";
@@ -1390,18 +1438,50 @@ async function getPdfJs() {
   return pdfJsPromise;
 }
 
+async function ensurePdfDocument(record) {
+  if (record.pdfDocument) return record.pdfDocument;
+  if (!record.pdfLoadPromise) {
+    record.pdfLoadPromise = (async () => {
+      const pdfjs = await getPdfJs();
+      const loadingTask = pdfjs.getDocument({
+        data: await record.file.arrayBuffer(),
+        cMapUrl: PDFJS_CMAP_URL,
+        cMapPacked: true,
+        standardFontDataUrl: PDFJS_FONT_URL,
+      });
+      record.pdfDocument = await loadingTask.promise;
+      return record.pdfDocument;
+    })();
+  }
+  try {
+    return await record.pdfLoadPromise;
+  } finally {
+    record.pdfLoadPromise = null;
+    if (record.releaseWhenIdle && record !== activePreview) {
+      record.releaseWhenIdle = false;
+      releasePdfDocument(record);
+    }
+  }
+}
+
+function releaseDistantPdfDocuments(centerIndex) {
+  pendingFiles.forEach((record, index) => {
+    if (record.kind !== "PDF" || record === activePreview) return;
+    if (centerIndex >= 0 && Math.abs(index - centerIndex) <= 1) return;
+    if (record.pdfLoadPromise) {
+      record.releaseWhenIdle = true;
+      return;
+    }
+    releasePdfDocument(record);
+  });
+}
+
 async function preparePdf(record) {
   record.previewState = "loading";
   renderFileList();
   try {
-    const pdfjs = await getPdfJs();
-    const loadingTask = pdfjs.getDocument({
-      data: await record.file.arrayBuffer(),
-      cMapUrl: PDFJS_CMAP_URL,
-      cMapPacked: true,
-      standardFontDataUrl: PDFJS_FONT_URL,
-    });
-    record.pdfDocument = await loadingTask.promise;
+    const pdfDocument = await ensurePdfDocument(record);
+    record.pdfDocument = pdfDocument;
     record.pageCount = record.pdfDocument.numPages;
     const page = await record.pdfDocument.getPage(1);
     const viewport = page.getViewport({ scale: 1 });
@@ -1413,9 +1493,11 @@ async function preparePdf(record) {
     await page.render({ canvasContext: canvas.getContext("2d"), viewport: thumbViewport }).promise;
     record.thumbnailUrl = canvas.toDataURL("image/jpeg", .82);
     record.previewState = "ready";
+    if (activePreview !== record) releasePdfDocument(record);
   } catch (error) {
     record.previewState = "error";
     record.previewError = error instanceof Error ? error.message : "PDF preview failed";
+    releasePdfDocument(record);
   }
   renderFileList();
 }
@@ -1436,6 +1518,9 @@ function collectFiles(input) {
         imageUrl: kind === "图片" ? URL.createObjectURL(file) : "",
         thumbnailUrl: "",
         pdfDocument: null,
+        pdfLoadPromise: null,
+        releaseWhenIdle: false,
+        preparePromise: null,
         previewError: "",
       };
       pendingFiles.push(record);
@@ -1446,7 +1531,9 @@ function collectFiles(input) {
   setState("SELECTED");
   clearResult();
   renderFileList();
-  newRecords.filter((record) => record.kind === "PDF").forEach(preparePdf);
+  newRecords.filter((record) => record.kind === "PDF").forEach((record) => {
+    record.preparePromise = preparePdf(record);
+  });
 }
 
 function removeFile(index) {
@@ -1470,27 +1557,33 @@ function resetSelection() {
   clearResult();
 }
 
-function showPreviewError() {
+function showPreviewError(message) {
   previewLoading.hidden = true;
   previewCanvas.hidden = true;
   previewImage.hidden = true;
+  previewError.textContent = message || "无法预览，但仍可移除/重新选择。";
   previewError.hidden = false;
-  previewPageIndicator.textContent = "—";
+  if (activePreviewIndex >= 0) updatePreviewControls(activePreviewIndex, 1);
 }
 
 async function renderPdfPage(record, pageNumber) {
-  if (!record.pdfDocument || activePreview !== record) return;
+  if (activePreview !== record) return;
+  const fileIndex = pendingFiles.indexOf(record);
+  if (fileIndex < 0 || activePreviewIndex !== fileIndex) return;
+  const pageTotal = previewPageTotal(record);
+  const normalizedPage = Math.min(Math.max(pageNumber, 1), pageTotal);
   const serial = ++renderSerial;
-  activePreviewPage = pageNumber;
+  activePreviewPage = normalizedPage;
   previewLoading.hidden = false;
   previewError.hidden = true;
   previewCanvas.hidden = true;
   previewImage.hidden = true;
-  previewPageIndicator.textContent = pageNumber + " / " + record.pageCount;
-  previewPrev.disabled = pageNumber <= 1;
-  previewNext.disabled = pageNumber >= record.pageCount;
+  updatePreviewControls(fileIndex, normalizedPage);
   try {
-    const page = await record.pdfDocument.getPage(pageNumber);
+    const pdfDocument = await ensurePdfDocument(record);
+    if (serial !== renderSerial || activePreview !== record || activePreviewIndex !== fileIndex) return;
+    record.pageCount = pdfDocument.numPages;
+    const page = await pdfDocument.getPage(normalizedPage);
     const baseViewport = page.getViewport({ scale: 1 });
     const maxWidth = Math.max(280, previewStage.clientWidth - 24);
     const scale = Math.min(2.5, maxWidth / Math.max(baseViewport.width, 1));
@@ -1508,53 +1601,148 @@ async function renderPdfPage(record, pageNumber) {
       viewport,
       transform: dpr === 1 ? null : [dpr, 0, 0, dpr, 0, 0],
     }).promise;
-    if (serial !== renderSerial || activePreview !== record) return;
+    if (serial !== renderSerial || activePreview !== record || activePreviewIndex !== fileIndex) return;
     previewLoading.hidden = true;
     previewCanvas.hidden = false;
+    releaseDistantPdfDocuments(fileIndex);
   } catch (_) {
-    if (serial !== renderSerial) return;
+    if (serial !== renderSerial || activePreview !== record) return;
     record.previewState = "error";
-    showPreviewError();
-    updateSelectionUi();
+    record.previewError = "PDF preview failed";
+    activePreviewPage = 1;
+    releasePdfDocument(record);
+    showPreviewError("无法预览，但仍可移除/重新选择。");
+    renderFileList();
   }
 }
 
-function openPreview(record) {
-  if (record.kind === "OFD") return;
+function showPreviewAt(fileIndex, pageNumber = 1) {
+  const record = pendingFiles[fileIndex];
+  if (!record) return;
+  renderSerial++;
   activePreview = record;
-  activePreviewPage = 1;
+  activePreviewIndex = fileIndex;
+  activePreviewPage = Math.min(Math.max(pageNumber, 1), previewPageTotal(record));
+  releaseDistantPdfDocuments(fileIndex);
   setState("PREVIEWING");
   previewModal.hidden = false;
   document.body.classList.add("modal-open");
-  previewTitle.textContent = record.file.name || "文件预览";
-  previewTitle.title = record.file.name || "文件预览";
+  const fullName = record.file.name || "文件预览";
+  previewTitle.textContent = fullName;
+  previewTitle.title = fullName;
   previewImage.hidden = true;
   previewCanvas.hidden = true;
   previewError.hidden = true;
   previewLoading.hidden = false;
-  previewFooter.hidden = record.kind !== "PDF" || record.previewState !== "ready";
+  previewFooter.hidden = false;
+  updatePreviewControls(fileIndex, activePreviewPage);
+
   if (record.kind === "图片") {
     previewLoading.hidden = true;
     previewImage.src = record.imageUrl;
-    previewImage.alt = "图片预览：" + (record.file.name || "文件");
+    previewImage.alt = "图片预览：" + fullName;
     previewImage.hidden = false;
-    previewPageIndicator.textContent = "1 / 1";
-    previewPrev.disabled = true;
-    previewNext.disabled = true;
-  } else if (record.previewState === "ready") {
-    renderPdfPage(record, 1);
-  } else {
-    showPreviewError();
+    return;
+  }
+  if (record.kind === "OFD") {
+    showPreviewError("手机浏览器暂不支持内容预览，上传后可在 Invoice Hub 中查看。");
+    return;
+  }
+  if (record.previewState === "ready") {
+    renderPdfPage(record, activePreviewPage);
+    return;
+  }
+  if (record.previewState === "loading") {
+    previewLoading.textContent = "正在生成预览…";
+    const preparation = record.preparePromise;
+    if (preparation) {
+      preparation.then(() => {
+        if (activePreview === record && activePreviewIndex === fileIndex && !previewModal.hidden) {
+          showPreviewAt(fileIndex, activePreviewPage);
+        }
+      });
+    }
+    return;
+  }
+  showPreviewError("无法预览，但仍可移除/重新选择。");
+}
+
+function openPreview(record) {
+  const fileIndex = pendingFiles.indexOf(record);
+  if (fileIndex >= 0) showPreviewAt(fileIndex, 1);
+}
+
+function navigatePreview(direction) {
+  if (activePreviewIndex < 0 || !pendingFiles[activePreviewIndex]) return;
+  const record = pendingFiles[activePreviewIndex];
+  const pageTotal = previewPageTotal(record);
+  if (direction > 0) {
+    if (record.kind === "PDF" && record.previewState === "ready" && activePreviewPage < pageTotal) {
+      renderPdfPage(record, activePreviewPage + 1);
+      return;
+    }
+    if (activePreviewIndex < pendingFiles.length - 1) {
+      showPreviewAt(activePreviewIndex + 1, 1);
+    }
+    return;
+  }
+  if (record.kind === "PDF" && record.previewState === "ready" && activePreviewPage > 1) {
+    renderPdfPage(record, activePreviewPage - 1);
+    return;
+  }
+  if (activePreviewIndex > 0) {
+    const previous = pendingFiles[activePreviewIndex - 1];
+    showPreviewAt(activePreviewIndex - 1, previewPageTotal(previous));
   }
 }
 
 function closePreview() {
   renderSerial++;
+  previewTouchStart = null;
   previewModal.hidden = true;
   document.body.classList.remove("modal-open");
   activePreview = null;
+  activePreviewIndex = -1;
+  releaseDistantPdfDocuments(-1);
   setState(pendingFiles.length ? "SELECTED" : "EMPTY");
 }
+
+function isPreviewZoomed() {
+  if (window.visualViewport && window.visualViewport.scale > 1.01) return true;
+  const rendered = !previewCanvas.hidden ? previewCanvas : (!previewImage.hidden ? previewImage : null);
+  if (!rendered) return false;
+  const renderedWidth = rendered.getBoundingClientRect().width;
+  return renderedWidth > previewStage.clientWidth + 4 || previewStage.scrollWidth > previewStage.clientWidth + 4;
+}
+
+previewStage.addEventListener("touchstart", (event) => {
+  if (event.touches.length !== 1) {
+    previewTouchStart = null;
+    return;
+  }
+  const touch = event.touches[0];
+  previewTouchStart = {
+    x: touch.clientX,
+    y: touch.clientY,
+    zoomed: isPreviewZoomed(),
+  };
+}, { passive: true });
+
+previewStage.addEventListener("touchend", (event) => {
+  const start = previewTouchStart;
+  previewTouchStart = null;
+  if (!start || event.changedTouches.length !== 1 || start.zoomed || isPreviewZoomed()) return;
+  const touch = event.changedTouches[0];
+  const deltaX = touch.clientX - start.x;
+  const deltaY = touch.clientY - start.y;
+  if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY) * SWIPE_DIRECTION_RATIO) return;
+  event.preventDefault();
+  navigatePreview(deltaX < 0 ? 1 : -1);
+}, { passive: false });
+
+previewStage.addEventListener("touchcancel", () => {
+  previewTouchStart = null;
+}, { passive: true });
 
 function toggleWechatTip() {
   const expanded = wechatTip.getAttribute("aria-expanded") === "true";
@@ -1572,12 +1760,8 @@ wechatTip.addEventListener("keydown", (event) => {
   if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleWechatTip(); }
 });
 previewBack.addEventListener("click", closePreview);
-previewPrev.addEventListener("click", () => {
-  if (activePreview && activePreview.kind === "PDF" && activePreviewPage > 1) renderPdfPage(activePreview, activePreviewPage - 1);
-});
-previewNext.addEventListener("click", () => {
-  if (activePreview && activePreview.kind === "PDF" && activePreviewPage < activePreview.pageCount) renderPdfPage(activePreview, activePreviewPage + 1);
-});
+previewPrev.addEventListener("click", () => navigatePreview(-1));
+previewNext.addEventListener("click", () => navigatePreview(1));
 window.addEventListener("resize", () => {
   if (activePreview && activePreview.kind === "PDF" && !previewModal.hidden) renderPdfPage(activePreview, activePreviewPage);
 });

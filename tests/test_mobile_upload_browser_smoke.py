@@ -9,6 +9,7 @@ validating the real browser-side PDF.js and file-selection flow.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import tempfile
 import unittest
@@ -78,6 +79,24 @@ _ONE_PIXEL_PNG = base64.b64decode(
     "set INVOICE_HUB_RUN_BROWSER_SMOKE=1 with a Chromium runtime to run browser smoke",
 )
 class MobileUploadBrowserSmokeTests(unittest.TestCase):
+    @staticmethod
+    def _dispatch_touch(page, start, end):
+        page.evaluate(
+            """([start, end]) => {
+                const stage = document.querySelector("#previewStage");
+                const emit = (type, touches, changedTouches) => {
+                    const event = new Event(type, { bubbles: true, cancelable: true });
+                    Object.defineProperty(event, "touches", { value: touches });
+                    Object.defineProperty(event, "changedTouches", { value: changedTouches });
+                    stage.dispatchEvent(event);
+                };
+                const point = ([x, y]) => ({ clientX: x, clientY: y });
+                emit("touchstart", [point(start)], []);
+                emit("touchend", [], [point(end)]);
+            }""",
+            [list(start), list(end)],
+        )
+
     def test_local_pdf_review_and_upload_flow_has_no_early_post(self):
         executable = Path(
             os.environ.get(
@@ -141,17 +160,181 @@ class MobileUploadBrowserSmokeTests(unittest.TestCase):
                     page.locator(".review-button").click()
                     page.locator("#previewModal").wait_for(state="visible")
                     page.locator("#previewCanvas").wait_for(state="visible")
-                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "1 / 2")
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/1 · 页 1/2")
                     page.locator("#previewNext").click()
-                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "2 / 2")
+                    page.wait_for_function(
+                        "() => document.querySelector('#previewPageIndicator').textContent === "
+                        + json.dumps("文件 1/1 · 页 2/2", ensure_ascii=False),
+                    )
+                    page.locator("#previewCanvas").wait_for(state="visible")
                     page.locator("#previewPrev").click()
-                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "1 / 2")
+                    page.wait_for_function(
+                        "() => document.querySelector('#previewPageIndicator').textContent === "
+                        + json.dumps("文件 1/1 · 页 1/2", ensure_ascii=False),
+                    )
+                    page.locator("#previewCanvas").wait_for(state="visible")
                     page.locator("#previewBack").click()
 
                     page.locator("#btnUpload").click()
                     page.locator("#result.result-success").wait_for(state="visible")
                     self.assertEqual(len(post_requests), 1)
                     self.assertEqual(page.locator("body").get_attribute("data-upload-state"), "SUCCESS")
+                finally:
+                    context.close()
+                    browser.close()
+
+    def test_multi_file_preview_navigates_pages_files_and_returns_without_post(self):
+        executable = Path(
+            os.environ.get(
+                "INVOICE_HUB_BROWSER_EXECUTABLE",
+                r"C:\Users\gawk\AppData\Local\ms-playwright\chromium-1217\chrome-win64\chrome.exe",
+            )
+        )
+        if not executable.exists():
+            self.skipTest(f"Chromium executable not found: {executable}")
+
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+            post_requests: list[str] = []
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, executable_path=str(executable))
+                context = browser.new_context(viewport={"width": 390, "height": 844})
+                page = context.new_page()
+                page.on(
+                    "request",
+                    lambda request: post_requests.append(request.url)
+                    if request.method == "POST"
+                    else None,
+                )
+                try:
+                    page.goto(session.upload_url, wait_until="networkidle")
+                    page.set_input_files(
+                        "#inputFile",
+                        [
+                            {"name": "A.pdf", "mimeType": "application/pdf", "buffer": _synthetic_pdf(3)},
+                            {"name": "B.pdf", "mimeType": "application/pdf", "buffer": _synthetic_pdf(2)},
+                            {"name": "C.pdf", "mimeType": "application/pdf", "buffer": _synthetic_pdf(1)},
+                        ],
+                    )
+                    page.locator(".pdf-thumb").nth(2).wait_for(state="visible")
+                    self.assertEqual(page.locator(".file-card").count(), 3)
+
+                    def expect_position(value):
+                        page.wait_for_function(
+                            "() => document.querySelector('#previewPageIndicator').textContent === "
+                            + json.dumps(value, ensure_ascii=False),
+                        )
+
+                    page.locator(".review-button").nth(0).click()
+                    page.locator("#previewCanvas").wait_for(state="visible")
+                    expect_position("文件 1/3 · 页 1/3")
+                    self.assertIn("当前第 1 个文件，共 3 个文件；第 1 页，共 3 页", page.locator("#previewPageIndicator").get_attribute("aria-label"))
+
+                    page.locator("#previewNext").click()
+                    expect_position("文件 1/3 · 页 2/3")
+                    page.locator("#previewNext").click()
+                    expect_position("文件 1/3 · 页 3/3")
+                    page.locator("#previewNext").click()
+                    expect_position("文件 2/3 · 页 1/2")
+                    self.assertEqual(page.locator("#previewTitle").inner_text(), "B.pdf")
+                    page.locator("#previewNext").click()
+                    expect_position("文件 2/3 · 页 2/2")
+                    page.locator("#previewNext").click()
+                    expect_position("文件 3/3 · 页 1/1")
+                    self.assertTrue(page.locator("#previewNext").is_disabled())
+
+                    page.locator("#previewPrev").click()
+                    expect_position("文件 2/3 · 页 2/2")
+                    page.locator("#previewPrev").click()
+                    expect_position("文件 2/3 · 页 1/2")
+                    page.locator("#previewPrev").click()
+                    expect_position("文件 1/3 · 页 3/3")
+                    page.locator("#previewPrev").click()
+                    expect_position("文件 1/3 · 页 2/3")
+                    page.locator("#previewPrev").click()
+                    expect_position("文件 1/3 · 页 1/3")
+                    self.assertTrue(page.locator("#previewPrev").is_disabled())
+
+                    page.locator("#previewBack").click()
+                    self.assertEqual(page.locator(".file-card").count(), 3)
+                    self.assertEqual(page.locator("body").get_attribute("data-upload-state"), "SELECTED")
+                    page.locator(".review-button").nth(1).click()
+                    expect_position("文件 2/3 · 页 1/2")
+                    self.assertEqual(page.locator("#previewTitle").inner_text(), "B.pdf")
+                    self.assertEqual(post_requests, [])
+                finally:
+                    context.close()
+                    browser.close()
+
+    def test_preview_swipe_contract_respects_direction_threshold_and_zoom(self):
+        executable = Path(
+            os.environ.get(
+                "INVOICE_HUB_BROWSER_EXECUTABLE",
+                r"C:\Users\gawk\AppData\Local\ms-playwright\chromium-1217\chrome-win64\chrome.exe",
+            )
+        )
+        if not executable.exists():
+            self.skipTest(f"Chromium executable not found: {executable}")
+
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, executable_path=str(executable))
+                context = browser.new_context(viewport={"width": 390, "height": 844})
+                page = context.new_page()
+                try:
+                    page.goto(session.upload_url, wait_until="networkidle")
+                    page.set_input_files(
+                        "#inputFile",
+                        [
+                            {"name": "A.pdf", "mimeType": "application/pdf", "buffer": _synthetic_pdf(1)},
+                            {"name": "B.pdf", "mimeType": "application/pdf", "buffer": _synthetic_pdf(1)},
+                            {"name": "C.pdf", "mimeType": "application/pdf", "buffer": _synthetic_pdf(1)},
+                        ],
+                    )
+                    page.locator(".pdf-thumb").nth(2).wait_for(state="visible")
+                    page.locator(".review-button").nth(0).click()
+                    page.locator("#previewCanvas").wait_for(state="visible")
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/3 · 页 1/1")
+
+                    self._dispatch_touch(page, (220, 220), (190, 300))
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/3 · 页 1/1")
+                    self._dispatch_touch(page, (220, 220), (175, 222))
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/3 · 页 1/1")
+                    self._dispatch_touch(page, (220, 220), (140, 223))
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 2/3 · 页 1/1")
+                    self._dispatch_touch(page, (140, 220), (230, 223))
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/3 · 页 1/1")
+                    page.locator("#previewCanvas").wait_for(state="visible")
+
+                    page.evaluate(
+                        """() => {
+                            const canvas = document.querySelector('#previewCanvas');
+                            canvas.style.setProperty('max-width', 'none', 'important');
+                            canvas.style.setProperty('width', '1000px', 'important');
+                            canvas.style.setProperty('flex', '0 0 auto', 'important');
+                        }"""
+                    )
+                    page.wait_for_function(
+                        "() => document.querySelector('#previewCanvas').getBoundingClientRect().width "
+                        "> document.querySelector('#previewStage').clientWidth + 4"
+                    )
+                    self._dispatch_touch(page, (220, 220), (130, 223))
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/3 · 页 1/1")
                 finally:
                     context.close()
                     browser.close()
@@ -255,6 +438,25 @@ class MobileUploadBrowserSmokeTests(unittest.TestCase):
                     self.assertEqual(page.locator('[data-file-kind="图片"]').count(), 1)
                     self.assertTrue(page.locator('[data-file-kind="OFD"] .file-preview').is_disabled())
                     self.assertIn("手机浏览器暂不支持内容预览", page.locator('[data-file-kind="OFD"]').inner_text())
+
+                    page.locator('[data-file-kind="PDF"] .review-button').click()
+                    page.locator("#previewCanvas").wait_for(state="visible")
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 1/3 · 页 1/2")
+                    page.locator("#previewNext").click()
+                    page.wait_for_function(
+                        "() => document.querySelector('#previewPageIndicator').textContent === "
+                        + json.dumps("文件 1/3 · 页 2/2", ensure_ascii=False),
+                    )
+                    page.locator("#previewNext").click()
+                    page.wait_for_function(
+                        "() => document.querySelector('#previewPageIndicator').textContent === "
+                        + json.dumps("文件 2/3 · 页 1/1", ensure_ascii=False),
+                    )
+                    self.assertIn("手机浏览器暂不支持内容预览", page.locator("#previewError").inner_text())
+                    page.locator("#previewNext").click()
+                    page.locator("#previewImage").wait_for(state="visible")
+                    self.assertEqual(page.locator("#previewPageIndicator").inner_text(), "文件 3/3 · 页 1/1")
+                    page.locator("#previewBack").click()
 
                     page.locator('[data-file-kind="图片"] .review-button').click()
                     page.locator("#previewImage").wait_for(state="visible")
