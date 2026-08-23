@@ -72,13 +72,92 @@ def _expand_modules(modules: list[str]) -> list[str]:
     return expanded
 
 
-def _select_shard(modules: list[str], shard_count: int, shard_index: int) -> list[str]:
-    """Return one deterministic round-robin partition of an ordered module list."""
+_DEFAULT_MODULE_WEIGHT = 2.0
+
+# Benchmark module execution time weights in seconds for deterministic LPT bin-packing
+_MODULE_WEIGHTS: dict[str, float] = {
+    "tests.claim_groups_gui": 178.0,
+    "tests.test_ihds09": 116.0,
+    "tests.test_gui_column_filters": 106.0,
+    "tests.test_ihds08": 51.0,
+    "tests.test_preview_workbench_ui": 46.0,
+    "tests.test_preview_pdf_nav_log_001": 41.0,
+    "tests.test_mobile_upload": 35.0,
+    "tests.test_import_review_identity": 33.0,
+    "tests.test_mailbox_v5_ui": 31.0,
+    "tests.test_hci_v1": 25.0,
+    "tests.test_export_material_preflight": 19.0,
+    "tests.test_review_action_regressions": 18.0,
+    "tests.test_ui_preview_helpers": 16.0,
+    "tests.test_review_toolbar_filter_fixes": 15.0,
+    "tests.claim_groups_mail": 15.0,
+    "tests.test_review_list_paging_fix": 15.0,
+    "tests.test_import_center_geometry": 14.0,
+    "tests.test_review_feedback_fixes": 14.0,
+    "tests.test_invoice_workflow": 13.0,
+    "tests.test_mobile_upload_diagnostics": 13.0,
+    "tests.test_expense_date": 12.0,
+    "tests.test_settings_pages_baseline": 12.0,
+    "tests.test_review_workspace_baseline": 12.0,
+    "tests.test_mobile_upload_firewall_ui": 10.0,
+    "tests.test_settings_provider_and_layout": 10.0,
+    "tests.test_mobile_upload_page_contract": 9.0,
+    "tests.test_settings_center": 9.0,
+    "tests.test_review_workspace_closure": 8.0,
+    "tests.test_settings_baseline": 7.0,
+    "tests.test_review_detail_closure": 7.0,
+    "tests.test_startup_probe_and_packaging": 6.0,
+    "tests.test_settings_dialog": 6.0,
+    "tests.test_v016_responsive_contracts": 6.0,
+    "tests.test_mailbox_safety_delete": 6.0,
+    "tests.test_generic_imap_config": 5.0,
+    "tests.claim_groups_core": 5.0,
+}
+
+
+def _select_shard(
+    modules: list[str],
+    shard_count: int,
+    shard_index: int,
+    module_weights: dict[str, float] | None = None,
+) -> list[str]:
+    """Return one deterministic LPT-weighted partition of an ordered module list.
+
+    Distributes modules across shards using Longest Processing Time first
+    (LPT) bin-packing to balance total execution time while guaranteeing
+    that all modules are assigned exactly once and shard assignments are
+    strictly deterministic.
+    """
     if shard_count <= 0:
         raise ValueError("shard_count must be positive")
     if shard_index < 0 or shard_index >= shard_count:
         raise ValueError("shard_index must be in [0, shard_count)")
-    return modules[shard_index::shard_count]
+
+    if not modules:
+        return []
+
+    weights = _MODULE_WEIGHTS if module_weights is None else module_weights
+
+    # Sort descending by weight, with secondary sort ascending by module name
+    # for 100% deterministic tie-breaking.
+    sorted_modules = sorted(
+        modules,
+        key=lambda m: (-weights.get(m, _DEFAULT_MODULE_WEIGHT), m),
+    )
+
+    shards: list[list[str]] = [[] for _ in range(shard_count)]
+    shard_weights: list[float] = [0.0] * shard_count
+
+    for module in sorted_modules:
+        w = weights.get(module, _DEFAULT_MODULE_WEIGHT)
+        min_idx = shard_weights.index(min(shard_weights))
+        shards[min_idx].append(module)
+        shard_weights[min_idx] += w
+
+    return shards[shard_index]
+
+
+_select_shard_lpt = _select_shard
 
 
 def _exit_hex(code: int) -> str:
@@ -169,7 +248,7 @@ def main() -> int:
         "--shard-count",
         type=int,
         default=1,
-        help="Number of deterministic round-robin shards.",
+        help="Number of deterministic LPT-weighted shards.",
     )
     parser.add_argument(
         "--shard-index",

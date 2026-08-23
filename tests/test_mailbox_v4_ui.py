@@ -2,23 +2,40 @@
 """UI unit tests for V4 Email Account Settings redesign and Import Center linkage."""
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from copy import deepcopy
 
 from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel
+from shiboken6 import isValid
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
 from scripts.invoice_fetch.config import load_config_safe, get_email_accounts
 
 app = QApplication.instance() or QApplication(sys.argv)
-TEST_DB_PATH = Path("test.db")
 
 
 class TestMailboxV4UI(unittest.TestCase):
 
+    def tearDown(self):
+        widgets = [
+            widget
+            for widget in list(app.topLevelWidgets())
+            if widget is not None and isValid(widget)
+        ]
+        for widget in widgets:
+            close = getattr(widget, "close", None)
+            if isValid(widget) and callable(close):
+                close()
+        app.processEvents()
+
     def setUp(self):
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp_dir.cleanup)
+        self.db_path = Path(self._temp_dir.name) / "test.db"
+
         self.cfg = deepcopy(load_config_safe())
         self.cfg["email"] = {}
         self.cfg["email_accounts"] = [
@@ -94,7 +111,7 @@ class TestMailboxV4UI(unittest.TestCase):
 
     def test_import_center_email_selection(self):
         """Directive 9: Import Center email import page can select email accounts."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
         window._refresh_imports_page()
 
@@ -112,7 +129,7 @@ class TestMailboxV4UI(unittest.TestCase):
 
     def test_manage_mailbox_more_action_navigates_to_settings(self):
         """IHDS-06: account management is a low-frequency More action."""
-        window = InvoiceReviewApp(db_path=TEST_DB_PATH)
+        window = InvoiceReviewApp(db_path=self.db_path)
         window.config = deepcopy(self.cfg)
 
         action = next(action for action in window.import_mail_more_menu.actions() if action.text() == "管理邮箱")

@@ -94,6 +94,7 @@ class PdfPreviewControllerContracts(unittest.TestCase):
 
         # Windows Qt may leave the Python wrapper reachable after C++ deletion.
         controller._dispose(view, None)
+        self.assertIsNone(controller.active_view())
 
     def test_rapid_invoice_switches_keep_only_latest_pdf(self):
         stack = QStackedWidget()

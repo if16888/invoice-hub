@@ -3013,8 +3013,10 @@ class ClaimGroupsTests(unittest.TestCase):
             from scripts.invoice_fetch.gui.app import StartupSplash
             splash = StartupSplash()
             splash.show_message("正在进行测试...", 50)
+            self.assertEqual(splash.status_label.text(), "正在进行测试...")
+            self.assertEqual(splash.progress_bar.value(), 50)
             splash.close()
-            self.assertTrue(True)
+            self.assertFalse(splash.isVisible())
         except (ImportError, RuntimeError, OSError) as e:
             self.skipTest(f"Skipping GUI test: {e}")
 

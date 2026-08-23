@@ -621,11 +621,13 @@ class SettingsCenterAIProfileTests(SettingsDialogTestMixin, unittest.TestCase):
         dialog._open_new_ai_editor()
         dialog.txt_ai_name.setText("My New AI")
         dialog.txt_ai_key.setText("new-secret-key")
-        with patch("scripts.invoice_fetch.config.save_config"), \
+        with patch("scripts.invoice_fetch.config.save_config") as mock_save, \
              patch("PySide6.QtWidgets.QMessageBox.information"), \
-             patch("scripts.invoice_fetch.credentials.set_ai_api_key"):
-            # Triggering save, should clear key and not raise AttributeError
+             patch("scripts.invoice_fetch.credentials.set_ai_api_key") as mock_set_key:
             dialog._save_ai_profile_settings(activate=True)
+            mock_set_key.assert_called_once()
+            mock_save.assert_called_once()
+            self.assertEqual(dialog.txt_ai_key.text(), "")
 
     def test_disabled_ai_profile_row_has_visible_activate_button(self):
         from scripts.invoice_fetch.gui.settings_dialog import AIProfileRow
