@@ -157,9 +157,6 @@ def _select_shard(
     return shards[shard_index]
 
 
-_select_shard_lpt = _select_shard
-
-
 def _exit_hex(code: int) -> str:
     return f"0x{code & 0xFFFFFFFF:08X}"
 

@@ -1,21 +1,37 @@
 # Invoice Hub 现有测试用例体系全景审计与 CI 提速优化方案深度报告
 ## Comprehensive Test Suite Audit, Fragility Profiling, and CI Acceleration Blueprint
 
-> **报告版本**: v1.0.0 (Master Release)  
-> **审计日期**: 2026-08-23  
-> **目标工程**: Invoice Hub 桌面发票与报销全流程管理系统 (`if16888/invoice-hub`)  
-> **工作空间**: `d:/01_workspace/win/invoice-hub`  
-> **联合审计团队**:
-> - **Explorer R1**: 业务端到端集成与核心状态机审计专家 (Business E2E & State Machine Specialist)
-> - **Explorer R2**: 测试质量、代码异味与脆弱性排查专家 (Test Quality, Smells & Fragility Specialist)
-> - **Explorer R3**: CI 架构、执行耗时与分片瓶颈诊断专家 (CI Architecture & Performance Specialist)
-> - **Worker Report**: 综合报告提炼与架构治理专家 (Report Synthesis Specialist)
+> **报告版本**: v1.0.0 (Engineering Architecture Blueprint)
+> **审计日期**: 2026-08-23
+> **目标工程**: Invoice Hub 桌面发票与报销全流程管理系统 (`if16888/invoice-hub`)
+
+---
+
+## 实施决策声明 (Implementation Decision)
+
+本报告包含审计阶段提出的候选优化方案，不代表所有方案均已批准实施。
+
+**Phase 1 已批准并实施**：
+- deterministic LPT weighted sharding
+- test state / DB pollution cleanup
+- assertion hardening
+- fresh-process isolation 保持不变
+
+**当前明确延期、不属于 v0.1.6 范围**：
+- uv migration
+- test-module consolidation
+- global SQLite :memory: migration
+- pytest-xdist hybrid execution
+- TIA incremental testing
+
+Tier 2 / Tier 3 的性能收益均为预测值，不是已验证的发布指标。
 
 ---
 
 ## 目录 (Table of Contents)
 
-1. [报告元数据与审计基准](#1-报告元数据与审计基准)
+1. [实施决策声明](#实施决策声明-implementation-decision)
+2. [报告元数据与审计基准](#1-报告元数据与审计基准)
 2. [执行摘要与核心审计发现](#2-执行摘要与核心审计发现)
 3. [全局测试资产全景与分类台账](#3-全局测试资产全景与分类台账)
 4. [R1. 业务集成测试与核心状态机覆盖全景审查](#4-r1-业务集成测试与核心状态机覆盖全景审查)
