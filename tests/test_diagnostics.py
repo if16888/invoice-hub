@@ -12,8 +12,8 @@ class DiagnosticsTests(unittest.TestCase):
         from scripts.invoice_fetch.version import APP_VERSION as VERSION_APP_VERSION
         from scripts.invoice_fetch.version import VERSION
 
-        self.assertEqual(VERSION, "0.1.5")
-        self.assertEqual(VERSION_APP_VERSION, "v0.1.5")
+        self.assertEqual(VERSION, "0.1.6")
+        self.assertEqual(VERSION_APP_VERSION, "v0.1.6")
         self.assertEqual(APP_VERSION, VERSION_APP_VERSION)
 
     def test_collect_app_info_includes_version_metadata_without_secrets(self):

@@ -1,13 +1,13 @@
 # Invoice Hub Design Baseline v1.0 — implementation review
 
 Review target: historical PR #50 (`agent/ui-stabilization-real-workflow`) plus the
-v0.1.6 interaction amendment tracked in PR #107.
+v0.1.6 interaction amendment delivered by merged PR #107.
 
 ## Decision
 
 **The historical Design Baseline source implementation is complete. The v0.1.6
 mobile interaction design is frozen by an addendum, while packaged-Windows and
-Android/WeChat release acceptance remain open.**
+Android/WeChat release acceptance remain pending.**
 
 The historical baseline was applied to the App Shell, Dashboard, Review
 Workspace, Import Center, reimbursement/export flow, and every Settings
@@ -117,5 +117,6 @@ gates continue to apply when a formal release candidate is cut.
 - **MOBILE-NET-001:** open pending packaged Windows + real phone evidence.
 - **UI-UPLOAD-001:** open pending Android/WeChat evidence.
 - **Automated regression gate:** green only when the current PR HEAD succeeds.
-- **Release/UI acceptance:** not yet approved; PR #107 remains Draft until the
-  real-device gates above are complete.
+- **Source implementation:** merged through PR #107.
+- **Interaction design:** frozen.
+- **Release/UI acceptance:** pending the real-device gates above; v0.1.6 is not released.
