@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any, Callable
@@ -31,6 +33,7 @@ EVENT_LABELS = {
     "list_refresh": "列表刷新",
     "page_switch": "页面切换",
     "preview": "预览",
+    "mobile_diagnostics": "手机诊断",
     "shutdown": "退出",
     "review_action": "审核操作",
     "stall": "stall",
@@ -102,6 +105,40 @@ def emit_performance_event(event: str, stage: str, **fields: object) -> None:
     if not performance_mode_enabled():
         return
     _log.info(format_performance_event(event, stage, **fields))
+
+
+@contextmanager
+def performance_stage(event: str, stage_name: str, **fields: object):
+    """Measure one potentially blocking stage when opt-in tracing is enabled.
+
+    The context deliberately does no clock work when performance mode is off.
+    Stage fields are limited by :func:`format_performance_event`, so this is
+    safe for shutdown diagnostics that must not carry paths, filenames, or
+    other user data.
+    """
+
+    if not performance_mode_enabled():
+        yield
+        return
+
+    thread = threading.current_thread()
+    common = {
+        "stage_name": stage_name,
+        "thread_name": thread.name,
+        "thread_id": threading.get_ident(),
+        **fields,
+    }
+    started_at = time.perf_counter()
+    emit_performance_event(event, "begin", **common)
+    try:
+        yield
+    finally:
+        emit_performance_event(
+            event,
+            "end",
+            elapsed_ms=(time.perf_counter() - started_at) * 1000.0,
+            **common,
+        )
 
 
 @dataclass
@@ -373,5 +410,6 @@ __all__ = [
     "PerformanceTrace",
     "emit_performance_event",
     "format_performance_event",
+    "performance_stage",
     "performance_mode_enabled",
 ]

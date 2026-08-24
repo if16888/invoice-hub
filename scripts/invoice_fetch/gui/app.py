@@ -87,7 +87,12 @@ from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageL
 from .settings_baseline import apply_settings_responsive_metrics
 from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
-from .performance_probe import GuiStallDetector, PerformancePaintObserver, PerformanceProbe
+from .performance_probe import (
+    GuiStallDetector,
+    PerformancePaintObserver,
+    PerformanceProbe,
+    performance_stage,
+)
 from .workers import EmailScanWorker, ExportMigrationWorker, LocalImportWorker
 from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .workbench_settings import (
@@ -865,7 +870,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if controller is not None:
             if shutdown_trace is not None:
                 self._performance_probe.active_stage = "mobile_shutdown"
-            mobile_stopped = controller.shutdown()
+            with performance_stage(
+                "shutdown",
+                "mobile_controller_shutdown",
+                session_exists=controller.server is not None or controller.session is not None,
+                server_active=controller.server is not None,
+                starting=controller.is_starting,
+                timeout_ms=5000,
+            ):
+                mobile_stopped = controller.shutdown()
             if shutdown_trace is not None:
                 shutdown_trace.mark("mobile_shutdown")
             if not mobile_stopped:
@@ -883,7 +896,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # terminating the worker while a destination file is being written.
             if shutdown_trace is not None:
                 self._performance_probe.active_stage = "migration_wait"
-            migration_worker.wait()
+            with performance_stage(
+                "shutdown",
+                "migration_worker_wait",
+                active=True,
+                timeout_requested="none",
+            ):
+                migration_worker.wait()
             if shutdown_trace is not None:
                 shutdown_trace.mark("migration_wait")
             if migration_worker.result is not None:
@@ -895,19 +914,47 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if callable(is_scan_running) and is_scan_running():
             if shutdown_trace is not None:
                 self._performance_probe.active_stage = "scan_cancel_wait"
-            scan_worker.request_cancel()
-            scan_worker.wait()
+            with performance_stage(
+                "shutdown",
+                "mailbox_scan_cancel",
+                active=True,
+                timeout_requested="none",
+            ):
+                scan_worker.request_cancel()
+            with performance_stage(
+                "shutdown",
+                "mailbox_scan_wait",
+                active=True,
+                timeout_requested="none",
+            ):
+                scan_worker.wait()
             if shutdown_trace is not None:
                 shutdown_trace.mark("scan_cancel_wait")
             self._end_data_operation("邮箱扫描")
-        self._save_splitter_prefs()
+        if shutdown_trace is not None:
+            self._performance_probe.active_stage = "settings_flush"
+        with performance_stage(
+            "shutdown",
+            "settings_flush",
+            active=True,
+            timeout_requested="none",
+        ):
+            self._save_splitter_prefs()
         if shutdown_trace is not None:
             self._performance_probe.active_stage = "db_close"
-        self.db.close()
+        with performance_stage(
+            "shutdown",
+            "sqlite_close_call",
+            active=self.db.is_open,
+            timeout_requested="none",
+        ):
+            self.db.close()
         if shutdown_trace is not None:
+            self._performance_probe.active_stage = "close_event_accept"
             shutdown_trace.mark("close_event_accepted")
         event.accept()
         if shutdown_trace is not None:
+            self._performance_probe.active_stage = "window_hide"
             QTimer.singleShot(0, self._finish_shutdown_performance)
 
     def _finish_shutdown_performance(self) -> None:

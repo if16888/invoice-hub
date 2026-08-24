@@ -23,6 +23,8 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import urlparse
 
+from .gui.performance_probe import performance_stage
+
 from .config import RUNTIME_DIR
 from .log_privacy import sanitize_log_message
 
@@ -330,10 +332,35 @@ class MobileUploadServer:
         httpd = self._httpd
         self._httpd = None
         if httpd:
-            httpd.shutdown()
-            httpd.server_close()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2)
+            with performance_stage(
+                "shutdown",
+                "mobile_http_server_shutdown",
+                active=True,
+                timeout_requested="none",
+                server_thread_name=self._thread.name if self._thread is not None else "none",
+                server_thread_id=self._thread.ident if self._thread is not None else 0,
+            ):
+                httpd.shutdown()
+            with performance_stage(
+                "shutdown",
+                "mobile_http_server_close",
+                active=True,
+                timeout_requested="none",
+            ):
+                httpd.server_close()
+        thread = self._thread
+        if thread is not None:
+            with performance_stage(
+                "shutdown",
+                "mobile_server_thread_join",
+                active=thread.is_alive(),
+                timeout_ms=2000,
+                skipped=not thread.is_alive(),
+                worker_thread_name=thread.name,
+                worker_thread_id=thread.ident or 0,
+            ):
+                if thread.is_alive():
+                    thread.join(timeout=2)
         self._thread = None
         if httpd is not None:
             _log.info("[手机上传] server stop batch_id=<redacted>")

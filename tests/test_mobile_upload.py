@@ -276,6 +276,27 @@ class MobileUploadTests(unittest.TestCase):
             self.assertIn("http://10.0.0.23:", updated.upload_url)
             self.assertEqual(server.status()["upload_url"], updated.upload_url)
 
+    def test_mobile_upload_server_stop_is_bounded_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+            )
+            server.start()
+            thread = server._thread
+            started = time.perf_counter()
+            server.stop()
+            elapsed_ms = (time.perf_counter() - started) * 1000
+
+            self.assertIsNotNone(thread)
+            self.assertFalse(thread.is_alive())
+            self.assertIsNone(server._httpd)
+            self.assertIsNone(server._thread)
+            self.assertLess(elapsed_ms, 2000)
+
+            server.stop()
+
     def test_save_uploads_writes_manifest_dedupes_and_imports_supported_files(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_dir = Path(td) / "runtime"

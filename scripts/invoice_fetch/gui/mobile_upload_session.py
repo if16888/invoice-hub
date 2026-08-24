@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import RUNTIME_DIR
-from .performance_probe import emit_performance_event
+from .performance_probe import emit_performance_event, performance_stage
 from .ui_components import (
     MiddleElidedTextLabel,
     WrappedTextLabel,
@@ -93,6 +93,7 @@ class MobileUploadSessionController(QObject):
         self._active_upload_batch_id = ""
         self._starting = False
         self._stop_requested = False
+        self._shutdown_in_progress = False
         self._session_expired_handled = False
         self._start_thread = None
         self._start_worker = None
@@ -113,6 +114,10 @@ class MobileUploadSessionController(QObject):
     @property
     def is_starting(self) -> bool:
         return self._starting
+
+    @property
+    def is_shutting_down(self) -> bool:
+        return self._shutdown_in_progress
 
     def start(self, host: str | None = None):
         if self.server is not None or self._starting:
@@ -225,16 +230,28 @@ class MobileUploadSessionController(QObject):
             get_mobile_upload_firewall_status,
         )
 
-        self.firewall_status = get_mobile_upload_firewall_status(
-            get_current_invoicehub_executable()
-        )
+        with performance_stage(
+            "mobile_diagnostics",
+            "firewall_formal_query",
+            active=True,
+            timeout_ms=8000,
+        ):
+            self.firewall_status = get_mobile_upload_firewall_status(
+                get_current_invoicehub_executable()
+            )
         self.firewall_status_changed.emit(self.firewall_status)
 
         current_port = self.session.port if self.session is not None else None
-        self.dev_firewall_status = get_mobile_upload_dev_firewall_status(
-            get_current_development_executable(),
-            current_port,
-        )
+        with performance_stage(
+            "mobile_diagnostics",
+            "firewall_dev_query",
+            active=current_port is not None,
+            timeout_ms=8000,
+        ):
+            self.dev_firewall_status = get_mobile_upload_dev_firewall_status(
+                get_current_development_executable(),
+                current_port,
+            )
         dev_data = self.dev_firewall_status.as_dict()
         self._dev_firewall_rule_present = dev_data.get("state") in {
             "rule_present", "rule_disabled", "unknown"
@@ -329,20 +346,39 @@ class MobileUploadSessionController(QObject):
         if not snapshot.get("upload_in_progress"):
             self._active_upload_batch_id = ""
 
-    def stop(self):
+    def stop(self, *, refresh_firewall: bool = True):
         if self._starting:
             self._stop_requested = True
         # Stopping the service must never trigger UAC or mutate firewall state.
         if self.server is not None:
             server = self.server
             self._emit_completed_batches(server=server)
-            server.stop()
+            with performance_stage(
+                "shutdown",
+                "mobile_server_stop",
+                active=True,
+                timeout_ms=2000,
+            ):
+                server.stop()
             self._emit_completed_batches(server=server)
         self.server = None
         self.session = None
-        self.timer.stop()
+        with performance_stage(
+            "shutdown",
+            "mobile_status_timer_stop",
+            active=self.timer.isActive(),
+            timeout_requested="none",
+        ):
+            self.timer.stop()
         self._release_operation_gate()
-        self.refresh_firewall_status()
+        if refresh_firewall:
+            with performance_stage(
+                "shutdown",
+                "mobile_stop_firewall_refresh",
+                active=True,
+                timeout_ms=8000,
+            ):
+                self.refresh_firewall_status()
         self.stopped.emit()
 
     def request_dev_firewall_access(self):
@@ -379,16 +415,37 @@ class MobileUploadSessionController(QObject):
 
     def shutdown(self, timeout_ms: int = 5000):
         """Release the owned service before the application closes its DB."""
-        self._stop_requested = True
-        self.timer.stop()
-        thread = self._start_thread
-        if thread is not None and thread.isRunning():
-            if not thread.wait(timeout_ms):
-                return False
-            QCoreApplication.processEvents()
-        self.stop()
-        thread = self._start_thread
-        return not (thread is not None and thread.isRunning()) and self.server is None and not self.timer.isActive()
+        self._shutdown_in_progress = True
+        with performance_stage(
+            "shutdown",
+            "mobile_session_shutdown",
+            session_exists=self.server is not None or self.session is not None,
+            server_active=self.server is not None,
+            starting=self.is_starting,
+            timeout_ms=timeout_ms,
+        ):
+            self._stop_requested = True
+            self.timer.stop()
+            thread = self._start_thread
+            if thread is not None and thread.isRunning():
+                with performance_stage(
+                    "shutdown",
+                    "mobile_start_thread_wait",
+                    active=True,
+                    timeout_ms=timeout_ms,
+                    worker_thread_name=thread.objectName() or thread.__class__.__name__,
+                ):
+                    if not thread.wait(timeout_ms):
+                        return False
+                QCoreApplication.processEvents()
+            if not self.is_starting and self.server is None and self.session is None:
+                self._stop_requested = False
+                self._release_operation_gate()
+                self.stopped.emit()
+                return True
+            self.stop(refresh_firewall=False)
+            thread = self._start_thread
+            return not (thread is not None and thread.isRunning()) and self.server is None and not self.timer.isActive()
 
     @staticmethod
     def qr_png(url: str) -> bytes:
@@ -617,7 +674,8 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_idle_notice.hide()
         self.btn_dev_firewall.setVisible(False)
         self.stack.setCurrentWidget(self.idle_page)
-        self.controller.refresh_firewall_status()
+        if not self.controller.is_shutting_down:
+            self.controller.refresh_firewall_status()
         self._apply_import_workspace_hint()
 
     def _show_expired(self):
@@ -628,7 +686,8 @@ class MobileUploadSessionPanel(QFrame):
         )
         self.lbl_idle_notice.show()
         self.stack.setCurrentWidget(self.idle_page)
-        self.controller.refresh_firewall_status()
+        if not self.controller.is_shutting_down:
+            self.controller.refresh_firewall_status()
         self._apply_import_workspace_hint()
 
     def show_starting(self):
