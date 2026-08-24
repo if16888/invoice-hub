@@ -729,6 +729,16 @@ class PreviewMixin:
             self.lbl_image_preview.setPixmap(scaled)
 
     def _update_document_preview(self):
+        performance_probe = getattr(self, "_performance_probe", None)
+        previous_performance_trace = getattr(self, "_performance_preview_trace", None)
+        if previous_performance_trace is not None:
+            previous_performance_trace.finish("superseded", surface="preview")
+        performance_trace = (
+            performance_probe.begin("preview")
+            if performance_probe is not None
+            else None
+        )
+        self._performance_preview_trace = performance_trace
         self._refresh_preview_thumbnails()
         # Thumbnail rail stays collapsed by default unless user toggles attachment list
         # self.thumbnail_rail.setVisible(False)
@@ -743,6 +753,9 @@ class PreviewMixin:
                 self.btn_link_evidence.setEnabled(False)
             self.overlay_toolbar.hide()
             self._set_zoom_buttons_enabled(False)
+            if performance_trace is not None:
+                performance_trace.finish("empty_state", surface="preview")
+                self._performance_preview_trace = None
             return
 
         idx = self.current_preview_index
@@ -793,6 +806,9 @@ class PreviewMixin:
             self._show_preview_status("文件不存在")
             self.overlay_toolbar.hide()
             self._set_preview_action_availability(file_path)
+            if performance_trace is not None:
+                performance_trace.finish("missing_file", surface="preview")
+                self._performance_preview_trace = None
             return
 
         # Keep default state as hidden, show toolbar when mouse enters
@@ -816,6 +832,8 @@ class PreviewMixin:
             if QPdfDocument is not None and QPdfView is not None:
                 self.pdf_preview_controller.document_class = QPdfDocument
                 self.pdf_preview_controller.view_class = QPdfView
+                if performance_trace is not None:
+                    performance_trace.mark("load_requested")
                 self.pdf_preview_controller.load(file_path)
             else:
                 used_fallback = True
@@ -848,6 +866,15 @@ class PreviewMixin:
             self._show_preview_status("暂不支持内嵌预览，请点击打开外部文件")
             self.overlay_toolbar.hide()
             self._set_zoom_buttons_enabled(False)
+
+        if performance_trace is not None and (suffix != ".pdf" or used_fallback):
+            performance_trace.mark("render_requested")
+            arm_paint = getattr(self, "_performance_arm_paint", None)
+            if callable(arm_paint):
+                arm_paint("preview", performance_trace)
+            else:
+                performance_trace.finish("paint_unobserved", surface="preview")
+            self._performance_preview_trace = None
 
         load_elapsed_ms = int((time.perf_counter() - preview_start) * 1000)
         fallback_text = " fallback=1" if used_fallback else ""
@@ -948,6 +975,15 @@ class PreviewMixin:
             self.pdf_view.installEventFilter(self)
         self._refresh_preview_file_info()
         self._update_pdf_page_buttons()
+        performance_trace = getattr(self, "_performance_preview_trace", None)
+        if performance_trace is not None:
+            performance_trace.mark("document_ready")
+            arm_paint = getattr(self, "_performance_arm_paint", None)
+            if callable(arm_paint):
+                arm_paint("preview", performance_trace)
+            else:
+                performance_trace.finish("paint_unobserved", surface="preview")
+            self._performance_preview_trace = None
 
     def _on_pdf_preview_failed(self, _path: str):
         # A previous PDF may still be attached while the replacement fails.
@@ -958,6 +994,10 @@ class PreviewMixin:
         self.pdf_document = None
         self._show_preview_status("PDF 加载失败，暂不支持预览")
         self._set_zoom_buttons_enabled(False)
+        performance_trace = getattr(self, "_performance_preview_trace", None)
+        if performance_trace is not None:
+            performance_trace.finish("load_failed", surface="preview")
+            self._performance_preview_trace = None
 
     def _connect_pdf_page_navigator(self):
         """Try to connect to QPdfDocument's pageNavigator currentPageChanged signal."""

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from .performance_probe import emit_performance_event
+
 
 class ExportMigrationWorker(QThread):
     """Move legacy install-local exports without delaying UI construction."""
@@ -48,10 +50,13 @@ class LocalImportWorker(QThread):
         try:
             from ..services import import_local_directory
             stats = import_local_directory(self.import_dir, self.db_path)
+            emit_performance_event("local_import", "T0_worker_done", outcome="success")
             self.finished.emit(stats)
         except Exception as e:
+            emit_performance_event("local_import", "T0_worker_done", outcome="error")
             self.error.emit(str(e))
         except BaseException as e:
+            emit_performance_event("local_import", "T0_worker_done", outcome="error")
             self.error.emit(str(e))
 
 
@@ -87,12 +92,16 @@ class EmailScanWorker(QThread):
                 scan_control=self.control,
                 progress_callback=self.stage.emit,
             )
+            emit_performance_event("mail_complete", "T0_worker_done", outcome="success")
             self.finished.emit(res)
         except Exception as e:
             from ..scan_lifecycle import ScanCancelled
             if isinstance(e, ScanCancelled):
+                emit_performance_event("mail_complete", "T0_worker_done", outcome="cancelled")
                 self.finished.emit({"cancelled": True, "reason": str(e)})
             else:
+                emit_performance_event("mail_complete", "T0_worker_done", outcome="error")
                 self.error.emit(str(e))
         except BaseException as e:
+            emit_performance_event("mail_complete", "T0_worker_done", outcome="error")
             self.error.emit(str(e))
