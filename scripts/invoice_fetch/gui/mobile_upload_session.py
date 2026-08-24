@@ -3,6 +3,7 @@
 
 from io import BytesIO
 import logging
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, QThread, QTimer, Slot
@@ -333,8 +334,15 @@ class MobileUploadSessionController(QObject):
                 "[手机上传] gui batch completed emitted batch_id=%s",
                 batch_id or "<missing>",
             )
+            completed_at = result.get("_performance_t0_monotonic")
+            if completed_at is None:
+                completed_at = time.perf_counter()
             emit_performance_event("upload_complete", "T0_worker_done", outcome="success")
-            self.upload_batch_completed.emit(dict(result))
+            # Keep the monotonic marker only on the GUI signal payload.  The
+            # persisted/server result and public HTTP response remain unchanged.
+            gui_result = dict(result)
+            gui_result["_performance_t0_monotonic"] = completed_at
+            self.upload_batch_completed.emit(gui_result)
             if result_seq:
                 self._last_completed_upload_seq = result_seq
             else:

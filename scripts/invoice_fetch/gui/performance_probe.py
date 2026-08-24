@@ -194,10 +194,27 @@ class PerformanceProbe:
     def set_sink(self, sink: Callable[[str], None] | None) -> None:
         self.sink = sink
 
-    def begin(self, event: str, **fields: object) -> PerformanceTrace | None:
+    def begin(
+        self,
+        event: str,
+        *,
+        started_at: float | None = None,
+        **fields: object,
+    ) -> PerformanceTrace | None:
         if not self.enabled:
             return None
-        return PerformanceTrace(self, event, self.clock(), fields=dict(fields))
+        now = self.clock()
+        if started_at is None:
+            trace_started_at = now
+        else:
+            try:
+                candidate = float(started_at)
+            except (TypeError, ValueError):
+                candidate = now
+            # Worker and GUI threads share the monotonic clock, but a malformed
+            # or future marker must never make a trace report negative time.
+            trace_started_at = min(now, candidate)
+        return PerformanceTrace(self, event, trace_started_at, fields=dict(fields))
 
     def mark_event(self, event: str, stage: str, **fields: object) -> None:
         if not self.enabled:

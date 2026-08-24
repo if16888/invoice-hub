@@ -526,6 +526,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._performance_stall_detector = None
         self._performance_list_trace = None
         self._performance_pending_completion = None
+        self._performance_active_completion_trace = None
         self._performance_preview_trace = None
         self._performance_shutdown_trace = None
 
@@ -691,6 +692,63 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         trace = self._performance_list_trace
         if trace is not None:
             trace.mark(stage)
+
+    def _performance_completion_call(
+        self,
+        trace,
+        name: str,
+        callback,
+        *args,
+        surface: str | None = None,
+        **kwargs,
+    ):
+        """Measure one existing completion-path call without changing it.
+
+        The helper is deliberately opt-in through the already opt-in
+        ``PerformanceProbe``.  It records ordinal calls (for example,
+        ``load_invoices_1`` and ``load_invoices_2``), elapsed time, and whether
+        the target surface was visible before the call.  No callback is
+        skipped, reordered, or made asynchronous by this observer.
+        """
+
+        if trace is None:
+            return callback(*args, **kwargs)
+
+        call_count_key = f"{name}_count"
+        ordinal = int(trace.fields.get(call_count_key, 0) or 0) + 1
+        trace.fields[call_count_key] = ordinal
+        target_surface = surface or self._performance_current_surface()
+        current_surface = self._performance_current_surface()
+        visible = current_surface == target_surface
+        stage_name = f"{name}_{ordinal}"
+        started_at = trace.probe.clock()
+        trace.probe.mark_event(
+            trace.event,
+            "begin",
+            stage_name=stage_name,
+            call=name,
+            ordinal=ordinal,
+            surface=target_surface,
+            visible=visible,
+        )
+        try:
+            return callback(*args, **kwargs)
+        finally:
+            elapsed_ms = max(0.0, (trace.probe.clock() - started_at) * 1000.0)
+            trace.fields[f"{name}_{ordinal}_ms"] = elapsed_ms
+            trace.fields[f"{name}_{ordinal}_visible"] = visible
+            total_key = f"{name}_total_ms"
+            trace.fields[total_key] = float(trace.fields.get(total_key, 0.0) or 0.0) + elapsed_ms
+            trace.probe.mark_event(
+                trace.event,
+                "end",
+                stage_name=stage_name,
+                call=name,
+                ordinal=ordinal,
+                surface=target_surface,
+                visible=visible,
+                elapsed_ms=elapsed_ms,
+            )
 
     def _start_export_migration(self):
         """Start legacy export migration after the main window is constructed."""
@@ -2555,8 +2613,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._review_scope_has_restored = bool(activity.restored > 0 or any(rid not in activity.new_invoice_ids for rid in activity.review_invoice_ids))
         self._review_scope_duplicate_outcomes = tuple(activity.duplicate_outcomes)
         self.current_filter_status = TO_REVIEW
-        self._switch_main_page("review", preserve_review_scope=True)
-        self._load_invoices()
+        active_trace = getattr(self, "_performance_active_completion_trace", None)
+        self._performance_completion_call(
+            active_trace,
+            "page_handoff",
+            self._switch_main_page,
+            "review",
+            preserve_review_scope=True,
+            surface="review",
+        )
+        # This call is intentionally still present in the BEFORE path.  Phase
+        # 2B measures whether it is equivalent to the earlier authoritative
+        # list load before any deduplication is considered.
+        self._performance_completion_call(
+            active_trace,
+            "load_invoices",
+            self._load_invoices,
+            surface="review",
+        )
 
     def _clear_review_scope(self, *, reload: bool = True) -> None:
         if not getattr(self, "_review_scope_ids", ()) and not getattr(self, "_review_scope_total", 0):
@@ -4907,15 +4981,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if page_key == "overview":
             self._clear_review_scope(reload=False)
-            self._refresh_overview_page()
+            self._performance_completion_call(
+                getattr(self, "_performance_active_completion_trace", None),
+                "refresh_overview",
+                self._refresh_overview_page,
+                surface="overview",
+            )
         elif page_key == "review" and not preserve_review_scope:
             self._clear_review_scope()
         elif page_key == "imports":
-            self._refresh_imports_page()
+            self._performance_completion_call(
+                getattr(self, "_performance_active_completion_trace", None),
+                "refresh_imports",
+                self._refresh_imports_page,
+                surface="imports",
+            )
         elif page_key == "export":
             self._refresh_export_page()
         elif page_key == "settings":
-            self._refresh_settings_page()
+            self._performance_completion_call(
+                getattr(self, "_performance_active_completion_trace", None),
+                "refresh_settings",
+                self._refresh_settings_page,
+                surface="settings",
+            )
 
         if page_trace is not None:
             page_trace.mark("page_refresh")
@@ -8069,7 +8158,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_import_scan_status.setText(f"扫描状态：已取消（耗时 {elapsed:.1f} 秒）")
 
     def _scan_email_finished(self, res: dict):
-        performance_trace = self._performance_probe.begin("mail_complete")
+        t0 = res.get("_performance_t0_monotonic") if isinstance(res, dict) else None
+        performance_trace = self._performance_probe.begin(
+            "mail_complete",
+            started_at=t0,
+            t0_source="worker" if t0 is not None else "gui_signal",
+        )
+        self._performance_active_completion_trace = performance_trace
         if performance_trace is not None:
             performance_trace.mark("T1_gui_signal")
         cancelled = bool(isinstance(res, dict) and res.get("cancelled"))
@@ -8085,11 +8180,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 performance_trace.mark("T2_state_update")
             self.write_log("⏹ [邮箱扫描] 用户已取消，当前邮箱事务保持一致，未开始后续邮箱。")
             self.statusBar().showMessage("邮箱扫描已取消", 4000)
-            self._refresh_imports_page()
+            self._performance_completion_call(
+                performance_trace,
+                "refresh_imports",
+                self._refresh_imports_page,
+                surface="imports",
+            )
             if performance_trace is not None:
                 performance_trace.mark("T3_db_list_refresh_complete")
                 self._performance_request_completion_paint(performance_trace, "imports")
                 self._performance_consume_completion_paint("imports")
+            self._performance_active_completion_trace = None
             return
         btn = getattr(getattr(self, "scan_worker", None), "_trigger_btn", None) or getattr(self, "btn_scan_email", None)
         if btn:
@@ -8129,23 +8230,43 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 f"新入库邮件头: {summary.get('new_email_headers', 0)}, "
                 f"判定为发票候选: {summary.get('classified_invoice', 0)}"
             )
-            QMessageBox.information(self, "扫描异常提示", msg)
-        self._load_invoices()
+            self._performance_completion_call(
+                performance_trace,
+                "completion_dialog",
+                QMessageBox.information,
+                self,
+                "扫描异常提示",
+                msg,
+                surface=self._performance_current_surface(),
+            )
+        self._performance_completion_call(
+            performance_trace,
+            "load_invoices",
+            self._load_invoices,
+            surface="review",
+        )
         if performance_trace is not None:
             performance_trace.mark("T3_db_list_refresh_complete")
             surface = self._performance_current_surface()
             self._performance_request_completion_paint(performance_trace, surface)
             self._performance_consume_completion_paint(surface)
+        self._performance_active_completion_trace = None
 
     def _scan_email_error(self, err_msg: str):
-        performance_trace = self._performance_probe.begin("mail_complete")
+        performance_trace = self._performance_probe.begin("mail_complete", t0_source="gui_signal")
+        self._performance_active_completion_trace = performance_trace
         if performance_trace is not None:
             performance_trace.mark("T1_gui_signal")
         self._finish_scan_ui(cancelled=False)
         self._record_import_activity("mail", failed=1, status="failed")
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")
-        self._refresh_imports_page()
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_imports",
+            self._refresh_imports_page,
+            surface="imports",
+        )
         if performance_trace is not None:
             performance_trace.mark("T3_db_list_refresh_complete")
             surface = self._performance_current_surface()
@@ -8157,7 +8278,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._clear_action_busy(btn, orig_text)
         self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
         self.statusBar().showMessage("邮箱扫描执行出错！", 4000)
-        QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")
+        self._performance_completion_call(
+            performance_trace,
+            "completion_dialog",
+            QMessageBox.critical,
+            self,
+            "错误",
+            f"邮箱扫描执行出错: {err_msg}",
+            surface=self._performance_current_surface(),
+        )
+        self._performance_active_completion_trace = None
 
     # ── Operations Bar Handlers ───────────────────────────────────────
 
@@ -8313,7 +8443,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_imports_page()
 
     def _mobile_upload_finished(self, result: dict):
-        performance_trace = self._performance_probe.begin("upload_complete")
+        t0 = result.get("_performance_t0_monotonic") if isinstance(result, dict) else None
+        performance_trace = self._performance_probe.begin(
+            "upload_complete",
+            started_at=t0,
+            t0_source="worker" if t0 is not None else "gui_signal",
+        )
+        self._performance_active_completion_trace = performance_trace
         if performance_trace is not None:
             performance_trace.mark("T1_gui_signal")
         self._mobile_upload_processing = False
@@ -8388,11 +8524,36 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")
         self.write_log("📱 [扫码上传] 手机上传批次已完成，正在刷新发票列表。")
-        self._load_invoices()
-        self._load_claims()
-        self._refresh_overview_page()
-        self._refresh_imports_page()
-        self._refresh_settings_page()
+        self._performance_completion_call(
+            performance_trace,
+            "load_invoices",
+            self._load_invoices,
+            surface="review",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "load_claims",
+            self._load_claims,
+            surface="review",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_overview",
+            self._refresh_overview_page,
+            surface="overview",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_imports",
+            self._refresh_imports_page,
+            surface="imports",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_settings",
+            self._refresh_settings_page,
+            surface="settings",
+        )
         if performance_trace is not None:
             performance_trace.mark("T3_db_list_refresh_complete")
             self._performance_request_completion_paint(
@@ -8400,12 +8561,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 "review" if review_ids and activity is not None else "imports",
             )
         if review_ids and activity is not None:
-            self._open_import_activity_review(activity)
+            self._performance_completion_call(
+                performance_trace,
+                "open_review",
+                self._open_import_activity_review,
+                activity,
+                surface="review",
+            )
         else:
-            self._switch_main_page("imports")
+            self._performance_completion_call(
+                performance_trace,
+                "page_handoff",
+                self._switch_main_page,
+                "imports",
+                surface="imports",
+            )
             self._set_import_source_selected("mobile")
         if performance_trace is not None and self._performance_pending_completion is not None:
             self._performance_consume_completion_paint(self._performance_current_surface())
+        self._performance_active_completion_trace = None
 
     def _format_local_import_summary(self, stats: dict) -> str:
         return (
@@ -8418,7 +8592,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _import_local_finished(self, stats: dict):
-        performance_trace = self._performance_probe.begin("local_import")
+        t0 = stats.get("_performance_t0_monotonic") if isinstance(stats, dict) else None
+        performance_trace = self._performance_probe.begin(
+            "local_import",
+            started_at=t0,
+            t0_source="worker" if t0 is not None else "gui_signal",
+        )
+        self._performance_active_completion_trace = performance_trace
         if performance_trace is not None:
             performance_trace.mark("T1_gui_signal")
         self._end_data_operation("本地导入")
@@ -8453,16 +8633,45 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             4000,
         )
 
-        QMessageBox.information(self, "导入完成", self._format_local_import_summary(stats))
-        self._load_invoices()
-        self._refresh_overview_page()
-        self._refresh_imports_page()
-        self._refresh_settings_page()
+        self._performance_completion_call(
+            performance_trace,
+            "completion_dialog",
+            QMessageBox.information,
+            self,
+            "导入完成",
+            self._format_local_import_summary(stats),
+            surface=self._performance_current_surface(),
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "load_invoices",
+            self._load_invoices,
+            surface="review",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_overview",
+            self._refresh_overview_page,
+            surface="overview",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_imports",
+            self._refresh_imports_page,
+            surface="imports",
+        )
+        self._performance_completion_call(
+            performance_trace,
+            "refresh_settings",
+            self._refresh_settings_page,
+            surface="settings",
+        )
         if performance_trace is not None:
             performance_trace.mark("T3_db_list_refresh_complete")
             surface = self._performance_current_surface()
             self._performance_request_completion_paint(performance_trace, surface)
             self._performance_consume_completion_paint(surface)
+        self._performance_active_completion_trace = None
 
     def _import_local_error(self, err_msg: str):
         self._end_data_operation("本地导入")

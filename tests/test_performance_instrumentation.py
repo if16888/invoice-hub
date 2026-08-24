@@ -71,6 +71,43 @@ class PerformanceInstrumentationTests(unittest.TestCase):
             self.assertIn("T3_db_list_refresh_complete", source)
             self.assertIn("_performance_request_completion_paint", source)
 
+    def test_completion_call_observer_records_ordinal_and_visibility(self):
+        window = self._make_window()
+        window._performance_probe.enabled = True
+        window._performance_probe.set_sink(lambda _line: None)
+        trace = window._performance_probe.begin("upload_complete")
+        window._performance_active_completion_trace = trace
+        calls = []
+
+        window._performance_completion_call(
+            trace,
+            "load_invoices",
+            lambda: calls.append("first"),
+            surface="review",
+        )
+        window._performance_completion_call(
+            trace,
+            "load_invoices",
+            lambda: calls.append("second"),
+            surface="review",
+        )
+        window._performance_completion_call(
+            trace,
+            "refresh_settings",
+            lambda: calls.append("settings"),
+            surface="settings",
+        )
+        record = trace.finish("T6_interactive", surface="review")
+
+        self.assertEqual(calls, ["first", "second", "settings"])
+        self.assertEqual(record["load_invoices_count"], 2)
+        self.assertEqual(record["refresh_settings_count"], 1)
+        self.assertIn("load_invoices_1_ms", record)
+        self.assertIn("load_invoices_2_ms", record)
+        self.assertTrue(record["load_invoices_1_visible"])
+        self.assertTrue(record["load_invoices_2_visible"])
+        self.assertFalse(record["refresh_settings_1_visible"])
+
     def test_performance_log_sink_does_not_copy_sensitive_fields(self):
         window = self._make_window()
         messages = []

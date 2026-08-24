@@ -2,6 +2,7 @@
 """Background GUI workers extracted from the main GUI assembly module."""
 
 from pathlib import Path
+import time
 
 from PySide6.QtCore import QThread, Signal
 
@@ -50,8 +51,11 @@ class LocalImportWorker(QThread):
         try:
             from ..services import import_local_directory
             stats = import_local_directory(self.import_dir, self.db_path)
+            completed_at = time.perf_counter()
             emit_performance_event("local_import", "T0_worker_done", outcome="success")
-            self.finished.emit(stats)
+            result = dict(stats)
+            result["_performance_t0_monotonic"] = completed_at
+            self.finished.emit(result)
         except Exception as e:
             emit_performance_event("local_import", "T0_worker_done", outcome="error")
             self.error.emit(str(e))
@@ -92,13 +96,23 @@ class EmailScanWorker(QThread):
                 scan_control=self.control,
                 progress_callback=self.stage.emit,
             )
+            completed_at = time.perf_counter()
             emit_performance_event("mail_complete", "T0_worker_done", outcome="success")
-            self.finished.emit(res)
+            result = dict(res)
+            result["_performance_t0_monotonic"] = completed_at
+            self.finished.emit(result)
         except Exception as e:
             from ..scan_lifecycle import ScanCancelled
             if isinstance(e, ScanCancelled):
+                completed_at = time.perf_counter()
                 emit_performance_event("mail_complete", "T0_worker_done", outcome="cancelled")
-                self.finished.emit({"cancelled": True, "reason": str(e)})
+                self.finished.emit(
+                    {
+                        "cancelled": True,
+                        "reason": str(e),
+                        "_performance_t0_monotonic": completed_at,
+                    }
+                )
             else:
                 emit_performance_event("mail_complete", "T0_worker_done", outcome="error")
                 self.error.emit(str(e))
