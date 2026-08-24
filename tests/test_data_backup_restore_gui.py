@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
@@ -157,6 +158,37 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
             self.assertEqual(gate.busy_reason(), "")
         finally:
             controller.shutdown(timeout_ms=1)
+
+    def test_mobile_shutdown_without_session_skips_firewall_query(self):
+        controller = MobileUploadSessionController(Path("unused.db"))
+        try:
+            with patch.object(controller, "refresh_firewall_status") as refresh:
+                started = time.perf_counter()
+                self.assertTrue(controller.shutdown(timeout_ms=1))
+                elapsed_ms = (time.perf_counter() - started) * 1000
+            refresh.assert_not_called()
+            self.assertLess(elapsed_ms, 100)
+            self.assertTrue(controller.shutdown(timeout_ms=1))
+            refresh.assert_not_called()
+        finally:
+            controller.stop(refresh_firewall=False)
+
+    def test_mobile_shutdown_active_server_does_not_refresh_firewall(self):
+        controller = MobileUploadSessionController(Path("unused.db"))
+        server = SimpleNamespace(
+            stop=lambda: None,
+            drain_completed_upload_results=lambda: [],
+        )
+        controller.server = server
+        controller.session = SimpleNamespace(host="127.0.0.1", port=43210)
+        try:
+            with patch.object(controller, "refresh_firewall_status") as refresh:
+                self.assertTrue(controller.shutdown(timeout_ms=1))
+            refresh.assert_not_called()
+            self.assertIsNone(controller.server)
+            self.assertIsNone(controller.session)
+        finally:
+            controller.stop(refresh_firewall=False)
 
 
 if __name__ == "__main__":

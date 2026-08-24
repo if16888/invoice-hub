@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,6 +16,7 @@ from scripts.invoice_fetch.gui.performance_probe import (
     PerformancePaintObserver,
     PerformanceProbe,
     format_performance_event,
+    performance_stage,
 )
 
 
@@ -123,6 +125,37 @@ class PerformanceProbeTests(unittest.TestCase):
         )
         self.assertNotIn("invoice-very-sensitive-name", line)
         self.assertIn("rows=1", line)
+
+    def test_blocking_stage_emits_begin_end_with_elapsed_and_thread(self):
+        messages = []
+        with patch.dict(os.environ, {"INVOICE_HUB_PERFORMANCE": "1"}):
+            with patch(
+                "scripts.invoice_fetch.gui.performance_probe._log"
+            ) as logger:
+                logger.info.side_effect = messages.append
+                with performance_stage(
+                    "shutdown",
+                    "sqlite_close_call",
+                    active=True,
+                    timeout_ms=0,
+                ):
+                    pass
+
+        self.assertEqual(len(messages), 2)
+        self.assertIn("stage=begin", messages[0])
+        self.assertIn("stage=end", messages[1])
+        self.assertIn("stage_name=sqlite_close_call", messages[1])
+        self.assertIn("elapsed_ms=", messages[1])
+        self.assertIn("thread_id=", messages[1])
+
+    def test_blocking_stage_disabled_does_not_read_clock(self):
+        with patch.dict(os.environ, {"INVOICE_HUB_PERFORMANCE": "0"}):
+            with patch(
+                "scripts.invoice_fetch.gui.performance_probe.time.perf_counter",
+                side_effect=AssertionError("disabled stage must not read the clock"),
+            ):
+                with performance_stage("shutdown", "sqlite_close_call", active=False):
+                    pass
 
 
 if __name__ == "__main__":
