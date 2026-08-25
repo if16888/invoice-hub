@@ -1,4 +1,5 @@
 import json
+import gc
 import tempfile
 import unittest
 from pathlib import Path
@@ -230,6 +231,9 @@ class ExpenseDateTests(unittest.TestCase):
             self.assertEqual(rows_by_num["NORMAL456"]["expense_date"], "2026-05-20")
             self.assertEqual(rows_by_num["NORMAL456"]["invoice_date"], "2026-05-20")
             self.assertIsNone(rows_by_num["NORMAL456"]["warning"])
+            wb.close()
+            del ws, wb
+            gc.collect()
 
     def test_refresh_legacy_railway_expense_date_upgrade(self):
         from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse

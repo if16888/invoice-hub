@@ -1,3 +1,4 @@
+import gc
 import sqlite3
 import tempfile
 import unittest
@@ -253,6 +254,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             ws_with = wb_with["发票汇总"]
             headers_with = [ws_with.cell(row=1, column=col).value for col in range(1, ws_with.max_column + 1)]
             self.assertIn("审核状态", headers_with)
+            wb_with.close()
+            del ws_with, wb_with
+            gc.collect()
 
             # 2. Row without review_status
             rows_without_status = [{
@@ -267,6 +271,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             ws_without = wb_without["发票汇总"]
             headers_without = [ws_without.cell(row=1, column=col).value for col in range(1, ws_without.max_column + 1)]
             self.assertNotIn("审核状态", headers_without)
+            wb_without.close()
+            del ws_without, wb_without
+            gc.collect()
 
     def test_excel_export_includes_confirmed_note_column(self):
         from scripts.invoice_fetch.excel_export import export_excel
@@ -290,6 +297,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("个人备注", headers)
             self.assertEqual(ws.cell(row=2, column=headers.index("解析备注") + 1).value, "Parsed from PDF")
             self.assertEqual(ws.cell(row=2, column=headers.index("个人备注") + 1).value, "Lunch with client")
+            wb.close()
+            del ws, wb
+            gc.collect()
 
     def test_old_database_migration_preserves_data_and_insert_works(self):
         with tempfile.TemporaryDirectory() as td:
@@ -379,6 +389,9 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ws.cell(row=2, column=18).value,
                 "https://example.com/pdf?token=%2A%2A%2A&invoice=%2A%2A%2A",
             )
+            wb.close()
+            del ws, wb
+            gc.collect()
 
     def test_excel_export_escapes_formula_like_user_values(self):
         from scripts.invoice_fetch.excel_export import export_excel
@@ -400,6 +413,9 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(ws.cell(row=2, column=7).value, "'=HYPERLINK(\"http://evil.example\",\"click\")")
             self.assertEqual(ws.cell(row=2, column=14).value, "'@SUM(1,1)")
+            wb.close()
+            del ws, wb
+            gc.collect()
 
 
 if __name__ == "__main__":
