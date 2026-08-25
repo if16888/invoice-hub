@@ -566,6 +566,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._review_scope_ids: tuple[int, ...] = ()
         self._review_scope_total = 0
         self._review_scope_has_restored = False
+        self._review_scope_duplicate_outcomes: tuple[dict, ...] = ()
+        # Completion handlers update the visible page and defer other summary
+        # surfaces until they are opened. These are small invalidation flags,
+        # not a second refresh coordinator.
+        self.overview_dirty = False
+        self.imports_dirty = False
+        self.settings_dirty = False
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
@@ -640,6 +647,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             0: "overview",
             1: "review",
             2: "imports",
+            5: "settings",
         }.get(index, "review")
 
     def _performance_arm_paint(
@@ -2595,24 +2603,66 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if activity is None or not pending_ids:
             self._refresh_overview_page()
             return
-        self._open_import_activity_review(activity, pending_ids=pending_ids)
+        prepared_ids = self._prepare_import_activity_review(activity, pending_ids=pending_ids)
+        if not prepared_ids:
+            self._refresh_overview_page()
+            return
+        # The caller owns the authoritative list refresh. The handoff helper
+        # below only changes page/selection state and never reloads the list.
+        self._load_invoices()
+        self._open_import_activity_review(
+            activity,
+            pending_ids=prepared_ids,
+            scope_prepared=True,
+        )
+
+    def _prepare_import_activity_review(
+        self,
+        activity: ImportActivity,
+        *,
+        pending_ids: tuple[int, ...] | None = None,
+    ) -> tuple[int, ...]:
+        """Install the authoritative scope/filter before the single list load."""
+        if pending_ids is None:
+            pending_ids = self._remaining_review_ids(activity)
+        pending_ids = tuple(int(invoice_id) for invoice_id in pending_ids)
+        if not pending_ids:
+            self._clear_review_scope(reload=False)
+            return ()
+        self._review_scope_ids = pending_ids
+        self._review_scope_total = len(activity.review_invoice_ids)
+        self._review_scope_has_restored = bool(
+            activity.restored > 0
+            or any(
+                invoice_id not in activity.new_invoice_ids
+                for invoice_id in activity.review_invoice_ids
+            )
+        )
+        self._review_scope_duplicate_outcomes = tuple(activity.duplicate_outcomes)
+        self.current_filter_status = TO_REVIEW
+        return pending_ids
 
     def _open_import_activity_review(
         self,
         activity: ImportActivity,
         *,
         pending_ids: tuple[int, ...] | None = None,
+        scope_prepared: bool = False,
     ) -> None:
-        if pending_ids is None:
-            pending_ids = self._remaining_review_ids(activity)
+        if not scope_prepared:
+            pending_ids = self._prepare_import_activity_review(
+                activity,
+                pending_ids=pending_ids,
+            )
+        elif pending_ids is None:
+            pending_ids = tuple(getattr(self, "_review_scope_ids", ()))
         if not pending_ids:
             self._clear_review_scope(reload=False)
             return
-        self._review_scope_ids = pending_ids
-        self._review_scope_total = len(activity.review_invoice_ids)
-        self._review_scope_has_restored = bool(activity.restored > 0 or any(rid not in activity.new_invoice_ids for rid in activity.review_invoice_ids))
-        self._review_scope_duplicate_outcomes = tuple(activity.duplicate_outcomes)
-        self.current_filter_status = TO_REVIEW
+
+        # Scope installation and the authoritative list load happen before
+        # this handoff helper is called by completion paths. Keeping this
+        # function handoff-only prevents a hidden second _load_invoices().
         active_trace = getattr(self, "_performance_active_completion_trace", None)
         self._performance_completion_call(
             active_trace,
@@ -2622,15 +2672,36 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             preserve_review_scope=True,
             surface="review",
         )
-        # This call is intentionally still present in the BEFORE path.  Phase
-        # 2B measures whether it is equivalent to the earlier authoritative
-        # list load before any deduplication is considered.
-        self._performance_completion_call(
-            active_trace,
-            "load_invoices",
-            self._load_invoices,
-            surface="review",
-        )
+
+    def _mark_completion_page_dirty(self, page_key: str) -> None:
+        if page_key in {"overview", "imports", "settings"}:
+            setattr(self, f"{page_key}_dirty", True)
+
+    def _mark_hidden_completion_pages(self, target_surface: str) -> None:
+        """Invalidate non-target summary pages without blocking handoff."""
+        for page_key in ("overview", "imports", "settings"):
+            if page_key != target_surface:
+                self._mark_completion_page_dirty(page_key)
+
+    def _refresh_visible_completion_page(self, trace) -> None:
+        """Refresh the visible summary page before local completion UI."""
+        surface = self._performance_current_surface()
+        callbacks = {
+            "overview": self._refresh_overview_page,
+            "imports": self._refresh_imports_page,
+            "settings": self._refresh_settings_page,
+        }
+        callback = callbacks.get(surface)
+        if callback is not None:
+            self._performance_completion_call(
+                trace,
+                f"refresh_{surface}",
+                callback,
+                surface=surface,
+            )
+        for page_key in callbacks:
+            if page_key != surface:
+                self._mark_completion_page_dirty(page_key)
 
     def _clear_review_scope(self, *, reload: bool = True) -> None:
         if not getattr(self, "_review_scope_ids", ()) and not getattr(self, "_review_scope_total", 0):
@@ -4981,6 +5052,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if page_key == "overview":
             self._clear_review_scope(reload=False)
+            self.overview_dirty = False
             self._performance_completion_call(
                 getattr(self, "_performance_active_completion_trace", None),
                 "refresh_overview",
@@ -4990,6 +5062,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         elif page_key == "review" and not preserve_review_scope:
             self._clear_review_scope()
         elif page_key == "imports":
+            self.imports_dirty = False
             self._performance_completion_call(
                 getattr(self, "_performance_active_completion_trace", None),
                 "refresh_imports",
@@ -4999,6 +5072,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         elif page_key == "export":
             self._refresh_export_page()
         elif page_key == "settings":
+            self.settings_dirty = False
             self._performance_completion_call(
                 getattr(self, "_performance_active_completion_trace", None),
                 "refresh_settings",
@@ -8524,48 +8598,52 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")
         self.write_log("📱 [扫码上传] 手机上传批次已完成，正在刷新发票列表。")
-        self._performance_completion_call(
-            performance_trace,
-            "load_invoices",
-            self._load_invoices,
-            surface="review",
+        pending_ids = (
+            self._remaining_review_ids(activity)
+            if activity is not None and review_ids
+            else ()
         )
+        target_surface = "review" if pending_ids else "imports"
+        if pending_ids and activity is not None:
+            prepared_ids = self._prepare_import_activity_review(
+                activity,
+                pending_ids=pending_ids,
+            )
+            self._performance_completion_call(
+                performance_trace,
+                "load_invoices",
+                self._load_invoices,
+                surface="review",
+            )
+        else:
+            prepared_ids = ()
+            self._performance_completion_call(
+                performance_trace,
+                "load_invoices",
+                self._load_invoices,
+                surface="imports",
+            )
         self._performance_completion_call(
             performance_trace,
             "load_claims",
             self._load_claims,
             surface="review",
         )
-        self._performance_completion_call(
-            performance_trace,
-            "refresh_overview",
-            self._refresh_overview_page,
-            surface="overview",
-        )
-        self._performance_completion_call(
-            performance_trace,
-            "refresh_imports",
-            self._refresh_imports_page,
-            surface="imports",
-        )
-        self._performance_completion_call(
-            performance_trace,
-            "refresh_settings",
-            self._refresh_settings_page,
-            surface="settings",
-        )
+        self._mark_hidden_completion_pages(target_surface)
         if performance_trace is not None:
             performance_trace.mark("T3_db_list_refresh_complete")
             self._performance_request_completion_paint(
                 performance_trace,
-                "review" if review_ids and activity is not None else "imports",
+                target_surface,
             )
-        if review_ids and activity is not None:
+        if prepared_ids and activity is not None:
             self._performance_completion_call(
                 performance_trace,
                 "open_review",
                 self._open_import_activity_review,
                 activity,
+                pending_ids=prepared_ids,
+                scope_prepared=True,
                 surface="review",
             )
         else:
@@ -8635,6 +8713,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self._performance_completion_call(
             performance_trace,
+            "load_invoices",
+            self._load_invoices,
+            surface="review",
+        )
+        self._refresh_visible_completion_page(performance_trace)
+        if performance_trace is not None:
+            performance_trace.mark("T3_db_list_refresh_complete")
+            surface = self._performance_current_surface()
+            self._performance_request_completion_paint(performance_trace, surface)
+            self._performance_consume_completion_paint(surface)
+        self._performance_completion_call(
+            performance_trace,
             "completion_dialog",
             QMessageBox.information,
             self,
@@ -8642,35 +8732,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._format_local_import_summary(stats),
             surface=self._performance_current_surface(),
         )
-        self._performance_completion_call(
-            performance_trace,
-            "load_invoices",
-            self._load_invoices,
-            surface="review",
-        )
-        self._performance_completion_call(
-            performance_trace,
-            "refresh_overview",
-            self._refresh_overview_page,
-            surface="overview",
-        )
-        self._performance_completion_call(
-            performance_trace,
-            "refresh_imports",
-            self._refresh_imports_page,
-            surface="imports",
-        )
-        self._performance_completion_call(
-            performance_trace,
-            "refresh_settings",
-            self._refresh_settings_page,
-            surface="settings",
-        )
-        if performance_trace is not None:
-            performance_trace.mark("T3_db_list_refresh_complete")
-            surface = self._performance_current_surface()
-            self._performance_request_completion_paint(performance_trace, surface)
-            self._performance_consume_completion_paint(surface)
         self._performance_active_completion_trace = None
 
     def _import_local_error(self, err_msg: str):
