@@ -1,3 +1,4 @@
+import gc
 import json
 import tempfile
 import unittest
@@ -88,6 +89,9 @@ class ReimbursementValidationTests(unittest.TestCase):
             self.assertIn("校验提示", headers)
             warning_col = headers.index("校验提示") + 1
             self.assertEqual(ws.cell(row=2, column=warning_col).value, warning)
+            wb.close()
+            del ws, wb
+            gc.collect()
 
 
 if __name__ == "__main__":

@@ -31,13 +31,14 @@ jobs:
           python-version: "3.11"
           cache: "pip"
           cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
       - name: Verify CLI help output
         run: python -m scripts.invoice_fetch --help
@@ -73,14 +74,15 @@ jobs:
           python-version: "3.11"
           cache: "pip"
           cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
-            requirements-test.txt
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
+            requirements-test.lock.txt
 
       - name: Install application and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt -r requirements-test.txt
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
 
       - name: Run isolated unit-test shard
         shell: pwsh
@@ -116,14 +118,15 @@ jobs:
           python-version: "3.11"
           cache: "pip"
           cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
-            requirements-test.txt
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
+            requirements-test.lock.txt
 
       - name: Install application and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt -r requirements-test.txt
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
 
       - name: Run authoritative HCI acceptance
         shell: pwsh
@@ -167,13 +170,14 @@ jobs:
           python-version: "3.11"
           cache: "pip"
           cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
 
       - name: Install application dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.txt -r requirements-build.txt
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
       - name: Classify native GUI geometry
         shell: pwsh

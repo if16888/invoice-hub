@@ -1,3 +1,4 @@
+import gc
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,6 +66,8 @@ class ExcelSortingTests(unittest.TestCase):
             sheet = workbook.active
             invoice_numbers = [sheet.cell(row=index, column=1).value for index in range(2, 7)]
             workbook.close()
+            del sheet, workbook
+            gc.collect()
 
         self.assertEqual(rows, original)
         self.assertEqual(invoice_numbers, ["5", "4", "3", "2", "1"])

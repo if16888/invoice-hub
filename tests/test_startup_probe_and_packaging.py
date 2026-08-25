@@ -674,18 +674,23 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
 
     def test_workflow_installs_python_deps_once_with_build_requirements(self):
         src = self._workflow_path().read_text(encoding="utf-8")
-        self.assertIn("requirements-build.txt", src)
+        self.assertIn("requirements.lock.txt", src)
+        self.assertIn("requirements-desktop.lock.txt", src)
+        self.assertIn("requirements-build.lock.txt", src)
         self.assertIn("cache-dependency-path", src)
         self.assertIn("--prefer-binary", src)
         self.assertIn("--no-input", src)
+        self.assertNotIn("-r requirements.txt", src)
+        self.assertNotIn("-r requirements-build.txt", src)
         self.assertNotIn("pip install PySide6 pyinstaller", src)
 
     def test_build_requirements_file_exists_and_pins_heavy_packages(self):
         p = PROJECT_ROOT / "requirements-build.txt"
         self.assertTrue(p.exists(), f"build requirements file not found at {p}")
         src = p.read_text(encoding="utf-8")
-        self.assertIn("PySide6==", src)
         self.assertIn("pyinstaller==", src)
+        desktop_lock = (PROJECT_ROOT / "requirements-desktop.lock.txt").read_text(encoding="utf-8")
+        self.assertIn("pyside6==", desktop_lock)
 
     def test_workflow_checks_artifacts_and_browser_exclusion(self):
         src = self._workflow_path().read_text(encoding="utf-8")

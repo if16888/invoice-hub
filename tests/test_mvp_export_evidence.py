@@ -1,3 +1,4 @@
+import gc
 import json
 import tempfile
 import unittest
@@ -39,6 +40,9 @@ class MvpExportEvidenceTests(unittest.TestCase):
             parse_note_col = headers.index("解析备注") + 1
             self.assertEqual(ws.cell(row=2, column=user_note_col).value, "项目A现场调试，和张三、李四午餐")
             self.assertEqual(ws.cell(row=2, column=parse_note_col).value, "PDF解析成功")
+            wb.close()
+            del ws, wb
+            gc.collect()
 
     def test_excel_exports_extra_materials_and_warnings(self):
         with tempfile.TemporaryDirectory() as td:
@@ -74,6 +78,9 @@ class MvpExportEvidenceTests(unittest.TestCase):
             self.assertEqual(ws.cell(row=2, column=missing_extra_col).value, "缺少")
             self.assertEqual(ws.cell(row=2, column=note_col).value, "Test Note")
             self.assertEqual(ws.cell(row=2, column=warn_col).value, "购方抬头不匹配，可能导致退单")
+            wb.close()
+            del ws, wb
+            gc.collect()
 
     def test_claim_export_copies_extra_paths_and_records_manifest(self):
         with tempfile.TemporaryDirectory() as td:
@@ -137,6 +144,9 @@ class MvpExportEvidenceTests(unittest.TestCase):
             self.assertIn("个人备注", headers)
             note_col = headers.index("个人备注") + 1
             self.assertEqual(ws.cell(row=2, column=note_col).value, "项目A现场支持住宿")
+            wb.close()
+            del ws, wb
+            gc.collect()
 
 
     def test_claim_export_prefixes_attachment_names_by_date_and_fallback(self):

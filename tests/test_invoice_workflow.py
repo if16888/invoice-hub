@@ -1,4 +1,5 @@
 import email
+import gc
 import json
 import tempfile
 import unittest
@@ -1936,13 +1937,17 @@ class InvoiceWorkflowTests(unittest.TestCase):
             dest = Path(td) / "发票汇总.xlsx"
             export_excel(rows, dest)
             wb = load_workbook(dest)
-
-        self.assertIn("发票汇总", wb.sheetnames)
-        self.assertIn("分类汇总", wb.sheetnames)
-        self.assertIn("异常待处理", wb.sheetnames)
-        self.assertEqual(wb["分类汇总"]["A2"].value, "餐饮")
-        self.assertEqual(wb["异常待处理"]["A2"].value, "1002")
-        self.assertIsNotNone(wb["发票汇总"]["P2"].hyperlink)
+            try:
+                self.assertIn("发票汇总", wb.sheetnames)
+                self.assertIn("分类汇总", wb.sheetnames)
+                self.assertIn("异常待处理", wb.sheetnames)
+                self.assertEqual(wb["分类汇总"]["A2"].value, "餐饮")
+                self.assertEqual(wb["异常待处理"]["A2"].value, "1002")
+                self.assertIsNotNone(wb["发票汇总"]["P2"].hyperlink)
+            finally:
+                wb.close()
+                del wb
+                gc.collect()
 
     def test_overseas_receipt_pdf_is_preserved_without_invoice_number(self):
         with tempfile.TemporaryDirectory() as td:

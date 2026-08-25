@@ -1,4 +1,9 @@
-pdfplumber>=0.9.0
+# PDF parsing is an external-input boundary. Keep the source requirement above
+# the fixed pdfminer.six security floor; release/CI install the committed lock.
+pdfplumber>=0.11.10
+pdfminer.six>=20251230
+cryptography>=50.0.0
+Pillow>=12.3.0
 requests>=2.33.0
 urllib3>=2.7.0
 beautifulsoup4>=4.12.0
