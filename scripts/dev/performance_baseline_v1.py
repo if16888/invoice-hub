@@ -168,9 +168,14 @@ def _release_preview(app: QApplication, window: InvoiceReviewApp) -> None:
 class _SyntheticMobileController:
     def __init__(self, active: bool) -> None:
         self.server = object() if active else None
+        # Match the controller lifecycle attributes read by InvoiceReviewApp
+        # closeEvent without starting a real network session.
+        self.session = None
+        self.is_starting = False
 
     def shutdown(self) -> bool:
         self.server = None
+        self.session = None
         return True
 
 
@@ -426,18 +431,25 @@ def _run_shutdown(app: QApplication, root: Path, reps: int) -> list[dict]:
     return results
 
 
-def run(repetitions: int) -> dict:
+def run(repetitions: int, *, completion_only: bool = False) -> dict:
     app = QApplication.instance() or QApplication([])
     _OBSERVED_PROBES.clear()
     with tempfile.TemporaryDirectory(prefix="invoice-hub-perf-") as temp_dir:
         root = Path(temp_dir)
-        scenarios = [_run_page_switch(app, root, repetitions)]
-        scenarios.extend(_run_list_refresh(app, root, repetitions))
-        scenarios.extend(_run_local_import(app, root, repetitions))
-        scenarios.extend(_run_mobile_completion(app, root, repetitions))
-        scenarios.extend(_run_mail_completion(app, root, repetitions))
-        scenarios.extend(_run_preview(app, root, repetitions))
-        scenarios.extend(_run_shutdown(app, root, repetitions))
+        if completion_only:
+            # Phase 2B compares only completion-to-result paths. Reuse the
+            # same scenario functions and statistics while avoiding unrelated
+            # PDF/shutdown/page-switch fixture churn in the triage loop.
+            scenarios = _run_local_import(app, root, repetitions)
+            scenarios.extend(_run_mobile_completion(app, root, repetitions))
+        else:
+            scenarios = [_run_page_switch(app, root, repetitions)]
+            scenarios.extend(_run_list_refresh(app, root, repetitions))
+            scenarios.extend(_run_local_import(app, root, repetitions))
+            scenarios.extend(_run_mobile_completion(app, root, repetitions))
+            scenarios.extend(_run_mail_completion(app, root, repetitions))
+            scenarios.extend(_run_preview(app, root, repetitions))
+            scenarios.extend(_run_shutdown(app, root, repetitions))
 
         trace_totals = {}
         for probe in _OBSERVED_PROBES:
@@ -473,6 +485,7 @@ def run(repetitions: int) -> dict:
                 "qt_platform": os.environ.get("QT_QPA_PLATFORM", ""),
                 "performance_mode": os.environ.get("INVOICE_HUB_PERFORMANCE", ""),
                 "synthetic_only": True,
+                "completion_only": completion_only,
                 "repetitions": repetitions,
             },
             "scenarios": scenarios,
@@ -487,10 +500,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repetitions", type=int, default=20)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--completion-only",
+        action="store_true",
+        help="run only local/mobile completion scenarios for Phase 2B comparison",
+    )
     args = parser.parse_args()
     if args.repetitions < 20:
         parser.error("Phase 1 requires at least 20 repetitions per scenario")
-    result = run(args.repetitions)
+    result = run(args.repetitions, completion_only=args.completion_only)
     encoded = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

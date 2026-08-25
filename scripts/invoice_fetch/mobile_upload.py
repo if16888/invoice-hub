@@ -13,6 +13,7 @@ import re
 import secrets
 import socket
 import threading
+import time
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -781,6 +782,11 @@ class MobileUploadServer:
             "restored_invoice_ids": tuple(dict.fromkeys(restored_invoice_ids)),
             "review_invoice_ids": tuple(dict.fromkeys(review_invoice_ids)),
         }
+        # This marker is internal-only and is projected out by
+        # ``public_upload_result``.  It anchors GUI completion timing to the
+        # authoritative end of import/finalization rather than to the later
+        # controller polling tick.
+        result["_performance_t0_monotonic"] = time.perf_counter()
         with self._lock:
             next_result_seq = self._completed_upload_seq + 1
             result["result_seq"] = next_result_seq

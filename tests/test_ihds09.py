@@ -113,11 +113,16 @@ class IHDS09Tests(unittest.TestCase):
                 })
                 self.app.processEvents()
                 self.assertEqual(len(window._import_activities), 1)
-                # The list/claims reload path may refresh dependent surfaces;
-                # event ownership is asserted by one activity, while each
-                # required surface must be refreshed at least once.
-                self.assertGreaterEqual(len(calls), 5)
-                self.assertTrue(set(("_load_invoices", "_load_claims", "_refresh_overview_page", "_refresh_imports_page", "_refresh_settings_page")) <= set(calls))
+                # Completion owns one list/claims refresh. The target Imports
+                # surface refreshes on handoff; other summary pages are dirty
+                # and refresh only when opened.
+                self.assertEqual(calls.count("_load_invoices"), 1)
+                self.assertEqual(calls.count("_load_claims"), 1)
+                self.assertEqual(calls.count("_refresh_imports_page"), 1)
+                self.assertNotIn("_refresh_overview_page", calls)
+                self.assertNotIn("_refresh_settings_page", calls)
+                self.assertTrue(window.overview_dirty)
+                self.assertTrue(window.settings_dirty)
             finally: window.close()
 
     def test_two_finalized_mobile_batches_create_two_history_rows_and_latest_status(self):

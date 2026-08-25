@@ -225,6 +225,9 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertIn("本次新增 2 张", window.lbl_review_scope.text())
                 self.assertIn("重复跳过 3 张", window.lbl_review_scope.text())
                 self.assertFalse(window.btn_review_scope_duplicates.isHidden())
+                self.assertTrue(window.imports_dirty)
+                window._switch_main_page("imports")
+                self.app.processEvents()
                 self.assertEqual(window.btn_import_recent_review.text(), "审核本批 2 张")
                 window._refresh_imports_page()
                 self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（3）")
@@ -364,6 +367,10 @@ class IHDS08Tests(unittest.TestCase):
                 })
                 self.app.processEvents()
 
+                # Imports is a hidden surface during the Review handoff. It
+                # becomes current before its completion summary is asserted.
+                window._switch_main_page("imports")
+                self.app.processEvents()
                 self.assertEqual(window._review_scope_ids, second_ids)
                 self.assertEqual(window._review_scope_total, 3)
                 self.assertEqual(

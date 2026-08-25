@@ -83,6 +83,18 @@ class PerformanceProbeTests(unittest.TestCase):
             self.assertIn(stage, stages)
         self.assertIn("[性能][上传完成]", messages[0])
 
+    def test_trace_can_start_at_worker_completion_marker(self):
+        clock = _Clock()
+        probe = PerformanceProbe(enabled=True, sink=lambda _line: None, clock=clock)
+        clock.advance_ms(25)
+        trace = probe.begin("local_import", started_at=0.0, t0_source="worker")
+        clock.advance_ms(10)
+        trace.mark("T1_gui_signal")
+        record = trace.finish("T6_interactive")
+
+        self.assertEqual(record["t0_source"], "worker")
+        self.assertAlmostEqual(record["stages"]["T1_gui_signal"], 35.0, delta=0.001)
+
     def test_stall_detector_reports_threshold_buckets_and_percentile(self):
         messages = []
         probe = PerformanceProbe(enabled=True, sink=messages.append)
