@@ -212,6 +212,16 @@ class TestVersionSource(unittest.TestCase):
         self.assertIn("(?:rc|pre)", src)
         self.assertIn("contains(env.VERSION, '-')", src)
 
+    def test_v017_source_and_release_tag_contract(self):
+        from scripts.invoice_fetch.version import VERSION
+
+        self.assertEqual(VERSION, "0.1.7")
+        tag_pattern = re.compile(r"^v(?P<base>\d+\.\d+\.\d+)(?P<suffix>-(?:rc|pre)\d+)?$")
+        for tag in ("v0.1.7-rc1", "v0.1.7"):
+            match = tag_pattern.fullmatch(tag)
+            self.assertIsNotNone(match)
+            self.assertEqual(match.group("base"), VERSION)
+
 
 class TestWindowsVersionInfo(unittest.TestCase):
     """Windows version metadata should be generated from a stable source."""
@@ -245,8 +255,8 @@ class TestWindowsVersionInfo(unittest.TestCase):
             self.assertTrue(output.exists(), "generator did not write the requested output file")
             text = output.read_text(encoding="utf-8")
             self.assertIn("VSVersionInfo(", text)
-            self.assertIn("filevers=(0, 1, 6, 0)", text)
-            self.assertIn("ProductVersion', '0.1.6", text)
+            self.assertIn("filevers=(0, 1, 7, 0)", text)
+            self.assertIn("ProductVersion', '0.1.7", text)
             self.assertIn(str(output), result.stdout + result.stderr)
 
     def test_spec_attaches_generated_version_resource(self):
@@ -343,7 +353,7 @@ class TestWindowsVersionInfoGenerator(unittest.TestCase):
             self.assertIn(str(Path("build") / "windows-version-info.txt"), buf.getvalue())
             text = output_path.read_text(encoding="utf-8")
             self.assertIn("VSVersionInfo(", text)
-            self.assertIn("StringStruct('ProductVersion', '0.1.6')", text)
+            self.assertIn("StringStruct('ProductVersion', '0.1.7')", text)
 
     def test_cli_uses_explicit_output_directory(self):
         from scripts import generate_windows_version_info as mod
