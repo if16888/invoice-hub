@@ -25,3 +25,10 @@ The whole 1,900-line module should not be deleted merely to remove those three w
 ## Active-test rule
 
 Tests under `tests/` should verify public or observable behavior. Source inspection is acceptable only for explicit repository-policy checks where runtime behavior cannot express the contract, and those exceptions should state why.
+
+Historical tests must not force production UI to retain hidden widgets,
+layouts, frames, or compatibility-only objects after the visible feature has
+moved on. When a test relies on `hasattr(...)`, `inspect(...)`, or
+`findChild(...)` for a retired implementation detail, replace it with a
+behavior-level assertion or archive it. Do not satisfy it by creating another
+hidden compatibility surface in production code.

@@ -17,7 +17,9 @@ When writing code or adding support for new features:
 
 ## Development Environment Setup
 
-We recommend developing on Windows using Python 3.10+.
+The maintained development, CI, lockfile, and Windows release baseline is
+**Python 3.11**. Other Python versions may be useful for compatibility testing,
+but must not be used to overwrite the committed lock files.
 
 1. Clone the repository and navigate to the directory:
    ```powershell
@@ -71,6 +73,18 @@ Verify there are no trailing whitespaces or formatting issues in the staged diff
 git diff --check
 ```
 
+### 5. Repository Policy Gates
+
+```powershell
+python scripts/check_architecture_policy.py
+python scripts/check_release_metadata.py
+```
+
+These gates freeze existing GUI patch debt and keep public release metadata
+aligned with `version.py`. The architecture baselines are exact snapshots:
+existing debt may be removed, but the checked-in baseline must shrink in the
+same PR. New baseline entries require explicit architecture review.
+
 ---
 
 ## Pull Request Guidelines
@@ -83,6 +97,15 @@ git diff --check
   GitHub supports no-reply commit email addresses.
 - Changes to `.github/workflows/`, `packaging/`, `SECURITY.md`, and privacy
   documentation require maintainer review.
+- Do not add new `*_closure.py`, `*_fix.py`, `*_fixes.py`, or
+  `*_baseline_pipeline.py` product modules. Existing files with these patterns
+  are grandfathered technical debt, not templates for new work.
+- Do not create hidden widgets, frames, layouts, or compatibility-only UI
+  objects merely so historical tests can continue to find retired internals
+  through `hasattr(...)`, `inspect(...)`, or `findChild(...)`.
+- Tests must follow current user-observable behavior and current product
+  contracts. If a test asserts a retired implementation detail, update or
+  archive the test instead of adding a ghost object to production UI.
 
 ---
 
