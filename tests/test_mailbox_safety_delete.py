@@ -141,7 +141,7 @@ class MailboxSafetyDeleteTests(SettingsDialogTestMixin, unittest.TestCase):
             mock_save.assert_called_once()
 
     def test_custom_imap_outlook_host_scan_is_skipped(self):
-        from scripts.invoice_fetch.__main__ import _scan_mailboxes_with_db
+        from scripts.invoice_fetch.services import _scan_mailboxes_with_db
         db = MagicMock()
         cfg = {
             "email_accounts": [

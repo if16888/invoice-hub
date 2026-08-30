@@ -6478,7 +6478,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 info = parser.parse_pdf(str(file_path))
                 if info.parse_success:
                     # Classify category and extra fields based on new seller name/original name
-                    from ..__main__ import _classify
+                    from ..services import _classify
                     category, extra_type, extra_required = _classify(
                         file_path.name, "local import", info.seller_name, categories
                     )
@@ -6605,7 +6605,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         from ..invoice_parser import InvoiceParser
         from ..link_downloader import LinkDownloader
         from ..mail_fetcher import MailFetcher
-        from ..__main__ import _handle_pending_email
+        from ..services import _handle_pending_email
 
         try:
             downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
@@ -6677,7 +6677,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             if suffix == ".pdf":
                                 info = parser.parse_pdf(dl.file_path)
                                 if info.parse_success:
-                                    from ..__main__ import _classify, _rename_by_invoice_code
+                                    from ..services import _classify, _rename_by_invoice_code
                                     cat, extra_type, extra_req = _classify(
                                         inv.get("mail_subject") or "",
                                         inv.get("mail_sender") or "",
@@ -6739,7 +6739,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                         self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 下载的文件是 PDF 但解析失败，正在删除临时文件: {dl.file_path}")
                                         os.remove(dl.file_path)
                             elif suffix == ".ofd":
-                                from ..__main__ import _rename_by_invoice_code
+                                from ..services import _rename_by_invoice_code
                                 code = inv.get("invoice_code") or inv.get("invoice_number") or ""
                                 inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
                                 cat = inv.get("category") or "其他"
@@ -6764,7 +6764,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                                 redownload_buckets["metadata_refreshed"] += 1
                                 direct_download_ok = True
                             else:
-                                from ..__main__ import _rename_by_invoice_code
+                                from ..services import _rename_by_invoice_code
                                 code = inv.get("invoice_code") or inv.get("invoice_number") or ""
                                 inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
                                 cat = inv.get("category") or "其他"

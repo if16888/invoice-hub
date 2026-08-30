@@ -632,7 +632,7 @@ class GuiColumnFilterTests(unittest.TestCase):
 
     @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
     @patch("scripts.invoice_fetch.mail_fetcher.MailFetcher")
-    @patch("scripts.invoice_fetch.__main__._handle_pending_email")
+    @patch("scripts.invoice_fetch.services._handle_pending_email")
     @patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=True)
     @patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="fake_code")
     @patch("scripts.invoice_fetch.config.get_email_accounts")

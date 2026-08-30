@@ -149,11 +149,16 @@ class PrivacyDefaultTests(unittest.TestCase):
             "batch_size": 20,
             "profile_id": "ai-main",
         }
-        import scripts.invoice_fetch.__main__ as invoice_main
-        with patch.object(invoice_main, "AIClassifier", FakeClassifier, create=True), patch.object(
-            invoice_main, "rule_classify", return_value=(-1, "未命中本地规则")
+        import scripts.invoice_fetch.services as application_services
+        with patch.object(application_services, "AIClassifier", FakeClassifier, create=True), patch.object(
+            application_services, "rule_classify", return_value=(-1, "未命中本地规则")
         ):
-            invoice_main._run_classify(db, ai_cfg, no_ai=False, mailbox_key="mailbox-one")
+            application_services._run_classify(
+                db,
+                ai_cfg,
+                no_ai=False,
+                mailbox_key="mailbox-one",
+            )
         self.assertEqual(captured["profile_id"], "ai-main")
 
 

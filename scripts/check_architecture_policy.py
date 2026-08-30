@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUI_DIR = REPO_ROOT / "scripts" / "invoice_fetch" / "gui"
+SERVICES_PATH = REPO_ROOT / "scripts" / "invoice_fetch" / "services.py"
 FORBIDDEN_PATCH_SUFFIXES = (
     "_closure.py",
     "_fix.py",
@@ -155,11 +156,36 @@ def find_hidden_compat_scopes(gui_dir: Path = GUI_DIR) -> set[str]:
     return findings
 
 
+def find_main_imports(services_path: Path = SERVICES_PATH) -> set[str]:
+    """Return services imports that point at the CLI entry-point module."""
+    tree = ast.parse(
+        services_path.read_text(encoding="utf-8"),
+        filename=str(services_path),
+    )
+    findings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imports_main_name = any(alias.name == "__main__" for alias in node.names)
+            if (
+                module == "__main__"
+                or module.endswith(".__main__")
+                or imports_main_name
+            ):
+                findings.add(f"line {node.lineno}: from {'.' * node.level}{module}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "__main__" or alias.name.endswith(".__main__"):
+                    findings.add(f"line {node.lineno}: import {alias.name}")
+    return findings
+
+
 def check_architecture_policy(
     gui_dir: Path = GUI_DIR,
     *,
     patch_baseline: frozenset[str] = FROZEN_PATCH_MODULES,
     hidden_baseline: frozenset[str] = FROZEN_HIDDEN_COMPAT_SCOPES,
+    services_path: Path = SERVICES_PATH,
 ) -> list[str]:
     """Return policy violations without changing the source tree."""
     errors: list[str] = []
@@ -185,6 +211,9 @@ def check_architecture_policy(
             "FROZEN_HIDDEN_COMPAT_SCOPES: "
             + ", ".join(stale_hidden)
         )
+    main_imports = sorted(find_main_imports(services_path))
+    if main_imports:
+        errors.append("services 不得依赖 CLI __main__: " + ", ".join(main_imports))
     return errors
 
 

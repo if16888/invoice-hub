@@ -442,7 +442,7 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 invoice_date="2026-08-22",
                 parse_success=True,
             )
-            with patch("scripts.invoice_fetch.__main__.InvoiceParser.parse_pdf", return_value=mock_parsed):
+            with patch("scripts.invoice_fetch.services.InvoiceParser.parse_pdf", return_value=mock_parsed):
                 stats = import_local_directory(import_dir, db_path)
 
             self.assertNotIn(inv_id, stats["new_invoice_ids"])
@@ -479,7 +479,7 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 invoice_type="行程单",
                 parse_success=True,
             )
-            with patch("scripts.invoice_fetch.__main__.InvoiceParser.parse_pdf", return_value=mock_parsed):
+            with patch("scripts.invoice_fetch.services.InvoiceParser.parse_pdf", return_value=mock_parsed):
                 stats = import_local_directory(import_dir, db_path)
 
             self.assertNotIn(inv_id, stats["new_invoice_ids"])
@@ -567,7 +567,7 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 invoice_date="2026-08-22",
                 parse_success=True,
             )
-            with patch("scripts.invoice_fetch.__main__.InvoiceParser.parse_pdf", return_value=mock_parsed):
+            with patch("scripts.invoice_fetch.services.InvoiceParser.parse_pdf", return_value=mock_parsed):
                 stats = import_local_directory(import_dir, db_path)
 
             self.assertNotIn(inv_id, stats["new_invoice_ids"])

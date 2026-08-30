@@ -479,7 +479,7 @@ class TestLinkDownloader(unittest.TestCase):
     def test_fallback_parse_warning_downgraded_in_main(self):
         import logging
         from scripts.invoice_fetch.invoice_parser import InvoiceInfo
-        from scripts.invoice_fetch.__main__ import _process_email
+        from scripts.invoice_fetch.services import _process_email
         from scripts.invoice_fetch.attachment_handler import Attachment
         from scripts.invoice_fetch.mail_fetcher import MailMessage
         from email.message import Message
@@ -522,7 +522,7 @@ class TestLinkDownloader(unittest.TestCase):
         db_path = Path(self.tmp_dir) / "test_main_log.db"
         with InvoiceDB(db_path) as db:
             with self.assertLogs("invoice_fetch", level=logging.INFO) as log_capture:
-                with patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', Path(self.tmp_dir)):
+                with patch('scripts.invoice_fetch.services.RUNTIME_DIR', Path(self.tmp_dir)):
                     _process_email(
                         msg=msg,
                         att_handler=mock_att_handler,

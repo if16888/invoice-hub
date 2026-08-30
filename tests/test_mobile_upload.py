@@ -1008,7 +1008,7 @@ class MobileUploadTests(unittest.TestCase):
             from scripts.invoice_fetch.services import import_local_directory
             from scripts.invoice_fetch.db import InvoiceDB
             from scripts.invoice_fetch.invoice_parser import InvoiceInfo
-            import scripts.invoice_fetch.__main__ as cli
+            import scripts.invoice_fetch.services as service_impl
 
             mock_parser = unittest.mock.MagicMock()
             mock_parser.parse_pdf.return_value = InvoiceInfo(
@@ -1021,7 +1021,7 @@ class MobileUploadTests(unittest.TestCase):
                 parse_success=True,
             )
 
-            with patch.object(cli, "RUNTIME_DIR", runtime_dir),                  patch("scripts.invoice_fetch.services.InvoiceParser", return_value=mock_parser):
+            with patch.object(service_impl, "RUNTIME_DIR", runtime_dir),                  patch("scripts.invoice_fetch.services.InvoiceParser", return_value=mock_parser):
 
                 stats = import_local_directory(
                     import_dir=session.original_dir,

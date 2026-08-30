@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
-from scripts.invoice_fetch.__main__ import _scan_mailboxes_with_db
+from scripts.invoice_fetch.services import _scan_mailboxes_with_db
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.workers import EmailScanWorker
 from scripts.invoice_fetch.mail_fetcher import MailFetcher, _TimedIMAP4SSL
@@ -291,16 +291,16 @@ class ScanLifecycleTests(unittest.TestCase):
             db = InvoiceDB(db_path)
             try:
                 with patch(
-                    "scripts.invoice_fetch.__main__.get_email_accounts",
+                    "scripts.invoice_fetch.services.get_email_accounts",
                     return_value=accounts,
                 ), patch(
-                    "scripts.invoice_fetch.__main__.get_auth_code",
+                    "scripts.invoice_fetch.services.get_auth_code",
                     return_value="secret",
                 ), patch(
-                    "scripts.invoice_fetch.__main__.MailFetcher",
+                    "scripts.invoice_fetch.services.MailFetcher",
                     FakeFetcher,
                 ), patch(
-                    "scripts.invoice_fetch.__main__._run_classify",
+                    "scripts.invoice_fetch.services._run_classify",
                     return_value={},
                 ):
                     with self.assertRaises(ScanCancelled):
