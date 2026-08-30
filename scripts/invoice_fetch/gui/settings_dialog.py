@@ -1561,7 +1561,7 @@ class SettingsDialog(QDialog):
     def _refresh_rules_center_summary(self):
         if not hasattr(self, "lbl_rules_flow"):
             return
-        from ..__main__ import DEFAULT_CATEGORY_RULES, TRANSPORT_DETAIL_RULES
+        from ..services import DEFAULT_CATEGORY_RULES, TRANSPORT_DETAIL_RULES
         from ..rule_classifier import INVOICE_KEYWORDS, EXCLUDE_KEYWORDS, TECHNICAL_EXCLUDE_KEYWORDS
         cfg_categories = self._config_category_map()
         db_categories = self._db_category_names()

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import requests
 from openpyxl import load_workbook
 
-from scripts.invoice_fetch import __main__ as cli
+from scripts.invoice_fetch import services as cli
 from scripts.invoice_fetch import link_downloader as link_dl
 from scripts.invoice_fetch.ai_classifier import AIClassifier
 from scripts.invoice_fetch.attachment_handler import Attachment
@@ -1052,7 +1052,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             db = InvoiceDB(Path(td) / "invoices.db")
             db.upsert_email(42, "plain subject", "sender@example.com", "2026-05-18")
-            with patch.object(cli, "AIClassifier", FailedAI):
+            with patch.object(cli, "AIClassifier", FailedAI, create=True):
                 cli._run_classify(db, {"provider": "deepseek", "model": "deepseek-chat"}, no_ai=False)
             stats = db.get_email_stats()
             db.close()

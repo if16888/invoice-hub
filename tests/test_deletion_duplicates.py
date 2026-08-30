@@ -3,7 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from scripts.invoice_fetch.db import InvoiceDB
-from scripts.invoice_fetch.__main__ import _import_local_directory, _sha256_file
+from scripts.invoice_fetch.services import _import_local_directory, _sha256_file
 from scripts.invoice_fetch.invoice_parser import InvoiceParser, InvoiceInfo
 
 class DummyParser(InvoiceParser):

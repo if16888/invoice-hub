@@ -118,7 +118,7 @@ class AIClassifierAuthTests(unittest.TestCase):
             self.assertEqual(results3[0]["is_invoice"], True)
 
     def test_run_classify_respects_session_pause_state(self):
-        from scripts.invoice_fetch.__main__ import _run_classify
+        from scripts.invoice_fetch.services import _run_classify
         from scripts.invoice_fetch.db import InvoiceDB
 
         clear_all_session_paused()
@@ -130,7 +130,7 @@ class AIClassifierAuthTests(unittest.TestCase):
 
         ai_cfg = {"provider": "deepseek", "model": "deepseek-chat"}
 
-        with patch("scripts.invoice_fetch.__main__._log") as mock_log:
+        with patch("scripts.invoice_fetch.services._log") as mock_log:
             res = _run_classify(db, ai_cfg, no_ai=False, mailbox_key="test")
             self.assertEqual(res["auth_failed"], True)
             self.assertEqual(res["pending_classification"], 1)

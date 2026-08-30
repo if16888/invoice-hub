@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,6 +7,7 @@ from pathlib import Path
 from scripts.check_architecture_policy import (
     check_architecture_policy,
     find_hidden_compat_scopes,
+    find_main_imports,
     find_patch_modules,
 )
 
@@ -127,6 +130,46 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 ),
                 [],
             )
+
+    def test_services_cannot_import_main_relative_or_absolute(self):
+        with tempfile.TemporaryDirectory() as td:
+            services_path = Path(td) / "services.py"
+            services_path.write_text(
+                "from .__main__ import run_local\n"
+                "import scripts.invoice_fetch.__main__ as cli\n",
+                encoding="utf-8",
+            )
+
+            findings = find_main_imports(services_path)
+
+            self.assertEqual(len(findings), 2)
+            self.assertTrue(any("from .__main__" in item for item in findings))
+            self.assertTrue(
+                any("import scripts.invoice_fetch.__main__" in item for item in findings)
+            )
+
+            services_path.write_text(
+                "from . import __main__\n"
+                "from scripts.invoice_fetch import __main__ as cli_main\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(len(find_main_imports(services_path)), 2)
+
+    def test_importing_services_does_not_load_main(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; import scripts.invoice_fetch.services; "
+                "assert 'scripts.invoice_fetch.__main__' not in sys.modules",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

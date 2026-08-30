@@ -254,7 +254,7 @@ class ExpenseDateTests(unittest.TestCase):
             gc.collect()
 
     def test_refresh_legacy_railway_expense_date_upgrade(self):
-        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+        from scripts.invoice_fetch.services import _refresh_invoice_from_parse
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "test.db"
             with InvoiceDB(db_path) as db:

@@ -1795,7 +1795,7 @@ class ClaimGroupsTests(unittest.TestCase):
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump({"email": {"address": "test_user@qq.com"}}, f)
 
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", side_effect=SystemExit("missing auth")):
+            with patch("scripts.invoice_fetch.services.get_auth_code", side_effect=SystemExit("missing auth")):
                 with self.assertRaises(ValueError) as ctx:
                     scan_email_and_download(db_path, config_path=config_file)
                 self.assertIn("未配置邮箱授权码", str(ctx.exception))
@@ -1835,10 +1835,10 @@ class ClaimGroupsTests(unittest.TestCase):
                 db.classify_email(1001, True, by="test", reason="synthetic")
 
             logs = []
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__.export_excel"), \
-                 patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=RuntimeError("synthetic parser failure")):
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services.export_excel"), \
+                 patch("scripts.invoice_fetch.services._handle_pending_email", side_effect=RuntimeError("synthetic parser failure")):
                 res = scan_email_and_download(
                     db_path,
                     config_path=config_file,
@@ -1907,9 +1907,9 @@ class ClaimGroupsTests(unittest.TestCase):
             }), encoding="utf-8")
 
             logs = []
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__._run_classify", side_effect=fake_run_classify):
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services._run_classify", side_effect=fake_run_classify):
                 res = scan_email_and_download(
                     db_path,
                     config_path=config_file,
@@ -1935,7 +1935,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
     def test_scan_email_only_counts_unfinished_rows_after_partial_batch_failure(self):
         from scripts.invoice_fetch.services import scan_email_and_download
-        from scripts.invoice_fetch.__main__ import PendingEmailResult
+        from scripts.invoice_fetch.services import PendingEmailResult
 
         class FakeMailFetcher:
             def __init__(self, *args, **kwargs):
@@ -1974,11 +1974,11 @@ class ClaimGroupsTests(unittest.TestCase):
                 db.classify_email(8101, True, by="test", reason="synthetic")
                 db.classify_email(8102, True, by="test", reason="synthetic")
 
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__.rule_classify", side_effect=fail_on_second_rule), \
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services.rule_classify", side_effect=fail_on_second_rule), \
                  patch(
-                     "scripts.invoice_fetch.__main__._handle_pending_email",
+                     "scripts.invoice_fetch.services._handle_pending_email",
                      return_value=PendingEmailResult("duplicate"),
                  ):
                 result = scan_email_and_download(
@@ -2037,10 +2037,10 @@ class ClaimGroupsTests(unittest.TestCase):
                 db.classify_email(7001, True, by="legacy_ai", reason="old result")
 
             with patch(
-                "scripts.invoice_fetch.__main__.get_auth_code",
+                "scripts.invoice_fetch.services.get_auth_code",
                 return_value="synthetic-auth-code",
             ), patch(
-                "scripts.invoice_fetch.__main__.MailFetcher",
+                "scripts.invoice_fetch.services.MailFetcher",
                 FakeMailFetcher,
             ):
                 result = scan_email_and_download(
@@ -2060,7 +2060,7 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertEqual(tuple(row), (0, 0, "rule_pre_download"))
 
     def test_download_result_buckets_do_not_count_no_candidate_as_failure(self):
-        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch import services as cli_main
 
         result = cli_main.PendingEmailResult("no_candidate_link")
         self.assertFalse(result)
@@ -2068,7 +2068,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
     def test_pending_email_preserves_manual_required_status_after_insert(self):
         from email.message import EmailMessage
-        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch import services as cli_main
 
         msg = EmailMessage()
         msg["Subject"] = "电子发票 synthetic"
@@ -2111,7 +2111,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
     def test_ofd_attachment_becomes_manual_required_without_pdf_parser_error(self):
         from email.message import EmailMessage
-        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch import services as cli_main
         from scripts.invoice_fetch.attachment_handler import Attachment
 
         msg = EmailMessage()
@@ -2194,7 +2194,7 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertNotIn("成功处理: 3 张", text)
 
     def test_rename_reuses_existing_same_hash_attachment(self):
-        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch import services as cli_main
 
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "runtime"
@@ -2264,7 +2264,7 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertTrue(row["next_retry_at"])
 
     def test_scan_summary_separates_no_candidate_and_download_failure(self):
-        from scripts.invoice_fetch import __main__ as cli_main
+        from scripts.invoice_fetch import services as cli_main
         from scripts.invoice_fetch.services import scan_email_and_download
 
         class FakeMailFetcher:
@@ -2298,13 +2298,13 @@ class ClaimGroupsTests(unittest.TestCase):
                     db.classify_email(uid, True, by="test")
 
             with patch(
-                "scripts.invoice_fetch.__main__.get_auth_code",
+                "scripts.invoice_fetch.services.get_auth_code",
                 return_value="synthetic-auth-code",
             ), patch(
-                "scripts.invoice_fetch.__main__.MailFetcher",
+                "scripts.invoice_fetch.services.MailFetcher",
                 FakeMailFetcher,
             ), patch(
-                "scripts.invoice_fetch.__main__._handle_pending_email",
+                "scripts.invoice_fetch.services._handle_pending_email",
                 side_effect=[
                     cli_main.PendingEmailResult("no_candidate_link"),
                     cli_main.PendingEmailResult("download_failed"),
@@ -2359,13 +2359,13 @@ class ClaimGroupsTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch(
-                "scripts.invoice_fetch.__main__.get_auth_code",
+                "scripts.invoice_fetch.services.get_auth_code",
                 return_value="synthetic-auth-code",
             ), patch(
-                "scripts.invoice_fetch.__main__.MailFetcher",
+                "scripts.invoice_fetch.services.MailFetcher",
                 FakeMailFetcher,
             ), patch(
-                "scripts.invoice_fetch.__main__._run_classify",
+                "scripts.invoice_fetch.services._run_classify",
                 side_effect=fake_run_classify,
             ):
                 result = scan_email_and_download(
@@ -2422,9 +2422,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 "categories": {},
             }), encoding="utf-8")
 
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__._run_classify", side_effect=fake_run_classify):
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services._run_classify", side_effect=fake_run_classify):
                 result = scan_email_and_download(
                     db_path,
                     config_path=config_file,
@@ -2492,10 +2492,10 @@ class ClaimGroupsTests(unittest.TestCase):
                 return True
 
             with patch("scripts.invoice_fetch.services.load_config_safe") as mock_load_cfg, \
-                 patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email), \
-                 patch("scripts.invoice_fetch.__main__.export_excel"):
+                 patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services._handle_pending_email", side_effect=fake_handle_pending_email), \
+                 patch("scripts.invoice_fetch.services.export_excel"):
                 mock_load_cfg.return_value = json.loads(config_file.read_text(encoding="utf-8"))
                 res = scan_email_and_download(
                     db_path,
@@ -2571,9 +2571,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 }, f)
 
             with patch("scripts.invoice_fetch.services.load_config_safe") as mock_load_cfg, \
-                 patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__.LinkDownloader") as mock_link_downloader:
+                 patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services.LinkDownloader") as mock_link_downloader:
                 mock_load_cfg.return_value = json.loads(config_file.read_text(encoding="utf-8"))
                 mock_link_downloader.return_value.close.return_value = None
                 res = scan_email_and_download(
@@ -2648,11 +2648,11 @@ class ClaimGroupsTests(unittest.TestCase):
                 count_calls.append(True)
                 return original_count_invoices(self, *args, **kwargs)
 
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                 patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                 patch("scripts.invoice_fetch.__main__.export_excel"), \
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                 patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                 patch("scripts.invoice_fetch.services.export_excel"), \
                  patch("scripts.invoice_fetch.db.InvoiceDB.count_invoices", spy_count_invoices), \
-                 patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email):
+                 patch("scripts.invoice_fetch.services._handle_pending_email", side_effect=fake_handle_pending_email):
                 res = scan_email_and_download(
                     db_path,
                     config_path=config_file,
@@ -2734,16 +2734,16 @@ class ClaimGroupsTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch(
-                "scripts.invoice_fetch.__main__.get_auth_code",
+                "scripts.invoice_fetch.services.get_auth_code",
                 return_value="synthetic-auth-code",
             ), patch(
-                "scripts.invoice_fetch.__main__.MailFetcher",
+                "scripts.invoice_fetch.services.MailFetcher",
                 FakeMailFetcher,
             ), patch(
-                "scripts.invoice_fetch.__main__._run_classify",
+                "scripts.invoice_fetch.services._run_classify",
                 side_effect=fake_run_classify,
             ), patch(
-                "scripts.invoice_fetch.__main__._handle_pending_email",
+                "scripts.invoice_fetch.services._handle_pending_email",
                 side_effect=fake_handle_pending_email,
             ):
                 result = scan_email_and_download(db_path, config_path=config_file)
@@ -2808,13 +2808,13 @@ class ClaimGroupsTests(unittest.TestCase):
                 return kwargs["db"].restore_invoice(invoice_id)
 
             with patch(
-                "scripts.invoice_fetch.__main__.get_auth_code",
+                "scripts.invoice_fetch.services.get_auth_code",
                 return_value="synthetic-auth-code",
             ), patch(
-                "scripts.invoice_fetch.__main__.MailFetcher",
+                "scripts.invoice_fetch.services.MailFetcher",
                 FakeMailFetcher,
             ), patch(
-                "scripts.invoice_fetch.__main__._handle_pending_email",
+                "scripts.invoice_fetch.services._handle_pending_email",
                 side_effect=fake_handle_pending_email,
             ):
                 result = scan_email_and_download(
@@ -2874,9 +2874,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 })
                 return True
 
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                    patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                    patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email):
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                    patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                    patch("scripts.invoice_fetch.services._handle_pending_email", side_effect=fake_handle_pending_email):
                 result = scan_email_and_download(
                     db_path,
                     config_path=config_file,
@@ -2933,9 +2933,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 })
                 return True
 
-            with patch("scripts.invoice_fetch.__main__.get_auth_code", return_value="synthetic-auth-code"), \
-                    patch("scripts.invoice_fetch.__main__.MailFetcher", FakeMailFetcher), \
-                    patch("scripts.invoice_fetch.__main__._handle_pending_email", side_effect=fake_handle_pending_email):
+            with patch("scripts.invoice_fetch.services.get_auth_code", return_value="synthetic-auth-code"), \
+                    patch("scripts.invoice_fetch.services.MailFetcher", FakeMailFetcher), \
+                    patch("scripts.invoice_fetch.services._handle_pending_email", side_effect=fake_handle_pending_email):
                 result = scan_email_and_download(
                     db_path,
                     config_path=config_file,
@@ -4077,7 +4077,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                from scripts.invoice_fetch.__main__ import PendingEmailResult
+                from scripts.invoice_fetch.services import PendingEmailResult
                 cfg = {
                     "email": {
                         "address": "user@example.com",
@@ -4097,7 +4097,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy-auth"), \
                         patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                         patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", FakeMailFetcher), \
-                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=PendingEmailResult("file_restored")) as mock_handle:
+                        patch("scripts.invoice_fetch.services._handle_pending_email", return_value=PendingEmailResult("file_restored")) as mock_handle:
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
                         window._deferred_init()
@@ -4278,7 +4278,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy-auth"), \
                         patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                         patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as mock_mail_fetcher, \
-                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=True) as mock_handle:
+                        patch("scripts.invoice_fetch.services._handle_pending_email", return_value=True) as mock_handle:
                     mock_mail_fetcher.return_value.__enter__.return_value = FakeMailFetcher()
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
@@ -4351,7 +4351,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                from scripts.invoice_fetch.__main__ import PendingEmailResult
+                from scripts.invoice_fetch.services import PendingEmailResult
                 cfg = {
                     "email": {"address": "user@example.com"},
                     "imap": {"server": "imap.example.com", "port": 993},
@@ -4363,7 +4363,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy"), \
                         patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                         patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", FakeMailFetcher), \
-                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=PendingEmailResult("duplicate")):
+                        patch("scripts.invoice_fetch.services._handle_pending_email", return_value=PendingEmailResult("duplicate")):
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
                         window._deferred_init()
@@ -4433,7 +4433,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                from scripts.invoice_fetch.__main__ import PendingEmailResult
+                from scripts.invoice_fetch.services import PendingEmailResult
                 cfg = {
                     "email": {"address": "user@example.com"},
                     "imap": {"server": "imap.example.com", "port": 993},
@@ -4445,7 +4445,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy"), \
                         patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                         patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", FakeMailFetcher), \
-                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=PendingEmailResult("duplicate")):
+                        patch("scripts.invoice_fetch.services._handle_pending_email", return_value=PendingEmailResult("duplicate")):
                     window = InvoiceReviewApp(db_path, splash=None)
                     try:
                         window._deferred_init()
@@ -4521,7 +4521,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                from scripts.invoice_fetch.__main__ import PendingEmailResult
+                from scripts.invoice_fetch.services import PendingEmailResult
                 cfg = {
                     "email": {"address": "user@example.com"},
                     "imap": {"server": "imap.example.com", "port": 993},
@@ -4533,7 +4533,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         patch("scripts.invoice_fetch.credentials.get_auth_code", return_value="dummy"), \
                         patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                         patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", FakeMailFetcher), \
-                        patch("scripts.invoice_fetch.__main__._handle_pending_email", return_value=PendingEmailResult("duplicate")):
+                        patch("scripts.invoice_fetch.services._handle_pending_email", return_value=PendingEmailResult("duplicate")):
                     window = InvoiceReviewApp(db_path, splash=None)
                     with patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", Path(td)), \
                             patch.object(window, "_update_document_preview", return_value=None):

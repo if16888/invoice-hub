@@ -1090,7 +1090,7 @@ class TestDuplicateSafeBackfill(unittest.TestCase):
 
     def test_duplicate_safe_backfill_logic(self):
         from scripts.invoice_fetch.db import InvoiceDB
-        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+        from scripts.invoice_fetch.services import _refresh_invoice_from_parse
 
         with InvoiceDB(self.db_path) as db:
             # 1. 插入一个 existing 发票，具有非空 seller_name="原有销售方"
@@ -1183,7 +1183,7 @@ class TestClaimedInvoiceProtection(unittest.TestCase):
 
     def test_claimed_invoice_protection_rules(self):
         from scripts.invoice_fetch.db import InvoiceDB
-        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+        from scripts.invoice_fetch.services import _refresh_invoice_from_parse
 
         with InvoiceDB(self.db_path) as db:
             # 1. 插入一个 existing 发票，且将其关联到报销组以使其成为 claimed 发票
@@ -1412,7 +1412,7 @@ class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
 
     def test_backfill_logs_redaction(self):
         from scripts.invoice_fetch.db import InvoiceDB
-        from scripts.invoice_fetch.__main__ import _refresh_invoice_from_parse
+        from scripts.invoice_fetch.services import _refresh_invoice_from_parse
 
         with InvoiceDB(self.db_path) as db:
             inv_id = db.insert_invoice({

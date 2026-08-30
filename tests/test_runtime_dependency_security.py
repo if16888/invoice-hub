@@ -81,7 +81,7 @@ class RuntimeDependencySecurityTests(unittest.TestCase):
 
         for relative_path in (
             "scripts/invoice_fetch/invoice_parser.py",
-            "scripts/invoice_fetch/__main__.py",
+            "scripts/invoice_fetch/services.py",
         ):
             source = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
             with self.subTest(path=relative_path):

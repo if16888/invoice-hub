@@ -442,7 +442,7 @@ class TestEmailReprocess(unittest.TestCase):
         self.assertFalse(mock_fetcher.called)
 
     def test_17_process_email_keeps_unmatched_extra_files(self):
-        from scripts.invoice_fetch.__main__ import _process_email
+        from scripts.invoice_fetch.services import _process_email
         from scripts.invoice_fetch.attachment_handler import Attachment
         from scripts.invoice_fetch.invoice_parser import InvoiceInfo
         from scripts.invoice_fetch.mail_fetcher import MailMessage
@@ -514,7 +514,7 @@ class TestEmailReprocess(unittest.TestCase):
 
         msg = MailMessage(uid=999, raw_msg=raw_msg)
 
-        with patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+        with patch('scripts.invoice_fetch.services.RUNTIME_DIR', self.temp_dir):
             recorded = _process_email(
                 msg=msg,
                 att_handler=mock_att_handler,
@@ -542,9 +542,9 @@ class TestEmailReprocess(unittest.TestCase):
             f_path = att_dir / f"extra_{i}.pdf"
             self.assertTrue(f_path.exists())
 
-    @patch('scripts.invoice_fetch.__main__._log')
+    @patch('scripts.invoice_fetch.services._log')
     def test_18_process_email_log_timing(self, mock_log):
-        from scripts.invoice_fetch.__main__ import _process_email
+        from scripts.invoice_fetch.services import _process_email
         from scripts.invoice_fetch.attachment_handler import Attachment
         from scripts.invoice_fetch.invoice_parser import InvoiceInfo
         from scripts.invoice_fetch.mail_fetcher import MailMessage
@@ -620,7 +620,7 @@ class TestEmailReprocess(unittest.TestCase):
             info_calls.append(formatted)
         mock_log.info.side_effect = log_info_side_effect
 
-        with patch('scripts.invoice_fetch.__main__.RUNTIME_DIR', self.temp_dir):
+        with patch('scripts.invoice_fetch.services.RUNTIME_DIR', self.temp_dir):
             _process_email(
                 msg=msg,
                 att_handler=mock_att_handler,
@@ -983,7 +983,7 @@ class TestEmailReprocess(unittest.TestCase):
         extra2 = MockFile("extra2.pdf", 2)
         extra_files = [extra1, extra2]
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
         matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": True})
 
         # 单发票直接全挂
@@ -1014,8 +1014,8 @@ class TestEmailReprocess(unittest.TestCase):
         extra2 = MockFile("行程单-2026-06-02-150.00元.pdf", 2)
         extra_files = [extra1, extra2]
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
-        import scripts.invoice_fetch.__main__ as main_mod
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
+        import scripts.invoice_fetch.services as main_mod
         orig_extract = main_mod._extract_pdf_text_simple
         main_mod._extract_pdf_text_simple = lambda x: "" # 返回空文本即可
         try:
@@ -1046,8 +1046,8 @@ class TestEmailReprocess(unittest.TestCase):
         inv2 = MockInvoice("INV-A2", "100.00", "2026-06-01")
         extra1 = MockFile("行程单-100.00.pdf", 1)
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
-        import scripts.invoice_fetch.__main__ as main_mod
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
+        import scripts.invoice_fetch.services as main_mod
         orig_extract = main_mod._extract_pdf_text_simple
         main_mod._extract_pdf_text_simple = lambda x: ""
         try:
@@ -1078,8 +1078,8 @@ class TestEmailReprocess(unittest.TestCase):
         inv2 = MockInvoice("INV-C2", "200.00", "2026-06-02")
         extra1 = MockFile("行程单-150.00.pdf", 1)
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
-        import scripts.invoice_fetch.__main__ as main_mod
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
+        import scripts.invoice_fetch.services as main_mod
         orig_extract = main_mod._extract_pdf_text_simple
         main_mod._extract_pdf_text_simple = lambda x: ""
         try:
@@ -1139,7 +1139,7 @@ class TestEmailReprocess(unittest.TestCase):
         extra = MockFile("something_random.pdf", 1)
         extra_files = [extra]
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
         matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": False})
 
         # 保守匹配下不应该关联，应该归为 unmatched
@@ -1167,7 +1167,7 @@ class TestEmailReprocess(unittest.TestCase):
         extra = MockFile("evidence_INV-S33.pdf", 1)
         extra_files = [extra]
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
         matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": False})
 
         # 应自动挂接
@@ -1335,7 +1335,7 @@ class TestEmailReprocess(unittest.TestCase):
         extra5 = MockFile("evidence_INV-M5_500.00.pdf", 9)
         extra_files = [extra1, extra2, extra3, extra4, extra5]
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
         matched, unmatched = _match_email_extras_to_invoices(extra_files, invoice_infos)
 
         # 在严格一对一贪心关联下，
@@ -1370,7 +1370,7 @@ class TestEmailReprocess(unittest.TestCase):
         extra = MockFile("evidence_INV-S36.pdf", 1)
         extra_files = [extra]
 
-        from scripts.invoice_fetch.__main__ import _match_email_extras_to_invoices
+        from scripts.invoice_fetch.services import _match_email_extras_to_invoices
         matched, unmatched = _match_email_extras_to_invoices(extra_files, [inv_info], config={"allow_unconditional_single_invoice_extras": False})
 
         # 匹配依然应成功
