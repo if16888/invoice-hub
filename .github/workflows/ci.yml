@@ -52,8 +52,8 @@ jobs:
       - name: Verify release metadata consistency
         run: python scripts/check_release_metadata.py
 
-      - name: Freeze GUI patch-module debt
-        run: python scripts/check_gui_patch_debt.py
+      - name: Enforce architecture debt baseline
+        run: python scripts/check_architecture_policy.py
 
       - name: Compile-check Python sources
         run: python -m compileall -q scripts/invoice_fetch

@@ -72,3 +72,46 @@ python -m compileall -q scripts tests
 python scripts/check_public_export.py .
 git diff --check
 ```
+
+## Architecture guard: stop adding acceptance patches
+
+New product changes must live in the owning domain module. Do not extend the
+GUI by adding new modules named like:
+
+- `*_closure.py` or `*_vNN_closure.py`;
+- `*_fix.py` or `*_fixes.py`;
+- `*_baseline_pipeline.py`.
+
+The existing closure/fix/baseline/contract files are grandfathered technical
+debt. They may be removed or migrated incrementally after behavior-level tests
+exist, but they must not be copied into new pages or subpackages.
+
+Tests must derive from current user-observable behavior and current product
+contracts:
+
+```text
+user-observable behavior / current product contract
+                         ↓
+                       tests
+```
+
+The reverse direction is prohibited:
+
+```text
+historical source-shape or internal-object assertion
+                         ↓
+hidden QWidget / QFrame / layout / compatibility-only production object
+```
+
+In particular, do not keep an obsolete `hasattr(...)`, `inspect(...)`, or
+`findChild(...)` assertion passing by creating a hidden object in production
+UI. Existing examples such as `review_legacy_contract.py`, legacy preview
+controls, and hidden compatibility cards are debt to retire, not approved
+extension patterns.
+
+`scripts/check_architecture_policy.py` uses grandfathered baselines to block
+new patch-named modules and a deliberately conservative AST check for obvious
+hidden compatibility UI construction. It does not ban ordinary `.hide()` or
+conditional visibility, because those are valid UI behavior and a broad grep
+would create false positives. Human review remains authoritative for patterns
+the conservative check cannot classify reliably.
