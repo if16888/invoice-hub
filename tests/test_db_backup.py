@@ -184,6 +184,33 @@ class DatabaseBackupTests(unittest.TestCase):
                 )
                 validate_latest_schema(conn)
 
+    def test_verified_backup_includes_committed_rows_from_live_wal(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            db = InvoiceDB(db_path)
+            try:
+                db._conn.execute("PRAGMA wal_autocheckpoint = 0")
+                db._conn.execute(
+                    "CREATE TABLE acceptance_marker (value TEXT NOT NULL)"
+                )
+                db._conn.execute(
+                    "INSERT INTO acceptance_marker(value) VALUES ('live-wal')"
+                )
+                db._conn.commit()
+                wal = db_path.with_name(db_path.name + "-wal")
+                self.assertTrue(wal.exists())
+                self.assertGreater(wal.stat().st_size, 0)
+
+                backup = create_verified_database_backup(
+                    db_path,
+                    backup_dir=root / "backups",
+                )
+                self.assertEqual(self.read_value(backup), "live-wal")
+                validate_sqlite_database(backup)
+            finally:
+                db.close()
+
     def test_restore_rejects_latest_database_missing_business_table_without_touching_live_db(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -208,6 +235,28 @@ class DatabaseBackupTests(unittest.TestCase):
             self.assertEqual(db_path.read_bytes(), live_before)
             self.assertEqual(self.read_value(db_path), "current")
             self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_rejects_latest_database_missing_v8_index(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(db_path, "current")
+            self.make_database(selected, "invalid")
+            with closing(sqlite3.connect(selected)) as conn:
+                conn.execute("DROP INDEX idx_invoices_file_hash")
+                conn.commit()
+
+            with self.assertRaises(DatabaseBackupError) as caught:
+                restore_verified_database_backup(
+                    selected,
+                    db_path,
+                    backup_dir=root / "backups",
+                )
+
+            self.assertIn("缺少索引", str(caught.exception))
+            self.assertEqual(self.read_value(db_path), "current")
+            self.assertEqual(self.read_value(selected), "invalid")
 
     def test_restore_rejects_latest_database_with_malformed_invoices_without_touching_live_db(self):
         with tempfile.TemporaryDirectory() as td:
