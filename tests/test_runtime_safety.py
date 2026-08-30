@@ -41,7 +41,10 @@ class ExcelFormulaInjectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             destination = Path(td) / "safe.xlsx"
             export_excel([row], destination)
-            workbook = load_workbook(destination, data_only=False)
+            # Pass an explicitly scoped file handle so older openpyxl releases
+            # cannot keep the Windows temporary file locked after loading.
+            with destination.open("rb") as workbook_file:
+                workbook = load_workbook(workbook_file, data_only=False)
             workbook.close()
 
         main = workbook["发票汇总"]
