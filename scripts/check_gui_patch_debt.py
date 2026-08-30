@@ -7,15 +7,17 @@ from pathlib import Path
 
 
 GUI_DIR = Path(__file__).resolve().parents[1] / "scripts" / "invoice_fetch" / "gui"
-DEBT_SUFFIXES = ("_fixes.py", "_closure.py", "_baseline.py", "_contract.py")
+DEBT_MARKERS = ("_fixes", "_closure", "_baseline", "_contract")
 
 # Existing debt is frozen.  Entries may be deleted or moved into domain modules,
 # but additions require changing this gate and should be rejected in review.
 FROZEN_DEBT = frozenset(
     {
         "business_pages_baseline.py",
+        "design_baseline_styles.py",
         "design_v1_review_task_closure.py",
         "hci_v1_closure.py",
+        "review_baseline_pipeline.py",
         "review_detail_closure.py",
         "review_feedback_fixes.py",
         "review_legacy_contract.py",
@@ -26,21 +28,28 @@ FROZEN_DEBT = frozenset(
         "review_workspace_closure.py",
         "selection_surface_contract.py",
         "settings_baseline.py",
+        "settings_baseline_pipeline.py",
         "settings_feedback_fixes.py",
         "settings_legacy_contract.py",
         "settings_pages_baseline.py",
         "settings_semantic_status_contract.py",
         "settings_token_contract.py",
+        "ui_visibility_contracts.py",
     }
 )
 
 
-def main() -> int:
-    current = {
-        path.name
-        for path in GUI_DIR.glob("*.py")
-        if path.name.endswith(DEBT_SUFFIXES)
+def find_patch_debt(gui_dir: Path = GUI_DIR) -> set[str]:
+    """Return relative paths for patch/acceptance-named GUI modules."""
+    return {
+        path.relative_to(gui_dir).as_posix()
+        for path in gui_dir.rglob("*.py")
+        if any(marker in path.name for marker in DEBT_MARKERS)
     }
+
+
+def main() -> int:
+    current = find_patch_debt()
     additions = sorted(current - FROZEN_DEBT)
     if additions:
         print("[FAIL] 检测到新的 GUI 补丁式模块：")
