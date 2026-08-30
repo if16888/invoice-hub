@@ -81,9 +81,9 @@ python scripts/check_release_metadata.py
 ```
 
 These gates freeze existing GUI patch debt and keep public release metadata
-aligned with `version.py`. They are baseline guards: deleting grandfathered
-debt is welcome, while adding a new allowlist entry requires explicit
-architecture review.
+aligned with `version.py`. The architecture baselines are exact snapshots:
+existing debt may be removed, but the checked-in baseline must shrink in the
+same PR. New baseline entries require explicit architecture review.
 
 ---
 

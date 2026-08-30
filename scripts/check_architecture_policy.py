@@ -9,7 +9,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUI_DIR = REPO_ROOT / "scripts" / "invoice_fetch" / "gui"
-PATCH_MARKERS = ("_closure", "_fix", "_baseline", "_contract")
+FORBIDDEN_PATCH_SUFFIXES = (
+    "_closure.py",
+    "_fix.py",
+    "_fixes.py",
+    "_baseline_pipeline.py",
+)
 WIDGET_CONSTRUCTORS = frozenset(
     {
         "QWidget",
@@ -22,8 +27,8 @@ WIDGET_CONSTRUCTORS = frozenset(
     }
 )
 
-# Existing debt is grandfathered. Entries may be deleted or moved into domain
-# modules, but additions require an explicit architecture review.
+# Exact snapshot of existing debt. When an entry is removed from production,
+# this baseline must shrink in the same PR.
 FROZEN_PATCH_MODULES = frozenset(
     {
         "business_pages_baseline.py",
@@ -66,13 +71,21 @@ FROZEN_HIDDEN_COMPAT_SCOPES = frozenset(
 )
 
 
-def find_patch_modules(gui_dir: Path = GUI_DIR) -> set[str]:
-    """Return relative paths for patch/acceptance-named GUI modules."""
-    return {
-        path.relative_to(gui_dir).as_posix()
-        for path in gui_dir.rglob("*.py")
-        if any(marker in path.name for marker in PATCH_MARKERS)
-    }
+def find_patch_modules(
+    gui_dir: Path = GUI_DIR,
+    tracked_modules: frozenset[str] = FROZEN_PATCH_MODULES,
+) -> set[str]:
+    """Return forbidden modules plus explicitly tracked historical debt."""
+    findings: set[str] = set()
+    for path in gui_dir.rglob("*.py"):
+        relative = path.relative_to(gui_dir).as_posix()
+        if path.name.endswith(FORBIDDEN_PATCH_SUFFIXES):
+            findings.add(relative)
+        elif relative in tracked_modules:
+            # Existing generic contract/baseline names remain tracked debt,
+            # without banning every future domain *_contract.py/*_baseline.py.
+            findings.add(relative)
+    return findings
 
 
 def _call_name(call: ast.Call) -> str:
@@ -142,17 +155,36 @@ def find_hidden_compat_scopes(gui_dir: Path = GUI_DIR) -> set[str]:
     return findings
 
 
-def check_architecture_policy(gui_dir: Path = GUI_DIR) -> list[str]:
+def check_architecture_policy(
+    gui_dir: Path = GUI_DIR,
+    *,
+    patch_baseline: frozenset[str] = FROZEN_PATCH_MODULES,
+    hidden_baseline: frozenset[str] = FROZEN_HIDDEN_COMPAT_SCOPES,
+) -> list[str]:
     """Return policy violations without changing the source tree."""
     errors: list[str] = []
-    new_modules = sorted(find_patch_modules(gui_dir) - FROZEN_PATCH_MODULES)
+    current_modules = find_patch_modules(gui_dir, patch_baseline)
+    new_modules = sorted(current_modules - patch_baseline)
     if new_modules:
         errors.append("新增 GUI 补丁式模块: " + ", ".join(new_modules))
-    new_hidden = sorted(
-        find_hidden_compat_scopes(gui_dir) - FROZEN_HIDDEN_COMPAT_SCOPES
-    )
+    stale_modules = sorted(patch_baseline - current_modules)
+    if stale_modules:
+        errors.append(
+            "GUI 历史债已删除；请在同一 PR 更新 FROZEN_PATCH_MODULES: "
+            + ", ".join(stale_modules)
+        )
+
+    current_hidden = find_hidden_compat_scopes(gui_dir)
+    new_hidden = sorted(current_hidden - hidden_baseline)
     if new_hidden:
         errors.append("新增 hidden compatibility UI: " + ", ".join(new_hidden))
+    stale_hidden = sorted(hidden_baseline - current_hidden)
+    if stale_hidden:
+        errors.append(
+            "hidden compatibility 历史债已删除；请在同一 PR 更新 "
+            "FROZEN_HIDDEN_COMPAT_SCOPES: "
+            + ", ".join(stale_hidden)
+        )
     return errors
 
 

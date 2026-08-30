@@ -10,10 +10,10 @@ from scripts.check_architecture_policy import (
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
-    def test_current_legacy_baseline_passes(self):
+    def test_current_production_baseline_passes(self):
         self.assertEqual(check_architecture_policy(), [])
 
-    def test_finds_nested_forbidden_patch_modules(self):
+    def test_new_forbidden_patch_module_fails(self):
         with tempfile.TemporaryDirectory() as td:
             gui_dir = Path(td) / "gui"
             review_dir = gui_dir / "review"
@@ -34,13 +34,51 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 {f"review/{name}" for name in names},
             )
 
-            errors = check_architecture_policy(gui_dir)
+            errors = check_architecture_policy(
+                gui_dir,
+                patch_baseline=frozenset(),
+                hidden_baseline=frozenset(),
+            )
             self.assertEqual(len(errors), 1)
             for name in names:
                 with self.subTest(name=name):
                     self.assertIn(f"review/{name}", errors[0])
 
-    def test_finds_obvious_hidden_compatibility_widget(self):
+    def test_stale_patch_module_baseline_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            gui_dir = Path(td) / "gui"
+            gui_dir.mkdir()
+
+            errors = check_architecture_policy(
+                gui_dir,
+                patch_baseline=frozenset({"retired_closure.py"}),
+                hidden_baseline=frozenset(),
+            )
+
+            self.assertEqual(len(errors), 1)
+            self.assertIn("更新 FROZEN_PATCH_MODULES", errors[0])
+            self.assertIn("retired_closure.py", errors[0])
+
+    def test_stale_hidden_compatibility_baseline_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            gui_dir = Path(td) / "gui"
+            gui_dir.mkdir()
+
+            errors = check_architecture_policy(
+                gui_dir,
+                patch_baseline=frozenset(),
+                hidden_baseline=frozenset(
+                    {"retired.py:build_legacy_compatibility_widget"}
+                ),
+            )
+
+            self.assertEqual(len(errors), 1)
+            self.assertIn("更新 FROZEN_HIDDEN_COMPAT_SCOPES", errors[0])
+            self.assertIn(
+                "retired.py:build_legacy_compatibility_widget", errors[0]
+            )
+
+    def test_hidden_compatibility_scope_is_detected_but_normal_hide_is_not(self):
         with tempfile.TemporaryDirectory() as td:
             gui_dir = Path(td) / "gui"
             gui_dir.mkdir()
@@ -60,6 +98,34 @@ class ArchitecturePolicyTests(unittest.TestCase):
             self.assertEqual(
                 find_hidden_compat_scopes(gui_dir),
                 {"legacy_adapter.py:build_legacy_compatibility_widget"},
+            )
+
+            self.assertEqual(
+                check_architecture_policy(
+                    gui_dir,
+                    patch_baseline=frozenset(),
+                    hidden_baseline=frozenset(
+                        {"legacy_adapter.py:build_legacy_compatibility_widget"}
+                    ),
+                ),
+                [],
+            )
+
+    def test_generic_domain_contract_and_baseline_names_are_not_forbidden(self):
+        with tempfile.TemporaryDirectory() as td:
+            gui_dir = Path(td) / "gui"
+            gui_dir.mkdir()
+            (gui_dir / "invoice_contract.py").touch()
+            (gui_dir / "pricing_baseline.py").touch()
+
+            self.assertEqual(find_patch_modules(gui_dir), set())
+            self.assertEqual(
+                check_architecture_policy(
+                    gui_dir,
+                    patch_baseline=frozenset(),
+                    hidden_baseline=frozenset(),
+                ),
+                [],
             )
 
 

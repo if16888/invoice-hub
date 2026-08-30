@@ -84,7 +84,11 @@ GUI by adding new modules named like:
 
 The existing closure/fix/baseline/contract files are grandfathered technical
 debt. They may be removed or migrated incrementally after behavior-level tests
-exist, but they must not be copied into new pages or subpackages.
+exist, but the checked-in baseline must shrink in the same PR and they must not
+be copied into new pages or subpackages. The automatic name rule does not ban
+all `*_contract.py` or `*_baseline.py` files: those names may represent valid
+domain concepts. Existing files with those names remain explicitly recorded as
+historical debt; any broader future ban requires a separate semantic policy.
 
 Tests must derive from current user-observable behavior and current product
 contracts:
@@ -109,9 +113,11 @@ UI. Existing examples such as `review_legacy_contract.py`, legacy preview
 controls, and hidden compatibility cards are debt to retire, not approved
 extension patterns.
 
-`scripts/check_architecture_policy.py` uses grandfathered baselines to block
-new patch-named modules and a deliberately conservative AST check for obvious
-hidden compatibility UI construction. It does not ban ordinary `.hide()` or
-conditional visibility, because those are valid UI behavior and a broad grep
-would create false positives. Human review remains authoritative for patterns
-the conservative check cannot classify reliably.
+`scripts/check_architecture_policy.py` requires both checked-in debt snapshots
+to equal the current findings. New debt fails the gate; stale baseline entries
+also fail and instruct the contributor to shrink the corresponding baseline in
+the same PR. The hidden-compatibility check remains deliberately conservative.
+It does not ban ordinary `.hide()` or conditional visibility, because those are
+valid UI behavior and a broad grep would create false positives. Human review
+remains authoritative for patterns the conservative check cannot classify
+reliably.
