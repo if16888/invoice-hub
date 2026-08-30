@@ -1,14 +1,151 @@
 import gc
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.invoice_fetch.db import InvoiceDB
-from scripts.invoice_fetch.migrations import check_and_migrate
+from scripts.invoice_fetch.db import InvoiceDB, SQLITE_BUSY_TIMEOUT_MS
+from scripts.invoice_fetch.migrations import (
+    LATEST_INDEX_CONTRACT,
+    LATEST_SCHEMA_VERSION,
+    check_and_migrate,
+    validate_latest_schema,
+)
 
 
 class DatabaseMigrationTests(unittest.TestCase):
+    def test_latest_database_uses_wal_busy_timeout_and_v8_indexes(self):
+        with tempfile.TemporaryDirectory() as td:
+            with InvoiceDB(Path(td) / "settings.db") as db:
+                self.assertEqual(
+                    db._conn.execute("PRAGMA journal_mode").fetchone()[0],
+                    "wal",
+                )
+                self.assertEqual(
+                    db._conn.execute("PRAGMA busy_timeout").fetchone()[0],
+                    SQLITE_BUSY_TIMEOUT_MS,
+                )
+                self.assertEqual(
+                    db._conn.execute("PRAGMA user_version").fetchone()[0],
+                    LATEST_SCHEMA_VERSION,
+                )
+                indexes = {
+                    row[0]
+                    for row in db._conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'index'"
+                    )
+                }
+                self.assertTrue(LATEST_INDEX_CONTRACT <= indexes)
+                validate_latest_schema(db._conn)
+
+    def test_v8_indexes_match_production_query_plans(self):
+        with tempfile.TemporaryDirectory() as td:
+            with InvoiceDB(Path(td) / "plans.db") as db:
+                plans = {
+                    "idx_emails_pending": db._conn.execute(
+                        "EXPLAIN QUERY PLAN SELECT uid FROM emails "
+                        "WHERE mailbox_key = ? AND is_invoice = 1 AND downloaded = 0",
+                        ("primary",),
+                    ).fetchall(),
+                    "idx_invoices_file_hash": db._conn.execute(
+                        "EXPLAIN QUERY PLAN SELECT id FROM invoices WHERE file_hash = ?",
+                        ("hash",),
+                    ).fetchall(),
+                    "idx_invoices_review_order": db._conn.execute(
+                        "EXPLAIN QUERY PLAN SELECT id FROM invoices "
+                        "WHERE is_deleted = 0 AND review_status = ? "
+                        "ORDER BY expense_date DESC, id DESC",
+                        ("to_review",),
+                    ).fetchall(),
+                    "idx_claim_items_invoice": db._conn.execute(
+                        "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM claim_group_items "
+                        "WHERE invoice_id = ?",
+                        (1,),
+                    ).fetchall(),
+                }
+                for index_name, rows in plans.items():
+                    detail = " ".join(str(row[3]) for row in rows)
+                    self.assertIn(index_name, detail, detail)
+
+    def test_wal_recovers_committed_data_after_forced_process_exit(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "forced-exit.db"
+            code = "\n".join(
+                (
+                    "import os",
+                    "from pathlib import Path",
+                    "from scripts.invoice_fetch.db import InvoiceDB",
+                    f"db = InvoiceDB(Path({str(db_path)!r}))",
+                    "db._conn.execute('PRAGMA wal_autocheckpoint = 0')",
+                    "db._conn.execute('CREATE TABLE crash_marker(value TEXT NOT NULL)')",
+                    "db._conn.execute(\"INSERT INTO crash_marker VALUES ('committed')\")",
+                    "db._conn.commit()",
+                    "os._exit(0)",
+                )
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+            completed = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                check=False,
+                timeout=20,
+            )
+            self.assertEqual(completed.returncode, 0)
+
+            with InvoiceDB(db_path) as recovered:
+                value = recovered._conn.execute(
+                    "SELECT value FROM crash_marker"
+                ).fetchone()[0]
+                self.assertEqual(value, "committed")
+                self.assertEqual(
+                    recovered._conn.execute("PRAGMA quick_check").fetchone()[0],
+                    "ok",
+                )
+
+    def test_bulk_email_writes_preserve_namespace_duplicates_and_classification(self):
+        with tempfile.TemporaryDirectory() as td:
+            with InvoiceDB(Path(td) / "bulk.db") as db:
+                rows = [
+                    {
+                        "uid": uid,
+                        "subject": f"Subject {uid}",
+                        "sender": "sender@example.com",
+                        "date": "2026-08-30",
+                    }
+                    for uid in range(1, 101)
+                ]
+                self.assertEqual(db.bulk_upsert_emails(rows, "primary"), 100)
+                self.assertEqual(db.bulk_upsert_emails(rows, "primary"), 0)
+                self.assertEqual(db.bulk_upsert_emails(rows, "secondary"), 100)
+
+                db.bulk_classify(
+                    [
+                        {
+                            "mailbox_key": "primary",
+                            "uid": uid,
+                            "is_invoice": uid % 2 == 0,
+                            "by": "batch-test",
+                            "reason": "synthetic",
+                        }
+                        for uid in range(1, 101)
+                    ]
+                )
+                classified = db._conn.execute(
+                    "SELECT COUNT(*) FROM emails WHERE mailbox_key = 'primary' "
+                    "AND classify_by = 'batch-test'"
+                ).fetchone()[0]
+                untouched = db._conn.execute(
+                    "SELECT COUNT(*) FROM emails WHERE mailbox_key = 'secondary' "
+                    "AND is_invoice = -1"
+                ).fetchone()[0]
+                self.assertEqual(classified, 100)
+                self.assertEqual(untouched, 100)
+
     def test_migration_can_run_twice_without_failure(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "test.db"
