@@ -9,10 +9,10 @@ import sys
 import logging
 import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from datetime import datetime
+from datetime import date, datetime
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -41,6 +41,7 @@ from ..export_paths import resolve_export_directory
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total, get_date_warning
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
+from ..review_query import ReviewColumnFilter, ReviewQuery
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import (
     APP_STYLESHEET,
@@ -107,10 +108,8 @@ from .column_filters import (
     COLUMN_LABELS,
     VISIBLE_COLUMN_DEFINITIONS,
     ColumnFilterPopup,
-    apply_column_filters,
     has_active_filters,
     is_filter_active,
-    unique_column_values,
 )
 
 _log = logging.getLogger("invoice_fetch.gui.app")
@@ -2234,11 +2233,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         key, _label = VISIBLE_COLUMN_DEFINITIONS[section]
         try:
             include_deleted = self.chk_show_deleted.isChecked()
-            rows = self.db.list_invoices(status=None, limit=None, include_deleted=include_deleted)
+            values = self.db.list_review_filter_values(key, include_deleted=include_deleted)
         except Exception as exc:
             _log.warning("Unable to load column filter values: %s", exc)
-            rows = []
-        values = unique_column_values(rows, key, self._column_filter_value_getters())
+            values = []
         popup = ColumnFilterPopup(
             key,
             values,
@@ -2726,7 +2724,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if hasattr(self, "btn_review_scope_duplicates"):
                 self.btn_review_scope_duplicates.hide()
             return
-        pending = sum(1 for row in self.db.list_invoices_by_ids(scope_ids) if (row.get("review_status") or TO_REVIEW) == TO_REVIEW) if scope_ids else 0
+        pending = self.db.count_review_invoices(ReviewQuery(
+            status=TO_REVIEW,
+            invoice_ids=scope_ids,
+        )) if scope_ids else 0
         has_restored = bool(getattr(self, "_review_scope_has_restored", False))
         if pending:
             prefix = "本次导入" if has_restored else "本次新增"
@@ -5292,12 +5293,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         try:
             if not hasattr(self, "db") or self.db is None:
                 return
-            current_count = len(getattr(self, "invoices_list", []) or [])
-            total = int(getattr(self, "_record_total_matching", current_count) or current_count)
-            self._review_page_limit = min(total, max(50, current_count + 50))
             self._limited_first_load_active = False
             self._is_first_load = False
-            self._load_invoices()
+            self._load_invoices(append=True)
             target_row = selected_row + 1 if advance_to_next_row else -1
             if target_row < 0 and selected_id is not None:
                 target_row = next((row for row, invoice in enumerate(self.invoices_list) if invoice.get("id") == selected_id), -1)
@@ -5554,14 +5552,37 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _load_all_invoices_clicked(self):
         """User clicked 'Load All' to bypass the first-load limit."""
         self._is_first_load = False
-        if has_active_filters(self.column_filters):
-            self._column_filters_load_all = True
+        self._column_filters_load_all = True
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._load_invoices()
 
-    def _load_invoices(self):
-        # Fetch invoices from DB with filter, then apply search/quality filters.
+    def _build_review_query(self, *, status=None, limit=50, offset=0) -> ReviewQuery:
+        filters = []
+        for key, spec in sorted(self.column_filters.items()):
+            if not is_filter_active(spec):
+                continue
+            values = tuple(sorted(str(value) for value in spec.get("values", ()))) if "values" in spec else None
+            filters.append(ReviewColumnFilter(
+                key=key,
+                values=values,
+                quick=str(spec.get("quick") or ""),
+                minimum=str(spec.get("min") or ""),
+                maximum=str(spec.get("max") or ""),
+            ))
+        return ReviewQuery(
+            status=status,
+            include_deleted=self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False,
+            search_text=self.txt_search.text().strip() if hasattr(self, "txt_search") else "",
+            column_filters=tuple(filters),
+            invoice_ids=tuple(getattr(self, "_review_scope_ids", ())),
+            limit=limit,
+            offset=offset,
+            today=date.today(),
+        )
+
+    def _load_invoices(self, *, append=False):
+        # SQLite owns review filtering, counting, ordering, and page boundaries.
         performance_trace = self._performance_probe.begin("list_refresh")
         self._performance_list_trace = performance_trace
         db_elapsed_ms = 0
@@ -5580,54 +5601,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         prev_id = self.current_invoice.get("id") if getattr(self, "current_invoice", None) else None
         prev_row = self.table.currentRow() if hasattr(self, "table") else -1
 
-        # Determine query limit for first load: if _is_first_load is True and no search text/quick filter is active
-        needle = self.txt_search.text().strip().lower() if hasattr(self, "txt_search") else ""
-        column_filters_active = has_active_filters(self.column_filters)
-        is_default_view = not needle and not column_filters_active
-
-        limit_val = None
-        if is_default_view and self.current_filter_status is None:
-            limit_val = max(50, int(getattr(self, "_review_page_limit", 50))) if hasattr(self, "_review_page_limit") else (50 if self._is_first_load else None)
-
-        counts = None
+        existing_rows = list(self.invoices_list) if append else []
+        page_size = int(getattr(getattr(self, "review_paging", None), "page_size", 50) or 50)
+        offset = len(existing_rows)
         try:
-            include_deleted = self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False
             db_start = time.perf_counter()
-            scope_ids = tuple(getattr(self, "_review_scope_ids", ()))
-            if scope_ids:
-                display_source = self.db.list_invoices_by_ids(
-                    scope_ids,
-                    status=self.current_filter_status if is_default_view else None,
-                    include_deleted=include_deleted,
-                )
-                scoped_rows = self.db.list_invoices_by_ids(scope_ids, include_deleted=include_deleted)
-                counts = {
-                    "all": len(scoped_rows),
-                    TO_REVIEW: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW),
-                    APPROVED: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == APPROVED),
-                    IGNORED: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == IGNORED),
-                    ERROR: sum(1 for row in scoped_rows if (row.get("review_status") or TO_REVIEW) == ERROR),
-                }
-            elif is_default_view:
-                # Optimized path: avoid loading all records
-                display_source = self.db.list_invoices(
-                    status=self.current_filter_status,
-                    limit=limit_val,
-                    include_deleted=include_deleted
-                )
-                counts = {
-                    "all": self.db.count_invoices_for_status(status=None, include_deleted=include_deleted),
-                    TO_REVIEW: self.db.count_invoices_for_status(status=TO_REVIEW, include_deleted=include_deleted),
-                    APPROVED: self.db.count_invoices_for_status(status=APPROVED, include_deleted=include_deleted),
-                    IGNORED: self.db.count_invoices_for_status(status=IGNORED, include_deleted=include_deleted),
-                    ERROR: self.db.count_invoices_for_status(status=ERROR, include_deleted=include_deleted),
-                }
-            else:
-                display_source = self.db.list_invoices(
-                    status=None,
-                    limit=None,
-                    include_deleted=include_deleted,
-                )
+            base_query = self._build_review_query(status=None, limit=page_size, offset=0)
+            counts = {
+                "all": self.db.count_review_invoices(base_query),
+                TO_REVIEW: self.db.count_review_invoices(replace(base_query, status=TO_REVIEW)),
+                APPROVED: self.db.count_review_invoices(replace(base_query, status=APPROVED)),
+                IGNORED: self.db.count_review_invoices(replace(base_query, status=IGNORED)),
+                ERROR: self.db.count_review_invoices(replace(base_query, status=ERROR)),
+            }
+            page_query = replace(base_query, status=self.current_filter_status, offset=offset)
+            total_matching = counts["all"] if self.current_filter_status is None else counts[self.current_filter_status]
+            if getattr(self, "_column_filters_load_all", False) and not append:
+                page_query = replace(page_query, limit=max(1, total_matching))
+            page_rows = self.db.list_review_invoices(page_query) if total_matching > offset else []
             db_elapsed_ms = int((time.perf_counter() - db_start) * 1000)
             if performance_trace is not None:
                 performance_trace.mark("db_query")
@@ -5636,76 +5627,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except Exception as e:
             _log.error("Failed to load invoices from DB: %s", e)
             QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
-            display_source = []
+            counts = {"all": 0, TO_REVIEW: 0, APPROVED: 0, IGNORED: 0, ERROR: 0}
+            total_matching = 0
+            page_rows = []
 
         filter_start = time.perf_counter()
-
-        # 1. Apply global search
-        if is_default_view:
-            filtered_invoices = display_source
-        else:
-            filtered_invoices = display_source
-            if needle:
-                temp = []
-                for inv in filtered_invoices:
-                    claim_name = self._get_invoice_claim_group(inv)
-                    haystack = " ".join([
-                        str(inv.get("invoice_number") or ""),
-                        str(inv.get("seller_name") or ""),
-                        str(inv.get("buyer_name") or ""),
-                        str(inv.get("total_amount") or ""),
-                        str(inv.get("mail_subject") or ""),
-                        str(inv.get("category") or ""),
-                        str(inv.get("attachment_path") or ""),
-                        claim_name,
-                    ]).lower()
-                    if needle in haystack:
-                        temp.append(inv)
-                filtered_invoices = temp
-
-            # 2. Apply column filters
-            filtered_invoices = apply_column_filters(
-                filtered_invoices,
-                self.column_filters,
-                self._column_filter_value_getters(),
-            )
-
-        # 3. Dynamic count calculation for review status buttons
-        if counts is None:
-            counts = {
-                "all": len(filtered_invoices),
-                TO_REVIEW: 0,
-                APPROVED: 0,
-                IGNORED: 0,
-                ERROR: 0,
-            }
-            for inv in filtered_invoices:
-                rev_status = inv.get("review_status") or TO_REVIEW
-                if rev_status in counts:
-                    counts[rev_status] += 1
-
         self._update_filter_counts(counts)
         self._update_review_scope_ui()
-
-        # 4. Filter by review status
-        displayed_invoices = filtered_invoices
-        if not is_default_view and self.current_filter_status is not None:
-            displayed_invoices = [
-                inv for inv in displayed_invoices
-                if (inv.get("review_status") or TO_REVIEW) == self.current_filter_status
-            ]
-
-        # 5. Apply first-load limit of 50 rows
-        total_matching = len(displayed_invoices)
-        if is_default_view:
-            total_matching = counts.get("all") if self.current_filter_status is None else counts.get(self.current_filter_status, 0)
-
-        first_load_limited = False
-        if (self._limited_first_load_active or (self._is_first_load and total_matching > 50 and not getattr(self, "_column_filters_load_all", False))) and total_matching > 50:
-            displayed_invoices = displayed_invoices[:50]
-            first_load_limited = True
-        elif limit_val is not None and total_matching > 50:
-            first_load_limited = True
+        displayed_invoices = existing_rows + page_rows
+        first_load_limited = len(displayed_invoices) < total_matching
 
         filter_elapsed_ms = int((time.perf_counter() - filter_start) * 1000)
         self.invoices_list = displayed_invoices

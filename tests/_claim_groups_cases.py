@@ -6134,23 +6134,23 @@ class ClaimGroupsTests(unittest.TestCase):
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
                 window = InvoiceReviewApp(db_path, splash=None)
                 try:
-                    original_list = window.db.list_invoices
+                    original_list = window.db.list_review_invoices
                     list_calls = []
 
-                    def spy_list(*args, **kwargs):
-                        list_calls.append((kwargs.get("status"), kwargs.get("limit")))
-                        return original_list(*args, **kwargs)
+                    def spy_list(query):
+                        list_calls.append(query)
+                        return original_list(query)
 
-                    window.db.list_invoices = spy_list
+                    window.db.list_review_invoices = spy_list
 
                     window._deferred_init()
                     app.processEvents()
 
                     self.assertEqual(window.table.rowCount(), 50)
 
-                    for status, limit in list_calls:
-                        if status is None and limit is None:
-                            self.fail("list_invoices(status=None, limit=None) was called, leading to full hydration!")
+                    self.assertTrue(list_calls)
+                    self.assertTrue(all(query.limit == 50 for query in list_calls))
+                    self.assertTrue(all(query.offset == 0 for query in list_calls))
 
                     self.assertTrue(window._limited_first_load_active)
                     self.assertEqual(window._limited_first_load_total, 1000)
