@@ -7,16 +7,44 @@ import logging
 import sqlite3
 import re
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from . import review_status
 from .log_privacy import mask_invoice_number
+from .review_query import ReviewColumnFilter, ReviewQuery
 
 _log = logging.getLogger(__name__)
 
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CONNECT_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_MS / 1_000
+
+_REVIEW_FILTER_KEYS = {
+    "status", "expense_date", "total_amount", "invoice_number",
+    "seller_name", "category", "source", "claim_name", "review_status",
+}
+
+
+def _review_amount_compare(value: object, boundary: object, direction: int) -> int:
+    try:
+        amount = Decimal(str(value or "").strip().replace(",", ""))
+        target = Decimal(str(boundary or "").strip().replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return 0
+    return int(amount >= target if direction > 0 else amount <= target)
+
+
+def _review_amount_is_valid(value: object) -> int:
+    try:
+        Decimal(str(value or "").strip().replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return 0
+    return 1
+
+
+def _review_text_contains(value: object, needle: object) -> int:
+    return int(str(needle or "").lower() in str(value or "").lower())
 
 
 def _configure_journal_mode(conn: sqlite3.Connection) -> str:
@@ -131,6 +159,22 @@ class InvoiceDB:
             timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
         )
         self._conn.row_factory = sqlite3.Row
+        self._conn.create_function(
+            "review_amount_at_least", 2,
+            lambda value, boundary: _review_amount_compare(value, boundary, 1),
+            deterministic=True,
+        )
+        self._conn.create_function(
+            "review_amount_at_most", 2,
+            lambda value, boundary: _review_amount_compare(value, boundary, -1),
+            deterministic=True,
+        )
+        self._conn.create_function(
+            "review_text_contains", 2, _review_text_contains, deterministic=True,
+        )
+        self._conn.create_function(
+            "review_amount_is_valid", 1, _review_amount_is_valid, deterministic=True,
+        )
         self._conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
         _configure_journal_mode(self._conn)
         self.last_error = ""
@@ -1132,6 +1176,170 @@ class InvoiceDB:
 
         row = self._conn.execute(query, params).fetchone()
         return int(row["cnt"] if row else 0)
+
+    @staticmethod
+    def _review_value_expression(key: str) -> str:
+        expressions = {
+            "expense_date": "COALESCE(NULLIF(TRIM(i.expense_date), ''), TRIM(i.invoice_date), '')",
+            "total_amount": "TRIM(COALESCE(i.total_amount, ''))",
+            "invoice_number": "TRIM(COALESCE(i.invoice_number, ''))",
+            "seller_name": "TRIM(COALESCE(i.seller_name, ''))",
+            "category": "TRIM(COALESCE(i.category, ''))",
+            "claim_name": "TRIM(COALESCE(cg.name, ''))",
+            "review_status": """
+                CASE COALESCE(NULLIF(i.review_status, ''), 'to_review')
+                    WHEN 'approved' THEN '已通过'
+                    WHEN 'ignored' THEN '已忽略'
+                    WHEN 'error' THEN '异常'
+                    ELSE '待审核'
+                END
+            """,
+            "source": """
+                CASE
+                    WHEN COALESCE(i.mail_sender, '') = 'mobile_qr' THEN '手机'
+                    WHEN COALESCE(i.attachment_path, '') <> '' AND i.mail_uid IS NOT NULL THEN '邮箱+本地'
+                    WHEN COALESCE(i.attachment_path, '') <> '' THEN '本地'
+                    WHEN COALESCE(i.download_url, '') <> '' THEN '链接'
+                    WHEN i.mail_uid IS NOT NULL THEN '邮箱'
+                    ELSE '未知'
+                END
+            """,
+            "status": """
+                CASE
+                    WHEN TRIM(COALESCE(i.invoice_number, '')) = ''
+                         AND TRIM(COALESCE(i.total_amount, '')) = ''
+                         AND TRIM(COALESCE(i.seller_name, '')) = '' THEN '未识别'
+                    WHEN TRIM(COALESCE(i.invoice_number, '')) = ''
+                         OR TRIM(COALESCE(i.total_amount, '')) = ''
+                         OR COALESCE(NULLIF(TRIM(i.expense_date), ''), TRIM(i.invoice_date), '') = ''
+                         OR TRIM(COALESCE(i.seller_name, '')) = '' THEN '待补全'
+                    WHEN TRIM(COALESCE(i.attachment_path, '')) = '' THEN '缺原件'
+                    WHEN COALESCE(i.missing_extra, 0) <> 0 THEN '缺证明'
+                    ELSE '正常'
+                END
+            """,
+        }
+        if key not in expressions:
+            raise ValueError(f"Unsupported review filter key: {key}")
+        return " ".join(expressions[key].split())
+
+    @staticmethod
+    def _review_join_sql() -> str:
+        return """
+            FROM invoices i
+            LEFT JOIN (
+                SELECT invoice_id, MAX(claim_id) AS claim_id
+                FROM claim_group_items
+                GROUP BY invoice_id
+            ) cgi ON i.id = cgi.invoice_id
+            LEFT JOIN claim_groups cg ON cgi.claim_id = cg.id
+        """
+
+    def _build_review_where(self, query: ReviewQuery) -> tuple[str, list[object]]:
+        if query.status is not None and query.status not in review_status.ALL_STATUSES:
+            raise ValueError(f"Invalid review status: '{query.status}'. Must be one of {review_status.ALL_STATUSES}")
+        clauses: list[str] = []
+        params: list[object] = []
+        if not query.include_deleted:
+            clauses.append("i.is_deleted = 0")
+        if query.status is not None:
+            clauses.append("i.review_status = ?")
+            params.append(query.status)
+        if query.invoice_ids:
+            placeholders = ", ".join("?" for _ in query.invoice_ids)
+            clauses.append(f"i.id IN ({placeholders})")
+            params.extend(query.invoice_ids)
+        needle = str(query.search_text or "").strip()
+        if needle:
+            clauses.append("""
+                review_text_contains(
+                    COALESCE(i.invoice_number, '') || ' ' ||
+                    COALESCE(i.seller_name, '') || ' ' ||
+                    COALESCE(i.buyer_name, '') || ' ' ||
+                    COALESCE(i.total_amount, '') || ' ' ||
+                    COALESCE(i.mail_subject, '') || ' ' ||
+                    COALESCE(i.category, '') || ' ' ||
+                    COALESCE(i.attachment_path, '') || ' ' ||
+                    COALESCE(cg.name, ''), ?
+                ) = 1
+            """)
+            params.append(needle)
+        for column_filter in query.column_filters:
+            if column_filter.key not in _REVIEW_FILTER_KEYS:
+                raise ValueError(f"Unsupported review filter key: {column_filter.key}")
+            expression = self._review_value_expression(column_filter.key)
+            if column_filter.values is not None:
+                if not column_filter.values:
+                    clauses.append("0 = 1")
+                else:
+                    placeholders = ", ".join("?" for _ in column_filter.values)
+                    clauses.append(f"COALESCE(NULLIF({expression}, ''), '(空白)') IN ({placeholders})")
+                    params.extend(column_filter.values)
+            if column_filter.quick:
+                today = query.today
+                if today is None:
+                    raise ValueError("ReviewQuery.today is required for quick date filters")
+                if column_filter.quick == "today":
+                    start = end = today
+                elif column_filter.quick == "week":
+                    start, end = today - timedelta(days=today.weekday()), today
+                elif column_filter.quick == "month":
+                    start = today.replace(day=1)
+                    end = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+                elif column_filter.quick == "last_30_days":
+                    start, end = today - timedelta(days=29), today
+                else:
+                    raise ValueError(f"Unsupported quick date filter: {column_filter.quick}")
+                clauses.append(f"date(substr({expression}, 1, 10)) BETWEEN date(?) AND date(?)")
+                params.extend((start.isoformat(), end.isoformat()))
+            if column_filter.key == "total_amount":
+                clauses.append(f"review_amount_is_valid({expression}) = 1")
+                if column_filter.minimum:
+                    if _review_amount_is_valid(column_filter.minimum):
+                        clauses.append(f"review_amount_at_least({expression}, ?) = 1")
+                        params.append(column_filter.minimum)
+                if column_filter.maximum:
+                    if _review_amount_is_valid(column_filter.maximum):
+                        clauses.append(f"review_amount_at_most({expression}, ?) = 1")
+                        params.append(column_filter.maximum)
+        return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+    def list_review_invoices(self, query: ReviewQuery) -> list[dict]:
+        """Return one deterministic review page after SQLite filtering."""
+        if query.limit <= 0:
+            raise ValueError(f"Limit must be a positive integer. Got: {query.limit}")
+        if query.offset < 0:
+            raise ValueError(f"Offset must be a non-negative integer. Got: {query.offset}")
+        where_sql, params = self._build_review_where(query)
+        sql = "SELECT i.*, cg.name AS claim_name " + self._review_join_sql() + where_sql
+        if query.invoice_ids:
+            sql += " ORDER BY CASE i.id " + " ".join(
+                f"WHEN ? THEN {index}" for index, _invoice_id in enumerate(query.invoice_ids)
+            ) + f" ELSE {len(query.invoice_ids)} END, i.id DESC"
+            params.extend(query.invoice_ids)
+        else:
+            sql += " ORDER BY i.expense_date DESC, i.id DESC"
+        sql += " LIMIT ? OFFSET ?"
+        params.extend((query.limit, query.offset))
+        return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def count_review_invoices(self, query: ReviewQuery) -> int:
+        """Count the same review predicate used by list_review_invoices."""
+        where_sql, params = self._build_review_where(query)
+        sql = "SELECT COUNT(*) AS cnt " + self._review_join_sql() + where_sql
+        row = self._conn.execute(sql, params).fetchone()
+        return int(row["cnt"] if row else 0)
+
+    def list_review_filter_values(self, key: str, *, include_deleted: bool = False) -> list[str]:
+        """Return distinct popup values without hydrating invoice rows."""
+        expression = self._review_value_expression(key)
+        where_sql, params = self._build_review_where(ReviewQuery(include_deleted=include_deleted))
+        sql = (
+            f"SELECT DISTINCT COALESCE(NULLIF({expression}, ''), '(空白)') AS value "
+            + self._review_join_sql() + where_sql + " ORDER BY value COLLATE NOCASE"
+        )
+        values = [str(row["value"]) for row in self._conn.execute(sql, params).fetchall()]
+        return sorted(values, key=str.casefold)
 
     def count_active_duplicates_by_invoice_number(self, invoice_number: str, exclude_id: int) -> int:
         """Count other active (not deleted) invoices with the same invoice_number."""

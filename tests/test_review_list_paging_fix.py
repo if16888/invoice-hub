@@ -58,6 +58,14 @@ class ReviewListPagingFixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self._window(td)
             try:
+                queries = []
+                original_list = window.db.list_review_invoices
+
+                def record_query(query):
+                    queries.append(query)
+                    return original_list(query)
+
+                window.db.list_review_invoices = record_query
                 window.table.selectRow(25)
                 window._on_table_selection_changed()
                 selected = window.current_invoice["id"]
@@ -65,6 +73,7 @@ class ReviewListPagingFixTests(unittest.TestCase):
                 self._events()
                 self.assertGreaterEqual(len(window.invoices_list), 100)
                 self.assertEqual(window.current_invoice["id"], selected)
+                self.assertEqual([(query.limit, query.offset) for query in queries], [(50, 50)])
             finally:
                 window.close()
 
