@@ -6,8 +6,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from scripts.invoice_fetch.db import InvoiceDB, SQLITE_BUSY_TIMEOUT_MS
+from scripts.invoice_fetch.db import (
+    InvoiceDB,
+    SQLITE_BUSY_TIMEOUT_MS,
+    _configure_journal_mode,
+)
 from scripts.invoice_fetch.migrations import (
     LATEST_INDEX_CONTRACT,
     LATEST_SCHEMA_VERSION,
@@ -17,6 +22,21 @@ from scripts.invoice_fetch.migrations import (
 
 
 class DatabaseMigrationTests(unittest.TestCase):
+    def test_non_wal_mode_warns_and_remains_usable(self):
+        conn = Mock()
+        conn.execute.return_value.fetchone.return_value = ("delete",)
+        with self.assertLogs("scripts.invoice_fetch.db", level="WARNING") as logs:
+            self.assertEqual(_configure_journal_mode(conn), "delete")
+        self.assertIn("继续使用兼容模式", " ".join(logs.output))
+
+        with tempfile.TemporaryDirectory() as td, patch(
+            "scripts.invoice_fetch.db._configure_journal_mode",
+            return_value="delete",
+        ):
+            with InvoiceDB(Path(td) / "fallback.db") as db:
+                self.assertTrue(db.is_open)
+                self.assertEqual(db.count_invoices(), 0)
+
     def test_latest_database_uses_wal_busy_timeout_and_v8_indexes(self):
         with tempfile.TemporaryDirectory() as td:
             with InvoiceDB(Path(td) / "settings.db") as db:
