@@ -19,6 +19,30 @@ SQLITE_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CONNECT_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_MS / 1_000
 
 
+def _configure_journal_mode(conn: sqlite3.Connection) -> str:
+    """Prefer WAL, but keep the database usable on unsupported filesystems."""
+    try:
+        row = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+        mode = str(row[0] if row else "unknown").lower()
+    except sqlite3.Error:
+        try:
+            row = conn.execute("PRAGMA journal_mode").fetchone()
+            mode = str(row[0] if row else "unknown").lower()
+        except sqlite3.Error:
+            mode = "unknown"
+        _log.warning(
+            "无法启用 SQLite WAL 模式，继续使用兼容模式: journal_mode=%s",
+            mode,
+        )
+        return mode
+    if mode != "wal":
+        _log.warning(
+            "SQLite WAL 模式不可用，继续使用兼容模式: journal_mode=%s",
+            mode,
+        )
+    return mode
+
+
 def is_pending_evidence_invoice(invoice: dict) -> bool:
     """Return True only for evidence that still needs a main invoice link."""
     return (
@@ -108,15 +132,7 @@ class InvoiceDB:
         )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
-        journal_mode = str(
-            self._conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
-        ).lower()
-        if journal_mode != "wal":
-            self._conn.close()
-            self._conn = None
-            raise sqlite3.OperationalError(
-                f"无法启用 SQLite WAL 模式（当前模式：{journal_mode}）"
-            )
+        _configure_journal_mode(self._conn)
         self.last_error = ""
         self._conn.executescript(_SCHEMA)
         _log.debug("数据库已打开: %s", self._path.name)
