@@ -106,7 +106,25 @@ class ExpenseDateTests(unittest.TestCase):
                 item_name       TEXT DEFAULT '',
                 is_deleted      INTEGER NOT NULL DEFAULT 0,
                 created_at      TEXT DEFAULT (datetime('now','localtime')),
+                review_status   TEXT NOT NULL DEFAULT 'to_review',
+                processing_status TEXT NOT NULL DEFAULT '',
+                currency        TEXT NOT NULL DEFAULT '',
+                exchange_rate   TEXT NOT NULL DEFAULT '',
+                amount_home     TEXT NOT NULL DEFAULT '',
+                file_hash       TEXT NOT NULL DEFAULT '',
+                confirmed_at    TEXT NOT NULL DEFAULT '',
+                confirmed_note  TEXT NOT NULL DEFAULT '',
                 UNIQUE(invoice_number, total_amount, seller_name)
+            );
+            """)
+            cursor.execute("""
+            CREATE TABLE claim_group_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                claim_id INTEGER NOT NULL,
+                invoice_id INTEGER NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                note TEXT DEFAULT '',
+                UNIQUE(claim_id, invoice_id)
             );
             """)
             cursor.execute("""
