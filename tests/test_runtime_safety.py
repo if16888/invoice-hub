@@ -42,6 +42,7 @@ class ExcelFormulaInjectionTests(unittest.TestCase):
             destination = Path(td) / "safe.xlsx"
             export_excel([row], destination)
             workbook = load_workbook(destination, data_only=False)
+            workbook.close()
 
         main = workbook["发票汇总"]
         summary = workbook["分类汇总"]
