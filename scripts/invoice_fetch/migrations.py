@@ -8,7 +8,20 @@ from collections.abc import Mapping
 
 _log = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
+
+
+# Index names are part of the latest-schema contract.  SQLite already creates
+# auto-indexes for UNIQUE(mailbox_key, uid), so those columns are deliberately
+# not duplicated here.
+LATEST_INDEX_CONTRACT = frozenset(
+    {
+        "idx_emails_pending",
+        "idx_invoices_file_hash",
+        "idx_invoices_review_order",
+        "idx_claim_items_invoice",
+    }
+)
 
 
 # The legacy contract describes the stable Invoice Hub identity that existed
@@ -198,6 +211,18 @@ def validate_latest_schema(conn: sqlite3.Connection) -> None:
         LATEST_SCHEMA_CONTRACT,
         expected_version=LATEST_SCHEMA_VERSION,
     )
+    indexes = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()
+    }
+    missing_indexes = sorted(LATEST_INDEX_CONTRACT - indexes)
+    if missing_indexes:
+        raise ValueError(
+            "Invoice Hub 数据库架构不完整：缺少索引 "
+            + ", ".join(missing_indexes)
+        )
 
 
 def check_and_migrate(conn: sqlite3.Connection):
@@ -504,4 +529,35 @@ def check_and_migrate(conn: sqlite3.Connection):
             except sqlite3.OperationalError:
                 pass
             _log.exception("CRITICAL: Database migration to V7 failed! Error: %s", e)
+            raise e
+
+    # 9. Migration to V8: indexes for the production review and email queries
+    if version < 8:
+        _log.info("Migrating database schema: V7 -> V8")
+        try:
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_pending "
+                "ON emails(mailbox_key, is_invoice, downloaded)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_invoices_file_hash "
+                "ON invoices(file_hash)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_invoices_review_order "
+                "ON invoices(is_deleted, review_status, expense_date DESC, id DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claim_items_invoice "
+                "ON claim_group_items(invoice_id)"
+            )
+            cursor.execute("PRAGMA user_version = 8")
+            conn.commit()
+            _log.info("Database migration to V8 completed successfully.")
+        except Exception as e:
+            try:
+                conn.rollback()
+            except sqlite3.OperationalError:
+                pass
+            _log.exception("CRITICAL: Database migration to V8 failed! Error: %s", e)
             raise e

@@ -15,6 +15,33 @@ from .log_privacy import mask_invoice_number
 
 _log = logging.getLogger(__name__)
 
+SQLITE_BUSY_TIMEOUT_MS = 5_000
+SQLITE_CONNECT_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_MS / 1_000
+
+
+def _configure_journal_mode(conn: sqlite3.Connection) -> str:
+    """Prefer WAL, but keep the database usable on unsupported filesystems."""
+    try:
+        row = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+        mode = str(row[0] if row else "unknown").lower()
+    except sqlite3.Error:
+        try:
+            row = conn.execute("PRAGMA journal_mode").fetchone()
+            mode = str(row[0] if row else "unknown").lower()
+        except sqlite3.Error:
+            mode = "unknown"
+        _log.warning(
+            "无法启用 SQLite WAL 模式，继续使用兼容模式: journal_mode=%s",
+            mode,
+        )
+        return mode
+    if mode != "wal":
+        _log.warning(
+            "SQLite WAL 模式不可用，继续使用兼容模式: journal_mode=%s",
+            mode,
+        )
+    return mode
+
 
 def is_pending_evidence_invoice(invoice: dict) -> bool:
     """Return True only for evidence that still needs a main invoice link."""
@@ -97,8 +124,15 @@ class InvoiceDB:
     def __init__(self, db_path: str | Path):
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._path))
+        # Keep SQLite's default thread ownership.  Worker code must use its own
+        # InvoiceDB instance rather than sharing this connection across threads.
+        self._conn = sqlite3.connect(
+            str(self._path),
+            timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
+        )
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        _configure_journal_mode(self._conn)
         self.last_error = ""
         self._conn.executescript(_SCHEMA)
         _log.debug("数据库已打开: %s", self._path.name)
@@ -152,19 +186,19 @@ class InvoiceDB:
     def bulk_upsert_emails(self, rows: list[dict], mailbox_key: str = "legacy") -> int:
         """Batch insert scanned headers. Returns count of new rows."""
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
-        new = 0
-        for r in rows:
-            try:
-                self._conn.execute(
-                    "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (mailbox_key, r["uid"], r["subject"], r["sender"], r["date"]),
-                )
-                new += 1
-            except sqlite3.IntegrityError:
-                pass
+        values = [
+            (mailbox_key, r["uid"], r["subject"], r["sender"], r["date"])
+            for r in rows
+        ]
+        before = self._conn.total_changes
+        self._conn.executemany(
+            "INSERT OR IGNORE INTO emails "
+            "(mailbox_key, uid, subject, sender, mail_date) "
+            "VALUES (?, ?, ?, ?, ?)",
+            values,
+        )
         self._conn.commit()
-        return new
+        return self._conn.total_changes - before
 
     def get_all_email_uids(self, mailbox_key: str | None = None) -> set[int]:
         """Return all known UIDs in the emails table."""
@@ -209,14 +243,21 @@ class InvoiceDB:
         Each dict: {uid, is_invoice (bool), by (str), reason (str)}
         """
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
-        for r in results:
-            row_mailbox_key = self._normalize_mailbox_key(r.get("mailbox_key", mailbox_key))
-            self._conn.execute(
-                "UPDATE emails SET is_invoice = ?, classify_by = ?, "
-                "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
-                (1 if r["is_invoice"] else 0,
-                 r.get("by", ""), r.get("reason", ""), row_mailbox_key, r["uid"]),
+        values = [
+            (
+                1 if r["is_invoice"] else 0,
+                r.get("by", ""),
+                r.get("reason", ""),
+                self._normalize_mailbox_key(r.get("mailbox_key", mailbox_key)),
+                r["uid"],
             )
+            for r in results
+        ]
+        self._conn.executemany(
+            "UPDATE emails SET is_invoice = ?, classify_by = ?, "
+            "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
+            values,
+        )
         self._conn.commit()
 
     def get_invoice_emails_to_download(
