@@ -491,6 +491,35 @@ class MailboxConnectionAsyncTests(SettingsDialogTestMixin, unittest.TestCase):
         ControlledFetcher.failure = failure
         return ControlledFetcher
 
+    @staticmethod
+    def _blocked_connect_fetcher():
+        class BlockedConnectFetcher:
+            instances = []
+            started = threading.Event()
+            external_release = threading.Event()
+
+            def __init__(self, **kwargs):
+                self.control = kwargs["control"]
+                self.cancel_called = False
+                self.disconnected = False
+                type(self).instances.append(self)
+                self.control.register_fetcher(self)
+
+            def connect(self):
+                type(self).started.set()
+                type(self).external_release.wait()
+                if self.control.cancelled:
+                    raise RuntimeError("cancelled")
+
+            def disconnect(self):
+                self.disconnected = True
+                self.control.unregister_fetcher(self)
+
+            def cancel(self):
+                self.cancel_called = True
+
+        return BlockedConnectFetcher
+
     def _finish_worker(self, dialog, *, release=True):
         worker = dialog._mailbox_test_worker
         self.assertIsNotNone(worker)
@@ -555,11 +584,14 @@ class MailboxConnectionAsyncTests(SettingsDialogTestMixin, unittest.TestCase):
         ):
             dialog._test_connection_clicked()
             self.assertTrue(QueuedSuccessWorker.emitted.wait(2))
+            worker = dialog._mailbox_test_worker
             dialog.close()
             self.assertTrue(dialog._closing)
-            self.assertIsNone(dialog._mailbox_test_worker)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.wait(2000), "queued success worker did not finish")
             self.QCoreApplication.processEvents()
         self.assertFalse(dialog.test_success)
+        self.assertIsNone(dialog._mailbox_test_worker)
 
     def test_close_cancels_running_network_test_before_dialog_shutdown(self):
         dialog = self._prepare_dialog()
@@ -570,10 +602,73 @@ class MailboxConnectionAsyncTests(SettingsDialogTestMixin, unittest.TestCase):
             worker = dialog._mailbox_test_worker
             dialog.close()
             self.assertTrue(self.fetcher_cls.instances[0].cancel_called)
-            self.assertFalse(worker.isRunning())
-            self.assertIsNone(dialog._mailbox_test_worker)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.wait(2000), "mailbox test worker did not finish")
             self.QCoreApplication.processEvents()
+        self.assertFalse(worker.isRunning())
+        self.assertIsNone(dialog._mailbox_test_worker)
+
+    def test_close_defers_until_blocked_connect_releases(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._blocked_connect_fetcher()
+        self.addCleanup(self.fetcher_cls.external_release.set)
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            worker = dialog._mailbox_test_worker
+            self.assertIsNotNone(worker)
+
+            ticks = []
+            self.QTimer.singleShot(0, lambda: ticks.append(True))
+            dialog.close()
+
+            self.assertTrue(dialog._closing)
+            self.assertTrue(self.fetcher_cls.instances[0].cancel_called)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.isRunning())
+            self.QCoreApplication.processEvents()
+            self.assertEqual(ticks, [True])
+            self.assertFalse(dialog.test_success)
+
+            self.fetcher_cls.external_release.set()
+            self.assertTrue(worker.wait(2000), "blocked-connect worker did not finish")
+            for _ in range(4):
+                self.QCoreApplication.processEvents()
+
+        self.assertIsNone(dialog._mailbox_test_worker)
+        self.assertIsNone(dialog._mailbox_test_pending_close_action)
         self.assertFalse(dialog.test_success)
+
+    def test_navigation_does_not_wait_for_blocked_connect(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._blocked_connect_fetcher()
+        self.addCleanup(self.fetcher_cls.external_release.set)
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            worker = dialog._mailbox_test_worker
+            ticks = []
+            self.QTimer.singleShot(0, lambda: ticks.append(True))
+
+            dialog._show_settings_home("mailboxes")
+
+            self.assertIs(
+                dialog.settings_stack.currentWidget(),
+                dialog.page_settings_home,
+            )
+            self.assertTrue(self.fetcher_cls.instances[0].cancel_called)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.isRunning())
+            self.QCoreApplication.processEvents()
+            self.assertEqual(ticks, [True])
+
+            self.fetcher_cls.external_release.set()
+            self.assertTrue(worker.wait(2000), "blocked-connect worker did not finish")
+            for _ in range(4):
+                self.QCoreApplication.processEvents()
+
+        self.assertIsNone(dialog._mailbox_test_worker)
+        self.assertIsNone(dialog._mailbox_test_context)
 
     def test_queued_error_after_close_is_ignored(self):
         dialog = self._prepare_dialog()
