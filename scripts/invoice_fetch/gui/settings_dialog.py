@@ -339,6 +339,8 @@ class SettingsDialog(QDialog):
         self._mailbox_test_cursor_active = False
         self._mailbox_test_result_handled = False
         self._mailbox_test_thread_finished = False
+        self._mailbox_test_pending_close_action = None
+        self._mailbox_test_finalizing_close = False
         self.test_success = False
         self.current_step = 1
         self.ai_current_step = 1
@@ -3211,49 +3213,90 @@ class SettingsDialog(QDialog):
             pass
 
     def _cancel_mailbox_test(self, *, closing: bool = False):
-        """Stop the owned test worker before leaving or destroying the dialog."""
+        """Request cooperative stop without blocking the GUI event loop.
 
+        The dialog retains ownership until QThread.finished.  Clearing the
+        context immediately makes any queued result callback fail closed.
+        """
         if closing:
             self._closing = True
+
         worker = self._mailbox_test_worker
-        self._mailbox_test_worker = None
+        if worker is None:
+            return False
+
         self._mailbox_test_context = None
         self._mailbox_test_result_handled = False
         self._mailbox_test_thread_finished = False
         self._set_mailbox_test_busy(False)
-        if worker is None:
+
+        if worker.isRunning():
+            worker.request_cancel()
+            return True
+
+        # The worker finished before its queued QThread.finished callback was
+        # delivered. It is safe to release ownership without waiting.
+        self._mailbox_test_thread_finished = True
+        self._clear_mailbox_test_worker(worker)
+        return False
+
+    def _request_mailbox_test_close(self, action):
+        self._mailbox_test_pending_close_action = action
+        self._closing = True
+        if self._cancel_mailbox_test(closing=True):
+            return True
+        self._mailbox_test_pending_close_action = None
+        return False
+
+    def _finalize_pending_mailbox_test_close(self):
+        action = self._mailbox_test_pending_close_action
+        if not action or self._mailbox_test_worker is not None:
             return
-        try:
-            if worker.isRunning():
-                worker.request_cancel()
-                worker.wait()
-        finally:
+
+        self._mailbox_test_pending_close_action = None
+        if action == "accept":
+            QDialog.accept(self)
+        elif action == "reject":
+            QDialog.reject(self)
+        elif action == "close":
+            self._mailbox_test_finalizing_close = True
             try:
-                worker.deleteLater()
-            except RuntimeError:
-                pass
+                self.close()
+            finally:
+                self._mailbox_test_finalizing_close = False
 
     def closeEvent(self, event):
-        self._cancel_mailbox_test(closing=True)
+        if self._mailbox_test_finalizing_close:
+            super().closeEvent(event)
+            return
+        if self._request_mailbox_test_close("close"):
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def accept(self):
-        self._cancel_mailbox_test(closing=True)
+        if self._request_mailbox_test_close("accept"):
+            return
         super().accept()
 
     def reject(self):
-        self._cancel_mailbox_test(closing=True)
+        if self._request_mailbox_test_close("reject"):
+            return
         super().reject()
 
     def _mailbox_test_thread_done(self):
-        if self._closing:
-            return
         worker = self.sender()
         if worker is not self._mailbox_test_worker:
             return
+
         self._mailbox_test_thread_finished = True
-        if self._mailbox_test_result_handled:
+        if (
+            self._closing
+            or self._mailbox_test_context is None
+            or self._mailbox_test_result_handled
+        ):
             self._clear_mailbox_test_worker(worker)
+            self._finalize_pending_mailbox_test_close()
 
     def _mailbox_test_result_done(self, worker):
         if worker is not self._mailbox_test_worker:
