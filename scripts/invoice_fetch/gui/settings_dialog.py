@@ -331,6 +331,16 @@ class SettingsDialog(QDialog):
         self.parent = parent
         self.setWindowTitle("系统设置")
         self.resize(1120, 720)
+        self._closing = False
+        self._mailbox_test_worker = None
+        self._mailbox_test_context = None
+        self._mailbox_test_request_id = 0
+        self._mailbox_test_form_revision = 0
+        self._mailbox_test_cursor_active = False
+        self._mailbox_test_result_handled = False
+        self._mailbox_test_thread_finished = False
+        self._mailbox_test_pending_close_action = None
+        self._mailbox_test_finalizing_close = False
         self.test_success = False
         self.current_step = 1
         self.ai_current_step = 1
@@ -2058,6 +2068,7 @@ class SettingsDialog(QDialog):
 
         QMessageBox.information(self, "成功", "邮箱配置已删除，已导入发票不会被删除。")
     def _show_settings_home(self, tab_name="mailboxes"):
+        self._cancel_mailbox_test()
         self.settings_stack.setCurrentWidget(self.page_settings_home)
         self._select_settings_section(tab_name)
 
@@ -2741,6 +2752,7 @@ class SettingsDialog(QDialog):
             title_label.style().polish(title_label)
 
     def _on_provider_card_clicked(self, checked_btn):
+        self._mailbox_test_form_revision += 1
         self._refresh_provider_card_visuals()
         provider = self._get_selected_provider()
         previous_provider = self._active_provider
@@ -2819,6 +2831,7 @@ class SettingsDialog(QDialog):
             self._advanced_settings_dirty = True
 
     def _on_advanced_settings_changed(self, *_args):
+        self._mailbox_test_form_revision += 1
         self._mark_advanced_settings_dirty()
         self.test_success = False
         self._update_provider_hint()
@@ -2963,6 +2976,7 @@ class SettingsDialog(QDialog):
         if self._loading_initial_values or self._loading_account_values:
             return
 
+        self._mailbox_test_form_revision += 1
         email = self.txt_email.text().strip()
         email_clean = self._normalize_address(email)
         self.test_success = False
@@ -3007,6 +3021,7 @@ class SettingsDialog(QDialog):
 
 
     def _on_auth_code_changed(self):
+        self._mailbox_test_form_revision += 1
         self.test_success = False
         self.lbl_test_result.setText("邮箱授权码已更改，请重新进行连接测试。")
         self.lbl_test_result.setProperty("variant", "warning")
@@ -3153,7 +3168,214 @@ class SettingsDialog(QDialog):
             port = str(preset["port"])
         self.lbl_sum_protocol.setText(f"IMAP ({server}:{port})")
 
+    def _mailbox_test_form_identity(self):
+        """Return only non-secret state that identifies the current form."""
+
+        return (
+            self.txt_email.text().strip(),
+            self._get_selected_provider(),
+            self.txt_imap_server.text().strip(),
+            self.txt_imap_port.text().strip(),
+            bool(getattr(self, "chk_ssl", None) and self.chk_ssl.isChecked()),
+            self.txt_months.text().strip(),
+            self._mailbox_test_form_revision,
+        )
+
+    def _set_mailbox_test_busy(self, busy: bool):
+        buttons = [
+            getattr(self, "btn_test", None),
+            getattr(self, "btn_v4_test", None),
+        ]
+        for button in buttons:
+            if button is None:
+                continue
+            button.setEnabled(not busy)
+            button.setText("正在测试..." if busy else "测试连接")
+
+        if busy and not self._mailbox_test_cursor_active:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            self._mailbox_test_cursor_active = True
+        elif not busy and self._mailbox_test_cursor_active:
+            QApplication.restoreOverrideCursor()
+            self._mailbox_test_cursor_active = False
+
+    def _clear_mailbox_test_worker(self, worker):
+        if worker is not self._mailbox_test_worker:
+            return
+        self._mailbox_test_worker = None
+        self._mailbox_test_context = None
+        self._mailbox_test_result_handled = False
+        self._mailbox_test_thread_finished = False
+        self._set_mailbox_test_busy(False)
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
+
+    def _cancel_mailbox_test(self, *, closing: bool = False):
+        """Request cooperative stop without blocking the GUI event loop.
+
+        The dialog retains ownership until QThread.finished.  Clearing the
+        context immediately makes any queued result callback fail closed.
+        """
+        if closing:
+            self._closing = True
+
+        worker = self._mailbox_test_worker
+        if worker is None:
+            return False
+
+        self._mailbox_test_context = None
+        self._mailbox_test_result_handled = False
+        self._mailbox_test_thread_finished = False
+        self._set_mailbox_test_busy(False)
+
+        if worker.isRunning():
+            worker.request_cancel()
+            return True
+
+        # The worker finished before its queued QThread.finished callback was
+        # delivered. It is safe to release ownership without waiting.
+        self._mailbox_test_thread_finished = True
+        self._clear_mailbox_test_worker(worker)
+        return False
+
+    def _request_mailbox_test_close(self, action):
+        self._mailbox_test_pending_close_action = action
+        self._closing = True
+        if self._cancel_mailbox_test(closing=True):
+            return True
+        self._mailbox_test_pending_close_action = None
+        return False
+
+    def _finalize_pending_mailbox_test_close(self):
+        action = self._mailbox_test_pending_close_action
+        if not action or self._mailbox_test_worker is not None:
+            return
+
+        self._mailbox_test_pending_close_action = None
+        if action == "accept":
+            QDialog.accept(self)
+        elif action == "reject":
+            QDialog.reject(self)
+        elif action == "close":
+            self._mailbox_test_finalizing_close = True
+            try:
+                self.close()
+            finally:
+                self._mailbox_test_finalizing_close = False
+
+    def closeEvent(self, event):
+        if self._mailbox_test_finalizing_close:
+            super().closeEvent(event)
+            return
+        if self._request_mailbox_test_close("close"):
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def accept(self):
+        if self._request_mailbox_test_close("accept"):
+            return
+        super().accept()
+
+    def reject(self):
+        if self._request_mailbox_test_close("reject"):
+            return
+        super().reject()
+
+    def _mailbox_test_thread_done(self):
+        worker = self.sender()
+        if worker is not self._mailbox_test_worker:
+            return
+
+        self._mailbox_test_thread_finished = True
+        if (
+            self._closing
+            or self._mailbox_test_context is None
+            or self._mailbox_test_result_handled
+        ):
+            self._clear_mailbox_test_worker(worker)
+            self._finalize_pending_mailbox_test_close()
+    def _mailbox_test_result_done(self, worker):
+        if worker is not self._mailbox_test_worker:
+            return
+        self._mailbox_test_result_handled = True
+        self._set_mailbox_test_busy(False)
+        if self._mailbox_test_thread_finished:
+            self._clear_mailbox_test_worker(worker)
+
+    def _mailbox_test_finished(self, request_id):
+        if self._closing:
+            return
+        worker = self.sender()
+        context = self._mailbox_test_context
+        if worker is not self._mailbox_test_worker or context is None:
+            return
+        if request_id != context["request_id"]:
+            self.test_success = False
+            self._mailbox_test_result_done(worker)
+            return
+        if self._mailbox_test_form_identity() != context["identity"]:
+            self.test_success = False
+            self._mailbox_test_result_done(worker)
+            return
+
+        self.test_success = True
+        self._mailbox_test_result_done(worker)
+        self.lbl_test_result.setProperty("variant", "success")
+        self.lbl_test_result.style().unpolish(self.lbl_test_result)
+        self.lbl_test_result.style().polish(self.lbl_test_result)
+        self.lbl_test_result.setText(
+            f"已连接到 {context['provider_text']}，可扫描最近 {context['months']} 个月发票邮件。"
+        )
+
+    def _mailbox_test_error(self, error_text):
+        if self._closing:
+            return
+        worker = self.sender()
+        context = self._mailbox_test_context
+        if worker is not self._mailbox_test_worker or context is None:
+            return
+        if self._mailbox_test_form_identity() != context["identity"]:
+            self.test_success = False
+            self._mailbox_test_result_done(worker)
+            return
+
+        self.test_success = False
+        self._mailbox_test_result_done(worker)
+        self.lbl_test_result.setProperty("variant", "danger")
+        self.lbl_test_result.style().unpolish(self.lbl_test_result)
+        self.lbl_test_result.style().polish(self.lbl_test_result)
+        self.lbl_test_result.setText(
+            self._format_connection_failure(
+                context["provider"],
+                context["server"],
+                context["port"],
+                error_text,
+            )
+        )
+
+    def _mailbox_test_cancelled(self):
+        if self._closing:
+            return
+        worker = self.sender()
+        context = self._mailbox_test_context
+        if worker is not self._mailbox_test_worker or context is None:
+            return
+        self.test_success = False
+        self._mailbox_test_result_done(worker)
+        self.lbl_test_result.setProperty("variant", "muted")
+        self.lbl_test_result.style().unpolish(self.lbl_test_result)
+        self.lbl_test_result.style().polish(self.lbl_test_result)
+        self.lbl_test_result.setText("连接测试已取消")
+
     def _test_connection_clicked(self):
+        # Keep one immutable in-flight operation.  This also blocks a second
+        # click while a finished worker's queued result is awaiting delivery.
+        if self._mailbox_test_worker is not None:
+            return
+
         email = self.txt_email.text().strip()
         auth_code = self.txt_auth_code.text().strip()
 
@@ -3218,38 +3440,51 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "校验提示", "IMAP 端口必须是有效的整数。")
             return
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.btn_test.setEnabled(False)
-        self.btn_test.setText("正在测试...")
+        from .workers import MailboxConnectionTestRequest, MailboxConnectionTestWorker
+
+        self.test_success = False
+        self._mailbox_test_request_id += 1
+        request_id = self._mailbox_test_request_id
+        request = MailboxConnectionTestRequest(
+            request_id=request_id,
+            address=email,
+            auth_code=auth_code,
+            server=server,
+            port=port,
+        )
+        self._mailbox_test_context = {
+            "request_id": request_id,
+            "identity": self._mailbox_test_form_identity(),
+            "provider": provider,
+            "provider_text": self.lbl_sum_provider.text(),
+            "server": server,
+            "port": port,
+            "months": self.txt_months.text().strip(),
+        }
+        worker = MailboxConnectionTestWorker(request, parent=self)
+        worker.success.connect(self._mailbox_test_finished)
+        worker.error.connect(self._mailbox_test_error)
+        worker.cancelled.connect(self._mailbox_test_cancelled)
+        worker.finished.connect(self._mailbox_test_thread_done)
+        self._mailbox_test_worker = worker
+        self._mailbox_test_result_handled = False
+        self._mailbox_test_thread_finished = False
+        self._set_mailbox_test_busy(True)
         self.lbl_test_result.setProperty("variant", "muted")
         self.lbl_test_result.style().unpolish(self.lbl_test_result)
         self.lbl_test_result.style().polish(self.lbl_test_result)
         self.lbl_test_result.setText("正在尝试连接 IMAP 服务器进行登录验证，请稍候...")
-        QApplication.processEvents()
-
         try:
-            from ..mail_fetcher import MailFetcher
-            fetcher = MailFetcher(address=email, auth_code=auth_code, server=server, port=port)
-            fetcher.connect()
-            fetcher.disconnect()
-
-            self.test_success = True
-            prov_text = self.lbl_sum_provider.text()
-            self.lbl_test_result.setProperty("variant", "success")
-            self.lbl_test_result.style().unpolish(self.lbl_test_result)
-            self.lbl_test_result.style().polish(self.lbl_test_result)
-            self.lbl_test_result.setText(f"已连接到 {prov_text}，可扫描最近 {self.txt_months.text().strip()} 个月发票邮件。")
-        except Exception as e:
+            worker.start()
+        except Exception as exc:
+            self._clear_mailbox_test_worker(worker)
             self.test_success = False
             self.lbl_test_result.setProperty("variant", "danger")
             self.lbl_test_result.style().unpolish(self.lbl_test_result)
             self.lbl_test_result.style().polish(self.lbl_test_result)
-            friendly = self._format_connection_failure(provider, server, port, e, auth_code)
-            self.lbl_test_result.setText(friendly)
-        finally:
-            self.btn_test.setEnabled(True)
-            self.btn_test.setText("测试连接")
-            QApplication.restoreOverrideCursor()
+            self.lbl_test_result.setText(
+                self._format_connection_failure(provider, server, port, exc)
+            )
 
     def _format_connection_failure(self, provider, server, port, error, auth_code=""):
         from ..log_privacy import sanitize_log_message
@@ -3323,6 +3558,7 @@ class SettingsDialog(QDialog):
             self._delete_mailbox(mailbox_key)
 
     def _v4_cancel_edits(self):
+        self._cancel_mailbox_test()
         if self._loaded_account_mailbox_key and self._saved_accounts:
             acc = next((a for a in self._saved_accounts if (a.get("mailbox_key") or a.get("address") or "").lower() == self._loaded_account_mailbox_key.lower()), None)
             if acc:

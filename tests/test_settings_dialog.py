@@ -1,4 +1,5 @@
 import copy
+import threading
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -434,6 +435,291 @@ class OutlookConnectionDiagnosticsTests(SettingsDialogTestMixin, unittest.TestCa
             fetcher_cls.assert_not_called()
             mock_warn.assert_called_once()
             self.assertIn("检测到 Outlook IMAP 服务器", mock_warn.call_args[0][2])
+
+
+class MailboxConnectionAsyncTests(SettingsDialogTestMixin, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if QApplication is None:
+            raise unittest.SkipTest("Skipping async mailbox GUI tests: Qt widgets unavailable")
+        super().setUpClass()
+        try:
+            from PySide6.QtCore import QCoreApplication, QTimer
+        except Exception as exc:  # pragma: no cover - host GUI dependency
+            raise unittest.SkipTest(f"Skipping async mailbox GUI tests: {exc}")
+        cls.QCoreApplication = QCoreApplication
+        cls.QTimer = QTimer
+
+    def _prepare_dialog(self):
+        dialog = self._make_dialog()
+        dialog.txt_email.setText("worker@qq.com")
+        dialog.txt_auth_code.setText("secret-auth-code")
+        dialog._update_summary_fields()
+        return dialog
+
+    @staticmethod
+    def _controlled_fetcher(*, failure=None):
+        class ControlledFetcher:
+            instances = []
+            started = threading.Event()
+            release = threading.Event()
+            failure = None
+
+            def __init__(self, **kwargs):
+                self.control = kwargs["control"]
+                self.cancel_called = False
+                self.disconnected = False
+                type(self).instances.append(self)
+                self.control.register_fetcher(self)
+
+            def connect(self):
+                type(self).started.set()
+                while not type(self).release.wait(0.01):
+                    if self.control.cancelled:
+                        raise RuntimeError("cancelled")
+                if type(self).failure is not None:
+                    raise type(self).failure
+
+            def disconnect(self):
+                self.disconnected = True
+                self.control.unregister_fetcher(self)
+
+            def cancel(self):
+                self.cancel_called = True
+                type(self).release.set()
+
+        ControlledFetcher.failure = failure
+        return ControlledFetcher
+
+    @staticmethod
+    def _blocked_connect_fetcher():
+        class BlockedConnectFetcher:
+            instances = []
+            started = threading.Event()
+            external_release = threading.Event()
+
+            def __init__(self, **kwargs):
+                self.control = kwargs["control"]
+                self.cancel_called = False
+                self.disconnected = False
+                type(self).instances.append(self)
+                self.control.register_fetcher(self)
+
+            def connect(self):
+                type(self).started.set()
+                type(self).external_release.wait()
+                if self.control.cancelled:
+                    raise RuntimeError("cancelled")
+
+            def disconnect(self):
+                self.disconnected = True
+                self.control.unregister_fetcher(self)
+
+            def cancel(self):
+                self.cancel_called = True
+
+        return BlockedConnectFetcher
+
+    def _finish_worker(self, dialog, *, release=True):
+        worker = dialog._mailbox_test_worker
+        self.assertIsNotNone(worker)
+        fetcher_cls = self.fetcher_cls
+        if release:
+            fetcher_cls.release.set()
+        self.assertTrue(worker.wait(2000), "mailbox test worker did not finish")
+        self.QCoreApplication.processEvents()
+        return worker
+
+    def test_connection_test_returns_to_event_loop_while_network_waits(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._controlled_fetcher()
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            ticks = []
+            self.QTimer.singleShot(0, lambda: ticks.append(True))
+            self.QCoreApplication.processEvents()
+            self.assertEqual(ticks, [True])
+            self.assertIsNotNone(dialog._mailbox_test_worker)
+            self.assertFalse(dialog.test_success)
+            self._finish_worker(dialog)
+        self.assertTrue(dialog.test_success)
+        self.assertTrue(dialog.btn_test.isEnabled())
+        self.assertIn("已连接到", dialog.lbl_test_result.text())
+
+    def test_failure_is_sanitized_and_restores_test_button(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._controlled_fetcher(
+            failure=RuntimeError("login failed secret-auth-code")
+        )
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            self._finish_worker(dialog)
+        self.assertFalse(dialog.test_success)
+        self.assertTrue(dialog.btn_test.isEnabled())
+        self.assertNotIn("secret-auth-code", dialog.lbl_test_result.text())
+        self.assertIn("授权码", dialog.lbl_test_result.text())
+
+    def test_close_requests_cancel_and_queued_success_is_ignored(self):
+        dialog = self._prepare_dialog()
+        from scripts.invoice_fetch.gui.workers import MailboxConnectionTestWorker
+
+        class QueuedSuccessWorker(MailboxConnectionTestWorker):
+            emitted = threading.Event()
+            release = threading.Event()
+
+            def run(self):
+                self.success.emit(self.request_id)
+                type(self).emitted.set()
+                type(self).release.wait()
+
+            def request_cancel(self):
+                super().request_cancel()
+                type(self).release.set()
+
+        with patch(
+            "scripts.invoice_fetch.gui.workers.MailboxConnectionTestWorker",
+            QueuedSuccessWorker,
+        ):
+            dialog._test_connection_clicked()
+            self.assertTrue(QueuedSuccessWorker.emitted.wait(2))
+            worker = dialog._mailbox_test_worker
+            dialog.close()
+            self.assertTrue(dialog._closing)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.wait(2000), "queued success worker did not finish")
+            self.QCoreApplication.processEvents()
+        self.assertFalse(dialog.test_success)
+        self.assertIsNone(dialog._mailbox_test_worker)
+
+    def test_close_cancels_running_network_test_before_dialog_shutdown(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._controlled_fetcher()
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            worker = dialog._mailbox_test_worker
+            dialog.close()
+            self.assertTrue(self.fetcher_cls.instances[0].cancel_called)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.wait(2000), "mailbox test worker did not finish")
+            self.QCoreApplication.processEvents()
+        self.assertFalse(worker.isRunning())
+        self.assertIsNone(dialog._mailbox_test_worker)
+
+    def test_close_defers_until_blocked_connect_releases(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._blocked_connect_fetcher()
+        self.addCleanup(self.fetcher_cls.external_release.set)
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            worker = dialog._mailbox_test_worker
+            self.assertIsNotNone(worker)
+
+            ticks = []
+            self.QTimer.singleShot(0, lambda: ticks.append(True))
+            dialog.close()
+
+            self.assertTrue(dialog._closing)
+            self.assertTrue(self.fetcher_cls.instances[0].cancel_called)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.isRunning())
+            self.QCoreApplication.processEvents()
+            self.assertEqual(ticks, [True])
+            self.assertFalse(dialog.test_success)
+
+            self.fetcher_cls.external_release.set()
+            self.assertTrue(worker.wait(2000), "blocked-connect worker did not finish")
+            for _ in range(4):
+                self.QCoreApplication.processEvents()
+
+        self.assertIsNone(dialog._mailbox_test_worker)
+        self.assertIsNone(dialog._mailbox_test_pending_close_action)
+        self.assertFalse(dialog.test_success)
+
+    def test_navigation_does_not_wait_for_blocked_connect(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._blocked_connect_fetcher()
+        self.addCleanup(self.fetcher_cls.external_release.set)
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            worker = dialog._mailbox_test_worker
+            ticks = []
+            self.QTimer.singleShot(0, lambda: ticks.append(True))
+
+            dialog._show_settings_home("mailboxes")
+
+            self.assertIs(
+                dialog.settings_stack.currentWidget(),
+                dialog.page_settings_home,
+            )
+            self.assertTrue(self.fetcher_cls.instances[0].cancel_called)
+            self.assertIs(dialog._mailbox_test_worker, worker)
+            self.assertTrue(worker.isRunning())
+            self.QCoreApplication.processEvents()
+            self.assertEqual(ticks, [True])
+
+            self.fetcher_cls.external_release.set()
+            self.assertTrue(worker.wait(2000), "blocked-connect worker did not finish")
+            for _ in range(4):
+                self.QCoreApplication.processEvents()
+
+        self.assertIsNone(dialog._mailbox_test_worker)
+        self.assertIsNone(dialog._mailbox_test_context)
+
+    def test_queued_error_after_close_is_ignored(self):
+        dialog = self._prepare_dialog()
+        from scripts.invoice_fetch.gui.workers import MailboxConnectionTestWorker
+
+        class QueuedErrorWorker(MailboxConnectionTestWorker):
+            emitted = threading.Event()
+            release = threading.Event()
+
+            def run(self):
+                self.error.emit("login failed secret-auth-code")
+                type(self).emitted.set()
+                type(self).release.wait()
+
+            def request_cancel(self):
+                super().request_cancel()
+                type(self).release.set()
+
+        with patch(
+            "scripts.invoice_fetch.gui.workers.MailboxConnectionTestWorker",
+            QueuedErrorWorker,
+        ):
+            dialog._test_connection_clicked()
+            self.assertTrue(QueuedErrorWorker.emitted.wait(2))
+            dialog.close()
+            self.QCoreApplication.processEvents()
+        self.assertFalse(dialog.test_success)
+        self.assertNotIn("secret-auth-code", dialog.lbl_test_result.text())
+
+    def test_stale_success_after_form_change_does_not_mark_test_success(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._controlled_fetcher()
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            dialog.txt_email.setText("changed@qq.com")
+            self._finish_worker(dialog)
+        self.assertFalse(dialog.test_success)
+        self.assertTrue(dialog.btn_test.isEnabled())
+
+    def test_second_click_does_not_start_another_worker(self):
+        dialog = self._prepare_dialog()
+        self.fetcher_cls = self._controlled_fetcher()
+        with patch("scripts.invoice_fetch.mail_fetcher.MailFetcher", self.fetcher_cls):
+            dialog._test_connection_clicked()
+            self.assertTrue(self.fetcher_cls.started.wait(2))
+            first_worker = dialog._mailbox_test_worker
+            dialog._test_connection_clicked()
+            self.assertIs(dialog._mailbox_test_worker, first_worker)
+            self.assertEqual(len(self.fetcher_cls.instances), 1)
+            self._finish_worker(dialog)
 
 
 if __name__ == "__main__":
