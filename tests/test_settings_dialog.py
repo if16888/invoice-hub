@@ -470,6 +470,7 @@ class MailboxConnectionAsyncTests(SettingsDialogTestMixin, unittest.TestCase):
                 self.cancel_called = False
                 self.disconnected = False
                 type(self).instances.append(self)
+                self.control.register_fetcher(self)
 
             def connect(self):
                 type(self).started.set()
@@ -481,6 +482,7 @@ class MailboxConnectionAsyncTests(SettingsDialogTestMixin, unittest.TestCase):
 
             def disconnect(self):
                 self.disconnected = True
+                self.control.unregister_fetcher(self)
 
             def cancel(self):
                 self.cancel_called = True
