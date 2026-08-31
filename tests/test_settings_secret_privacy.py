@@ -135,6 +135,10 @@ class SettingsSecretPrivacyTests(unittest.TestCase):
             return_value=SAVED_AUTH_CODE,
         ) as get_auth_code, patch("scripts.invoice_fetch.mail_fetcher.MailFetcher") as fetcher_cls:
             dialog._test_connection_clicked()
+            worker = dialog._mailbox_test_worker
+            self.assertIsNotNone(worker)
+            self.assertTrue(worker.wait(2000), "mailbox test worker did not finish")
+            self.app.processEvents()
 
         get_auth_code.assert_called_once_with("tester@qq.com")
         self.assertEqual(fetcher_cls.call_args.kwargs["auth_code"], SAVED_AUTH_CODE)
