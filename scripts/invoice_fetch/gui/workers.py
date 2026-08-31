@@ -3,10 +3,108 @@
 
 from pathlib import Path
 import time
+from dataclasses import dataclass
 
 from PySide6.QtCore import QThread, Signal
 
 from .performance_probe import emit_performance_event
+from ..scan_lifecycle import ScanCancelled, ScanControl
+
+
+@dataclass(frozen=True)
+class MailboxConnectionTestRequest:
+    """Immutable, non-UI input snapshot for one mailbox connection test."""
+
+    request_id: int
+    address: str
+    auth_code: str
+    server: str
+    port: int
+
+
+class MailboxConnectionTestWorker(QThread):
+    """Run one IMAP login attempt outside the Qt GUI thread.
+
+    The worker deliberately owns only the network operation.  It never
+    touches widgets, settings, credentials storage, or application state.
+    """
+
+    success = Signal(object)
+    error = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, request: MailboxConnectionTestRequest, parent=None):
+        super().__init__(parent)
+        self._request = request
+        self.control = ScanControl()
+
+    @property
+    def request_id(self) -> int:
+        return self._request.request_id if self._request is not None else -1
+
+    def request_cancel(self):
+        """Cooperatively cancel the active IMAP operation."""
+
+        self.control.cancel()
+
+    @staticmethod
+    def _safe_error_text(error, secret: str) -> str:
+        text = str(error or "")
+        if secret:
+            text = text.replace(secret, "<redacted>")
+        return text
+
+    def run(self):
+        request = self._request
+        fetcher = None
+        outcome = "failure"
+        error_text = ""
+        try:
+            # Import at execution time so importing the GUI worker module does
+            # not perform any network setup and tests can replace MailFetcher.
+            from ..mail_fetcher import MailFetcher
+
+            self.control.raise_if_cancelled()
+            fetcher = MailFetcher(
+                address=request.address,
+                auth_code=request.auth_code,
+                server=request.server,
+                port=request.port,
+                control=self.control,
+            )
+            fetcher.connect()
+            self.control.raise_if_cancelled()
+            outcome = "success"
+        except ScanCancelled:
+            outcome = "cancelled"
+        except Exception as exc:
+            if self.control.cancelled:
+                outcome = "cancelled"
+            else:
+                error_text = self._safe_error_text(exc, request.auth_code)
+        except BaseException as exc:
+            if self.control.cancelled:
+                outcome = "cancelled"
+            else:
+                error_text = self._safe_error_text(exc, request.auth_code)
+        finally:
+            if fetcher is not None:
+                try:
+                    fetcher.disconnect()
+                except Exception as exc:
+                    if outcome == "success":
+                        outcome = "failure"
+                        error_text = self._safe_error_text(exc, request.auth_code)
+            # Drop the worker's references as soon as the network operation is
+            # complete.  The GUI receives only request_id/status-safe text.
+            self._request = None
+
+        if outcome == "success":
+            self.success.emit(request.request_id)
+        elif outcome == "cancelled":
+            self.cancelled.emit()
+        else:
+            self.error.emit(error_text)
 
 
 class ExportMigrationWorker(QThread):
