@@ -217,14 +217,15 @@ class InvoiceDB:
         """Insert a scanned email header. Returns True if new."""
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
         try:
-            self._conn.execute(
-                "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date) "
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO emails (mailbox_key, uid, subject, sender, mail_date) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (mailbox_key, uid, subject, sender, mail_date),
             )
             self._conn.commit()
-            return True
+            return cursor.rowcount > 0
         except sqlite3.IntegrityError:
+            self._conn.rollback()
             return False
 
     def bulk_upsert_emails(self, rows: list[dict], mailbox_key: str = "legacy") -> int:
@@ -562,6 +563,7 @@ class InvoiceDB:
             self._conn.commit()
             return cur.lastrowid
         except sqlite3.IntegrityError:
+            self._conn.rollback()
             _log.info("重复发票(DB约束): %s", mask_invoice_number(rec.get("invoice_number", "")))
             return None
 
@@ -833,6 +835,7 @@ class InvoiceDB:
             self._set_last_error("")
             return True
         except sqlite3.IntegrityError:
+            self._conn.rollback()
             self._set_last_error("unique_conflict")
             return False
 
@@ -898,6 +901,7 @@ class InvoiceDB:
             self._set_last_error("")
             return True
         except sqlite3.IntegrityError:
+            self._conn.rollback()
             self._set_last_error("unique_conflict")
             return False
 
@@ -1543,14 +1547,19 @@ class InvoiceDB:
             self._set_last_error("evidence_only")
             return False
         try:
-            self._conn.execute(
-                "INSERT INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
                 (claim_id, invoice_id, note)
             )
             self._conn.commit()
+            if cursor.rowcount == 0:
+                self._set_last_error("integrity_error")
+                _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
+                return False
             self._set_last_error("")
             return True
         except sqlite3.IntegrityError:
+            self._conn.rollback()
             self._set_last_error("integrity_error")
             _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
             return False

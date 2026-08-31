@@ -103,6 +103,8 @@ def _qt_dispatch_allowed(*, window=None, page=None) -> bool:
         return False
     if window is not None and not isValid(window):
         return False
+    if window is not None and getattr(window, "_shutdown_requested", False):
+        return False
     if page is not None and not isValid(page):
         return False
     return True

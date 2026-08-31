@@ -253,7 +253,7 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
                     val = "；".join(Path(p).name for p in paths)
                 else:
                     val = ""
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell = ws.cell(row=row_idx, column=col_idx, value=_safe_excel_value(val))
             _style_cell(cell)
             if key == "attachment_path" and val:
                 cell.hyperlink = str(val)

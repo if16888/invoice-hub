@@ -543,6 +543,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self._export_migration = None
         self._export_migration_worker = None
+        self._shutdown_requested = False
         db_time = _time_mod.time()
         self.db_open_ms = int((db_time - start_time) * 1000)
 
@@ -759,6 +760,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _start_export_migration(self):
         """Start legacy export migration after the main window is constructed."""
+        if getattr(self, "_shutdown_requested", False):
+            return
         if not self._legacy_exports.is_dir():
             return
         if not self._data_operation_gate.try_acquire("旧导出目录迁移"):
@@ -783,13 +786,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         gate_reason = self._data_operation_gate.busy_reason()
         if gate_reason:
             return gate_reason
-        for attr, label in (
-            ("scan_worker", "邮箱扫描"),
-            ("import_worker", "本地导入"),
-            ("_export_migration_worker", "旧导出目录迁移"),
-            ("_hci_history_worker", "历史记录重检"),
-        ):
-            worker = getattr(self, attr, None)
+        for _attr, label, worker in self._active_background_workers():
             is_running = getattr(worker, "isRunning", None)
             if callable(is_running) and is_running():
                 return label
@@ -801,7 +798,69 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return "手机上传"
         return ""
 
+    def _worker_callback_allowed(self) -> bool:
+        """Reject queued worker callbacks after shutdown has started."""
+        return not getattr(self, "_shutdown_requested", False)
+
+    def _active_background_workers(self):
+        """Return every worker owned by this window and its operation label."""
+        for attr, label in (
+            ("scan_worker", "邮箱扫描"),
+            ("import_worker", "本地导入"),
+            ("_export_migration_worker", "旧导出目录迁移"),
+            ("_hci_history_worker", "历史记录重检"),
+        ):
+            worker = getattr(self, attr, None)
+            if worker is not None:
+                yield attr, label, worker
+
+    @staticmethod
+    def _disconnect_worker_signals(worker) -> None:
+        """Stop queued worker callbacks from targeting a closing window."""
+        for signal_name in (
+            "progress", "log", "stage", "finished", "error", "finished_result", "failed",
+        ):
+            signal = getattr(worker, signal_name, None)
+            disconnect = getattr(signal, "disconnect", None)
+            if callable(disconnect):
+                try:
+                    disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+
+    def _shutdown_background_workers(self) -> None:
+        """Cooperatively stop all window-owned workers before closing SQLite."""
+        running = []
+        for attr, label, worker in self._active_background_workers():
+            is_running = getattr(worker, "isRunning", None)
+            if not callable(is_running) or not is_running():
+                self._disconnect_worker_signals(worker)
+                self._end_data_operation(label)
+                continue
+            self._disconnect_worker_signals(worker)
+            block_signals = getattr(worker, "blockSignals", None)
+            if callable(block_signals):
+                block_signals(True)
+            request_cancel = getattr(worker, "request_cancel", None)
+            if callable(request_cancel):
+                request_cancel()
+            running.append((attr, label, worker))
+
+        for attr, label, worker in running:
+            wait = getattr(worker, "wait", None)
+            if not callable(wait):
+                raise RuntimeError(f"后台 worker {label} 不支持安全等待")
+            wait()
+            is_running = getattr(worker, "isRunning", None)
+            if callable(is_running) and is_running():
+                raise RuntimeError(f"后台 worker {label} 在等待后仍在运行")
+            if attr == "_export_migration_worker" and getattr(worker, "result", None) is not None:
+                self._export_migration = worker.result
+            self._end_data_operation(label)
+
     def _try_begin_data_operation(self, operation: str, *, notify: bool = True) -> bool:
+        if getattr(self, "_shutdown_requested", False):
+            return False
         busy = self._data_operation_busy_reason()
         if busy:
             if notify:
@@ -827,6 +886,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             _log.warning("data operation gate release mismatch: %s", operation)
 
     def _export_migration_progress(self, progress: dict):
+        if not self._worker_callback_allowed():
+            return
         processed = int(progress.get("processed", 0) or 0)
         total = int(progress.get("total", 0) or 0)
         copied = int(progress.get("copied", 0) or 0)
@@ -839,6 +900,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _export_migration_finished(self, result):
+        if not self._worker_callback_allowed():
+            return
         self._end_data_operation("旧导出目录迁移")
         self._export_migration = result
         if result.failures or result.source_remains:
@@ -853,10 +916,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QTimer.singleShot(0, self._show_export_migration_result)
 
     def _export_migration_error(self, message: str):
+        if not self._worker_callback_allowed():
+            return
         self._end_data_operation("旧导出目录迁移")
         self.statusBar().showMessage(f"旧导出目录迁移失败：{message}", 8000)
 
     def _show_export_migration_result(self):
+        if not self._worker_callback_allowed():
+            return
         result = self._export_migration
         if result is None:
             return
@@ -924,6 +991,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage(status_msg, 4000)
 
     def closeEvent(self, event):
+        self._shutdown_requested = True
         shutdown_trace = self._performance_shutdown_trace
         if shutdown_trace is None:
             shutdown_trace = self._performance_probe.begin("shutdown")
@@ -953,49 +1021,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 return
         self._close_pending = False
 
-        migration_worker = getattr(self, "_export_migration_worker", None)
-        if migration_worker is not None and migration_worker.isRunning():
-            self.statusBar().showMessage("正在完成旧导出文件迁移，请稍候…")
-            # Migration copies into a private temporary file and only exposes a
-            # verified target at the end.  Wait cooperatively instead of
-            # terminating the worker while a destination file is being written.
-            if shutdown_trace is not None:
-                self._performance_probe.active_stage = "migration_wait"
-            with performance_stage(
-                "shutdown",
-                "migration_worker_wait",
-                active=True,
-                timeout_requested="none",
-            ):
-                migration_worker.wait()
-            if shutdown_trace is not None:
-                shutdown_trace.mark("migration_wait")
-            if migration_worker.result is not None:
-                self._export_migration = migration_worker.result
-            self._end_data_operation("旧导出目录迁移")
-
-        scan_worker = getattr(self, "scan_worker", None)
-        is_scan_running = getattr(scan_worker, "isRunning", None)
-        if callable(is_scan_running) and is_scan_running():
-            if shutdown_trace is not None:
-                self._performance_probe.active_stage = "scan_cancel_wait"
-            with performance_stage(
-                "shutdown",
-                "mailbox_scan_cancel",
-                active=True,
-                timeout_requested="none",
-            ):
-                scan_worker.request_cancel()
-            with performance_stage(
-                "shutdown",
-                "mailbox_scan_wait",
-                active=True,
-                timeout_requested="none",
-            ):
-                scan_worker.wait()
-            if shutdown_trace is not None:
-                shutdown_trace.mark("scan_cancel_wait")
-            self._end_data_operation("邮箱扫描")
+        running_workers = [
+            (label, worker)
+            for _attr, label, worker in self._active_background_workers()
+            if callable(getattr(worker, "isRunning", None)) and worker.isRunning()
+        ]
+        if running_workers:
+            labels = "、".join(label for label, _worker in running_workers)
+            self.statusBar().showMessage(f"正在安全停止后台操作：{labels}，请稍候…")
+        if shutdown_trace is not None and running_workers:
+            self._performance_probe.active_stage = "worker_shutdown"
+        with performance_stage(
+            "shutdown",
+            "background_worker_shutdown",
+            active=bool(running_workers),
+            worker_count=len(running_workers),
+            timeout_requested="none",
+        ):
+            self._shutdown_background_workers()
+        if shutdown_trace is not None and running_workers:
+            shutdown_trace.mark("worker_shutdown")
         if shutdown_trace is not None:
             self._performance_probe.active_stage = "settings_flush"
         with performance_stage(
@@ -8075,9 +8120,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Spawn asynchronous thread worker
         self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
         self.scan_worker._trigger_btn = active_btn
-        self.scan_worker.log.connect(
-            lambda text: self.write_log(text, mirror_to_file=False)
-        )
+        self.scan_worker.log.connect(self._scan_log_received)
         self.scan_worker.stage.connect(self._scan_stage_updated)
         self.scan_worker.finished.connect(self._scan_email_finished)
         self.scan_worker.error.connect(self._scan_email_error)
@@ -8088,6 +8131,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             raise
 
     def _scan_stage_updated(self, event: dict):
+        if not self._worker_callback_allowed():
+            return
         if not isinstance(event, dict):
             return
         labels = {
@@ -8115,7 +8160,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_import_scan_status.setText(text)
         self.statusBar().showMessage(text, 2500)
 
+    def _scan_log_received(self, text: str) -> None:
+        if not self._worker_callback_allowed():
+            return
+        self.write_log(text, mirror_to_file=False)
+
     def _refresh_scan_elapsed(self):
+        if not self._worker_callback_allowed():
+            return
         if not getattr(self, "_scan_started_at", None):
             return
         elapsed = time.monotonic() - self._scan_started_at
@@ -8162,6 +8214,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_import_scan_status.setText(f"扫描状态：已取消（耗时 {elapsed:.1f} 秒）")
 
     def _scan_email_finished(self, res: dict):
+        if not self._worker_callback_allowed():
+            return
         t0 = res.get("_performance_t0_monotonic") if isinstance(res, dict) else None
         performance_trace = self._performance_probe.begin(
             "mail_complete",
@@ -8257,6 +8311,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._performance_active_completion_trace = None
 
     def _scan_email_error(self, err_msg: str):
+        if not self._worker_callback_allowed():
+            return
         performance_trace = self._performance_probe.begin("mail_complete", t0_source="gui_signal")
         self._performance_active_completion_trace = performance_trace
         if performance_trace is not None:
@@ -8600,6 +8656,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _import_local_finished(self, stats: dict):
+        if not self._worker_callback_allowed():
+            return
         t0 = stats.get("_performance_t0_monotonic") if isinstance(stats, dict) else None
         performance_trace = self._performance_probe.begin(
             "local_import",
@@ -8665,6 +8723,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._performance_active_completion_trace = None
 
     def _import_local_error(self, err_msg: str):
+        if not self._worker_callback_allowed():
+            return
         self._end_data_operation("本地导入")
         self._clear_action_busy(self.btn_import_local, "导入")
         self._record_import_activity("local", failed=1, status="failed")
