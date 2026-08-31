@@ -662,6 +662,8 @@ def apply_review_hci_v1(page: QWidget | None) -> None:
 
 
 def _restore_import_sync_label(window) -> None:
+    if getattr(window, "_shutdown_requested", False):
+        return
     button = getattr(window, "btn_import_scan_selected", None)
     if button is None:
         return
@@ -689,6 +691,8 @@ def _install_import_label_refresh(window) -> None:
 
 
 def _history_recheck_finished(window, result: dict) -> None:
+    if getattr(window, "_shutdown_requested", False):
+        return
     from .hci_v1_closure import _render_history_recheck_terminal
 
     _render_history_recheck_terminal(window, result)
@@ -734,6 +738,8 @@ def _history_recheck_finished(window, result: dict) -> None:
 
 
 def _history_recheck_failed(window, message: str) -> None:
+    if getattr(window, "_shutdown_requested", False):
+        return
     from .hci_v1_closure import _render_history_recheck_failed
 
     _render_history_recheck_failed(window, message)
@@ -829,6 +835,8 @@ def _start_history_recheck(
 
 
 def _release_history_operation(window, worker=None) -> None:
+    if getattr(window, "_shutdown_requested", False):
+        return
     token = getattr(window, "_hci_history_operation_token", None)
     if worker is not None and token is not worker:
         return

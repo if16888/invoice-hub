@@ -798,6 +798,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return "手机上传"
         return ""
 
+    def _worker_callback_allowed(self) -> bool:
+        """Reject queued worker callbacks after shutdown has started."""
+        return not getattr(self, "_shutdown_requested", False)
+
     def _active_background_workers(self):
         """Return every worker owned by this window and its operation label."""
         for attr, label in (
@@ -882,6 +886,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             _log.warning("data operation gate release mismatch: %s", operation)
 
     def _export_migration_progress(self, progress: dict):
+        if not self._worker_callback_allowed():
+            return
         processed = int(progress.get("processed", 0) or 0)
         total = int(progress.get("total", 0) or 0)
         copied = int(progress.get("copied", 0) or 0)
@@ -894,6 +900,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _export_migration_finished(self, result):
+        if not self._worker_callback_allowed():
+            return
         self._end_data_operation("旧导出目录迁移")
         self._export_migration = result
         if result.failures or result.source_remains:
@@ -908,10 +916,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QTimer.singleShot(0, self._show_export_migration_result)
 
     def _export_migration_error(self, message: str):
+        if not self._worker_callback_allowed():
+            return
         self._end_data_operation("旧导出目录迁移")
         self.statusBar().showMessage(f"旧导出目录迁移失败：{message}", 8000)
 
     def _show_export_migration_result(self):
+        if not self._worker_callback_allowed():
+            return
         result = self._export_migration
         if result is None:
             return
@@ -8108,9 +8120,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Spawn asynchronous thread worker
         self.scan_worker = EmailScanWorker(self.db_path, selected_keys=selected_keys)
         self.scan_worker._trigger_btn = active_btn
-        self.scan_worker.log.connect(
-            lambda text: self.write_log(text, mirror_to_file=False)
-        )
+        self.scan_worker.log.connect(self._scan_log_received)
         self.scan_worker.stage.connect(self._scan_stage_updated)
         self.scan_worker.finished.connect(self._scan_email_finished)
         self.scan_worker.error.connect(self._scan_email_error)
@@ -8121,6 +8131,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             raise
 
     def _scan_stage_updated(self, event: dict):
+        if not self._worker_callback_allowed():
+            return
         if not isinstance(event, dict):
             return
         labels = {
@@ -8148,7 +8160,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_import_scan_status.setText(text)
         self.statusBar().showMessage(text, 2500)
 
+    def _scan_log_received(self, text: str) -> None:
+        if not self._worker_callback_allowed():
+            return
+        self.write_log(text, mirror_to_file=False)
+
     def _refresh_scan_elapsed(self):
+        if not self._worker_callback_allowed():
+            return
         if not getattr(self, "_scan_started_at", None):
             return
         elapsed = time.monotonic() - self._scan_started_at
@@ -8195,6 +8214,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_import_scan_status.setText(f"扫描状态：已取消（耗时 {elapsed:.1f} 秒）")
 
     def _scan_email_finished(self, res: dict):
+        if not self._worker_callback_allowed():
+            return
         t0 = res.get("_performance_t0_monotonic") if isinstance(res, dict) else None
         performance_trace = self._performance_probe.begin(
             "mail_complete",
@@ -8290,6 +8311,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._performance_active_completion_trace = None
 
     def _scan_email_error(self, err_msg: str):
+        if not self._worker_callback_allowed():
+            return
         performance_trace = self._performance_probe.begin("mail_complete", t0_source="gui_signal")
         self._performance_active_completion_trace = performance_trace
         if performance_trace is not None:
@@ -8633,6 +8656,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _import_local_finished(self, stats: dict):
+        if not self._worker_callback_allowed():
+            return
         t0 = stats.get("_performance_t0_monotonic") if isinstance(stats, dict) else None
         performance_trace = self._performance_probe.begin(
             "local_import",
@@ -8698,6 +8723,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._performance_active_completion_trace = None
 
     def _import_local_error(self, err_msg: str):
+        if not self._worker_callback_allowed():
+            return
         self._end_data_operation("本地导入")
         self._clear_action_busy(self.btn_import_local, "导入")
         self._record_import_activity("local", failed=1, status="failed")

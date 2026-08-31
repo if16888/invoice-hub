@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import threading
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from openpyxl import load_workbook
 
@@ -229,16 +231,69 @@ class WorkerShutdownTests(unittest.TestCase):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         try:
             from PySide6.QtCore import QCoreApplication
+            from PySide6.QtCore import Qt
             from PySide6.QtGui import QCloseEvent
             from PySide6.QtWidgets import QApplication
             from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            from scripts.invoice_fetch.gui.workers import EmailScanWorker, LocalImportWorker
         except Exception as exc:  # pragma: no cover - depends on host GUI libraries
             raise unittest.SkipTest(f"Qt GUI unavailable: {exc}")
         cls._QApplication = QApplication
         cls._QCoreApplication = QCoreApplication
         cls._QCloseEvent = QCloseEvent
+        cls._Qt = Qt
         cls._InvoiceReviewApp = InvoiceReviewApp
+        cls._EmailScanWorker = EmailScanWorker
+        cls._LocalImportWorker = LocalImportWorker
         cls._qt_app = QApplication.instance() or QApplication([])
+
+        class QueuedLocalImportWorker(LocalImportWorker):
+            def __init__(self, import_dir, db_path, payload):
+                super().__init__(import_dir, db_path)
+                self.payload = dict(payload)
+                self.emitted = threading.Event()
+                self.release = threading.Event()
+                self.wait_calls = 0
+                self.db_open_during_wait = []
+                self.window = None
+
+            def run(self):
+                self.finished.emit(self.payload)
+                self.emitted.set()
+                self.release.wait()
+
+            def wait(self, *args, **kwargs):
+                self.wait_calls += 1
+                if self.window is not None:
+                    self.db_open_during_wait.append(self.window.db.is_open)
+                self.release.set()
+                return super().wait(*args, **kwargs)
+
+        class QueuedEmailScanWorker(EmailScanWorker):
+            def __init__(self, db_path, signal_name, payload):
+                super().__init__(db_path)
+                self.signal_name = signal_name
+                self.payload = payload
+                self.emitted = threading.Event()
+                self.release = threading.Event()
+                self.wait_calls = 0
+                self.db_open_during_wait = []
+                self.window = None
+
+            def run(self):
+                getattr(self, self.signal_name).emit(self.payload)
+                self.emitted.set()
+                self.release.wait()
+
+            def wait(self, *args, **kwargs):
+                self.wait_calls += 1
+                if self.window is not None:
+                    self.db_open_during_wait.append(self.window.db.is_open)
+                self.release.set()
+                return super().wait(*args, **kwargs)
+
+        cls._QueuedLocalImportWorker = QueuedLocalImportWorker
+        cls._QueuedEmailScanWorker = QueuedEmailScanWorker
 
     def _window(self, td: str):
         window = self._InvoiceReviewApp(Path(td) / "shutdown.db", startup_probe=True)
@@ -255,6 +310,119 @@ class WorkerShutdownTests(unittest.TestCase):
         self._QCoreApplication.processEvents()
         window.deleteLater()
         self._QCoreApplication.processEvents()
+
+    def _close_without_processing(self, window):
+        event = self._QCloseEvent()
+        window.closeEvent(event)
+        self.assertTrue(event.isAccepted())
+
+    @staticmethod
+    def _install_callback_probe(window):
+        callback_checks = []
+        business_calls = []
+        end_calls = []
+        original_end = window._end_data_operation
+
+        def callback_allowed():
+            callback_checks.append(bool(window._shutdown_requested))
+            return not window._shutdown_requested
+
+        def end_operation(operation):
+            end_calls.append(operation)
+            original_end(operation)
+
+        window._worker_callback_allowed = callback_allowed
+        window._end_data_operation = end_operation
+        for name in (
+            "_clear_action_busy",
+            "_record_import_activity",
+            "_performance_completion_call",
+            "_refresh_visible_completion_page",
+            "_refresh_imports_page",
+            "_load_invoices",
+            "write_log",
+        ):
+            setattr(window, name, Mock(side_effect=lambda *args, _name=name, **kwargs: business_calls.append(_name)))
+        window.btn_import_local = Mock()
+        window.btn_scan_email = Mock()
+        return callback_checks, business_calls, end_calls
+
+    def _assert_queued_callback_is_ignored(self, window, worker, signal, handler, operation):
+        callback_checks, business_calls, end_calls = self._install_callback_probe(window)
+        worker.window = window
+        self.assertTrue(window._try_begin_data_operation(operation, notify=False))
+        if operation == "本地导入":
+            window.import_worker = worker
+        else:
+            window.scan_worker = worker
+        signal.connect(handler, self._Qt.ConnectionType.QueuedConnection)
+        worker.start()
+        self.assertTrue(worker.emitted.wait(5), "worker did not enqueue its callback")
+
+        self._close_without_processing(window)
+        self.assertFalse(window.db.is_open)
+        self.assertEqual(worker.db_open_during_wait, [True])
+        self.assertEqual(worker.wait_calls, 1)
+        self.assertEqual(end_calls, [operation])
+
+        # The signal was emitted before closeEvent and is delivered only now.
+        self._QCoreApplication.processEvents()
+        self.assertEqual(callback_checks, [True])
+        self.assertEqual(business_calls, [])
+        self.assertEqual(window._data_operation_gate.owner, "")
+
+        worker.deleteLater()
+        window.deleteLater()
+        self._QCoreApplication.processEvents()
+
+    def test_queued_local_import_finished_is_ignored_after_shutdown(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td)
+            worker = self._QueuedLocalImportWorker(
+                Path(td),
+                Path(td) / "shutdown.db",
+                {"added": 1, "duplicates": 0, "conflicts": 0, "pending_manual": 0, "failed": 0},
+            )
+            self._assert_queued_callback_is_ignored(
+                window,
+                worker,
+                worker.finished,
+                window._import_local_finished,
+                "本地导入",
+            )
+
+    def test_queued_email_finished_is_ignored_after_shutdown(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td)
+            worker = self._QueuedEmailScanWorker(
+                Path(td) / "shutdown.db",
+                "finished",
+                {"cancelled": True},
+            )
+            self._assert_queued_callback_is_ignored(
+                window,
+                worker,
+                worker.finished,
+                window._scan_email_finished,
+                "邮箱扫描",
+            )
+
+    def test_queued_email_error_is_ignored_after_shutdown(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td)
+            worker = self._QueuedEmailScanWorker(
+                Path(td) / "shutdown.db",
+                "error",
+                "synthetic scan failure",
+            )
+            with patch("scripts.invoice_fetch.gui.app.QMessageBox.critical"):
+                self._assert_queued_callback_is_ignored(
+                    window,
+                    worker,
+                    worker.error,
+                    window._scan_email_error,
+                    "邮箱扫描",
+                )
 
     def test_local_import_waits_before_database_close(self):
         with tempfile.TemporaryDirectory() as td:
