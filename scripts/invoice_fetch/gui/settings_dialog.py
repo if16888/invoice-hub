@@ -3297,7 +3297,6 @@ class SettingsDialog(QDialog):
         ):
             self._clear_mailbox_test_worker(worker)
             self._finalize_pending_mailbox_test_close()
-
     def _mailbox_test_result_done(self, worker):
         if worker is not self._mailbox_test_worker:
             return
