@@ -532,6 +532,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             window = self._make_window(td)
             try:
                 window.show()
+                window.resize(1920, 1080)
                 window._switch_main_page("settings", sub_tab=1)
                 QApplication.processEvents()
                 self.assertFalse(hasattr(window, "stat_box_overview"))
