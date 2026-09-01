@@ -44,6 +44,7 @@ class ReviewPagingTests(unittest.TestCase):
         window.lbl_status_left.show()
         window._load_invoices = Mock()
         window.search_reload_timer = QTimer(window)
+        window.search_reload_timer.timeout.connect(lambda: None)
         install_review_paging(page)
         self.addCleanup(window.deleteLater)
         return window
