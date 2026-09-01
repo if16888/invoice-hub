@@ -31,6 +31,15 @@ class ClaimGroupsTests(unittest.TestCase):
         self.addCleanup(self._export_path_patch.stop)
         self.addCleanup(shutil.rmtree, self._test_export_root, ignore_errors=True)
 
+    @staticmethod
+    def _wait_for_redownload(window, app):
+        worker = getattr(window, "_redownload_worker", None)
+        if worker is None:
+            return
+        worker.wait()
+        app.processEvents()
+        app.processEvents()
+
     def test_pending_evidence_helper_does_not_confuse_manual_review_types(self):
         self.assertTrue(is_pending_evidence_invoice({
             "invoice_type": "待关联证明材料",
@@ -3936,6 +3945,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.table.selectRow(0)
                         app.processEvents()
                         window._redownload_selected_invoices()
+                        self._wait_for_redownload(window, app)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -4109,6 +4119,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok), \
                                 patch.object(window, "write_log", side_effect=log_messages.append):
                             window._redownload_selected_invoices()
+                            self._wait_for_redownload(window, app)
 
                         self.assertTrue(any("重新读取邮件" in msg for msg in log_messages))
                         self.assertTrue(any("已通过重新读取邮件修复" in msg for msg in log_messages))
@@ -4192,12 +4203,16 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.table.selectRow(0)
                         app.processEvents()
 
+                        def conflict_update(db_instance, *args, **kwargs):
+                            db_instance.last_error = "unique_conflict"
+                            return False
+
                         with patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                                 patch("scripts.invoice_fetch.invoice_parser.InvoiceParser", return_value=FakeParser()), \
-                                patch.object(window.db, "update_invoice_parsed_metadata", return_value=False), \
-                                patch.object(window.db, "last_error", "unique_conflict"), \
+                                patch.object(InvoiceDB, "update_invoice_parsed_metadata", conflict_update), \
                                 patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warning:
                             window._redownload_selected_invoices()
+                            self._wait_for_redownload(window, app)
 
                         result_text = mock_warning.call_args.args[2]
                         self.assertIn("唯一键冲突", result_text)
@@ -4291,6 +4306,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok), \
                                 patch.object(window, "write_log", side_effect=log_messages.append):
                             window._redownload_selected_invoices()
+                            self._wait_for_redownload(window, app)
 
                         self.assertTrue(any("重新读取邮件" in msg for msg in log_messages))
                         mock_handle.assert_called_once()
@@ -4374,6 +4390,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
                         with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
                             window._redownload_selected_invoices()
+                            self._wait_for_redownload(window, app)
                             mock_warn.assert_called_once()
                             result_text = mock_warn.call_args.args[2]
                             self.assertIn("下载失败: 1 张", result_text)
@@ -4456,6 +4473,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
                         with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn:
                             window._redownload_selected_invoices()
+                            self._wait_for_redownload(window, app)
                             mock_warn.assert_called_once()
                             result_text = mock_warn.call_args.args[2]
                             self.assertIn("下载失败: 1 张", result_text)
@@ -4547,6 +4565,7 @@ class ClaimGroupsTests(unittest.TestCase):
                             with patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warn, \
                                     patch.object(QMessageBox, "information", return_value=QMessageBox.Ok) as mock_info:
                                 window._redownload_selected_invoices()
+                                self._wait_for_redownload(window, app)
                                 mock_info.assert_not_called()
                                 mock_warn.assert_called_once()
                                 result_text = mock_warn.call_args.args[2]
