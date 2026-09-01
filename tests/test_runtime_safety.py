@@ -438,6 +438,84 @@ class WorkerShutdownTests(unittest.TestCase):
             self.assertEqual(window._data_operation_gate.owner, "")
             self.assertFalse(window._try_begin_data_operation("本地导入", notify=False))
 
+    def test_local_import_shutdown_cancels_at_source_boundary(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source_dir = base / "source"
+            source_dir.mkdir()
+            for name in ("A.pdf", "B.pdf", "C.pdf"):
+                (source_dir / name).write_bytes(f"%PDF-{name}".encode("ascii"))
+
+            window = self._window(td)
+            started = threading.Event()
+            release = threading.Event()
+            processed = []
+            observed = {}
+            db_open_during_wait = []
+
+            from scripts.invoice_fetch import services
+
+            real_import = services.import_local_directory
+
+            def wrapped_import(import_dir, db_path, *, scan_control):
+                observed["control"] = scan_control
+                return real_import(import_dir, db_path, scan_control=scan_control)
+
+            def fake_pdf(source_name, *_args, **_kwargs):
+                processed.append(source_name)
+                if source_name == "A.pdf":
+                    started.set()
+                    release.wait()
+                return services.LocalImportItemResult(
+                    status="added",
+                    invoice_id=len(processed),
+                    created=True,
+                    reviewable=True,
+                )
+
+            class ControlledLocalImportWorker(self._LocalImportWorker):
+                def request_cancel(self):
+                    super().request_cancel()
+                    release.set()
+
+                def wait(self, *args, **kwargs):
+                    db_open_during_wait.append(window.db.is_open)
+                    return super().wait(*args, **kwargs)
+
+            worker = ControlledLocalImportWorker(source_dir, base / "shutdown.db")
+            self.assertTrue(window._try_begin_data_operation("本地导入", notify=False))
+            window.import_worker = worker
+
+            with patch.object(services, "RUNTIME_DIR", base / "runtime"), patch.object(
+                services, "InvoiceParser", return_value=Mock()
+            ), patch.object(services, "_import_local_pdf", side_effect=fake_pdf), patch.object(
+                services, "import_local_directory", side_effect=wrapped_import
+            ):
+                worker.start()
+                try:
+                    self.assertTrue(started.wait(5), "local import did not enter the controlled source")
+                    self.assertTrue(window.db.is_open)
+
+                    event = self._QCloseEvent()
+                    window.closeEvent(event)
+
+                    self.assertTrue(event.isAccepted())
+                    self.assertTrue(release.is_set())
+                    self.assertFalse(worker.isRunning())
+                    self.assertEqual(processed, ["A.pdf"])
+                    self.assertIs(observed["control"], worker.control)
+                    self.assertTrue(worker.control.cancelled)
+                    self.assertEqual(db_open_during_wait, [True])
+                    self.assertFalse(window.db.is_open)
+                    self.assertEqual(window._data_operation_gate.owner, "")
+                finally:
+                    release.set()
+                    if worker.isRunning():
+                        worker.wait(5000)
+
+            window.deleteLater()
+            self._QCoreApplication.processEvents()
+
     def test_scan_requests_cancel_then_waits_before_database_close(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._window(td)

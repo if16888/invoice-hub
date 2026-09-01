@@ -8640,6 +8640,41 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         restored = stats.get("restored", 0)
         new_ids = stats.get("new_invoice_ids", ())
         review_ids = stats.get("review_invoice_ids", new_ids)
+        if stats.get("cancelled"):
+            self._record_import_activity(
+                "local",
+                added=added,
+                restored=restored,
+                duplicates=duplicates,
+                failed=failed,
+                status="cancelled",
+                new_invoice_ids=new_ids,
+                review_invoice_ids=review_ids,
+            )
+            if performance_trace is not None:
+                performance_trace.mark("T2_state_update")
+            self.write_log(
+                f"⏹ [本地导入] 已取消：已完成 {added + duplicates + conflicts + pending_manual + failed} 项，"
+                "未开始后续文件。"
+            )
+            self.statusBar().showMessage(
+                f"本地导入已取消：已完成 {added + duplicates + conflicts + pending_manual + failed} 项",
+                4000,
+            )
+            self._performance_completion_call(
+                performance_trace,
+                "load_invoices",
+                self._load_invoices,
+                surface="review",
+            )
+            self._refresh_visible_completion_page(performance_trace)
+            if performance_trace is not None:
+                performance_trace.mark("T3_db_list_refresh_complete")
+                surface = self._performance_current_surface()
+                self._performance_request_completion_paint(performance_trace, surface)
+                self._performance_consume_completion_paint(surface)
+            self._performance_active_completion_trace = None
+            return
         self._record_import_activity(
             "local",
             added=added,
