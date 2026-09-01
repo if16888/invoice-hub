@@ -91,7 +91,7 @@ _MODULE_WEIGHTS: dict[str, float] = {
     "tests.test_ui_preview_helpers": 16.0,
     "tests.test_review_toolbar_filter_fixes": 15.0,
     "tests.claim_groups_mail": 15.0,
-    "tests.test_review_list_paging_fix": 15.0,
+    "tests.test_review_paging": 15.0,
     "tests.test_import_center_geometry": 14.0,
     "tests.test_review_feedback_fixes": 14.0,
     "tests.test_invoice_workflow": 13.0,

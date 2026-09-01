@@ -41,7 +41,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "review_detail_width_fix.py",
         "review_feedback_fixes.py",
         "review_legacy_contract.py",
-        "review_list_paging_fix.py",
         "review_settings_issue_fixes.py",
         "review_table_width_contract.py",
         "review_toolbar_filter_fixes.py",

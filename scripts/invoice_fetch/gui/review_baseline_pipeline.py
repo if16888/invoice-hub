@@ -22,7 +22,7 @@ from .hci_v1 import apply_review_hci_v1
 from .hci_v1_closure import apply_review_hci_closure
 from .review_detail_closure import apply_review_detail_closure
 from .review_detail_width_fix import apply_review_detail_width_fix
-from .review_list_paging_fix import apply_review_list_paging_fix
+from .review_paging import install_review_paging
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_table_width_contract import apply_review_table_width_contract
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
@@ -43,7 +43,7 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("workspace_closure", apply_review_workspace_closure),
     ("detail_closure", apply_review_detail_closure),
     # Paging owns the final count copy and reconnects the search debounce timer.
-    ("list_paging", apply_review_list_paging_fix),
+    ("list_paging", install_review_paging),
     # Task ownership runs late so no earlier compatibility stage can restore
     # cross-workflow buttons or expand the buyer warning again.
     ("task_ownership", apply_design_v1_review_task_closure),
