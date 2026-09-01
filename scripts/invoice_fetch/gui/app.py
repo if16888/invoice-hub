@@ -41,6 +41,7 @@ from ..export_paths import resolve_export_directory
 from ..diagnostics import collect_app_info, export_diagnostics_zip
 from ..reimbursement import amount_total, buyer_warning, format_amount_total, get_date_warning
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
+from ..redownload import RedownloadInvoiceSnapshot
 from ..review_query import ReviewColumnFilter, ReviewQuery
 from ..log_privacy import PrivacyLogFilter, mask_email, sanitize_log_message
 from .styles import (
@@ -94,7 +95,13 @@ from .performance_probe import (
     PerformanceProbe,
     performance_stage,
 )
-from .workers import EmailScanWorker, ExportMigrationWorker, LocalImportWorker
+from .workers import (
+    EmailScanWorker,
+    ExportMigrationWorker,
+    InvoiceRedownloadRequest,
+    InvoiceRedownloadWorker,
+    LocalImportWorker,
+)
 from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .workbench_settings import (
     migrate_legacy_workbench_settings,
@@ -543,6 +550,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self._export_migration = None
         self._export_migration_worker = None
+        self._redownload_worker = None
+        self._redownload_request_id = 0
+        self._redownload_shutdown_pending = False
         self._shutdown_requested = False
         db_time = _time_mod.time()
         self.db_open_ms = int((db_time - start_time) * 1000)
@@ -809,6 +819,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ("import_worker", "本地导入"),
             ("_export_migration_worker", "旧导出目录迁移"),
             ("_hci_history_worker", "历史记录重检"),
+            ("_redownload_worker", "重新下载发票"),
         ):
             worker = getattr(self, attr, None)
             if worker is not None:
@@ -818,7 +829,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _disconnect_worker_signals(worker) -> None:
         """Stop queued worker callbacks from targeting a closing window."""
         for signal_name in (
-            "progress", "log", "stage", "finished", "error", "finished_result", "failed",
+            "progress", "log", "stage", "result", "finished", "error", "cancelled",
+            "finished_result", "failed",
         ):
             signal = getattr(worker, signal_name, None)
             disconnect = getattr(signal, "disconnect", None)
@@ -1020,6 +1032,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 event.ignore()
                 return
         self._close_pending = False
+
+        # A redownload may be inside a Playwright/HTTP operation which has no
+        # immediate cancellation boundary.  Keep the window alive and let the
+        # worker finish cooperatively; its callbacks are guarded by
+        # ``_shutdown_requested`` and cannot touch the closing UI.
+        redownload_worker = getattr(self, "_redownload_worker", None)
+        if (
+            redownload_worker is not None
+            and callable(getattr(redownload_worker, "isRunning", None))
+            and redownload_worker.isRunning()
+        ):
+            self._redownload_shutdown_pending = True
+            request_cancel = getattr(redownload_worker, "request_cancel", None)
+            if callable(request_cancel):
+                request_cancel()
+            self.statusBar().showMessage("正在安全停止重新下载，请稍候…")
+            event.ignore()
+            return
 
         running_workers = [
             (label, worker)
@@ -2043,7 +2073,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_open_file=self._open_attachment,
             on_add_attachment=self._add_attachment_manually,
             on_add_evidence=self._add_evidence_manually,
-            on_retry_download=self._retry_download_link,
+            on_retry_download=self._redownload_selected_invoices,
             on_open_evidence=self._open_extra_docs,
             on_copy_number=self._copy_invoice_number,
             on_locate_file=self._locate_attachment_file,
@@ -6193,6 +6223,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._performance_mark_list("preview_trigger")
             self._update_document_preview()
             self._update_claim_total()
+            self._sync_redownload_entry_state()
             return
 
         self._set_selection_total_status(selected_indexes)
@@ -6346,6 +6377,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.lbl_closing_desc.setText("已选中多张发票，请使用下方或右键菜单进行批量操作。")
 
         self._update_claim_total()
+        self._sync_redownload_entry_state()
 
     def _show_table_context_menu(self, pos):
         selected_indexes = self.table.selectionModel().selectedRows()
@@ -6392,6 +6424,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             action_reparse = menu.addAction("🔄 重新解析发票")
             action_reparse.triggered.connect(self._reparse_selected_invoices)
             action_redownload = menu.addAction("📥 重新下载发票")
+            action_redownload.setEnabled(
+                not getattr(self, "_redownload_worker", None)
+                and not getattr(self, "_shutdown_requested", False)
+            )
             action_redownload.triggered.connect(self._redownload_selected_invoices)
             menu.addSeparator()
             action_delete = menu.addAction("🗑️ 删除发票")
@@ -6558,322 +6594,157 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"缺失文件: {len(missing_files)}, 失败: {len(parse_failed_files)}"
         )
 
+    def _redownload_is_active(self) -> bool:
+        """Return whether a redownload worker is still owned by this window."""
+        return getattr(self, "_redownload_worker", None) is not None
+
+    def _refresh_redownload_entry_style(self) -> None:
+        button = getattr(self, "btn_retry_download", None)
+        if button is None:
+            return
+        style = button.style()
+        if style is not None:
+            style.unpolish(button)
+            style.polish(button)
+
+    def _sync_redownload_entry_state(self) -> None:
+        """Keep the detail retry entry disabled while a batch is owned."""
+        button = getattr(self, "btn_retry_download", None)
+        if button is None:
+            return
+        if self._redownload_is_active():
+            if button.property("_redownload_idle_label") is None:
+                button.setProperty("_redownload_idle_label", button.text())
+            button.setText("重新下载中...")
+            button.setEnabled(False)
+            button.setProperty("busy", "true")
+        else:
+            idle_label = button.property("_redownload_idle_label")
+            if idle_label:
+                button.setText(str(idle_label))
+                button.setProperty("_redownload_idle_label", None)
+            invoice = getattr(self, "current_invoice", None) or {}
+            has_file = bool(invoice.get("attachment_path"))
+            has_url = bool(str(invoice.get("download_url") or "").strip())
+            button.setEnabled(not has_file and has_url)
+            button.setProperty("busy", "false")
+        self._refresh_redownload_entry_style()
+
     def _redownload_selected_invoices(self):
-        """Redownload invoice PDFs from remote download URL using Playwright browser."""
-        selected_indexes = self.table.selectionModel().selectedRows()
+        """Start one immutable, background redownload request."""
+        if getattr(self, "_shutdown_requested", False):
+            return None
+        worker = getattr(self, "_redownload_worker", None)
+        if worker is not None:
+            # Keep ownership until the QThread has actually finished.  This
+            # also makes repeated context-menu activation a no-op.
+            return worker
+
+        selection_model = self.table.selectionModel()
+        selected_indexes = selection_model.selectedRows() if selection_model is not None else []
         if not selected_indexes:
-            return
+            return None
 
-        count = len(selected_indexes)
-        success_count = 0
-        no_url_count = 0
-        failed_count = 0
-        download_failed_files = []
-        reread_count = 0
-        reread_success_count = 0
-        reread_failed_count = 0
-        redownload_buckets = {key: 0 for key in REDOWNLOAD_BUCKETS}
+        snapshots: list[RedownloadInvoiceSnapshot] = []
+        for index in selected_indexes:
+            row = index.row()
+            if 0 <= row < len(self.invoices_list):
+                invoice = self.invoices_list[row]
+                snapshot = RedownloadInvoiceSnapshot.from_mapping(invoice)
+                if snapshot.invoice_id > 0:
+                    snapshots.append(snapshot)
+        if not snapshots:
+            return None
 
-        from ..attachment_handler import AttachmentHandler
-        from ..config import get_email_accounts
-        from ..credentials import get_auth_code, has_auth_code
-        from ..invoice_parser import InvoiceParser
-        from ..link_downloader import LinkDownloader
-        from ..mail_fetcher import MailFetcher
-        from ..services import _handle_pending_email
+        if not self._try_begin_data_operation("重新下载发票"):
+            return None
 
+        self._redownload_request_id += 1
+        request_id = self._redownload_request_id
+        worker = None
         try:
-            downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"启动下载引擎失败: {e}")
-            return
-
-        parser = InvoiceParser()
-        att_handler = AttachmentHandler(RUNTIME_DIR / "attachments")
-        cfg = self.config or load_config_safe()
-        categories = cfg.get("categories", {})
-        accounts = get_email_accounts(cfg)
-        default_account = {
-            "mailbox_key": "legacy",
-            "address": cfg.get("email", {}).get("address", ""),
-            "auth_code": "",
-            "imap": cfg.get("imap", {}),
-            "search": cfg.get("search", {}),
-        }
-        account_map = {str(account.get("mailbox_key") or "legacy"): account for account in accounts}
-        mail_fetchers: dict[str, tuple[MailFetcher, object]] = {}
-
-        def ensure_mail_fetcher(mailbox_key: str):
-            key = str(mailbox_key or "legacy")
-            cached = mail_fetchers.get(key)
-            if cached is not None:
-                return cached[0]
-
-            account = account_map.get(key, default_account)
-            email_addr = str(account.get("address") or "")
-            if not email_addr or email_addr == "your_email@qq.com":
-                raise ValueError("请先在[设置]中配置邮箱账号")
-            if not has_auth_code(email_addr):
-                raise ValueError(f"邮箱账号 {email_addr} 未配置授权码，请先在[设置]中配置")
-
-            auth_code = get_auth_code(email_addr)
-            imap_cfg = account.get("imap") or cfg.get("imap", {})
-            self.write_log(f"📥 [重新下载] 连接 IMAP {email_addr} ...")
-            mail_fetcher_cm = MailFetcher(
-                address=email_addr,
-                auth_code=auth_code,
-                server=imap_cfg.get("server", "imap.qq.com"),
-                port=imap_cfg.get("port", 993),
+            config_snapshot = getattr(self, "config", None)
+            if config_snapshot is None:
+                config_snapshot = load_config_safe()
+            request = InvoiceRedownloadRequest.from_values(
+                request_id,
+                snapshots,
+                self.db_path,
+                RUNTIME_DIR,
+                deepcopy(config_snapshot),
             )
-            mail_fetcher = mail_fetcher_cm.__enter__()
-            mail_fetchers[key] = (mail_fetcher, mail_fetcher_cm)
-            return mail_fetcher
+            worker = InvoiceRedownloadWorker(request, parent=self)
+            self._redownload_worker = worker
+            self._sync_redownload_entry_state()
+            worker.log.connect(self._redownload_log_received)
+            worker.progress.connect(self._redownload_progress)
+            worker.result.connect(
+                lambda result, request_id=request_id: self._redownload_finished(result, request_id)
+            )
+            worker.cancelled.connect(
+                lambda result, request_id=request_id: self._redownload_cancelled(result, request_id)
+            )
+            worker.error.connect(
+                lambda message, request_id=request_id: self._redownload_error(message, request_id)
+            )
+            worker.finished.connect(
+                lambda request_id=request_id: self._redownload_thread_done(request_id)
+            )
+            self.statusBar().showMessage("正在启动下载引擎并获取发票文件...")
+            worker.start()
+        except Exception:
+            self._redownload_worker = None
+            self._sync_redownload_entry_state()
+            self._end_data_operation("重新下载发票")
+            if worker is not None:
+                worker.deleteLater()
+            raise
+        return worker
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.statusBar().showMessage("正在启动下载引擎并获取发票文件...")
-        QApplication.processEvents()
+    def _redownload_log_received(self, message: str) -> None:
+        if not self._worker_callback_allowed():
+            return
+        self.write_log(message)
 
-        try:
-            for idx in selected_indexes:
-                inv = self.invoices_list[idx.row()]
-                inv_id = inv.get("id")
-                download_url = str(inv.get("download_url") or "")
-                mail_uid = inv.get("mail_uid")
-                mail_date = inv.get("mail_date") or inv.get("invoice_date") or "unknown_date"
+    def _redownload_progress(self, progress: dict) -> None:
+        if not self._worker_callback_allowed():
+            return
+        processed = int(progress.get("processed", 0) or 0)
+        total = int(progress.get("total", 0) or 0)
+        status = str(progress.get("status") or "processing")
+        if progress.get("cancelled"):
+            status = "正在取消"
+        suffix = f"：{status}" if status not in {"processing", ""} else ""
+        self.statusBar().showMessage(f"正在重新下载发票：{processed}/{total}{suffix}")
 
-                direct_download_ok = False
-                fallback_reason = ""
-
-                if download_url:
-                    try:
-                        dl = downloader._download_url(download_url, mail_uid or 0, inv_id, mail_date)
-                        if dl and dl.file_path and os.path.exists(dl.file_path):
-                            suffix = os.path.splitext(dl.file_path)[1].lower()
-                            if suffix == ".pdf":
-                                info = parser.parse_pdf(dl.file_path)
-                                if info.parse_success:
-                                    from ..services import _classify, _rename_by_invoice_code
-                                    cat, extra_type, extra_req = _classify(
-                                        inv.get("mail_subject") or "",
-                                        inv.get("mail_sender") or "",
-                                        info.seller_name,
-                                        categories,
-                                    )
-                                    code = info.invoice_code or info.invoice_number
-                                    att_path = _rename_by_invoice_code(
-                                        dl.file_path,
-                                        code,
-                                        info.invoice_date or mail_date,
-                                        RUNTIME_DIR / "attachments",
-                                        category=cat,
-                                        total_amount=info.total_amount,
-                                        invoice_number=info.invoice_number,
-                                        source_mode="reprocess",
-                                    )
-                                    updated = self.db.update_invoice_parsed_metadata(
-                                        invoice_id=inv_id,
-                                        invoice_number=info.invoice_number,
-                                        invoice_code=info.invoice_code,
-                                        invoice_date=info.invoice_date,
-                                        amount=info.amount,
-                                        total_amount=info.total_amount,
-                                        seller_name=info.seller_name,
-                                        buyer_name=info.buyer_name,
-                                        invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
-                                        category=cat,
-                                        has_extra=inv.get("has_extra") or False,
-                                        extra_type=extra_type,
-                                        missing_extra=extra_req,
-                                        parse_success=True,
-                                        parse_note="重新下载后解析",
-                                        item_name=getattr(info, "item_name", ""),
-                                        expense_date=getattr(info, "expense_date", ""),
-                                        date_source=getattr(info, "date_source", ""),
-                                    )
-                                    if not updated:
-                                        if getattr(self.db, "last_error", "") == "unique_conflict":
-                                            fallback_reason = "解析结果与已有发票唯一键冲突"
-                                            self.write_log(
-                                                f"⚠️ [重新下载] 发票 ID {inv_id} 更新元数据时发生唯一键冲突，尝试回读邮件"
-                                            )
-                                        else:
-                                            fallback_reason = "解析结果写入数据库失败"
-                                    else:
-                                        self.db._conn.execute(
-                                            "UPDATE invoices SET attachment_path = ? WHERE id = ?",
-                                            (att_path, inv_id),
-                                        )
-                                        self.db._conn.commit()
-                                        success_count += 1
-                                        redownload_buckets["file_restored"] += 1
-                                        direct_download_ok = True
-                                        self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 链接下载成功")
-                                else:
-                                    fallback_reason = f"链接下载后解析失败: {info.parse_note}"
-                                    if os.path.exists(dl.file_path):
-                                        self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 下载的文件是 PDF 但解析失败，正在删除临时文件: {dl.file_path}")
-                                        os.remove(dl.file_path)
-                            elif suffix == ".ofd":
-                                from ..services import _rename_by_invoice_code
-                                code = inv.get("invoice_code") or inv.get("invoice_number") or ""
-                                inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
-                                cat = inv.get("category") or "其他"
-                                amt = inv.get("total_amount") or ""
-                                inv_num = inv.get("invoice_number") or ""
-                                att_path = _rename_by_invoice_code(
-                                    dl.file_path,
-                                    code,
-                                    inv_date,
-                                    RUNTIME_DIR / "attachments",
-                                    category=cat,
-                                    total_amount=amt,
-                                    invoice_number=inv_num,
-                                    source_mode="reprocess",
-                                )
-                                self.db._conn.execute(
-                                    "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
-                                    (att_path, "OFD 原件已恢复，需手动处理/转换后再解析。", inv_id),
-                                )
-                                self.db._conn.commit()
-                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} OFD 原件已恢复，需手动处理/转换后再解析。")
-                                redownload_buckets["metadata_refreshed"] += 1
-                                direct_download_ok = True
-                            else:
-                                from ..services import _rename_by_invoice_code
-                                code = inv.get("invoice_code") or inv.get("invoice_number") or ""
-                                inv_date = inv.get("invoice_date") or mail_date or "unknown_date"
-                                cat = inv.get("category") or "其他"
-                                amt = inv.get("total_amount") or ""
-                                inv_num = inv.get("invoice_number") or ""
-                                att_path = _rename_by_invoice_code(
-                                    dl.file_path,
-                                    code,
-                                    inv_date,
-                                    RUNTIME_DIR / "attachments",
-                                    category=cat,
-                                    total_amount=amt,
-                                    invoice_number=inv_num,
-                                    source_mode="reprocess",
-                                )
-                                self.db._conn.execute(
-                                    "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
-                                    (att_path, f"下载了不支持的文件类型 ({suffix})，需手动处理。", inv_id),
-                                )
-                                self.db._conn.commit()
-                                self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 下载了不支持的文件类型 ({suffix})，已保存，需手动处理。")
-                                redownload_buckets["metadata_refreshed"] += 1
-                                direct_download_ok = True
-                        else:
-                            fallback_reason = "下载超时或链接失效"
-                    except Exception as e:
-                        fallback_reason = f"链接下载异常: {e}"
-
-                if direct_download_ok:
-                    continue
-
-                if not mail_uid:
-                    no_url_count += 1
-                    failed_count += 1
-                    failure_detail = fallback_reason or "无邮件 UID，无法重新读取邮件"
-                    if download_url or fallback_reason:
-                        redownload_buckets["download_failed"] += 1
-                    else:
-                        redownload_buckets["no_candidate_link"] += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: {failure_detail}")
-                    self.write_log(f"❌ [重新下载] 发票 ID {inv_id} {failure_detail}")
-                    continue
-
-                reread_count += 1
-                if not download_url:
-                    no_url_count += 1
-
-                try:
-                    mailbox_key = str(inv.get("mailbox_key") or "legacy")
-                    account = account_map.get(mailbox_key, default_account)
-                    mailbox_folder = account.get("search", {}).get("folder", "INBOX")
-                    fetcher = ensure_mail_fetcher(mailbox_key)
-                    self.write_log(
-                        f"↩️ [重新下载] 发票 ID {inv_id} {fallback_reason or '无下载链接'}，改为重新读取邮件 UID={mail_uid}"
-                    )
-                    reread_ok = _handle_pending_email(
-                        row={"uid": mail_uid, "mail_date": mail_date, "mailbox_key": mailbox_key},
-                        fetcher=fetcher,
-                        folder=mailbox_folder,
-                        att_handler=att_handler,
-                        parser=parser,
-                        link_dl=downloader,
-                        db=self.db,
-                        categories=categories,
-                    )
-                    reread_status = getattr(reread_ok, "status", "")
-                    if reread_ok:
-                        status = reread_status or "recorded"
-
-                        if status == "duplicate":
-                            refreshed = self.db.get_invoice(inv_id)
-                            refreshed_att_path = refreshed.get("attachment_path") if refreshed else None
-                            resolved_path = self._resolve_attachment_path(refreshed_att_path) if refreshed_att_path else None
-
-                            file_ok = _is_file_valid_and_openable(resolved_path)
-                            if not file_ok:
-                                status = "download_failed"
-
-                        bucket = _bucket_redownload_status(status)
-                        redownload_buckets[bucket] += 1
-                        if bucket == "file_restored":
-                            success_count += 1
-                            reread_success_count += 1
-                            self.write_log(f"✅ [重新下载] 发票 ID {inv_id} 已通过重新读取邮件修复原文件")
-                        elif bucket == "metadata_refreshed":
-                            self.write_log(f"ℹ️ [重新下载] 发票 ID {inv_id} 仅刷新元数据或仍需手动下载")
-                        elif bucket == "duplicate_only":
-                            self.write_log(f"ℹ️ [重新下载] 发票 ID {inv_id} 仅命中已有重复记录")
-                        else:
-                            reread_failed_count += 1
-                            failed_count += 1
-                            diagnostics = getattr(downloader, "last_download_diagnostics", {}) or {}
-                            attempted = int(diagnostics.get("attempted", 0) or 0)
-                            failed = int(diagnostics.get("failed", 0) or 0)
-                            if attempted > 0 and failed > 0:
-                                fail_reason = "链接下载失败并且未恢复原件"
-                            else:
-                                fail_reason = "未恢复原件文件"
-                            download_failed_files.append(f"发票 ID {inv_id}: {fail_reason}")
-                            self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件后仍未成功恢复原件")
-                        continue
-
-                    if reread_status == "no_candidate_link":
-                        redownload_buckets["no_candidate_link"] += 1
-                        reread_failed_count += 1
-                        failed_count += 1
-                        download_failed_files.append(f"发票 ID {inv_id}: 无候选下载链接")
-                        self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 无候选下载链接")
-                        continue
-
-                    reread_failed_count += 1
-                    failed_count += 1
-                    redownload_buckets["download_failed"] += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: 重新读取邮件后仍未成功入库")
-                    self.write_log(f"⚠️ [重新下载] 发票 ID {inv_id} 重新读取邮件后仍未成功入库")
-                except Exception as e:
-                    reread_failed_count += 1
-                    failed_count += 1
-                    redownload_buckets["download_failed"] += 1
-                    download_failed_files.append(f"发票 ID {inv_id}: 重新读取邮件失败 ({str(e)})")
-                    self.write_log(f"❌ [重新下载] 发票 ID {inv_id} 重新读取邮件失败: {e}")
-        finally:
-            downloader.close()
-            for _, mail_fetcher_cm in mail_fetchers.values():
-                mail_fetcher_cm.__exit__(None, None, None)
-            QApplication.restoreOverrideCursor()
-            self.statusBar().clearMessage()
-
+    def _redownload_render_result(self, result: dict, *, cancelled: bool = False) -> None:
+        result = result or {}
+        requested = int(result.get("requested_count", 0) or 0)
+        completed = int(result.get("completed_count", 0) or 0)
+        buckets = dict(result.get("buckets") or {})
+        failure_details = list(result.get("failure_details") or ())
         self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
         self._on_table_selection_changed()
+        self._sync_redownload_entry_state()
 
-        msg = _format_redownload_bucket_summary(count, redownload_buckets, download_failed_files)
+        if cancelled:
+            self.statusBar().showMessage(
+                f"重新下载已取消，已完成 {completed}/{requested} 张",
+                8000,
+            )
+            self.write_log(
+                f"📥 [重新下载] 已取消。完成: {completed}/{requested}, "
+                f"file_restored={int(buckets.get('file_restored', 0) or 0)}"
+            )
+            return
+
+        msg = _format_redownload_bucket_summary(requested, buckets, failure_details)
+        reread_count = int(result.get("reread_count", 0) or 0)
+        reread_success_count = int(result.get("reread_success_count", 0) or 0)
+        reread_failed_count = int(result.get("reread_failed_count", 0) or 0)
+        no_url_count = int(result.get("no_url_count", 0) or 0)
         if reread_count:
             msg += (
                 f"\n\n其中 {reread_count} 张需要重新读取邮件，"
@@ -6882,20 +6753,65 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if no_url_count:
             msg += f"\n\n{no_url_count} 张没有直接下载链接，已尝试从邮件重新读取。"
 
-        if (redownload_buckets.get("download_failed", 0) > 0 or
-            (redownload_buckets.get("duplicate_only", 0) > 0 and redownload_buckets.get("file_restored", 0) == 0)):
+        if (
+            int(buckets.get("download_failed", 0) or 0) > 0
+            or (
+                int(buckets.get("duplicate_only", 0) or 0) > 0
+                and int(buckets.get("file_restored", 0) or 0) == 0
+            )
+        ):
             QMessageBox.warning(self, "重新下载结果", msg)
         else:
             QMessageBox.information(self, "重新下载结果", msg)
+        self.statusBar().clearMessage()
         self.write_log(
             "📥 [重新下载] 完成。"
-            f"file_restored={redownload_buckets['file_restored']} "
-            f"metadata_refreshed={redownload_buckets['metadata_refreshed']} "
-            f"duplicate_only={redownload_buckets['duplicate_only']} "
-            f"download_failed={redownload_buckets['download_failed']} "
-            f"no_candidate_link={redownload_buckets['no_candidate_link']} "
-            f"回读邮件: {reread_success_count}/{reread_count}, 失败: {failed_count}"
+            f"file_restored={int(buckets.get('file_restored', 0) or 0)} "
+            f"metadata_refreshed={int(buckets.get('metadata_refreshed', 0) or 0)} "
+            f"duplicate_only={int(buckets.get('duplicate_only', 0) or 0)} "
+            f"download_failed={int(buckets.get('download_failed', 0) or 0)} "
+            f"no_candidate_link={int(buckets.get('no_candidate_link', 0) or 0)} "
+            f"回读邮件: {reread_success_count}/{reread_count}, "
+            f"失败: {int(result.get('failed_count', 0) or 0)}"
         )
+
+    def _redownload_finished(self, result: dict, request_id: int) -> None:
+        if not self._worker_callback_allowed() or request_id != self._redownload_request_id:
+            return
+        self._end_data_operation("重新下载发票")
+        self._redownload_render_result(result, cancelled=False)
+
+    def _redownload_cancelled(self, result: dict, request_id: int) -> None:
+        if not self._worker_callback_allowed() or request_id != self._redownload_request_id:
+            return
+        self._end_data_operation("重新下载发票")
+        self._redownload_render_result(result, cancelled=True)
+
+    def _redownload_error(self, message: str, request_id: int) -> None:
+        if not self._worker_callback_allowed() or request_id != self._redownload_request_id:
+            return
+        self._end_data_operation("重新下载发票")
+        self.statusBar().clearMessage()
+        QMessageBox.critical(self, "错误", sanitize_log_message(message))
+
+    def _redownload_thread_done(self, request_id: int) -> None:
+        worker = getattr(self, "_redownload_worker", None)
+        if worker is None or request_id != self._redownload_request_id:
+            return
+        callbacks_allowed = self._worker_callback_allowed()
+        self._end_data_operation("重新下载发票")
+        self._redownload_worker = None
+        # This callback is lifecycle-only.  It may clear worker ownership
+        # during shutdown, but it must not re-touch normal GUI state then.
+        if callbacks_allowed:
+            self._sync_redownload_entry_state()
+        delete_later = getattr(worker, "deleteLater", None)
+        if callable(delete_later):
+            delete_later()
+        if getattr(self, "_redownload_shutdown_pending", False):
+            self._redownload_shutdown_pending = False
+            QTimer.singleShot(0, self.close)
+
 
     def _delete_selected_invoices(self):
         selected_indexes = self.table.selectionModel().selectedRows(0)
@@ -7221,105 +7137,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QMessageBox.critical(self, "错误", f"补齐证明材料失败: {e}")
 
     def _retry_download_link(self):
-        if not self.current_invoice:
-            return
-
-        url = self.current_invoice.get("download_url") or ""
-        if not url.strip():
-            return
-
-        from PySide6.QtWidgets import QProgressDialog, QMessageBox
-        progress = QProgressDialog("正在从链接尝试下载发票文件...", "取消", 0, 0, self)
-        progress.setWindowTitle("下载引擎")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.show()
-        progress.setValue(0)
-        QApplication.processEvents()
-
-        from ..link_downloader import LinkDownloader
-        import shutil
-
-        inv_id = self.current_invoice["id"]
-        mail_uid = self.current_invoice.get("mail_uid") or 0
-        date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
-
-        if "-" in date_str:
-            date_dir_name = date_str[:10]
-        else:
-            date_dir_name = "unknown_date"
-
-        success = False
-        try:
-            downloader = LinkDownloader(download_dir=RUNTIME_DIR / "attachments")
-            res = downloader._download_url(url, mail_uid, 999, date_dir_name)
-            if res and res.file_path and os.path.exists(res.file_path):
-                src_path = Path(res.file_path)
-                ext = src_path.suffix.lower()
-
-                inv_num = self.current_invoice.get("invoice_number") or ""
-                inv_code = self.current_invoice.get("invoice_code") or ""
-                code = inv_code or inv_num
-
-                dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
-                from scripts.invoice_fetch.attachment_handler import build_managed_attachment_name
-                dest_name = build_managed_attachment_name(
-                    original_name=src_path.name,
-                    invoice_date=self.current_invoice.get("invoice_date"),
-                    expense_date=self.current_invoice.get("expense_date"),
-                    fallback_date=self.current_invoice.get("mail_date"),
-                    category=self.current_invoice.get("category"),
-                    total_amount=self.current_invoice.get("total_amount"),
-                    invoice_number=self.current_invoice.get("invoice_number"),
-                    role="原件",
-                )
-                if not dest_name.lower().endswith(ext):
-                    dest_name = os.path.splitext(dest_name)[0] + ext
-
-                dest_path = dest_dir / dest_name
-                if dest_path.resolve() != src_path.resolve():
-                    if dest_path.exists():
-                        stem = dest_path.stem
-                        for n in range(1, 100):
-                            cand = dest_dir / f"{stem}_{n}{ext}"
-                            if not cand.exists():
-                                dest_path = cand
-                                break
-                    shutil.move(src_path, dest_path)
-
-                h = hashlib.sha256()
-                with open(dest_path, "rb") as f:
-                    while chunk := f.read(8192):
-                        h.update(chunk)
-                file_hash_val = h.hexdigest()
-
-                rel_path = f"attachments/{date_dir_name}/{dest_path.name}"
-
-                self.db.update_invoice_file_paths(inv_id, attachment_path=rel_path, file_hash=file_hash_val)
-                if getattr(res, "parse_note", None):
-                    self.db.update_invoice_missing_fields(inv_id, {"parse_note": res.parse_note}, only_if_empty=False)
-
-                self.current_invoice["attachment_path"] = rel_path
-                self.current_invoice["file_hash"] = file_hash_val
-                if getattr(res, "parse_note", None):
-                    self.current_invoice["parse_note"] = res.parse_note
-
-                success = True
-
-            downloader.close()
-        except Exception as e:
-            _log.error("重试下载发生错误: %s", e)
-
-        progress.close()
-
-        if success:
-            QMessageBox.information(self, "成功", "发票原件下载并关联成功！")
-            self._on_table_selection_changed()
-            self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
-            self.current_preview_index = 0
-            self._update_document_preview()
-            self._load_invoices()
-        else:
-            QMessageBox.warning(self, "下载失败", "未能从链接获取官方 PDF/OFD，请尝试人工补齐原件文件。")
+        """Route the legacy detail callback through the single async path."""
+        return self._redownload_selected_invoices()
 
     def _open_extra_docs(self):
         """Open the currently selected extra/unassociated supporting doc."""

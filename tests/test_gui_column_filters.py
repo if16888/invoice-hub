@@ -71,6 +71,14 @@ class GuiColumnFilterTests(unittest.TestCase):
     def _numbers(self, window):
         return [row.get("invoice_number") for row in window.invoices_list]
 
+    def _wait_for_redownload(self, window):
+        worker = getattr(window, "_redownload_worker", None)
+        if worker is None:
+            return
+        worker.wait()
+        self.app.processEvents()
+        self.app.processEvents()
+
     def test_categorical_filter_by_category(self):
         window = self._make_window([
             {"invoice_number": "FOOD", "category": "餐饮"},
@@ -538,6 +546,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
              patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
             window._redownload_selected_invoices()
+            self._wait_for_redownload(window)
 
         mock_parser.parse_pdf.assert_not_called()
 
@@ -572,6 +581,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
              patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
             window._redownload_selected_invoices()
+            self._wait_for_redownload(window)
 
         refreshed = window.db.get_invoice(inv_id)
         att_path = refreshed.get("attachment_path")
@@ -623,6 +633,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
              patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
             window._redownload_selected_invoices()
+            self._wait_for_redownload(window)
 
         self.assertFalse(pdf_file.exists())
         mock_warn.assert_called_once()
@@ -662,6 +673,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         with patch("PySide6.QtWidgets.QMessageBox.information") as mock_info, \
              patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
             window._redownload_selected_invoices()
+            self._wait_for_redownload(window)
 
         mock_warn.assert_called_once()
         summary_msg = mock_warn.call_args[0][2]
