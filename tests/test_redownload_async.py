@@ -898,7 +898,11 @@ class RedownloadGuiBoundaryTests(unittest.TestCase):
         from scripts.invoice_fetch import redownload as redownload_module
 
         window, _first_id, second_id = self._make_window()
-        window.table.selectRow(0)
+        first_row = window._row_for_invoice_id(_first_id)
+        second_row = window._row_for_invoice_id(second_id)
+        self.assertGreaterEqual(first_row, 0)
+        self.assertGreaterEqual(second_row, 0)
+        window._apply_single_row_selection(first_row)
         release = threading.Event()
 
         def controlled_operation(*_args, **_kwargs):
@@ -909,16 +913,16 @@ class RedownloadGuiBoundaryTests(unittest.TestCase):
             redownload_module, "run_invoice_redownload", side_effect=controlled_operation
         ), patch("PySide6.QtWidgets.QMessageBox.information"):
             worker = window._redownload_selected_invoices()
-            window.table.selectRow(1)
+            window._apply_single_row_selection(second_row)
             # Reproduce the Windows regression: the live table selection is B
             # while the cached detail object still points to A.
-            window.current_invoice = window.invoices_list[0]
+            window.current_invoice = window._invoice_by_id(_first_id)
             release.set()
             worker.wait()
             self._qt.processEvents()
 
         selected_rows = window.table.selectionModel().selectedRows()
-        self.assertEqual([index.row() for index in selected_rows], [1])
+        self.assertEqual([index.row() for index in selected_rows], [second_row])
         selected_invoice_ids = [window.invoices_list[index.row()]["id"] for index in selected_rows]
         self.assertEqual(selected_invoice_ids, [second_id])
         self.assertIsNotNone(window.current_invoice)
@@ -932,12 +936,16 @@ class RedownloadGuiBoundaryTests(unittest.TestCase):
 
         window, first_id, second_id = self._make_window()
         window.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        window.table.selectRow(1)
+        first_row = window._row_for_invoice_id(first_id)
+        second_row = window._row_for_invoice_id(second_id)
+        self.assertGreaterEqual(first_row, 0)
+        self.assertGreaterEqual(second_row, 0)
+        window._apply_single_row_selection(second_row)
         window.table.selectionModel().select(
-            window.table.model().index(0, 0),
+            window.table.model().index(first_row, 0),
             QItemSelectionModel.Select | QItemSelectionModel.Rows,
         )
-        window.current_invoice = window.invoices_list[1]
+        window.current_invoice = window._invoice_by_id(second_id)
         captured = []
 
         def controlled_detail(snapshot, *_args, **_kwargs):
