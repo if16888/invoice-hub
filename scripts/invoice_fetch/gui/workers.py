@@ -317,16 +317,37 @@ class LocalImportWorker(QThread):
         super().__init__()
         self.import_dir = import_dir
         self.db_path = db_path
+        self.control = ScanControl()
+
+    def request_cancel(self):
+        """Request a cooperative stop before the next source file."""
+
+        self.control.cancel()
 
     def run(self):
         try:
             from ..services import import_local_directory
-            stats = import_local_directory(self.import_dir, self.db_path)
+
+            stats = import_local_directory(
+                self.import_dir,
+                self.db_path,
+                scan_control=self.control,
+            )
             completed_at = time.perf_counter()
-            emit_performance_event("local_import", "T0_worker_done", outcome="success")
             result = dict(stats)
             result["_performance_t0_monotonic"] = completed_at
+            outcome = "cancelled" if result.get("cancelled") else "success"
+            emit_performance_event("local_import", "T0_worker_done", outcome=outcome)
             self.finished.emit(result)
+        except ScanCancelled:
+            completed_at = time.perf_counter()
+            emit_performance_event("local_import", "T0_worker_done", outcome="cancelled")
+            self.finished.emit(
+                {
+                    "cancelled": True,
+                    "_performance_t0_monotonic": completed_at,
+                }
+            )
         except Exception as e:
             emit_performance_event("local_import", "T0_worker_done", outcome="error")
             self.error.emit(str(e))

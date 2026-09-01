@@ -2030,6 +2030,7 @@ def _import_local_directory(
     categories: dict,
     att_dir: Path,
     file_paths=None,
+    scan_control: ScanControl | None = None,
 ) -> dict:
     root = Path(import_dir)
     if not root.exists() or not root.is_dir():
@@ -2064,6 +2065,13 @@ def _import_local_directory(
         "duplicate_outcomes": [],
     }
 
+    # Local import intentionally cancels only between top-level source files.
+    # The current source must finish its parser/file/DB operation so its
+    # existing business result remains committed and internally consistent.
+    if scan_control is not None and scan_control.cancelled:
+        stats["cancelled"] = True
+        return stats
+
     def record_item_result(res: LocalImportItemResult) -> None:
         if res.status in stats:
             stats[res.status] += 1
@@ -2088,6 +2096,9 @@ def _import_local_directory(
 
     _log.info("开始本地导入: %s (%d 个文件)", mask_path(root), len(files))
     for src in files:
+        if scan_control is not None and scan_control.cancelled:
+            stats["cancelled"] = True
+            break
         ext = src.suffix.lower()
         try:
             preserve_source_path = _path_is_within(src, runtime_root)
@@ -2167,6 +2178,12 @@ def _import_local_directory(
         except Exception as exc:
             _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
             stats["failed"] += 1
+
+    # Observe a request made while the final source was executing as well.
+    # There is no next source to skip, but the caller still needs a neutral
+    # partial-result outcome and must not start the export stage.
+    if scan_control is not None and scan_control.cancelled:
+        stats["cancelled"] = True
 
     stats["new_invoice_ids"] = list(stats["new_invoice_ids"])
     stats["restored_invoice_ids"] = list(stats["restored_invoice_ids"])
@@ -4056,6 +4073,7 @@ def import_local_directory(
     db_path: Path,
     config_path: Path | None = None,
     file_paths: Iterable[str | Path] | None = None,
+    scan_control: ScanControl | None = None,
 ) -> dict:
     """Public wrapper to import a local directory of invoices."""
     try:
@@ -4074,9 +4092,11 @@ def import_local_directory(
                 categories=categories,
                 att_dir=att_dir,
                 file_paths=file_paths,
+                scan_control=scan_control,
             )
-            excel_path = db_path.parent / "发票汇总.xlsx"
-            export_excel(db.get_all_invoices(), excel_path)
+            if not stats.get("cancelled"):
+                excel_path = db_path.parent / "发票汇总.xlsx"
+                export_excel(db.get_all_invoices(), excel_path)
             return stats
     except SystemExit as sys_err:
         raise ValueError(str(sys_err)) from None
