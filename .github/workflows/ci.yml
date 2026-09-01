@@ -93,7 +93,7 @@ jobs:
       - name: Run isolated unit-test shard
         shell: pwsh
         run: |
-          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_layout --module-timeout-seconds 900 --shard-count 3 --shard-index ${{ matrix.shard }} 2>&1 | Tee-Object -FilePath ci-test-output-${{ matrix.shard }}.txt
+          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_native_geometry --module-timeout-seconds 900 --shard-count 3 --shard-index ${{ matrix.shard }} 2>&1 | Tee-Object -FilePath ci-test-output-${{ matrix.shard }}.txt
           exit $LASTEXITCODE
 
       - name: Upload unit-test shard output
@@ -193,11 +193,22 @@ jobs:
           Write-Host "Native geometry preflight exit code: $code"
           exit $code
 
+      - name: Run native workbench geometry tests
+        if: always()
+        shell: pwsh
+        run: |
+          python -m unittest -v tests.test_workbench_native_geometry 2>&1 | Tee-Object -FilePath native-workbench-geometry-tests.txt
+          $code = $LASTEXITCODE
+          Write-Host "Native workbench geometry test exit code: $code"
+          exit $code
+
       - name: Upload native geometry evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: native-geometry-preflight
-          path: native-geometry-preflight.txt
-          if-no-files-found: error
+          path: |
+            native-geometry-preflight.txt
+            native-workbench-geometry-tests.txt
+          if-no-files-found: warn
           retention-days: 3

@@ -234,10 +234,10 @@ def main() -> int:
     parser.add_argument(
         "--exclude-module",
         action="append",
-        default=["tests.test_workbench_layout"],
+        default=["tests.test_workbench_native_geometry"],
         help=(
             "Test module owned by another lane and excluded from this run. "
-            "The native workbench contract is excluded by default."
+            "Native workbench geometry is excluded by default."
         ),
     )
     parser.add_argument("--module-timeout-seconds", type=int, default=900)

@@ -1,7 +1,12 @@
 from pathlib import Path
+import io
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
+from scripts.dev import run_isolated_unittest as runner
 from scripts.dev.run_isolated_unittest import (
     _DEFAULT_MODULE_WEIGHT,
     _MODULE_WEIGHTS,
@@ -144,8 +149,10 @@ class IsolatedUnittestRunnerTests(unittest.TestCase):
             tests_dir,
             "test_*.py",
             exclude_dirs=(tests_dir / "hci_acceptance",),
-            exclude_modules=("tests.test_workbench_layout",),
+            exclude_modules=("tests.test_workbench_native_geometry",),
         )
+        self.assertIn("tests.test_workbench_layout", discovered)
+        self.assertNotIn("tests.test_workbench_native_geometry", discovered)
         expanded = _expand_modules(discovered)
         self.assertGreater(len(expanded), 50)
 
@@ -166,6 +173,43 @@ class IsolatedUnittestRunnerTests(unittest.TestCase):
                 expanded,
                 f"Union mismatch with shard_count={shard_count}",
             )
+
+    def test_default_lane_ownership_includes_layout_and_excludes_native(self):
+        with tempfile.TemporaryDirectory() as td:
+            tests_dir = Path(td) / "tests"
+            tests_dir.mkdir()
+            for name in (
+                "test_other.py",
+                "test_workbench_layout.py",
+                "test_workbench_native_geometry.py",
+            ):
+                (tests_dir / name).write_text("", encoding="utf-8")
+
+            executed = []
+            output = io.StringIO()
+            with (
+                patch.object(
+                    runner,
+                    "_run_module",
+                    side_effect=lambda module, _timeout: (
+                        executed.append(module) or (0, "", 1, 0)
+                    ),
+                ),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["run_isolated_unittest.py", "--tests-dir", str(tests_dir)],
+                ),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(runner.main(), 0)
+
+        self.assertIn("tests.test_workbench_layout", executed)
+        self.assertNotIn("tests.test_workbench_native_geometry", executed)
+        self.assertIn(
+            "excluded_modules=tests.test_workbench_native_geometry",
+            output.getvalue(),
+        )
 
     def test_select_shard_tie_breaking_is_alphabetically_deterministic(self):
         modules = ["tests.test_z", "tests.test_a", "tests.test_m"]
