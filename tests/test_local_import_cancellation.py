@@ -182,6 +182,48 @@ class LocalImportCancellationTests(unittest.TestCase):
             self.assertIs(operation.call_args.kwargs["scan_control"], control)
             export.assert_not_called()
 
+    def test_late_cancel_after_operation_return_preserves_stats_and_skips_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source_dir = base / "source"
+            source_dir.mkdir()
+            db_path = base / "invoices.db"
+            control = ScanControl()
+            stats = {
+                "added": 2,
+                "duplicates": 1,
+                "conflicts": 0,
+                "pending_manual": 0,
+                "failed": 0,
+                "new_invoice_ids": [101, 102],
+            }
+
+            def finish_then_cancel(*, scan_control, **_kwargs):
+                scan_control.cancel()
+                return stats
+
+            with patch.object(
+                services,
+                "_import_local_directory",
+                side_effect=finish_then_cancel,
+            ) as operation, patch.object(
+                services, "InvoiceParser", return_value=Mock()
+            ), patch.object(services, "export_excel") as export:
+                result = services.import_local_directory(
+                    source_dir,
+                    db_path,
+                    scan_control=control,
+                )
+
+            operation.assert_called_once()
+            self.assertIs(operation.call_args.kwargs["scan_control"], control)
+            self.assertTrue(result["cancelled"])
+            self.assertEqual(result["added"], 2)
+            self.assertEqual(result["duplicates"], 1)
+            self.assertEqual(result["new_invoice_ids"], [101, 102])
+            self.assertEqual(result["failed"], 0)
+            export.assert_not_called()
+
     def test_worker_reuses_control_and_emits_cancelled_finished_result(self):
         worker = LocalImportWorker(Path("source"), Path("invoices.db"))
         finished = []

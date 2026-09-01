@@ -4094,6 +4094,8 @@ def import_local_directory(
                 file_paths=file_paths,
                 scan_control=scan_control,
             )
+            if scan_control is not None and scan_control.cancelled:
+                stats["cancelled"] = True
             if not stats.get("cancelled"):
                 excel_path = db_path.parent / "发票汇总.xlsx"
                 export_excel(db.get_all_invoices(), excel_path)
