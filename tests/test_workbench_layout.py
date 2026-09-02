@@ -700,11 +700,10 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         for marker in ["浠", "瀵", "閰", "鈥", "�", "涓", "鏃", "鍏", "绠"]:
             self.assertNotIn(marker, text)
 
-    def test_workbench_version_is_017(self):
+    def test_workbench_version_follows_central_metadata(self):
         from scripts.invoice_fetch.version import APP_VERSION, VERSION
 
-        self.assertEqual(VERSION, "0.1.7")
-        self.assertEqual(APP_VERSION, "v0.1.7")
+        self.assertEqual(APP_VERSION, f"v{VERSION}")
 
     def test_status_bar_shortcut_copy_uses_chinese_punctuation(self):
         with tempfile.TemporaryDirectory() as td:
