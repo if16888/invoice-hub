@@ -1,4 +1,4 @@
-"""Physical-review corrections for migrated Settings information pages."""
+"""Settings information-page feedback presentation."""
 
 from __future__ import annotations
 

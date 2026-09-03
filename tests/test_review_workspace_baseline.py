@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.review_detail_width_fix import (
+from scripts.invoice_fetch.gui.review_layout import (
     COLLAPSED_DETAIL_BONUS,
     DETAIL_MAX_WIDTH,
     _reflow_review_detail,

@@ -17,7 +17,7 @@ from shiboken6 import isValid
 
 from .review_settings_issue_fixes import apply_settings_action_clarity
 from .settings_baseline import apply_settings_baseline
-from .settings_feedback_fixes import apply_settings_feedback_fixes
+from .settings_feedback import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .settings_refresh_guard import install_settings_refresh_guard

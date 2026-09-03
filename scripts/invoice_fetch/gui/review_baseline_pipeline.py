@@ -21,7 +21,7 @@ from .design_v1_review_task_closure import apply_design_v1_review_task_closure
 from .hci_v1 import apply_review_hci_v1
 from .hci_v1_closure import apply_review_hci_closure
 from .review_detail_closure import apply_review_detail_closure
-from .review_detail_width_fix import apply_review_detail_width_fix
+from .review_layout import apply_review_detail_width_fix
 from .review_paging import install_review_paging
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_table_width_contract import apply_review_table_width_contract
