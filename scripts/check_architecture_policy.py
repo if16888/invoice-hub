@@ -46,7 +46,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "review_toolbar_filter_fixes.py",
         "review_workspace_baseline.py",
         "review_workspace_closure.py",
-        "selection_surface_contract.py",
         "settings_baseline.py",
         "settings_baseline_pipeline.py",
         "settings_feedback_fixes.py",

@@ -1,11 +1,4 @@
-"""Shared selection/focus contract for list-based desktop surfaces.
-
-Qt's native item-view delegate may paint a platform focus rectangle even when
-QSS already provides a product selection state. With transparent custom row
-widgets this appears as a dark box around the selected item on Windows. This
-module keeps keyboard navigation intact while replacing that native rectangle
-with Design v1 selection surfaces.
-"""
+"""Selection surface styling and interaction behavior."""
 
 from __future__ import annotations
 
