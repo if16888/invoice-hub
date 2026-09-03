@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .selection_surface_contract import install_selection_surface_contracts
+from .selection_surfaces import install_selection_surface_contracts
 
 
 ValueGetter = Callable[[dict], str]

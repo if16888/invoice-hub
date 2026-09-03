@@ -21,7 +21,7 @@ from PySide6.QtTest import QTest
 
 from scripts.invoice_fetch.gui.column_filters import ColumnFilterPopup
 from scripts.invoice_fetch.gui.page_layouts import DashboardPageLayout
-from scripts.invoice_fetch.gui.selection_surface_contract import (
+from scripts.invoice_fetch.gui.selection_surfaces import (
     SelectionSurfaceDelegate,
     install_selection_surface_contracts,
 )

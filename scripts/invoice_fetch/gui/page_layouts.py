@@ -13,7 +13,7 @@ from .hci_v1_closure import (
     schedule_task_flow_hci_closure,
 )
 from .review_baseline_pipeline import schedule_review_baseline_pipeline
-from .selection_surface_contract import schedule_selection_surface_contracts
+from .selection_surfaces import schedule_selection_surface_contracts
 from .settings_baseline_pipeline import schedule_settings_baseline_pipeline
 
 BASELINE_PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
