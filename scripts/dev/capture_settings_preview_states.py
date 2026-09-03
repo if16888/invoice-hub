@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from scripts.invoice_fetch.gui.settings_semantic_status_contract import normalize_status_label
-from scripts.invoice_fetch.gui.settings_token_contract import _settings_token_qss
+from scripts.invoice_fetch.gui.settings_theme import _settings_token_qss
 from scripts.invoice_fetch.gui.ui import build_qss
 from scripts.invoice_fetch.gui.ui.components.preview_toolbar import PreviewToolbar
 
