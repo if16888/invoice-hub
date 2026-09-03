@@ -38,7 +38,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "hci_v1_closure.py",
         "review_baseline_pipeline.py",
         "review_detail_closure.py",
-        "review_detail_width_fix.py",
         "review_feedback_fixes.py",
         "review_legacy_contract.py",
         "review_settings_issue_fixes.py",
