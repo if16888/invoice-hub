@@ -1379,7 +1379,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertTrue(marked)
             self.assertEqual(pending, [])
 
-    def test_duplicate_subject_fallback_without_number_marks_email_downloaded(self):
+    def test_subject_fallback_without_number_does_not_drop_receipt_by_weak_identity(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             runtime = base / "runtime"
@@ -1429,9 +1429,68 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     )
 
                 pending = db.get_invoice_emails_to_download()
+                rows = db.get_all_invoices()
 
             self.assertTrue(marked)
             self.assertEqual(pending, [])
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({row["invoice_number"] for row in rows}, {None})
+
+    def test_subject_fallback_does_not_use_seller_amount_for_different_number(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.insert_invoice({
+                    "invoice_number": "A001",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "100.00",
+                    "seller_name": "中国移动",
+                })
+
+                with (
+                    patch.object(cli, "parse_subject", return_value={
+                        "invoice_number": "B002",
+                        "total_amount": "100.00",
+                        "seller_name": "中国移动",
+                        "invoice_date": "2026-05-18",
+                        "invoice_type": "synthetic invoice",
+                    }),
+                    patch.object(cli, "extract_html_from_message", return_value=""),
+                    patch.object(cli, "parse_html_body", return_value={}),
+                ):
+                    recorded = cli._process_email(
+                        cli.MailMessage(uid=463, raw_msg=msg),
+                        StaticAttachmentHandler(runtime / "attachments", []),
+                        StaticParser(InvoiceInfo(parse_success=False)),
+                        NoopLinkDownloader(),
+                        db,
+                        {},
+                    )
+                rows = db.get_all_invoices()
+
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(
+                {row["invoice_number"] for row in rows},
+                {"A001", "B002"},
+            )
+
+    def test_is_duplicate_requires_invoice_number_identity(self):
+        with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:
+            db.insert_invoice({
+                "invoice_number": "A001",
+                "total_amount": "100.00",
+                "seller_name": "中国移动",
+            })
+
+            self.assertTrue(db.is_duplicate("A001", "100.00", "中国移动"))
+            self.assertFalse(db.is_duplicate("B002", "100.00", "中国移动"))
+            self.assertFalse(db.is_duplicate("", "100.00", "中国移动"))
 
     def test_rescanning_soft_deleted_attachment_restores_invoice(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1625,7 +1684,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertIn("review_status=approved", log_text)
             self.assertIn("is_deleted=0", log_text)
 
-    def test_subject_body_dedup_restores_soft_deleted_without_invoice_number(self):
+    def test_subject_body_fallback_preserves_soft_deleted_without_invoice_number(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             runtime = base / "runtime"
@@ -1663,12 +1722,19 @@ class InvoiceWorkflowTests(unittest.TestCase):
                         {},
                     )
                 rows = db.get_all_invoices()
+                all_rows = db.get_all_invoices(include_deleted=True)
 
             self.assertEqual(recorded, 1)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["id"], row_id)
+            self.assertNotEqual(rows[0]["id"], row_id)
             self.assertEqual(rows[0]["is_deleted"], 0)
-            self.assertIn("已恢复已删除的重复发票", "\n".join(logs.output))
+            self.assertIsNone(rows[0]["invoice_number"])
+            self.assertEqual(len(all_rows), 2)
+            self.assertEqual(
+                next(row for row in all_rows if row["id"] == row_id)["is_deleted"],
+                1,
+            )
+            self.assertNotIn("已恢复已删除的重复发票", "\n".join(logs.output))
 
     def test_subject_body_unmatched_dedup_stays_pending_without_false_success(self):
         with tempfile.TemporaryDirectory() as td:

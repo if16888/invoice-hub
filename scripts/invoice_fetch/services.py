@@ -1536,10 +1536,8 @@ def _find_existing_invoice_for_parse(
         return db.find_invoice_by_number_and_amount(
             invoice_number, total_amount, include_deleted=include_deleted
         )
-    if seller_name and total_amount:
-        return db.find_invoice_by_seller_and_amount(
-            seller_name, total_amount, include_deleted=include_deleted
-        )
+    # Seller + amount is only a weak heuristic and cannot establish invoice
+    # identity for either a numbered invoice or an unnumbered receipt.
     return None
 
 
@@ -3262,19 +3260,7 @@ def _process_email(
                     set_process_outcome("metadata_refreshed" if recorded else "duplicate")
                     return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
-            existing = _find_existing_invoice_for_parse(db, "", amount, seller, include_deleted=True)
-            if existing:
-                was_deleted = int(existing.get("is_deleted") or 0) == 1
-                existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
-                _track_restored(existing)
-                if not was_deleted:
-                    _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
-                    _log_existing_invoice_duplicate(existing, "subject_body_seller_amount")
-                recorded += 1
-                set_process_outcome("duplicate")
-                return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
-
-            if db.is_duplicate(dedup_key, amount, seller):
+            if inv_num and db.is_duplicate(inv_num, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                 recorded += 1
                 set_process_outcome("duplicate")
