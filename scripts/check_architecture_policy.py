@@ -48,7 +48,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "selection_surface_contract.py",
         "settings_baseline.py",
         "settings_baseline_pipeline.py",
-        "settings_feedback_fixes.py",
         "settings_legacy_contract.py",
         "settings_pages_baseline.py",
         "settings_semantic_status_contract.py",
