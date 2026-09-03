@@ -1,4 +1,4 @@
-"""Responsive width contract for the review detail pane.
+"""Responsive review workbench layout controller.
 
 The physical Windows review found that collapsing the application sidebar made
 more horizontal space available, but the detail pane stayed locked to the old
