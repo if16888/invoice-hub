@@ -49,7 +49,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "settings_baseline_pipeline.py",
         "settings_legacy_contract.py",
         "settings_pages_baseline.py",
-        "settings_semantic_status_contract.py",
         "ui_visibility_contracts.py",
     }
 )
