@@ -1,9 +1,4 @@
-"""Semantic status rendering for Settings labels.
-
-Legacy Settings code still emits a few rich-text status strings. This contract
-normalizes the rendered labels to plain text and Design-token-backed semantic
-properties without changing the surrounding page structure.
-"""
+"""Semantic status presentation for Settings surfaces."""
 
 from __future__ import annotations
 

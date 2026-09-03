@@ -21,7 +21,7 @@ from .settings_feedback import apply_settings_feedback_fixes
 from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .settings_refresh_guard import install_settings_refresh_guard
-from .settings_semantic_status_contract import install_settings_semantic_status_contract
+from .settings_status import install_settings_semantic_status_contract
 from .settings_theme import apply_settings_token_contract
 from .ui_visibility_contracts import install_settings_visibility_contract
 

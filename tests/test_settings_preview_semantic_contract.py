@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_COLORS
 from scripts.invoice_fetch.gui.settings_baseline_pipeline import SETTINGS_BASELINE_STAGES
-from scripts.invoice_fetch.gui.settings_semantic_status_contract import (
+from scripts.invoice_fetch.gui.settings_status import (
     infer_status_tone,
     normalize_status_label,
     plain_status_text,
