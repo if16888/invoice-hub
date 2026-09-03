@@ -1,4 +1,4 @@
-"""Design-token override for migrated Settings surfaces."""
+"""Settings visual theme derived from shared design tokens."""
 
 from __future__ import annotations
 
