@@ -484,29 +484,25 @@ class InvoiceDB:
 
     def is_duplicate(self, invoice_number: str,
                      total_amount: str = "", seller_name: str = "", include_deleted: bool = False) -> bool:
-        """Check uniqueness on (number, amount, seller)."""
+        """Check duplicate status only when invoice number identity is available."""
         invoice_number = (invoice_number or "").strip()
         total_amount = (total_amount or "").strip()
         seller_name = (seller_name or "").strip()
 
         cond = "" if include_deleted else " AND is_deleted = 0"
 
-        if invoice_number:
-            row = self._conn.execute(
-                f"SELECT 1 FROM invoices WHERE invoice_number = ? AND total_amount = ?{cond}",
-                (invoice_number, total_amount),
-            ).fetchone()
-            if row is not None:
-                return True
+        # Seller + amount is not a stable invoice identity: recurring invoices
+        # from the same seller can legitimately share that pair.  Records with
+        # no invoice number are intentionally allowed to coexist; exact-file
+        # deduplication remains handled by the file-hash path.
+        if not invoice_number:
+            return False
 
-        if seller_name and total_amount:
-            row = self._conn.execute(
-                f"SELECT 1 FROM invoices WHERE total_amount = ? AND seller_name = ?{cond}",
-                (total_amount, seller_name),
-            ).fetchone()
-            return row is not None
-
-        return False
+        row = self._conn.execute(
+            f"SELECT 1 FROM invoices WHERE invoice_number = ? AND total_amount = ?{cond}",
+            (invoice_number, total_amount),
+        ).fetchone()
+        return row is not None
 
     # ── Insert ───────────────────────────────────────────────────────
 
