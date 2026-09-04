@@ -45,7 +45,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "review_workspace_baseline.py",
         "review_workspace_closure.py",
         "settings_baseline.py",
-        "settings_baseline_pipeline.py",
         "settings_legacy_contract.py",
         "settings_pages_baseline.py",
         "ui_visibility_contracts.py",
