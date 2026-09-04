@@ -37,7 +37,6 @@ FROZEN_PATCH_MODULES = frozenset(
         "design_v1_review_task_closure.py",
         "hci_v1_closure.py",
         "review_baseline_pipeline.py",
-        "review_detail_closure.py",
         "review_feedback_fixes.py",
         "review_legacy_contract.py",
         "review_settings_issue_fixes.py",
