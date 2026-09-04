@@ -11,13 +11,13 @@ from PySide6.QtWidgets import QApplication, QLabel
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 
 
-class ReviewDetailClosureTests(unittest.TestCase):
+class InvoiceDetailOwnershipTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def make_window(self, td):
-        window = InvoiceReviewApp(Path(td) / "review-detail-closure.db")
+        window = InvoiceReviewApp(Path(td) / "invoice-detail-ownership.db")
         window.resize(1600, 900)
         window.show()
         for _ in range(10):

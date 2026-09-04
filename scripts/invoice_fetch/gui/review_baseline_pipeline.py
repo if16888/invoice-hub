@@ -20,11 +20,11 @@ from .design_system_v11 import apply_design_system_v11
 from .design_v1_review_task_closure import apply_design_v1_review_task_closure
 from .hci_v1 import apply_review_hci_v1
 from .hci_v1_closure import apply_review_hci_closure
-from .invoice_detail_panel import apply_review_detail_closure
+from .invoice_detail_panel import install_invoice_detail_ownership
 from .review_layout import (
     apply_review_detail_width_fix,
     apply_review_table_width_contract,
-    apply_review_workspace_closure,
+    install_review_vertical_workspace,
 )
 from .review_paging import install_review_paging
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
@@ -42,8 +42,8 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("attachment_action_clarity", apply_review_attachment_action_fix),
     ("table_width", apply_review_table_width_contract),
     ("detail_width", apply_review_detail_width_fix),
-    ("workspace_closure", apply_review_workspace_closure),
-    ("detail_closure", apply_review_detail_closure),
+    ("workspace_vertical_layout", install_review_vertical_workspace),
+    ("invoice_detail_ownership", install_invoice_detail_ownership),
     # Paging owns the final count copy and reconnects the search debounce timer.
     ("list_paging", install_review_paging),
     # Task ownership runs late so no earlier compatibility stage can restore
