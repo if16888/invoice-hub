@@ -20,7 +20,7 @@ from .design_system_v11 import apply_design_system_v11
 from .design_v1_review_task_closure import apply_design_v1_review_task_closure
 from .hci_v1 import apply_review_hci_v1
 from .hci_v1_closure import apply_review_hci_closure
-from .review_detail_closure import apply_review_detail_closure
+from .invoice_detail_panel import apply_review_detail_closure
 from .review_layout import (
     apply_review_detail_width_fix,
     apply_review_table_width_contract,
