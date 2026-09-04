@@ -24,12 +24,12 @@ from .review_detail_closure import apply_review_detail_closure
 from .review_layout import (
     apply_review_detail_width_fix,
     apply_review_table_width_contract,
+    apply_review_workspace_closure,
 )
 from .review_paging import install_review_paging
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
-from .review_workspace_closure import apply_review_workspace_closure
 
 
 ReviewStage = tuple[str, Callable[[QWidget], None]]

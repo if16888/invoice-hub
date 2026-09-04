@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QHeaderView
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.review_workspace_closure import (
+from scripts.invoice_fetch.gui.review_layout import (
     PREVIEW_MIN_HEIGHT,
     RECORD_MAX_HEIGHT,
     RECORD_MIN_HEIGHT,
