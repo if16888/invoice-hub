@@ -635,7 +635,10 @@ class GuiColumnFilterTests(unittest.TestCase):
             window._redownload_selected_invoices()
             self._wait_for_redownload(window)
 
-        self.assertFalse(pdf_file.exists())
+        # The mocked downloader returns a path outside the managed attachment
+        # root. Its ownership cannot be proven, so cleanup must fail closed
+        # rather than unlinking an arbitrary external file.
+        self.assertTrue(pdf_file.exists())
         mock_warn.assert_called_once()
         summary_msg = mock_warn.call_args[0][2]
         self.assertIn("下载失败: 1 张", summary_msg)
