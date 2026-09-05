@@ -232,6 +232,156 @@ def _detail_date_directory(snapshot: RedownloadInvoiceSnapshot) -> str:
     return raw_date[:10] if "-" in raw_date else "unknown_date"
 
 
+def _snapshot_attachment_files(attachments_root: Path) -> set[Path]:
+    """Capture the only provenance that permits later rollback deletion."""
+
+    root = Path(attachments_root)
+    if not root.exists():
+        return set()
+    try:
+        return {path.resolve() for path in root.rglob("*") if path.is_file()}
+    except OSError:
+        return set()
+
+
+def _rollback_created_attachment(
+    path: str | Path | None,
+    *,
+    attachments_root: Path,
+    preexisting_files: set[Path],
+) -> bool:
+    """Delete only a file proven to have been created by this attempt."""
+
+    if not path:
+        return False
+    try:
+        candidate = Path(path).resolve()
+        root = Path(attachments_root).resolve()
+        if candidate in preexisting_files:
+            return False
+        if candidate != root and root not in candidate.parents:
+            return False
+        if not candidate.is_file():
+            return False
+        candidate.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _restore_invoice_state(db: InvoiceDB, original: Mapping[str, object] | None) -> None:
+    """Best-effort compensation after a multi-step DB write fails."""
+
+    if not original:
+        return
+    invoice_id = int(original.get("id") or original.get("invoice_id") or 0)
+    if invoice_id <= 0:
+        return
+    try:
+        db.update_invoice_parsed_metadata(
+            invoice_id=invoice_id,
+            invoice_number=str(original.get("invoice_number") or ""),
+            invoice_code=str(original.get("invoice_code") or ""),
+            invoice_date=str(original.get("invoice_date") or ""),
+            amount=str(original.get("amount") or ""),
+            total_amount=str(original.get("total_amount") or ""),
+            seller_name=str(original.get("seller_name") or ""),
+            buyer_name=str(original.get("buyer_name") or ""),
+            invoice_type=str(original.get("invoice_type") or ""),
+            category=str(original.get("category") or ""),
+            has_extra=bool(original.get("has_extra")),
+            extra_type=str(original.get("extra_type") or ""),
+            missing_extra=bool(original.get("missing_extra")),
+            parse_success=bool(original.get("parse_success")),
+            parse_note=str(original.get("parse_note") or ""),
+            item_name=str(original.get("item_name") or ""),
+            expense_date=str(original.get("expense_date") or ""),
+            date_source=str(original.get("date_source") or ""),
+        )
+        db.update_invoice_file_paths(
+            invoice_id,
+            attachment_path=str(original.get("attachment_path") or ""),
+            file_hash=str(original.get("file_hash") or ""),
+        )
+    except Exception:
+        pass
+
+
+def _persist_attachment_reference(
+    db: InvoiceDB,
+    *,
+    invoice_id: int,
+    attachment_path: str,
+    file_hash: str | None = None,
+    original: Mapping[str, object] | None = None,
+) -> bool:
+    """Persist an attachment through the public DB API and compensate on failure."""
+
+    try:
+        updated = db.update_invoice_file_paths(
+            invoice_id,
+            attachment_path=attachment_path,
+            file_hash=file_hash,
+        )
+    except Exception:
+        updated = False
+    if updated:
+        return True
+    if original is not None:
+        _restore_invoice_state(db, original)
+    return False
+
+
+def _update_unparsed_direct_download(
+    db: InvoiceDB,
+    *,
+    original: Mapping[str, object] | None,
+    attachment_path: str,
+    parse_note: str,
+) -> bool:
+    """Preserve business fields while recording a non-parsed direct download."""
+
+    if not original:
+        return False
+    invoice_id = int(original.get("id") or original.get("invoice_id") or 0)
+    if invoice_id <= 0:
+        return False
+    try:
+        metadata_updated = db.update_invoice_parsed_metadata(
+            invoice_id=invoice_id,
+            invoice_number=str(original.get("invoice_number") or ""),
+            invoice_code=str(original.get("invoice_code") or ""),
+            invoice_date=str(original.get("invoice_date") or ""),
+            amount=str(original.get("amount") or ""),
+            total_amount=str(original.get("total_amount") or ""),
+            seller_name=str(original.get("seller_name") or ""),
+            buyer_name=str(original.get("buyer_name") or ""),
+            invoice_type=str(original.get("invoice_type") or ""),
+            category=str(original.get("category") or ""),
+            has_extra=bool(original.get("has_extra")),
+            extra_type=str(original.get("extra_type") or ""),
+            missing_extra=bool(original.get("missing_extra")),
+            parse_success=False,
+            parse_note=parse_note,
+            item_name=str(original.get("item_name") or ""),
+            expense_date=str(original.get("expense_date") or ""),
+            date_source=str(original.get("date_source") or ""),
+        )
+    except Exception:
+        metadata_updated = False
+    if not metadata_updated:
+        return False
+    if _persist_attachment_reference(
+        db,
+        invoice_id=invoice_id,
+        attachment_path=attachment_path,
+        original=original,
+    ):
+        return True
+    _restore_invoice_state(db, original)
+    return False
+
+
 def run_invoice_link_retry(
     snapshot: RedownloadInvoiceSnapshot | Mapping[str, object],
     db_path: str | Path,
@@ -255,8 +405,13 @@ def run_invoice_link_retry(
     total = 1
     control = scan_control or ScanControl()
     runtime_dir = Path(runtime_dir)
+    attachments_root = runtime_dir / "attachments"
     downloader = None
     db = None
+    downloaded = None
+    final_path: Path | None = None
+    preexisting_files: set[Path] = set()
+    persisted = False
 
     def result(*, success: bool, cancelled: bool = False, failure_detail: str = "") -> dict:
         return {
@@ -281,10 +436,12 @@ def run_invoice_link_retry(
             from . import link_downloader
 
         db = InvoiceDB(db_path)
+        original_invoice = db.get_invoice(item.invoice_id)
         downloader = link_downloader.LinkDownloader(
-            download_dir=runtime_dir / "attachments",
+            download_dir=attachments_root,
         )
         date_dir_name = _detail_date_directory(item)
+        preexisting_files = _snapshot_attachment_files(attachments_root)
         _emit_progress(
             progress_callback,
             processed=0,
@@ -308,7 +465,7 @@ def run_invoice_link_retry(
         if not source_path.is_file():
             return result(success=False, failure_detail="下载文件不存在")
 
-        destination_dir = runtime_dir / "attachments" / date_dir_name
+        destination_dir = attachments_root / date_dir_name
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination_name = _attachment_handler.build_managed_attachment_name(
             original_name=source_path.name,
@@ -334,15 +491,24 @@ def run_invoice_link_retry(
                         destination_path = candidate
                         break
             shutil.move(str(source_path), str(destination_path))
+        final_path = destination_path
 
         file_hash = _sha256_file(destination_path)
         relative_path = f"attachments/{date_dir_name}/{destination_path.name}"
-        if not db.update_invoice_file_paths(
-            item.invoice_id,
+        if not _persist_attachment_reference(
+            db,
+            invoice_id=item.invoice_id,
             attachment_path=relative_path,
             file_hash=file_hash,
+            original=original_invoice,
         ):
+            _rollback_created_attachment(
+                destination_path,
+                attachments_root=attachments_root,
+                preexisting_files=preexisting_files,
+            )
             return result(success=False, failure_detail="附件路径写入失败")
+        persisted = True
         parse_note = getattr(downloaded, "parse_note", None)
         if parse_note:
             db.update_invoice_missing_fields(
@@ -361,6 +527,15 @@ def run_invoice_link_retry(
         )
         return result(success=True)
     except ScanCancelled:
+        if not persisted:
+            rollback_path = final_path
+            if rollback_path is None and downloaded is not None and getattr(downloaded, "file_path", None):
+                rollback_path = Path(downloaded.file_path)
+            _rollback_created_attachment(
+                rollback_path,
+                attachments_root=attachments_root,
+                preexisting_files=preexisting_files,
+            )
         _emit_progress(
             progress_callback,
             processed=0,
@@ -371,6 +546,15 @@ def run_invoice_link_retry(
         )
         return result(success=False, cancelled=True)
     except Exception as exc:
+        if not persisted:
+            rollback_path = final_path
+            if rollback_path is None and downloaded is not None and getattr(downloaded, "file_path", None):
+                rollback_path = Path(downloaded.file_path)
+            _rollback_created_attachment(
+                rollback_path,
+                attachments_root=attachments_root,
+                preexisting_files=preexisting_files,
+            )
         _emit_log(log_callback, f"❌ [重新下载] 发票 ID {item.invoice_id} 详情链接下载失败")
         return result(success=False, failure_detail=f"{type(exc).__name__}")
     finally:
@@ -404,6 +588,7 @@ def run_invoice_redownload(
     total = len(items)
     control = scan_control or ScanControl()
     runtime_dir = Path(runtime_dir)
+    attachments_root = runtime_dir / "attachments"
     cfg = dict(config) if isinstance(config, Mapping) else _config.load_config_safe()
     categories = cfg.get("categories", {}) if isinstance(cfg, dict) else {}
     if not isinstance(categories, dict):
@@ -499,10 +684,10 @@ def run_invoice_redownload(
     try:
         control.raise_if_cancelled()
         downloader = link_downloader.LinkDownloader(
-            download_dir=runtime_dir / "attachments",
+            download_dir=attachments_root,
         )
         parser = _invoice_parser.InvoiceParser()
-        att_handler = _attachment_handler.AttachmentHandler(runtime_dir / "attachments")
+        att_handler = _attachment_handler.AttachmentHandler(attachments_root)
 
         for inv in items:
             if control.cancelled:
@@ -518,10 +703,13 @@ def run_invoice_redownload(
             failure_detail = ""
 
             if download_url:
+                preexisting_files = _snapshot_attachment_files(attachments_root)
+                final_path: Path | None = None
                 try:
                     dl = downloader._download_url(download_url, mail_uid or 0, inv_id, mail_date)
                     if dl and dl.file_path and os.path.exists(dl.file_path):
                         suffix = os.path.splitext(dl.file_path)[1].lower()
+                        original_invoice = db.get_invoice(inv_id)
                         if suffix == ".pdf":
                             info = parser.parse_pdf(dl.file_path)
                             if info.parse_success:
@@ -538,12 +726,13 @@ def run_invoice_redownload(
                                     dl.file_path,
                                     code,
                                     info.invoice_date or mail_date,
-                                    runtime_dir / "attachments",
+                                    attachments_root,
                                     category=cat,
                                     total_amount=info.total_amount,
                                     invoice_number=info.invoice_number,
                                     source_mode="reprocess",
                                 )
+                                final_path = _resolve_stored_attachment(att_path, runtime_dir)
                                 updated = db.update_invoice_parsed_metadata(
                                     invoice_id=inv_id,
                                     invoice_number=info.invoice_number,
@@ -565,6 +754,11 @@ def run_invoice_redownload(
                                     date_source=getattr(info, "date_source", ""),
                                 )
                                 if not updated:
+                                    _rollback_created_attachment(
+                                        final_path,
+                                        attachments_root=attachments_root,
+                                        preexisting_files=preexisting_files,
+                                    )
                                     if getattr(db, "last_error", "") == "unique_conflict":
                                         fallback_reason = "解析结果与已有发票唯一键冲突"
                                         _emit_log(
@@ -573,12 +767,19 @@ def run_invoice_redownload(
                                         )
                                     else:
                                         fallback_reason = "解析结果写入数据库失败"
-                                else:
-                                    db._conn.execute(
-                                        "UPDATE invoices SET attachment_path = ? WHERE id = ?",
-                                        (att_path, inv_id),
+                                elif not _persist_attachment_reference(
+                                    db,
+                                    invoice_id=inv_id,
+                                    attachment_path=att_path,
+                                    original=original_invoice,
+                                ):
+                                    _rollback_created_attachment(
+                                        final_path,
+                                        attachments_root=attachments_root,
+                                        preexisting_files=preexisting_files,
                                     )
-                                    db._conn.commit()
+                                    fallback_reason = "附件路径写入数据库失败"
+                                else:
                                     success_count += 1
                                     buckets["file_restored"] += 1
                                     status = "file_restored"
@@ -589,9 +790,13 @@ def run_invoice_redownload(
                                 if os.path.exists(dl.file_path):
                                     _emit_log(
                                         log_callback,
-                                        f"⚠️ [重新下载] 发票 ID {inv_id} 下载的文件是 PDF 但解析失败，正在删除临时文件: {dl.file_path}",
+                                        f"⚠️ [重新下载] 发票 ID {inv_id} 下载的文件是 PDF 但解析失败，正在清理本次临时文件: {dl.file_path}",
                                     )
-                                    os.remove(dl.file_path)
+                                    _rollback_created_attachment(
+                                        Path(dl.file_path),
+                                        attachments_root=attachments_root,
+                                        preexisting_files=preexisting_files,
+                                    )
                         elif suffix == ".ofd":
                             from . import services as _services
 
@@ -602,21 +807,31 @@ def run_invoice_redownload(
                                 dl.file_path,
                                 code,
                                 inv_date,
-                                runtime_dir / "attachments",
+                                attachments_root,
                                 category=cat,
                                 total_amount=inv.total_amount,
                                 invoice_number=inv.invoice_number,
                                 source_mode="reprocess",
                             )
-                            db._conn.execute(
-                                "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
-                                (att_path, "OFD 原件已恢复，需手动处理/转换后再解析。", inv_id),
-                            )
-                            db._conn.commit()
-                            _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} OFD 原件已恢复，需手动处理/转换后再解析。")
-                            buckets["metadata_refreshed"] += 1
-                            status = "metadata_refreshed"
-                            direct_download_ok = True
+                            final_path = _resolve_stored_attachment(att_path, runtime_dir)
+                            note = "OFD 原件已恢复，需手动处理/转换后再解析。"
+                            if _update_unparsed_direct_download(
+                                db,
+                                original=original_invoice,
+                                attachment_path=att_path,
+                                parse_note=note,
+                            ):
+                                _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} {note}")
+                                buckets["metadata_refreshed"] += 1
+                                status = "metadata_refreshed"
+                                direct_download_ok = True
+                            else:
+                                _rollback_created_attachment(
+                                    final_path,
+                                    attachments_root=attachments_root,
+                                    preexisting_files=preexisting_files,
+                                )
+                                fallback_reason = "OFD 原件写入数据库失败"
                         else:
                             from . import services as _services
 
@@ -627,24 +842,40 @@ def run_invoice_redownload(
                                 dl.file_path,
                                 code,
                                 inv_date,
-                                runtime_dir / "attachments",
+                                attachments_root,
                                 category=cat,
                                 total_amount=inv.total_amount,
                                 invoice_number=inv.invoice_number,
                                 source_mode="reprocess",
                             )
-                            db._conn.execute(
-                                "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
-                                (att_path, f"下载了不支持的文件类型 ({suffix})，需手动处理。", inv_id),
-                            )
-                            db._conn.commit()
-                            _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} 下载了不支持的文件类型 ({suffix})，已保存，需手动处理。")
-                            buckets["metadata_refreshed"] += 1
-                            status = "metadata_refreshed"
-                            direct_download_ok = True
+                            final_path = _resolve_stored_attachment(att_path, runtime_dir)
+                            note = f"下载了不支持的文件类型 ({suffix})，需手动处理。"
+                            if _update_unparsed_direct_download(
+                                db,
+                                original=original_invoice,
+                                attachment_path=att_path,
+                                parse_note=note,
+                            ):
+                                _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} {note}")
+                                buckets["metadata_refreshed"] += 1
+                                status = "metadata_refreshed"
+                                direct_download_ok = True
+                            else:
+                                _rollback_created_attachment(
+                                    final_path,
+                                    attachments_root=attachments_root,
+                                    preexisting_files=preexisting_files,
+                                )
+                                fallback_reason = "下载文件写入数据库失败"
                     else:
                         fallback_reason = "下载超时或链接失效"
                 except Exception as exc:
+                    if final_path is not None:
+                        _rollback_created_attachment(
+                            final_path,
+                            attachments_root=attachments_root,
+                            preexisting_files=preexisting_files,
+                        )
                     fallback_reason = _safe_failure(f"链接下载异常: {exc}", secrets)
 
             if not direct_download_ok:
