@@ -232,8 +232,12 @@ def _detail_date_directory(snapshot: RedownloadInvoiceSnapshot) -> str:
     return raw_date[:10] if "-" in raw_date else "unknown_date"
 
 
-def _snapshot_attachment_files(attachments_root: Path) -> set[Path]:
-    """Capture the only provenance that permits later rollback deletion."""
+def _snapshot_attachment_files(attachments_root: Path) -> set[Path] | None:
+    """Capture the only provenance that permits later rollback deletion.
+
+    ``None`` means provenance could not be established. Rollback must fail
+    closed in that state rather than assuming the directory was empty.
+    """
 
     root = Path(attachments_root)
     if not root.exists():
@@ -241,18 +245,18 @@ def _snapshot_attachment_files(attachments_root: Path) -> set[Path]:
     try:
         return {path.resolve() for path in root.rglob("*") if path.is_file()}
     except OSError:
-        return set()
+        return None
 
 
 def _rollback_created_attachment(
     path: str | Path | None,
     *,
     attachments_root: Path,
-    preexisting_files: set[Path],
+    preexisting_files: set[Path] | None,
 ) -> bool:
     """Delete only a file proven to have been created by this attempt."""
 
-    if not path:
+    if not path or preexisting_files is None:
         return False
     try:
         candidate = Path(path).resolve()
@@ -410,7 +414,7 @@ def run_invoice_link_retry(
     db = None
     downloaded = None
     final_path: Path | None = None
-    preexisting_files: set[Path] = set()
+    preexisting_files: set[Path] | None = set()
     persisted = False
 
     def result(*, success: bool, cancelled: bool = False, failure_detail: str = "") -> dict:
