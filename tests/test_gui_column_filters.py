@@ -300,6 +300,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.current_invoice["invoice_number"], "HOTEL-A")
 
     def test_review_and_material_status_are_visible_in_table(self):
+        # 审核状态和资料状态都必须在表格中可见，不能只放 tooltip。
         window = self._make_window([
             {"invoice_number": "OK-1", "review_status": "approved", "attachment_path": "file.pdf"},
             {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"},
@@ -346,6 +347,8 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.table.item(0, 2).textAlignment(), int(Qt.AlignCenter | Qt.AlignVCenter))
         self.assertEqual(window.table.item(0, 3).textAlignment(), int(Qt.AlignRight | Qt.AlignVCenter))
         self.assertEqual(window.table.item(0, 3).text(), "28.90")
+        # Invoice numbers are informative text, so keep normal-text contrast
+        # instead of the decorative-only #94A3B8 gray.
         self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#667085")
 
     def test_default_headers_are_clean_without_dropdown_arrows(self):
@@ -409,38 +412,54 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.btn_toolbar_user.text(), "本地模式 ▾")
 
     def test_top_checkbox_bidirectional_sync_needs_fix(self):
+        # 勾选“待补全”等价于资料状态列过滤。
+        # 清除资料状态列过滤会同步取消顶部“待补全”。
         window = self._make_window([
-            {"invoice_number": "INV-1", "category": "餐饮"},
-            {"invoice_number": "", "total_amount": "50.00"},
+            {"invoice_number": "INV-1", "category": "餐饮"}, # 正常
+            {"invoice_number": "", "total_amount": "50.00"}, # 待补全
         ])
 
+        # Check that needs_fix checkbox is initially unchecked
         self.assertFalse(window.chk_needs_fix.isChecked())
+
+        # Toggle top checkbox to check
         window.chk_needs_fix.setChecked(True)
         self.app.processEvents()
 
+        # Check that it filters to only needs_fix (which is the empty invoice number row)
         self.assertEqual(len(window.invoices_list), 1)
         self.assertEqual(window.invoices_list[0]["total_amount"], "50.00")
+
+        # Verify column_filters has been updated
         self.assertIn("status", window.column_filters)
 
+        # Clear column filter status manually
         window._set_column_filter("status", {})
         self.app.processEvents()
 
+        # Check that top checkbox is automatically unchecked
         self.assertFalse(window.chk_needs_fix.isChecked())
+        # Check that all invoices are loaded again
         self.assertEqual(len(window.invoices_list), 2)
 
     def test_top_checkbox_bidirectional_sync_unlinked(self):
+        # 勾选“未关联报销组”等价于报销组列过滤为未加入。
+        # 清除报销组列过滤会同步取消顶部“未关联报销组”。
         window = self._make_window([
             {"invoice_number": "INV-1", "claim_name": "Group-A"},
             {"invoice_number": "INV-2", "claim_name": ""},
         ])
 
         self.assertFalse(window.chk_unlinked.isChecked())
+
+        # Check unlinked
         window.chk_unlinked.setChecked(True)
         self.app.processEvents()
 
         self.assertEqual(len(window.invoices_list), 1)
         self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-2")
 
+        # Clear claim_name filter manually
         window._set_column_filter("claim_name", {})
         self.app.processEvents()
 
@@ -448,6 +467,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(len(window.invoices_list), 2)
 
     def test_reset_clears_all_filter_states_chips_and_markers(self):
+        # 重置会清空顶部过滤、搜索、列过滤、active marker、筛选摘要。
         window = self._make_window([
             {"invoice_number": "INV-1", "category": "餐饮"},
             {"invoice_number": "", "total_amount": "50.00"},
@@ -459,6 +479,8 @@ class GuiColumnFilterTests(unittest.TestCase):
         window.current_filter_status = "approved"
 
         self.app.processEvents()
+
+        # Reset
         window._reset_invoice_filters()
         self.app.processEvents()
 
@@ -471,15 +493,18 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.table.horizontalHeaderItem(0).text(), "状态")
 
     def test_top_review_counts_dynamic_under_non_review_filters(self):
+        # 顶部审核状态数字在待补全过滤条件下仍正确。
         window = self._make_window([
-            {"invoice_number": "INV-1", "review_status": "approved"},
-            {"invoice_number": "", "total_amount": "50.00", "review_status": "to_review"},
-            {"invoice_number": "", "total_amount": "10.00", "review_status": "approved"},
+            {"invoice_number": "INV-1", "review_status": "approved"}, # 正常, approved
+            {"invoice_number": "", "total_amount": "50.00", "review_status": "to_review"}, # 待补全, to_review
+            {"invoice_number": "", "total_amount": "10.00", "review_status": "approved"}, # 待补全, approved
         ])
 
+        # Apply "待补全" filter
         window.chk_needs_fix.setChecked(True)
         self.app.processEvents()
 
+        # Buttons texts should reflect only the "待补全" invoices (which are 2 in total: 1 to_review, 1 approved)
         to_review_text = window.filter_buttons["to_review"].text()
         approved_text = window.filter_buttons["approved"].text()
         all_text = window.filter_buttons["all"].text()
