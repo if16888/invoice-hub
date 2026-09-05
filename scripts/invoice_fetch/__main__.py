@@ -40,6 +40,7 @@ from . import review_status
 from . import services as application_services
 from .services import (
     _classify,
+    _handle_pending_email,
     _import_local_directory,
     _normalize_path_list,
     _resolve_runtime_path,
@@ -49,10 +50,6 @@ from .services import (
     _scan_mailboxes_with_db,
     _sha256_file,
 )
-
-
-def _handle_pending_email(*args, **kwargs):
-    return application_services._handle_pending_email(*args, **kwargs)
 
 # Re-export selected classes for tests while keeping optional AI imports lazy.
 def __getattr__(name: str):
@@ -1078,6 +1075,10 @@ def _reprocess_email_records(
     parser = InvoiceParser()
     link_dl = LinkDownloader(att_dir, headed=headed)
 
+    # ── Downgrade filename conflict logs during reprocess ──
+    prev_rename_mode = application_services._rename_source_mode
+    application_services._rename_source_mode = "reprocess"
+
     reprocessed_count = 0
     failed_count = 0
     new_records_count = 0
@@ -1140,7 +1141,6 @@ def _reprocess_email_records(
                             db=db,
                             categories=cfg.get("categories", {}),
                             config=cfg,
-                            source_mode="reprocess",
                         )
 
                         after_active_count = db.count_invoices()
@@ -1163,6 +1163,9 @@ def _reprocess_email_records(
             failed_count += len(pending)
 
     link_dl.close()
+
+    # ── Restore filename conflict log severity ──
+    application_services._rename_source_mode = prev_rename_mode
 
     print("\n邮箱重处理完成：")
     print(f"- 选中邮件：{len(records)} 封")

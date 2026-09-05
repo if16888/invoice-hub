@@ -643,7 +643,6 @@ def _attach_email_extras_to_invoice(
     attached_source_paths: set[str] | None = None,
     expense_date: str | None = None,
     fallback_date: str | None = None,
-    source_mode: str | None = None,
 ) -> list[str]:
     """Rename and associate extra files with an invoice, avoiding duplicate paths or file hashes.
 
@@ -684,7 +683,6 @@ def _attach_email_extras_to_invoice(
             e.file_path, code, inv_date, att_base, is_extra=True,
             category=category, total_amount=total_amount,
             invoice_number=invoice_number,
-            source_mode=source_mode,
             original_name=getattr(e, "original_name", None),
             expense_date=expense_date,
             fallback_date=fallback_date,
@@ -2634,7 +2632,6 @@ def _process_email(
                             att_handler._base,
                             category=category, total_amount=info.total_amount,
                             invoice_number=info.invoice_number,
-                            source_mode=source_mode,
                             original_name=dl.filename,
                             expense_date=info.expense_date,
                             fallback_date=msg.date)
@@ -2659,7 +2656,6 @@ def _process_email(
                             attached_source_paths=attached_extra_source_paths,
                             expense_date=info.expense_date,
                             fallback_date=msg.date,
-                            source_mode=source_mode,
                         )
 
                     if _refresh_invoice_from_parse(
@@ -2721,7 +2717,6 @@ def _process_email(
                             att_handler._base,
                             category=cat_ld, total_amount=info.total_amount,
                             invoice_number=info.invoice_number,
-                            source_mode=source_mode,
                             original_name=dl.filename,
                             expense_date=info.expense_date,
                             fallback_date=msg.date)
@@ -2756,7 +2751,6 @@ def _process_email(
                             attached_source_paths=attached_extra_source_paths,
                             expense_date=info.expense_date,
                             fallback_date=msg.date,
-                            source_mode=source_mode,
                         )
                     link_pdf_skipped_as_duplicate = True
                     recorded += 1
@@ -2773,7 +2767,6 @@ def _process_email(
                     att_handler._base,
                     category=cat, total_amount=info.total_amount,
                     invoice_number=info.invoice_number,
-                    source_mode=source_mode,
                     original_name=dl.filename,
                     expense_date=info.expense_date,
                     fallback_date=msg.date)
@@ -2825,7 +2818,6 @@ def _process_email(
                             attached_source_paths=attached_extra_source_paths,
                             expense_date=info.expense_date,
                             fallback_date=msg.date,
-                            source_mode=source_mode,
                         )
                     recorded += 1
                     _log.info("  ✅ 已入库(链接下载): %s (%s)", mask_invoice_number(info.invoice_number), cat)
@@ -2900,7 +2892,6 @@ def _process_email(
                     att_handler._base,
                     category=cat, total_amount=info.total_amount,
                     invoice_number=info.invoice_number,
-                    source_mode=source_mode,
                     original_name=att.original_name,
                     expense_date=info.expense_date,
                     fallback_date=msg.date)
@@ -2925,7 +2916,6 @@ def _process_email(
                     attached_source_paths=attached_extra_source_paths,
                     expense_date=info.expense_date,
                     fallback_date=msg.date,
-                    source_mode=source_mode,
                 )
 
             if _refresh_invoice_from_parse(
@@ -2982,7 +2972,6 @@ def _process_email(
                     att_handler._base,
                     category=cat_dup, total_amount=info.total_amount,
                     invoice_number=info.invoice_number,
-                    source_mode=source_mode,
                     original_name=att.original_name,
                     expense_date=info.expense_date,
                     fallback_date=msg.date)
@@ -3014,7 +3003,6 @@ def _process_email(
                     attached_source_paths=attached_extra_source_paths,
                     expense_date=info.expense_date,
                     fallback_date=msg.date,
-                    source_mode=source_mode,
                 )
             recorded += 1
             continue
@@ -3035,7 +3023,6 @@ def _process_email(
             att.file_path, code, inv_date, att_handler._base,
             category=cat, total_amount=info.total_amount,
             invoice_number=info.invoice_number,
-            source_mode=source_mode,
             original_name=att.original_name,
             expense_date=info.expense_date,
             fallback_date=msg.date)
@@ -3085,7 +3072,6 @@ def _process_email(
                     invoice_number=info.invoice_number,
                     kept_paths=kept_paths,
                     attached_source_paths=attached_extra_source_paths,
-                    source_mode=source_mode,
                 )
             recorded += 1
             _log.info("  ✅ 已入库: %s (%s)", mask_invoice_number(info.invoice_number), cat)
@@ -3274,26 +3260,7 @@ def _process_email(
                     set_process_outcome("metadata_refreshed" if recorded else "duplicate")
                     return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
-            inv_date = merged.get("invoice_date", "") or msg.date
-            exp_date = merged.get("expense_date", "") or merged.get("invoice_date", "") or msg.date
-
-            if not inv_num:
-                existing = _find_existing_invoice_for_parse(db, "", amount, seller, include_deleted=True)
-                if existing:
-                    existing_date = existing.get("expense_date") or existing.get("invoice_date") or ""
-                    target_dates = {d for d in (exp_date, inv_date) if d}
-                    if target_dates and existing_date in target_dates:
-                        was_deleted = int(existing.get("is_deleted") or 0) == 1
-                        existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
-                        _track_restored(existing)
-                        if not was_deleted:
-                            _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
-                            _log_existing_invoice_duplicate(existing, "subject_body_seller_amount")
-                        recorded += 1
-                        set_process_outcome("duplicate")
-                        return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
-
-            if db.is_duplicate(inv_num, amount, seller, expense_date=exp_date, invoice_date=inv_date):
+            if inv_num and db.is_duplicate(inv_num, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                 recorded += 1
                 set_process_outcome("duplicate")
@@ -3984,7 +3951,6 @@ def _handle_pending_email(
     categories: dict,
     config: dict | None = None,
     progress_callback=None,
-    source_mode: str = "normal",
 ) -> PendingEmailResult:
     """Fetch and process one pending invoice email.
 
@@ -4022,7 +3988,6 @@ def _handle_pending_email(
         categories,
         mailbox_key=row.get("mailbox_key", "legacy"),
         config=config,
-        source_mode=source_mode,
     )
     new_ids = getattr(recorded, "new_invoice_ids", ())
     review_ids = getattr(recorded, "review_invoice_ids", ())

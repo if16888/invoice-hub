@@ -168,21 +168,6 @@ def _is_file_valid_and_openable(path: Path | None) -> bool:
         return False
 
 
-def _safe_unlink(path: str | Path | None, runtime_dir: Path | None = None) -> None:
-    """Safely unlink a file if it exists, without raising errors."""
-    if not path:
-        return
-    try:
-        p = Path(path)
-        if not p.is_absolute() and runtime_dir is not None:
-            resolved = _resolve_stored_attachment(str(path), runtime_dir)
-            p = resolved if resolved and resolved.exists() else (runtime_dir / p)
-        if p.exists():
-            p.unlink()
-    except Exception:
-        pass
-
-
 def _safe_failure(text: object, secrets: Iterable[object] = ()) -> str:
     rendered = str(text or "")
     for secret in secrets:
@@ -352,18 +337,11 @@ def run_invoice_link_retry(
 
         file_hash = _sha256_file(destination_path)
         relative_path = f"attachments/{date_dir_name}/{destination_path.name}"
-        try:
-            update_ok = db.update_invoice_file_paths(
-                item.invoice_id,
-                attachment_path=relative_path,
-                file_hash=file_hash,
-            )
-        except Exception:
-            _safe_unlink(destination_path)
-            raise
-
-        if not update_ok:
-            _safe_unlink(destination_path)
+        if not db.update_invoice_file_paths(
+            item.invoice_id,
+            attachment_path=relative_path,
+            file_hash=file_hash,
+        ):
             return result(success=False, failure_detail="附件路径写入失败")
         parse_note = getattr(downloaded, "parse_note", None)
         if parse_note:
@@ -566,35 +544,28 @@ def run_invoice_redownload(
                                     invoice_number=info.invoice_number,
                                     source_mode="reprocess",
                                 )
-                                try:
-                                    updated = db.update_invoice_parsed_metadata(
-                                        invoice_id=inv_id,
-                                        invoice_number=info.invoice_number,
-                                        invoice_code=info.invoice_code,
-                                        invoice_date=info.invoice_date,
-                                        amount=info.amount,
-                                        total_amount=info.total_amount,
-                                        seller_name=info.seller_name,
-                                        buyer_name=info.buyer_name,
-                                        invoice_type=info.invoice_type or inv.invoice_type or "电子发票",
-                                        category=cat,
-                                        has_extra=inv.has_extra,
-                                        extra_type=extra_type,
-                                        missing_extra=extra_req,
-                                        parse_success=True,
-                                        parse_note="重新下载后解析",
-                                        item_name=getattr(info, "item_name", ""),
-                                        expense_date=getattr(info, "expense_date", ""),
-                                        date_source=getattr(info, "date_source", ""),
-                                        attachment_path=att_path,
-                                    )
-                                except Exception:
-                                    _safe_unlink(att_path, runtime_dir)
-                                    raise
-
+                                updated = db.update_invoice_parsed_metadata(
+                                    invoice_id=inv_id,
+                                    invoice_number=info.invoice_number,
+                                    invoice_code=info.invoice_code,
+                                    invoice_date=info.invoice_date,
+                                    amount=info.amount,
+                                    total_amount=info.total_amount,
+                                    seller_name=info.seller_name,
+                                    buyer_name=info.buyer_name,
+                                    invoice_type=info.invoice_type or inv.invoice_type or "电子发票",
+                                    category=cat,
+                                    has_extra=inv.has_extra,
+                                    extra_type=extra_type,
+                                    missing_extra=extra_req,
+                                    parse_success=True,
+                                    parse_note="重新下载后解析",
+                                    item_name=getattr(info, "item_name", ""),
+                                    expense_date=getattr(info, "expense_date", ""),
+                                    date_source=getattr(info, "date_source", ""),
+                                )
                                 if not updated:
-                                    _safe_unlink(att_path, runtime_dir)
-                                    if db.is_unique_conflict():
+                                    if getattr(db, "last_error", "") == "unique_conflict":
                                         fallback_reason = "解析结果与已有发票唯一键冲突"
                                         _emit_log(
                                             log_callback,
@@ -603,6 +574,11 @@ def run_invoice_redownload(
                                     else:
                                         fallback_reason = "解析结果写入数据库失败"
                                 else:
+                                    db._conn.execute(
+                                        "UPDATE invoices SET attachment_path = ? WHERE id = ?",
+                                        (att_path, inv_id),
+                                    )
+                                    db._conn.commit()
                                     success_count += 1
                                     buckets["file_restored"] += 1
                                     status = "file_restored"
@@ -632,24 +608,15 @@ def run_invoice_redownload(
                                 invoice_number=inv.invoice_number,
                                 source_mode="reprocess",
                             )
-                            try:
-                                updated = db.update_invoice_raw_attachment(
-                                    inv_id,
-                                    att_path,
-                                    parse_note="OFD 原件已恢复，需手动处理/转换后再解析。",
-                                )
-                            except Exception:
-                                _safe_unlink(att_path, runtime_dir)
-                                raise
-
-                            if not updated:
-                                _safe_unlink(att_path, runtime_dir)
-                                fallback_reason = "OFD 记录写入数据库失败"
-                            else:
-                                _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} OFD 原件已恢复，需手动处理/转换后再解析。")
-                                buckets["metadata_refreshed"] += 1
-                                status = "metadata_refreshed"
-                                direct_download_ok = True
+                            db._conn.execute(
+                                "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
+                                (att_path, "OFD 原件已恢复，需手动处理/转换后再解析。", inv_id),
+                            )
+                            db._conn.commit()
+                            _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} OFD 原件已恢复，需手动处理/转换后再解析。")
+                            buckets["metadata_refreshed"] += 1
+                            status = "metadata_refreshed"
+                            direct_download_ok = True
                         else:
                             from . import services as _services
 
@@ -666,30 +633,19 @@ def run_invoice_redownload(
                                 invoice_number=inv.invoice_number,
                                 source_mode="reprocess",
                             )
-                            try:
-                                updated = db.update_invoice_raw_attachment(
-                                    inv_id,
-                                    att_path,
-                                    parse_note=f"下载了不支持的文件类型 ({suffix})，需手动处理。",
-                                )
-                            except Exception:
-                                _safe_unlink(att_path, runtime_dir)
-                                raise
-
-                            if not updated:
-                                _safe_unlink(att_path, runtime_dir)
-                                fallback_reason = f"文件记录写入数据库失败 ({suffix})"
-                            else:
-                                _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} 下载了不支持的文件类型 ({suffix})，已保存，需手动处理。")
-                                buckets["metadata_refreshed"] += 1
-                                status = "metadata_refreshed"
-                                direct_download_ok = True
+                            db._conn.execute(
+                                "UPDATE invoices SET attachment_path = ?, parse_success = 0, parse_note = ? WHERE id = ?",
+                                (att_path, f"下载了不支持的文件类型 ({suffix})，需手动处理。", inv_id),
+                            )
+                            db._conn.commit()
+                            _emit_log(log_callback, f"✅ [重新下载] 发票 ID {inv_id} 下载了不支持的文件类型 ({suffix})，已保存，需手动处理。")
+                            buckets["metadata_refreshed"] += 1
+                            status = "metadata_refreshed"
+                            direct_download_ok = True
                     else:
                         fallback_reason = "下载超时或链接失效"
                 except Exception as exc:
                     fallback_reason = _safe_failure(f"链接下载异常: {exc}", secrets)
-                    if "dl" in locals() and dl and getattr(dl, "file_path", None):
-                        _safe_unlink(dl.file_path)
 
             if not direct_download_ok:
                 # A cancellation requested while a direct link operation was
