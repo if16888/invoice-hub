@@ -644,11 +644,16 @@ class RedownloadServiceTests(unittest.TestCase):
 class RedownloadWorkerEventLoopTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         try:
-            from PySide6.QtCore import QCoreApplication
-        except ImportError as exc:
+            from PySide6.QtWidgets import QApplication
+        except (ImportError, RuntimeError) as exc:
             raise unittest.SkipTest(f"Skipping Qt worker tests: {exc}")
-        cls._qt = QCoreApplication.instance() or QCoreApplication([])
+        try:
+            cls._qt = QApplication.instance() or QApplication([])
+        except (ImportError, RuntimeError) as exc:
+            raise unittest.SkipTest(f"Skipping Qt worker tests: {exc}")
 
     def test_worker_does_not_block_event_loop_while_operation_is_pending(self):
         from PySide6.QtCore import QTimer
