@@ -411,7 +411,7 @@ def _install_table_remainder_contract(window) -> None:
     table.setToolTip("点击列标题筛选；销售方可拖动调整，发票号自动利用剩余宽度")
 
 
-def apply_review_workspace_closure(page: QWidget) -> None:
+def install_review_vertical_workspace(page: QWidget) -> None:
     """Apply the final Review workspace structure after legacy construction."""
     if page is None or page.property("reviewWorkspaceClosureApplied"):
         return
@@ -441,7 +441,7 @@ __all__ = [
     "SELLER_MAX_WIDTH",
     "apply_review_detail_width_fix",
     "apply_review_table_width_contract",
-    "apply_review_workspace_closure",
+    "install_review_vertical_workspace",
     "_reflow_review_detail",
     "_target_detail_width",
 ]

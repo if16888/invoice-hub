@@ -9,12 +9,33 @@ from scripts.check_architecture_policy import (
     find_hidden_compat_scopes,
     find_main_imports,
     find_patch_modules,
+    find_retired_production_symbols,
 )
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
     def test_current_production_baseline_passes(self):
         self.assertEqual(check_architecture_policy(), [])
+
+    def test_retired_review_symbols_are_absent_from_production(self):
+        self.assertEqual(find_retired_production_symbols(), set())
+
+    def test_retired_review_symbol_is_detected(self):
+        with tempfile.TemporaryDirectory() as td:
+            production_root = Path(td) / "invoice_fetch"
+            production_root.mkdir()
+            (production_root / "legacy.py").write_text(
+                "def apply_review_detail_closure(page):\n"
+                "    return page\n",
+                encoding="utf-8",
+            )
+
+            findings = find_retired_production_symbols(production_root)
+
+            self.assertEqual(
+                findings,
+                {"legacy.py:1:apply_review_detail_closure"},
+            )
 
     def test_new_forbidden_patch_module_fails(self):
         with tempfile.TemporaryDirectory() as td:

@@ -16,13 +16,13 @@ from scripts.invoice_fetch.gui.review_layout import (
 )
 
 
-class ReviewWorkspaceClosureTests(unittest.TestCase):
+class ReviewWorkspaceVerticalLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def make_window(self, td):
-        window = InvoiceReviewApp(Path(td) / "review-workspace-closure.db")
+        window = InvoiceReviewApp(Path(td) / "review-workspace-vertical-layout.db")
         window.resize(1600, 900)
         window.show()
         for _ in range(8):

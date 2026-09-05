@@ -5056,7 +5056,7 @@ def _repolish(widget: QWidget) -> None:
     widget.updateGeometry()
 
 
-def apply_review_detail_closure(page: QWidget) -> None:
+def install_invoice_detail_ownership(page: QWidget) -> None:
     """Apply the final information-ownership and material-row contract."""
     if page is None or page.property("reviewDetailClosureApplied"):
         return
