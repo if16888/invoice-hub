@@ -9,20 +9,20 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QHeaderView
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.review_workspace_closure import (
+from scripts.invoice_fetch.gui.review_layout import (
     PREVIEW_MIN_HEIGHT,
     RECORD_MAX_HEIGHT,
     RECORD_MIN_HEIGHT,
 )
 
 
-class ReviewWorkspaceClosureTests(unittest.TestCase):
+class ReviewWorkspaceVerticalLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def make_window(self, td):
-        window = InvoiceReviewApp(Path(td) / "review-workspace-closure.db")
+        window = InvoiceReviewApp(Path(td) / "review-workspace-vertical-layout.db")
         window.resize(1600, 900)
         window.show()
         for _ in range(8):

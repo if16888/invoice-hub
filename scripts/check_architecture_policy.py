@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUI_DIR = REPO_ROOT / "scripts" / "invoice_fetch" / "gui"
+PRODUCTION_SOURCE_ROOT = REPO_ROOT / "scripts" / "invoice_fetch"
 SERVICES_PATH = REPO_ROOT / "scripts" / "invoice_fetch" / "services.py"
 FORBIDDEN_PATCH_SUFFIXES = (
     "_closure.py",
@@ -37,19 +38,14 @@ FROZEN_PATCH_MODULES = frozenset(
         "design_v1_review_task_closure.py",
         "hci_v1_closure.py",
         "review_baseline_pipeline.py",
-        "review_detail_closure.py",
         "review_feedback_fixes.py",
         "review_legacy_contract.py",
         "review_settings_issue_fixes.py",
-        "review_table_width_contract.py",
         "review_toolbar_filter_fixes.py",
         "review_workspace_baseline.py",
-        "review_workspace_closure.py",
         "settings_baseline.py",
-        "settings_baseline_pipeline.py",
         "settings_legacy_contract.py",
         "settings_pages_baseline.py",
-        "settings_semantic_status_contract.py",
         "ui_visibility_contracts.py",
     }
 )
@@ -63,6 +59,16 @@ FROZEN_HIDDEN_COMPAT_SCOPES = frozenset(
         "preview_mixin.py:PreviewMixin._init_overlay_toolbar",
         "review_legacy_contract.py:install_claim_summary_layout_compatibility",
         "settings_dialog.py:SettingsDialog._init_settings_home_page",
+    }
+)
+
+# Runtime contracts retired after their physical owners were consolidated.
+# Keep this assertion deliberately narrow: other historical uses of the word
+# "closure" remain valid until their own retirement work is authorized.
+RETIRED_PRODUCTION_SYMBOLS = frozenset(
+    {
+        "apply_review_workspace_closure",
+        "apply_review_detail_closure",
     }
 )
 
@@ -175,12 +181,39 @@ def find_main_imports(services_path: Path = SERVICES_PATH) -> set[str]:
     return findings
 
 
+def find_retired_production_symbols(
+    production_root: Path = PRODUCTION_SOURCE_ROOT,
+    symbols: frozenset[str] = RETIRED_PRODUCTION_SYMBOLS,
+) -> set[str]:
+    """Find exact retired runtime symbols still exposed by production Python."""
+    findings: set[str] = set()
+    for path in production_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        relative = path.relative_to(production_root).as_posix()
+        for node in ast.walk(tree):
+            names: set[str] = set()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.alias):
+                names.add(node.name)
+                if node.asname:
+                    names.add(node.asname)
+            for name in names & symbols:
+                findings.add(f"{relative}:{node.lineno}:{name}")
+    return findings
+
+
 def check_architecture_policy(
     gui_dir: Path = GUI_DIR,
     *,
     patch_baseline: frozenset[str] = FROZEN_PATCH_MODULES,
     hidden_baseline: frozenset[str] = FROZEN_HIDDEN_COMPAT_SCOPES,
     services_path: Path = SERVICES_PATH,
+    production_root: Path = PRODUCTION_SOURCE_ROOT,
 ) -> list[str]:
     """Return policy violations without changing the source tree."""
     errors: list[str] = []
@@ -209,6 +242,12 @@ def check_architecture_policy(
     main_imports = sorted(find_main_imports(services_path))
     if main_imports:
         errors.append("services 不得依赖 CLI __main__: " + ", ".join(main_imports))
+    retired_symbols = sorted(find_retired_production_symbols(production_root))
+    if retired_symbols:
+        errors.append(
+            "已退役 Review 运行时符号不得重新暴露: "
+            + ", ".join(retired_symbols)
+        )
     return errors
 
 

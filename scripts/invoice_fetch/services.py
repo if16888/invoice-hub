@@ -1538,10 +1538,8 @@ def _find_existing_invoice_for_parse(
         return db.find_invoice_by_number_and_amount(
             invoice_number, total_amount, include_deleted=include_deleted
         )
-    if seller_name and total_amount:
-        return db.find_invoice_by_seller_and_amount(
-            seller_name, total_amount, include_deleted=include_deleted
-        )
+    # Seller + amount is only a weak heuristic and cannot establish invoice
+    # identity for either a numbered invoice or an unnumbered receipt.
     return None
 
 

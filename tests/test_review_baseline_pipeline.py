@@ -25,6 +25,26 @@ class ReviewBaselinePipelineTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _app()
 
+    def test_review_baseline_domain_stage_order_is_preserved(self):
+        self.assertEqual(
+            [name for name, _stage in pipeline.REVIEW_BASELINE_STAGES][4:9],
+            [
+                "table_width",
+                "detail_width",
+                "workspace_vertical_layout",
+                "invoice_detail_ownership",
+                "list_paging",
+            ],
+        )
+        self.assertIs(
+            pipeline.REVIEW_BASELINE_STAGES[6][1],
+            pipeline.install_review_vertical_workspace,
+        )
+        self.assertIs(
+            pipeline.REVIEW_BASELINE_STAGES[7][1],
+            pipeline.install_invoice_detail_ownership,
+        )
+
     def test_pipeline_runs_stages_in_order_once(self):
         page = QWidget()
         calls = []

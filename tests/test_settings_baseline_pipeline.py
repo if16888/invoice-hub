@@ -11,7 +11,7 @@ from shiboken6 import isValid
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS
-from scripts.invoice_fetch.gui.settings_baseline_pipeline import SETTINGS_BASELINE_STAGES
+from scripts.invoice_fetch.gui.page_layouts import SETTINGS_BASELINE_STAGES
 from scripts.invoice_fetch.gui import (
     review_feedback_fixes,
     settings_baseline,
