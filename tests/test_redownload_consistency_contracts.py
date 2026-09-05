@@ -44,7 +44,7 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
             )
             self.assertTrue(db.closed)
 
-    def test_detail_retry_successful_reuse_preserves_preexisting_file(self):
+    def test_detail_retry_collision_preserves_preexisting_file(self):
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "runtime"
             dest_dir = runtime / "attachments" / "2026-09-05"
@@ -73,12 +73,15 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
                     runtime_dir=runtime,
                 )
 
+            collision_copy = dest_dir / "managed_1.pdf"
             self.assertTrue(result["success"])
             self.assertTrue(existing.exists())
             self.assertEqual(existing.read_bytes(), b"synthetic")
+            self.assertTrue(collision_copy.exists())
+            self.assertEqual(collision_copy.read_bytes(), b"synthetic")
             self.assertEqual(
-                [p for p in (runtime / "attachments").rglob("*") if p.is_file()],
-                [existing],
+                sorted(p.name for p in dest_dir.iterdir() if p.is_file()),
+                ["managed.pdf", "managed_1.pdf"],
             )
 
     def test_unsupported_direct_download_keeps_metadata_refreshed_contract(self):
@@ -113,7 +116,7 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
                     config={},
                 )
 
-            self.assertEqual(result["success_count"], 1)
+            self.assertEqual(result["success_count"], 0)
             self.assertEqual(result["buckets"]["metadata_refreshed"], 1)
             self.assertEqual(
                 result["invoice_results"],
