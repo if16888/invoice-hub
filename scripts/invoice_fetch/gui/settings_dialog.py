@@ -1291,12 +1291,79 @@ class SettingsDialog(QDialog):
         main_layout.addWidget(right_panel, stretch=1)
 
 
+    def _get_active_ai_profile(self) -> dict | None:
+        from ..ai_profiles import get_ai_profiles
+        try:
+            profiles = get_ai_profiles(self.cfg)
+            return next((p for p in profiles if p.get("enabled")), None)
+        except Exception:
+            return None
+
     def _v5_test_ai_clicked(self):
-        QMessageBox.information(self, "AI 测试", "正在发起连接与文本结构化提取测试... 接口连通正常！")
+        active = self._get_active_ai_profile()
+        if not active:
+            QMessageBox.warning(
+                self,
+                "AI 配置测试",
+                "当前未启用任何 AI 配置。\n\n请在下方的 AI 配置列表中新增或启用一个配置后再进行测试。",
+            )
+            return
+
+        from ..credentials import get_ai_api_key, get_ai_api_key_source
+        from ..ai_classifier import is_provider_session_paused
+
+        provider = active.get("provider", "")
+        profile_id = active.get("profile_id", "")
+        name = active.get("name", "未命名")
+        model = active.get("model", "")
+        key_source = get_ai_api_key_source(provider, profile_id)
+        if key_source == "missing":
+            QMessageBox.warning(
+                self,
+                "AI 配置测试",
+                f"当前启用的配置【{name}】尚未配置 API Key。\n\n"
+                f"• 服务提供商: {provider}\n"
+                f"• 使用模型: {model}\n"
+                f"• 凭据状态: 缺少 API Key\n\n"
+                f"请点击“编辑此配置”输入并保存有效的 API Key 后再试。",
+            )
+            return
+
+        try:
+            api_key = get_ai_api_key(provider, profile_id)
+        except (Exception, SystemExit):
+            api_key = ""
+
+        if not api_key:
+            QMessageBox.warning(
+                self,
+                "AI 配置测试",
+                f"当前启用的配置【{name}】未能读取到有效 API Key。\n\n"
+                f"• 服务提供商: {provider}\n"
+                f"• 使用模型: {model}\n"
+                f"• 凭据状态: 缺少 API Key\n\n"
+                f"请点击“编辑此配置”输入并保存有效的 API Key 后再试。",
+            )
+            return
+
+        key_label = AI_KEY_SOURCE_LABELS.get(key_source, key_source)
+        paused = is_provider_session_paused(provider)
+        session_text = "本次会话已暂停（可能因限流或认证失败自动熔断）" if paused else "本次会话可用"
+
+        QMessageBox.information(
+            self,
+            "AI 配置与凭据验证",
+            f"AI 配置与凭据检查正常：\n\n"
+            f"• 配置名称: {name}\n"
+            f"• 服务提供商: {provider}\n"
+            f"• 使用模型: {model}\n"
+            f"• Key 来源: {key_label}\n"
+            f"• 会话状态: {session_text}\n\n"
+            f"本地配置与凭据校验通过，可正常用于发票分类识别。",
+        )
 
     def _v5_clear_ai_key_clicked(self):
-        from ..ai_profiles import get_active_ai_profile
-        active = get_active_ai_profile(self.cfg)
+        active = self._get_active_ai_profile()
         if active:
             from ..credentials import delete_ai_api_key
             try:
@@ -1307,10 +1374,9 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, "提示", f"清除 Key 时产生提示: {e}")
 
     def _v5_edit_active_ai_clicked(self):
-        from ..ai_profiles import get_active_ai_profile
-        active = get_active_ai_profile(self.cfg)
+        active = self._get_active_ai_profile()
         if active:
-            self._open_ai_profile_editor(active["profile_id"])
+            self._open_ai_editor(active["profile_id"])
         else:
             self._open_new_ai_editor()
 
@@ -1567,6 +1633,24 @@ class SettingsDialog(QDialog):
             self.lbl_ai_key_metric.setText("所有已保存配置都具备可用 Key 来源")
         self.lbl_ai_profile_metric.setText(f"共 {len(profiles)} 个 AI 配置保存在本地")
         self.lbl_ai_summary.setText(f"{status} / 已保存 {len(profiles)} / 缺少密钥 {missing_keys}")
+        if hasattr(self, "lbl_v5_ai_provider"):
+            if active:
+                self.lbl_v5_ai_provider.setText(f"服务提供商: {active.get('provider', '')}")
+                self.lbl_v5_ai_model.setText(f"使用模型: {active.get('model', '')}")
+                self.lbl_v5_ai_key_status.setText(f"Key 来源: {key_source}")
+                self.lbl_v5_ai_health.setText(
+                    "Key 健康度: 待配置 Key" if active_key_source == "missing"
+                    else ("Key 健康度: 会话已暂停" if is_provider_session_paused(active.get("provider", "")) else "Key 健康度: 正常可用")
+                )
+                self.lbl_v5_ai_active_state.setText(
+                    f"生效状态: 当前生效中 ({'会话已暂停' if is_provider_session_paused(active.get('provider', '')) else '本次会话可用'})"
+                )
+            else:
+                self.lbl_v5_ai_provider.setText("服务提供商: 未启用")
+                self.lbl_v5_ai_model.setText("使用模型: 未启用")
+                self.lbl_v5_ai_key_status.setText("Key 来源: 未启用")
+                self.lbl_v5_ai_health.setText("Key 健康度: 未启用")
+                self.lbl_v5_ai_active_state.setText("生效状态: AI 功能未启用")
 
     def _refresh_rules_center_summary(self):
         if not hasattr(self, "lbl_rules_flow"):

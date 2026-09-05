@@ -49,38 +49,6 @@ def get_qt_pdf_classes():
         _QPDF_CLASSES = (None, None)
     return _QPDF_CLASSES
 
-from ..config import RUNTIME_DIR
-
-_log = logging.getLogger("invoice_fetch.gui.app")
-
-HAS_QT_PDF = None
-_QPDF_CLASSES = None
-
-
-def _runtime_dir_compat():
-    app_module = sys.modules.get(f"{__package__}.app")
-    return getattr(app_module, "RUNTIME_DIR", RUNTIME_DIR)
-
-def check_has_qt_pdf() -> bool:
-    global HAS_QT_PDF
-    if HAS_QT_PDF is None:
-        QPdfDocument, QPdfView = get_qt_pdf_classes()
-        HAS_QT_PDF = QPdfDocument is not None and QPdfView is not None
-    return HAS_QT_PDF
-
-
-def get_qt_pdf_classes():
-    global _QPDF_CLASSES
-    if _QPDF_CLASSES is not None:
-        return _QPDF_CLASSES
-    try:
-        from PySide6.QtPdf import QPdfDocument
-        from PySide6.QtPdfWidgets import QPdfView
-        _QPDF_CLASSES = (QPdfDocument, QPdfView)
-    except ImportError:
-        _QPDF_CLASSES = (None, None)
-    return _QPDF_CLASSES
-
 
 class PreviewMixin:
     def _make_toolbar_button(self, text: str, handler, *, width: int | None = None, tooltip: str = "") -> QPushButton:

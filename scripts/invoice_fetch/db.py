@@ -210,6 +210,14 @@ class InvoiceDB:
     def _set_last_error(self, code: str = "") -> None:
         self.last_error = code or ""
 
+    def get_last_error(self) -> str:
+        """Return the last error code encountered by database operations."""
+        return getattr(self, "last_error", "")
+
+    def is_unique_conflict(self) -> bool:
+        """Return True if the last error was a unique constraint conflict."""
+        return self.get_last_error() == "unique_conflict"
+
     # ── Emails table (Phase 1: scan & classify) ──────────────────────
 
     def upsert_email(self, uid: int, subject: str,
@@ -483,28 +491,55 @@ class InvoiceDB:
     # ── Invoice dedup ────────────────────────────────────────────────
 
     def is_duplicate(self, invoice_number: str,
-                     total_amount: str = "", seller_name: str = "", include_deleted: bool = False) -> bool:
-        """Check uniqueness on (number, amount, seller)."""
+                     total_amount: str = "", seller_name: str = "", include_deleted: bool = False,
+                     expense_date: str = "", invoice_date: str = "", file_hash: str = "") -> bool:
+        """Check uniqueness on (number, amount), file_hash, or composite (seller, amount, date)."""
         invoice_number = (invoice_number or "").strip()
         total_amount = (total_amount or "").strip()
         seller_name = (seller_name or "").strip()
+        expense_date = (expense_date or "").strip()
+        invoice_date = (invoice_date or "").strip()
+        file_hash = (file_hash or "").strip()
 
         cond = "" if include_deleted else " AND is_deleted = 0"
 
+        # a) When invoice_number is non-empty:
+        # Check by invoice_number (and total_amount if provided).
+        # If match found, return True. If NOT found, return False immediately.
         if invoice_number:
+            if total_amount:
+                row = self._conn.execute(
+                    f"SELECT 1 FROM invoices WHERE invoice_number = ? AND total_amount = ?{cond}",
+                    (invoice_number, total_amount),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    f"SELECT 1 FROM invoices WHERE invoice_number = ?{cond}",
+                    (invoice_number,),
+                ).fetchone()
+            return row is not None
+
+        # b) When invoice_number is empty/missing:
+        # 1. Check file_hash if provided
+        if file_hash:
             row = self._conn.execute(
-                f"SELECT 1 FROM invoices WHERE invoice_number = ? AND total_amount = ?{cond}",
-                (invoice_number, total_amount),
+                f"SELECT 1 FROM invoices WHERE file_hash = ?{cond}",
+                (file_hash,),
             ).fetchone()
             if row is not None:
                 return True
 
-        if seller_name and total_amount:
+        # 2. Check composite key (seller_name, total_amount, date)
+        check_dates = list(dict.fromkeys(d for d in (expense_date, invoice_date) if d))
+        if seller_name and total_amount and check_dates:
+            placeholders = ", ".join("?" for _ in check_dates)
             row = self._conn.execute(
-                f"SELECT 1 FROM invoices WHERE total_amount = ? AND seller_name = ?{cond}",
-                (total_amount, seller_name),
+                f"SELECT 1 FROM invoices WHERE seller_name = ? AND total_amount = ? "
+                f"AND (expense_date IN ({placeholders}) OR invoice_date IN ({placeholders})){cond}",
+                [seller_name, total_amount, *check_dates, *check_dates],
             ).fetchone()
-            return row is not None
+            if row is not None:
+                return True
 
         return False
 
@@ -842,23 +877,27 @@ class InvoiceDB:
     def update_invoice_parsed_metadata(
         self,
         invoice_id: int,
-        invoice_number: str,
-        invoice_code: str,
-        invoice_date: str,
-        amount: str,
-        total_amount: str,
-        seller_name: str,
-        buyer_name: str,
-        invoice_type: str,
-        category: str,
-        has_extra: bool,
-        extra_type: str,
-        missing_extra: bool,
-        parse_success: bool,
+        fields: dict[str, Any] | str | None = None,
+        invoice_code: str = "",
+        invoice_date: str = "",
+        amount: str = "",
+        total_amount: str = "",
+        seller_name: str = "",
+        buyer_name: str = "",
+        invoice_type: str = "",
+        category: str = "",
+        has_extra: bool = False,
+        extra_type: str = "",
+        missing_extra: bool = False,
+        parse_success: bool = True,
         parse_note: str = "",
         item_name: str = "",
         expense_date: str = "",
         date_source: str = "",
+        attachment_path: str | None = None,
+        file_hash: str | None = None,
+        invoice_number: str | None = None,
+        **kwargs: Any,
     ) -> bool:
         """Refresh parsed metadata in-place without touching review status."""
         inv = self.get_invoice(invoice_id)
@@ -866,36 +905,112 @@ class InvoiceDB:
             self._set_last_error("not_found")
             return False
 
-        if not expense_date:
-            expense_date = invoice_date
-        if not date_source:
-            date_source = "invoice_date"
+        if isinstance(fields, dict):
+            field_dict = fields
+        elif isinstance(kwargs.get("fields"), dict):
+            field_dict = kwargs.pop("fields")
+        else:
+            field_dict = None
+
+        if field_dict is not None:
+            inv_num = field_dict.get("invoice_number", "")
+            inv_code = field_dict.get("invoice_code", "")
+            inv_date = field_dict.get("invoice_date", "")
+            amt = field_dict.get("amount", "")
+            tot_amt = field_dict.get("total_amount", "")
+            seller = field_dict.get("seller_name", "")
+            buyer = field_dict.get("buyer_name", "")
+            inv_type = field_dict.get("invoice_type", "")
+            cat = field_dict.get("category", "")
+            h_extra = field_dict.get("has_extra", False)
+            e_type = field_dict.get("extra_type", "")
+            m_extra = field_dict.get("missing_extra", False)
+            p_success = field_dict.get("parse_success", True)
+            p_note = field_dict.get("parse_note", "")
+            i_name = field_dict.get("item_name", "")
+            exp_date = field_dict.get("expense_date", "")
+            d_source = field_dict.get("date_source", "")
+            if attachment_path is None:
+                attachment_path = field_dict.get("attachment_path")
+            if file_hash is None:
+                file_hash = field_dict.get("file_hash")
+        else:
+            inv_num = invoice_number if invoice_number is not None else (str(fields or "") if fields is not None else "")
+            inv_code = invoice_code
+            inv_date = invoice_date
+            amt = amount
+            tot_amt = total_amount
+            seller = seller_name
+            buyer = buyer_name
+            inv_type = invoice_type
+            cat = category
+            h_extra = has_extra
+            e_type = extra_type
+            m_extra = missing_extra
+            p_success = parse_success
+            p_note = parse_note
+            i_name = item_name
+            exp_date = expense_date
+            d_source = date_source
+
+        if not exp_date:
+            exp_date = inv_date
+        if not d_source:
+            d_source = "invoice_date"
+
+        sql_parts = [
+            "invoice_number=?",
+            "invoice_code=?",
+            "invoice_date=?",
+            "expense_date=?",
+            "date_source=?",
+            "amount=?",
+            "total_amount=?",
+            "seller_name=?",
+            "buyer_name=?",
+            "invoice_type=?",
+            "category=?",
+            "has_extra=?",
+            "extra_type=?",
+            "missing_extra=?",
+            "parse_success=?",
+            "parse_note=?",
+            "item_name=?",
+        ]
+        params: list[Any] = [
+            inv_num,
+            inv_code,
+            inv_date,
+            exp_date,
+            d_source,
+            amt,
+            tot_amt,
+            seller,
+            buyer,
+            inv_type,
+            cat,
+            int(bool(h_extra)),
+            e_type,
+            int(bool(m_extra)),
+            int(bool(p_success)),
+            p_note,
+            i_name,
+        ]
+
+        if attachment_path is not None:
+            sql_parts.append("attachment_path=?")
+            params.append(attachment_path)
+
+        if file_hash is not None:
+            sql_parts.append("file_hash=?")
+            params.append(file_hash)
+
+        params.append(invoice_id)
 
         try:
             self._conn.execute(
-                "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, expense_date=?, date_source=?, amount=?, total_amount=?, "
-                "seller_name=?, buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
-                "missing_extra=?, parse_success=?, parse_note=?, item_name=? WHERE id=?",
-                (
-                    invoice_number,
-                    invoice_code,
-                    invoice_date,
-                    expense_date,
-                    date_source,
-                    amount,
-                    total_amount,
-                    seller_name,
-                    buyer_name,
-                    invoice_type,
-                    category,
-                    int(bool(has_extra)),
-                    extra_type,
-                    int(bool(missing_extra)),
-                    int(bool(parse_success)),
-                    parse_note,
-                    item_name,
-                    invoice_id,
-                ),
+                f"UPDATE invoices SET {', '.join(sql_parts)} WHERE id=?",
+                params,
             )
             self._conn.commit()
             self._set_last_error("")
@@ -904,6 +1019,49 @@ class InvoiceDB:
             self._conn.rollback()
             self._set_last_error("unique_conflict")
             return False
+        except sqlite3.Error as exc:
+            self._conn.rollback()
+            self._set_last_error("db_error")
+            _log.error("Failed to update invoice parsed metadata for id %s: %s", invoice_id, exc)
+            return False
+
+    def update_invoice_raw_attachment(
+        self,
+        invoice_id: int,
+        attachment_path: str,
+        parse_note: str = "",
+        parse_success: bool = False,
+        file_hash: str | None = None,
+    ) -> bool:
+        """Atomically record an unparsed or raw attachment (e.g. OFD or unsupported formats)."""
+        inv = self.get_invoice(invoice_id)
+        if not inv:
+            self._set_last_error("not_found")
+            return False
+
+        sql_parts = ["attachment_path = ?", "parse_success = ?", "parse_note = ?"]
+        params: list[Any] = [attachment_path, int(bool(parse_success)), parse_note]
+        if file_hash is not None:
+            sql_parts.append("file_hash = ?")
+            params.append(file_hash)
+        params.append(invoice_id)
+
+        try:
+            self._conn.execute(
+                f"UPDATE invoices SET {', '.join(sql_parts)} WHERE id = ?",
+                params,
+            )
+            self._conn.commit()
+            self._set_last_error("")
+            return True
+        except sqlite3.Error as exc:
+            self._conn.rollback()
+            self._set_last_error("db_error")
+            _log.error("Failed to update invoice raw attachment for id %s: %s", invoice_id, exc)
+            return False
+
+    update_invoice_attachment_path = update_invoice_raw_attachment
+
 
     def update_invoice_file_paths(
         self,

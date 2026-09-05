@@ -51,7 +51,7 @@ class TestEmailReprocess(unittest.TestCase):
         shutil.rmtree(self.temp_dir)
 
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
-    @patch('scripts.invoice_fetch.__main__._handle_pending_email')
+    @patch('scripts.invoice_fetch.services._handle_pending_email')
     def test_1_dry_run_no_modifications(self, mock_handle, mock_fetcher):
         # 1. 插入 email 和 invoice
         self.db._conn.execute(
@@ -85,7 +85,7 @@ class TestEmailReprocess(unittest.TestCase):
 
     @patch('scripts.invoice_fetch.__main__.get_auth_code')
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
-    @patch('scripts.invoice_fetch.__main__._handle_pending_email')
+    @patch('scripts.invoice_fetch.services._handle_pending_email')
     def test_2_apply_deletes_and_resets(self, mock_handle, mock_fetcher, mock_get_auth):
         mock_get_auth.return_value = "dummycode"
         mock_handle.return_value = True
@@ -118,8 +118,9 @@ class TestEmailReprocess(unittest.TestCase):
         invoices = self.db.get_invoices_by_mail_identity('a', 100)
         self.assertEqual(len(invoices), 0)
 
-        # 4. 重新下载成功了，所以 downloaded 状态重置为 0 后，被 _handle_pending_email 内部又标记为 1 了。
-        # 我们可以验证 reset_email_for_reprocess 单独调用时的 downloaded 为 0。
+        # 4. 重新下载成功了，验证 _handle_pending_email 被以 source_mode='reprocess' 调用
+        self.assertEqual(mock_handle.call_count, 1)
+        self.assertEqual(mock_handle.call_args.kwargs.get("source_mode"), "reprocess")
         self.db.reset_email_for_reprocess('a', 100)
         email = self.db._conn.execute("SELECT downloaded FROM emails WHERE mailbox_key='a' AND uid=100").fetchone()
         self.assertEqual(email["downloaded"], 0)
@@ -210,7 +211,7 @@ class TestEmailReprocess(unittest.TestCase):
         self.assertEqual(len(invs_after), 0)
 
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
-    @patch('scripts.invoice_fetch.__main__._handle_pending_email')
+    @patch('scripts.invoice_fetch.services._handle_pending_email')
     def test_7_reclassify_github(self, mock_handle, mock_fetcher):
         # 1. 插入 GitHub 误判发票的 email 和 invoice
         self.db._conn.execute(
@@ -245,7 +246,7 @@ class TestEmailReprocess(unittest.TestCase):
 
     @patch('scripts.invoice_fetch.__main__.get_auth_code')
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
-    @patch('scripts.invoice_fetch.__main__._handle_pending_email')
+    @patch('scripts.invoice_fetch.services._handle_pending_email')
     def test_8_only_process_selected_uids(self, mock_handle, mock_fetcher, mock_get_auth):
         mock_get_auth.return_value = "dummycode"
         mock_handle.return_value = True
@@ -1376,6 +1377,130 @@ class TestEmailReprocess(unittest.TestCase):
         # 匹配依然应成功
         self.assertEqual(len(unmatched), 0)
         self.assertEqual(len(matched[id(inv_info)]), 1)
+
+    def test_37_handle_pending_email_delegation_and_source_mode(self):
+        """Verify __main__._handle_pending_email delegates to services._handle_pending_email with source_mode."""
+        from scripts.invoice_fetch import __main__ as main_mod
+        from scripts.invoice_fetch import services as services_mod
+
+        with patch.object(services_mod, "_handle_pending_email") as mock_services_handle:
+            mock_services_handle.return_value = "sentinel_result"
+            res = main_mod._handle_pending_email(
+                row={"uid": 1},
+                fetcher=None,
+                folder="INBOX",
+                att_handler=None,
+                parser=None,
+                link_dl=None,
+                db=self.db,
+                categories={},
+                source_mode="reprocess",
+            )
+            self.assertEqual(res, "sentinel_result")
+            mock_services_handle.assert_called_once_with(
+                row={"uid": 1},
+                fetcher=None,
+                folder="INBOX",
+                att_handler=None,
+                parser=None,
+                link_dl=None,
+                db=self.db,
+                categories={},
+                source_mode="reprocess",
+            )
+
+    @patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode")
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    @patch('scripts.invoice_fetch.services._handle_pending_email', return_value=True)
+    def test_38_reprocess_does_not_mutate_global_rename_source_mode(self, mock_handle, mock_fetcher, mock_auth):
+        """Verify _reprocess_email_records does not mutate global _rename_source_mode in services."""
+        from scripts.invoice_fetch import services as services_mod
+
+        self.db._conn.execute(
+            "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
+            "VALUES ('a', 200, 'Test Invoice', 'sender', '2026-06-01', 1, 1)"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted) "
+            "VALUES ('a', 200, 'INV-200', '200.00', 'to_review', 0)"
+        )
+        self.db._conn.commit()
+        records = self.db.find_emails_for_reprocess(mailbox_key='a', uids=[200])
+
+        initial_mode = services_mod._rename_source_mode
+        self.assertEqual(initial_mode, "normal")
+
+        _reprocess_email_records(
+            db=self.db,
+            cfg=self.cfg,
+            records=records,
+            dry_run=False,
+        )
+
+        # Global mode remains completely untouched
+        self.assertEqual(services_mod._rename_source_mode, "normal")
+        # And mock_handle was passed source_mode='reprocess'
+        self.assertEqual(mock_handle.call_args.kwargs.get("source_mode"), "reprocess")
+
+    @patch('scripts.invoice_fetch.services._rename_by_invoice_code', return_value="2026-06/test.pdf")
+    @patch('scripts.invoice_fetch.services._attach_email_extras_to_invoice', return_value=[])
+    def test_39_process_email_threads_source_mode_to_rename_and_extras(self, mock_attach, mock_rename):
+        """Verify _process_email threads source_mode explicitly into all rename and attachment calls."""
+        from scripts.invoice_fetch import services as services_mod
+
+        mock_msg = MagicMock()
+        mock_msg.uid = 999
+        mock_msg.subject = "Test"
+        mock_msg.sender = "s@example.com"
+        mock_msg.date = "2026-06-01"
+        mock_msg.raw_msg = b""
+
+        mock_att = MagicMock()
+        mock_att.is_invoice = True
+        mock_att.is_extra = False
+        mock_att.file_path = "invoice.pdf"
+        mock_att.original_name = "invoice.pdf"
+
+        mock_handler = MagicMock()
+        mock_handler.extract.return_value = [mock_att]
+        mock_handler._base = Path(self.temp_dir)
+
+        mock_parsed = MagicMock()
+        mock_parsed.invoice_number = "INV-999"
+        mock_parsed.invoice_code = "CODE-999"
+        mock_parsed.invoice_date = "2026-06-01"
+        mock_parsed.expense_date = "2026-06-01"
+        mock_parsed.date_source = "invoice_date"
+        mock_parsed.amount = "10.00"
+        mock_parsed.total_amount = "10.00"
+        mock_parsed.seller_name = "TestSeller"
+        mock_parsed.buyer_name = "TestBuyer"
+        mock_parsed.invoice_type = "增值税电子普通发票"
+        mock_parsed.parse_success = True
+        mock_parsed.parse_note = ""
+        mock_parsed.raw_text = ""
+        mock_parsed.item_name = "Item"
+
+        mock_parser = MagicMock()
+        mock_parser.parse_pdf.return_value = mock_parsed
+
+        mock_dl = MagicMock()
+        mock_dl.extract_and_download.return_value = []
+
+        services_mod._process_email(
+            msg=mock_msg,
+            att_handler=mock_handler,
+            parser=mock_parser,
+            link_dl=mock_dl,
+            db=self.db,
+            categories={},
+            source_mode="reprocess",
+        )
+
+        # Assert _rename_by_invoice_code was called with source_mode="reprocess"
+        self.assertTrue(mock_rename.called)
+        for call in mock_rename.call_args_list:
+            self.assertEqual(call.kwargs.get("source_mode"), "reprocess")
 
 
 if __name__ == '__main__':

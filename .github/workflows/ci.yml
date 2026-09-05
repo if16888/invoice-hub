@@ -3,10 +3,14 @@ name: CI
 permissions:
   contents: read
 
-on:
+'on':
+  push:
+    branches:
+      - master
   pull_request:
     branches:
       - master
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

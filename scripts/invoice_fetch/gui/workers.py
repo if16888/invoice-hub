@@ -90,11 +90,6 @@ class MailboxConnectionTestWorker(QThread):
                 outcome = "cancelled"
             else:
                 error_text = self._safe_error_text(exc, request.auth_code)
-        except BaseException as exc:
-            if self.control.cancelled:
-                outcome = "cancelled"
-            else:
-                error_text = self._safe_error_text(exc, request.auth_code)
         finally:
             if fetcher is not None:
                 try:
@@ -255,24 +250,6 @@ class InvoiceRedownloadWorker(QThread):
                 )
             else:
                 self.error.emit(self._safe_error_text(exc))
-        except BaseException as exc:
-            if self.control.cancelled:
-                self.cancelled.emit(
-                    {
-                        "mode": request.mode,
-                        "invoice_id": request.invoice_snapshots[0].invoice_id
-                        if request.invoice_snapshots
-                        else None,
-                        "requested_count": len(request.invoice_snapshots),
-                        "completed_count": 0,
-                        "cancelled": True,
-                        "buckets": {},
-                        "invoice_results": (),
-                        "failure_details": (),
-                    }
-                )
-            else:
-                self.error.emit(self._safe_error_text(exc))
         finally:
             # Release the immutable snapshot (including any config reference)
             # as soon as the operation exits.  The native QThread finished
@@ -304,8 +281,6 @@ class ExportMigrationWorker(QThread):
             )
             self.finished.emit(self.result)
         except Exception as e:
-            self.error.emit(str(e))
-        except BaseException as e:
             self.error.emit(str(e))
 
 
@@ -349,9 +324,6 @@ class LocalImportWorker(QThread):
                 }
             )
         except Exception as e:
-            emit_performance_event("local_import", "T0_worker_done", outcome="error")
-            self.error.emit(str(e))
-        except BaseException as e:
             emit_performance_event("local_import", "T0_worker_done", outcome="error")
             self.error.emit(str(e))
 
@@ -408,6 +380,3 @@ class EmailScanWorker(QThread):
             else:
                 emit_performance_event("mail_complete", "T0_worker_done", outcome="error")
                 self.error.emit(str(e))
-        except BaseException as e:
-            emit_performance_event("mail_complete", "T0_worker_done", outcome="error")
-            self.error.emit(str(e))
