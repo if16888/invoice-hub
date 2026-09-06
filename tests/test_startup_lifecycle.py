@@ -166,7 +166,9 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
                 window.resize(1276, 875)
                 window._nav_collapsed_manual = True
                 window._apply_workbench_metrics(1276, 875)
-                self.qt_app.processEvents()
+                startup_lifecycle.reveal_startup_window(window, splash=None)
+                for _ in range(4):
+                    self.qt_app.processEvents()
 
                 self.assertEqual(
                     window.imports_page.property("startupDeferredPage"),
