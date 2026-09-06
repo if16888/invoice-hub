@@ -6528,38 +6528,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         file_path.name, "local import", info.seller_name, categories
                     )
 
-                    duplicate = self.db.find_invoice_by_unique_fields(
-                        info.invoice_number,
-                        info.total_amount,
-                        info.seller_name,
+                    from ..reparse_reconciliation import (
+                        MERGED_INTO_CLAIMED_DUPLICATE,
+                        REPLACED_UNLINKED_DUPLICATE,
+                        reconcile_reparsed_invoice,
                     )
-                    repair_target_id = inv_id
-                    if duplicate and duplicate.get("id") != inv_id:
-                        duplicate_claim_count = self.db.count_claim_links(int(duplicate["id"]))
-                        if duplicate_claim_count == 0:
-                            if self.db.delete_invoice_permanently(int(duplicate["id"])):
-                                duplicate_conflicts.append(
-                                    f"发票 ID {inv_id}: 已删除旧重复记录 ID {duplicate.get('id')}"
-                                )
-                                self.write_log(
-                                    f"🔁 [重新解析] 发票 ID {inv_id} 命中旧重复记录 ID {duplicate.get('id')}，已删除旧记录并修复当前记录"
-                                )
-                            else:
-                                duplicate_conflicts.append(
-                                    f"发票 ID {inv_id}: 发现重复记录 ID {duplicate.get('id')}，但无法清理旧记录"
-                                )
-                                self.write_log(
-                                    f"⚠️ [重新解析] 发票 ID {inv_id} 命中重复记录 ID {duplicate.get('id')}，旧记录清理失败"
-                                )
-                        else:
-                            repair_target_id = int(duplicate["id"])
-                            self.write_log(
-                                f"🔁 [重新解析] 发票 ID {inv_id} 命中已关联报销组的重复记录 ID {duplicate.get('id')}，改为更新该主记录"
-                            )
 
-                    # Update database in-place
-                    updated = self.db.update_invoice_parsed_metadata(
-                        invoice_id=repair_target_id,
+                    reconciliation = reconcile_reparsed_invoice(
+                        self.db,
+                        inv_id,
                         invoice_number=info.invoice_number,
                         invoice_code=info.invoice_code,
                         invoice_date=info.invoice_date,
@@ -6578,24 +6555,46 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         expense_date=getattr(info, "expense_date", ""),
                         date_source=getattr(info, "date_source", ""),
                     )
-                    if updated:
-                        if repair_target_id != inv_id:
-                            self.db.soft_delete_invoice(inv_id)
+                    if reconciliation.success:
+                        duplicate_id = reconciliation.duplicate_invoice_id
+                        if reconciliation.action == REPLACED_UNLINKED_DUPLICATE:
+                            duplicate_conflicts.append(
+                                f"发票 ID {inv_id}: 已删除旧重复记录 ID {duplicate_id}"
+                            )
                             self.write_log(
-                                f"✅ [重新解析] 发票 ID {inv_id} 已合并到主记录 ID {repair_target_id}"
+                                f"🔁 [重新解析] 发票 ID {inv_id} 命中旧重复记录 ID {duplicate_id}，"
+                                "已删除旧记录并修复当前记录"
+                            )
+                        elif reconciliation.action == MERGED_INTO_CLAIMED_DUPLICATE:
+                            self.write_log(
+                                f"🔁 [重新解析] 发票 ID {inv_id} 命中已关联报销组的重复记录 ID {duplicate_id}，"
+                                f"改为更新该主记录"
+                            )
+                            self.write_log(
+                                f"✅ [重新解析] 发票 ID {inv_id} 已合并到主记录 ID {reconciliation.target_invoice_id}"
                             )
                         else:
                             self.write_log(f"✅ [重新解析] 发票 ID {inv_id} 已更新解析结果")
                         success_count += 1
-                    elif getattr(self.db, "last_error", "") == "unique_conflict":
+                    elif reconciliation.error == "unique_conflict":
                         duplicate_conflicts.append(
                             f"发票 ID {inv_id}: 解析结果与已有发票唯一键冲突"
                         )
                         self.write_log(
                             f"⚠️ [重新解析] 发票 ID {inv_id} 与已有发票重复，未覆盖当前记录"
                         )
+                    elif reconciliation.duplicate_invoice_id is not None:
+                        duplicate_conflicts.append(
+                            f"发票 ID {inv_id}: 重复记录 ID {reconciliation.duplicate_invoice_id} 协调失败，事务已回滚"
+                        )
+                        self.write_log(
+                            f"⚠️ [重新解析] 发票 ID {inv_id} 重复协调失败，原子事务已回滚 "
+                            f"({reconciliation.error})"
+                        )
                     else:
-                        parse_failed_files.append(f"发票 ID {inv_id}: 解析结果写入失败 ({info.parse_note})")
+                        parse_failed_files.append(
+                            f"发票 ID {inv_id}: 解析结果写入失败 ({info.parse_note})"
+                        )
                 else:
                     parse_failed_files.append(f"发票 ID {inv_id}: 解析失败 ({info.parse_note})")
             except Exception as e:
