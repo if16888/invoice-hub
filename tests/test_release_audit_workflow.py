@@ -28,6 +28,13 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
         self.assertIn("Audit event SHA $actual is not exact origin/master", self.workflow)
         self.assertNotIn("candidate_sha:", self.workflow)
 
+        manual_start = self.workflow.index('if ($env:EVENT_NAME -eq "workflow_dispatch") {')
+        tag_else = self.workflow.index("\n          else {", manual_start)
+        manual_block = self.workflow[manual_start:tag_else]
+        self.assertIn("$eventSha = $env:EVENT_SHA.Trim().ToLowerInvariant()", manual_block)
+        self.assertIn("if ($actual -ne $eventSha)", manual_block)
+        self.assertNotIn("$eventSha = $env:EVENT_SHA.Trim().ToLowerInvariant()", self.workflow[:manual_start])
+
     def test_dispatch_input_is_not_interpolated_into_powershell_code(self) -> None:
         self.assertNotIn('$thresh = "${{ github.event.inputs.strict_startup_ms }}"', self.workflow)
         self.assertIn("REQUESTED_STARTUP_MS: ${{ github.event.inputs.strict_startup_ms }}", self.workflow)
