@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Truthful startup-probe execution for the desktop application.
 
-The release probe follows the same full workbench construction and deferred
-first-load path as a normal desktop launch. It exits only after the main
-window's first Qt Paint event has returned to the event loop. This is a Qt
+The release probe follows the same full workbench construction and first-paint
+lifecycle as a normal desktop launch. It exits only after the main window's
+first Qt Paint event has returned to the event loop. Invoice/claim data loading
+is intentionally post-paint in both normal startup and this probe. This is a Qt
 render-readiness milestone; it does not claim OS compositor/display presentation.
 """
 
@@ -20,6 +21,10 @@ from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 from .app import InvoiceReviewApp, StartupSplash
+from .startup_lifecycle import (
+    FirstPaintDeferredInvoiceReviewApp,
+    reveal_startup_window,
+)
 
 
 PROBE_CONTRACT = "main_window_first_paint_v1"
@@ -200,12 +205,17 @@ def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> N
     launch_started_at = time.monotonic()
     app = QApplication(sys.argv)
 
-    # Match normal production startup: show the splash, build the complete
-    # workbench, run the deferred first data load, then show the main window.
+    # Match normal production startup through first paint: show the splash,
+    # build the complete InvoiceReviewApp workbench with startup_probe=False,
+    # install the evidence observer, then reveal the real workbench shell.
     splash = StartupSplash()
     splash.show()
     splash.show_message("正在启动 Invoice Hub...", 15)
-    window = InvoiceReviewApp(db_path, splash=splash, startup_probe=False)
+    window = FirstPaintDeferredInvoiceReviewApp(
+        db_path,
+        splash=splash,
+        startup_probe=False,
+    )
 
     session = StartupProbeSession(
         app,
@@ -216,4 +226,5 @@ def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> N
     # Keep an explicit Python reference in addition to QObject parent ownership.
     window._startup_probe_session = session
     session.start()
+    reveal_startup_window(window, splash)
     sys.exit(app.exec())
