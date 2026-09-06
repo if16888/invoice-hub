@@ -106,6 +106,11 @@ from .workers import (
     InvoiceRedownloadWorker,
     LocalImportWorker,
 )
+from .reparse_worker import (
+    InvoiceReparseRequest,
+    InvoiceReparseWorker,
+    ReparseInvoiceSnapshot,
+)
 from .workbench_layout import clamp_vertical_split, metrics_for_size
 from .workbench_settings import (
     migrate_legacy_workbench_settings,
@@ -557,6 +562,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._export_migration_worker = None
         self._redownload_worker = None
         self._redownload_request_id = 0
+        self._reparse_worker = None
+        self._reparse_request_id = 0
         self._redownload_shutdown_pending = False
         self._shutdown_requested = False
         db_time = _time_mod.time()
@@ -825,6 +832,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ("_export_migration_worker", "旧导出目录迁移"),
             ("_hci_history_worker", "历史记录重检"),
             ("_redownload_worker", "重新下载发票"),
+            ("_reparse_worker", "重新解析发票"),
         ):
             worker = getattr(self, attr, None)
             if worker is not None:
@@ -6487,126 +6495,98 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return self.invoices_list[target_row].get("id")
 
     def _reparse_selected_invoices(self):
-        """Reparse PDF metadata in-place for selected invoices, updating DB values."""
-        selected_indexes = self.table.selectionModel().selectedRows()
+        """Start one immutable background reparse batch for selected invoices."""
+        if getattr(self, "_shutdown_requested", False):
+            return None
+        worker = getattr(self, "_reparse_worker", None)
+        if worker is not None:
+            return worker
+
+        selection_model = self.table.selectionModel()
+        selected_indexes = selection_model.selectedRows() if selection_model is not None else []
         if not selected_indexes:
+            return None
+
+        snapshots: list[ReparseInvoiceSnapshot] = []
+        for index in selected_indexes:
+            row = index.row()
+            if 0 <= row < len(self.invoices_list):
+                snapshot = ReparseInvoiceSnapshot.from_mapping(self.invoices_list[row])
+                if snapshot.invoice_id > 0:
+                    snapshots.append(snapshot)
+        if not snapshots:
+            return None
+
+        if not self._try_begin_data_operation("重新解析发票"):
+            return None
+
+        self._reparse_request_id += 1
+        request_id = self._reparse_request_id
+        worker = None
+        try:
+            request = InvoiceReparseRequest.from_values(
+                request_id,
+                snapshots,
+                self.db_path,
+                RUNTIME_DIR,
+                deepcopy(self.config.get("categories", {})),
+            )
+            worker = InvoiceReparseWorker(request, parent=self)
+            self._reparse_worker = worker
+            worker.log.connect(self._reparse_log_received)
+            worker.progress.connect(self._reparse_progress)
+            worker.result.connect(
+                lambda result, request_id=request_id: self._reparse_finished(result, request_id)
+            )
+            worker.error.connect(
+                lambda message, request_id=request_id: self._reparse_error(message, request_id)
+            )
+            worker.finished.connect(
+                lambda request_id=request_id: self._reparse_thread_done(request_id)
+            )
+            self.statusBar().showMessage(f"正在重新解析发票：0/{len(snapshots)}")
+            worker.start()
+        except Exception:
+            self._reparse_worker = None
+            self._end_data_operation("重新解析发票")
+            if worker is not None:
+                worker.deleteLater()
+            raise
+        return worker
+
+    def _reparse_log_received(self, message: str) -> None:
+        if not self._worker_callback_allowed():
             return
+        self.write_log(message)
 
-        count = len(selected_indexes)
-        success_count = 0
-        missing_files = []
-        parse_failed_files = []
-        duplicate_conflicts = []
+    def _reparse_progress(self, progress: dict) -> None:
+        if not self._worker_callback_allowed():
+            return
+        processed = int(progress.get("processed", 0) or 0)
+        total = int(progress.get("total", 0) or 0)
+        self.statusBar().showMessage(f"正在重新解析发票：{processed}/{total}")
 
-        from ..invoice_parser import InvoiceParser
-        parser = InvoiceParser()
+    def _reparse_render_result(self, result: dict) -> None:
+        result = result or {}
+        count = int(result.get("requested_count", 0) or 0)
+        processed = int(result.get("processed_count", 0) or 0)
+        success_count = int(result.get("success_count", 0) or 0)
+        missing_files = list(result.get("missing_files") or ())
+        duplicate_conflicts = list(result.get("duplicate_conflicts") or ())
+        parse_failed_files = list(result.get("parse_failed_files") or ())
 
-        # Load categories for metadata classification
-        categories = self.config.get("categories", {})
-
-        for idx in selected_indexes:
-            inv = self.invoices_list[idx.row()]
-            inv_id = inv.get("id")
-            attachment_path = inv.get("attachment_path")
-
-            if not attachment_path:
-                missing_files.append(f"发票 ID {inv_id}: 无附件文件记录")
-                continue
-
-            file_path = self._resolve_attachment_path(attachment_path)
-            if not file_path or not file_path.exists():
-                missing_files.append(f"发票 ID {inv_id}: 文件不存在 ({attachment_path})")
-                continue
-
-            # Run PDF parser
-            try:
-                info = parser.parse_pdf(str(file_path))
-                if info.parse_success:
-                    # Classify category and extra fields based on new seller name/original name
-                    from ..services import _classify
-                    category, extra_type, extra_required = _classify(
-                        file_path.name, "local import", info.seller_name, categories
-                    )
-
-                    from ..reparse_reconciliation import (
-                        MERGED_INTO_CLAIMED_DUPLICATE,
-                        REPLACED_UNLINKED_DUPLICATE,
-                        reconcile_reparsed_invoice,
-                    )
-
-                    reconciliation = reconcile_reparsed_invoice(
-                        self.db,
-                        inv_id,
-                        invoice_number=info.invoice_number,
-                        invoice_code=info.invoice_code,
-                        invoice_date=info.invoice_date,
-                        amount=info.amount,
-                        total_amount=info.total_amount,
-                        seller_name=info.seller_name,
-                        buyer_name=info.buyer_name,
-                        invoice_type=info.invoice_type or inv.get("invoice_type") or "电子发票",
-                        category=category,
-                        has_extra=inv.get("has_extra") or False,
-                        extra_type=extra_type,
-                        missing_extra=extra_required,
-                        parse_success=True,
-                        parse_note=info.parse_note or "重新解析",
-                        item_name=getattr(info, "item_name", ""),
-                        expense_date=getattr(info, "expense_date", ""),
-                        date_source=getattr(info, "date_source", ""),
-                    )
-                    if reconciliation.success:
-                        duplicate_id = reconciliation.duplicate_invoice_id
-                        if reconciliation.action == REPLACED_UNLINKED_DUPLICATE:
-                            duplicate_conflicts.append(
-                                f"发票 ID {inv_id}: 已删除旧重复记录 ID {duplicate_id}"
-                            )
-                            self.write_log(
-                                f"🔁 [重新解析] 发票 ID {inv_id} 命中旧重复记录 ID {duplicate_id}，"
-                                "已删除旧记录并修复当前记录"
-                            )
-                        elif reconciliation.action == MERGED_INTO_CLAIMED_DUPLICATE:
-                            self.write_log(
-                                f"🔁 [重新解析] 发票 ID {inv_id} 命中已关联报销组的重复记录 ID {duplicate_id}，"
-                                f"改为更新该主记录"
-                            )
-                            self.write_log(
-                                f"✅ [重新解析] 发票 ID {inv_id} 已合并到主记录 ID {reconciliation.target_invoice_id}"
-                            )
-                        else:
-                            self.write_log(f"✅ [重新解析] 发票 ID {inv_id} 已更新解析结果")
-                        success_count += 1
-                    elif reconciliation.error == "unique_conflict":
-                        duplicate_conflicts.append(
-                            f"发票 ID {inv_id}: 解析结果与已有发票唯一键冲突"
-                        )
-                        self.write_log(
-                            f"⚠️ [重新解析] 发票 ID {inv_id} 与已有发票重复，未覆盖当前记录"
-                        )
-                    elif reconciliation.duplicate_invoice_id is not None:
-                        duplicate_conflicts.append(
-                            f"发票 ID {inv_id}: 重复记录 ID {reconciliation.duplicate_invoice_id} 协调失败，事务已回滚"
-                        )
-                        self.write_log(
-                            f"⚠️ [重新解析] 发票 ID {inv_id} 重复协调失败，原子事务已回滚 "
-                            f"({reconciliation.error})"
-                        )
-                    else:
-                        parse_failed_files.append(
-                            f"发票 ID {inv_id}: 解析结果写入失败 ({info.parse_note})"
-                        )
-                else:
-                    parse_failed_files.append(f"发票 ID {inv_id}: 解析失败 ({info.parse_note})")
-            except Exception as e:
-                parse_failed_files.append(f"发票 ID {inv_id}: 异常 ({str(e)})")
-
-        # Reload data
         self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
         self._load_claims()
         self._on_table_selection_changed()
 
-        # Build notification message
+        if result.get("cancelled"):
+            self.statusBar().showMessage(
+                f"重新解析已取消，已完成 {processed}/{count} 张",
+                8000,
+            )
+            return
+
         msg = f"已完成 {count} 张发票的重新解析流程！\n\n成功重新解析并更新: {success_count} 张"
         if missing_files:
             msg += f"\n\n以下发票的本地文件不存在:\n" + "\n".join(missing_files[:10])
@@ -6622,10 +6602,38 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 msg += f"\n... 以及其他 {len(parse_failed_files)-10} 个文件"
 
         QMessageBox.information(self, "重新解析结果", msg)
+        self.statusBar().clearMessage()
         self.write_log(
             f"🔄 [重新解析] 完成。成功: {success_count}, 重复处理: {len(duplicate_conflicts)}, "
             f"缺失文件: {len(missing_files)}, 失败: {len(parse_failed_files)}"
         )
+
+    def _reparse_finished(self, result: dict, request_id: int) -> None:
+        if not self._worker_callback_allowed() or request_id != self._reparse_request_id:
+            return
+        self._end_data_operation("重新解析发票")
+        self._reparse_render_result(result)
+
+    def _reparse_error(self, message: str, request_id: int) -> None:
+        if not self._worker_callback_allowed() or request_id != self._reparse_request_id:
+            return
+        self._end_data_operation("重新解析发票")
+        self.statusBar().clearMessage()
+        QMessageBox.warning(self, "重新解析失败", message)
+        self.write_log("⚠️ [重新解析] 后台任务失败，未完成本次重新解析")
+
+    def _reparse_thread_done(self, request_id: int) -> None:
+        worker = getattr(self, "_reparse_worker", None)
+        if worker is None or request_id != self._reparse_request_id:
+            return
+        callbacks_allowed = self._worker_callback_allowed()
+        self._end_data_operation("重新解析发票")
+        self._reparse_worker = None
+        delete_later = getattr(worker, "deleteLater", None)
+        if callable(delete_later):
+            delete_later()
+        if callbacks_allowed and not self.statusBar().currentMessage().startswith("重新解析已取消"):
+            self.statusBar().clearMessage()
 
     def _redownload_is_active(self) -> bool:
         """Return whether a redownload worker is still owned by this window."""

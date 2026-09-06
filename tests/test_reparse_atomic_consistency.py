@@ -310,20 +310,17 @@ class ReparseAtomicConsistencyTests(unittest.TestCase):
                 self.assertEqual(duplicate["invoice_number"], "DUP-B")
 
 
-class ReparseGuiAtomicBoundaryTests(unittest.TestCase):
-    def test_gui_uses_one_atomic_reconciliation_write_boundary(self):
+class ReparseAtomicBoundaryTests(unittest.TestCase):
+    @staticmethod
+    def _calls_in_function(path: Path, function_name: str) -> list[str]:
         import ast
 
-        root = Path(__file__).resolve().parents[1]
-        source = (root / "scripts" / "invoice_fetch" / "gui" / "app.py").read_text(
-            encoding="utf-8"
-        )
-        tree = ast.parse(source)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         target = next(
             node
             for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "_reparse_selected_invoices"
+            and node.name == function_name
         )
         calls = []
         for node in ast.walk(target):
@@ -333,17 +330,30 @@ class ReparseGuiAtomicBoundaryTests(unittest.TestCase):
                 calls.append(node.func.id)
             elif isinstance(node.func, ast.Attribute):
                 calls.append(node.func.attr)
+        return calls
 
-        self.assertEqual(calls.count("reconcile_reparsed_invoice"), 1)
-        self.assertTrue(
-            {
-                "find_invoice_by_unique_fields",
-                "count_claim_links",
-                "delete_invoice_permanently",
-                "update_invoice_parsed_metadata",
-                "soft_delete_invoice",
-            }.isdisjoint(calls)
+    def test_async_reparse_uses_one_atomic_reconciliation_write_boundary(self):
+        root = Path(__file__).resolve().parents[1]
+        gui_calls = self._calls_in_function(
+            root / "scripts" / "invoice_fetch" / "gui" / "app.py",
+            "_reparse_selected_invoices",
         )
+        worker_calls = self._calls_in_function(
+            root / "scripts" / "invoice_fetch" / "gui" / "reparse_worker.py",
+            "run_invoice_reparse",
+        )
+        legacy_writes = {
+            "find_invoice_by_unique_fields",
+            "count_claim_links",
+            "delete_invoice_permanently",
+            "update_invoice_parsed_metadata",
+            "soft_delete_invoice",
+        }
+
+        self.assertEqual(gui_calls.count("reconcile_reparsed_invoice"), 0)
+        self.assertTrue(legacy_writes.isdisjoint(gui_calls))
+        self.assertEqual(worker_calls.count("reconcile_reparsed_invoice"), 1)
+        self.assertTrue(legacy_writes.isdisjoint(worker_calls))
 
 
 if __name__ == "__main__":

@@ -40,6 +40,15 @@ class ClaimGroupsTests(unittest.TestCase):
         app.processEvents()
         app.processEvents()
 
+    @staticmethod
+    def _wait_for_reparse(window, app):
+        worker = getattr(window, "_reparse_worker", None)
+        if worker is None:
+            return
+        worker.wait()
+        app.processEvents()
+        app.processEvents()
+
     def test_pending_evidence_helper_does_not_confuse_manual_review_types(self):
         self.assertTrue(is_pending_evidence_invoice({
             "invoice_type": "待关联证明材料",
@@ -3939,7 +3948,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
                     with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
                         window._reparse_selected_invoices()
-
+                        self._wait_for_reparse(window, app)
                     with patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
                             patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
                         window.table.selectRow(0)
@@ -4017,10 +4026,10 @@ class ClaimGroupsTests(unittest.TestCase):
                         app.processEvents()
 
                         with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok), \
-                                patch("scripts.invoice_fetch.invoice_parser.InvoiceParser", return_value=FakeParser()), \
+                                patch("scripts.invoice_fetch.gui.reparse_worker.InvoiceParser", return_value=FakeParser()), \
                                 patch.object(window, "write_log", side_effect=logs.append):
                             window._reparse_selected_invoices()
-
+                            self._wait_for_reparse(window, app)
                     self.assertTrue(any("已删除旧记录并修复当前记录" in msg for msg in logs))
 
                     with InvoiceDB(db_path) as verify_db:
