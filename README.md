@@ -2,13 +2,11 @@
 
 **本地优先的发票审核与报销整理工具。**
 
-| 当前公开稳定版 | 上一稳定版 | 发布状态 | 推荐 |
+| 源码发布线 | 上一已发布稳定版 | 实时发布状态 | 推荐 |
 | --- | --- | --- | --- |
-| [Invoice Hub v0.1.7](https://github.com/if16888/invoice-hub/releases/tag/v0.1.7) | [v0.1.6](https://github.com/if16888/invoice-hub/releases/tag/v0.1.6) | v0.1.7 Stable | 普通用户使用 v0.1.7 官方 Release |
+| [v0.1.8 release notes](docs/release-notes/v0.1.8.md) | [Invoice Hub v0.1.7](https://github.com/if16888/invoice-hub/releases/tag/v0.1.7) | 以 [GitHub Releases](https://github.com/if16888/invoice-hub/releases) 为准 | 普通用户使用 Releases 页面当前最新的非预发布正式版 |
 
-> **v0.1.6 发布状态：**历史稳定版，官方 tag、Release 和资产保持不变。
-
-> **发布状态：**当前公开稳定版为 v0.1.7；v0.1.8 当前仍为未发布开发线，未形成官方 tag、GitHub Release 或正式资产。候选记录见 [v0.1.8 Release notes](docs/release-notes/v0.1.8.md)。
+> **发布真实性说明：**源码快照只记录版本线和历史稳定版，不硬编码会随 tag / Release 创建而变化的实时 publication state。v0.1.8 是否已经形成官方发布，以 GitHub Releases 页面为唯一权威。
 
 Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交报销前，把散落在邮箱、本地文件夹和手机里的发票、收据、截图、证明材料整理成可审核、可归组、可导出的资料包。
 
@@ -24,12 +22,12 @@ Invoice Hub 是一个本地优先的报销资料整理助手，用来在提交�
 
 请先打开 [GitHub Releases 官方页面](https://github.com/if16888/invoice-hub/releases)，并先阅读 [Windows 下载与安装安全说明](docs/windows-install.md)，再在 Assets 中选择适合的文件。
 
-- 普通用户优先使用当前稳定版。
+- 普通用户优先使用 GitHub Releases 页面当前最新的非预发布正式资产。
 - 参与候选版验证时，可下载对应 RC 的 `InvoiceHub-*-win64-setup.exe`，按提示安装后启动 `Invoice Hub`。
 - 想免安装试用时，可下载对应版本的 `InvoiceHub-*-win64-portable.zip`，解压后运行其中的程序。
 - `SHA256SUMS.txt` 是 SHA256 校验文件，用于确认下载文件没有损坏或在传输中发生变化。
 
-> `v0.1.7` 是当前公开稳定版；`v0.1.8` 当前仍为未发布开发线，不应作为正式版下载。
+> v0.1.8 是当前源码发布线；官方 tag、GitHub Release 和正式资产是否已经存在，只以 GitHub Releases 页面实时状态为准。
 
 安装或解压后启动 `Invoice Hub`。建议先用少量脱敏样本试跑；确认流程符合预期后，再在本机导入自己的报销材料，并避免把运行数据上传到公开 Issue。
 
@@ -119,7 +117,7 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 
 当前适合：个人先用少量真实或脱敏材料试跑导入 -> 审核 -> 归组 -> 导出闭环。
 
-当前不建议：一次性导入大量正式材料并完全依赖自动解析结果。稳定用户请使用 v0.1.7 官方 Release，并继续人工复核解析结果和导出材料。
+当前不建议：一次性导入大量正式材料并完全依赖自动解析结果。稳定用户请使用 GitHub Releases 页面当前最新的非预发布正式版，并继续人工复核解析结果和导出材料。
 
 已覆盖的方向：
 
@@ -132,7 +130,7 @@ Invoice Hub 处于早期可试用阶段，重点是个人本地整理和提交�
 
 - 解析结果需要人工复核，不应直接视为财务事实。
 - 不提供企业审批流、自动报销、云同步或第三方报销平台自动提交。
-- v0.1.8 当前仍是未发布开发线；此前候选未形成官方 tag、GitHub Release 或正式资产。真实安装环境仍应按 Windows 安装说明完成本机校验。
+- v0.1.8 的官方发布状态只从 GitHub Releases 读取，不从 `master`、`version.py` 或静态 README 文本推断。
 
 ## Windows 数据与凭据边界
 
