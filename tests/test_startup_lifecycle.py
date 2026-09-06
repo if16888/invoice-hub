@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QBoxLayout
 
 from scripts.invoice_fetch.gui import startup_lifecycle, startup_probe
 
@@ -53,13 +53,23 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         )
         self.assertNotIn("review", specs)
 
-    def test_navigation_materializes_lazy_page_before_base_switch(self):
+    def test_navigation_materializes_then_switches_then_reflows_lazy_page(self):
         source = inspect.getsource(
             startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._switch_main_page
         )
         materialize_at = source.index("self._materialize_startup_page(page_key)")
-        switch_at = source.index("return super()._switch_main_page(")
+        switch_at = source.index("result = super()._switch_main_page(")
+        reflow_at = source.index("self._reflow_after_lazy_page_switch()")
         self.assertLess(materialize_at, switch_at)
+        self.assertLess(switch_at, reflow_at)
+
+    def test_lazy_reflow_has_immediate_and_post_baseline_metrics_passes(self):
+        source = inspect.getsource(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._reflow_after_lazy_page_switch
+        )
+        immediate_at = source.index("self._apply_workbench_metrics()")
+        queued_at = source.index("QTimer.singleShot(0, self._apply_workbench_metrics)")
+        self.assertLess(immediate_at, queued_at)
 
     def test_hidden_refreshes_are_invalidated_instead_of_touching_placeholders(self):
         for method_name, page_key, dirty_flag in (
@@ -125,6 +135,43 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
                 self.assertIs(window.center_stack.currentWidget(), window.settings_page)
                 self.assertTrue(hasattr(window, "settings_tabs"))
                 self.assertNotIn("settings", window._startup_lazy_placeholders)
+            finally:
+                window.close()
+                self.qt_app.processEvents()
+
+    def test_imports_first_navigation_reflows_without_window_resize(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-lazy-imports-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                window.resize(1276, 875)
+                window._nav_collapsed_manual = True
+                window._apply_workbench_metrics(1276, 875)
+                self.qt_app.processEvents()
+
+                self.assertEqual(
+                    window.imports_page.property("startupDeferredPage"),
+                    "imports",
+                )
+                window._switch_main_page("imports")
+                for _ in range(4):
+                    self.qt_app.processEvents()
+
+                self.assertIs(window.center_stack.currentWidget(), window.imports_page)
+                self.assertNotIn("imports", window._startup_lazy_placeholders)
+                self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
+                self.assertEqual(
+                    window.import_source_card.body_layout.direction(),
+                    QBoxLayout.LeftToRight,
+                )
+                self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.LeftToRight)
+                self.assertGreaterEqual(window.import_task_stack.width(), 700)
+                self.assertGreaterEqual(
+                    window.import_mail_recent_card.x(),
+                    window.import_task_stack.x() + window.import_task_stack.width() - 1,
+                )
             finally:
                 window.close()
                 self.qt_app.processEvents()
