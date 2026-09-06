@@ -9,15 +9,20 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      candidate_sha:
+        description: "Exact 40-character master SHA to audit before tagging"
+        required: true
+        type: string
       strict_startup_ms:
         description: "Strict startup gate threshold (ms)"
         required: false
         default: "3000"
+        type: string
 
 jobs:
   build:
     name: Build Windows x64 Package
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -29,7 +34,48 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.candidate_sha || github.ref }}
           fetch-depth: 0
+
+      - name: Verify source identity
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            if ("${{ github.ref }}" -ne "refs/heads/master") {
+              throw "Pre-tag release audit must be dispatched from master."
+            }
+            $expected = "${{ github.event.inputs.candidate_sha }}".Trim().ToLowerInvariant()
+            if ($expected -notmatch '^[0-9a-f]{40}$') {
+              throw "candidate_sha must be a full 40-character commit SHA."
+            }
+            if ($actual -ne $expected) {
+              throw "Checked out SHA $actual does not match requested candidate $expected."
+            }
+            git fetch --no-tags origin master --depth=1
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not fetch origin/master for candidate identity verification."
+            }
+            $master = (git rev-parse FETCH_HEAD).Trim().ToLowerInvariant()
+            if ($master -ne $expected) {
+              throw "Audit candidate $expected is not exact origin/master ($master)."
+            }
+            "AUDIT_MODE=true" >> $env:GITHUB_ENV
+          }
+          else {
+            $tag = "${{ github.ref_name }}"
+            $tagType = (git cat-file -t "refs/tags/$tag").Trim()
+            if ($tagType -ne "tag") {
+              throw "Release tag $tag must be annotated; found object type $tagType."
+            }
+            $tagCommit = (git rev-list -n 1 "refs/tags/$tag").Trim().ToLowerInvariant()
+            if ($tagCommit -ne $actual) {
+              throw "Release tag $tag resolves to $tagCommit but checkout is $actual."
+            }
+            "AUDIT_MODE=false" >> $env:GITHUB_ENV
+          }
+          "SOURCE_SHA=$actual" >> $env:GITHUB_ENV
+          Write-Host "SOURCE_SHA=$actual"
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -91,31 +137,52 @@ jobs:
           Get-Item $exe | Select-Object Name, Length, LastWriteTime
 
       - name: Startup performance check
+        shell: pwsh
         run: |
           $thresh = "${{ github.event.inputs.strict_startup_ms }}"
           if (-not $thresh) { $thresh = "3000" }
-          python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $thresh
+          $runtimeDir = Join-Path $env:RUNNER_TEMP "invoice-hub-portable-startup"
+          Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          $env:INVOICE_HUB_RUNTIME_DIR = $runtimeDir
+          try {
+            python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $thresh
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Remove-Item Env:INVOICE_HUB_RUNTIME_DIR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
         timeout-minutes: 2
 
       - name: Sign portable executable
         run: '& scripts\sign_windows.ps1 "dist\InvoiceHub\InvoiceHub.exe"'
 
-      - name: Prepare release version
+      - name: Prepare package version
+        shell: pwsh
         run: |
           $sourceVersion = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
-          $tagVersion = "${{ github.ref_name }}" -replace '/', '-'
-          if ($tagVersion -notmatch '^v(?<base>\d+\.\d+\.\d+)(?<suffix>-(?:rc|pre)\d+)?$') {
-            Write-Error "Tag $tagVersion must match vX.Y.Z or vX.Y.Z-rcN/vX.Y.Z-preN."
-            exit 1
+          if ($env:AUDIT_MODE -eq "true") {
+            $version = $sourceVersion
+            $artifactName = "InvoiceHub-windows-audit-$($env:SOURCE_SHA.Substring(0, 12))"
           }
-          if ($Matches.base -ne $sourceVersion) {
-            Write-Error "Tag base version $($Matches.base) does not match source version $sourceVersion."
-            exit 1
+          else {
+            $tagVersion = "${{ github.ref_name }}" -replace '/', '-'
+            if ($tagVersion -notmatch '^v(?<base>\d+\.\d+\.\d+)(?<suffix>-(?:rc|pre)\d+)?$') {
+              Write-Error "Tag $tagVersion must match vX.Y.Z or vX.Y.Z-rcN/vX.Y.Z-preN."
+              exit 1
+            }
+            if ($Matches.base -ne $sourceVersion) {
+              Write-Error "Tag base version $($Matches.base) does not match source version $sourceVersion."
+              exit 1
+            }
+            $version = $tagVersion.Substring(1)
+            $artifactName = "InvoiceHub-windows-release"
           }
-          $version = $tagVersion.Substring(1)
           echo "VERSION=${version}" >> $env:GITHUB_ENV
           echo "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
           echo "SETUP_NAME=InvoiceHub-${version}-win64-setup.exe" >> $env:GITHUB_ENV
+          echo "ARTIFACT_NAME=${artifactName}" >> $env:GITHUB_ENV
+          Write-Host "AUDIT_MODE=$env:AUDIT_MODE VERSION=$version ARTIFACT_NAME=$artifactName"
 
       - name: Verify bundled payload hygiene
         run: |
@@ -179,6 +246,23 @@ jobs:
       - name: Sign installer
         run: '& scripts\sign_windows.ps1 "dist\${env:SETUP_NAME}"'
 
+      - name: Verify real installer install startup uninstall
+        shell: pwsh
+        run: |
+          $thresh = "${{ github.event.inputs.strict_startup_ms }}"
+          if (-not $thresh) { $thresh = "3000" }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\dev\verify_release_install.ps1 -SetupPath "dist\${env:SETUP_NAME}" -ExpectedVersion "${env:VERSION}" -StartupThresholdMs $thresh -EvidenceDir "build\release-install-smoke"
+        timeout-minutes: 5
+
+      - name: Upload real installer smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-install-smoke-${{ github.sha }}
+          path: build/release-install-smoke
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Create checksums
         run: |
           $version = "${env:VERSION}"
@@ -212,10 +296,10 @@ jobs:
             }
           }
 
-      - name: Upload portable artifact
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: InvoiceHub-windows-release
+          name: ${{ env.ARTIFACT_NAME }}
           path: |
             dist/${{ env.ZIP_NAME }}
             dist/${{ env.SETUP_NAME }}
