@@ -24,6 +24,9 @@ STABLE_PUBLICATION_PATTERNS = (
     r"current official release",
     r"published as the stable release",
 )
+LIVE_PUBLICATION_AUTHORITY = (
+    "Live publication status is authoritative on the GitHub Releases page."
+)
 
 
 def load_version(repo_root: Path = REPO_ROOT) -> str:
@@ -33,11 +36,11 @@ def load_version(repo_root: Path = REPO_ROOT) -> str:
 
 
 def load_version_metadata(repo_root: Path = REPO_ROOT) -> tuple[str, str]:
-    """Load source and published-stable versions without importing the app."""
+    """Load the source release line and its previous published stable version."""
     metadata = runpy.run_path(
         str(repo_root / "scripts" / "invoice_fetch" / "version.py")
     )
-    return str(metadata["VERSION"]), str(metadata["STABLE_VERSION"])
+    return str(metadata["VERSION"]), str(metadata["PREVIOUS_STABLE_VERSION"])
 
 
 def _contains_stable_publication_claim(text: str) -> bool:
@@ -60,13 +63,20 @@ def _local_tag_type(repo_root: Path, version: str) -> str | None:
     return result.stdout.strip()
 
 
-def _annotated_tag_error(repo_root: Path, version: str) -> str | None:
+def _annotated_tag_error(
+    repo_root: Path,
+    version: str,
+    *,
+    required: bool,
+) -> str | None:
     tag_type = _local_tag_type(repo_root, version)
     if tag_type is None:
-        return f"v{version} stable metadata requires a local annotated tag"
+        if required:
+            return f"v{version} historical stable metadata requires a local annotated tag"
+        return None
     if tag_type != "tag":
         return (
-            f"v{version} stable metadata requires an annotated tag "
+            f"v{version} tag must be annotated "
             f"(found {tag_type})"
         )
     return None
@@ -79,67 +89,79 @@ def _release_note_version(path: Path) -> str | None:
 
 def check_release_metadata(repo_root: Path = REPO_ROOT) -> list[str]:
     """Return release-truth and Python-baseline consistency errors."""
-    version, stable_version = load_version_metadata(repo_root)
+    version, previous_stable_version = load_version_metadata(repo_root)
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
-    expected_link = (
-        f"[Invoice Hub v{stable_version}]"
-        f"(https://github.com/if16888/invoice-hub/releases/tag/v{stable_version})"
+    expected_previous_link = (
+        f"[Invoice Hub v{previous_stable_version}]"
+        f"(https://github.com/if16888/invoice-hub/releases/tag/v{previous_stable_version})"
+    )
+    expected_source_notes_link = (
+        f"[v{version} release notes](docs/release-notes/v{version}.md)"
     )
     errors: list[str] = []
-    if expected_link not in readme:
-        errors.append(f"README 当前稳定版链接必须指向 v{stable_version}")
-    if f"v{stable_version} Stable" not in readme:
-        errors.append(f"README 发布状态必须声明 v{stable_version} Stable")
 
-    source_stable_patterns = (
+    if expected_previous_link not in readme:
+        errors.append(
+            f"README 上一稳定版链接必须指向 v{previous_stable_version}"
+        )
+    if expected_source_notes_link not in readme:
+        errors.append(f"README 必须链接当前源码发布线 v{version} release notes")
+    if "GitHub Releases" not in readme:
+        errors.append("README 必须声明 GitHub Releases 为实时发布状态权威")
+
+    time_sensitive_source_patterns = (
         rf"v{re.escape(version)}\s+Stable\b",
-        rf"v{re.escape(version)}[^\n]*(?:正式版已发布|当前稳定版|官方 Release|current official release)",
+        rf"v{re.escape(version)}[^\n]*(?:正式版已发布|当前公开稳定版|current official release)",
+        rf"v{re.escape(version)}[^\n]*(?:未发布开发线|不应作为正式版下载|\bUnreleased\b)",
     )
-    if version != stable_version:
-        for pattern in source_stable_patterns:
-            if re.search(pattern, readme, flags=re.IGNORECASE):
-                errors.append(
-                    f"README 不得将 source VERSION v{version} 声明为稳定发布版"
-                )
-        if not re.search(
-            rf"v{re.escape(version)}[^\n]*(?:未发布|unreleased|development)",
-            readme,
-            flags=re.IGNORECASE,
-        ):
-            errors.append(f"README 必须明确 v{version} 仍为未发布开发线")
+    for pattern in time_sensitive_source_patterns:
+        if re.search(pattern, readme, flags=re.IGNORECASE):
+            errors.append(
+                f"README 不得硬编码 v{version} 的实时发布/未发布状态；"
+                "应以 GitHub Releases 为权威"
+            )
 
     notes_dir = repo_root / "docs" / "release-notes"
-    stable_notes_path = notes_dir / f"v{stable_version}.md"
+    previous_notes_path = notes_dir / f"v{previous_stable_version}.md"
     checked_tag_versions: set[str] = set()
-    if not stable_notes_path.is_file():
-        errors.append(f"缺少 v{stable_version} stable release notes")
+    if not previous_notes_path.is_file():
+        errors.append(f"缺少 v{previous_stable_version} historical stable release notes")
     else:
-        stable_notes = stable_notes_path.read_text(encoding="utf-8")
-        if not _contains_stable_publication_claim(stable_notes):
+        previous_notes = previous_notes_path.read_text(encoding="utf-8")
+        if not _contains_stable_publication_claim(previous_notes):
             errors.append(
-                f"v{stable_version} release notes 必须声明 Stable — published"
+                f"v{previous_stable_version} release notes 必须声明 Stable — published"
             )
-        tag_error = _annotated_tag_error(repo_root, stable_version)
-        checked_tag_versions.add(stable_version)
+        tag_error = _annotated_tag_error(
+            repo_root,
+            previous_stable_version,
+            required=True,
+        )
+        checked_tag_versions.add(previous_stable_version)
         if tag_error:
             errors.append(tag_error)
 
-    if version != stable_version:
-        development_notes_path = notes_dir / f"v{version}.md"
-        if not development_notes_path.is_file():
-            errors.append(f"缺少 v{version} development release notes")
-        else:
-            development_notes = development_notes_path.read_text(encoding="utf-8")
-            if _contains_stable_publication_claim(development_notes):
-                errors.append(
-                    f"v{version} development release notes 不得声明 Stable — published"
-                )
-            if not re.search(
-                r"\bUnreleased\b|未发布|previous candidate superseded",
-                development_notes,
-                flags=re.IGNORECASE,
-            ):
-                errors.append(f"v{version} release notes 必须明确为 Unreleased")
+    source_notes_path = notes_dir / f"v{version}.md"
+    if not source_notes_path.is_file():
+        errors.append(f"缺少 v{version} source release notes")
+    else:
+        source_notes = source_notes_path.read_text(encoding="utf-8")
+        if LIVE_PUBLICATION_AUTHORITY not in source_notes:
+            errors.append(
+                f"v{version} release notes 必须把实时发布状态委托给 GitHub Releases"
+            )
+        if _contains_stable_publication_claim(source_notes):
+            errors.append(
+                f"v{version} source release notes 不得硬编码 Stable — published 状态"
+            )
+        if re.search(r"\bUnreleased\b|未发布", source_notes, flags=re.IGNORECASE):
+            errors.append(
+                f"v{version} source release notes 不得硬编码 Unreleased 状态"
+            )
+        tag_error = _annotated_tag_error(repo_root, version, required=False)
+        checked_tag_versions.add(version)
+        if tag_error:
+            errors.append(tag_error)
 
     if notes_dir.is_dir():
         for path in sorted(notes_dir.glob("v*.md")):
@@ -150,7 +172,7 @@ def check_release_metadata(repo_root: Path = REPO_ROOT) -> list[str]:
                 continue
             if note_version in checked_tag_versions:
                 continue
-            tag_error = _annotated_tag_error(repo_root, note_version)
+            tag_error = _annotated_tag_error(repo_root, note_version, required=True)
             checked_tag_versions.add(note_version)
             if tag_error:
                 errors.append(tag_error)
@@ -169,7 +191,7 @@ def check_release_metadata(repo_root: Path = REPO_ROOT) -> list[str]:
 
 
 def main() -> int:
-    version, stable_version = load_version_metadata()
+    version, previous_stable_version = load_version_metadata()
     errors = check_release_metadata()
 
     if errors:
@@ -178,7 +200,7 @@ def main() -> int:
         return 1
     print(
         "[PASS] Release truth 与 Python 3.11 baseline 一致: "
-        f"VERSION={version}, STABLE_VERSION={stable_version}"
+        f"VERSION={version}, PREVIOUS_STABLE_VERSION={previous_stable_version}"
     )
     return 0
 
