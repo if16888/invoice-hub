@@ -110,9 +110,16 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
             observer = getattr(self, "_performance_paint_observer", None)
             if observer is not None and page_key in {"overview", "imports"}:
                 observer.observe(page_key, page)
-            self._apply_workbench_metrics()
         finally:
             self._startup_page_materializing.discard(page_key)
+
+    def _reflow_after_lazy_page_switch(self) -> None:
+        """Apply responsive geometry after a materialized page becomes current."""
+        self._apply_workbench_metrics()
+        # Page builders intentionally queue baseline/HCI normalization with
+        # zero-delay timers. Run one final metrics pass after those callbacks so
+        # first navigation has the same geometry as a later native resize.
+        QTimer.singleShot(0, self._apply_workbench_metrics)
 
     def _switch_main_page(
         self,
@@ -122,12 +129,16 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         preserve_review_scope: bool = False,
     ) -> None:
         # Hidden-page construction is deliberately outside launch/first paint.
+        was_deferred = self._startup_page_is_deferred(page_key)
         self._materialize_startup_page(page_key)
-        return super()._switch_main_page(
+        result = super()._switch_main_page(
             page_key,
             sub_tab=sub_tab,
             preserve_review_scope=preserve_review_scope,
         )
+        if was_deferred:
+            self._reflow_after_lazy_page_switch()
+        return result
 
     def _refresh_overview_page(self) -> None:
         if self._startup_page_is_deferred("overview"):
