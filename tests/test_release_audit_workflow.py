@@ -29,34 +29,56 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
             "ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.candidate_sha || github.ref }}",
             self.workflow,
         )
-        self.assertIn('if ("${{ github.ref }}" -ne "refs/heads/master")', self.workflow)
+        self.assertIn("DISPATCH_REF: ${{ github.ref }}", self.workflow)
+        self.assertIn("REQUESTED_CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}", self.workflow)
+        self.assertIn('if ($env:DISPATCH_REF -ne "refs/heads/master")', self.workflow)
         self.assertIn("git fetch --no-tags origin master --depth=1", self.workflow)
         self.assertIn("Audit candidate $expected is not exact origin/master", self.workflow)
+
+    def test_dispatch_inputs_are_not_interpolated_into_powershell_code(self) -> None:
+        self.assertNotIn('$expected = "${{ github.event.inputs.candidate_sha }}"', self.workflow)
+        self.assertNotIn('$thresh = "${{ github.event.inputs.strict_startup_ms }}"', self.workflow)
+        self.assertIn("$expected = $env:REQUESTED_CANDIDATE_SHA.Trim().ToLowerInvariant()", self.workflow)
+        self.assertIn("$thresh = $env:REQUESTED_STARTUP_MS", self.workflow)
+        self.assertIn("strict_startup_ms must be a positive integer", self.workflow)
 
     def test_tag_publication_remains_tag_only_and_requires_annotated_tag(self) -> None:
         release_job = self.workflow.split("\n  release:\n", 1)[1]
         self.assertIn("if: startsWith(github.ref, 'refs/tags/v')", release_job)
         self.assertNotIn("workflow_dispatch", release_job)
         self.assertIn('(git cat-file -t "refs/tags/$tag").Trim()', self.workflow)
-        self.assertIn('Release tag $tag must be annotated', self.workflow)
-        self.assertIn('name: InvoiceHub-windows-release', release_job)
+        self.assertIn("Release tag $tag must be annotated", self.workflow)
+        self.assertIn("name: InvoiceHub-windows-release", release_job)
 
     def test_audit_artifact_cannot_be_confused_with_release_artifact(self) -> None:
         self.assertIn(
             'InvoiceHub-windows-audit-$($env:SOURCE_SHA.Substring(0, 12))',
             self.workflow,
         )
-        self.assertIn('name: ${{ env.ARTIFACT_NAME }}', self.workflow)
+        self.assertIn("name: ${{ env.ARTIFACT_NAME }}", self.workflow)
         self.assertIn('$artifactName = "InvoiceHub-windows-release"', self.workflow)
+
+    def test_audit_rechecks_master_before_package_evidence_upload(self) -> None:
+        self.assertIn("Reconfirm audit candidate is still master", self.workflow)
+        self.assertIn(
+            "origin/master moved to $master during audit; evidence for $env:SOURCE_SHA is stale",
+            self.workflow,
+        )
+        recheck_index = self.workflow.index("Reconfirm audit candidate is still master")
+        upload_index = self.workflow.index("Upload Windows package")
+        self.assertLess(recheck_index, upload_index)
 
     def test_real_installer_is_installed_started_and_uninstalled(self) -> None:
         self.assertIn("verify_release_install.ps1", self.workflow)
         self.assertIn("Upload real installer smoke evidence", self.workflow)
+        self.assertIn('-SourceExePath "dist\\InvoiceHub\\InvoiceHub.exe"', self.workflow)
         self.assertIn("INVOICE_HUB_RUNTIME_DIR", self.install_smoke)
         self.assertIn("scripts\\check_startup_time.py", self.install_smoke)
         self.assertIn("Get-ChildItem -LiteralPath $installDir -Filter 'unins*.exe'", self.install_smoke)
         self.assertIn("SETUP_SHA256=", self.install_smoke)
+        self.assertIn("SOURCE_EXE_SHA256=", self.install_smoke)
         self.assertIn("INSTALLED_EXE_SHA256=", self.install_smoke)
+        self.assertIn("INSTALLED_EXE_MATCHES_SOURCE=PASS", self.install_smoke)
         self.assertIn("INSTALL=PASS", self.install_smoke)
         self.assertIn("STARTUP=PASS", self.install_smoke)
         self.assertIn("UNINSTALL=PASS", self.install_smoke)
