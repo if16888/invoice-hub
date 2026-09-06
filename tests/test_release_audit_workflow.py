@@ -15,30 +15,22 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.install_smoke = INSTALL_SMOKE.read_text(encoding="utf-8")
 
-    def test_manual_audit_requires_exact_master_sha(self) -> None:
-        self.assertIn("candidate_sha:", self.workflow)
-        self.assertIn(
-            'description: "Exact 40-character master SHA to audit before tagging"',
-            self.workflow,
-        )
+    def test_manual_audit_requires_exact_master_event_sha(self) -> None:
         self.assertIn(
             "if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')",
             self.workflow,
         )
-        self.assertIn(
-            "ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.candidate_sha || github.ref }}",
-            self.workflow,
-        )
-        self.assertIn("DISPATCH_REF: ${{ github.ref }}", self.workflow)
-        self.assertIn("REQUESTED_CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}", self.workflow)
-        self.assertIn('if ($env:DISPATCH_REF -ne "refs/heads/master")', self.workflow)
+        self.assertIn("EVENT_REF: ${{ github.ref }}", self.workflow)
+        self.assertIn("EVENT_SHA: ${{ github.sha }}", self.workflow)
+        self.assertIn('if ($env:EVENT_REF -ne "refs/heads/master")', self.workflow)
+        self.assertIn("Checked out SHA $actual does not match workflow event SHA $eventSha", self.workflow)
         self.assertIn("git fetch --no-tags origin master --depth=1", self.workflow)
-        self.assertIn("Audit candidate $expected is not exact origin/master", self.workflow)
+        self.assertIn("Audit event SHA $actual is not exact origin/master", self.workflow)
+        self.assertNotIn("candidate_sha:", self.workflow)
 
-    def test_dispatch_inputs_are_not_interpolated_into_powershell_code(self) -> None:
-        self.assertNotIn('$expected = "${{ github.event.inputs.candidate_sha }}"', self.workflow)
+    def test_dispatch_input_is_not_interpolated_into_powershell_code(self) -> None:
         self.assertNotIn('$thresh = "${{ github.event.inputs.strict_startup_ms }}"', self.workflow)
-        self.assertIn("$expected = $env:REQUESTED_CANDIDATE_SHA.Trim().ToLowerInvariant()", self.workflow)
+        self.assertIn("REQUESTED_STARTUP_MS: ${{ github.event.inputs.strict_startup_ms }}", self.workflow)
         self.assertIn("$thresh = $env:REQUESTED_STARTUP_MS", self.workflow)
         self.assertIn("strict_startup_ms must be a positive integer", self.workflow)
 
