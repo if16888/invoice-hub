@@ -41,12 +41,12 @@ jobs:
         shell: pwsh
         run: |
           $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
-          $eventSha = $env:EVENT_SHA.Trim().ToLowerInvariant()
-          if ($actual -ne $eventSha) {
-            throw "Checked out SHA $actual does not match workflow event SHA $eventSha."
-          }
 
           if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            $eventSha = $env:EVENT_SHA.Trim().ToLowerInvariant()
+            if ($actual -ne $eventSha) {
+              throw "Checked out SHA $actual does not match workflow event SHA $eventSha."
+            }
             if ($env:EVENT_REF -ne "refs/heads/master") {
               throw "Pre-tag release audit must be dispatched from master."
             }
