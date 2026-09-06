@@ -71,6 +71,23 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         queued_at = source.index("QTimer.singleShot(0, self._apply_workbench_metrics)")
         self.assertLess(immediate_at, queued_at)
 
+    def test_post_paint_launch_reflow_precedes_initial_data_load(self):
+        source = inspect.getsource(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._run_post_paint_deferred_init
+        )
+        reflow_at = source.index("self._reflow_launch_page_after_first_paint()")
+        load_at = source.index("super()._deferred_init()")
+        self.assertLess(reflow_at, load_at)
+
+    def test_launch_reflow_uses_metrics_and_review_width_controller(self):
+        source = inspect.getsource(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._reflow_launch_page_after_first_paint
+        )
+        self.assertIn("self._apply_workbench_metrics()", source)
+        self.assertIn('getattr(self, "_review_detail_width_controller", None)', source)
+        self.assertIn("controller.schedule()", source)
+        self.assertIn("QTimer.singleShot(0, self._apply_workbench_metrics)", source)
+
     def test_hidden_refreshes_are_invalidated_instead_of_touching_placeholders(self):
         for method_name, page_key, dirty_flag in (
             ("_refresh_overview_page", "overview", "overview_dirty"),
@@ -172,6 +189,34 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
                     window.import_mail_recent_card.x(),
                     window.import_task_stack.x() + window.import_task_stack.width() - 1,
                 )
+            finally:
+                window.close()
+                self.qt_app.processEvents()
+
+    def test_launch_review_reflows_after_real_first_paint_without_resize(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-review-geometry-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                window.resize(1700, 900)
+                startup_lifecycle.reveal_startup_window(window, splash=None)
+                for _ in range(6):
+                    self.qt_app.processEvents()
+
+                self.assertTrue(window._startup_first_paint_seen)
+                self.assertIs(window.center_stack.currentWidget(), window.review_page)
+                usable = (
+                    window.main_splitter.width()
+                    - window.main_splitter.handleWidth() * (window.main_splitter.count() - 1)
+                )
+                sizes = window.main_splitter.sizes()
+                self.assertEqual(len(sizes), 2)
+                self.assertLessEqual(abs(sum(sizes) - usable), 2)
+                self.assertGreaterEqual(sizes[0], 720)
+                self.assertGreaterEqual(sizes[1], 352)
+                self.assertLessEqual(sizes[1], 520)
             finally:
                 window.close()
                 self.qt_app.processEvents()
