@@ -33,6 +33,13 @@ def _install_function_guard(
     def guarded(window) -> None:
         if window is None or not isValid(window):
             return
+        # closeEvent marks the window as shutting down before child widgets are
+        # destroyed.  A queued zero-delay refresh can therefore still receive a
+        # valid Python/Qt window while its owned item views are already entering
+        # teardown.  Once shutdown starts, UI refreshes have no useful work left
+        # to do and must not touch that child tree.
+        if bool(getattr(window, "_shutdown_requested", False)):
+            return
         if bool(window.property(gate_property)):
             return
 
@@ -48,12 +55,15 @@ def _install_function_guard(
             raise
         finally:
             if isValid(window):
-                QTimer.singleShot(
-                    0,
-                    lambda ref=weakref.ref(window), prop=gate_property: (
-                        _release_refresh_gate(ref, prop)
-                    ),
-                )
+                if bool(getattr(window, "_shutdown_requested", False)):
+                    window.setProperty(gate_property, False)
+                else:
+                    QTimer.singleShot(
+                        0,
+                        lambda ref=weakref.ref(window), prop=gate_property: (
+                            _release_refresh_gate(ref, prop)
+                        ),
+                    )
 
     guarded._settings_lifecycle_guard = True
     guarded._settings_original_refresh = original
