@@ -72,20 +72,19 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
             self.assertTrue(isValid(window))
 
             # closeEvent establishes the shutdown authority before Qt destroys
-            # the owned settings widgets. This is the exact lifecycle window
-            # where a queued mailbox refresh previously reached setItemWidget().
+            # the owned settings widgets. This mirrors the failing mailbox test
+            # teardown: close the window, then drain already-queued callbacks
+            # while the top-level Qt object is still valid.
             window.close()
             self.assertTrue(getattr(window, "_shutdown_requested", False))
+            self.assertTrue(isValid(window))
+            self.app.processEvents()
             self.assertTrue(isValid(window))
 
             gate_property = "settingsMailboxRefreshInFlight"
             window.setProperty(gate_property, False)
             guarded(window)
             self.assertFalse(bool(window.property(gate_property)))
-
-            window.deleteLater()
-            QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-            self.app.processEvents()
 
     def test_deferred_ui_refreshes_are_safe_after_window_deletion(self):
         with tempfile.TemporaryDirectory() as td:
