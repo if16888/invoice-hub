@@ -81,6 +81,14 @@ class ReviewActionRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
 
+    def _wait_for_reparse(self):
+        worker = getattr(self.review_app, "_reparse_worker", None)
+        if worker is None:
+            return
+        worker.wait()
+        self.app.processEvents()
+        self.app.processEvents()
+
     def test_toolbar_buttons_busy_state(self):
         app = self.review_app
         self.assertTrue(app.btn_import_local.isEnabled())
@@ -280,6 +288,7 @@ class ReviewActionRegressionTests(unittest.TestCase):
                 patch.object(app, "_load_claims"), \
                 patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
             app._reparse_selected_invoices()
+            self._wait_for_reparse()
         self.assertEqual(captured_hints[-1], 1)
 
         class FakeDownloader:
