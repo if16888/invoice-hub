@@ -4,6 +4,9 @@ param(
     [string]$SetupPath,
 
     [Parameter(Mandatory = $true)]
+    [string]$SourceExePath,
+
+    [Parameter(Mandatory = $true)]
     [string]$ExpectedVersion,
 
     [int]$StartupThresholdMs = 3000,
@@ -14,6 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $setup = (Resolve-Path -LiteralPath $SetupPath).Path
+$sourceExe = (Resolve-Path -LiteralPath $SourceExePath).Path
 $evidence = [IO.Path]::GetFullPath((Join-Path $repoRoot $EvidenceDir))
 $probeBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 $probeRoot = Join-Path $probeBase "InvoiceHubReleaseSmoke-$PID"
@@ -69,7 +73,10 @@ try {
     Assert-True ($StartupThresholdMs -gt 0) 'StartupThresholdMs must be positive.'
     Assert-True ($ExpectedVersion -match '^\d+\.\d+\.\d+(?:-(?:rc|pre)\d+)?$') 'ExpectedVersion is not a supported release version.'
     Assert-True ([IO.Path]::GetFileName($setup) -eq "InvoiceHub-$ExpectedVersion-win64-setup.exe") 'Setup filename does not match ExpectedVersion.'
+    Assert-True ([IO.Path]::GetFileName($sourceExe) -eq 'InvoiceHub.exe') 'SourceExePath must identify InvoiceHub.exe.'
     Assert-True ($sourceSha -match '^[0-9a-fA-F]{40}$') 'SOURCE_SHA/GITHUB_SHA must identify the exact 40-character source commit.'
+
+    $sourceExeHash = (Get-FileHash -LiteralPath $sourceExe -Algorithm SHA256).Hash.ToLowerInvariant()
 
     New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
@@ -77,7 +84,8 @@ try {
         "SOURCE_SHA=$($sourceSha.ToLowerInvariant())",
         "EXPECTED_VERSION=$ExpectedVersion",
         "SETUP_FILE=$([IO.Path]::GetFileName($setup))",
-        "SETUP_SHA256=$((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant())"
+        "SETUP_SHA256=$((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant())",
+        "SOURCE_EXE_SHA256=$sourceExeHash"
     ) -Encoding utf8
 
     $setupArgs = @(
@@ -101,8 +109,12 @@ try {
     Assert-True ($displayVersion -eq $ExpectedVersion) "Installed DisplayVersion is $displayVersion, expected $ExpectedVersion."
     Assert-True ($installLocation.TrimEnd('\') -ieq $installDir.TrimEnd('\')) 'Installed InstallLocation does not match the isolated audit directory.'
 
+    $installedExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-True ($installedExeHash -eq $sourceExeHash) 'Installed InvoiceHub.exe does not match the signed source executable bundled into the installer.'
+
     Add-Evidence 'INSTALL=PASS'
-    Add-Evidence "INSTALLED_EXE_SHA256=$((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant())"
+    Add-Evidence "INSTALLED_EXE_SHA256=$installedExeHash"
+    Add-Evidence 'INSTALLED_EXE_MATCHES_SOURCE=PASS'
 
     New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
     $env:INVOICE_HUB_RUNTIME_DIR = $runtimeDir
