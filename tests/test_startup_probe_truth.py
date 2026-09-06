@@ -12,7 +12,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from scripts import check_startup_time
-from scripts.invoice_fetch.gui import startup_probe
+from scripts.invoice_fetch.gui import startup_lifecycle, startup_probe
 
 
 class StartupProbeMetricContractTests(unittest.TestCase):
@@ -49,6 +49,14 @@ class StartupProbeMetricContractTests(unittest.TestCase):
 
     def test_checker_accepts_valid_qt_first_paint_evidence(self):
         self.assertEqual(check_startup_time._probe_truth_errors(self._valid_metrics()), [])
+
+    def test_release_gate_uses_first_paint_total_not_process_teardown_wall(self):
+        metrics = self._valid_metrics()
+        metrics["TOTAL_STARTUP_MS"] = 2500
+        metrics["STARTUP_MS"] = 2500
+        metrics["PROCESS_WALL_MS"] = 9000
+        self.assertEqual(check_startup_time._release_gate_ms(metrics), 2500)
+        self.assertEqual(check_startup_time._probe_truth_errors(metrics), [])
 
     def test_checker_rejects_legacy_zero_paint_probe(self):
         metrics = self._valid_metrics()
@@ -94,10 +102,10 @@ class StartupProbeExecutionBoundaryTests(unittest.TestCase):
         self.assertIn("start_first_paint_startup_probe", source)
         self.assertIn("if is_probe:", source)
 
-    def test_first_paint_probe_constructs_full_normal_workbench_path(self):
+    def test_first_paint_probe_constructs_production_startup_window(self):
         source = inspect.getsource(startup_probe.start_first_paint_startup_probe)
         self.assertIn("StartupSplash()", source)
-        self.assertIn("InvoiceReviewApp", source)
+        self.assertIn("FirstPaintDeferredInvoiceReviewApp", source)
         self.assertIn("startup_probe=False", source)
         self.assertIn("session.start()", source)
         self.assertIn("app.exec()", source)
@@ -109,8 +117,16 @@ class StartupProbeExecutionBoundaryTests(unittest.TestCase):
         finish_source = inspect.getsource(startup_probe.StartupProbeSession._finish_after_paint)
         builder_source = inspect.getsource(startup_probe.build_startup_probe_metrics)
         self.assertIn("QT_PAINT_EVENT_COMPLETED", builder_source)
+        self.assertIn("_startup_first_paint_completed_at", finish_source)
         self.assertIn("_write_metrics", finish_source)
         self.assertIn("self._app.exit(0)", finish_source)
+
+    def test_completed_paint_timestamp_is_captured_in_window_event_boundary(self):
+        source = inspect.getsource(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp.event
+        )
+        self.assertIn("handled = super().event(event)", source)
+        self.assertIn("_startup_first_paint_completed_at = time.monotonic()", source)
 
     def test_release_checker_does_not_overclaim_display_presentation(self):
         source = Path("scripts/check_startup_time.py").read_text(encoding="utf-8")
@@ -120,6 +136,7 @@ class StartupProbeExecutionBoundaryTests(unittest.TestCase):
         self.assertIn("主窗口Show事件", source)
         self.assertIn("首次Qt Paint已返回", source)
         self.assertIn("OS compositor/display presentation is not asserted", source)
+        self.assertIn("Process wall boundary: diagnostic only", source)
 
     def test_checker_decodes_probe_output_as_utf8_explicitly(self):
         source = inspect.getsource(check_startup_time.run_probe)

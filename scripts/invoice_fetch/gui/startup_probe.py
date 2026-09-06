@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """Truthful startup-probe execution for the desktop application.
 
-The release probe follows the same full workbench construction and first-paint
-lifecycle as a normal desktop launch. It exits only after the main window's
-first Qt Paint event has returned to the event loop. Invoice/claim data loading
-is intentionally post-paint in both normal startup and this probe. This is a Qt
-render-readiness milestone; it does not claim OS compositor/display presentation.
+The release probe follows the same launch-visible review-workbench construction
+and first-paint lifecycle as a normal desktop launch. It exits only after the
+main window's first Qt Paint event has returned. Invoice/claim data loading and
+non-visible business pages are intentionally outside that critical path. This
+is a Qt render-readiness milestone; it does not claim OS compositor/display
+presentation.
 """
 
 from __future__ import annotations
@@ -124,9 +125,9 @@ class StartupProbeSession(QObject):
                 and self._show_ms is not None
                 and not self._paint_pending
             ):
-                # Event filters run before QWidget handles the Paint event. A
-                # zero-delay callback records the milestone only after that
-                # event has returned to the Qt event loop.
+                # The startup lifecycle captures the exact timestamp after
+                # QWidget handles this Paint. This callback only persists and
+                # terminates after control returns to the Qt event loop.
                 self._paint_pending = True
                 QTimer.singleShot(0, self._finish_after_paint)
         return False
@@ -134,7 +135,15 @@ class StartupProbeSession(QObject):
     def _finish_after_paint(self) -> None:
         if self._finished:
             return
-        first_paint_ms = self._elapsed_ms()
+        completed_at = getattr(self._window, "_startup_first_paint_completed_at", None)
+        if isinstance(completed_at, (int, float)) and completed_at >= self._launch_started_at:
+            first_paint_ms = max(
+                0,
+                int((float(completed_at) - self._launch_started_at) * 1000),
+            )
+        else:
+            # Fail-safe fallback for a future compatible window implementation.
+            first_paint_ms = self._elapsed_ms()
         show_ms = self._show_ms
         if show_ms is None:
             self._fail("main window painted without an observed Show event")
@@ -201,13 +210,13 @@ class StartupProbeSession(QObject):
 
 
 def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> None:
-    """Launch the full desktop path and exit after the first completed Qt Paint."""
+    """Launch the production startup path and exit after completed first Paint."""
     launch_started_at = time.monotonic()
     app = QApplication(sys.argv)
 
     # Match normal production startup through first paint: show the splash,
-    # build the complete InvoiceReviewApp workbench with startup_probe=False,
-    # install the evidence observer, then reveal the real workbench shell.
+    # build the launch-visible InvoiceReviewApp workbench with startup_probe=False,
+    # install the evidence observer, then reveal the real review workbench.
     splash = StartupSplash()
     splash.show()
     splash.show_message("正在启动 Invoice Hub...", 15)
