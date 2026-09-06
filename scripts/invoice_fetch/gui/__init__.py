@@ -38,7 +38,7 @@ def start_gui(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
 
     is_probe = startup_probe or os.environ.get("INVOICE_HUB_STARTUP_PROBE") == "1"
     import_started_at = time.monotonic()
-    from .app import start_gui_app
+    from .startup_lifecycle import start_first_paint_deferred_gui_app
     if is_probe:
         from .startup_probe import start_first_paint_startup_probe
     import_ms = int((time.monotonic() - import_started_at) * 1000)
@@ -55,4 +55,7 @@ def start_gui(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
         start_first_paint_startup_probe(db_path, app_init_ms=total_app_init_ms)
         return
 
-    start_gui_app(db_path, startup_probe=False, app_init_ms=total_app_init_ms)
+    start_first_paint_deferred_gui_app(
+        db_path,
+        app_init_ms=total_app_init_ms,
+    )
