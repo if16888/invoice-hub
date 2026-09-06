@@ -45,7 +45,14 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
         release_job = self.workflow.split("\n  release:\n", 1)[1]
         self.assertIn("if: startsWith(github.ref, 'refs/tags/v')", release_job)
         self.assertNotIn("workflow_dispatch", release_job)
-        self.assertIn('(git cat-file -t "refs/tags/$tag").Trim()', self.workflow)
+        self.assertIn('$authorityRef = "refs/release-authority/$tag"', self.workflow)
+        self.assertIn(
+            'git fetch --force --no-tags origin "refs/tags/${tag}:$authorityRef"',
+            self.workflow,
+        )
+        self.assertIn("(git cat-file -t $authorityRef).Trim()", self.workflow)
+        self.assertIn('(git rev-parse "$authorityRef^{commit}").Trim().ToLowerInvariant()', self.workflow)
+        self.assertNotIn('(git cat-file -t "refs/tags/$tag").Trim()', self.workflow)
         self.assertIn("Release tag $tag must be annotated", self.workflow)
         self.assertIn("name: InvoiceHub-windows-release", release_job)
 
