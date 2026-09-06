@@ -121,6 +121,17 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         # first navigation has the same geometry as a later native resize.
         QTimer.singleShot(0, self._apply_workbench_metrics)
 
+    def _reflow_launch_page_after_first_paint(self) -> None:
+        """Settle the launch page against the real shown-window geometry."""
+        self._apply_workbench_metrics()
+        controller = getattr(self, "_review_detail_width_controller", None)
+        if controller is not None:
+            controller.schedule()
+        # Some review baseline callbacks are also zero-delay. A final queued
+        # metrics pass makes the launch state converge to the same geometry as
+        # a later native resize without moving any work back before first paint.
+        QTimer.singleShot(0, self._apply_workbench_metrics)
+
     def _switch_main_page(
         self,
         page_key: str,
@@ -188,6 +199,7 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
             return
         if getattr(self, "_deferred_init_done", False):
             return
+        self._reflow_launch_page_after_first_paint()
         super()._deferred_init()
 
 
