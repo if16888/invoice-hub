@@ -60,6 +60,32 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_deferred_ui_refresh_is_noop_after_close_starts_while_window_is_valid(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = InvoiceReviewApp(Path(td) / "settings-closing.db")
+            window.show()
+            for _ in range(8):
+                self.app.processEvents()
+
+            guarded = settings_baseline._refresh_mailbox_visuals
+            self.assertTrue(bool(getattr(guarded, "_settings_lifecycle_guard", False)))
+            self.assertTrue(isValid(window))
+
+            # closeEvent establishes the shutdown authority before Qt destroys
+            # the owned settings widgets. This mirrors the failing mailbox test
+            # teardown: close the window, then drain already-queued callbacks
+            # while the top-level Qt object is still valid.
+            window.close()
+            self.assertTrue(getattr(window, "_shutdown_requested", False))
+            self.assertTrue(isValid(window))
+            self.app.processEvents()
+            self.assertTrue(isValid(window))
+
+            gate_property = "settingsMailboxRefreshInFlight"
+            window.setProperty(gate_property, False)
+            guarded(window)
+            self.assertFalse(bool(window.property(gate_property)))
+
     def test_deferred_ui_refreshes_are_safe_after_window_deletion(self):
         with tempfile.TemporaryDirectory() as td:
             window = InvoiceReviewApp(Path(td) / "settings-close.db")
