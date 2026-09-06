@@ -310,5 +310,41 @@ class ReparseAtomicConsistencyTests(unittest.TestCase):
                 self.assertEqual(duplicate["invoice_number"], "DUP-B")
 
 
+class ReparseGuiAtomicBoundaryTests(unittest.TestCase):
+    def test_gui_uses_one_atomic_reconciliation_write_boundary(self):
+        import ast
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "invoice_fetch" / "gui" / "app.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        target = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_reparse_selected_invoices"
+        )
+        calls = []
+        for node in ast.walk(target):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                calls.append(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                calls.append(node.func.attr)
+
+        self.assertEqual(calls.count("reconcile_reparsed_invoice"), 1)
+        self.assertTrue(
+            {
+                "find_invoice_by_unique_fields",
+                "count_claim_links",
+                "delete_invoice_permanently",
+                "update_invoice_parsed_metadata",
+                "soft_delete_invoice",
+            }.isdisjoint(calls)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
