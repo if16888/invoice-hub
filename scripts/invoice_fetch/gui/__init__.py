@@ -3,7 +3,10 @@
 Invoice Hub PySide6 GUI Package
 """
 
+import logging
+import os
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -19,10 +22,11 @@ def start_gui(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
 
     Args:
         db_path: Path to the SQLite database.
-        startup_probe: If True, exit immediately after the main window is shown
-            (used for CI startup-performance measurement).
-        app_init_ms: Milliseconds elapsed for the GUI import step, recorded as
-            APP_INIT_MS in the startup probe output.
+        startup_probe: If True, run the full desktop startup path and exit only
+            after the main window's first Qt Paint event has completed.
+        app_init_ms: Milliseconds already spent importing the GUI package. The
+            launcher adds the concrete app/probe module import time before
+            reporting APP_INIT_MS.
     """
     if not PYSIDE6_AVAILABLE:
         print("=" * 60)
@@ -32,5 +36,23 @@ def start_gui(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
         print("=" * 60)
         sys.exit(1)
 
+    is_probe = startup_probe or os.environ.get("INVOICE_HUB_STARTUP_PROBE") == "1"
+    import_started_at = time.monotonic()
     from .app import start_gui_app
-    start_gui_app(db_path, startup_probe=startup_probe, app_init_ms=app_init_ms)
+    if is_probe:
+        from .startup_probe import start_first_paint_startup_probe
+    import_ms = int((time.monotonic() - import_started_at) * 1000)
+    total_app_init_ms = max(0, int(app_init_ms)) + max(0, import_ms)
+
+    if is_probe:
+        # Probe stdout/stderr is a machine-readable evidence channel. Keep
+        # normal INFO console logging out of it while preserving file logging
+        # and direct Qt diagnostics such as QFont warnings.
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if type(handler) is logging.StreamHandler:
+                handler.setLevel(logging.CRITICAL + 1)
+        start_first_paint_startup_probe(db_path, app_init_ms=total_app_init_ms)
+        return
+
+    start_gui_app(db_path, startup_probe=False, app_init_ms=total_app_init_ms)
