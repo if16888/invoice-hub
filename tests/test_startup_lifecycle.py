@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import tempfile
 import unittest
 from pathlib import Path
+
+from PySide6.QtWidgets import QApplication
 
 from scripts.invoice_fetch.gui import startup_lifecycle, startup_probe
 
@@ -20,17 +23,55 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         self.assertIn("if not self._startup_first_paint_seen", source)
         self.assertIn("return super()._deferred_init()", source)
 
-    def test_first_paint_is_handled_before_post_paint_load_is_scheduled(self):
+    def test_first_paint_is_handled_and_timestamped_before_post_paint_load(self):
         source = inspect.getsource(
             startup_lifecycle.FirstPaintDeferredInvoiceReviewApp.event
         )
         handled_at = source.index("handled = super().event(event)")
         paint_at = source.index("event.type() == QEvent.Paint")
+        timestamp_at = source.index(
+            "self._startup_first_paint_completed_at = time.monotonic()"
+        )
         schedule_at = source.index(
             "QTimer.singleShot(0, self._run_post_paint_deferred_init)"
         )
         self.assertLess(handled_at, paint_at)
-        self.assertLess(paint_at, schedule_at)
+        self.assertLess(paint_at, timestamp_at)
+        self.assertLess(timestamp_at, schedule_at)
+
+    def test_hidden_pages_have_stable_lazy_stack_indices(self):
+        specs = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._STARTUP_LAZY_PAGE_SPECS
+        self.assertEqual(
+            {key: spec[0] for key, spec in specs.items()},
+            {
+                "overview": 0,
+                "imports": 2,
+                "export": 3,
+                "logs": 4,
+                "settings": 5,
+            },
+        )
+        self.assertNotIn("review", specs)
+
+    def test_navigation_materializes_lazy_page_before_base_switch(self):
+        source = inspect.getsource(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._switch_main_page
+        )
+        materialize_at = source.index("self._materialize_startup_page(page_key)")
+        switch_at = source.index("return super()._switch_main_page(")
+        self.assertLess(materialize_at, switch_at)
+
+    def test_hidden_refreshes_are_invalidated_instead_of_touching_placeholders(self):
+        for method_name, page_key, dirty_flag in (
+            ("_refresh_overview_page", "overview", "overview_dirty"),
+            ("_refresh_imports_page", "imports", "imports_dirty"),
+            ("_refresh_settings_page", "settings", "settings_dirty"),
+        ):
+            source = inspect.getsource(
+                getattr(startup_lifecycle.FirstPaintDeferredInvoiceReviewApp, method_name)
+            )
+            self.assertIn(f'_startup_page_is_deferred("{page_key}")', source)
+            self.assertIn(f"self.{dirty_flag} = True", source)
 
     def test_reveal_disarms_legacy_show_after_load_before_showing_window(self):
         source = inspect.getsource(startup_lifecycle.reveal_startup_window)
@@ -54,6 +95,39 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         class_name = "FirstPaintDeferredInvoiceReviewApp"
         self.assertIn(class_name, build_source)
         self.assertIn(class_name, probe_source)
+
+
+class StartupLazyPageIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def test_settings_page_is_built_on_first_navigation_without_index_drift(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-lazy-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                self.assertEqual(window.center_stack.count(), 6)
+                self.assertIs(window.center_stack.currentWidget(), window.review_page)
+                self.assertEqual(
+                    window.settings_page.property("startupDeferredPage"),
+                    "settings",
+                )
+                self.assertFalse(hasattr(window, "settings_tabs"))
+
+                window._switch_main_page("settings")
+                self.qt_app.processEvents()
+
+                self.assertEqual(window.center_stack.count(), 6)
+                self.assertEqual(window.center_stack.indexOf(window.settings_page), 5)
+                self.assertIs(window.center_stack.currentWidget(), window.settings_page)
+                self.assertTrue(hasattr(window, "settings_tabs"))
+                self.assertNotIn("settings", window._startup_lazy_placeholders)
+            finally:
+                window.close()
+                self.qt_app.processEvents()
 
 
 if __name__ == "__main__":
