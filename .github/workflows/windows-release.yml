@@ -9,10 +9,6 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      candidate_sha:
-        description: "Exact 40-character master SHA to audit before tagging"
-        required: true
-        type: string
       strict_startup_ms:
         description: "Strict startup gate threshold (ms)"
         required: false
@@ -30,8 +26,8 @@ jobs:
     env:
       PYTHONIOENCODING: "utf-8"
       EVENT_NAME: ${{ github.event_name }}
-      DISPATCH_REF: ${{ github.ref }}
-      REQUESTED_CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}
+      EVENT_REF: ${{ github.ref }}
+      EVENT_SHA: ${{ github.sha }}
       REQUESTED_STARTUP_MS: ${{ github.event.inputs.strict_startup_ms }}
       TAG_NAME: ${{ github.ref_name }}
 
@@ -39,31 +35,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.candidate_sha || github.ref }}
           fetch-depth: 0
 
       - name: Verify source identity
         shell: pwsh
         run: |
           $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          $eventSha = $env:EVENT_SHA.Trim().ToLowerInvariant()
+          if ($actual -ne $eventSha) {
+            throw "Checked out SHA $actual does not match workflow event SHA $eventSha."
+          }
+
           if ($env:EVENT_NAME -eq "workflow_dispatch") {
-            if ($env:DISPATCH_REF -ne "refs/heads/master") {
+            if ($env:EVENT_REF -ne "refs/heads/master") {
               throw "Pre-tag release audit must be dispatched from master."
-            }
-            $expected = $env:REQUESTED_CANDIDATE_SHA.Trim().ToLowerInvariant()
-            if ($expected -notmatch '^[0-9a-f]{40}$') {
-              throw "candidate_sha must be a full 40-character commit SHA."
-            }
-            if ($actual -ne $expected) {
-              throw "Checked out SHA $actual does not match requested candidate $expected."
             }
             git fetch --no-tags origin master --depth=1
             if ($LASTEXITCODE -ne 0) {
               throw "Could not fetch origin/master for candidate identity verification."
             }
             $master = (git rev-parse FETCH_HEAD).Trim().ToLowerInvariant()
-            if ($master -ne $expected) {
-              throw "Audit candidate $expected is not exact origin/master ($master)."
+            if ($master -ne $actual) {
+              throw "Audit event SHA $actual is not exact origin/master ($master)."
             }
             "AUDIT_MODE=true" >> $env:GITHUB_ENV
           }
