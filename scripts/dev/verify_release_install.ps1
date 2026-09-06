@@ -15,10 +15,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $setup = (Resolve-Path -LiteralPath $SetupPath).Path
 $evidence = [IO.Path]::GetFullPath((Join-Path $repoRoot $EvidenceDir))
-$probeRoot = Join-Path $env:RUNNER_TEMP "InvoiceHubReleaseSmoke-$PID"
-if (-not $env:RUNNER_TEMP) {
-    $probeRoot = Join-Path $env:TEMP "InvoiceHubReleaseSmoke-$PID"
-}
+$probeBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+$probeRoot = Join-Path $probeBase "InvoiceHubReleaseSmoke-$PID"
 $installDir = Join-Path $probeRoot 'install'
 $runtimeDir = Join-Path $probeRoot 'runtime'
 $setupLog = Join-Path $evidence 'setup.log'
@@ -26,6 +24,7 @@ $startupLog = Join-Path $evidence 'startup.log'
 $summaryPath = Join-Path $evidence 'summary.txt'
 $productionGuid = 'B4A5B8B8-0F83-4E8B-9A8D-3C4321609C5D'
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{$productionGuid}_is1"
+$sourceSha = if ($env:SOURCE_SHA) { $env:SOURCE_SHA } else { $env:GITHUB_SHA }
 $previousRuntimeDir = $env:INVOICE_HUB_RUNTIME_DIR
 $installed = $false
 $uninstalled = $false
@@ -70,11 +69,12 @@ try {
     Assert-True ($StartupThresholdMs -gt 0) 'StartupThresholdMs must be positive.'
     Assert-True ($ExpectedVersion -match '^\d+\.\d+\.\d+(?:-(?:rc|pre)\d+)?$') 'ExpectedVersion is not a supported release version.'
     Assert-True ([IO.Path]::GetFileName($setup) -eq "InvoiceHub-$ExpectedVersion-win64-setup.exe") 'Setup filename does not match ExpectedVersion.'
+    Assert-True ($sourceSha -match '^[0-9a-fA-F]{40}$') 'SOURCE_SHA/GITHUB_SHA must identify the exact 40-character source commit.'
 
     New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
     Set-Content -LiteralPath $summaryPath -Value @(
-        "SOURCE_SHA=$($env:GITHUB_SHA)",
+        "SOURCE_SHA=$($sourceSha.ToLowerInvariant())",
         "EXPECTED_VERSION=$ExpectedVersion",
         "SETUP_FILE=$([IO.Path]::GetFileName($setup))",
         "SETUP_SHA256=$((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant())"
