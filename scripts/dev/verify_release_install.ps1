@@ -112,6 +112,24 @@ try {
     $installedExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($installedExeHash -eq $sourceExeHash) 'Installed InvoiceHub.exe does not match the signed source executable bundled into the installer.'
 
+    $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
+    Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+    try {
+        $installedDisplayVersion = (& $exe --version 2>&1 | Out-String).Trim()
+        $installedVersionExit = $LASTEXITCODE
+    }
+    finally {
+        if ($null -eq $previousBuildVersion) {
+            Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:INVOICE_HUB_BUILD_VERSION = $previousBuildVersion
+        }
+    }
+    Assert-True ($installedVersionExit -eq 0) "Installed --version command failed with exit code $installedVersionExit. Output: $installedDisplayVersion"
+    Assert-True ($installedDisplayVersion -eq "v$ExpectedVersion") "Installed display version is $installedDisplayVersion, expected v$ExpectedVersion."
+    Add-Evidence "INSTALLED_DISPLAY_VERSION=$installedDisplayVersion"
+
     Add-Evidence 'INSTALL=PASS'
     Add-Evidence "INSTALLED_EXE_SHA256=$installedExeHash"
     Add-Evidence 'INSTALLED_EXE_MATCHES_SOURCE=PASS'
