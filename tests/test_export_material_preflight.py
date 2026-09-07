@@ -32,7 +32,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
         with InvoiceDB(db_path) as db:
             claim_id = db.create_claim_group("Synthetic Material Preflight")
             for index, row in enumerate(rows, start=1):
-                attachment_path = row.get("attachment_path", f"attachments/invoice-{index}.pdf")
+                attachment_path = row.get("attachment_path", f"attachments/invoice-{index}.xml")
                 extra_paths = row.get("extra_paths", [])
                 payload = {
                     "invoice_number": row.get("invoice_number", f"SYN-{index}"),
@@ -50,8 +50,12 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                 invoice_id = db.insert_invoice(payload)
                 db.add_invoice_to_claim(claim_id, invoice_id)
 
-        for row in rows:
-            for relative_path in [row.get("attachment_path", "")] + list(row.get("files", [])):
+        for index, row in enumerate(rows, start=1):
+            attachment_path = row.get("attachment_path", f"attachments/invoice-{index}.xml")
+            files_to_create = list(row.get("files", []))
+            if row.get("create_attachment", True) and attachment_path:
+                files_to_create.insert(0, attachment_path)
+            for relative_path in files_to_create:
                 if not relative_path:
                     continue
                 path = runtime_dir / relative_path
@@ -98,6 +102,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     stats = window._claim_export_preflight_stats(claim_id)
                     self.assertEqual(stats["missing_extra"], 1)
                     self.assertEqual(stats["unavailable_extra"], 0)
+                    self.assertEqual(stats["missing_attachment"], 0)
                     self.assertIn("缺补充材料：1 张", window._format_claim_export_preflight_text(stats))
 
                     window._refresh_export_page()
@@ -106,6 +111,43 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     self.assertFalse(window.btn_run_export_page.isEnabled())
                     self.assertEqual(window.export_check_missing_extra.lbl_value.text(), "1 张")
                     self.assertIn("缺补充材料 1 张", window.lbl_export_action_hint.text())
+                finally:
+                    if getattr(window, "db", None) is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    self.qt_app.processEvents()
+
+    def test_gui_preflight_blocks_configured_but_unavailable_original(self):
+        from scripts.invoice_fetch.gui import app as app_module
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{
+                    "invoice_number": "MISSING-ORIGINAL",
+                    "attachment_path": "attachments/missing-original.xml",
+                    "create_attachment": False,
+                }],
+            )
+            with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
+                app_module, "RUNTIME_DIR", runtime_dir
+            ):
+                window = InvoiceReviewApp(runtime_dir / "invoices.db", splash=None)
+                try:
+                    window._deferred_init()
+                    self.qt_app.processEvents()
+                    stats = window._claim_export_preflight_stats(claim_id)
+                    self.assertEqual(stats["missing_attachment"], 1)
+                    self.assertIn("缺原件：1 张", window._format_claim_export_preflight_text(stats))
+
+                    window._refresh_export_page()
+                    window.export_group_list.setCurrentRow(0)
+                    window._sync_export_claim_selection()
+                    self.assertFalse(window.btn_run_export_page.isEnabled())
+                    self.assertEqual(window.export_check_missing_attach.lbl_value.text(), "1 张")
+                    self.assertIn("缺原件 1 张", window.lbl_export_action_hint.text())
                 finally:
                     if getattr(window, "db", None) is not None:
                         window.db.close()
@@ -345,7 +387,6 @@ class ExportMaterialPreflightTests(unittest.TestCase):
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
                 [{
-                    "attachment_path": "",
                     "missing_extra": False,
                     "has_extra": True,
                     "extra_type": "水单",
@@ -393,7 +434,6 @@ class ExportMaterialPreflightTests(unittest.TestCase):
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
                 [{
-                    "attachment_path": "",
                     "missing_extra": False,
                     "has_extra": True,
                     "extra_type": "水单",
@@ -407,12 +447,18 @@ class ExportMaterialPreflightTests(unittest.TestCase):
             historical_dir.mkdir(parents=True)
             historical_marker = historical_dir / "manifest.json"
             historical_marker.write_text("synthetic history", encoding="utf-8")
+            original_copy2 = claim_export_module.shutil.copy2
+
+            def copy_with_evidence_failure(src, dst, *args, **kwargs):
+                if Path(src) == evidence_path:
+                    raise OSError(f"copy failed: {evidence_path}")
+                return original_copy2(src, dst, *args, **kwargs)
 
             with InvoiceDB(runtime_dir / "invoices.db") as db:
                 with patch.object(
                     claim_export_module.shutil,
                     "copy2",
-                    side_effect=OSError(f"copy failed: {evidence_path}"),
+                    side_effect=copy_with_evidence_failure,
                 ), patch.object(
                     claim_export_module,
                     "export_excel",
