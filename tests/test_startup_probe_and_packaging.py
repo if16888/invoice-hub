@@ -211,6 +211,10 @@ class TestVersionSource(unittest.TestCase):
         self.assertIn("(?<base>\\d+\\.\\d+\\.\\d+)", src)
         self.assertIn("(?:rc|pre)", src)
         self.assertIn("contains(env.VERSION, '-')", src)
+        self.assertIn("write_embedded_build_version.py", src)
+        self.assertIn("Verify packaged display version", src)
+        self.assertIn("--version", src)
+        self.assertIn("Remove-Item Env:INVOICE_HUB_BUILD_VERSION", src)
 
     def test_build_display_version_resolves_rc_and_stable_without_git(self):
         from scripts.invoice_fetch.version import VERSION, resolve_build_version
@@ -244,6 +248,48 @@ class TestVersionSource(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip(), expected)
+    def test_embedded_build_version_is_used_without_runtime_environment(self):
+        from scripts.invoice_fetch import version as version_module
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("INVOICE_HUB_BUILD_VERSION", None)
+            with patch.object(version_module, "EMBEDDED_BUILD_VERSION", "0.1.8-rc3"):
+                self.assertEqual(version_module.resolve_build_version(), "0.1.8-rc3")
+
+    def test_embedded_build_version_writer_validates_and_writes_module(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = Path(td) / "_embedded_build_version.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/dev/write_embedded_build_version.py",
+                    "--version",
+                    "0.1.8-rc3",
+                    "--output",
+                    str(output),
+                ],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('BUILD_VERSION = "0.1.8-rc3"', output.read_text(encoding="utf-8"))
+
+    def test_cli_version_uses_source_build_identity(self):
+        env = os.environ.copy()
+        env.pop("INVOICE_HUB_BUILD_VERSION", None)
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.invoice_fetch", "--version"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), "v0.1.8")
+
     def test_current_source_and_release_tag_contract(self):
         from scripts.invoice_fetch.version import VERSION
 
@@ -688,6 +734,12 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertIn("ItemType Junction", src)
         self.assertIn("FileShare]::Read", src)
         self.assertIn("INSTALLER_LIFECYCLE_PROBE: PASS", src)
+
+    def test_installed_smoke_checks_embedded_display_version(self):
+        src = (PROJECT_ROOT / "scripts" / "dev" / "verify_release_install.ps1").read_text(encoding="utf-8")
+        self.assertIn("--version", src)
+        self.assertIn("INSTALLED_DISPLAY_VERSION", src)
+        self.assertIn("v$ExpectedVersion", src)
 
     def test_workflow_builds_setup_zip_and_checksums(self):
         src = self._workflow_path().read_text(encoding="utf-8")
