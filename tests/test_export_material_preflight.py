@@ -50,8 +50,9 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                 invoice_id = db.insert_invoice(payload)
                 db.add_invoice_to_claim(claim_id, invoice_id)
 
-        for row in rows:
-            for relative_path in [row.get("attachment_path", "")] + list(row.get("files", [])):
+        for index, row in enumerate(rows, start=1):
+            attachment_path = row.get("attachment_path", f"attachments/invoice-{index}.pdf")
+            for relative_path in [attachment_path] + list(row.get("files", [])):
                 if not relative_path:
                     continue
                 path = runtime_dir / relative_path
@@ -345,7 +346,6 @@ class ExportMaterialPreflightTests(unittest.TestCase):
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
                 [{
-                    "attachment_path": "",
                     "missing_extra": False,
                     "has_extra": True,
                     "extra_type": "水单",
@@ -393,7 +393,6 @@ class ExportMaterialPreflightTests(unittest.TestCase):
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
                 [{
-                    "attachment_path": "",
                     "missing_extra": False,
                     "has_extra": True,
                     "extra_type": "水单",
@@ -407,12 +406,18 @@ class ExportMaterialPreflightTests(unittest.TestCase):
             historical_dir.mkdir(parents=True)
             historical_marker = historical_dir / "manifest.json"
             historical_marker.write_text("synthetic history", encoding="utf-8")
+            original_copy2 = claim_export_module.shutil.copy2
+
+            def copy_with_evidence_failure(src, dst, *args, **kwargs):
+                if Path(src) == evidence_path:
+                    raise OSError(f"copy failed: {evidence_path}")
+                return original_copy2(src, dst, *args, **kwargs)
 
             with InvoiceDB(runtime_dir / "invoices.db") as db:
                 with patch.object(
                     claim_export_module.shutil,
                     "copy2",
-                    side_effect=OSError(f"copy failed: {evidence_path}"),
+                    side_effect=copy_with_evidence_failure,
                 ), patch.object(
                     claim_export_module,
                     "export_excel",
