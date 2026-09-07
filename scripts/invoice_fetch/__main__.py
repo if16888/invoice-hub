@@ -36,7 +36,7 @@ from .log_privacy import mask_email, sanitize_log_message, mask_filename, mask_i
 from .scan_lifecycle import ScanCancelled, ScanControl, ScanStage, new_scan_id, redacted_progress
 from .url_utils import _mask_url
 from .rule_classifier import classify as rule_classify
-from . import review_status
+from . import APP_VERSION, review_status
 from . import services as application_services
 from .services import (
     _classify,
@@ -146,6 +146,7 @@ class ChineseHelpArgumentParser(argparse.ArgumentParser):
 
 def _parse_args() -> argparse.Namespace:
     p = ChineseHelpArgumentParser(
+    p.add_argument("--version", action="version", version=APP_VERSION, help="显示当前版本并退出")
         description="Invoice Hub - 本地优先的报销资料整理助手",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
