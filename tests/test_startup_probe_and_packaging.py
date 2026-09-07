@@ -212,6 +212,38 @@ class TestVersionSource(unittest.TestCase):
         self.assertIn("(?:rc|pre)", src)
         self.assertIn("contains(env.VERSION, '-')", src)
 
+    def test_build_display_version_resolves_rc_and_stable_without_git(self):
+        from scripts.invoice_fetch.version import VERSION, resolve_build_version
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("INVOICE_HUB_BUILD_VERSION", None)
+            self.assertEqual(resolve_build_version(), VERSION)
+            self.assertEqual(resolve_build_version("0.1.8-rc3"), "0.1.8-rc3")
+            self.assertEqual(resolve_build_version("0.1.8"), "0.1.8")
+            self.assertEqual(resolve_build_version("0.1.9-rc1"), VERSION)
+            with self.assertRaises(ValueError):
+                resolve_build_version("0.1.9-rc1", strict=True)
+
+        for raw, expected in (
+            ("0.1.8-rc3", "v0.1.8-rc3"),
+            ("0.1.8", "v0.1.8"),
+            ("0.1.9-rc1", "v0.1.8"),
+        ):
+            env = os.environ.copy()
+            env["INVOICE_HUB_BUILD_VERSION"] = raw
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from scripts.invoice_fetch.version import APP_VERSION; print(APP_VERSION)",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.strip(), expected)
     def test_current_source_and_release_tag_contract(self):
         from scripts.invoice_fetch.version import VERSION
 

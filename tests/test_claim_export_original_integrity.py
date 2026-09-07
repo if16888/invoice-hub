@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 from scripts.invoice_fetch import claim_export as claim_export_module
 from scripts.invoice_fetch import review_status
-from scripts.invoice_fetch.claim_export import export_claim_package
+from scripts.invoice_fetch.claim_export import (
+    export_claim_package,
+    inspect_original_attachment,
+    summarize_extra_material_issues,
+)
 from scripts.invoice_fetch.db import InvoiceDB
 
 
@@ -102,6 +106,59 @@ class ClaimExportOriginalIntegrityTests(unittest.TestCase):
                 self.assertEqual(db.list_export_runs(claim_id), [])
                 self._assert_no_current_partial_package(export_root)
 
+    def test_zero_byte_original_is_unavailable_during_preflight(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, _ = self._create_claim(
+                Path(td),
+                attachment_path="attachments/empty.xml",
+                invoice_number="EMPTY-BYTES",
+            )
+            empty_path = runtime_dir / "attachments/empty.xml"
+            empty_path.parent.mkdir(parents=True, exist_ok=True)
+            empty_path.write_bytes(b"")
+
+            result = inspect_original_attachment(
+                {"attachment_path": "attachments/empty.xml"},
+                runtime_dir,
+            )
+            self.assertFalse(result["available"])
+            self.assertEqual(result["reason"], "empty")
+            self.assertEqual(
+                summarize_extra_material_issues(
+                    [{"attachment_path": "attachments/empty.xml"}],
+                    runtime_dir,
+                )["missing_attachment"],
+                1,
+            )
+            self.assertEqual(project_root.name, "project")
+
+    def test_zero_byte_original_blocks_complete_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                attachment_path="attachments/empty.xml",
+                invoice_number="EMPTY-BYTES-EXPORT",
+            )
+            empty_path = runtime_dir / "attachments/empty.xml"
+            empty_path.parent.mkdir(parents=True, exist_ok=True)
+            empty_path.write_bytes(b"")
+            export_root = project_root / "exports"
+
+            with InvoiceDB(runtime_dir / "invoices.db") as db:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "发票号 EMPTY-BYTES-EXPORT的发票原件复制失败或已不可用",
+                ) as ctx:
+                    export_claim_package(
+                        db,
+                        claim_id,
+                        project_root,
+                        runtime_dir,
+                        export_root=export_root,
+                    )
+                self.assertNotIn(str(runtime_dir), str(ctx.exception))
+                self.assertEqual(db.list_export_runs(claim_id), [])
+                self._assert_no_current_partial_package(export_root)
     def test_missing_or_directory_original_blocks_complete_export(self):
         for case_name, create_directory in (("missing", False), ("directory", True)):
             with self.subTest(case=case_name), tempfile.TemporaryDirectory() as td:
@@ -165,6 +222,47 @@ class ClaimExportOriginalIntegrityTests(unittest.TestCase):
             self.assertEqual(historical_marker.read_text(encoding="utf-8"), "historical package")
             self._assert_no_current_partial_package(export_root)
 
+    def test_zero_byte_copy_result_fails_closed_and_preserves_history(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                attachment_path="attachments/original.xml",
+                invoice_number="COPY-EMPTY-001",
+            )
+            source_path = runtime_dir / "attachments/original.xml"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_bytes(b"synthetic invoice original")
+            export_root = project_root / "exports"
+            historical_dir = export_root / "historical-success"
+            historical_dir.mkdir(parents=True, exist_ok=True)
+            historical_marker = historical_dir / "manifest.json"
+            historical_marker.write_text("historical package", encoding="utf-8")
+
+            def copy_as_empty(_src, dest, *args, **kwargs):
+                Path(dest).write_bytes(b"")
+
+            with InvoiceDB(runtime_dir / "invoices.db") as db, patch.object(
+                claim_export_module.shutil,
+                "copy2",
+                side_effect=copy_as_empty,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "发票号 COPY-EMPTY-001的发票原件复制失败或已不可用",
+                ) as ctx:
+                    export_claim_package(
+                        db,
+                        claim_id,
+                        project_root,
+                        runtime_dir,
+                        export_root=export_root,
+                    )
+                self.assertNotIn(str(runtime_dir), str(ctx.exception))
+                self.assertEqual(db.list_export_runs(claim_id), [])
+
+            self.assertTrue(historical_marker.is_file())
+            self.assertEqual(historical_marker.read_text(encoding="utf-8"), "historical package")
+            self._assert_no_current_partial_package(export_root)
     def test_original_and_supplementary_material_must_both_copy(self):
         with tempfile.TemporaryDirectory() as td:
             project_root, runtime_dir, claim_id = self._create_claim(
