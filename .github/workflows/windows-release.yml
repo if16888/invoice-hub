@@ -223,7 +223,8 @@ jobs:
           $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
           Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
           try {
-            $probeProcess = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", $probePath) -Wait -PassThru -WindowStyle Hidden
+            $probeArgument = '"{0}"' -f $probePath
+            $probeProcess = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", $probeArgument) -Wait -PassThru -WindowStyle Hidden
             if ($probeProcess.ExitCode -ne 0) {
               throw "Packaged version probe failed with exit code $($probeProcess.ExitCode)."
             }
