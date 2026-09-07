@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import runpy
+from pathlib import Path
 
 try:
     from ._embedded_build_version import BUILD_VERSION as EMBEDDED_BUILD_VERSION
@@ -70,3 +72,23 @@ def resolve_build_version(
 
 BUILD_VERSION = resolve_build_version()
 APP_VERSION = f"v{BUILD_VERSION}"
+
+PROBE_CONTRACT = "invoice_hub_build_version_v1"
+
+
+def write_build_version_probe(output_path: str | os.PathLike[str]) -> None:
+    """Write the embedded application identity for release verification.
+
+    The caller owns the output directory and must provide an absolute path.
+    Exclusive creation makes a stale probe fail closed instead of being reused.
+    """
+    path = Path(output_path)
+    if not path.is_absolute():
+        raise ValueError("Version probe output path must be absolute.")
+    payload = {
+        "contract": PROBE_CONTRACT,
+        "app_version": APP_VERSION,
+    }
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        json.dump(payload, stream, ensure_ascii=True, separators=(",", ":"))
+        stream.write("\n")
