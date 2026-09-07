@@ -274,7 +274,9 @@ class TestVersionSource(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('BUILD_VERSION = "0.1.8-rc3"', output.read_text(encoding="utf-8"))
+            generated = output.read_text(encoding="utf-8")
+            compile(generated, str(output), "exec")
+            self.assertIn('BUILD_VERSION = "0.1.8-rc3"', generated)
 
     def test_cli_version_uses_source_build_identity(self):
         env = os.environ.copy()
