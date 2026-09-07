@@ -4,14 +4,29 @@ from __future__ import annotations
 
 import os
 import re
+import runpy
 
-from ._embedded_build_version import BUILD_VERSION as EMBEDDED_BUILD_VERSION
+try:
+    from ._embedded_build_version import BUILD_VERSION as EMBEDDED_BUILD_VERSION
+except (ImportError, ValueError):
+    # check_release_metadata.py loads this file with runpy, outside the package.
+    _embedded_path = os.path.join(
+        os.path.dirname(__file__),
+        "_embedded_build_version.py",
+    )
+    try:
+        _embedded_metadata = runpy.run_path(_embedded_path)
+    except (OSError, SyntaxError):
+        _embedded_metadata = {}
+    EMBEDDED_BUILD_VERSION = str(
+        _embedded_metadata.get("BUILD_VERSION") or ""
+    )
 
 VERSION = "0.1.8"
 PREVIOUS_STABLE_VERSION = "0.1.7"
 
 _BUILD_VERSION_PATTERN = re.compile(
-    rf"^(?P<base>{re.escape(VERSION)})(?P<suffix>-(?:rc|pre)\d+)?$"
+    rf"^(?P<base>{re.escape(VERSION)})(?P<suffix>-(?:rc|pre)\\d+)?$"
 )
 
 
