@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import re
 
+from ._embedded_build_version import BUILD_VERSION as EMBEDDED_BUILD_VERSION
+
 VERSION = "0.1.8"
 PREVIOUS_STABLE_VERSION = "0.1.7"
 
@@ -30,15 +32,17 @@ def resolve_build_version(
 ) -> str:
     """Resolve the build display version without relying on Git at import time.
 
-    Source/dev imports fall back to VERSION for absent or invalid overrides.
-    Release workflows pass strict mode after validating the tag-derived
-    override so invalid release identities fail closed.
+    Release builds embed their display version in the package before freezing.
+    An explicit environment override remains useful for CI validation and
+    development. Invalid non-strict values fall back to the source VERSION.
     """
-    raw_value = (
-        os.environ.get("INVOICE_HUB_BUILD_VERSION")
-        if candidate is None
-        else candidate
-    )
+    if candidate is None:
+        raw_value = os.environ.get("INVOICE_HUB_BUILD_VERSION")
+        if raw_value is None or not str(raw_value).strip():
+            raw_value = EMBEDDED_BUILD_VERSION
+    else:
+        raw_value = candidate
+
     if raw_value is None or not str(raw_value).strip():
         return VERSION
     try:
