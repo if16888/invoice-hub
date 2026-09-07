@@ -66,6 +66,12 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                 self.assertEqual(window.export_check_naming.lbl_icon.text(), "")
                 self.assertEqual(window.export_check_naming.property("state"), "muted")
                 self.assertEqual(window.export_check_naming.lbl_value.text(), "等待选择报销组")
+                self.assertEqual(window.export_check_dir.property("state"), "muted")
+                self.assertEqual(
+                    window.export_check_dir.lbl_value.text(),
+                    "已设置（导出时验证）",
+                )
+                self.assertTrue(window.export_check_dir.lbl_value.toolTip())
                 self.assertEqual(window.btn_run_export_page.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
                 self.assertLessEqual(window.btn_run_export_page.maximumWidth(), 180)
             finally:
@@ -174,6 +180,12 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                     window.export_check_naming.lbl_value.text(),
                     "1 张使用日期前缀 + 原文件名",
                 )
+                self.assertEqual(window.export_check_dir.property("state"), "muted")
+                self.assertEqual(
+                    window.export_check_dir.lbl_value.text(),
+                    "已设置（导出时验证）",
+                )
+                self.assertEqual(window.export_check_dir.lbl_value.toolTip(), str(Path(td)))
                 self.assertTrue(window.btn_run_export_page.isEnabled())
             finally:
                 window.db.close()
