@@ -77,6 +77,17 @@ def _resolve_export_source_path(raw_value: str, runtime_dir: Path) -> Path:
     return source_path
 
 
+def _invoice_export_identity(invoice: dict) -> str:
+    """Return a user-visible invoice identity without exposing local paths."""
+    invoice_number = str(invoice.get("invoice_number") or "").strip()
+    if invoice_number:
+        return f"发票号 {invoice_number[:80]}"
+    invoice_id = invoice.get("id")
+    if invoice_id not in (None, ""):
+        return f"发票 ID {invoice_id}"
+    return "当前发票"
+
+
 def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
     """Return one invoice's supplemental-material integrity result.
 
@@ -154,6 +165,16 @@ def _prefix_export_filename(filename: str, date_prefix: str) -> str:
     return f"{safe_prefix}_{basename}"
 
 
+def _required_copy_error(kind: str, context: str = "") -> ValueError:
+    subject = str(kind or "文件").strip() or "文件"
+    identity = str(context or "").strip()
+    if identity:
+        subject = f"{identity}的{subject}"
+    return ValueError(
+        f"导出已阻断：{subject}复制失败或已不可用。请确认文件仍可访问后重试。"
+    )
+
+
 def _copy_into_attachments(
     src_value: str,
     runtime_dir: Path,
@@ -161,20 +182,18 @@ def _copy_into_attachments(
     *,
     date_prefix: str = "",
     required: bool = False,
+    required_kind: str = "补充材料",
+    required_context: str = "",
 ) -> str:
     if not src_value:
         if required:
-            raise ValueError(
-                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
-            )
+            raise _required_copy_error(required_kind, required_context)
         return ""
     src_path = _resolve_export_source_path(src_value, runtime_dir)
     if not src_path.exists() or not src_path.is_file():
         _log.warning("Attachment file not found at: %s (skipped)", mask_path(src_path))
         if required:
-            raise ValueError(
-                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
-            )
+            raise _required_copy_error(required_kind, required_context)
         return ""
 
     dest_name = _prefix_export_filename(src_path.name, date_prefix)
@@ -194,9 +213,7 @@ def _copy_into_attachments(
         shutil.copy2(src_path, dest_path)
     except (OSError, shutil.Error):
         if required:
-            raise ValueError(
-                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
-            ) from None
+            raise _required_copy_error(required_kind, required_context) from None
         raise
 
     if required:
@@ -205,9 +222,7 @@ def _copy_into_attachments(
         except OSError:
             copied_ok = False
         if not copied_ok:
-            raise ValueError(
-                "导出已阻断：补充材料复制失败或已不可用。请确认材料文件仍可访问后重试。"
-            )
+            raise _required_copy_error(required_kind, required_context)
 
     copied_relative_path = f"attachments/{dest_path.name}"
     _log.info("Copied export file: %s -> %s", mask_path(src_path), mask_path(copied_relative_path))
@@ -332,7 +347,7 @@ def export_claim_package(
         export_invoices = []
         manifest_items = []
 
-        # 2. Process attachments
+        # 2. Process attachments. Every exported invoice original is required.
         for inv in invoices:
             inv_copy = dict(inv)
             b_warning = buyer_warning(inv, reimbursement_config)
@@ -344,19 +359,21 @@ def export_claim_package(
             else:
                 warning = d_warning
             inv_copy["warning"] = warning
-            copied_relative_path = ""
             orig_attachment_path = inv.get("attachment_path", "")
             export_date_prefix = inv.get("invoice_date") or inv.get("expense_date") or inv.get("mail_date") or "unknown-date"
+            invoice_identity = _invoice_export_identity(inv)
 
-            if orig_attachment_path:
-                copied_relative_path = _copy_into_attachments(
-                    orig_attachment_path,
-                    runtime_dir,
-                    attachments_dir,
-                    date_prefix=export_date_prefix,
-                )
-            else:
-                _log.info("No attachment path found for invoice ID %s", inv.get("id"))
+            copied_relative_path = _copy_into_attachments(
+                orig_attachment_path,
+                runtime_dir,
+                attachments_dir,
+                date_prefix=export_date_prefix,
+                required=True,
+                required_kind="发票原件",
+                required_context=invoice_identity,
+            )
+            if not copied_relative_path:
+                raise _required_copy_error("发票原件", invoice_identity)
 
             raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
             copied_extra_paths = []
@@ -405,6 +422,13 @@ def export_claim_package(
                 "review_status": inv.get("review_status", ""),
                 "warning": warning,
             })
+
+        if len(export_invoices) != len(invoices) or any(
+            not inv.get("attachment_path") for inv in export_invoices
+        ):
+            raise ValueError(
+                "导出已阻断：发票原件复制数量不完整，本次报销包未生成。"
+            )
 
         # 3. Generate reimbursement.xlsx
         xlsx_dest = export_dir / "reimbursement.xlsx"
