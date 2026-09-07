@@ -229,7 +229,7 @@ def _copy_into_attachments(
 
     src_path = _resolve_export_source_path(src_value, runtime_dir)
     try:
-        source_available = src_path.is_file()
+        source_available = src_path.exists() and src_path.is_file()
         if source_available and require_non_empty:
             with src_path.open("rb") as stream:
                 source_available = bool(stream.read(1))
