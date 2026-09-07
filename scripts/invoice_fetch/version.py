@@ -26,7 +26,7 @@ VERSION = "0.1.8"
 PREVIOUS_STABLE_VERSION = "0.1.7"
 
 _BUILD_VERSION_PATTERN = re.compile(
-    rf"^(?P<base>{re.escape(VERSION)})(?P<suffix>-(?:rc|pre)\\d+)?$"
+    rf"^(?P<base>{re.escape(VERSION)})(?P<suffix>-(?:rc|pre)\d+)?$"
 )
 
 
