@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QFrame, QSizePolicy, QWidget
 from shiboken6 import isValid
 
 from ..claim_export import _normalize_export_date_prefix
+from ..export_paths import resolve_export_directory
 from ..review_status import APPROVED
 from .semantic_checklist import install_semantic_checklist_contract
 from .ui_components import ChecklistRow
@@ -168,13 +169,35 @@ def _sync_export_naming_check(window) -> None:
     row.set_value(text, state=state)
 
 
-def _schedule_export_naming_check(window) -> None:
+def _sync_export_directory_state(window) -> None:
+    """Show configuration truth without claiming the directory was verified.
+
+    The exporter remains authoritative for runtime filesystem failures.  This
+    row only states that an output location is configured/resolved; it does not
+    imply that the directory currently exists or is writable.
+    """
+    row = getattr(window, "export_check_dir", None)
+    if row is None:
+        return
+
+    try:
+        export_dir = Path(getattr(window, "_export_dir", None) or resolve_export_directory(window.config))
+    except Exception:
+        row.set_value("无法解析导出位置", state="warning")
+        return
+
+    row.set_value("已设置（导出时验证）", state="muted")
+    row.lbl_value.setToolTip(str(export_dir))
+
+
+def _schedule_export_checks(window) -> None:
     window_ref = weakref.ref(window)
 
     def run() -> None:
         target = window_ref()
         if target is not None and isValid(target):
             _sync_export_naming_check(target)
+            _sync_export_directory_state(target)
 
     QTimer.singleShot(0, run)
 
@@ -187,7 +210,7 @@ def _install_export_naming_refresh(window, page: QWidget) -> None:
     group_list = getattr(window, "export_group_list", None)
     if group_list is not None:
         group_list.currentRowChanged.connect(
-            lambda _row: _schedule_export_naming_check(window)
+            lambda _row: _schedule_export_checks(window)
         )
 
     for method_name in ("_sync_export_claim_selection", "_refresh_export_page"):
@@ -198,7 +221,7 @@ def _install_export_naming_refresh(window, page: QWidget) -> None:
         @wraps(original)
         def wrapped(*args, __original=original, **kwargs):
             result = __original(*args, **kwargs)
-            _schedule_export_naming_check(window)
+            _schedule_export_checks(window)
             return result
 
         setattr(window, method_name, wrapped)
@@ -251,6 +274,7 @@ def apply_export_baseline(page: QWidget) -> None:
         sync()
     else:
         _sync_export_naming_check(window)
+        _sync_export_directory_state(window)
 
     _content_width_button(getattr(window, "btn_run_export_page", None), minimum=128)
 
