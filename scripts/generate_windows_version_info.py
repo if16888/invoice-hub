@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from scripts.invoice_fetch.version import VERSION
+from scripts.invoice_fetch.version import BUILD_VERSION
 
 _COMPANY_NAME = "Invoice Hub"
 _PRODUCT_NAME = "Invoice Hub"
@@ -16,7 +16,9 @@ _TRANSLATION = "040904B0"
 
 
 def _version_tuple(version: str) -> tuple[int, int, int, int]:
-    parts = version.split(".")
+    # Windows numeric file-version fields cannot contain an RC/pre suffix.
+    base_version = str(version).split("-", 1)[0]
+    parts = base_version.split(".")
     values: list[int] = []
     for part in parts[:4]:
         if not part.isdigit():
@@ -79,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     output = args.output
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(build_version_info_text(VERSION), encoding="utf-8")
+    output.write_text(build_version_info_text(BUILD_VERSION), encoding="utf-8")
     print(output)
     return 0
 
