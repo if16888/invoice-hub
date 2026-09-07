@@ -211,21 +211,39 @@ jobs:
       - name: Sign portable executable
         run: '& scripts\sign_windows.ps1 "dist\InvoiceHub\InvoiceHub.exe"'
 
-      - name: Verify packaged display version
+      - name: Verify packaged embedded display version
         shell: pwsh
         run: |
+          $probeRoot = Join-Path $env:RUNNER_TEMP "invoice-hub-version-probe-$PID"
+          New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
+          $probePath = Join-Path $probeRoot ("version-$([guid]::NewGuid().ToString('N')).json")
+          if (Test-Path -LiteralPath $probePath) {
+            throw "Version probe path unexpectedly exists before launch."
+          }
           $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
           Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
           try {
-            $actual = (& "dist\\InvoiceHub\\InvoiceHub.exe" --version 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0) {
-              throw "Packaged --version command failed with exit code $LASTEXITCODE. Output: $actual"
+            $probeProcess = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", $probePath) -Wait -PassThru -WindowStyle Hidden
+            if ($probeProcess.ExitCode -ne 0) {
+              throw "Packaged version probe failed with exit code $($probeProcess.ExitCode)."
+            }
+            if (-not (Test-Path -LiteralPath $probePath -PathType Leaf)) {
+              throw "Packaged version probe did not create evidence."
+            }
+            try {
+              $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
+            }
+            catch {
+              throw "Packaged version probe evidence is not valid JSON."
+            }
+            if ([string]$probe.contract -ne "invoice_hub_build_version_v1") {
+              throw "Packaged version probe contract is invalid."
             }
             $expected = "v$env:VERSION"
-            if ($actual -ne $expected) {
-              throw "Packaged display version $actual does not match expected version $expected."
+            if ([string]$probe.app_version -ne $expected) {
+              throw "Packaged embedded display version $($probe.app_version) does not match expected version $expected."
             }
-            Write-Host "Packaged display version confirmed: $actual"
+            Write-Host "Packaged embedded display version confirmed: $expected"
           }
           finally {
             if ($null -eq $previousBuildVersion) {
@@ -234,6 +252,7 @@ jobs:
             else {
               $env:INVOICE_HUB_BUILD_VERSION = $previousBuildVersion
             }
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
           }
 
       - name: Verify bundled payload hygiene
