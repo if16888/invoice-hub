@@ -88,6 +88,30 @@ def _invoice_export_identity(invoice: dict) -> str:
     return "当前发票"
 
 
+def inspect_original_attachment(invoice: dict, runtime_dir: Path) -> dict:
+    """Return whether one invoice original is currently usable for export.
+
+    This is an early/preflight judgement only.  ``export_claim_package`` still
+    performs the authoritative copy-time check so a TOCTOU disappearance cannot
+    produce a successful incomplete package.
+    """
+    raw_path = str(invoice.get("attachment_path") or "").strip()
+    if not raw_path:
+        return {"available": False, "reason": "missing_path"}
+
+    source_path = _resolve_export_source_path(raw_path, runtime_dir)
+    try:
+        if not source_path.is_file():
+            return {"available": False, "reason": "not_file"}
+        # An actual read is more truthful than a configured path or os.access()
+        # check, especially on Windows.  The handle is closed before returning.
+        with source_path.open("rb") as stream:
+            stream.read(1)
+    except (OSError, ValueError):
+        return {"available": False, "reason": "unreadable"}
+    return {"available": True, "reason": ""}
+
+
 def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
     """Return one invoice's supplemental-material integrity result.
 
@@ -127,9 +151,20 @@ def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
 
 
 def summarize_extra_material_issues(invoices: list[dict], runtime_dir: Path) -> dict:
-    """Count supplemental-material issues without exposing local paths."""
-    summary = {"missing_extra": 0, "unavailable_extra": 0}
+    """Count export-material issues without exposing local paths.
+
+    ``missing_attachment`` intentionally includes configured-but-missing,
+    directory, and unreadable originals.  The GUI merges this shared result
+    into its preflight stats, replacing its legacy string-only path check.
+    """
+    summary = {
+        "missing_attachment": 0,
+        "missing_extra": 0,
+        "unavailable_extra": 0,
+    }
     for invoice in invoices:
+        if not inspect_original_attachment(invoice, runtime_dir)["available"]:
+            summary["missing_attachment"] += 1
         result = inspect_extra_material(invoice, runtime_dir)
         if result["missing_extra"]:
             summary["missing_extra"] += 1
@@ -244,7 +279,6 @@ def _cleanup_failed_export_dir(export_dir: Path) -> None:
         raise RuntimeError(
             "导出失败，且未能清理本次生成的半成品目录。请关闭占用文件后重试。"
         ) from None
-
 
 
 def _invoice_sort_key(inv: dict) -> tuple:
