@@ -134,6 +134,46 @@ jobs:
       - name: Compile-check Python sources
         run: python -m compileall -q scripts/invoice_fetch
 
+      - name: Resolve build display version
+        shell: pwsh
+        run: |
+          $sourceVersion = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
+          if ($env:AUDIT_MODE -eq "true") {
+            $version = $sourceVersion
+            $artifactName = "InvoiceHub-windows-audit-$($env:SOURCE_SHA.Substring(0, 12))"
+          }
+          else {
+            $tagVersion = $env:TAG_NAME -replace '/', '-'
+            if ($tagVersion -notmatch '^v(?<base>\d+\.\d+\.\d+)(?<suffix>-(?:rc|pre)\d+)?$') {
+              Write-Error "Tag $tagVersion must match vX.Y.Z or vX.Y.Z-rcN/vX.Y.Z-preN."
+              exit 1
+            }
+            if ($Matches.base -ne $sourceVersion) {
+              Write-Error "Tag base version $($Matches.base) does not match source version $sourceVersion."
+              exit 1
+            }
+            $version = $tagVersion.Substring(1)
+            $artifactName = "InvoiceHub-windows-release"
+          }
+          $env:INVOICE_HUB_BUILD_VERSION = $version
+          $resolved = (python -c "from scripts.invoice_fetch.version import resolve_build_version; print(resolve_build_version(strict=True))").Trim()
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if ($resolved -ne $version) {
+            throw "Resolved build version $resolved does not match expected version $version."
+          }
+          python scripts/dev/write_embedded_build_version.py --version $version
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          "INVOICE_HUB_BUILD_VERSION=${version}" >> $env:GITHUB_ENV
+          "VERSION=${version}" >> $env:GITHUB_ENV
+          "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
+          "SETUP_NAME=InvoiceHub-${version}-win64-setup.exe" >> $env:GITHUB_ENV
+          "ARTIFACT_NAME=${artifactName}" >> $env:GITHUB_ENV
+          Write-Host "AUDIT_MODE=$env:AUDIT_MODE VERSION=$version ARTIFACT_NAME=$artifactName"
+
       - name: Generate Windows version metadata
         run: python -m scripts.generate_windows_version_info --output build/windows-version-info.txt
 
@@ -171,32 +211,50 @@ jobs:
       - name: Sign portable executable
         run: '& scripts\sign_windows.ps1 "dist\InvoiceHub\InvoiceHub.exe"'
 
-      - name: Prepare package version
+      - name: Verify packaged embedded display version
         shell: pwsh
         run: |
-          $sourceVersion = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
-          if ($env:AUDIT_MODE -eq "true") {
-            $version = $sourceVersion
-            $artifactName = "InvoiceHub-windows-audit-$($env:SOURCE_SHA.Substring(0, 12))"
+          $probeRoot = Join-Path $env:RUNNER_TEMP "invoice-hub-version-probe-$PID"
+          New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
+          $probePath = Join-Path $probeRoot ("version-$([guid]::NewGuid().ToString('N')).json")
+          if (Test-Path -LiteralPath $probePath) {
+            throw "Version probe path unexpectedly exists before launch."
           }
-          else {
-            $tagVersion = $env:TAG_NAME -replace '/', '-'
-            if ($tagVersion -notmatch '^v(?<base>\d+\.\d+\.\d+)(?<suffix>-(?:rc|pre)\d+)?$') {
-              Write-Error "Tag $tagVersion must match vX.Y.Z or vX.Y.Z-rcN/vX.Y.Z-preN."
-              exit 1
+          $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
+          Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+          try {
+            $probeArgument = '"{0}"' -f $probePath
+            $probeProcess = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", $probeArgument) -Wait -PassThru -WindowStyle Hidden
+            if ($probeProcess.ExitCode -ne 0) {
+              throw "Packaged version probe failed with exit code $($probeProcess.ExitCode)."
             }
-            if ($Matches.base -ne $sourceVersion) {
-              Write-Error "Tag base version $($Matches.base) does not match source version $sourceVersion."
-              exit 1
+            if (-not (Test-Path -LiteralPath $probePath -PathType Leaf)) {
+              throw "Packaged version probe did not create evidence."
             }
-            $version = $tagVersion.Substring(1)
-            $artifactName = "InvoiceHub-windows-release"
+            try {
+              $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
+            }
+            catch {
+              throw "Packaged version probe evidence is not valid JSON."
+            }
+            if ([string]$probe.contract -ne "invoice_hub_build_version_v1") {
+              throw "Packaged version probe contract is invalid."
+            }
+            $expected = "v$env:VERSION"
+            if ([string]$probe.app_version -ne $expected) {
+              throw "Packaged embedded display version $($probe.app_version) does not match expected version $expected."
+            }
+            Write-Host "Packaged embedded display version confirmed: $expected"
           }
-          "VERSION=${version}" >> $env:GITHUB_ENV
-          "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
-          "SETUP_NAME=InvoiceHub-${version}-win64-setup.exe" >> $env:GITHUB_ENV
-          "ARTIFACT_NAME=${artifactName}" >> $env:GITHUB_ENV
-          Write-Host "AUDIT_MODE=$env:AUDIT_MODE VERSION=$version ARTIFACT_NAME=$artifactName"
+          finally {
+            if ($null -eq $previousBuildVersion) {
+              Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+            }
+            else {
+              $env:INVOICE_HUB_BUILD_VERSION = $previousBuildVersion
+            }
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Verify bundled payload hygiene
         run: |

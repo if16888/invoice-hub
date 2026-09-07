@@ -112,6 +112,42 @@ try {
     $installedExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($installedExeHash -eq $sourceExeHash) 'Installed InvoiceHub.exe does not match the signed source executable bundled into the installer.'
 
+    $probePath = Join-Path $probeRoot ("version-$([guid]::NewGuid().ToString('N')).json")
+    if (Test-Path -LiteralPath $probePath) {
+        throw 'Version probe path unexpectedly exists before launch.'
+    }
+    $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
+    Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+    try {
+        $probeArgument = '"{0}"' -f $probePath
+        $probeProcess = Start-Process -FilePath $exe -ArgumentList @(
+            '--version-probe-file',
+            $probeArgument
+        ) -Wait -PassThru -WindowStyle Hidden
+        Assert-True ($probeProcess.ExitCode -eq 0) "Installed version probe failed with exit code $($probeProcess.ExitCode)."
+        Assert-True (Test-Path -LiteralPath $probePath -PathType Leaf) 'Installed version probe did not create evidence.'
+        try {
+            $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
+        }
+        catch {
+            throw 'Installed version probe evidence is not valid JSON.'
+        }
+        Assert-True ([string]$probe.contract -eq 'invoice_hub_build_version_v1') 'Installed version probe contract is invalid.'
+        $expectedInstalledDisplayVersion = "v$ExpectedVersion"
+        Assert-True ([string]$probe.app_version -eq $expectedInstalledDisplayVersion) "Installed embedded display version is $($probe.app_version), expected $expectedInstalledDisplayVersion."
+        $installedDisplayVersion = [string]$probe.app_version
+    }
+    finally {
+        if ($null -eq $previousBuildVersion) {
+            Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:INVOICE_HUB_BUILD_VERSION = $previousBuildVersion
+        }
+        Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+    }
+    Add-Evidence "INSTALLED_DISPLAY_VERSION=$installedDisplayVersion"
+    Add-Evidence 'INSTALLED_VERSION_PROBE=PASS'
     Add-Evidence 'INSTALL=PASS'
     Add-Evidence "INSTALLED_EXE_SHA256=$installedExeHash"
     Add-Evidence 'INSTALLED_EXE_MATCHES_SOURCE=PASS'

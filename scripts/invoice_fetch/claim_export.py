@@ -106,7 +106,8 @@ def inspect_original_attachment(invoice: dict, runtime_dir: Path) -> dict:
         # An actual read is more truthful than a configured path or os.access()
         # check, especially on Windows.  The handle is closed before returning.
         with source_path.open("rb") as stream:
-            stream.read(1)
+            if not stream.read(1):
+                return {"available": False, "reason": "empty"}
     except (OSError, ValueError):
         return {"available": False, "reason": "unreadable"}
     return {"available": True, "reason": ""}
@@ -219,6 +220,7 @@ def _copy_into_attachments(
     required: bool = False,
     required_kind: str = "补充材料",
     required_context: str = "",
+    require_non_empty: bool = False,
 ) -> str:
     if not src_value:
         if required:
@@ -228,6 +230,9 @@ def _copy_into_attachments(
     src_path = _resolve_export_source_path(src_value, runtime_dir)
     try:
         source_available = src_path.exists() and src_path.is_file()
+        if source_available and require_non_empty:
+            with src_path.open("rb") as stream:
+                source_available = bool(stream.read(1))
     except OSError:
         if required:
             raise _required_copy_error(required_kind, required_context) from None
@@ -267,6 +272,8 @@ def _copy_into_attachments(
     if required:
         try:
             copied_ok = dest_path.is_file()
+            if copied_ok and require_non_empty:
+                copied_ok = dest_path.stat().st_size > 0
         except OSError:
             copied_ok = False
         if not copied_ok:
@@ -418,6 +425,7 @@ def export_claim_package(
                 required=True,
                 required_kind="发票原件",
                 required_context=invoice_identity,
+                require_non_empty=True,
             )
             if not copied_relative_path:
                 raise _required_copy_error("发票原件", invoice_identity)
