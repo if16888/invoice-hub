@@ -330,7 +330,7 @@ class TestOptionalWindowsSigning(unittest.TestCase):
 
 
 class TestWindowsVersionInfoGenerator(unittest.TestCase):
-    """Windows version resource text should be stable and generated from VERSION."""
+    """Windows version resource text uses the build display version."""
 
     def _module_path(self) -> Path:
         p = PROJECT_ROOT / "scripts" / "generate_windows_version_info.py"
@@ -342,8 +342,16 @@ class TestWindowsVersionInfoGenerator(unittest.TestCase):
 
     def test_generator_source_imports_version_constant(self):
         src = self._module_path().read_text(encoding="utf-8")
-        self.assertIn("from scripts.invoice_fetch.version import VERSION", src)
+        self.assertIn("from scripts.invoice_fetch.version import BUILD_VERSION", src)
 
+    def test_build_version_info_text_accepts_rc_suffix_with_numeric_file_version(self):
+        from scripts.generate_windows_version_info import build_version_info_text
+
+        text = build_version_info_text("0.1.8-rc3")
+        self.assertIn("filevers=(0, 1, 8, 0)", text)
+        self.assertIn("prodvers=(0, 1, 8, 0)", text)
+        self.assertIn("FileVersion', '0.1.8-rc3", text)
+        self.assertIn("ProductVersion', '0.1.8-rc3", text)
     def test_build_version_info_text_formats_version_tuple_and_metadata(self):
         from scripts.generate_windows_version_info import build_version_info_text
 
