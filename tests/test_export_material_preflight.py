@@ -52,7 +52,10 @@ class ExportMaterialPreflightTests(unittest.TestCase):
 
         for index, row in enumerate(rows, start=1):
             attachment_path = row.get("attachment_path", f"attachments/invoice-{index}.pdf")
-            for relative_path in [attachment_path] + list(row.get("files", [])):
+            files_to_create = list(row.get("files", []))
+            if row.get("create_attachment", True) and attachment_path:
+                files_to_create.insert(0, attachment_path)
+            for relative_path in files_to_create:
                 if not relative_path:
                     continue
                 path = runtime_dir / relative_path
@@ -87,7 +90,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
-                [{"missing_extra": True}],
+                [{"missing_extra": True, "create_attachment": False}],
             )
             with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
                 app_module, "RUNTIME_DIR", runtime_dir
@@ -121,7 +124,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
-                [{"missing_extra": True}],
+                [{"missing_extra": True, "create_attachment": False}],
             )
             export_root = project_root / "exports"
             with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
@@ -171,11 +174,13 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         "invoice_number": "APPROVED-COMPLETE",
                         "review_status": review_status.APPROVED,
                         "missing_extra": False,
+                        "create_attachment": False,
                     },
                     {
                         "invoice_number": "PENDING-MISSING",
                         "review_status": review_status.TO_REVIEW,
                         "missing_extra": True,
+                        "create_attachment": False,
                     },
                 ],
             )
