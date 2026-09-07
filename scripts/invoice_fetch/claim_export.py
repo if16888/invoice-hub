@@ -224,8 +224,16 @@ def _copy_into_attachments(
         if required:
             raise _required_copy_error(required_kind, required_context)
         return ""
+
     src_path = _resolve_export_source_path(src_value, runtime_dir)
-    if not src_path.exists() or not src_path.is_file():
+    try:
+        source_available = src_path.exists() and src_path.is_file()
+    except OSError:
+        if required:
+            raise _required_copy_error(required_kind, required_context) from None
+        raise
+
+    if not source_available:
         _log.warning("Attachment file not found at: %s (skipped)", mask_path(src_path))
         if required:
             raise _required_copy_error(required_kind, required_context)
@@ -233,16 +241,21 @@ def _copy_into_attachments(
 
     dest_name = _prefix_export_filename(src_path.name, date_prefix)
     dest_path = attachments_dir / dest_name
-    if dest_path.exists():
-        stem = dest_path.stem
-        ext = src_path.suffix
-        counter = 1
-        while True:
-            candidate = attachments_dir / f"{stem}_{counter}{ext}"
-            if not candidate.exists():
-                dest_path = candidate
-                break
-            counter += 1
+    try:
+        if dest_path.exists():
+            stem = dest_path.stem
+            ext = src_path.suffix
+            counter = 1
+            while True:
+                candidate = attachments_dir / f"{stem}_{counter}{ext}"
+                if not candidate.exists():
+                    dest_path = candidate
+                    break
+                counter += 1
+    except OSError:
+        if required:
+            raise _required_copy_error(required_kind, required_context) from None
+        raise
 
     try:
         shutil.copy2(src_path, dest_path)
@@ -266,9 +279,9 @@ def _copy_into_attachments(
 
 def _cleanup_failed_export_dir(export_dir: Path) -> None:
     """Remove only the package directory created by the current export call."""
-    if not export_dir.exists():
-        return
     try:
+        if not export_dir.exists():
+            return
         shutil.rmtree(export_dir)
     except OSError as exc:
         _log.error(
@@ -418,6 +431,8 @@ def export_claim_package(
                     attachments_dir,
                     date_prefix=export_date_prefix,
                     required=True,
+                    required_kind="补充材料",
+                    required_context=invoice_identity,
                 )
                 if not copied_extra_path:
                     raise ValueError(
