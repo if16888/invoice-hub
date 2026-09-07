@@ -163,6 +163,10 @@ jobs:
           if ($resolved -ne $version) {
             throw "Resolved build version $resolved does not match expected version $version."
           }
+          python scripts/dev/write_embedded_build_version.py --version $version
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
           "INVOICE_HUB_BUILD_VERSION=${version}" >> $env:GITHUB_ENV
           "VERSION=${version}" >> $env:GITHUB_ENV
           "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
@@ -207,17 +211,30 @@ jobs:
       - name: Sign portable executable
         run: '& scripts\sign_windows.ps1 "dist\InvoiceHub\InvoiceHub.exe"'
 
-      - name: Verify packaged version
+      - name: Verify packaged display version
         shell: pwsh
         run: |
-          $resolved = (python -c "from scripts.invoice_fetch.version import BUILD_VERSION; print(BUILD_VERSION)").Trim()
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
+          Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+          try {
+            $actual = (& "dist\\InvoiceHub\\InvoiceHub.exe" --version 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+              throw "Packaged --version command failed with exit code $LASTEXITCODE. Output: $actual"
+            }
+            $expected = "v$env:VERSION"
+            if ($actual -ne $expected) {
+              throw "Packaged display version $actual does not match expected version $expected."
+            }
+            Write-Host "Packaged display version confirmed: $actual"
           }
-          if ($resolved -ne $env:VERSION) {
-            throw "Packaged source version $resolved does not match workflow version $env:VERSION."
+          finally {
+            if ($null -eq $previousBuildVersion) {
+              Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+            }
+            else {
+              $env:INVOICE_HUB_BUILD_VERSION = $previousBuildVersion
+            }
           }
-          Write-Host "Build display version confirmed: $resolved"
 
       - name: Verify bundled payload hygiene
         run: |
