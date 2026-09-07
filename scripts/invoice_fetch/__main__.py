@@ -146,10 +146,10 @@ class ChineseHelpArgumentParser(argparse.ArgumentParser):
 
 def _parse_args() -> argparse.Namespace:
     p = ChineseHelpArgumentParser(
-    p.add_argument("--version", action="version", version=APP_VERSION, help="显示当前版本并退出")
         description="Invoice Hub - 本地优先的报销资料整理助手",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p.add_argument("--version", action="version", version=APP_VERSION, help="显示当前版本并退出")
     p.add_argument("--config", default=None, help="配置文件路径")
     p.add_argument("--limit", type=int, default=None, help="最大处理邮件数")
     p.add_argument("--months", type=int, default=None, help="搜索最近N个月")
