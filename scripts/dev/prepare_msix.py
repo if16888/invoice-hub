@@ -10,14 +10,18 @@ import argparse
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from PIL import Image
-
-from scripts.invoice_fetch.version import VERSION
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from PIL import Image  # noqa: E402
+
+from scripts.invoice_fetch.version import VERSION  # noqa: E402
+
 DEFAULT_TEMPLATE = PROJECT_ROOT / "packaging" / "msix" / "AppxManifest.template.xml"
 DEFAULT_LOGO = PROJECT_ROOT / "scripts" / "invoice_fetch" / "gui" / "assets" / "logo_icon.png"
 
