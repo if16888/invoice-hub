@@ -155,6 +155,9 @@ jobs:
             if ($process.ExitCode -ne 0) {
               throw "Frozen version probe failed with exit code $($process.ExitCode)."
             }
+            if (-not (Test-Path -LiteralPath $probePath -PathType Leaf)) {
+              throw "Frozen version probe did not create evidence."
+            }
             $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
             if ([string]$probe.contract -ne "invoice_hub_build_version_v1") {
               throw "Frozen version probe contract is invalid."
@@ -205,16 +208,33 @@ jobs:
           "MAKEAPPX_PATH=$($makeAppx.FullName)" >> $env:GITHUB_ENV
           Write-Host "Using MakeAppx: $($makeAppx.FullName)"
 
-      - name: Build and validate MSIX
+      - name: Build and inspect MSIX
         shell: pwsh
         run: |
           $package = Join-Path "dist" $env:MSIX_NAME
-          & $env:MAKEAPPX_PATH pack /d "build\msix-layout" /p $package /o /v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $env:MAKEAPPX_PATH validate /p $package /v
+          # MakeAppx pack performs its semantic validation unless /nv is used.
+          & $env:MAKEAPPX_PATH pack /d "build\msix-layout" /p $package /o /v /h SHA256
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
             throw "MSIX package was not created."
+          }
+
+          $unpacked = "build\msix-unpacked-proof"
+          Remove-Item -LiteralPath $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+          & $env:MAKEAPPX_PATH unpack /p $package /d $unpacked /o /v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($required in @("InvoiceHub.exe", "AppxManifest.xml", "Assets\StoreLogo.png", "Assets\Square44x44Logo.png", "Assets\Square150x150Logo.png")) {
+            $requiredPath = Join-Path $unpacked $required
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+              throw "Packed MSIX is missing required payload: $required"
+            }
+          }
+          $manifestText = Get-Content -LiteralPath (Join-Path $unpacked "AppxManifest.xml") -Raw
+          if ($manifestText -notmatch [regex]::Escape("Name=\"$env:STORE_IDENTITY_NAME\"")) {
+            throw "Packed MSIX identity name does not match Partner Center input."
+          }
+          if ($manifestText -notmatch [regex]::Escape("Version=\"$env:STORE_PACKAGE_VERSION\"")) {
+            throw "Packed MSIX package version does not match staged metadata."
           }
           Get-Item $package | Select-Object Name, Length, LastWriteTime
 
