@@ -30,12 +30,7 @@ _PLACEHOLDER_MARKERS = ("@@", "<partner-center", "replace-me", "example.publishe
 
 
 def store_package_version(source_version: str = VERSION) -> str:
-    """Map app SemVer X.Y.Z to a Store-safe four-part package version.
-
-    Store package versions require a non-zero first component and reserve the
-    fourth component as 0. Offset the app major by one so the current 0.x line
-    remains valid while preserving SemVer ordering for future stable releases.
-    """
+    """Map app SemVer X.Y.Z to a Store-safe four-part package version."""
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", str(source_version).strip())
     if not match:
         raise ValueError("Store packaging requires a stable numeric source version X.Y.Z.")
@@ -127,7 +122,6 @@ def stage_msix_layout(
     publisher_display_name: str,
     display_name: str = "Invoice Hub",
     description: str = "本地优先的发票与报销资料整理工具",
-    package_version: str | None = None,
 ) -> dict[str, str]:
     payload_dir = payload_dir.resolve()
     output_dir = output_dir.resolve()
@@ -141,9 +135,7 @@ def stage_msix_layout(
     if not logo_path.is_file():
         raise FileNotFoundError("Invoice Hub logo source is missing.")
 
-    resolved_package_version = validate_package_version(
-        package_version or store_package_version(VERSION)
-    )
+    resolved_package_version = validate_package_version(store_package_version(VERSION))
     manifest = render_manifest(
         template_path.read_text(encoding="utf-8"),
         identity_name=identity_name,
@@ -188,7 +180,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--description",
         default="本地优先的发票与报销资料整理工具",
     )
-    parser.add_argument("--package-version", default=None)
     parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE)
     parser.add_argument("--logo", type=Path, default=DEFAULT_LOGO)
     parser.add_argument("--metadata-output", type=Path, required=True)
@@ -207,7 +198,6 @@ def main(argv: list[str] | None = None) -> int:
         publisher_display_name=args.publisher_display_name,
         display_name=args.display_name,
         description=args.description,
-        package_version=args.package_version,
     )
     metadata_output = args.metadata_output.resolve()
     metadata_output.parent.mkdir(parents=True, exist_ok=True)
