@@ -212,7 +212,7 @@ jobs:
         shell: pwsh
         run: |
           $package = Join-Path "dist" $env:MSIX_NAME
-          # MakeAppx pack performs its semantic validation unless /nv is used.
+          # MakeAppx pack performs semantic validation unless /nv is used.
           & $env:MAKEAPPX_PATH pack /d "build\msix-layout" /p $package /o /v /h SHA256
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
@@ -230,10 +230,12 @@ jobs:
             }
           }
           $manifestText = Get-Content -LiteralPath (Join-Path $unpacked "AppxManifest.xml") -Raw
-          if ($manifestText -notmatch [regex]::Escape("Name=\"$env:STORE_IDENTITY_NAME\"")) {
+          $expectedNameAttribute = 'Name="{0}"' -f $env:STORE_IDENTITY_NAME
+          $expectedVersionAttribute = 'Version="{0}"' -f $env:STORE_PACKAGE_VERSION
+          if ($manifestText -notmatch [regex]::Escape($expectedNameAttribute)) {
             throw "Packed MSIX identity name does not match Partner Center input."
           }
-          if ($manifestText -notmatch [regex]::Escape("Version=\"$env:STORE_PACKAGE_VERSION\"")) {
+          if ($manifestText -notmatch [regex]::Escape($expectedVersionAttribute)) {
             throw "Packed MSIX package version does not match staged metadata."
           }
           Get-Item $package | Select-Object Name, Length, LastWriteTime
