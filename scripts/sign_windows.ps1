@@ -83,8 +83,5 @@ foreach ($target in $Path) {
         throw "signtool.exe failed with exit code $LASTEXITCODE for $($resolvedTarget.Name)."
     }
 
-    Assert-AuthenticodeSignature \
-        -Target $resolvedTarget \
-        -ExpectedSubject $certSubject \
-        -RequireTimestamp:$RequireSignature
+    Assert-AuthenticodeSignature -Target $resolvedTarget -ExpectedSubject $certSubject -RequireTimestamp:$RequireSignature
 }
