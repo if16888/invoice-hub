@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,11 +20,14 @@ from scripts.dev.prepare_msix import (
 )
 from scripts.invoice_fetch.version import VERSION
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 class TestStorePackageVersion(unittest.TestCase):
-    def test_current_source_version_maps_to_store_safe_version(self):
-        self.assertEqual(VERSION, "0.1.8")
-        self.assertEqual(store_package_version(VERSION), "1.1.8.0")
+    def test_current_source_version_maps_deterministically(self):
+        major, minor, patch = (int(part) for part in VERSION.split("."))
+        expected = f"{major + 1}.{minor}.{patch}.0"
+        self.assertEqual(store_package_version(VERSION), expected)
 
     def test_mapping_preserves_semver_order_and_nonzero_store_major(self):
         self.assertEqual(store_package_version("0.1.9"), "1.1.9.0")
@@ -114,7 +119,7 @@ class TestStoreLayoutStaging(unittest.TestCase):
             )
 
             self.assertEqual(metadata["source_version"], VERSION)
-            self.assertEqual(metadata["package_version"], "1.1.8.0")
+            self.assertEqual(metadata["package_version"], store_package_version(VERSION))
             self.assertEqual(metadata["distribution"], "microsoft-store-msix")
             self.assertEqual((output / "InvoiceHub.exe").read_bytes(), b"synthetic-frozen-exe")
             self.assertTrue((output / "internal" / "dependency.dll").is_file())
@@ -151,10 +156,24 @@ class TestStoreLayoutStaging(unittest.TestCase):
                     publisher_display_name="Invoice Hub Developer",
                 )
 
+    def test_prepare_script_is_runnable_by_path(self):
+        result = subprocess.run(
+            [sys.executable, "scripts/dev/prepare_msix.py", "--help"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("--identity-name", result.stdout)
+        self.assertNotIn("--package-version", result.stdout)
+
 
 class TestStoreWorkflowPolicy(unittest.TestCase):
     def test_store_workflow_is_manual_exact_master_and_does_not_publish(self):
-        workflow = Path(".github/workflows/windows-store-msix.yml").read_text(encoding="utf-8")
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "windows-store-msix.yml").read_text(
+            encoding="utf-8"
+        )
         lowered = workflow.lower()
         self.assertIn("workflow_dispatch", workflow)
         self.assertIn('refs/heads/master', workflow)
@@ -166,14 +185,16 @@ class TestStoreWorkflowPolicy(unittest.TestCase):
         self.assertIn(" unpack /p ", lowered)
         self.assertNotIn("makeappx_path validate", lowered)
         self.assertNotIn(" /nv", lowered)
+        self.assertIn("expectedNameAttribute", workflow)
+        self.assertIn("expectedVersionAttribute", workflow)
         self.assertIn("upload-artifact@v4", workflow)
         self.assertNotIn("action-gh-release", workflow)
         self.assertNotIn("Sign installer", workflow)
         self.assertNotIn("SIGNTOOL_PATH", workflow)
 
     def test_existing_inno_release_path_remains_present_during_migration(self):
-        self.assertTrue(Path("packaging/invoice_hub_windows.iss").is_file())
-        self.assertTrue(Path(".github/workflows/windows-release.yml").is_file())
+        self.assertTrue((PROJECT_ROOT / "packaging" / "invoice_hub_windows.iss").is_file())
+        self.assertTrue((PROJECT_ROOT / ".github" / "workflows" / "windows-release.yml").is_file())
 
 
 if __name__ == "__main__":
