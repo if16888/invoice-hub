@@ -9,6 +9,15 @@ $signToolPath = $env:SIGNTOOL_PATH
 $certSubject = $env:CERT_SUBJECT
 $timestampUrl = $env:TIMESTAMP_URL
 
+# Stable tag publication must never silently fall back to unsigned artifacts.
+# RC/pre-release builds and pre-tag audits may remain unsigned while the
+# publisher certificate is being provisioned.
+$stableTagBuild = (
+    $env:AUDIT_MODE -ne "true" -and
+    [string]$env:TAG_NAME -match '^v\d+\.\d+\.\d+$'
+)
+$requireSignatureEffective = $RequireSignature -or $stableTagBuild
+
 function Assert-AuthenticodeSignature {
     param(
         [Parameter(Mandatory = $true)]
@@ -54,15 +63,15 @@ if ([string]::IsNullOrWhiteSpace($certSubject)) {
 
 if ($missingSigningConfig.Count -gt 0) {
     $missingText = $missingSigningConfig -join ", "
-    if ($RequireSignature) {
-        throw "Authenticode signing is required for this release, but signing configuration is missing: $missingText."
+    if ($requireSignatureEffective) {
+        throw "Authenticode signing is required for this stable release, but signing configuration is missing: $missingText."
     }
     Write-Warning "Signing skipped: missing $missingText. Prerelease/audit artifacts may remain unsigned."
     return
 }
 
-if ($RequireSignature -and [string]::IsNullOrWhiteSpace($timestampUrl)) {
-    throw "Authenticode signing is required for this release, but TIMESTAMP_URL is not configured."
+if ($requireSignatureEffective -and [string]::IsNullOrWhiteSpace($timestampUrl)) {
+    throw "Authenticode signing is required for this stable release, but TIMESTAMP_URL is not configured."
 }
 
 $signTool = Get-Item -LiteralPath $signToolPath -ErrorAction Stop
@@ -83,5 +92,5 @@ foreach ($target in $Path) {
         throw "signtool.exe failed with exit code $LASTEXITCODE for $($resolvedTarget.Name)."
     }
 
-    Assert-AuthenticodeSignature -Target $resolvedTarget -ExpectedSubject $certSubject -RequireTimestamp:$RequireSignature
+    Assert-AuthenticodeSignature -Target $resolvedTarget -ExpectedSubject $certSubject -RequireTimestamp:$requireSignatureEffective
 }
