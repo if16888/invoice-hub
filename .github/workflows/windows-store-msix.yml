@@ -1,0 +1,277 @@
+name: Windows Store MSIX
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      identity_name:
+        description: "Partner Center Package/Identity/Name (exact, case-sensitive)"
+        required: true
+        type: string
+      publisher:
+        description: "Partner Center Package/Identity/Publisher (exact, case-sensitive)"
+        required: true
+        type: string
+      publisher_display_name:
+        description: "Partner Center publisher display name"
+        required: true
+        type: string
+      display_name:
+        description: "Reserved Store app display name"
+        required: true
+        default: "Invoice Hub"
+        type: string
+      strict_startup_ms:
+        description: "Strict startup gate threshold (ms)"
+        required: false
+        default: "3000"
+        type: string
+
+jobs:
+  build-store-msix:
+    name: Build Store MSIX x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONIOENCODING: "utf-8"
+      STORE_IDENTITY_NAME: ${{ inputs.identity_name }}
+      STORE_PUBLISHER: ${{ inputs.publisher }}
+      STORE_PUBLISHER_DISPLAY_NAME: ${{ inputs.publisher_display_name }}
+      STORE_DISPLAY_NAME: ${{ inputs.display_name }}
+      REQUESTED_STARTUP_MS: ${{ inputs.strict_startup_ms }}
+
+    steps:
+      - name: Checkout exact master candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact master identity
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($env:GITHUB_REF -ne "refs/heads/master") {
+            throw "Store MSIX packaging must be dispatched from master, got $env:GITHUB_REF."
+          }
+          git fetch --no-tags origin master --depth=1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not fetch origin/master."
+          }
+          $master = (git rev-parse FETCH_HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $master) {
+            throw "Store build SHA $actual is not exact origin/master ($master)."
+          }
+          "SOURCE_SHA=$actual" >> $env:GITHUB_ENV
+
+      - name: Resolve startup threshold
+        shell: pwsh
+        run: |
+          $threshold = $env:REQUESTED_STARTUP_MS
+          if (-not $threshold) { $threshold = "3000" }
+          if ($threshold -notmatch '^\d+$' -or [int]$threshold -le 0) {
+            throw "strict_startup_ms must be a positive integer."
+          }
+          "STARTUP_THRESHOLD_MS=$threshold" >> $env:GITHUB_ENV
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
+            requirements-test.lock.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
+
+      - name: Run repository privacy gate
+        run: python scripts/check_repo_privacy.py
+
+      - name: Run public export source-tree gate
+        run: python scripts/check_public_export.py .
+
+      - name: Verify release metadata consistency
+        run: python scripts/check_release_metadata.py
+
+      - name: Enforce architecture debt baseline
+        run: python scripts/check_architecture_policy.py
+
+      - name: Compile-check Store packaging sources
+        run: python -m compileall -q scripts/invoice_fetch scripts/dev/prepare_msix.py
+
+      - name: Run isolated unit tests
+        run: python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900
+        env:
+          INVOICE_HUB_TEST_MODE: "1"
+
+      - name: Resolve stable app build identity
+        shell: pwsh
+        run: |
+          $version = (python -c "from scripts.invoice_fetch.version import VERSION; print(VERSION)").Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Microsoft Store workflow only packages a stable numeric source version, got $version."
+          }
+          python scripts/dev/write_embedded_build_version.py --version $version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "INVOICE_HUB_BUILD_VERSION=$version" >> $env:GITHUB_ENV
+          "APP_SOURCE_VERSION=$version" >> $env:GITHUB_ENV
+          "MSIX_NAME=InvoiceHub-$version-store-x64.msix" >> $env:GITHUB_ENV
+
+      - name: Generate Windows version metadata
+        run: python -m scripts.generate_windows_version_info --output build/windows-version-info.txt
+
+      - name: Build frozen onedir payload
+        run: pyinstaller packaging/invoice_hub_windows.spec --distpath dist --workpath build/pyinstaller --clean --noconfirm
+        env:
+          PYTHONOPTIMIZE: "1"
+
+      - name: Verify frozen executable startup
+        shell: pwsh
+        run: |
+          $runtimeDir = Join-Path $env:RUNNER_TEMP "invoice-hub-store-startup"
+          Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          $env:INVOICE_HUB_RUNTIME_DIR = $runtimeDir
+          try {
+            python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $env:STARTUP_THRESHOLD_MS
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Remove-Item Env:INVOICE_HUB_RUNTIME_DIR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+        timeout-minutes: 2
+
+      - name: Verify frozen embedded version
+        shell: pwsh
+        run: |
+          $probeRoot = Join-Path $env:RUNNER_TEMP "invoice-hub-store-version-$PID"
+          New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
+          $probePath = Join-Path $probeRoot ("version-$([guid]::NewGuid().ToString('N')).json")
+          $previousBuildVersion = $env:INVOICE_HUB_BUILD_VERSION
+          Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+          try {
+            $probeArgument = '"{0}"' -f $probePath
+            $process = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", $probeArgument) -Wait -PassThru -WindowStyle Hidden
+            if ($process.ExitCode -ne 0) {
+              throw "Frozen version probe failed with exit code $($process.ExitCode)."
+            }
+            if (-not (Test-Path -LiteralPath $probePath -PathType Leaf)) {
+              throw "Frozen version probe did not create evidence."
+            }
+            $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
+            if ([string]$probe.contract -ne "invoice_hub_build_version_v1") {
+              throw "Frozen version probe contract is invalid."
+            }
+            $expected = "v$env:APP_SOURCE_VERSION"
+            if ([string]$probe.app_version -ne $expected) {
+              throw "Frozen version $($probe.app_version) does not match $expected."
+            }
+          }
+          finally {
+            if ($null -eq $previousBuildVersion) {
+              Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+            }
+            else {
+              $env:INVOICE_HUB_BUILD_VERSION = $previousBuildVersion
+            }
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Stage Store MSIX layout
+        shell: pwsh
+        run: |
+          python scripts/dev/prepare_msix.py `
+            --payload-dir dist/InvoiceHub `
+            --output-dir build/msix-layout `
+            --identity-name "$env:STORE_IDENTITY_NAME" `
+            --publisher "$env:STORE_PUBLISHER" `
+            --publisher-display-name "$env:STORE_PUBLISHER_DISPLAY_NAME" `
+            --display-name "$env:STORE_DISPLAY_NAME" `
+            --metadata-output build/msix-store-metadata.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = Get-Content build/msix-store-metadata.json -Raw | ConvertFrom-Json
+          "STORE_PACKAGE_VERSION=$($metadata.package_version)" >> $env:GITHUB_ENV
+          Write-Host "App version: $($metadata.source_version)"
+          Write-Host "Store package version: $($metadata.package_version)"
+
+      - name: Locate MakeAppx
+        shell: pwsh
+        run: |
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          $makeAppx = Get-ChildItem -Path $sdkBin -Filter makeappx.exe -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]makeappx\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $makeAppx) {
+            throw "makeappx.exe was not found in the Windows SDK."
+          }
+          "MAKEAPPX_PATH=$($makeAppx.FullName)" >> $env:GITHUB_ENV
+          Write-Host "Using MakeAppx: $($makeAppx.FullName)"
+
+      - name: Build and inspect MSIX
+        shell: pwsh
+        run: |
+          $package = Join-Path "dist" $env:MSIX_NAME
+          # Keep MakeAppx semantic validation enabled for Store package evidence.
+          & $env:MAKEAPPX_PATH pack /d "build\msix-layout" /p $package /o /v /h SHA256
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+            throw "MSIX package was not created."
+          }
+
+          $unpacked = "build\msix-unpacked-proof"
+          Remove-Item -LiteralPath $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+          & $env:MAKEAPPX_PATH unpack /p $package /d $unpacked /o /v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($required in @("InvoiceHub.exe", "AppxManifest.xml", "Assets\StoreLogo.png", "Assets\Square44x44Logo.png", "Assets\Square150x150Logo.png")) {
+            $requiredPath = Join-Path $unpacked $required
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+              throw "Packed MSIX is missing required payload: $required"
+            }
+          }
+          $manifestText = Get-Content -LiteralPath (Join-Path $unpacked "AppxManifest.xml") -Raw
+          $expectedNameAttribute = 'Name="{0}"' -f $env:STORE_IDENTITY_NAME
+          $expectedVersionAttribute = 'Version="{0}"' -f $env:STORE_PACKAGE_VERSION
+          if ($manifestText -notmatch [regex]::Escape($expectedNameAttribute)) {
+            throw "Packed MSIX identity name does not match Partner Center input."
+          }
+          if ($manifestText -notmatch [regex]::Escape($expectedVersionAttribute)) {
+            throw "Packed MSIX package version does not match staged metadata."
+          }
+          Get-Item $package | Select-Object Name, Length, LastWriteTime
+
+      - name: Create Store artifact checksum
+        shell: pwsh
+        run: |
+          $package = Join-Path "dist" $env:MSIX_NAME
+          $hash = Get-FileHash -LiteralPath $package -Algorithm SHA256
+          "$($hash.Hash.ToLowerInvariant())  $env:MSIX_NAME" | Set-Content -Path "dist\SHA256SUMS-store.txt" -Encoding ascii
+          Get-Content "dist\SHA256SUMS-store.txt"
+
+      - name: Reconfirm master before artifact upload
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin master --depth=1
+          if ($LASTEXITCODE -ne 0) { throw "Could not refetch origin/master." }
+          $master = (git rev-parse FETCH_HEAD).Trim().ToLowerInvariant()
+          if ($master -ne $env:SOURCE_SHA) {
+            throw "origin/master moved to $master; Store package evidence for $env:SOURCE_SHA is stale."
+          }
+
+      - name: Upload Store submission package
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-msix-${{ github.sha }}
+          path: |
+            dist/${{ env.MSIX_NAME }}
+            dist/SHA256SUMS-store.txt
+            build/msix-store-metadata.json
+          if-no-files-found: error
+          retention-days: 30
