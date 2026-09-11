@@ -91,13 +91,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
 
-      - name: Run release source gates
-        run: |
-          python scripts/check_repo_privacy.py
-          python scripts/check_public_export.py .
-          python scripts/check_release_metadata.py
-          python scripts/check_architecture_policy.py
-          python -m compileall -q scripts/invoice_fetch scripts/dev/prepare_msix.py
+      - name: Run repository privacy gate
+        run: python scripts/check_repo_privacy.py
+
+      - name: Run public export source-tree gate
+        run: python scripts/check_public_export.py .
+
+      - name: Verify release metadata consistency
+        run: python scripts/check_release_metadata.py
+
+      - name: Enforce architecture debt baseline
+        run: python scripts/check_architecture_policy.py
+
+      - name: Compile-check Store packaging sources
+        run: python -m compileall -q scripts/invoice_fetch scripts/dev/prepare_msix.py
 
       - name: Run isolated unit tests
         run: python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900
