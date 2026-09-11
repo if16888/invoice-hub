@@ -27,6 +27,7 @@ DEFAULT_LOGO = PROJECT_ROOT / "scripts" / "invoice_fetch" / "gui" / "assets" / "
 
 _PACKAGE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)$")
 _PLACEHOLDER_MARKERS = ("@@", "<partner-center", "replace-me", "example.publisher")
+_STAGING_OWNER_MARKER = "<!-- invoice-hub-msix-staging-owner:v1 -->"
 
 
 def store_package_version(source_version: str = VERSION) -> str:
@@ -111,6 +112,67 @@ def _write_square_asset(source: Path, destination: Path, size: int) -> None:
         canvas.save(destination, format="PNG", optimize=True)
 
 
+def _path_contains(container: Path, candidate: Path) -> bool:
+    return candidate == container or container in candidate.parents
+
+
+def _validate_staging_boundaries(
+    *,
+    payload_dir: Path,
+    output_dir: Path,
+    template_path: Path,
+    logo_path: Path,
+) -> None:
+    if _path_contains(payload_dir, output_dir) or _path_contains(output_dir, payload_dir):
+        raise ValueError("MSIX payload and output directories must not overlap.")
+    for name, source in (
+        ("manifest template", template_path),
+        ("logo source", logo_path),
+    ):
+        if _path_contains(output_dir, source):
+            raise ValueError(f"MSIX output directory must not contain the {name} input.")
+
+
+def _with_staging_owner_marker(manifest: str) -> str:
+    if _STAGING_OWNER_MARKER in manifest:
+        return manifest
+    if manifest.startswith("<?xml"):
+        declaration_end = manifest.find("?>")
+        if declaration_end >= 0:
+            insertion = declaration_end + 2
+            return (
+                manifest[:insertion]
+                + "\n"
+                + _STAGING_OWNER_MARKER
+                + manifest[insertion:]
+            )
+    return _STAGING_OWNER_MARKER + "\n" + manifest
+
+
+def _remove_existing_owned_staging(output_dir: Path) -> None:
+    if not output_dir.exists():
+        return
+    if not output_dir.is_dir():
+        raise ValueError("MSIX output path already exists and is not a directory.")
+
+    manifest_path = output_dir / "AppxManifest.xml"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError(
+            "Refusing to replace an existing MSIX output directory without staging ownership."
+        )
+    try:
+        existing_manifest = manifest_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise ValueError(
+            "Refusing to replace an existing MSIX output directory whose ownership cannot be verified."
+        ) from None
+    if _STAGING_OWNER_MARKER not in existing_manifest:
+        raise ValueError(
+            "Refusing to replace an existing MSIX output directory not owned by Invoice Hub staging."
+        )
+    shutil.rmtree(output_dir)
+
+
 def stage_msix_layout(
     *,
     payload_dir: Path,
@@ -123,10 +185,21 @@ def stage_msix_layout(
     display_name: str = "Invoice Hub",
     description: str = "本地优先的发票与报销资料整理工具",
 ) -> dict[str, str]:
+    raw_output_dir = Path(output_dir)
+    if raw_output_dir.is_symlink():
+        raise ValueError("MSIX output directory must not be a symbolic link.")
+
     payload_dir = payload_dir.resolve()
-    output_dir = output_dir.resolve()
+    output_dir = raw_output_dir.resolve()
     template_path = template_path.resolve()
     logo_path = logo_path.resolve()
+
+    _validate_staging_boundaries(
+        payload_dir=payload_dir,
+        output_dir=output_dir,
+        template_path=template_path,
+        logo_path=logo_path,
+    )
 
     if not (payload_dir / "InvoiceHub.exe").is_file():
         raise FileNotFoundError("Frozen payload must contain InvoiceHub.exe at its root.")
@@ -145,9 +218,9 @@ def stage_msix_layout(
         description=description,
         package_version=resolved_package_version,
     )
+    manifest = _with_staging_owner_marker(manifest)
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
+    _remove_existing_owned_staging(output_dir)
     shutil.copytree(payload_dir, output_dir)
 
     (output_dir / "AppxManifest.xml").write_text(manifest, encoding="utf-8")
