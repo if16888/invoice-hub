@@ -212,7 +212,7 @@ jobs:
         shell: pwsh
         run: |
           $package = Join-Path "dist" $env:MSIX_NAME
-          # MakeAppx pack performs semantic validation unless /nv is used.
+          # Keep MakeAppx semantic validation enabled for Store package evidence.
           & $env:MAKEAPPX_PATH pack /d "build\msix-layout" /p $package /o /v /h SHA256
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
