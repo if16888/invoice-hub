@@ -80,17 +80,9 @@ jobs:
               throw "Release tag $tag resolves to $tagCommit but checkout is $actual."
             }
 
-            # Release tags are accepted only for the exact current master
-            # candidate. Source correctness is delegated to the exact-SHA CI
-            # authority verified in the next step.
-            git fetch --no-tags origin master --depth=1
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not fetch origin/master for release authority verification."
-            }
-            $master = (git rev-parse FETCH_HEAD).Trim().ToLowerInvariant()
-            if ($master -ne $actual) {
-              throw "Release tag $tag targets $actual but exact origin/master is $master."
-            }
+            # Do not require a release tag to remain equal to the future
+            # origin/master HEAD. The next step requires successful exact-SHA
+            # master push CI authority for this immutable tagged source.
             "AUDIT_MODE=false" >> $env:GITHUB_ENV
           }
 
