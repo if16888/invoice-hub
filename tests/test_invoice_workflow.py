@@ -66,7 +66,7 @@ class MultiLinkDownloader(LinkDownloader):
     def __init__(self):
         super().__init__(tempfile.mkdtemp())
 
-    def _download_url(self, url, mail_uid, idx, date_str, disable_fallback=False):
+    def _download_url(self, url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
         return DownloadedFile(
             url=url,
             file_path=f"/tmp/invoice_{idx}.pdf",
@@ -1874,7 +1874,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
             dl = LinkDownloader(base / "downloads")
 
-            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
                 if idx == 0:
                     return DownloadedFile(
                         url=url,
@@ -1927,7 +1927,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
             dl = LinkDownloader(base / "downloads")
 
-            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
                 if idx == 0:
                     return DownloadedFile(
                         url=url,
@@ -4276,7 +4276,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
             dl = LinkDownloader(base / "downloads")
 
-            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+            def fake_download(url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
                 return DownloadedFile(
                     url=url,
                     file_path=str(ofd_file),

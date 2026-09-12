@@ -135,7 +135,7 @@ class TestLinkDownloader(unittest.TestCase):
         )
 
         dl = LinkDownloader(download_dir=self.tmp_dir)
-        dl._max_seconds_per_email = 1
+        dl._email_budget_seconds = 1
 
         attempts = []
 
@@ -144,7 +144,7 @@ class TestLinkDownloader(unittest.TestCase):
             return None
 
         with patch.object(dl, "_download_url", side_effect=fake_download), \
-                patch("scripts.invoice_fetch.link_downloader.time.perf_counter", side_effect=[0, 2, 2]):
+                patch("scripts.invoice_fetch.link_downloader.time.monotonic", side_effect=[0, 2, 2, 2]):
             result = dl.download_from_email(msg, 123, "2026-06-14")
 
         self.assertEqual(result, [])
@@ -181,7 +181,7 @@ class TestLinkDownloader(unittest.TestCase):
 
         dl = LinkDownloader(self.tmp_dir)
 
-        def fake_download(url, mail_uid, idx, date_str, disable_fallback=False):
+        def fake_download(url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
             file_path = pdf_file if idx == 0 else ofd_file
             filename = "invoice.pdf" if idx == 0 else "invoice.ofd"
             return DownloadedFile(
@@ -398,7 +398,7 @@ class TestLinkDownloader(unittest.TestCase):
         )
 
         call_args = []
-        def side_effect(url, mail_uid, idx, date_str, disable_fallback=False):
+        def side_effect(url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
             call_args.append((url, disable_fallback))
             if "id=1" in url:
                 return r1
@@ -442,7 +442,7 @@ class TestLinkDownloader(unittest.TestCase):
         )
 
         call_args = []
-        def side_effect(url, mail_uid, idx, date_str, disable_fallback=False):
+        def side_effect(url, mail_uid, idx, date_str, disable_fallback=False, deadline=None):
             call_args.append((url, disable_fallback))
             if "id=1" in url:
                 return r1
