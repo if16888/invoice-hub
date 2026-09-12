@@ -1,0 +1,87 @@
+name: Temporary v0.1.8 Launch Timeout Test Fix
+
+on:
+  push:
+    branches:
+      - fix/v018-mail-scan-bounded-browser
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v018-mail-scan-bounded-browser
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Update legacy browser fake for bounded launch contract
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          p = Path("tests/test_invoice_workflow.py")
+          text = p.read_text(encoding="utf-8")
+          old = '''            def launch(self, channel=None, headless=False, args=None):
+                self.calls.append(channel or "chromium")
+                if channel == "msedge":
+                    return FakeBrowser()
+                raise RuntimeError(f"{channel or 'chromium'} unavailable")
+'''
+          new = '''            def launch(self, channel=None, headless=False, args=None, timeout=None):
+                self.calls.append((channel or "chromium", timeout))
+                if channel == "msedge":
+                    return FakeBrowser()
+                raise RuntimeError(f"{channel or 'chromium'} unavailable")
+'''
+          if old not in text:
+              raise SystemExit("FakeChromium launch anchor not found")
+          text = text.replace(old, new, 1)
+          old_assert = '        self.assertEqual(chromium.calls, ["msedge"])\n'
+          new_assert = '''        self.assertEqual(len(chromium.calls), 1)
+        self.assertEqual(chromium.calls[0][0], "msedge")
+        self.assertEqual(chromium.calls[0][1], downloader._timeout)
+'''
+          if old_assert not in text:
+              raise SystemExit("FakeChromium assertion anchor not found")
+          text = text.replace(old_assert, new_assert, 1)
+          p.write_text(text, encoding="utf-8")
+          '@ | Set-Content -Encoding utf8 scripts/dev/_apply_v018_launch_timeout_test_fix.py
+          python scripts/dev/_apply_v018_launch_timeout_test_fix.py
+
+      - name: Install locked test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-test.lock.txt
+
+      - name: Validate focused regression
+        shell: pwsh
+        env:
+          INVOICE_HUB_TEST_MODE: '1'
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m unittest -v tests.test_invoice_workflow.InvoiceWorkflowTests.test_link_downloader_auto_prefers_edge_before_chrome
+          python -m unittest -v tests.test_mail_scan_bounded_browser
+          python -m unittest -v tests.test_runtime_safety.WorkerShutdownTests
+          git -c core.whitespace=cr-at-eol diff --check
+
+      - name: Commit fix and remove temporary scaffolding
+        shell: pwsh
+        run: |
+          Remove-Item -Force scripts/dev/_apply_v018_launch_timeout_test_fix.py
+          Remove-Item -Force .github/workflows/_temp-v018-launch-timeout-test-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git -c core.whitespace=cr-at-eol diff --cached --check
+          git commit -m "test: cover bounded browser launch timeout"
+          git push origin HEAD:fix/v018-mail-scan-bounded-browser
