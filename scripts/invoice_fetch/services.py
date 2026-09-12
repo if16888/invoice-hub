@@ -573,16 +573,29 @@ def _find_matching_invoice_for_evidence(
 
 
 def _semantic_evidence_fingerprint(path: str | Path) -> str:
-    """Return a stable fingerprint for PDFs with identical visible text."""
+    """Return a stable full-document visible-text fingerprint for small PDFs."""
     p = Path(path)
     if not p.exists() or p.suffix.lower() != ".pdf":
         return ""
     try:
-        visible_text = _extract_pdf_text_simple(p)
+        import pdfplumber
+        with pdfplumber.open(str(p)) as pdf:
+            # Semantic dedup must never ignore later pages.  For unusually
+            # long documents, fail open to byte/path dedup instead of risking
+            # a false duplicate while doing expensive full-document parsing.
+            if not pdf.pages or len(pdf.pages) > 32:
+                return ""
+            parts: list[str] = []
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    parts.append(page_text)
+            visible_text = "\n".join(parts)
     except Exception:
         return ""
+    visible_text = visible_text.replace("\u2f26", "月").replace("\u2f49", "月")
+    visible_text = visible_text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
     normalized = re.sub(r"\s+", " ", str(visible_text or "")).strip().casefold()
-    # Avoid treating tiny/blank extraction results as identity evidence.
     if len(normalized) < 32:
         return ""
     digest = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
