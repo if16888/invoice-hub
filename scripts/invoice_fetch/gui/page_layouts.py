@@ -53,9 +53,22 @@ SETTINGS_BASELINE_STAGES: tuple[SettingsStage, ...] = (
 )
 
 
+def _settings_pipeline_shutdown_started(page: QWidget | None) -> bool:
+    """Return True once the owning window has entered its shutdown lifecycle."""
+    if page is None or not isValid(page):
+        return True
+    try:
+        window = page.window()
+    except RuntimeError:
+        return True
+    if window is None or not isValid(window):
+        return True
+    return bool(getattr(window, "_shutdown_requested", False))
+
+
 def apply_settings_baseline_pipeline(page: QWidget | None) -> None:
     """Apply all Settings migrations once, in their documented order."""
-    if page is None or not isValid(page):
+    if _settings_pipeline_shutdown_started(page):
         return
     if page.property("settingsBaselinePipelineApplied"):
         return
@@ -63,6 +76,9 @@ def apply_settings_baseline_pipeline(page: QWidget | None) -> None:
     page.setProperty("settingsBaselinePipelineFailedStage", "")
     completed: list[str] = []
     for name, stage in SETTINGS_BASELINE_STAGES:
+        if _settings_pipeline_shutdown_started(page):
+            page.setProperty("settingsBaselinePipelineActiveStage", "")
+            return
         page.setProperty("settingsBaselinePipelineActiveStage", name)
         try:
             stage(page)
@@ -96,6 +112,8 @@ def schedule_settings_baseline_pipeline(page: QWidget | None) -> None:
         if target is None or not isValid(target):
             return
         try:
+            if _settings_pipeline_shutdown_started(target):
+                return
             apply_settings_baseline_pipeline(target)
         finally:
             if isValid(target):

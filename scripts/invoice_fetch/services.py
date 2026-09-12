@@ -570,6 +570,37 @@ def _find_matching_invoice_for_evidence(
     return None, "unmatched"
 
 
+
+
+def _semantic_evidence_fingerprint(path: str | Path) -> str:
+    """Return a stable full-document visible-text fingerprint for small PDFs."""
+    p = Path(path)
+    if not p.exists() or p.suffix.lower() != ".pdf":
+        return ""
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(p)) as pdf:
+            # Semantic dedup must never ignore later pages.  For unusually
+            # long documents, fail open to byte/path dedup instead of risking
+            # a false duplicate while doing expensive full-document parsing.
+            if not pdf.pages or len(pdf.pages) > 32:
+                return ""
+            parts: list[str] = []
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    parts.append(page_text)
+            visible_text = "\n".join(parts)
+    except Exception:
+        return ""
+    visible_text = visible_text.replace("\u2f26", "月").replace("\u2f49", "月")
+    visible_text = visible_text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
+    normalized = re.sub(r"\s+", " ", str(visible_text or "")).strip().casefold()
+    if len(normalized) < 32:
+        return ""
+    digest = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
+    return f"pdftext:{digest}"
+
 def _attach_evidence_to_invoice(
     db: InvoiceDB,
     invoice: dict,
@@ -579,6 +610,19 @@ def _attach_evidence_to_invoice(
     code = invoice.get("invoice_code") or invoice.get("invoice_number") or "extra"
     inv_date = invoice.get("invoice_date") or invoice.get("mail_date") or "unknown_date"
     att_dir = RUNTIME_DIR / "attachments"
+
+    extra_paths = _normalize_path_list(invoice.get("extra_paths"))
+    incoming_semantic = _semantic_evidence_fingerprint(file_path)
+    if incoming_semantic:
+        for existing_path in extra_paths:
+            resolved = _resolve_runtime_path(existing_path)
+            if resolved and _semantic_evidence_fingerprint(resolved) == incoming_semantic:
+                _log.info(
+                    "  检测到语义相同证明材料，复用已有关联: invoice_id=%s file=%s",
+                    invoice["id"],
+                    mask_filename(file_path.name),
+                )
+                return False
 
     renamed_rel = _rename_by_invoice_code(
         str(file_path),
@@ -598,7 +642,6 @@ def _attach_evidence_to_invoice(
     resolved_path = RUNTIME_DIR / renamed_rel
     stored_path = renamed_rel
 
-    extra_paths = _normalize_path_list(invoice.get("extra_paths"))
     if stored_path in extra_paths:
         return False
 
@@ -653,8 +696,9 @@ def _attach_email_extras_to_invoice(
         return []
     current_extras = _normalize_path_list(inv.get("extra_paths"))
 
-    # Pre-calculate hashes of existing extras
+    # Pre-calculate byte and visible-text fingerprints of existing extras.
     existing_hashes = set()
+    existing_semantic_fingerprints = set()
     for ep in current_extras:
         res = _resolve_runtime_path(ep)
         if res and res.exists():
@@ -662,13 +706,27 @@ def _attach_email_extras_to_invoice(
                 existing_hashes.add(_sha256_file(res))
             except Exception:
                 pass
+            semantic = _semantic_evidence_fingerprint(res)
+            if semantic:
+                existing_semantic_fingerprints.add(semantic)
 
     updated = False
     for e in extra_files:
         e_path = Path(e.file_path)
         source_path = ""
+        incoming_semantic = ""
         if e_path.exists():
             source_path = str(e_path.resolve())
+            incoming_semantic = _semantic_evidence_fingerprint(e_path)
+            if incoming_semantic and incoming_semantic in existing_semantic_fingerprints:
+                if attached_source_paths is not None:
+                    attached_source_paths.add(source_path)
+                _log.info(
+                    "  检测到语义相同证明材料，跳过重复追加: invoice_id=%s file=%s",
+                    invoice_id,
+                    mask_filename(getattr(e, "original_name", e_path.name)),
+                )
+                continue
             kept_paths.add(source_path)
             try:
                 h = _sha256_file(e_path)
@@ -710,6 +768,8 @@ def _attach_email_extras_to_invoice(
 
             kept_paths.add(str((att_base.parent / ep).resolve()))
             current_extras.append(ep)
+            if incoming_semantic:
+                existing_semantic_fingerprints.add(incoming_semantic)
             updated = True
             if attached_source_paths is not None and source_path:
                 attached_source_paths.add(source_path)
@@ -3434,7 +3494,7 @@ def _scan_mailboxes_with_db(
     att_dir.mkdir(parents=True, exist_ok=True)
     att_handler = AttachmentHandler(att_dir)
     parser = InvoiceParser()
-    link_dl = LinkDownloader(att_dir, headed=headed)
+    link_dl = LinkDownloader(att_dir, headed=headed, scan_control=scan_control)
 
     scanned_headers = 0
     new_email_headers = 0

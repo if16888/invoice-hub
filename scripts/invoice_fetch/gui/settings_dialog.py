@@ -1226,7 +1226,7 @@ class SettingsDialog(QDialog):
         rules_layout.setContentsMargins(10, 8, 10, 8)
         rules_layout.setSpacing(6)
 
-        rules_layout.addWidget(QLabel("📅 扫描时间范围: 只扫描最近 3 个月内的增量发票邮件"), 0, 0)
+        rules_layout.addWidget(QLabel("📅 扫描时间范围: 按各邮箱配置的时间范围进行增量抓取"), 0, 0)
         rules_layout.addWidget(QLabel("📎 附件提取类型: PDF / OFD / XML / 常用图片格式"), 0, 1)
         rules_layout.addWidget(QLabel("🔍 主题匹配规则: 包含 “发票 / 行程单 / 电子发票 / 账单”"), 1, 0)
         rules_layout.addWidget(QLabel("🛡️ 重复发票处理: 相同发票代码+号码自动忽略去重"), 1, 1)
