@@ -2,11 +2,11 @@
 """Desktop startup lifecycle boundary.
 
 Keep the review workbench that is actually visible at launch on the first-paint
-critical path. Invoice/claim data loading and non-visible business pages are
-materialized only after that boundary: data immediately after the first real Qt
-Paint event, and hidden pages on their first navigation. This preserves the
-normal InvoiceReviewApp business behavior while avoiding work the user cannot
-see before first paint.
+critical path. Invoice/claim data loading and non-visible business pages stay
+outside that boundary. Hidden pages are then materialized one at a time during
+post-startup idle turns, or synchronously on first navigation if the user gets
+there first. This preserves fast first paint without making every first page
+switch pay the full widget-construction cost.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from .app import InvoiceReviewApp, StartupSplash
 
@@ -31,6 +31,16 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         "logs": (4, "_build_logs_page_view", ("logs_page", "audit_log_page")),
         "settings": (5, "_build_settings_page_view", ("settings_page",)),
     }
+    _STARTUP_WARMUP_PAGE_ORDER = (
+        "overview",
+        "imports",
+        "export",
+        "settings",
+        "logs",
+    )
+    _STARTUP_WARMUP_INITIAL_DELAY_MS = 650
+    _STARTUP_WARMUP_GAP_MS = 450
+    _STARTUP_WARMUP_NAVIGATION_QUIET_MS = 500
 
     def __init__(self, *args, **kwargs):
         self._startup_first_paint_seen = False
@@ -39,13 +49,23 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         self._startup_defer_hidden_pages = True
         self._startup_lazy_placeholders: dict[str, QWidget] = {}
         self._startup_page_materializing: set[str] = set()
+        self._startup_warmup_scheduled = False
+        self._startup_last_navigation_at = 0.0
         super().__init__(*args, **kwargs)
 
     def _startup_placeholder(self, page_key: str) -> QWidget:
-        """Return a zero-work placeholder that preserves QStackedWidget indices."""
+        """Return a cheap, user-visible placeholder with a stable stack index."""
         placeholder = QWidget()
         placeholder.setObjectName(f"StartupDeferredPage_{page_key}")
         placeholder.setProperty("startupDeferredPage", page_key)
+
+        layout = QVBoxLayout(placeholder)
+        layout.setContentsMargins(24, 24, 24, 24)
+        label = QLabel("正在准备页面…", placeholder)
+        label.setObjectName("StartupDeferredPageLabel")
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+
         self._startup_lazy_placeholders[page_key] = placeholder
         return placeholder
 
@@ -78,7 +98,7 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         return page_key in self._startup_lazy_placeholders
 
     def _materialize_startup_page(self, page_key: str) -> None:
-        """Build one hidden business page exactly when the user first opens it."""
+        """Build one deferred business page without changing the visible page."""
         spec = self._STARTUP_LAZY_PAGE_SPECS.get(page_key)
         placeholder = self._startup_lazy_placeholders.get(page_key)
         if spec is None or placeholder is None or page_key in self._startup_page_materializing:
@@ -102,8 +122,9 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
             self._startup_lazy_placeholders.pop(page_key, None)
             placeholder.deleteLater()
 
-            # Preserve the page that was visible while construction happened;
-            # the normal page switch below owns the actual navigation change.
+            # Idle warmup must never steal focus from the page the user is
+            # currently viewing. First-navigation materialization is followed
+            # immediately by the normal switch below.
             if current_widget is not None and current_widget is not placeholder:
                 self.center_stack.setCurrentWidget(current_widget)
 
@@ -112,6 +133,63 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
                 observer.observe(page_key, page)
         finally:
             self._startup_page_materializing.discard(page_key)
+
+    def _schedule_startup_page_warmup(self, delay_ms: int | None = None) -> None:
+        """Queue one hidden-page warmup turn after startup or user navigation."""
+        if getattr(self, "_shutdown_requested", False):
+            return
+        if not self._startup_lazy_placeholders or self._startup_warmup_scheduled:
+            return
+        delay = (
+            self._STARTUP_WARMUP_INITIAL_DELAY_MS
+            if delay_ms is None
+            else max(0, int(delay_ms))
+        )
+        self._startup_warmup_scheduled = True
+        QTimer.singleShot(delay, self._warm_next_startup_page)
+
+    def _warm_next_startup_page(self) -> None:
+        """Materialize at most one hidden page, then yield to the event loop."""
+        self._startup_warmup_scheduled = False
+        if getattr(self, "_shutdown_requested", False):
+            return
+        if not self._startup_lazy_placeholders:
+            return
+
+        # Do not start a hidden-page build while a dialog/popup owns the UI or
+        # immediately after the user navigated. Requeue instead of competing
+        # with visible interaction.
+        if QApplication.activeModalWidget() is not None or QApplication.activePopupWidget() is not None:
+            self._schedule_startup_page_warmup(self._STARTUP_WARMUP_GAP_MS)
+            return
+        if self._startup_last_navigation_at:
+            quiet_ms = (time.monotonic() - self._startup_last_navigation_at) * 1000.0
+            if quiet_ms < self._STARTUP_WARMUP_NAVIGATION_QUIET_MS:
+                self._schedule_startup_page_warmup(
+                    max(
+                        self._STARTUP_WARMUP_GAP_MS,
+                        int(self._STARTUP_WARMUP_NAVIGATION_QUIET_MS - quiet_ms),
+                    )
+                )
+                return
+
+        for page_key in self._STARTUP_WARMUP_PAGE_ORDER:
+            if self._startup_page_is_deferred(page_key):
+                self._materialize_startup_page(page_key)
+                break
+
+        if self._startup_lazy_placeholders:
+            self._schedule_startup_page_warmup(self._STARTUP_WARMUP_GAP_MS)
+
+    def _show_startup_loading_placeholder(self, page_key: str) -> None:
+        """Paint immediate feedback before an unavoidable cold-page build."""
+        placeholder = self._startup_lazy_placeholders.get(page_key)
+        if placeholder is None or not hasattr(self, "center_stack"):
+            return
+        self.center_stack.setCurrentWidget(placeholder)
+        # repaint() is synchronous, so the user sees feedback before the Qt
+        # widget tree is constructed on the GUI thread.
+        placeholder.repaint()
 
     def _reflow_after_lazy_page_switch(self) -> None:
         """Apply responsive geometry after a materialized page becomes current."""
@@ -139,9 +217,11 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         *,
         preserve_review_scope: bool = False,
     ) -> None:
-        # Hidden-page construction is deliberately outside launch/first paint.
+        self._startup_last_navigation_at = time.monotonic()
         was_deferred = self._startup_page_is_deferred(page_key)
-        self._materialize_startup_page(page_key)
+        if was_deferred:
+            self._show_startup_loading_placeholder(page_key)
+            self._materialize_startup_page(page_key)
         result = super()._switch_main_page(
             page_key,
             sub_tab=sub_tab,
@@ -149,6 +229,7 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
         )
         if was_deferred:
             self._reflow_after_lazy_page_switch()
+        self._schedule_startup_page_warmup(self._STARTUP_WARMUP_GAP_MS)
         return result
 
     def _refresh_overview_page(self) -> None:
@@ -201,6 +282,7 @@ class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
             return
         self._reflow_launch_page_after_first_paint()
         super()._deferred_init()
+        self._schedule_startup_page_warmup()
 
 
 def build_startup_window(db_path: Path, splash: StartupSplash | None):
