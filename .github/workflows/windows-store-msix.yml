@@ -9,19 +9,22 @@ on:
       identity_name:
         description: "Partner Center Package/Identity/Name (exact, case-sensitive)"
         required: true
+        default: "gawk.InvoiceHubLocal"
         type: string
       publisher:
         description: "Partner Center Package/Identity/Publisher (exact, case-sensitive)"
         required: true
+        default: "CN=82AA0936-DF00-48F3-A7B5-BEAD9171A9EC"
         type: string
       publisher_display_name:
         description: "Partner Center publisher display name"
         required: true
+        default: "gawk"
         type: string
       display_name:
         description: "Reserved Store app display name"
         required: true
-        default: "Invoice Hub"
+        default: "Invoice Hub Local"
         type: string
       strict_startup_ms:
         description: "Strict startup gate threshold (ms)"
