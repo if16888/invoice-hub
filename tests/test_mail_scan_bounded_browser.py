@@ -113,7 +113,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
         control = ScanControl()
         downloader = self._downloader(Path("bounded-browser-start-cancel"), control)
 
-        def cancel_during_start():
+        def cancel_during_start(*_args, **_kwargs):
             control.cancel()
             raise ScanCancelled("cancel during browser start")
 
@@ -155,10 +155,67 @@ class BoundedBrowserScanTests(unittest.TestCase):
 
     def test_url_deadline_and_cancellation_are_part_of_download_contract(self):
         source = inspect.getsource(LinkDownloader._download_url)
-        self.assertIn("deadline = attempt_started + self._max_seconds_per_url", source)
+        self.assertIn("url_deadline = attempt_started + self._max_seconds_per_url", source)
+        self.assertIn("min(url_deadline, deadline)", source)
+        self.assertIn("self._ensure_browser(deadline)", source)
         self.assertIn("self._remaining_timeout_ms(deadline)", source)
+        self.assertIn("self._try_click_download(page, deadline)", source)
+        self.assertIn("self._wait_event_until(download_done, deadline, 5.0)", source)
         self.assertIn("self._check_cancelled()", source)
         self.assertIn("Browser download attempt finished", source)
+
+    def test_browser_launch_fallbacks_share_the_remaining_deadline(self):
+        source = inspect.getsource(LinkDownloader._ensure_browser)
+        self.assertIn("deadline: float | None = None", source)
+        self.assertIn("self._remaining_timeout_ms(deadline)", source)
+        self.assertNotIn('"timeout": self._timeout,', source)
+
+    def test_email_deadline_is_forwarded_to_each_url_attempt(self):
+        downloader = self._downloader(Path("bounded-browser-email-deadline"))
+        downloader._max_seconds_per_email = 2.0
+        msg = EmailMessage()
+        msg["Subject"] = "invoice"
+        raw = [{"url": "https://example.com/invoice", "text": "invoice"}]
+        deadlines = []
+
+        def attempt(*_args, **kwargs):
+            deadlines.append(kwargs.get("deadline"))
+            return None
+
+        started = time.monotonic()
+        with patch.object(link_downloader, "extract_html_from_message", return_value="<html></html>"), patch.object(
+            link_downloader,
+            "_extract_links_with_metadata_from_html_and_stats",
+            return_value=(raw, {"anchor_count": 1, "unsafe_skipped": 0, "excluded_skipped": 0}),
+        ), patch.object(
+            link_downloader,
+            "_dedup_and_prioritize_with_metadata",
+            return_value=(raw, []),
+        ), patch.object(downloader, "_download_url", side_effect=attempt):
+            downloader.download_from_email(msg, 1, "2026-09-12")
+
+        self.assertEqual(len(deadlines), 1)
+        self.assertIsNotNone(deadlines[0])
+        self.assertGreater(deadlines[0], started)
+        self.assertLessEqual(deadlines[0], started + 2.2)
+
+    def test_download_event_wait_observes_cancellation_promptly(self):
+        control = ScanControl()
+        downloader = self._downloader(Path("bounded-browser-event-cancel"), control)
+        event = threading.Event()
+
+        def cancel_soon():
+            time.sleep(0.03)
+            control.cancel()
+
+        thread = threading.Thread(target=cancel_soon, daemon=True)
+        thread.start()
+        started = time.monotonic()
+        with self.assertRaises(ScanCancelled):
+            downloader._wait_event_until(event, time.monotonic() + 1.0, 1.0)
+        elapsed = time.monotonic() - started
+        thread.join(timeout=0.2)
+        self.assertLess(elapsed, 0.3)
 
     def test_mail_scan_service_passes_scan_control_to_link_downloader(self):
         from scripts.invoice_fetch import services

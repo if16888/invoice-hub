@@ -166,7 +166,8 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
         return literal_ip.is_global
 
     fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    if not _DNS_RESOLVE_SLOTS.acquire(blocking=False):
+    resolver_slots = _DNS_RESOLVE_SLOTS
+    if not resolver_slots.acquire(blocking=False):
         _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)
         return False
 
@@ -180,7 +181,7 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
             result["records"] = None
         finally:
             done.set()
-            _DNS_RESOLVE_SLOTS.release()
+            resolver_slots.release()
 
     resolver = threading.Thread(
         target=resolve,
@@ -190,7 +191,7 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
     try:
         resolver.start()
     except Exception:
-        _DNS_RESOLVE_SLOTS.release()
+        resolver_slots.release()
         return False
     if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
         _log.warning("DNS safety check timed out: <%s>", fingerprint)
@@ -651,7 +652,39 @@ class LinkDownloader:
             remaining_ms = min(remaining_ms, int(cap_ms))
         return max(1, min(remaining_ms, self._timeout))
 
-    def _ensure_browser(self):
+    def _sleep_with_cancel(self, seconds: float, deadline: float | None = None) -> None:
+        wait_deadline = time.monotonic() + max(0.0, float(seconds))
+        if deadline is not None:
+            wait_deadline = min(wait_deadline, deadline)
+        while True:
+            self._check_cancelled()
+            now = time.monotonic()
+            remaining = wait_deadline - now
+            if remaining <= 0:
+                if deadline is not None and now >= deadline:
+                    raise TimeoutError("browser link download deadline exceeded")
+                return
+            time.sleep(min(0.05, remaining))
+
+    def _wait_event_until(
+        self,
+        event: threading.Event,
+        deadline: float,
+        cap_seconds: float,
+    ) -> bool:
+        wait_deadline = min(deadline, time.monotonic() + max(0.0, float(cap_seconds)))
+        while True:
+            self._check_cancelled()
+            now = time.monotonic()
+            remaining = wait_deadline - now
+            if remaining <= 0:
+                if now >= deadline:
+                    raise TimeoutError("browser link download deadline exceeded")
+                return event.is_set()
+            if event.wait(min(0.05, remaining)):
+                return True
+
+    def _ensure_browser(self, deadline: float | None = None):
         if self._browser:
             return
         from playwright.sync_api import sync_playwright
@@ -661,6 +694,9 @@ class LinkDownloader:
         channel = cfg.get("playwright", {}).get("channel", "auto")
 
         self._pw = sync_playwright().start()
+        self._check_cancelled()
+        if deadline is not None:
+            self._remaining_timeout_ms(deadline)
 
         launch_args = [
             "--disable-blink-features=AutomationControlled",
@@ -672,7 +708,7 @@ class LinkDownloader:
             kwargs = {
                 "headless": not self._headed,
                 "args": launch_args,
-                "timeout": self._timeout,
+                "timeout": self._remaining_timeout_ms(deadline) if deadline is not None else self._timeout,
             }
             if channel_name:
                 kwargs["channel"] = channel_name
@@ -801,12 +837,13 @@ class LinkDownloader:
         has_official_success = False
         timed_out = False
 
-        start_time = time.perf_counter()
+        start_time = time.monotonic()
+        email_deadline = start_time + self._max_seconds_per_email
 
         def email_budget_exhausted() -> bool:
             if self._max_seconds_per_email <= 0 or attempted_count == 0:
                 return False
-            return (time.perf_counter() - start_time) >= self._max_seconds_per_email
+            return time.monotonic() >= email_deadline
 
         # 1. Try high priority links first
         high_success = False
@@ -824,7 +861,14 @@ class LinkDownloader:
                 continue
             self._check_cancelled()
             attempted_count += 1
-            r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)
+            r = self._download_url(
+                url,
+                mail_uid,
+                len(results),
+                date_str,
+                disable_fallback=has_official_success,
+                deadline=email_deadline,
+            )
             self._check_cancelled()
             if r:
                 results.append(r)
@@ -852,7 +896,14 @@ class LinkDownloader:
                     continue
                 self._check_cancelled()
                 attempted_count += 1
-                r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)
+                r = self._download_url(
+                url,
+                mail_uid,
+                len(results),
+                date_str,
+                disable_fallback=has_official_success,
+                deadline=email_deadline,
+            )
                 self._check_cancelled()
                 if r:
                     results.append(r)
@@ -877,7 +928,7 @@ class LinkDownloader:
         results = _dedupe_downloaded_files(results)
         deduped_removed = max(0, before_dedupe_count - len(results))
 
-        elapsed = time.perf_counter() - start_time
+        elapsed = time.monotonic() - start_time
         success = len(results)
         failed = max(0, attempted_count - success - deduped_removed)
         self.last_download_diagnostics = {
@@ -1040,7 +1091,11 @@ class LinkDownloader:
                 if locator.count() > 0:
                     try:
                         with page.expect_download(timeout=self._remaining_timeout_ms(deadline, 3000) if deadline is not None else 3000) as download_info:
-                            locator.first.click()
+                            locator.first.click(
+                                timeout=self._remaining_timeout_ms(deadline, 3000)
+                                if deadline is not None
+                                else 3000
+                            )
                         if download_info:
                             download = download_info.value
                             dest = _safe_download_destination(
@@ -1058,8 +1113,12 @@ class LinkDownloader:
         except Exception as e:
             _log.debug("点击页面下载按钮失败: %s", e)
 
-        # Short wait to collect responses
-        page.wait_for_timeout(2000)
+        # Short wait to collect responses without exceeding the URL/email deadline.
+        page.wait_for_timeout(
+            min(2000, self._remaining_timeout_ms(deadline, 2000))
+            if deadline is not None
+            else 2000
+        )
 
         # Check captured responses
         for f in captured_files:
@@ -1135,19 +1194,28 @@ class LinkDownloader:
 
         return None
 
-    def _download_url(self, url: str, mail_uid: int, idx: int, date_str: str, disable_fallback: bool = False) -> DownloadedFile | None:
+    def _download_url(
+        self,
+        url: str,
+        mail_uid: int,
+        idx: int,
+        date_str: str,
+        disable_fallback: bool = False,
+        deadline: float | None = None,
+    ) -> DownloadedFile | None:
         if not _is_safe_download_url(url):
             _log.warning("Skipping unsafe link: %s", mask_url_for_log(url))
             return None
 
         attempt_started = time.monotonic()
-        deadline = attempt_started + self._max_seconds_per_url
+        url_deadline = attempt_started + self._max_seconds_per_url
+        deadline = min(url_deadline, deadline) if deadline is not None else url_deadline
         fingerprint = self._url_fingerprint(url)
         _log.info("Browser download: %s", mask_url_for_log(url))
 
         try:
             self._check_cancelled()
-            self._ensure_browser()
+            self._ensure_browser(deadline)
             self._check_cancelled()
         except Exception as exc:
             # Cancellation is control flow, not a browser-start failure.  Re-check
@@ -1265,9 +1333,9 @@ class LinkDownloader:
             if not downloaded_path:
                 page.wait_for_timeout(min(1000, self._remaining_timeout_ms(deadline, 1000)) if deadline is not None else 1000)
                 if not downloaded_path:
-                    self._try_click_download(page)
+                    self._try_click_download(page, deadline)
                 if download_started and not downloaded_path:
-                    download_done.wait(timeout=5)
+                    self._wait_event_until(download_done, deadline, 5.0)
                     if downloaded_path:
                         source_type = "official_download"
                 if not downloaded_path:
@@ -1314,7 +1382,7 @@ class LinkDownloader:
                 except Exception:
                     pass
 
-    def _try_click_download(self, page) -> None:
+    def _try_click_download(self, page, deadline: float | None = None) -> None:
         selectors = [
             'a:has-text("下载")',
             'button:has-text("下载")',
@@ -1329,8 +1397,12 @@ class LinkDownloader:
                 locator = page.locator(sel)
                 if locator.count() == 0:
                     continue
-                locator.first.click(timeout=2000)
-                time.sleep(1)
+                locator.first.click(
+                    timeout=self._remaining_timeout_ms(deadline, 2000)
+                    if deadline is not None
+                    else 2000
+                )
+                self._sleep_with_cancel(1.0, deadline)
                 return
             except Exception:
                 continue
