@@ -105,15 +105,13 @@ class BoundedBrowserScanTests(unittest.TestCase):
     def test_mail_scan_service_passes_scan_control_to_link_downloader(self):
         from scripts.invoice_fetch import services
 
-        source = inspect.getsource(services.scan_email_and_download)
+        source = inspect.getsource(services._scan_mailboxes_with_db)
         self.assertIn(
             "LinkDownloader(att_dir, headed=headed, scan_control=scan_control)", source
         )
 
     def test_settings_rule_does_not_claim_a_fixed_three_month_window(self):
-        from scripts.invoice_fetch.gui import settings_dialog
-
-        source = inspect.getsource(settings_dialog.SettingsDialog)
+        source = Path("scripts/invoice_fetch/gui/settings_dialog.py").read_text(encoding="utf-8")
         self.assertNotIn("只扫描最近 3 个月", source)
         self.assertIn("按各邮箱配置的时间范围进行增量抓取", source)
 

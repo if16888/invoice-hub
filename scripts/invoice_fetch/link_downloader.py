@@ -660,6 +660,7 @@ class LinkDownloader:
             kwargs = {
                 "headless": not self._headed,
                 "args": launch_args,
+                "timeout": self._timeout,
             }
             if channel_name:
                 kwargs["channel"] = channel_name
@@ -837,8 +838,10 @@ class LinkDownloader:
                     skipped_cached += 1
                     _log.info("跳过本轮已失败链接: <%s>", fp)
                     continue
+                self._check_cancelled()
                 attempted_count += 1
                 r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)
+                self._check_cancelled()
                 if r:
                     results.append(r)
                     if r.source_type != "invoice_page_pdf_fallback":
@@ -1135,6 +1138,9 @@ class LinkDownloader:
             self._ensure_browser()
             self._check_cancelled()
         except Exception as exc:
+            # Cancellation is control flow, not a browser-start failure.  Re-check
+            # after any launch exception so a close/cancel request cannot be swallowed.
+            self._check_cancelled()
             _log.error("Playwright start failed: %s", exc)
             return None
 
