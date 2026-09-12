@@ -86,22 +86,6 @@ jobs:
               '📅 扫描时间范围: 只扫描最近 3 个月内的增量发票邮件',
               '📅 扫描时间范围: 按各邮箱配置的时间范围进行增量抓取',
           )
-          with settings_path.open('r', encoding='utf-8', newline='') as fh:
-              settings_text = fh.read()
-          cleaned = []
-          target = '按各邮箱配置的时间范围进行增量抓取'
-          for line in settings_text.splitlines(keepends=True):
-              if target in line:
-                  if line.endswith('\r\n'):
-                      line = line[:-2].rstrip(' \t') + '\r\n'
-                  elif line.endswith('\n'):
-                      line = line[:-1].rstrip(' \t') + '\n'
-                  else:
-                      line = line.rstrip(' \t')
-              cleaned.append(line)
-          with settings_path.open('w', encoding='utf-8', newline='') as fh:
-              fh.write(''.join(cleaned))
-
           replace_exact(
               'config.example.json',
               '    "timeout_ms": 10000,\n    "max_links_per_email": 5,',
@@ -117,7 +101,7 @@ jobs:
             scripts/invoice_fetch/gui/settings_dialog.py \
             tests/test_mail_scan_bounded_browser.py
           python -m json.tool config.example.json > /dev/null
-          git diff --check
+          git -c core.whitespace=cr-at-eol diff --check
 
       - name: Commit production patch and remove temporary patcher
         shell: bash
@@ -127,6 +111,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --check
+          git -c core.whitespace=cr-at-eol diff --cached --check
           git commit -m "fix: bound browser work during mailbox scans"
           git push origin HEAD:fix/v018-mail-scan-bounded-browser
