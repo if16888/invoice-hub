@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 import tempfile
 import threading
 import time
@@ -171,6 +172,53 @@ class BoundedBrowserScanTests(unittest.TestCase):
         source = Path("scripts/invoice_fetch/gui/settings_dialog.py").read_text(encoding="utf-8")
         self.assertNotIn("只扫描最近 3 个月", source)
         self.assertIn("按各邮箱配置的时间范围进行增量抓取", source)
+
+    def test_semantic_evidence_fingerprint_includes_later_pages(self):
+        from scripts.invoice_fetch import services
+
+        class FakePage:
+            def __init__(self, text: str):
+                self._text = text
+
+            def extract_text(self):
+                return self._text
+
+        class FakePdf:
+            def __init__(self, texts: list[str]):
+                self.pages = [FakePage(text) for text in texts]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        common = [
+            "Trip statement common first page with enough visible text for stable fingerprinting.",
+            "Trip statement common second page with the same shared reimbursement details.",
+        ]
+
+        def fake_open(path: str):
+            tail = (
+                "Third page contains trip A details and route one."
+                if Path(path).stem == "a"
+                else "Third page contains trip B details and route two."
+            )
+            return FakePdf(common + [tail])
+
+        fake_pdfplumber = SimpleNamespace(open=fake_open)
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-evidence-pages-") as td:
+            a = Path(td) / "a.pdf"
+            b = Path(td) / "b.pdf"
+            a.write_bytes(b"a")
+            b.write_bytes(b"b")
+            with patch.dict(sys.modules, {"pdfplumber": fake_pdfplumber}):
+                a_fingerprint = services._semantic_evidence_fingerprint(a)
+                b_fingerprint = services._semantic_evidence_fingerprint(b)
+
+        self.assertTrue(a_fingerprint.startswith("pdftext:"))
+        self.assertTrue(b_fingerprint.startswith("pdftext:"))
+        self.assertNotEqual(a_fingerprint, b_fingerprint)
 
     def test_email_extra_semantic_duplicate_is_not_copied_or_appended(self):
         from scripts.invoice_fetch import services
