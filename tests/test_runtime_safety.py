@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -218,7 +219,7 @@ class _ControlledWorker:
     def _request_cancel(self):
         self.cancel_calls += 1
 
-    def wait(self):
+    def wait(self, *_args, **_kwargs):
         self.wait_calls += 1
         self.db_open_during_wait.append(self.window.db.is_open)
         self._running = False
@@ -527,6 +528,45 @@ class WorkerShutdownTests(unittest.TestCase):
             self.assertEqual(worker.wait_calls, 1)
             self.assertEqual(worker.db_open_during_wait, [True])
             self.assertFalse(window.db.is_open)
+
+
+    def test_stuck_scan_close_returns_to_event_loop_and_keeps_db_open(self):
+        class StuckWorker(_ControlledWorker):
+            def wait(self, *_args, **_kwargs):
+                self.wait_calls += 1
+                self.db_open_during_wait.append(self.window.db.is_open)
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td)
+            worker = StuckWorker(window, running=True, cancellable=True)
+            self.assertTrue(window._try_begin_data_operation("邮箱扫描", notify=False))
+            window.scan_worker = worker
+
+            event = self._QCloseEvent()
+            started = time.monotonic()
+            window.closeEvent(event)
+            elapsed = time.monotonic() - started
+
+            self.assertFalse(event.isAccepted())
+            self.assertLess(elapsed, 0.5)
+            self.assertEqual(worker.cancel_calls, 1)
+            self.assertEqual(worker.wait_calls, 1)
+            self.assertEqual(worker.db_open_during_wait, [True])
+            self.assertTrue(window.db.is_open)
+            self.assertTrue(window._close_pending)
+
+            # Once the worker exits, the next close finalizes state and SQLite.
+            worker._running = False
+            final_event = self._QCloseEvent()
+            window.closeEvent(final_event)
+            self.assertTrue(final_event.isAccepted())
+            self.assertFalse(window.db.is_open)
+            self.assertEqual(window._data_operation_gate.owner, "")
+            self.assertFalse(window._close_pending)
+
+            window.deleteLater()
+            self._QCoreApplication.processEvents()
 
     def test_no_active_worker_closes_immediately(self):
         with tempfile.TemporaryDirectory() as td:

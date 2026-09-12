@@ -853,8 +853,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 except (RuntimeError, TypeError):
                     pass
 
-    def _shutdown_background_workers(self) -> None:
-        """Cooperatively stop all window-owned workers before closing SQLite."""
+    def _shutdown_background_workers(self, wait_ms: int = 50) -> bool:
+        """Request cooperative worker shutdown without blocking the GUI indefinitely."""
         running = []
         for attr, label, worker in self._active_background_workers():
             is_running = getattr(worker, "isRunning", None)
@@ -871,17 +871,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 request_cancel()
             running.append((attr, label, worker))
 
+        all_stopped = True
+        bounded_wait_ms = max(0, int(wait_ms))
         for attr, label, worker in running:
             wait = getattr(worker, "wait", None)
-            if not callable(wait):
-                raise RuntimeError(f"后台 worker {label} 不支持安全等待")
-            wait()
+            if callable(wait) and bounded_wait_ms:
+                try:
+                    wait(bounded_wait_ms)
+                except TypeError:
+                    # Never fall back to wait() without a timeout.  Non-QThread
+                    # test doubles or foreign workers are handled by polling.
+                    pass
             is_running = getattr(worker, "isRunning", None)
             if callable(is_running) and is_running():
-                raise RuntimeError(f"后台 worker {label} 在等待后仍在运行")
+                all_stopped = False
+                continue
             if attr == "_export_migration_worker" and getattr(worker, "result", None) is not None:
                 self._export_migration = worker.result
             self._end_data_operation(label)
+
+        return all_stopped
 
     def _try_begin_data_operation(self, operation: str, *, notify: bool = True) -> bool:
         if getattr(self, "_shutdown_requested", False):
@@ -1079,9 +1088,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "background_worker_shutdown",
             active=bool(running_workers),
             worker_count=len(running_workers),
-            timeout_requested="none",
+            timeout_requested=50,
         ):
-            self._shutdown_background_workers()
+            workers_stopped = self._shutdown_background_workers(wait_ms=50)
+        if not workers_stopped:
+            self._close_pending = True
+            self.statusBar().showMessage("正在安全停止后台操作，窗口仍可响应，请稍候…")
+            event.ignore()
+            if not getattr(self, "_worker_shutdown_retry_scheduled", False):
+                self._worker_shutdown_retry_scheduled = True
+                QTimer.singleShot(100, self._retry_close_after_worker_shutdown)
+            return
         if shutdown_trace is not None and running_workers:
             shutdown_trace.mark("worker_shutdown")
         if shutdown_trace is not None:
@@ -1105,6 +1122,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if shutdown_trace is not None:
             self._performance_probe.active_stage = "close_event_accept"
             shutdown_trace.mark("close_event_accepted")
+        self._close_pending = False
+        self._worker_shutdown_retry_scheduled = False
         event.accept()
         if shutdown_trace is not None:
             self._performance_probe.active_stage = "window_hide"
@@ -1122,6 +1141,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _retry_close_after_mobile_shutdown(self):
         if getattr(self, "_close_pending", False):
             QTimer.singleShot(0, self.close)
+
+    def _retry_close_after_worker_shutdown(self):
+        """Poll worker completion without blocking the Qt GUI thread."""
+        self._worker_shutdown_retry_scheduled = False
+        if not getattr(self, "_close_pending", False):
+            return
+        running = [
+            worker
+            for _attr, _label, worker in self._active_background_workers()
+            if callable(getattr(worker, "isRunning", None)) and worker.isRunning()
+        ]
+        if running:
+            self._worker_shutdown_retry_scheduled = True
+            QTimer.singleShot(100, self._retry_close_after_worker_shutdown)
+            return
+        QTimer.singleShot(0, self.close)
 
     def _init_ui_probe(self):
         central_widget = QWidget()

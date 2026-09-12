@@ -2,17 +2,19 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 from shiboken6 import isValid
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS
 from scripts.invoice_fetch.gui.page_layouts import SETTINGS_BASELINE_STAGES
 from scripts.invoice_fetch.gui import (
+    page_layouts,
     review_feedback_fixes,
     settings_baseline,
     settings_pages_baseline,
@@ -23,6 +25,51 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_scheduled_settings_pipeline_is_dropped_after_owner_shutdown_starts(self):
+        owner = QWidget()
+        page = QWidget(owner)
+        try:
+            with patch.object(page_layouts, "apply_settings_baseline_pipeline") as apply_pipeline:
+                page_layouts.schedule_settings_baseline_pipeline(page)
+                self.assertTrue(page.property("settingsBaselinePipelineScheduled"))
+
+                # closeEvent establishes this authority before deferred Qt work
+                # is drained. A queued settings migration must not touch UI from
+                # that point onward, even while the C++ objects remain valid.
+                owner._shutdown_requested = True
+                self.app.processEvents()
+
+                apply_pipeline.assert_not_called()
+                self.assertFalse(page.property("settingsBaselinePipelineScheduled"))
+                self.assertTrue(isValid(owner))
+                self.assertTrue(isValid(page))
+        finally:
+            page.deleteLater()
+            owner.deleteLater()
+            QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.app.processEvents()
+
+    def test_direct_settings_pipeline_is_noop_after_owner_shutdown_starts(self):
+        owner = QWidget()
+        page = QWidget(owner)
+        stage_calls = []
+        try:
+            owner._shutdown_requested = True
+            with patch.object(
+                page_layouts,
+                "SETTINGS_BASELINE_STAGES",
+                (("sentinel", lambda _page: stage_calls.append(True)),),
+            ):
+                page_layouts.apply_settings_baseline_pipeline(page)
+
+            self.assertEqual(stage_calls, [])
+            self.assertFalse(bool(page.property("settingsBaselinePipelineApplied")))
+        finally:
+            page.deleteLater()
+            owner.deleteLater()
+            QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.app.processEvents()
 
     def test_settings_migrations_run_once_in_declared_order(self):
         with tempfile.TemporaryDirectory() as td:
