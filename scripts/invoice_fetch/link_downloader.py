@@ -554,8 +554,8 @@ def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFi
     return final_results
 
 
-def _save_download_to_path(download, dest: Path, timeout_ms: int = 30_000) -> bool:
-    """Persist a Playwright download to *dest* without leaking callback errors."""
+def _save_download_to_path(download, dest: Path) -> bool:
+    """Persist a completed Playwright download without implying a fake save timeout."""
     if dest.exists():
         return True
     try:
@@ -617,11 +617,16 @@ class LinkDownloader:
         requested_timeout = int(link_cfg.get("timeout_ms", timeout_ms))
         max_operation_timeout_ms = int(link_cfg.get("max_operation_timeout_ms", 10_000))
         self._timeout = max(1_000, min(requested_timeout, max_operation_timeout_ms))
-        self._max_seconds_per_url = max(3.0, float(link_cfg.get("max_seconds_per_url", 20.0)))
+        legacy_url_budget = link_cfg.get("max_seconds_per_url", 20.0)
+        self._url_budget_seconds = max(
+            3.0,
+            float(link_cfg.get("budget_seconds_per_url", legacy_url_budget)),
+        )
         self._max_links_per_email = max(1, int(link_cfg.get("max_links_per_email", 3)))
-        self._max_seconds_per_email = max(
-            self._max_seconds_per_url,
-            float(link_cfg.get("max_seconds_per_email", 60.0)),
+        legacy_email_budget = link_cfg.get("max_seconds_per_email", 60.0)
+        self._email_budget_seconds = max(
+            self._url_budget_seconds,
+            float(link_cfg.get("budget_seconds_per_email", legacy_email_budget)),
         )
         self._skip_when_attachment_invoice_present = bool(
             link_cfg.get("skip_when_attachment_invoice_present", True)
@@ -838,10 +843,10 @@ class LinkDownloader:
         timed_out = False
 
         start_time = time.monotonic()
-        email_deadline = start_time + self._max_seconds_per_email
+        email_deadline = start_time + self._email_budget_seconds
 
         def email_budget_exhausted() -> bool:
-            if self._max_seconds_per_email <= 0 or attempted_count == 0:
+            if self._email_budget_seconds <= 0 or attempted_count == 0:
                 return False
             return time.monotonic() >= email_deadline
 
@@ -875,6 +880,8 @@ class LinkDownloader:
                 high_success = True
                 if r.source_type != "invoice_page_pdf_fallback":
                     has_official_success = True
+            if time.monotonic() >= email_deadline:
+                timed_out = True
 
         # 2. Try low priority links if no high priority links succeeded and limit not reached
         if high_success:
@@ -897,18 +904,20 @@ class LinkDownloader:
                 self._check_cancelled()
                 attempted_count += 1
                 r = self._download_url(
-                url,
-                mail_uid,
-                len(results),
-                date_str,
-                disable_fallback=has_official_success,
-                deadline=email_deadline,
-            )
+                    url,
+                    mail_uid,
+                    len(results),
+                    date_str,
+                    disable_fallback=has_official_success,
+                    deadline=email_deadline,
+                )
                 self._check_cancelled()
                 if r:
                     results.append(r)
                     if r.source_type != "invoice_page_pdf_fallback":
                         has_official_success = True
+                if time.monotonic() >= email_deadline:
+                    timed_out = True
 
         # Post-process: if has_official_success is True, filter out and clean up any fallback results
         if has_official_success:
@@ -947,10 +956,10 @@ class LinkDownloader:
         )
         if timed_out:
             _log.warning(
-                "链接下载达到单邮件耗时上限: attempted=%d elapsed=%.1fs limit=%.1fs",
+                "链接下载达到单邮件浏览器处理预算: attempted=%d elapsed=%.1fs budget=%.1fs",
                 attempted_count,
                 elapsed,
-                self._max_seconds_per_email,
+                self._email_budget_seconds,
             )
         if success == 0:
             _log.info(
@@ -1103,7 +1112,7 @@ class LinkDownloader:
                                 download.suggested_filename,
                                 f"invoice_{mail_uid}_{idx}.pdf",
                             )
-                            if _save_download_to_path(download, dest, self._timeout):
+                            if _save_download_to_path(download, dest):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
                                     return str(dest), "official_download", None
@@ -1208,7 +1217,7 @@ class LinkDownloader:
             return None
 
         attempt_started = time.monotonic()
-        url_deadline = attempt_started + self._max_seconds_per_url
+        url_deadline = attempt_started + self._url_budget_seconds
         deadline = min(url_deadline, deadline) if deadline is not None else url_deadline
         fingerprint = self._url_fingerprint(url)
         _log.info("Browser download: %s", mask_url_for_log(url))
@@ -1259,7 +1268,7 @@ class LinkDownloader:
                     downloaded_path = str(dest)
                     download_done.set()
                     return
-                if _save_download_to_path(download, dest, self._timeout):
+                if _save_download_to_path(download, dest):
                     downloaded_path = str(dest)
                 download_done.set()
 
@@ -1369,7 +1378,7 @@ class LinkDownloader:
             if self._scan_control is not None and self._scan_control.cancelled:
                 raise
             elapsed = time.monotonic() - attempt_started
-            level = _log.warning if isinstance(exc, TimeoutError) or elapsed >= self._max_seconds_per_url else _log.debug
+            level = _log.warning if isinstance(exc, TimeoutError) or elapsed >= self._url_budget_seconds else _log.debug
             level("Browser download failed for <%s>: %s (elapsed=%.1fs)", fingerprint, exc, elapsed)
             self.failed_url_fingerprints.add(fingerprint)
             return None

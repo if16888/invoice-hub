@@ -37,6 +37,44 @@ class BoundedBrowserScanTests(unittest.TestCase):
             downloader = LinkDownloader(td)
         self.assertEqual(downloader._timeout, 10_000)
 
+    def test_browser_budget_config_uses_truthful_names_and_keeps_legacy_aliases(self):
+        config = {
+            "link_download": {
+                "budget_seconds_per_url": 7,
+                "budget_seconds_per_email": 19,
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-browser-budget-") as td, patch(
+            "scripts.invoice_fetch.config.load_config_safe", return_value=config
+        ):
+            downloader = LinkDownloader(td)
+        self.assertEqual(downloader._url_budget_seconds, 7.0)
+        self.assertEqual(downloader._email_budget_seconds, 19.0)
+
+        legacy_config = {
+            "link_download": {
+                "max_seconds_per_url": 8,
+                "max_seconds_per_email": 21,
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-browser-budget-legacy-") as td, patch(
+            "scripts.invoice_fetch.config.load_config_safe", return_value=legacy_config
+        ):
+            legacy = LinkDownloader(td)
+        self.assertEqual(legacy._url_budget_seconds, 8.0)
+        self.assertEqual(legacy._email_budget_seconds, 21.0)
+
+    def test_download_save_helper_does_not_advertise_an_unenforced_timeout(self):
+        signature = inspect.signature(link_downloader._save_download_to_path)
+        self.assertNotIn("timeout_ms", signature.parameters)
+
+    def test_example_config_calls_scan_limits_budgets_not_hard_deadlines(self):
+        source = Path("config.example.json").read_text(encoding="utf-8")
+        self.assertIn('"budget_seconds_per_url": 20', source)
+        self.assertIn('"budget_seconds_per_email": 60', source)
+        self.assertNotIn('"max_seconds_per_url"', source)
+        self.assertNotIn('"max_seconds_per_email"', source)
+
     def test_dns_safety_check_fails_closed_without_waiting_for_stuck_resolver(self):
         blocker = threading.Event()
 
@@ -155,7 +193,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
 
     def test_url_deadline_and_cancellation_are_part_of_download_contract(self):
         source = inspect.getsource(LinkDownloader._download_url)
-        self.assertIn("url_deadline = attempt_started + self._max_seconds_per_url", source)
+        self.assertIn("url_deadline = attempt_started + self._url_budget_seconds", source)
         self.assertIn("min(url_deadline, deadline)", source)
         self.assertIn("self._ensure_browser(deadline)", source)
         self.assertIn("self._remaining_timeout_ms(deadline)", source)
@@ -172,7 +210,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
 
     def test_email_deadline_is_forwarded_to_each_url_attempt(self):
         downloader = self._downloader(Path("bounded-browser-email-deadline"))
-        downloader._max_seconds_per_email = 2.0
+        downloader._email_budget_seconds = 2.0
         msg = EmailMessage()
         msg["Subject"] = "invoice"
         raw = [{"url": "https://example.com/invoice", "text": "invoice"}]
