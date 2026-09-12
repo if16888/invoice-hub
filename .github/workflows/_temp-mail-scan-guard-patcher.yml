@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Normalize patcher preconditions
+      - name: Normalize complex browser patcher
         shell: bash
         run: |
           python - <<'PY'
@@ -38,9 +38,8 @@ jobs:
           elif new not in text:
               raise SystemExit('browser attempt precondition block not found')
 
-          # Keep the existing fixed 2-second general-page wait. It is already
-          # bounded and is not part of the observed 32-minute hang. Avoid a
-          # brittle source rewrite merely to shave the tail of the URL budget.
+          # The fixed general-page 2s wait is already bounded; keep it instead
+          # of introducing a brittle rewrite only for the final tail of budget.
           start_marker = "replace_once(\n    link,\n    '''            if not downloaded_path:\\n                page.wait_for_timeout(2000)\\n                if not downloaded_path:\\n'''"
           start = text.find(start_marker)
           if start != -1:
@@ -50,11 +49,53 @@ jobs:
                   raise SystemExit('could not find end of general-wait patch block')
               text = text[:start] + text[end + 1:]
 
+          # Keep this patcher responsible only for the complex browser file.
+          # Apply simple cross-file edits below with semantic string updates so
+          # CRLF/LF layout differences cannot make the migration fragile.
+          simple_marker = '# 3) Wire the active scan cancellation token into browser link downloads.'
+          simple_start = text.find(simple_marker)
+          if simple_start == -1:
+              raise SystemExit('simple edit marker not found')
+          text = text[:simple_start] + 'print("bounded browser core patch applied")\n'
+
           p.write_text(text, encoding='utf-8')
           PY
 
-      - name: Apply bounded-browser patch
+      - name: Apply bounded-browser core patch
         run: python scripts/dev/_apply_mail_scan_guard_patch.py
+
+      - name: Apply simple scan and UI edits
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, expected=1):
+              p = Path(path)
+              with p.open('r', encoding='utf-8', newline='') as fh:
+                  text = fh.read()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} matches, got {count}: {old!r}')
+              with p.open('w', encoding='utf-8', newline='') as fh:
+                  fh.write(text.replace(old, new, expected))
+
+          replace_exact(
+              'scripts/invoice_fetch/services.py',
+              'LinkDownloader(att_dir, headed=headed)',
+              'LinkDownloader(att_dir, headed=headed, scan_control=scan_control)',
+          )
+          replace_exact(
+              'scripts/invoice_fetch/gui/settings_dialog.py',
+              '📅 扫描时间范围: 只扫描最近 3 个月内的增量发票邮件',
+              '📅 扫描时间范围: 按各邮箱配置的时间范围进行增量抓取',
+          )
+          replace_exact(
+              'config.example.json',
+              '    "timeout_ms": 10000,\n    "max_links_per_email": 5,',
+              '    "timeout_ms": 10000,\n    "max_operation_timeout_ms": 10000,\n    "max_seconds_per_url": 20,\n    "max_seconds_per_email": 60,\n    "max_links_per_email": 3,',
+          )
+          PY
 
       - name: Static validation
         run: |
