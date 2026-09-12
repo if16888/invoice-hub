@@ -1,0 +1,48 @@
+name: Temporary Mail Scan Guard Patcher
+
+on:
+  push:
+    branches:
+      - fix/v018-mail-scan-bounded-browser
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v018-mail-scan-bounded-browser
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply bounded-browser patch
+        run: python scripts/dev/_apply_mail_scan_guard_patch.py
+
+      - name: Static validation
+        run: |
+          python -m py_compile \
+            scripts/invoice_fetch/link_downloader.py \
+            scripts/invoice_fetch/services.py \
+            scripts/invoice_fetch/gui/settings_dialog.py \
+            tests/test_mail_scan_bounded_browser.py
+          python -m json.tool config.example.json > /dev/null
+          git diff --check
+
+      - name: Commit production patch and remove temporary patcher
+        shell: bash
+        run: |
+          rm -f scripts/dev/_apply_mail_scan_guard_patch.py
+          rm -f .github/workflows/_temp-mail-scan-guard-patcher.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: bound browser work during mailbox scans"
+          git push origin HEAD:fix/v018-mail-scan-bounded-browser
