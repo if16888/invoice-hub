@@ -220,6 +220,28 @@ class BoundedBrowserScanTests(unittest.TestCase):
         self.assertTrue(b_fingerprint.startswith("pdftext:"))
         self.assertNotEqual(a_fingerprint, b_fingerprint)
 
+    def test_semantic_evidence_fingerprint_fails_open_for_long_documents(self):
+        from scripts.invoice_fetch import services
+
+        class FakePdf:
+            def __init__(self):
+                self.pages = [SimpleNamespace(extract_text=lambda: "content") for _ in range(33)]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        fake_pdfplumber = SimpleNamespace(open=lambda _path: FakePdf())
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-evidence-long-") as td:
+            document = Path(td) / "long.pdf"
+            document.write_bytes(b"long")
+            with patch.dict(sys.modules, {"pdfplumber": fake_pdfplumber}):
+                fingerprint = services._semantic_evidence_fingerprint(document)
+
+        self.assertEqual(fingerprint, "")
+
     def test_email_extra_semantic_duplicate_is_not_copied_or_appended(self):
         from scripts.invoice_fetch import services
 
