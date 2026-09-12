@@ -51,12 +51,21 @@ jobs:
               text = text.replace(old, new, 1)
           elif new not in text:
               raise SystemExit('mail scan service source assertion anchor not found')
+
+          old_settings = '''    def test_settings_rule_does_not_claim_a_fixed_three_month_window(self):\n        from scripts.invoice_fetch.gui import settings_dialog\n\n        source = inspect.getsource(settings_dialog.SettingsDialog)\n        self.assertNotIn("只扫描最近 3 个月", source)\n        self.assertIn("按各邮箱配置的时间范围进行增量抓取", source)\n'''
+          new_settings = '''    def test_settings_rule_does_not_claim_a_fixed_three_month_window(self):\n        source = Path("scripts/invoice_fetch/gui/settings_dialog.py").read_text(encoding="utf-8")\n        self.assertNotIn("只扫描最近 3 个月", source)\n        self.assertIn("按各邮箱配置的时间范围进行增量抓取", source)\n'''
+          if old_settings in text:
+              text = text.replace(old_settings, new_settings, 1)
+          elif new_settings not in text:
+              raise SystemExit('settings text test anchor not found')
           bounded_test.write_text(text, encoding='utf-8')
           PY
 
       - name: Install focused test dependencies
         shell: bash
         run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libegl1 libgl1
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-desktop.txt
 
