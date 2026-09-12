@@ -151,6 +151,8 @@ def _is_safe_download_url(url: str) -> bool:
 
 
 _DNS_RESOLVE_TIMEOUT_SECONDS = 2.0
+_DNS_RESOLVE_MAX_INFLIGHT = 4
+_DNS_RESOLVE_SLOTS = threading.BoundedSemaphore(_DNS_RESOLVE_MAX_INFLIGHT)
 
 
 @lru_cache(maxsize=256)
@@ -163,6 +165,11 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
     if literal_ip is not None:
         return literal_ip.is_global
 
+    fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    if not _DNS_RESOLVE_SLOTS.acquire(blocking=False):
+        _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)
+        return False
+
     done = threading.Event()
     result: dict[str, object] = {}
 
@@ -173,14 +180,19 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
             result["records"] = None
         finally:
             done.set()
+            _DNS_RESOLVE_SLOTS.release()
 
-    threading.Thread(
+    resolver = threading.Thread(
         target=resolve,
         name="InvoiceHubDnsSafetyCheck",
         daemon=True,
-    ).start()
+    )
+    try:
+        resolver.start()
+    except Exception:
+        _DNS_RESOLVE_SLOTS.release()
+        return False
     if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
-        fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
         _log.warning("DNS safety check timed out: <%s>", fingerprint)
         return False
 
