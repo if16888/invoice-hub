@@ -1190,8 +1190,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def launch(self, channel=None, headless=False, args=None):
-                self.calls.append(channel or "chromium")
+            def launch(self, channel=None, headless=False, args=None, timeout=None):
+                self.calls.append((channel or "chromium", timeout))
                 if channel == "msedge":
                     return FakeBrowser()
                 raise RuntimeError(f"{channel or 'chromium'} unavailable")
@@ -1217,7 +1217,9 @@ class InvoiceWorkflowTests(unittest.TestCase):
             downloader = LinkDownloader(tempfile.mkdtemp())
             downloader._ensure_browser()
 
-        self.assertEqual(chromium.calls, ["msedge"])
+        self.assertEqual(len(chromium.calls), 1)
+        self.assertEqual(chromium.calls[0][0], "msedge")
+        self.assertEqual(chromium.calls[0][1], downloader._timeout)
         downloader.close()
 
     def test_save_download_to_path_swallows_download_errors(self):
