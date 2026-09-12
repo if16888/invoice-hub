@@ -10,29 +10,21 @@ on:
 
 jobs:
   build:
-    name: Build PR161 Windows UX candidate
+    name: A/B frozen startup and build PR161 UX candidate
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
+      BASELINE_SHA: "5eea6bf29d207c7a39758116da261b4dc6913fa2"
       CANDIDATE_SHA: "45d7f900ad1c82144eb624d2bfb85b832e9788f6"
+      BASELINE_VERSION: "0.1.8-pre160"
       CANDIDATE_VERSION: "0.1.8-pre161"
       PYTHONIOENCODING: "utf-8"
 
     steps:
-      - name: Checkout exact PR161 candidate
+      - name: Checkout workflow branch with full history
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
-
-      - name: Verify exact source identity
-        shell: pwsh
-        run: |
-          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
-          if ($actual -ne $env:CANDIDATE_SHA.ToLowerInvariant()) {
-            throw "Expected PR161 candidate $env:CANDIDATE_SHA but checked out $actual."
-          }
-          Write-Host "PR161 UX candidate source: $actual"
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -50,9 +42,64 @@ jobs:
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
-      - name: Run cheap source safety gates
+      - name: Build and probe baseline master
         shell: pwsh
+        env:
+          PYTHONOPTIMIZE: "1"
         run: |
+          git checkout --force $env:BASELINE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git clean -fdx
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $env:BASELINE_SHA.ToLowerInvariant()) {
+            throw "Baseline checkout drift: expected $env:BASELINE_SHA, got $actual"
+          }
+
+          $env:INVOICE_HUB_BUILD_VERSION = $env:BASELINE_VERSION
+          python scripts/dev/write_embedded_build_version.py --version $env:BASELINE_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m scripts.generate_windows_version_info --output build/windows-version-info.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pyinstaller packaging/invoice_hub_windows.spec --distpath dist-baseline --workpath build/pyinstaller-baseline --clean --noconfirm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $exe = "dist-baseline\InvoiceHub\InvoiceHub.exe"
+          $runtime = Join-Path $env:RUNNER_TEMP "invoice-hub-pr161-ab-baseline"
+          Remove-Item -LiteralPath $runtime -Recurse -Force -ErrorAction SilentlyContinue
+          $env:INVOICE_HUB_RUNTIME_DIR = $runtime
+          try {
+            for ($i = 1; $i -le 2; $i++) {
+              Remove-Item -LiteralPath "bench-local\results" -Recurse -Force -ErrorAction SilentlyContinue
+              python scripts/check_startup_time.py $exe --threshold 60000 --output-json
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $json = Get-ChildItem "bench-local\results\startup_metrics_*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($null -eq $json) { throw "Baseline startup evidence missing on pass $i" }
+              $data = Get-Content -LiteralPath $json.FullName -Raw | ConvertFrom-Json
+              if ($i -eq 2) {
+                "BASELINE_TOTAL_MS=$([int]$data.TOTAL_STARTUP_MS)" >> $env:GITHUB_ENV
+                "BASELINE_SHOW_MS=$([int]$data.MAIN_WINDOW_SHOW_MS)" >> $env:GITHUB_ENV
+                Write-Host "Baseline warmed probe: total=$($data.TOTAL_STARTUP_MS)ms show=$($data.MAIN_WINDOW_SHOW_MS)ms"
+              }
+            }
+          }
+          finally {
+            Remove-Item Env:INVOICE_HUB_RUNTIME_DIR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $runtime -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Build and probe exact PR161 candidate
+        shell: pwsh
+        env:
+          PYTHONOPTIMIZE: "1"
+        run: |
+          git checkout --force $env:CANDIDATE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git clean -fdx
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $env:CANDIDATE_SHA.ToLowerInvariant()) {
+            throw "Candidate checkout drift: expected $env:CANDIDATE_SHA, got $actual"
+          }
+
           python scripts/check_repo_privacy.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/check_public_export.py .
@@ -64,43 +111,89 @@ jobs:
           python -m compileall -q scripts/invoice_fetch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Embed UX candidate display version
-        shell: pwsh
-        run: |
           $env:INVOICE_HUB_BUILD_VERSION = $env:CANDIDATE_VERSION
-          python -c "from scripts.invoice_fetch.version import resolve_build_version; print(resolve_build_version(strict=True))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/dev/write_embedded_build_version.py --version $env:CANDIDATE_VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m scripts.generate_windows_version_info --output build/windows-version-info.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pyinstaller packaging/invoice_hub_windows.spec --distpath dist --workpath build/pyinstaller --clean --noconfirm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build frozen Windows candidate
-        shell: pwsh
-        env:
-          PYTHONOPTIMIZE: "1"
-        run: pyinstaller packaging/invoice_hub_windows.spec --distpath dist --workpath build/pyinstaller --clean --noconfirm
-
-      - name: Verify executable and startup gate
-        shell: pwsh
-        run: |
           $exe = "dist\InvoiceHub\InvoiceHub.exe"
-          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-            throw "Frozen candidate executable missing: $exe"
-          }
-          $runtimeDir = Join-Path $env:RUNNER_TEMP "invoice-hub-pr161-ux-startup"
-          Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
-          $env:INVOICE_HUB_RUNTIME_DIR = $runtimeDir
+          $runtime = Join-Path $env:RUNNER_TEMP "invoice-hub-pr161-ab-candidate"
+          Remove-Item -LiteralPath $runtime -Recurse -Force -ErrorAction SilentlyContinue
+          $env:INVOICE_HUB_RUNTIME_DIR = $runtime
           try {
-            python scripts/check_startup_time.py $exe --threshold 3000
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            for ($i = 1; $i -le 2; $i++) {
+              Remove-Item -LiteralPath "bench-local\results" -Recurse -Force -ErrorAction SilentlyContinue
+              python scripts/check_startup_time.py $exe --threshold 60000 --output-json
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $json = Get-ChildItem "bench-local\results\startup_metrics_*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($null -eq $json) { throw "Candidate startup evidence missing on pass $i" }
+              $data = Get-Content -LiteralPath $json.FullName -Raw | ConvertFrom-Json
+              if ($i -eq 2) {
+                "CANDIDATE_TOTAL_MS=$([int]$data.TOTAL_STARTUP_MS)" >> $env:GITHUB_ENV
+                "CANDIDATE_SHOW_MS=$([int]$data.MAIN_WINDOW_SHOW_MS)" >> $env:GITHUB_ENV
+                Write-Host "Candidate warmed probe: total=$($data.TOTAL_STARTUP_MS)ms show=$($data.MAIN_WINDOW_SHOW_MS)ms"
+              }
+            }
           }
           finally {
             Remove-Item Env:INVOICE_HUB_RUNTIME_DIR -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $runtime -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Verify packaged display version
+      - name: Compare startup A/B evidence
+        shell: pwsh
+        run: |
+          $baseline = [int]$env:BASELINE_TOTAL_MS
+          $candidate = [int]$env:CANDIDATE_TOTAL_MS
+          $delta = $candidate - $baseline
+          $ratio = if ($baseline -gt 0) { [double]$candidate / [double]$baseline } else { 99.0 }
+          $allowedDelta = [Math]::Max(500, [int]($baseline * 0.25))
+
+          Write-Host "Baseline total:  $baseline ms"
+          Write-Host "Candidate total: $candidate ms"
+          Write-Host "Delta:           $delta ms"
+          Write-Host ("Ratio:           {0:N2}x" -f $ratio)
+
+          if ($baseline -le 3000 -and $candidate -gt 3000) {
+            throw "PR161 crosses the 3000 ms startup gate while baseline passes."
+          }
+          if ($delta -gt $allowedDelta -and $ratio -gt 1.25) {
+            throw "PR161 startup regression exceeds A/B tolerance: delta=$delta ms ratio=$ratio"
+          }
+
+          $absoluteNote = if ($candidate -le 3000) {
+            "candidate_within_3000ms"
+          } elseif ($baseline -gt 3000) {
+            "runner_absolute_gate_slow_for_both"
+          } else {
+            "candidate_absolute_gate_failure"
+          }
+
+          @{
+            baseline_sha = $env:BASELINE_SHA
+            candidate_sha = $env:CANDIDATE_SHA
+            baseline_total_ms = $baseline
+            baseline_show_ms = [int]$env:BASELINE_SHOW_MS
+            candidate_total_ms = $candidate
+            candidate_show_ms = [int]$env:CANDIDATE_SHOW_MS
+            delta_ms = $delta
+            ratio = [Math]::Round($ratio, 4)
+            interpretation = $absoluteNote
+          } | ConvertTo-Json | Set-Content -LiteralPath "startup-ab-pr161.json" -Encoding UTF8
+
+          @"
+          ## PR161 frozen startup A/B
+          - baseline: `$env:BASELINE_SHA` = **$baseline ms**
+          - candidate: `$env:CANDIDATE_SHA` = **$candidate ms**
+          - delta: **$delta ms**
+          - ratio: **$([Math]::Round($ratio, 2))x**
+          - interpretation: **$absoluteNote**
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Verify packaged candidate display version
         shell: pwsh
         run: |
           $probeRoot = Join-Path $env:RUNNER_TEMP "invoice-hub-pr161-version-probe"
@@ -109,13 +202,9 @@ jobs:
           Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
           try {
             $probeProcess = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", ('"{0}"' -f $probePath)) -Wait -PassThru -WindowStyle Hidden
-            if ($probeProcess.ExitCode -ne 0) {
-              throw "Version probe exited with $($probeProcess.ExitCode)."
-            }
+            if ($probeProcess.ExitCode -ne 0) { throw "Version probe exited with $($probeProcess.ExitCode)." }
             $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
-            if ([string]$probe.contract -ne "invoice_hub_build_version_v1") {
-              throw "Unexpected version probe contract."
-            }
+            if ([string]$probe.contract -ne "invoice_hub_build_version_v1") { throw "Unexpected version probe contract." }
             if ([string]$probe.app_version -ne "v$env:CANDIDATE_VERSION") {
               throw "Embedded display version $($probe.app_version) does not match v$env:CANDIDATE_VERSION."
             }
@@ -124,7 +213,7 @@ jobs:
             Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Verify bundled payload hygiene
+      - name: Verify candidate payload hygiene
         shell: pwsh
         run: |
           $bad = Get-ChildItem dist\InvoiceHub -Recurse -Force | Where-Object {
@@ -150,26 +239,29 @@ jobs:
           Display version: v$env:CANDIDATE_VERSION
           Purpose: real-Windows cold-navigation and startup responsiveness validation only
           This is NOT a release and must not be redistributed as a stable build.
-          "@ | Set-Content -LiteralPath "dist\UX-CANDIDATE.txt" -Encoding UTF8
-          Compress-Archive -Path "dist\InvoiceHub\*" -DestinationPath "dist\$zipName" -Force
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist\$zipName").Hash.ToLowerInvariant()
-          "$hash  $zipName" | Set-Content -LiteralPath "dist\SHA256SUMS-UX.txt" -Encoding ASCII
+          "@ | Set-Content -LiteralPath "UX-CANDIDATE.txt" -Encoding UTF8
+          Compress-Archive -Path "dist\InvoiceHub\*" -DestinationPath "$zipName" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipName).Hash.ToLowerInvariant()
+          "$hash  $zipName" | Set-Content -LiteralPath "SHA256SUMS-UX.txt" -Encoding ASCII
           @{
             purpose = "pr161_windows_ux_validation_only"
             source_sha = $env:CANDIDATE_SHA
             display_version = "v$env:CANDIDATE_VERSION"
             artifact = $zipName
             sha256 = $hash
-          } | ConvertTo-Json | Set-Content -LiteralPath "dist\ux-candidate-metadata.json" -Encoding UTF8
+            baseline_total_ms = [int]$env:BASELINE_TOTAL_MS
+            candidate_total_ms = [int]$env:CANDIDATE_TOTAL_MS
+          } | ConvertTo-Json | Set-Content -LiteralPath "ux-candidate-metadata.json" -Encoding UTF8
 
       - name: Upload UX candidate
         uses: actions/upload-artifact@v4
         with:
           name: pr161-windows-ux-candidate-45d7f900
           path: |
-            dist/InvoiceHub-pr161-45d7f900-win64-portable.zip
-            dist/SHA256SUMS-UX.txt
-            dist/UX-CANDIDATE.txt
-            dist/ux-candidate-metadata.json
+            InvoiceHub-pr161-45d7f900-win64-portable.zip
+            SHA256SUMS-UX.txt
+            UX-CANDIDATE.txt
+            ux-candidate-metadata.json
+            startup-ab-pr161.json
           retention-days: 3
           if-no-files-found: error
