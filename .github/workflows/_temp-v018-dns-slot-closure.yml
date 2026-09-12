@@ -1,0 +1,144 @@
+name: Temporary v0.1.8 DNS Slot Closure
+
+on:
+  push:
+    branches:
+      - fix/v018-mail-scan-bounded-browser
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v018-mail-scan-bounded-browser
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Apply bounded DNS resolver capacity
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('scripts/invoice_fetch/link_downloader.py')
+          text = p.read_text(encoding='utf-8')
+
+          old = '_DNS_RESOLVE_TIMEOUT_SECONDS = 2.0\n\n\n@lru_cache(maxsize=256)\n'
+          new = (
+              '_DNS_RESOLVE_TIMEOUT_SECONDS = 2.0\n'
+              '_DNS_RESOLVE_MAX_INFLIGHT = 4\n'
+              '_DNS_RESOLVE_SLOTS = threading.BoundedSemaphore(_DNS_RESOLVE_MAX_INFLIGHT)\n\n\n'
+              '@lru_cache(maxsize=256)\n'
+          )
+          if old not in text:
+              raise SystemExit('DNS constant anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    done = threading.Event()
+    result: dict[str, object] = {}
+
+    def resolve() -> None:
+        try:
+            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            result["records"] = None
+        finally:
+            done.set()
+
+    threading.Thread(
+        target=resolve,
+        name="InvoiceHubDnsSafetyCheck",
+        daemon=True,
+    ).start()
+    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
+        fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        _log.warning("DNS safety check timed out: <%s>", fingerprint)
+        return False
+'''
+          new = '''    fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    if not _DNS_RESOLVE_SLOTS.acquire(blocking=False):
+        _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)
+        return False
+
+    done = threading.Event()
+    result: dict[str, object] = {}
+
+    def resolve() -> None:
+        try:
+            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            result["records"] = None
+        finally:
+            done.set()
+            _DNS_RESOLVE_SLOTS.release()
+
+    resolver = threading.Thread(
+        target=resolve,
+        name="InvoiceHubDnsSafetyCheck",
+        daemon=True,
+    )
+    try:
+        resolver.start()
+    except Exception:
+        _DNS_RESOLVE_SLOTS.release()
+        return False
+    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
+        _log.warning("DNS safety check timed out: <%s>", fingerprint)
+        return False
+'''
+          if old not in text:
+              raise SystemExit('DNS resolver body anchor not found')
+          text = text.replace(old, new, 1)
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate bounded resolver capacity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import threading
+          import time
+          from unittest.mock import patch
+          from scripts.invoice_fetch import link_downloader as ld
+
+          blocker = threading.Event()
+          calls = []
+          def stuck(host, *_args, **_kwargs):
+              calls.append(host)
+              blocker.wait(1.0)
+              return []
+
+          ld._host_resolves_to_public_addresses.cache_clear()
+          slots = threading.BoundedSemaphore(2)
+          with patch.object(ld, '_DNS_RESOLVE_TIMEOUT_SECONDS', 0.02), \
+               patch.object(ld, '_DNS_RESOLVE_SLOTS', slots), \
+               patch.object(ld.socket, 'getaddrinfo', side_effect=stuck):
+              assert not ld._host_resolves_to_public_addresses('a-timeout.example', 443)
+              assert not ld._host_resolves_to_public_addresses('b-timeout.example', 443)
+              started = time.monotonic()
+              assert not ld._host_resolves_to_public_addresses('c-timeout.example', 443)
+              assert time.monotonic() - started < 0.1
+              assert len(calls) == 2, calls
+          blocker.set()
+          PY
+          python -m py_compile scripts/invoice_fetch/link_downloader.py
+          git -c core.whitespace=cr-at-eol diff --check
+
+      - name: Commit closure and remove temporary workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/_temp-v018-dns-slot-closure.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git -c core.whitespace=cr-at-eol diff --cached --check
+          git commit -m "fix: bound DNS resolver resource growth"
+          git push origin HEAD:fix/v018-mail-scan-bounded-browser
