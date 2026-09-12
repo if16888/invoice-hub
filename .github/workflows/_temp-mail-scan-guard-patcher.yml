@@ -38,8 +38,6 @@ jobs:
           elif new not in text:
               raise SystemExit('browser attempt precondition block not found')
 
-          # The fixed general-page 2s wait is already bounded; keep it instead
-          # of introducing a brittle rewrite only for the final tail of budget.
           start_marker = "replace_once(\n    link,\n    '''            if not downloaded_path:\\n                page.wait_for_timeout(2000)\\n                if not downloaded_path:\\n'''"
           start = text.find(start_marker)
           if start != -1:
@@ -49,9 +47,6 @@ jobs:
                   raise SystemExit('could not find end of general-wait patch block')
               text = text[:start] + text[end + 1:]
 
-          # Keep this patcher responsible only for the complex browser file.
-          # Apply simple cross-file edits below with semantic string updates so
-          # CRLF/LF layout differences cannot make the migration fragile.
           simple_marker = '# 3) Wire the active scan cancellation token into browser link downloads.'
           simple_start = text.find(simple_marker)
           if simple_start == -1:
@@ -85,11 +80,28 @@ jobs:
               'LinkDownloader(att_dir, headed=headed)',
               'LinkDownloader(att_dir, headed=headed, scan_control=scan_control)',
           )
+          settings_path = Path('scripts/invoice_fetch/gui/settings_dialog.py')
           replace_exact(
-              'scripts/invoice_fetch/gui/settings_dialog.py',
+              settings_path,
               '📅 扫描时间范围: 只扫描最近 3 个月内的增量发票邮件',
               '📅 扫描时间范围: 按各邮箱配置的时间范围进行增量抓取',
           )
+          with settings_path.open('r', encoding='utf-8', newline='') as fh:
+              settings_text = fh.read()
+          cleaned = []
+          target = '按各邮箱配置的时间范围进行增量抓取'
+          for line in settings_text.splitlines(keepends=True):
+              if target in line:
+                  if line.endswith('\r\n'):
+                      line = line[:-2].rstrip(' \t') + '\r\n'
+                  elif line.endswith('\n'):
+                      line = line[:-1].rstrip(' \t') + '\n'
+                  else:
+                      line = line.rstrip(' \t')
+              cleaned.append(line)
+          with settings_path.open('w', encoding='utf-8', newline='') as fh:
+              fh.write(''.join(cleaned))
+
           replace_exact(
               'config.example.json',
               '    "timeout_ms": 10000,\n    "max_links_per_email": 5,',
