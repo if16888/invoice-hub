@@ -87,7 +87,7 @@
     "max_operation_timeout_ms": 10000,
     "budget_seconds_per_url": 20,
     "budget_seconds_per_email": 60,
-    "max_links_per_email": 3,
+    "max_links_per_email": 5,
     "skip_when_attachment_invoice_present": true
   },
   "categories": {

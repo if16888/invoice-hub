@@ -64,6 +64,36 @@ class BoundedBrowserScanTests(unittest.TestCase):
         self.assertEqual(legacy._url_budget_seconds, 8.0)
         self.assertEqual(legacy._email_budget_seconds, 21.0)
 
+    def test_default_capacity_preserves_five_candidate_links_until_budget_stops_work(self):
+        downloader = self._downloader(Path("bounded-browser-five-link-capacity"))
+        self.assertEqual(downloader._max_links_per_email, 5)
+        msg = EmailMessage()
+        msg["Subject"] = "invoice bundle"
+        raw = [
+            {"url": f"https://example.com/invoice-{idx}", "text": "invoice"}
+            for idx in range(5)
+        ]
+        attempts: list[str] = []
+
+        def attempt(url, *_args, **_kwargs):
+            attempts.append(url)
+            return None
+
+        with patch.object(
+            link_downloader, "extract_html_from_message", return_value="<html></html>"
+        ), patch.object(
+            link_downloader,
+            "_extract_links_with_metadata_from_html_and_stats",
+            return_value=(raw, {"anchor_count": 5, "unsafe_skipped": 0, "excluded_skipped": 0}),
+        ), patch.object(
+            link_downloader,
+            "_dedup_and_prioritize_with_metadata",
+            return_value=(raw, []),
+        ), patch.object(downloader, "_download_url", side_effect=attempt):
+            downloader.download_from_email(msg, 1, "2026-09-12")
+
+        self.assertEqual(attempts, [item["url"] for item in raw])
+
     def test_download_save_helper_does_not_advertise_an_unenforced_timeout(self):
         signature = inspect.signature(link_downloader._save_download_to_path)
         self.assertNotIn("timeout_ms", signature.parameters)

@@ -622,7 +622,7 @@ class LinkDownloader:
             3.0,
             float(link_cfg.get("budget_seconds_per_url", legacy_url_budget)),
         )
-        self._max_links_per_email = max(1, int(link_cfg.get("max_links_per_email", 3)))
+        self._max_links_per_email = max(1, int(link_cfg.get("max_links_per_email", 5)))
         legacy_email_budget = link_cfg.get("max_seconds_per_email", 60.0)
         self._email_budget_seconds = max(
             self._url_budget_seconds,
