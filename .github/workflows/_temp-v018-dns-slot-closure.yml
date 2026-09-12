@@ -30,7 +30,6 @@ jobs:
 
           p = Path('scripts/invoice_fetch/link_downloader.py')
           text = p.read_text(encoding='utf-8')
-
           old = '_DNS_RESOLVE_TIMEOUT_SECONDS = 2.0\n\n\n@lru_cache(maxsize=256)\n'
           new = (
               '_DNS_RESOLVE_TIMEOUT_SECONDS = 2.0\n'
@@ -42,61 +41,39 @@ jobs:
               raise SystemExit('DNS constant anchor not found')
           text = text.replace(old, new, 1)
 
-          old = '''    done = threading.Event()
-    result: dict[str, object] = {}
-
-    def resolve() -> None:
-        try:
-            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        except OSError:
-            result["records"] = None
-        finally:
-            done.set()
-
-    threading.Thread(
-        target=resolve,
-        name="InvoiceHubDnsSafetyCheck",
-        daemon=True,
-    ).start()
-    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
-        fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
-        _log.warning("DNS safety check timed out: <%s>", fingerprint)
-        return False
-'''
-          new = '''    fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    if not _DNS_RESOLVE_SLOTS.acquire(blocking=False):
-        _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)
-        return False
-
-    done = threading.Event()
-    result: dict[str, object] = {}
-
-    def resolve() -> None:
-        try:
-            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        except OSError:
-            result["records"] = None
-        finally:
-            done.set()
-            _DNS_RESOLVE_SLOTS.release()
-
-    resolver = threading.Thread(
-        target=resolve,
-        name="InvoiceHubDnsSafetyCheck",
-        daemon=True,
-    )
-    try:
-        resolver.start()
-    except Exception:
-        _DNS_RESOLVE_SLOTS.release()
-        return False
-    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
-        _log.warning("DNS safety check timed out: <%s>", fingerprint)
-        return False
-'''
-          if old not in text:
-              raise SystemExit('DNS resolver body anchor not found')
-          text = text.replace(old, new, 1)
+          start = text.index('    done = threading.Event()\n', text.index('def _host_resolves_to_public_addresses'))
+          end_marker = '        return False\n\n    records = result.get("records")\n'
+          end = text.index(end_marker, start)
+          replacement = (
+              '    fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]\n'
+              '    if not _DNS_RESOLVE_SLOTS.acquire(blocking=False):\n'
+              '        _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)\n'
+              '        return False\n\n'
+              '    done = threading.Event()\n'
+              '    result: dict[str, object] = {}\n\n'
+              '    def resolve() -> None:\n'
+              '        try:\n'
+              '            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)\n'
+              '        except OSError:\n'
+              '            result["records"] = None\n'
+              '        finally:\n'
+              '            done.set()\n'
+              '            _DNS_RESOLVE_SLOTS.release()\n\n'
+              '    resolver = threading.Thread(\n'
+              '        target=resolve,\n'
+              '        name="InvoiceHubDnsSafetyCheck",\n'
+              '        daemon=True,\n'
+              '    )\n'
+              '    try:\n'
+              '        resolver.start()\n'
+              '    except Exception:\n'
+              '        _DNS_RESOLVE_SLOTS.release()\n'
+              '        return False\n'
+              '    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):\n'
+              '        _log.warning("DNS safety check timed out: <%s>", fingerprint)\n'
+              '        return False\n\n'
+          )
+          text = text[:start] + replacement + text[end + len('        return False\n\n'):]
           p.write_text(text, encoding='utf-8')
           PY
 
@@ -118,9 +95,7 @@ jobs:
 
           ld._host_resolves_to_public_addresses.cache_clear()
           slots = threading.BoundedSemaphore(2)
-          with patch.object(ld, '_DNS_RESOLVE_TIMEOUT_SECONDS', 0.02), \
-               patch.object(ld, '_DNS_RESOLVE_SLOTS', slots), \
-               patch.object(ld.socket, 'getaddrinfo', side_effect=stuck):
+          with patch.object(ld, '_DNS_RESOLVE_TIMEOUT_SECONDS', 0.02), patch.object(ld, '_DNS_RESOLVE_SLOTS', slots), patch.object(ld.socket, 'getaddrinfo', side_effect=stuck):
               assert not ld._host_resolves_to_public_addresses('a-timeout.example', 443)
               assert not ld._host_resolves_to_public_addresses('b-timeout.example', 443)
               started = time.monotonic()
