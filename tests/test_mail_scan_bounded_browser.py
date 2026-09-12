@@ -57,6 +57,50 @@ class BoundedBrowserScanTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertLess(elapsed, 0.25)
 
+    def test_dns_safety_check_caps_stuck_resolver_thread_growth(self):
+        blocker = threading.Event()
+        calls: list[str] = []
+
+        def stuck_getaddrinfo(host, *_args, **_kwargs):
+            calls.append(str(host))
+            blocker.wait(1.0)
+            return []
+
+        link_downloader._host_resolves_to_public_addresses.cache_clear()
+        slots = threading.BoundedSemaphore(2)
+        exhausted_elapsed = None
+        try:
+            with patch.object(
+                link_downloader, "_DNS_RESOLVE_TIMEOUT_SECONDS", 0.02
+            ), patch.object(
+                link_downloader, "_DNS_RESOLVE_SLOTS", slots
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=stuck_getaddrinfo
+            ):
+                self.assertFalse(
+                    link_downloader._host_resolves_to_public_addresses(
+                        "invoice-timeout-a.example", 443
+                    )
+                )
+                self.assertFalse(
+                    link_downloader._host_resolves_to_public_addresses(
+                        "invoice-timeout-b.example", 443
+                    )
+                )
+                started = time.monotonic()
+                self.assertFalse(
+                    link_downloader._host_resolves_to_public_addresses(
+                        "invoice-timeout-c.example", 443
+                    )
+                )
+                exhausted_elapsed = time.monotonic() - started
+        finally:
+            blocker.set()
+
+        self.assertEqual(len(calls), 2)
+        self.assertIsNotNone(exhausted_elapsed)
+        self.assertLess(exhausted_elapsed, 0.1)
+
     def test_link_downloader_honors_scan_control_before_browser_work(self):
         control = ScanControl()
         control.cancel()
