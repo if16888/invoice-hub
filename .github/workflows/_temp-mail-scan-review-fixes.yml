@@ -1,0 +1,149 @@
+name: Temporary Mail Scan Review Fixes
+
+on:
+  push:
+    branches:
+      - fix/v018-mail-scan-bounded-browser
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v018-mail-scan-bounded-browser
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              p = Path(path)
+              with p.open('r', encoding='utf-8', newline='') as fh:
+                  return fh.read()
+
+          def write(path, text):
+              p = Path(path)
+              with p.open('w', encoding='utf-8', newline='') as fh:
+                  fh.write(text)
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              return text.replace(old, new, 1)
+
+          link_path = 'scripts/invoice_fetch/link_downloader.py'
+          text = read(link_path)
+
+          text = replace_once(
+              text,
+              '''                attempted_count += 1\n                r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)\n                if r:\n''',
+              '''                self._check_cancelled()\n                attempted_count += 1\n                r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)\n                self._check_cancelled()\n                if r:\n''',
+              'low-priority cancellation',
+          )
+
+          text = replace_once(
+              text,
+              '''        try:\n            self._check_cancelled()\n            self._ensure_browser()\n            self._check_cancelled()\n        except Exception as exc:\n            _log.error("Playwright start failed: %s", exc)\n            return None\n''',
+              '''        try:\n            self._check_cancelled()\n            self._ensure_browser()\n            self._check_cancelled()\n        except Exception as exc:\n            if self._scan_control is not None and self._scan_control.cancelled:\n                raise\n            _log.error("Playwright start failed: %s", exc)\n            return None\n''',
+              'browser-start cancellation propagation',
+          )
+
+          text = replace_once(
+              text,
+              '''            kwargs = {\n                "headless": not self._headed,\n                "args": launch_args,\n            }\n''',
+              '''            kwargs = {\n                "headless": not self._headed,\n                "args": launch_args,\n                "timeout": self._timeout,\n            }\n''',
+              'browser launch timeout',
+          )
+
+          text = replace_once(
+              text,
+              '''    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False, deadline: float | None = None) -> tuple[str | None, str | None, str | None] | None:\n        \"\"\" Nuonuo/JSS site specific downloader handler \"\"\"\n''',
+              '''    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False, deadline: float | None = None) -> tuple[str | None, str | None, str | None] | None:\n        \"\"\" Nuonuo/JSS site specific downloader handler \"\"\"\n        self._check_cancelled()\n''',
+              'nuonuo entry cancellation',
+          )
+
+          text = replace_once(
+              text,
+              '''        # Short wait to collect responses\n        page.wait_for_timeout(2000)\n\n        # Check captured responses\n''',
+              '''        # Short wait to collect responses; preserve the cumulative URL deadline.\n        self._check_cancelled()\n        page.wait_for_timeout(\n            min(1000, self._remaining_timeout_ms(deadline, 1000))\n            if deadline is not None\n            else 1000\n        )\n        self._check_cancelled()\n\n        # Check captured responses\n''',
+              'nuonuo response wait deadline',
+          )
+
+          write(link_path, text)
+
+          services_path = 'scripts/invoice_fetch/services.py'
+          text = read(services_path)
+          newline = '\r\n' if '\r\n' in text else '\n'
+
+          marker = f'''{newline}def _attach_evidence_to_invoice({newline}'''
+          if text.count(marker) != 1:
+              raise SystemExit(f'semantic evidence helper marker count={text.count(marker)}')
+          helper = '''\n\ndef _semantic_evidence_fingerprint(path: str | Path) -> str:\n    \"\"\"Hash stable visible PDF text so regenerated copies remain idempotent.\"\"\"\n    p = Path(path)\n    if not p.exists() or p.suffix.lower() != ".pdf":\n        return ""\n    try:\n        text = _extract_pdf_text_simple(p)\n    except Exception:\n        return ""\n    normalized = re.sub(r"\\s+", " ", str(text or "")).strip().casefold()\n    if len(normalized) < 32:\n        return ""\n    digest = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()\n    return f"pdftext:{digest}"\n'''.replace('\n', newline)
+          text = text.replace(marker, helper + marker, 1)
+
+          old = '''    att_dir = RUNTIME_DIR / "attachments"\n\n    renamed_rel = _rename_by_invoice_code(\n'''.replace('\n', newline)
+          new = '''    att_dir = RUNTIME_DIR / "attachments"\n\n    extra_paths = _normalize_path_list(invoice.get("extra_paths"))\n    incoming_semantic = _semantic_evidence_fingerprint(file_path)\n    if incoming_semantic:\n        for existing_path in extra_paths:\n            resolved = _resolve_runtime_path(existing_path)\n            if resolved and _semantic_evidence_fingerprint(resolved) == incoming_semantic:\n                _log.info(\n                    "  检测到语义相同证明材料，复用已有关联: invoice_id=%s file=%s",\n                    invoice["id"],\n                    mask_filename(file_path.name),\n                )\n                return False\n\n    renamed_rel = _rename_by_invoice_code(\n'''.replace('\n', newline)
+          if text.count(old) != 1:
+              raise SystemExit(f'_attach_evidence precheck insertion count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''    stored_path = renamed_rel\n\n    extra_paths = _normalize_path_list(invoice.get("extra_paths"))\n    if stored_path in extra_paths:\n'''.replace('\n', newline)
+          new = '''    stored_path = renamed_rel\n\n    if stored_path in extra_paths:\n'''.replace('\n', newline)
+          if text.count(old) != 1:
+              raise SystemExit(f'_attach_evidence duplicate declaration count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''    # Pre-calculate hashes of existing extras\n    existing_hashes = set()\n    for ep in current_extras:\n        res = _resolve_runtime_path(ep)\n        if res and res.exists():\n            try:\n                existing_hashes.add(_sha256_file(res))\n            except Exception:\n                pass\n\n    updated = False\n'''.replace('\n', newline)
+          new = '''    # Pre-calculate byte and visible-text fingerprints of existing extras.\n    existing_hashes = set()\n    existing_semantic_fingerprints = set()\n    for ep in current_extras:\n        res = _resolve_runtime_path(ep)\n        if res and res.exists():\n            try:\n                existing_hashes.add(_sha256_file(res))\n            except Exception:\n                pass\n            semantic = _semantic_evidence_fingerprint(res)\n            if semantic:\n                existing_semantic_fingerprints.add(semantic)\n\n    updated = False\n'''.replace('\n', newline)
+          if text.count(old) != 1:
+              raise SystemExit(f'existing evidence fingerprint block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''        e_path = Path(e.file_path)\n        source_path = ""\n        if e_path.exists():\n            source_path = str(e_path.resolve())\n            kept_paths.add(source_path)\n            try:\n                h = _sha256_file(e_path)\n                if h in existing_hashes:\n                    if attached_source_paths is not None:\n                        attached_source_paths.add(source_path)\n                    continue\n            except Exception:\n                pass\n\n        ep = _rename_by_invoice_code(\n'''.replace('\n', newline)
+          new = '''        e_path = Path(e.file_path)\n        source_path = ""\n        incoming_semantic = ""\n        if e_path.exists():\n            source_path = str(e_path.resolve())\n            incoming_semantic = _semantic_evidence_fingerprint(e_path)\n            if incoming_semantic and incoming_semantic in existing_semantic_fingerprints:\n                if attached_source_paths is not None:\n                    attached_source_paths.add(source_path)\n                _log.info(\n                    "  检测到语义相同证明材料，跳过重复追加: invoice_id=%s file=%s",\n                    invoice_id,\n                    mask_filename(getattr(e, "original_name", e_path.name)),\n                )\n                continue\n            kept_paths.add(source_path)\n            try:\n                h = _sha256_file(e_path)\n                if h in existing_hashes:\n                    if attached_source_paths is not None:\n                        attached_source_paths.add(source_path)\n                    continue\n            except Exception:\n                pass\n\n        ep = _rename_by_invoice_code(\n'''.replace('\n', newline)
+          if text.count(old) != 1:
+              raise SystemExit(f'incoming evidence semantic block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''            current_extras.append(ep)\n            updated = True\n            if attached_source_paths is not None and source_path:\n'''.replace('\n', newline)
+          new = '''            current_extras.append(ep)\n            if incoming_semantic:\n                existing_semantic_fingerprints.add(incoming_semantic)\n            updated = True\n            if attached_source_paths is not None and source_path:\n'''.replace('\n', newline)
+          if text.count(old) != 1:
+              raise SystemExit(f'new evidence semantic commit block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          write(services_path, text)
+          PY
+
+      - name: Validate focused tests and syntax
+        shell: bash
+        run: |
+          python -m py_compile \
+            scripts/invoice_fetch/link_downloader.py \
+            scripts/invoice_fetch/services.py \
+            tests/test_mail_scan_bounded_browser.py
+          python -m unittest -v tests.test_mail_scan_bounded_browser
+          git -c core.whitespace=cr-at-eol diff --check
+
+      - name: Commit fixes and remove temporary workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/_temp-mail-scan-review-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git -c core.whitespace=cr-at-eol diff --cached --check
+          git commit -m "fix: close mailbox scan cancellation gaps"
+          git push origin HEAD:fix/v018-mail-scan-bounded-browser
