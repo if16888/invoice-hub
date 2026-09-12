@@ -3434,7 +3434,7 @@ def _scan_mailboxes_with_db(
     att_dir.mkdir(parents=True, exist_ok=True)
     att_handler = AttachmentHandler(att_dir)
     parser = InvoiceParser()
-    link_dl = LinkDownloader(att_dir, headed=headed)
+    link_dl = LinkDownloader(att_dir, headed=headed, scan_control=scan_control)
 
     scanned_headers = 0
     new_email_headers = 0

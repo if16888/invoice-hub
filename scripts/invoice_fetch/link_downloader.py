@@ -150,9 +150,12 @@ def _is_safe_download_url(url: str) -> bool:
     return ip.is_global
 
 
+_DNS_RESOLVE_TIMEOUT_SECONDS = 2.0
+
+
 @lru_cache(maxsize=256)
 def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
-    """Fail closed unless every resolved address is publicly routable."""
+    """Fail closed unless every resolved address is public, with bounded DNS wait."""
     try:
         literal_ip = ipaddress.ip_address(host)
     except ValueError:
@@ -160,9 +163,29 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
     if literal_ip is not None:
         return literal_ip.is_global
 
-    try:
-        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError:
+    done = threading.Event()
+    result: dict[str, object] = {}
+
+    def resolve() -> None:
+        try:
+            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            result["records"] = None
+        finally:
+            done.set()
+
+    threading.Thread(
+        target=resolve,
+        name="InvoiceHubDnsSafetyCheck",
+        daemon=True,
+    ).start()
+    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
+        fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        _log.warning("DNS safety check timed out: <%s>", fingerprint)
+        return False
+
+    records = result.get("records")
+    if not records:
         return False
     addresses = {record[4][0] for record in records if record[4]}
     if not addresses:
@@ -571,25 +594,29 @@ def _verify_and_clean_file(path: str | Path) -> bool:
 class LinkDownloader:
     """Download invoice PDFs from URLs using a headless browser."""
 
-    def __init__(self, download_dir: str | Path, timeout_ms: int = 30_000, headed: bool = False):
+    def __init__(self, download_dir: str | Path, timeout_ms: int = 30_000, headed: bool = False, scan_control=None):
         self._dir = Path(download_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         # Per-config capacity limits (can be overridden via config)
         from .config import load_config_safe
         cfg = load_config_safe()
         link_cfg = cfg.get("link_download", {}) if isinstance(cfg, dict) else {}
-        self._timeout = timeout_ms
-        cfg_timeout = link_cfg.get("timeout_ms")
-        if cfg_timeout is not None:
-            self._timeout = int(cfg_timeout)
-        self._max_links_per_email = int(link_cfg.get("max_links_per_email", 5))
-        self._max_seconds_per_email = float(link_cfg.get("max_seconds_per_email", 120))
+        requested_timeout = int(link_cfg.get("timeout_ms", timeout_ms))
+        max_operation_timeout_ms = int(link_cfg.get("max_operation_timeout_ms", 10_000))
+        self._timeout = max(1_000, min(requested_timeout, max_operation_timeout_ms))
+        self._max_seconds_per_url = max(3.0, float(link_cfg.get("max_seconds_per_url", 20.0)))
+        self._max_links_per_email = max(1, int(link_cfg.get("max_links_per_email", 3)))
+        self._max_seconds_per_email = max(
+            self._max_seconds_per_url,
+            float(link_cfg.get("max_seconds_per_email", 60.0)),
+        )
         self._skip_when_attachment_invoice_present = bool(
             link_cfg.get("skip_when_attachment_invoice_present", True)
         )
         self._pw = None
         self._browser = None
         self._headed = headed
+        self._scan_control = scan_control
         # Per-process failed URL fingerprint cache — avoid retrying known failures
         self.failed_url_fingerprints: set[str] = set()
 
@@ -597,6 +624,20 @@ class LinkDownloader:
     def _url_fingerprint(url: str) -> str:
         """Return a hashed fingerprint for a URL — deterministic, not reversible."""
         return hashlib.sha256(url.encode()).hexdigest()[:16]
+
+    def _check_cancelled(self) -> None:
+        control = self._scan_control
+        if control is not None:
+            control.raise_if_cancelled()
+
+    def _remaining_timeout_ms(self, deadline: float, cap_ms: int | None = None) -> int:
+        self._check_cancelled()
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            raise TimeoutError("browser link download deadline exceeded")
+        if cap_ms is not None:
+            remaining_ms = min(remaining_ms, int(cap_ms))
+        return max(1, min(remaining_ms, self._timeout))
 
     def _ensure_browser(self):
         if self._browser:
@@ -686,6 +727,7 @@ class LinkDownloader:
         self.close()
 
     def download_from_email(self, msg, mail_uid: int, date_str: str = "") -> list[DownloadedFile]:
+        self._check_cancelled()
         subject = ""
         sender = ""
         if msg:
@@ -767,8 +809,10 @@ class LinkDownloader:
                 skipped_cached += 1
                 _log.info("跳过本轮已失败链接: <%s>", fp)
                 continue
+            self._check_cancelled()
             attempted_count += 1
             r = self._download_url(url, mail_uid, len(results), date_str, disable_fallback=has_official_success)
+            self._check_cancelled()
             if r:
                 results.append(r)
                 high_success = True
@@ -856,20 +900,20 @@ class LinkDownloader:
             )
         return results
 
-    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False) -> tuple[str | None, str | None, str | None] | None:
+    def _handle_nuonuo_invoice_page(self, page, url: str, save_dir: Path, mail_uid: int, idx: int, disable_fallback: bool = False, deadline: float | None = None) -> tuple[str | None, str | None, str | None] | None:
         """ Nuonuo/JSS site specific downloader handler """
         try:
-            page.wait_for_load_state("domcontentloaded", timeout=5000)
+            page.wait_for_load_state("domcontentloaded", timeout=self._remaining_timeout_ms(deadline, 5000) if deadline is not None else 5000)
         except Exception:
             pass
 
         try:
-            page.wait_for_load_state("networkidle", timeout=5000)
+            page.wait_for_load_state("networkidle", timeout=self._remaining_timeout_ms(deadline, 5000) if deadline is not None else 5000)
         except Exception:
             pass
 
         try:
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(min(1000, self._remaining_timeout_ms(deadline, 1000)) if deadline is not None else 1000)
         except Exception:
             pass
 
@@ -980,7 +1024,7 @@ class LinkDownloader:
                 locator = page.locator(sel)
                 if locator.count() > 0:
                     try:
-                        with page.expect_download(timeout=3000) as download_info:
+                        with page.expect_download(timeout=self._remaining_timeout_ms(deadline, 3000) if deadline is not None else 3000) as download_info:
                             locator.first.click()
                         if download_info:
                             download = download_info.value
@@ -1081,10 +1125,15 @@ class LinkDownloader:
             _log.warning("Skipping unsafe link: %s", mask_url_for_log(url))
             return None
 
+        attempt_started = time.monotonic()
+        deadline = attempt_started + self._max_seconds_per_url
+        fingerprint = self._url_fingerprint(url)
         _log.info("Browser download: %s", mask_url_for_log(url))
 
         try:
+            self._check_cancelled()
             self._ensure_browser()
+            self._check_cancelled()
         except Exception as exc:
             _log.error("Playwright start failed: %s", exc)
             return None
@@ -1100,8 +1149,9 @@ class LinkDownloader:
             )
             ctx = self._browser.new_context(accept_downloads=True, user_agent=desktop_ua)
             page = ctx.new_page()
-            ctx.set_default_timeout(self._timeout)
-            ctx.set_default_navigation_timeout(self._timeout)
+            bounded_timeout = self._remaining_timeout_ms(deadline)
+            ctx.set_default_timeout(bounded_timeout)
+            ctx.set_default_navigation_timeout(bounded_timeout)
             page.route("**/*", _route_browser_request)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
@@ -1166,9 +1216,10 @@ class LinkDownloader:
             page.on("response", on_response)
 
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=self._timeout)
+                page.goto(url, wait_until="domcontentloaded", timeout=self._remaining_timeout_ms(deadline))
             except Exception:
-                pass
+                self._check_cancelled()
+            self._check_cancelled()
             final_url = str(getattr(page, "url", "") or "")
             if final_url and not _is_safe_browser_request_url(final_url):
                 _log.warning(
@@ -1179,13 +1230,22 @@ class LinkDownloader:
                 return None
 
             # 1. Try JSS/Nuonuo site specific download logic first
-            res_handle = self._handle_nuonuo_invoice_page(page, url, save_dir, mail_uid, idx, disable_fallback=disable_fallback)
+            res_handle = self._handle_nuonuo_invoice_page(
+                page,
+                url,
+                save_dir,
+                mail_uid,
+                idx,
+                disable_fallback=disable_fallback,
+                deadline=deadline,
+            )
+            self._check_cancelled()
             if res_handle:
                 downloaded_path, source_type, parse_note = res_handle
 
             # 2. General logic
             if not downloaded_path:
-                page.wait_for_timeout(2000)
+                page.wait_for_timeout(min(1000, self._remaining_timeout_ms(deadline, 1000)) if deadline is not None else 1000)
                 if not downloaded_path:
                     self._try_click_download(page)
                 if download_started and not downloaded_path:
@@ -1220,12 +1280,21 @@ class LinkDownloader:
             self.failed_url_fingerprints.add(self._url_fingerprint(url))
             return None
         except Exception as exc:
-            _log.debug("Browser download failed for <%s>: %s", self._url_fingerprint(url), exc)
-            self.failed_url_fingerprints.add(self._url_fingerprint(url))
+            if self._scan_control is not None and self._scan_control.cancelled:
+                raise
+            elapsed = time.monotonic() - attempt_started
+            level = _log.warning if isinstance(exc, TimeoutError) or elapsed >= self._max_seconds_per_url else _log.debug
+            level("Browser download failed for <%s>: %s (elapsed=%.1fs)", fingerprint, exc, elapsed)
+            self.failed_url_fingerprints.add(fingerprint)
             return None
         finally:
+            elapsed = time.monotonic() - attempt_started
+            _log.info("Browser download attempt finished: <%s> elapsed=%.1fs", fingerprint, elapsed)
             if ctx:
-                ctx.close()
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
 
     def _try_click_download(self, page) -> None:
         selectors = [
