@@ -1,0 +1,175 @@
+name: PR161 Windows UX Candidate
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - "test/pr161-windows-ux-candidate"
+
+jobs:
+  build:
+    name: Build PR161 Windows UX candidate
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: "45d7f900ad1c82144eb624d2bfb85b832e9788f6"
+      CANDIDATE_VERSION: "0.1.8-pre161"
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+      - name: Checkout exact PR161 candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact source identity
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne $env:CANDIDATE_SHA.ToLowerInvariant()) {
+            throw "Expected PR161 candidate $env:CANDIDATE_SHA but checked out $actual."
+          }
+          Write-Host "PR161 UX candidate source: $actual"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
+
+      - name: Run cheap source safety gates
+        shell: pwsh
+        run: |
+          python scripts/check_repo_privacy.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_public_export.py .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_release_metadata.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_architecture_policy.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m compileall -q scripts/invoice_fetch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Embed UX candidate display version
+        shell: pwsh
+        run: |
+          $env:INVOICE_HUB_BUILD_VERSION = $env:CANDIDATE_VERSION
+          python -c "from scripts.invoice_fetch.version import resolve_build_version; print(resolve_build_version(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/dev/write_embedded_build_version.py --version $env:CANDIDATE_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m scripts.generate_windows_version_info --output build/windows-version-info.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build frozen Windows candidate
+        shell: pwsh
+        env:
+          PYTHONOPTIMIZE: "1"
+        run: pyinstaller packaging/invoice_hub_windows.spec --distpath dist --workpath build/pyinstaller --clean --noconfirm
+
+      - name: Verify executable and startup gate
+        shell: pwsh
+        run: |
+          $exe = "dist\InvoiceHub\InvoiceHub.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Frozen candidate executable missing: $exe"
+          }
+          $runtimeDir = Join-Path $env:RUNNER_TEMP "invoice-hub-pr161-ux-startup"
+          Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          $env:INVOICE_HUB_RUNTIME_DIR = $runtimeDir
+          try {
+            python scripts/check_startup_time.py $exe --threshold 3000
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Remove-Item Env:INVOICE_HUB_RUNTIME_DIR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Verify packaged display version
+        shell: pwsh
+        run: |
+          $probeRoot = Join-Path $env:RUNNER_TEMP "invoice-hub-pr161-version-probe"
+          New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
+          $probePath = Join-Path $probeRoot "version.json"
+          Remove-Item Env:INVOICE_HUB_BUILD_VERSION -ErrorAction SilentlyContinue
+          try {
+            $probeProcess = Start-Process -FilePath "dist\InvoiceHub\InvoiceHub.exe" -ArgumentList @("--version-probe-file", ('"{0}"' -f $probePath)) -Wait -PassThru -WindowStyle Hidden
+            if ($probeProcess.ExitCode -ne 0) {
+              throw "Version probe exited with $($probeProcess.ExitCode)."
+            }
+            $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
+            if ([string]$probe.contract -ne "invoice_hub_build_version_v1") {
+              throw "Unexpected version probe contract."
+            }
+            if ([string]$probe.app_version -ne "v$env:CANDIDATE_VERSION") {
+              throw "Embedded display version $($probe.app_version) does not match v$env:CANDIDATE_VERSION."
+            }
+          }
+          finally {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Verify bundled payload hygiene
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem dist\InvoiceHub -Recurse -Force | Where-Object {
+            $path = $_.FullName
+            $name = $_.Name
+            $path -match '[\\/](runtime|private-data|real-samples|ms-playwright)[\\/]' -or
+              $path -match '[\\/]chromium-[^\\/]+[\\/]' -or
+              $name -in @("config.json", "invoices.db")
+          }
+          if ($bad) {
+            $bad | Select-Object FullName
+            throw "UX candidate payload contains forbidden runtime/private/browser files."
+          }
+
+      - name: Create UX candidate artifact
+        shell: pwsh
+        run: |
+          $short = $env:CANDIDATE_SHA.Substring(0, 8)
+          $zipName = "InvoiceHub-pr161-$short-win64-portable.zip"
+          @"
+          Invoice Hub PR #161 Windows UX validation candidate
+          Source SHA: $env:CANDIDATE_SHA
+          Display version: v$env:CANDIDATE_VERSION
+          Purpose: real-Windows cold-navigation and startup responsiveness validation only
+          This is NOT a release and must not be redistributed as a stable build.
+          "@ | Set-Content -LiteralPath "dist\UX-CANDIDATE.txt" -Encoding UTF8
+          Compress-Archive -Path "dist\InvoiceHub\*" -DestinationPath "dist\$zipName" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist\$zipName").Hash.ToLowerInvariant()
+          "$hash  $zipName" | Set-Content -LiteralPath "dist\SHA256SUMS-UX.txt" -Encoding ASCII
+          @{
+            purpose = "pr161_windows_ux_validation_only"
+            source_sha = $env:CANDIDATE_SHA
+            display_version = "v$env:CANDIDATE_VERSION"
+            artifact = $zipName
+            sha256 = $hash
+          } | ConvertTo-Json | Set-Content -LiteralPath "dist\ux-candidate-metadata.json" -Encoding UTF8
+
+      - name: Upload UX candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr161-windows-ux-candidate-45d7f900
+          path: |
+            dist/InvoiceHub-pr161-45d7f900-win64-portable.zip
+            dist/SHA256SUMS-UX.txt
+            dist/UX-CANDIDATE.txt
+            dist/ux-candidate-metadata.json
+          retention-days: 3
+          if-no-files-found: error
