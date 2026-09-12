@@ -22,6 +22,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install focused dependency
+        shell: bash
+        run: python -m pip install beautifulsoup4
+
       - name: Apply bounded DNS resolver capacity
         shell: bash
         run: |
