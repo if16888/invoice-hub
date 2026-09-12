@@ -1,0 +1,58 @@
+name: Temporary Mail Scan Deadline Closure
+
+on:
+  push:
+    branches:
+      - fix/v018-mail-scan-bounded-browser
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONIOENCODING: "utf-8"
+      INVOICE_HUB_TEST_MODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v018-mail-scan-bounded-browser
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+            requirements-build.lock.txt
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
+
+      - name: Apply shared deadline closure
+        run: python scripts/dev/_apply_mail_scan_deadline_closure.py
+
+      - name: Focused validation
+        run: |
+          python -m py_compile scripts/invoice_fetch/link_downloader.py tests/test_mail_scan_bounded_browser.py
+          python -m unittest tests.test_mail_scan_bounded_browser
+          git diff --check
+
+      - name: Commit production patch and remove temporary scaffolding
+        shell: bash
+        run: |
+          rm -f scripts/dev/_apply_mail_scan_deadline_closure.py
+          rm -f .github/workflows/_temp-mail-scan-deadline-closure.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: enforce shared mail scan deadlines"
+          git push origin HEAD:fix/v018-mail-scan-bounded-browser
