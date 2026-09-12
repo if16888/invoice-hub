@@ -20,8 +20,9 @@ jobs:
     name: Build Windows x64 Package
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
     env:
       PYTHONIOENCODING: "utf-8"
@@ -63,8 +64,8 @@ jobs:
           else {
             $tag = $env:TAG_NAME
             # actions/checkout may materialize the event's peeled commit into
-            # refs/tags/<tag>. Do not use that checkout-local ref as release
-            # authority. Fetch the remote tag object into an independent ref.
+            # refs/tags/<tag>. Fetch the remote tag object into an independent
+            # ref and require an annotated tag as release authority.
             $authorityRef = "refs/release-authority/$tag"
             git fetch --force --no-tags origin "refs/tags/${tag}:$authorityRef"
             if ($LASTEXITCODE -ne 0) {
@@ -78,10 +79,72 @@ jobs:
             if ($tagCommit -ne $actual) {
               throw "Release tag $tag resolves to $tagCommit but checkout is $actual."
             }
+
+            # Do not require a release tag to remain equal to the future
+            # origin/master HEAD. The next step requires successful exact-SHA
+            # master push CI authority for this immutable tagged source.
             "AUDIT_MODE=false" >> $env:GITHUB_ENV
           }
+
           "SOURCE_SHA=$actual" >> $env:GITHUB_ENV
+          "RELEASE_BUILD_START_EPOCH=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV
           Write-Host "SOURCE_SHA=$actual"
+
+      - name: Verify exact-SHA unittest and HCI CI authority
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not $env:GH_TOKEN) {
+            throw "GITHUB_TOKEN is required to verify CI authority."
+          }
+
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $runsUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$env:SOURCE_SHA&event=push&per_page=20"
+          $runs = Invoke-RestMethod -Method Get -Uri $runsUri -Headers $headers
+          $authority = @($runs.workflow_runs) |
+            Where-Object {
+              ([string]$_.head_sha).ToLowerInvariant() -eq $env:SOURCE_SHA -and
+              [string]$_.head_branch -eq "master" -and
+              [string]$_.event -eq "push" -and
+              [string]$_.status -eq "completed" -and
+              [string]$_.conclusion -eq "success"
+            } |
+            Sort-Object -Property run_number -Descending |
+            Select-Object -First 1
+
+          if ($null -eq $authority) {
+            throw "No successful master CI run exists for exact SHA $env:SOURCE_SHA. Release build refuses to repeat source tests as a substitute."
+          }
+
+          $jobsUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$($authority.id)/jobs?filter=latest&per_page=100"
+          $jobsResponse = Invoke-RestMethod -Method Get -Uri $jobsUri -Headers $headers
+          $requiredJobs = @(
+            "Source gates",
+            "Unit shard 0",
+            "Unit shard 1",
+            "Unit shard 2",
+            "HCI acceptance lane"
+          )
+          foreach ($requiredName in $requiredJobs) {
+            $matching = @($jobsResponse.jobs) | Where-Object { [string]$_.name -eq $requiredName }
+            if ($matching.Count -ne 1) {
+              throw "CI authority run $($authority.id) must contain exactly one '$requiredName' job; found $($matching.Count)."
+            }
+            if ([string]$matching[0].conclusion -ne "success") {
+              throw "CI authority job '$requiredName' is $($matching[0].conclusion), not success."
+            }
+          }
+
+          "CI_AUTHORITY_RUN_ID=$($authority.id)" >> $env:GITHUB_ENV
+          "CI_AUTHORITY_RUN_NUMBER=$($authority.run_number)" >> $env:GITHUB_ENV
+          "CI_AUTHORITY_RUN_URL=$($authority.html_url)" >> $env:GITHUB_ENV
+          Write-Host "Exact-SHA source authority: CI #$($authority.run_number) $($authority.html_url)"
+          Write-Host "Unit-test shards and HCI are not repeated in the release lane."
 
       - name: Resolve startup threshold
         shell: pwsh
@@ -104,7 +167,7 @@ jobs:
             requirements-desktop.lock.txt
             requirements-build.lock.txt
 
-      - name: Install Python dependencies
+      - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
@@ -115,16 +178,12 @@ jobs:
       - name: Verify CLI help output
         run: python -m scripts.invoice_fetch --help
 
-      - name: Run isolated unit tests
-        run: python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900
-        env:
-          INVOICE_HUB_TEST_MODE: "1"
-
       - name: Run repository privacy gate
         run: python scripts/check_repo_privacy.py
 
       - name: Run public export/source tree gate
         run: python scripts/check_public_export.py .
+
       - name: Verify release metadata consistency
         run: python scripts/check_release_metadata.py
 
@@ -157,16 +216,12 @@ jobs:
           }
           $env:INVOICE_HUB_BUILD_VERSION = $version
           $resolved = (python -c "from scripts.invoice_fetch.version import resolve_build_version; print(resolve_build_version(strict=True))").Trim()
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($resolved -ne $version) {
             throw "Resolved build version $resolved does not match expected version $version."
           }
           python scripts/dev/write_embedded_build_version.py --version $version
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "INVOICE_HUB_BUILD_VERSION=${version}" >> $env:GITHUB_ENV
           "VERSION=${version}" >> $env:GITHUB_ENV
           "ZIP_NAME=InvoiceHub-${version}-win64-portable.zip" >> $env:GITHUB_ENV
@@ -393,6 +448,29 @@ jobs:
             dist/SHA256SUMS.txt
           retention-days: 30
 
+      - name: Write release gate summary
+        if: always()
+        shell: pwsh
+        run: |
+          $elapsed = "n/a"
+          if ($env:RELEASE_BUILD_START_EPOCH -match '^\d+$') {
+            $seconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [int64]$env:RELEASE_BUILD_START_EPOCH
+            $elapsed = "${seconds}s"
+          }
+          @"
+          ## Windows release gate
+
+          - Result: `${{ job.status }}`
+          - Source SHA: `$env:SOURCE_SHA`
+          - Source authority: CI #$env:CI_AUTHORITY_RUN_NUMBER
+          - CI URL: $env:CI_AUTHORITY_RUN_URL
+          - Unit shards/HCI: reused from exact-SHA CI; not repeated here
+          - Cheap source/privacy gates: rerun in this lane
+          - Release-specific gates: frozen build, startup, embedded version, payload hygiene, installer lifecycle, real install/start/uninstall, SHA256
+          - Build-lane elapsed: $elapsed
+          - Distribution: GitHub release keeps setup EXE + portable ZIP; Microsoft Store MSIX remains a separate Store submission artifact until Store signing/distribution is live
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
   release:
     name: Publish GitHub Release
     needs: build
@@ -431,12 +509,14 @@ jobs:
             ## Invoice Hub ${{ env.VERSION }} - Windows x64
 
             Release artifacts:
-            - `${{ env.SETUP_NAME }}`: per-user installer, no administrator permission required.
+            - `${{ env.SETUP_NAME }}`: direct GitHub installer, per-user and no administrator permission required.
             - `${{ env.ZIP_NAME }}`: portable onedir package.
             - `SHA256SUMS.txt`: SHA256 checksums for both artifacts.
 
+            Microsoft Store distribution uses a separate MSIX submission package. That Store MSIX is intentionally not attached here as a direct installer until Store certification/signing and the Store update path are live.
+
             Download only from the official GitHub Releases page and verify SHA256 before installing.
-            SmartScreen or Unknown Publisher prompts can appear for unsigned builds with little download reputation; that is expected until trusted Authenticode signing is in place.
+            SmartScreen or Unknown Publisher prompts can appear for unsigned GitHub builds with little download reputation; that is expected until trusted Authenticode signing is in place.
           draft: false
           prerelease: ${{ contains(env.VERSION, '-') }}
           files: |
