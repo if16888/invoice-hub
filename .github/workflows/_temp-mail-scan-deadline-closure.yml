@@ -37,7 +37,9 @@ jobs:
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
       - name: Apply shared deadline closure
-        run: python scripts/dev/_apply_mail_scan_deadline_closure.py
+        run: |
+          python scripts/dev/_apply_mail_scan_deadline_closure.py
+          python scripts/dev/_apply_mail_scan_deadline_followup.py
 
       - name: Focused validation
         run: |
@@ -49,6 +51,7 @@ jobs:
         shell: bash
         run: |
           rm -f scripts/dev/_apply_mail_scan_deadline_closure.py
+          rm -f scripts/dev/_apply_mail_scan_deadline_followup.py
           rm -f .github/workflows/_temp-mail-scan-deadline-closure.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
