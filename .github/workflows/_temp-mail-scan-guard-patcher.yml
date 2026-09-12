@@ -22,18 +22,35 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Relax loop match precondition
+      - name: Normalize patcher preconditions
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+
           p = Path('scripts/dev/_apply_mail_scan_guard_patch.py')
           text = p.read_text(encoding='utf-8')
+
           old = 'if text.count(needle) != 2:\n    raise RuntimeError(f"{link}: expected two browser attempt call sites, found {text.count(needle)}")'
           new = 'if text.count(needle) < 1:\n    raise RuntimeError(f"{link}: expected at least one browser attempt call site, found {text.count(needle)}")'
-          if old not in text:
-              raise SystemExit('patcher precondition block not found')
-          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('browser attempt precondition block not found')
+
+          # Keep the existing fixed 2-second general-page wait. It is already
+          # bounded and is not part of the observed 32-minute hang. Avoid a
+          # brittle source rewrite merely to shave the tail of the URL budget.
+          start_marker = "replace_once(\n    link,\n    '''            if not downloaded_path:\\n                page.wait_for_timeout(2000)\\n                if not downloaded_path:\\n'''"
+          start = text.find(start_marker)
+          if start != -1:
+              next_marker = "\nreplace_once(\n    link,\n    '''        except Exception as exc:"
+              end = text.find(next_marker, start)
+              if end == -1:
+                  raise SystemExit('could not find end of general-wait patch block')
+              text = text[:start] + text[end + 1:]
+
+          p.write_text(text, encoding='utf-8')
           PY
 
       - name: Apply bounded-browser patch
