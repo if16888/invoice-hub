@@ -23,6 +23,19 @@ class BoundedBrowserScanTests(unittest.TestCase):
         with patch("scripts.invoice_fetch.config.load_config_safe", return_value={}):
             return LinkDownloader(root, scan_control=control)
 
+    def test_browser_operation_timeout_is_capped_by_configured_hard_limit(self):
+        config = {
+            "link_download": {
+                "timeout_ms": 30_000,
+                "max_operation_timeout_ms": 10_000,
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-browser-timeout-") as td, patch(
+            "scripts.invoice_fetch.config.load_config_safe", return_value=config
+        ):
+            downloader = LinkDownloader(td)
+        self.assertEqual(downloader._timeout, 10_000)
+
     def test_dns_safety_check_fails_closed_without_waiting_for_stuck_resolver(self):
         blocker = threading.Event()
 
