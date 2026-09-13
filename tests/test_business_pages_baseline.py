@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, QPoint
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.db import InvoiceDB
@@ -19,9 +19,9 @@ class BusinessPagesBaselineTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def make_window(self, td, db_name="business-pages.db"):
+    def make_window(self, td, db_name="business-pages.db", size=(1600, 900)):
         window = InvoiceReviewApp(Path(td) / db_name)
-        window.resize(1600, 900)
+        window.resize(*size)
         window.show()
         for _ in range(6):
             self.app.processEvents()
@@ -32,12 +32,34 @@ class BusinessPagesBaselineTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 self.assertTrue(window.overview_page.property("dashboardBaselineApplied"))
-                self.assertEqual(window.overview_content_host.minimumWidth(), 960)
+                self.assertEqual(window.overview_content_host.minimumWidth(), 0)
                 self.assertEqual(window.overview_content_host.maximumWidth(), 1360)
                 button = window.btn_overview_continue_review
                 self.assertEqual(button.text(), "继续审核")
                 self.assertEqual(button.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
                 self.assertLessEqual(button.maximumWidth(), 180)
+            finally:
+                window.close()
+
+    def test_dashboard_fits_default_window_without_horizontal_clipping(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td, size=(1150, 850))
+            try:
+                page = window.overview_page
+                host = window.overview_content_host
+                self.assertGreaterEqual(host.geometry().left(), 0)
+                self.assertLessEqual(host.geometry().right() + 1, page.width())
+
+                visible_controls = (
+                    window.lbl_hci_task_total,
+                    window.btn_hci_continue_tasks,
+                )
+                visible_controls += tuple(window.hci_dashboard_task_cards.values())
+                for widget in visible_controls:
+                    top_left = widget.mapTo(page, QPoint(0, 0))
+                    bottom_right = widget.mapTo(page, widget.rect().bottomRight())
+                    self.assertGreaterEqual(top_left.x(), 0)
+                    self.assertLessEqual(bottom_right.x() + 1, page.width())
             finally:
                 window.close()
 

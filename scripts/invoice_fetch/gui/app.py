@@ -4262,7 +4262,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         layout = QVBoxLayout(self.overview_content_host)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(SECTION_GAP)
-        outer_layout.addWidget(self.overview_content_host, 0, Qt.AlignTop | Qt.AlignHCenter)
+        # Keep the preferred dashboard width when there is room, but let the
+        # centered row shrink to the real client area on small/DPI-scaled windows.
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+        content_row.addStretch(1)
+        content_row.addWidget(self.overview_content_host, 0, Qt.AlignTop)
+        content_row.addStretch(1)
+        outer_layout.addLayout(content_row, 0)
         outer_layout.addStretch(1)
 
         self.overview_header = PageHeader(
