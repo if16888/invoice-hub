@@ -27,6 +27,7 @@ from .review_layout import (
     install_review_vertical_workspace,
 )
 from .review_paging import install_review_paging
+from .review_queue_semantics import apply_review_queue_semantics
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
@@ -58,6 +59,7 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
 REVIEW_HCI_STAGES: tuple[ReviewStage, ...] = (
     ("hci_v1_task_flow", apply_review_hci_v1),
     ("hci_v1_closure", apply_review_hci_closure),
+    ("review_queue_semantics", apply_review_queue_semantics),
 )
 
 
