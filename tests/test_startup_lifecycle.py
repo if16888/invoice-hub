@@ -6,9 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QBoxLayout, QLabel
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QApplication, QBoxLayout, QLabel, QWidget
 
 from scripts.invoice_fetch.gui import startup_lifecycle, startup_probe
+from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard, ResponsiveTaskCardRow
 
 
 class StartupLifecycleOrderingTests(unittest.TestCase):
@@ -184,6 +186,80 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
                 self.assertIn("imports", window._startup_lazy_placeholders)
                 self.assertIs(window.center_stack.currentWidget(), window.review_page)
                 schedule.assert_called_once_with(window._STARTUP_WARMUP_GAP_MS)
+            finally:
+                window.close()
+                self.qt_app.processEvents()
+
+    def test_responsive_task_cards_reflow_at_width_breakpoints(self):
+        host = QWidget()
+        row = ResponsiveTaskCardRow(host)
+        cards = [
+            HciTaskCard(f"task-{index}", f"任务 {index}", parent=row)
+            for index in range(4)
+        ]
+        for card in cards:
+            row.add_card(card)
+
+        try:
+            host.show()
+            for width, expected_columns in ((1000, 4), (720, 2), (640, 1)):
+                host.resize(width, 400)
+                row.setGeometry(0, 0, width, 400)
+                for _ in range(2):
+                    self.qt_app.processEvents()
+
+                self.assertEqual(row.column_count(), expected_columns)
+                for card in cards:
+                    top_left = card.mapTo(row, QPoint(0, 0))
+                    bottom_right = card.mapTo(row, card.rect().bottomRight())
+                    self.assertGreaterEqual(top_left.x(), 0)
+                    self.assertGreaterEqual(top_left.y(), 0)
+                    self.assertLessEqual(bottom_right.x() + 1, row.width())
+                    self.assertLessEqual(bottom_right.y() + 1, row.height())
+        finally:
+            host.close()
+            self.qt_app.processEvents()
+
+    def test_deferred_overview_reflows_after_startup_resize_without_clipping(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-overview-geometry-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                window.resize(1150, 850)
+                startup_lifecycle.reveal_startup_window(window, splash=None)
+                for _ in range(6):
+                    self.qt_app.processEvents()
+
+                window._switch_main_page("overview")
+                for _ in range(6):
+                    self.qt_app.processEvents()
+
+                self.assertIs(window.center_stack.currentWidget(), window.overview_page)
+                row = window.hci_dashboard_task_cards_row
+                cards = tuple(window.hci_dashboard_task_cards.values())
+                self.assertEqual(len(cards), 4)
+
+                for size in ((1150, 850), (1400, 900), (1150, 850)):
+                    window.resize(*size)
+                    for _ in range(3):
+                        self.qt_app.processEvents()
+
+                    page = window.overview_page
+                    self.assertGreater(row.width(), 0)
+                    self.assertLessEqual(row.geometry().right() + 1, page.width())
+                    for card in cards:
+                        top_left = card.mapTo(page, QPoint(0, 0))
+                        bottom_right = card.mapTo(page, card.rect().bottomRight())
+                        self.assertGreaterEqual(top_left.x(), 0)
+                        self.assertGreaterEqual(top_left.y(), 0)
+                        self.assertLessEqual(
+                            bottom_right.x() + 1,
+                            page.width(),
+                            f"{card.objectName()}: page_width={page.width()} "
+                            f"card_geometry={card.geometry()} row_geometry={row.geometry()}",
+                        )
             finally:
                 window.close()
                 self.qt_app.processEvents()
