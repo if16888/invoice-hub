@@ -265,3 +265,53 @@ jobs:
             startup-ab-pr161.json
           retention-days: 3
           if-no-files-found: error
+  linux-self-hosted-smoke:
+    name: Linux self-hosted startup lifecycle (non-gating)
+    runs-on: [self-hosted, Linux, X64]
+    continue-on-error: true
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: "7f5080cfc6b2ad9b4f912fd4f5df35b1deb8f2c0"
+      QT_QPA_PLATFORM: "offscreen"
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+      - name: Checkout exact PR161 candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+
+      - name: Verify candidate identity
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$CANDIDATE_SHA" ]; then
+            echo "Candidate checkout drift: expected $CANDIDATE_SHA, got $actual"
+            exit 1
+          fi
+          echo "Linux self-hosted runner: $(uname -a)"
+          echo "Candidate SHA: $actual"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.lock.txt
+            requirements-desktop.lock.txt
+
+      - name: Install desktop test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --disable-pip-version-check --no-input --prefer-binary --no-compile \
+            -r requirements.lock.txt -r requirements-desktop.lock.txt
+
+      - name: Run focused startup lifecycle tests
+        shell: bash
+        run: |
+          python -m compileall -q scripts/invoice_fetch
+          python -m unittest -v tests.test_startup_lifecycle
+
