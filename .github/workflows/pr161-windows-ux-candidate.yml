@@ -265,7 +265,7 @@ jobs:
             startup-ab-pr161.json
           retention-days: 3
           if-no-files-found: error
-linux-self-hosted-smoke:
+  linux-self-hosted-smoke:
     name: Linux self-hosted candidate preflight (non-gating)
     runs-on: [self-hosted, Linux, X64]
     continue-on-error: true
@@ -279,7 +279,7 @@ linux-self-hosted-smoke:
       - name: Checkout exact PR161 candidate
         uses: actions/checkout@v4
         with:
-          ref: \${{ env.CANDIDATE_SHA }}
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 1
 
       - name: Verify candidate identity
