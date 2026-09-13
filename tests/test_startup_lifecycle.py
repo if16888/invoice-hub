@@ -203,8 +203,8 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
         try:
             host.show()
             for width, expected_columns in ((1000, 4), (720, 2), (640, 1)):
-                host.resize(width, 400)
-                row.setGeometry(0, 0, width, 400)
+                host.resize(width, 560)
+                row.setGeometry(0, 0, width, 560)
                 for _ in range(2):
                     self.qt_app.processEvents()
 
