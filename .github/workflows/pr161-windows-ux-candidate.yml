@@ -315,7 +315,11 @@ jobs:
           import platform
           print(f"Python platform: {platform.platform()}")
           for module in ("PySide6", "PySide6.QtWidgets", "bs4", "requests"):
-              print(f"{module}: {'available' if importlib.util.find_spec(module) else 'absent'}")
+              try:
+                  available = importlib.util.find_spec(module) is not None
+              except ModuleNotFoundError:
+                  available = False
+              print(f"{module}: {'available' if available else 'absent'}")
           PY
 
       - name: Run source and non-GUI candidate regression checks
