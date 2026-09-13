@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 25
     env:
       BASELINE_SHA: "f111fae2fe420ab14126cbdc008e4d25989cbddd"
-      CANDIDATE_SHA: "5c14b11d259ab6f44c6ac67a1ffec2e9d527f5b1"
+      CANDIDATE_SHA: "bc9969f1db97a00abd9dfabaa18f9d3ba79df14a"
       BASELINE_VERSION: "0.1.8-pre162"
       CANDIDATE_VERSION: "0.1.8-pre161"
       PYTHONIOENCODING: "utf-8"
@@ -256,9 +256,9 @@ jobs:
       - name: Upload UX candidate
         uses: actions/upload-artifact@v4
         with:
-          name: pr161-windows-ux-candidate-5c14b11d
+          name: pr161-windows-ux-candidate-bc9969f1
           path: |
-            InvoiceHub-pr161-5c14b11d-win64-portable.zip
+            InvoiceHub-pr161-bc9969f1-win64-portable.zip
             SHA256SUMS-UX.txt
             UX-CANDIDATE.txt
             ux-candidate-metadata.json
@@ -271,7 +271,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 15
     env:
-      CANDIDATE_SHA: "5c14b11d259ab6f44c6ac67a1ffec2e9d527f5b1"
+      CANDIDATE_SHA: "bc9969f1db97a00abd9dfabaa18f9d3ba79df14a"
       PYTHONIOENCODING: "utf-8"
       QT_QPA_PLATFORM: "offscreen"
 
