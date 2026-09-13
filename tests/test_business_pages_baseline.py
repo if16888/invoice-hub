@@ -44,6 +44,12 @@ class BusinessPagesBaselineTests(unittest.TestCase):
     def test_dashboard_fits_default_window_without_horizontal_clipping(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td, size=(1150, 850))
+            # The application launches on the review page.  Switch to the
+            # dashboard before measuring it so the stacked page has real
+            # client geometry instead of its hidden 640x480 default size.
+            window._switch_main_page("overview")
+            for _ in range(2):
+                self.app.processEvents()
             try:
                 page = window.overview_page
                 host = window.overview_content_host
