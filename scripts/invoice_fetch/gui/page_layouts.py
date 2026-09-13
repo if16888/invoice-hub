@@ -17,6 +17,7 @@ from .hci_v1_closure import (
     schedule_task_flow_hci_closure,
 )
 from .review_baseline_pipeline import schedule_review_baseline_pipeline
+from .review_queue_semantics import schedule_task_flow_review_scope_semantics
 from .review_settings_issue_fixes import apply_settings_action_clarity
 from .selection_surfaces import schedule_selection_surface_contracts
 from .settings_baseline import apply_settings_baseline
@@ -199,6 +200,7 @@ class TaskFlowPageLayout(_PageLayoutContract):
         QTimer.singleShot(0, lambda p=page: apply_task_flow_baseline(p))
         schedule_task_flow_hci_v1(page)
         schedule_task_flow_hci_closure(page)
+        schedule_task_flow_review_scope_semantics(page)
         return layout
 
 
