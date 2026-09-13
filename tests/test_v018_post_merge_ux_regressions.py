@@ -46,6 +46,9 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
                 # physical desktop size. This is the same product viewport the
                 # responsive contract is intended to handle.
                 window.resize(1600, 900)
+                window.show()
+                for _ in range(4):
+                    self.qt_app.processEvents()
                 window._nav_collapsed_manual = True
                 window._apply_workbench_metrics(1600, 900)
                 window._switch_main_page("overview")
