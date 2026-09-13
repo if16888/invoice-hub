@@ -1,0 +1,108 @@
+name: Self-hosted Linux PySide6 probe
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - test/selfhosted-linux-pyside6-probe
+
+concurrency:
+  group: selfhosted-linux-pyside6-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Linux self-hosted PySide6 probe
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    env:
+      TMPDIR: /var/tmp/actions-invoice-hub
+      TMP: /var/tmp/actions-invoice-hub
+      TEMP: /var/tmp/actions-invoice-hub
+      QT_QPA_PLATFORM: offscreen
+      INVOICE_HUB_TEST_MODE: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Host and temp preflight
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          uname -m
+          python3 --version
+          echo "TMPDIR=$TMPDIR"
+          echo "TMP=$TMP"
+          echo "TEMP=$TEMP"
+          python3 - <<'PY'
+          import tempfile
+          print('python tempfile =', tempfile.gettempdir())
+          assert tempfile.gettempdir() == '/var/tmp/actions-invoice-hub'
+          PY
+          df -h / /tmp /var/tmp/actions-invoice-hub
+          free -h
+          test -w /var/tmp/actions-invoice-hub
+
+      - name: Install locked PySide6 in isolated venv
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf .venv-selfhosted-probe
+          python3 -m venv .venv-selfhosted-probe
+          source .venv-selfhosted-probe/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir -r requirements-desktop.lock.txt
+          python - <<'PY'
+          import PySide6
+          from PySide6.QtCore import qVersion
+          print('PySide6 =', PySide6.__version__)
+          print('Qt =', qVersion())
+          print('PYSIDE6_IMPORT=PASS')
+          PY
+
+      - name: Run Qt offscreen lifecycle
+        shell: bash
+        run: |
+          set -euxo pipefail
+          source .venv-selfhosted-probe/bin/activate
+          python - <<'PY'
+          from PySide6.QtWidgets import QApplication, QWidget
+
+          app = QApplication([])
+          widget = QWidget()
+          widget.resize(640, 480)
+          widget.show()
+          app.processEvents()
+          assert widget.width() == 640
+          assert widget.height() == 480
+          widget.close()
+          app.processEvents()
+          print('QT_OFFSCREEN_LIFECYCLE=PASS')
+          PY
+
+      - name: Run lightweight repository checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          source .venv-selfhosted-probe/bin/activate
+          python scripts/check_release_metadata.py
+          python scripts/check_architecture_policy.py
+          python -m compileall -q scripts/invoice_fetch
+          echo 'LIGHTWEIGHT_REPOSITORY_CHECKS=PASS'
+
+      - name: Resource snapshot
+        if: always()
+        shell: bash
+        run: |
+          echo '=== memory ==='
+          free -h || true
+          echo '=== filesystems ==='
+          df -h / /tmp /var/tmp/actions-invoice-hub || true
+          echo '=== probe venv ==='
+          du -sh .venv-selfhosted-probe 2>/dev/null || true
+          echo '=== kernel OOM evidence ==='
+          dmesg 2>/dev/null | tail -n 80 | grep -Ei 'oom|out of memory|killed process' || true
