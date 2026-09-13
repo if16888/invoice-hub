@@ -436,18 +436,27 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
     task_layout.setContentsMargins(0, 0, 0, 0)
     task_layout.setSpacing(10)
 
-    action_row = QHBoxLayout()
+    # Give the action cluster a real parent widget.  A bare layout can leave
+    # its labels with top-level geometry during offscreen/narrow-window layout,
+    # which makes the first dashboard frame report horizontal overflow.
+    action_bar = QWidget(task_host)
+    action_bar.setObjectName("HciDashboardTaskActions")
+    action_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    action_row = QHBoxLayout(action_bar)
     action_row.setContentsMargins(0, 0, 0, 0)
     action_row.setSpacing(8)
     action_row.addStretch(1)
     window.lbl_hci_task_total = make_badge("—", variant="warning")
+    window.lbl_hci_task_total.setParent(action_bar)
     window.btn_hci_continue_tasks = make_button("继续处理", variant="primary")
+    window.btn_hci_continue_tasks.setParent(action_bar)
     window.btn_hci_continue_tasks.clicked.connect(
         lambda: _switch_to_review(window, TO_REVIEW, continuous=True)
     )
     action_row.addWidget(window.lbl_hci_task_total)
     action_row.addWidget(window.btn_hci_continue_tasks)
-    task_layout.addLayout(action_row)
+    task_layout.addWidget(action_bar)
+    window.hci_dashboard_task_actions = action_bar
 
     cards_row = ResponsiveTaskCardRow(task_host)
     specs = (
