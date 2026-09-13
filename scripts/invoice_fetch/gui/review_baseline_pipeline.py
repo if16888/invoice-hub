@@ -59,7 +59,6 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
 REVIEW_HCI_STAGES: tuple[ReviewStage, ...] = (
     ("hci_v1_task_flow", apply_review_hci_v1),
     ("hci_v1_closure", apply_review_hci_closure),
-    ("review_queue_semantics", apply_review_queue_semantics),
 )
 
 
@@ -116,6 +115,9 @@ def apply_review_hci_pipeline(page: QWidget | None) -> None:
         active_property="reviewHciPipelineActiveStage",
         failed_property="reviewHciPipelineFailedStage",
     )
+    # Keep the established HCI stage identity stable. Queue semantics are a
+    # post-HCI behavioral contract, not another migration/closure stage.
+    apply_review_queue_semantics(page)
     page.setProperty("reviewHciPipelineStages", completed)
     page.setProperty("reviewHciPipelineApplied", True)
 
