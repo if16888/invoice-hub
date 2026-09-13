@@ -23,6 +23,7 @@ jobs:
       TEMP: /var/tmp/actions-invoice-hub
       QT_QPA_PLATFORM: offscreen
       INVOICE_HUB_TEST_MODE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
       - name: Checkout repository
@@ -35,6 +36,7 @@ jobs:
           uname -a
           uname -m
           python3 --version
+          python3 -m pip --version
           echo "TMPDIR=$TMPDIR"
           echo "TMP=$TMP"
           echo "TEMP=$TEMP"
@@ -47,29 +49,31 @@ jobs:
           free -h
           test -w /var/tmp/actions-invoice-hub
 
-      - name: Install locked PySide6 in isolated venv
+      - name: Install locked PySide6 in isolated target
         shell: bash
         run: |
           set -euxo pipefail
-          rm -rf .venv-selfhosted-probe
-          python3 -m venv .venv-selfhosted-probe
-          source .venv-selfhosted-probe/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir -r requirements-desktop.lock.txt
-          python - <<'PY'
+          TARGET="$RUNNER_TEMP/../pyside6-target"
+          rm -rf "$TARGET"
+          mkdir -p "$TARGET"
+          python3 -m pip install \
+            --no-cache-dir \
+            --target "$TARGET" \
+            -r requirements-desktop.lock.txt
+          PYTHONPATH="$TARGET" python3 - <<'PY'
           import PySide6
           from PySide6.QtCore import qVersion
           print('PySide6 =', PySide6.__version__)
           print('Qt =', qVersion())
           print('PYSIDE6_IMPORT=PASS')
           PY
+          echo "PYSIDE6_TARGET=$TARGET" >> "$GITHUB_ENV"
 
       - name: Run Qt offscreen lifecycle
         shell: bash
         run: |
           set -euxo pipefail
-          source .venv-selfhosted-probe/bin/activate
-          python - <<'PY'
+          PYTHONPATH="$PYSIDE6_TARGET" python3 - <<'PY'
           from PySide6.QtWidgets import QApplication, QWidget
 
           app = QApplication([])
@@ -88,10 +92,9 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          source .venv-selfhosted-probe/bin/activate
-          python scripts/check_release_metadata.py
-          python scripts/check_architecture_policy.py
-          python -m compileall -q scripts/invoice_fetch
+          python3 scripts/check_release_metadata.py
+          python3 scripts/check_architecture_policy.py
+          python3 -m compileall -q scripts/invoice_fetch
           echo 'LIGHTWEIGHT_REPOSITORY_CHECKS=PASS'
 
       - name: Resource snapshot
@@ -102,7 +105,7 @@ jobs:
           free -h || true
           echo '=== filesystems ==='
           df -h / /tmp /var/tmp/actions-invoice-hub || true
-          echo '=== probe venv ==='
-          du -sh .venv-selfhosted-probe 2>/dev/null || true
+          echo '=== PySide6 target ==='
+          du -sh "$PYSIDE6_TARGET" 2>/dev/null || true
           echo '=== kernel OOM evidence ==='
           dmesg 2>/dev/null | tail -n 80 | grep -Ei 'oom|out of memory|killed process' || true
