@@ -4267,8 +4267,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
         content_row.setSpacing(0)
+        # Side gutters keep the dashboard centered, while the content host
+        # receives most of the available width. Giving the host zero stretch
+        # leaves it near its sizeHint even on a maximized window, which in turn
+        # forces the responsive task cards into a permanent single column.
         content_row.addStretch(1)
-        content_row.addWidget(self.overview_content_host, 0, Qt.AlignTop)
+        content_row.addWidget(self.overview_content_host, 8)
         content_row.addStretch(1)
         outer_layout.addLayout(content_row, 0)
         outer_layout.addStretch(1)
