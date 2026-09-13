@@ -5,11 +5,19 @@ from pathlib import Path
 
 def replace_once(path: str, old: str, new: str) -> None:
     target = Path(path)
-    text = target.read_text(encoding="utf-8")
-    count = text.count(old)
+    # Preserve the repository file's native CRLF/LF convention.  Path.read_text
+    # uses universal-newline translation and would otherwise rewrite app.py in
+    # full, turning a focused patch into a line-ending-only diff.
+    with target.open("r", encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    newline = "\r\n" if "\r\n" in text else "\n"
+    old_native = old.replace("\n", newline)
+    new_native = new.replace("\n", newline)
+    count = text.count(old_native)
     if count != 1:
         raise RuntimeError(f"{path}: expected exactly one match, found {count}")
-    target.write_text(text.replace(old, new, 1), encoding="utf-8")
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text.replace(old_native, new_native, 1))
 
 
 replace_once(
