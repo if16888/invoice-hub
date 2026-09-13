@@ -29,18 +29,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Host and temp preflight
         shell: bash
         run: |
           set -euxo pipefail
           uname -a
           uname -m
-          python3 --version
-          python3 -m pip --version
+          python --version
+          python -m pip --version
           echo "TMPDIR=$TMPDIR"
           echo "TMP=$TMP"
           echo "TEMP=$TEMP"
-          python3 - <<'PY'
+          python - <<'PY'
           import tempfile
           print('python tempfile =', tempfile.gettempdir())
           assert tempfile.gettempdir() == '/var/tmp/actions-invoice-hub'
@@ -49,31 +54,29 @@ jobs:
           free -h
           test -w /var/tmp/actions-invoice-hub
 
-      - name: Install locked PySide6 in isolated target
+      - name: Install locked PySide6 in isolated venv
         shell: bash
         run: |
           set -euxo pipefail
-          TARGET="$RUNNER_TEMP/../pyside6-target"
-          rm -rf "$TARGET"
-          mkdir -p "$TARGET"
-          python3 -m pip install \
-            --no-cache-dir \
-            --target "$TARGET" \
-            -r requirements-desktop.lock.txt
-          PYTHONPATH="$TARGET" python3 - <<'PY'
+          rm -rf .venv-selfhosted-probe
+          python -m venv .venv-selfhosted-probe
+          source .venv-selfhosted-probe/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir -r requirements-desktop.lock.txt
+          python - <<'PY'
           import PySide6
           from PySide6.QtCore import qVersion
           print('PySide6 =', PySide6.__version__)
           print('Qt =', qVersion())
           print('PYSIDE6_IMPORT=PASS')
           PY
-          echo "PYSIDE6_TARGET=$TARGET" >> "$GITHUB_ENV"
 
       - name: Run Qt offscreen lifecycle
         shell: bash
         run: |
           set -euxo pipefail
-          PYTHONPATH="$PYSIDE6_TARGET" python3 - <<'PY'
+          source .venv-selfhosted-probe/bin/activate
+          python - <<'PY'
           from PySide6.QtWidgets import QApplication, QWidget
 
           app = QApplication([])
@@ -92,9 +95,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          python3 scripts/check_release_metadata.py
-          python3 scripts/check_architecture_policy.py
-          python3 -m compileall -q scripts/invoice_fetch
+          source .venv-selfhosted-probe/bin/activate
+          python scripts/check_release_metadata.py
+          python scripts/check_architecture_policy.py
+          python -m compileall -q scripts/invoice_fetch
           echo 'LIGHTWEIGHT_REPOSITORY_CHECKS=PASS'
 
       - name: Resource snapshot
@@ -105,7 +109,7 @@ jobs:
           free -h || true
           echo '=== filesystems ==='
           df -h / /tmp /var/tmp/actions-invoice-hub || true
-          echo '=== PySide6 target ==='
-          du -sh "$PYSIDE6_TARGET" 2>/dev/null || true
+          echo '=== probe venv ==='
+          du -sh .venv-selfhosted-probe 2>/dev/null || true
           echo '=== kernel OOM evidence ==='
           dmesg 2>/dev/null | tail -n 80 | grep -Ei 'oom|out of memory|killed process' || true
