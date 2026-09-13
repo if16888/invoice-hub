@@ -14,9 +14,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 25
     env:
-      BASELINE_SHA: "5eea6bf29d207c7a39758116da261b4dc6913fa2"
-      CANDIDATE_SHA: "45d7f900ad1c82144eb624d2bfb85b832e9788f6"
-      BASELINE_VERSION: "0.1.8-pre160"
+      BASELINE_SHA: "f111fae2fe420ab14126cbdc008e4d25989cbddd"
+      CANDIDATE_SHA: "7f5080cfc6b2ad9b4f912fd4f5df35b1deb8f2c0"
+      BASELINE_VERSION: "0.1.8-pre162"
       CANDIDATE_VERSION: "0.1.8-pre161"
       PYTHONIOENCODING: "utf-8"
 
@@ -256,9 +256,9 @@ jobs:
       - name: Upload UX candidate
         uses: actions/upload-artifact@v4
         with:
-          name: pr161-windows-ux-candidate-45d7f900
+          name: pr161-windows-ux-candidate-7f5080c
           path: |
-            InvoiceHub-pr161-45d7f900-win64-portable.zip
+            InvoiceHub-pr161-7f5080c-win64-portable.zip
             SHA256SUMS-UX.txt
             UX-CANDIDATE.txt
             ux-candidate-metadata.json
