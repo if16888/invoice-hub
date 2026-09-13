@@ -44,8 +44,11 @@ from .ui_components import SectionCard, make_badge, make_button
 class ResponsiveTaskCardRow(QWidget):
     """Keep dashboard task cards inside the available client width."""
 
-    _FOUR_COLUMN_MIN_WIDTH = 720
-    _TWO_COLUMN_MIN_WIDTH = 360
+    # Four columns remain the normal desktop presentation. Below that,
+    # two columns avoid the single-row minimum-width pressure; very narrow
+    # clients use one column so the action cluster and cards never overflow.
+    _FOUR_COLUMN_MIN_WIDTH = 900
+    _TWO_COLUMN_MIN_WIDTH = 680
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
