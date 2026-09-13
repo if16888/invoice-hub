@@ -3,16 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def replace_once(path: str, old: str, new: str) -> None:
+def replace_once(
+    path: str,
+    old: str,
+    new: str,
+    *,
+    force_new_lf: bool = False,
+) -> None:
     target = Path(path)
-    # Preserve the repository file's native CRLF/LF convention.  Path.read_text
-    # uses universal-newline translation and would otherwise rewrite app.py in
-    # full, turning a focused patch into a line-ending-only diff.
+    # Preserve all untouched bytes. app.py contains historical mixed EOLs, so
+    # newly inserted lines can explicitly use LF without rewriting old CRLF
+    # content or making git diff --check treat CR as added trailing whitespace.
     with target.open("r", encoding="utf-8", newline="") as handle:
         text = handle.read()
-    newline = "\r\n" if "\r\n" in text else "\n"
-    old_native = old.replace("\n", newline)
-    new_native = new.replace("\n", newline)
+    source_newline = "\r\n" if "\r\n" in text else "\n"
+    old_native = old.replace("\n", source_newline)
+    new_native = new if force_new_lf else new.replace("\n", source_newline)
     count = text.count(old_native)
     if count != 1:
         raise RuntimeError(f"{path}: expected exactly one match, found {count}")
@@ -24,6 +30,7 @@ replace_once(
     "scripts/invoice_fetch/gui/app.py",
     """        content_row.addStretch(1)\n        content_row.addWidget(self.overview_content_host, 0, Qt.AlignTop)\n        content_row.addStretch(1)\n""",
     """        # Side gutters keep the dashboard centered, while the content host\n        # receives most of the available width. Giving the host zero stretch\n        # leaves it near its sizeHint even on a maximized window, which in turn\n        # forces the responsive task cards into a permanent single column.\n        content_row.addStretch(1)\n        content_row.addWidget(self.overview_content_host, 8, Qt.AlignTop)\n        content_row.addStretch(1)\n""",
+    force_new_lf=True,
 )
 
 replace_once(
