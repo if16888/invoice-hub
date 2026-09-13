@@ -336,7 +336,7 @@ def _sync_dashboard_hci(window) -> None:
     cards = getattr(window, "hci_dashboard_task_cards", {}) or {}
     if cards:
         cards["to_review"].set_value(
-            counts["to_review"], "逐张确认，处理后自动进入下一张 →"
+            counts["to_review"], "所有尚未确认的发票 →"
         )
         cards["missing_evidence"].set_value(
             counts["missing_evidence"], "补齐行程单、付款凭证等材料 →"
@@ -451,7 +451,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
 
     cards_row = ResponsiveTaskCardRow(task_host)
     specs = (
-        ("to_review", "新票待确认", "warning"),
+        ("to_review", "待审核", "warning"),
         ("missing_evidence", "缺证明材料", "warning"),
         ("buyer_mismatch", "购买方异常", "warning"),
         ("parse_error", "解析失败 / 异常", "danger"),

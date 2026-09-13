@@ -493,7 +493,10 @@ class MobileUploadSessionPanel(QFrame):
         controller.failed.connect(self._show_error)
         controller.stopped.connect(self.show_idle)
         controller.session_expired.connect(self._show_expired)
-        controller.refresh_firewall_status()
+        # Do not synchronously query Windows Firewall while constructing the
+        # hidden Imports page. The query shells out to PowerShell and can take
+        # several seconds on real Windows machines. Firewall status becomes
+        # authoritative when the user explicitly starts mobile upload.
 
     def _build_idle(self):
         page = QWidget(self)
@@ -503,7 +506,7 @@ class MobileUploadSessionPanel(QFrame):
         desc.setWordWrap(True); desc.setProperty("class", "SectionHint")
         self.lbl_idle_network = QLabel("网络：局域网 · 自动检测\n支持：PDF / OFD / XML / 图片\n上传后：自动进入审核队列")
         self.lbl_idle_network.setWordWrap(True)
-        self.lbl_idle_firewall = QLabel("Windows 防火墙：检查中")
+        self.lbl_idle_firewall = QLabel("Windows 防火墙：启动手机上传后检查")
         self.lbl_idle_firewall.setWordWrap(True)
         self.lbl_idle_firewall.setProperty("class", "SectionHint")
         self.lbl_idle_notice = WrappedTextLabel("")
