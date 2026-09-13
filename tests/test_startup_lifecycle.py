@@ -4,10 +4,13 @@ import inspect
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QBoxLayout
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QApplication, QBoxLayout, QLabel, QWidget
 
 from scripts.invoice_fetch.gui import startup_lifecycle, startup_probe
+from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard, ResponsiveTaskCardRow
 
 
 class StartupLifecycleOrderingTests(unittest.TestCase):
@@ -53,13 +56,21 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         )
         self.assertNotIn("review", specs)
 
-    def test_navigation_materializes_then_switches_then_reflows_lazy_page(self):
+    def test_idle_warmup_order_prioritizes_high_value_business_pages(self):
+        self.assertEqual(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._STARTUP_WARMUP_PAGE_ORDER,
+            ("overview", "imports", "export", "settings", "logs"),
+        )
+
+    def test_cold_navigation_paints_feedback_then_materializes_then_switches(self):
         source = inspect.getsource(
             startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._switch_main_page
         )
+        feedback_at = source.index("self._show_startup_loading_placeholder(page_key)")
         materialize_at = source.index("self._materialize_startup_page(page_key)")
         switch_at = source.index("result = super()._switch_main_page(")
         reflow_at = source.index("self._reflow_after_lazy_page_switch()")
+        self.assertLess(feedback_at, materialize_at)
         self.assertLess(materialize_at, switch_at)
         self.assertLess(switch_at, reflow_at)
 
@@ -71,13 +82,15 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         queued_at = source.index("QTimer.singleShot(0, self._apply_workbench_metrics)")
         self.assertLess(immediate_at, queued_at)
 
-    def test_post_paint_launch_reflow_precedes_initial_data_load(self):
+    def test_post_paint_launch_reflow_precedes_initial_data_load_and_warmup(self):
         source = inspect.getsource(
             startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._run_post_paint_deferred_init
         )
         reflow_at = source.index("self._reflow_launch_page_after_first_paint()")
         load_at = source.index("super()._deferred_init()")
+        warmup_at = source.index("self._schedule_startup_page_warmup()")
         self.assertLess(reflow_at, load_at)
+        self.assertLess(load_at, warmup_at)
 
     def test_launch_reflow_uses_metrics_and_review_width_controller(self):
         source = inspect.getsource(
@@ -99,6 +112,18 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
             )
             self.assertIn(f'_startup_page_is_deferred("{page_key}")', source)
             self.assertIn(f"self.{dirty_flag} = True", source)
+
+    def test_warmup_yields_after_one_materialized_page(self):
+        source = inspect.getsource(
+            startup_lifecycle.FirstPaintDeferredInvoiceReviewApp._warm_next_startup_page
+        )
+        self.assertIn("for page_key in self._STARTUP_WARMUP_PAGE_ORDER", source)
+        self.assertIn("self._materialize_startup_page(page_key)", source)
+        self.assertIn("break", source)
+        self.assertIn(
+            "self._schedule_startup_page_warmup(self._STARTUP_WARMUP_GAP_MS)",
+            source,
+        )
 
     def test_reveal_disarms_legacy_show_after_load_before_showing_window(self):
         source = inspect.getsource(startup_lifecycle.reveal_startup_window)
@@ -128,6 +153,116 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.qt_app = QApplication.instance() or QApplication([])
+
+    def test_placeholder_has_visible_feedback_for_cold_navigation(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-feedback-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                label = window.overview_page.findChild(QLabel, "StartupDeferredPageLabel")
+                self.assertIsNotNone(label)
+                self.assertIn("准备", label.text())
+            finally:
+                window.close()
+                self.qt_app.processEvents()
+
+    def test_idle_warmup_builds_one_page_without_stealing_review_focus(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-warmup-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                self.assertIs(window.center_stack.currentWidget(), window.review_page)
+                self.assertIn("overview", window._startup_lazy_placeholders)
+                self.assertIn("imports", window._startup_lazy_placeholders)
+
+                with patch.object(window, "_schedule_startup_page_warmup") as schedule:
+                    window._warm_next_startup_page()
+
+                self.assertNotIn("overview", window._startup_lazy_placeholders)
+                self.assertIn("imports", window._startup_lazy_placeholders)
+                self.assertIs(window.center_stack.currentWidget(), window.review_page)
+                schedule.assert_called_once_with(window._STARTUP_WARMUP_GAP_MS)
+            finally:
+                window.close()
+                self.qt_app.processEvents()
+
+    def test_responsive_task_cards_reflow_at_width_breakpoints(self):
+        host = QWidget()
+        row = ResponsiveTaskCardRow(host)
+        cards = [
+            HciTaskCard(f"task-{index}", f"任务 {index}", parent=row)
+            for index in range(4)
+        ]
+        for card in cards:
+            row.add_card(card)
+
+        try:
+            host.show()
+            for width, expected_columns in ((1000, 4), (720, 2), (640, 1)):
+                host.resize(width, 560)
+                row.setGeometry(0, 0, width, 560)
+                for _ in range(2):
+                    self.qt_app.processEvents()
+
+                self.assertEqual(row.column_count(), expected_columns)
+                for card in cards:
+                    top_left = card.mapTo(row, QPoint(0, 0))
+                    bottom_right = card.mapTo(row, card.rect().bottomRight())
+                    self.assertGreaterEqual(top_left.x(), 0)
+                    self.assertGreaterEqual(top_left.y(), 0)
+                    self.assertLessEqual(bottom_right.x() + 1, row.width())
+                    self.assertLessEqual(bottom_right.y() + 1, row.height())
+        finally:
+            host.close()
+            self.qt_app.processEvents()
+
+    def test_deferred_overview_reflows_after_startup_resize_without_clipping(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-overview-geometry-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                window.resize(1150, 850)
+                startup_lifecycle.reveal_startup_window(window, splash=None)
+                for _ in range(6):
+                    self.qt_app.processEvents()
+
+                window._switch_main_page("overview")
+                for _ in range(6):
+                    self.qt_app.processEvents()
+
+                self.assertIs(window.center_stack.currentWidget(), window.overview_page)
+                row = window.hci_dashboard_task_cards_row
+                cards = tuple(window.hci_dashboard_task_cards.values())
+                self.assertEqual(len(cards), 4)
+
+                for size in ((1150, 850), (1400, 900), (1150, 850)):
+                    window.resize(*size)
+                    for _ in range(3):
+                        self.qt_app.processEvents()
+
+                    page = window.overview_page
+                    self.assertGreater(row.width(), 0)
+                    self.assertLessEqual(row.geometry().right() + 1, page.width())
+                    for card in cards:
+                        top_left = card.mapTo(page, QPoint(0, 0))
+                        bottom_right = card.mapTo(page, card.rect().bottomRight())
+                        self.assertGreaterEqual(top_left.x(), 0)
+                        self.assertGreaterEqual(top_left.y(), 0)
+                        self.assertLessEqual(
+                            bottom_right.x() + 1,
+                            page.width(),
+                            f"{card.objectName()}: page_width={page.width()} "
+                            f"card_geometry={card.geometry()} row_geometry={row.geometry()}",
+                        )
+            finally:
+                window.close()
+                self.qt_app.processEvents()
 
     def test_settings_page_is_built_on_first_navigation_without_index_drift(self):
         with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-lazy-") as td:

@@ -23,7 +23,6 @@ from .ui_components import ChecklistRow
 install_semantic_checklist_contract(ChecklistRow)
 
 
-DASHBOARD_MIN_WIDTH = 960
 DASHBOARD_MAX_WIDTH = 1360
 IMPORT_SOURCE_WIDTH = 248
 IMPORT_RESULT_WIDTH = 340
@@ -51,7 +50,10 @@ def apply_dashboard_baseline(page: QWidget) -> None:
 
     host = getattr(window, "overview_content_host", None)
     if host is not None:
-        host.setMinimumWidth(DASHBOARD_MIN_WIDTH)
+        # The centered parent row supplies the preferred width. A hard
+        # 960px minimum overflows the default 1150x850 client area after
+        # the navigation rail and page margins are applied.
+        host.setMinimumWidth(0)
         host.setMaximumWidth(DASHBOARD_MAX_WIDTH)
         host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 

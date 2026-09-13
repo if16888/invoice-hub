@@ -23,6 +23,7 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -39,6 +40,65 @@ from .design_tokens import DESIGN_V1_COLORS
 from .date_range_dialog import DateRangeDialog
 from .ui_components import SectionCard, make_badge, make_button
 
+
+class ResponsiveTaskCardRow(QWidget):
+    """Keep dashboard task cards inside the available client width."""
+
+    # Four columns remain the normal desktop presentation. Below that,
+    # two columns avoid the single-row minimum-width pressure; very narrow
+    # clients use one column so the action cluster and cards never overflow.
+    _FOUR_COLUMN_MIN_WIDTH = 900
+    _TWO_COLUMN_MIN_WIDTH = 680
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("HciDashboardTaskCards")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._cards: list[HciTaskCard] = []
+        self._column_count = 0
+        self._layout = QGridLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setHorizontalSpacing(12)
+        self._layout.setVerticalSpacing(12)
+
+    def add_card(self, card: HciTaskCard) -> None:
+        if card is None or card in self._cards:
+            return
+        self._cards.append(card)
+        card.setParent(self)
+        self._relayout_cards()
+
+    def column_count(self) -> int:
+        return self._column_count
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._relayout_cards()
+
+    def _relayout_cards(self) -> None:
+        width = max(0, self.contentsRect().width())
+        if width >= self._FOUR_COLUMN_MIN_WIDTH:
+            columns = 4
+        elif width >= self._TWO_COLUMN_MIN_WIDTH:
+            columns = 2
+        else:
+            columns = 1
+        if columns == self._column_count and self._layout.count() == len(self._cards):
+            return
+
+        self._column_count = columns
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self)
+        for column in range(4):
+            self._layout.setColumnStretch(column, 0)
+        for column in range(columns):
+            self._layout.setColumnStretch(column, 1)
+        for index, card in enumerate(self._cards):
+            self._layout.addWidget(card, index // columns, index % columns)
+        self._layout.invalidate()
 
 def _repolish(widget: QWidget | None) -> None:
     if widget is None:
@@ -389,9 +449,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
     action_row.addWidget(window.btn_hci_continue_tasks)
     task_layout.addLayout(action_row)
 
-    cards_row = QHBoxLayout()
-    cards_row.setContentsMargins(0, 0, 0, 0)
-    cards_row.setSpacing(12)
+    cards_row = ResponsiveTaskCardRow(task_host)
     specs = (
         ("to_review", "新票待确认", "warning"),
         ("missing_evidence", "缺证明材料", "warning"),
@@ -400,12 +458,13 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
     )
     cards: dict[str, HciTaskCard] = {}
     for key, title, state in specs:
-        card = HciTaskCard(key, title, state, task_host)
+        card = HciTaskCard(key, title, state, cards_row)
         card.activated.connect(lambda task_key, w=window: _dashboard_task_clicked(w, task_key))
-        cards_row.addWidget(card, 1)
+        cards_row.add_card(card)
         cards[key] = card
     window.hci_dashboard_task_cards = cards
-    task_layout.addLayout(cards_row)
+    window.hci_dashboard_task_cards_row = cards_row
+    task_layout.addWidget(cards_row)
 
     header_index = layout.indexOf(header)
     layout.insertWidget(max(0, header_index + 1), task_host)
