@@ -256,9 +256,9 @@ jobs:
       - name: Upload UX candidate
         uses: actions/upload-artifact@v4
         with:
-          name: pr161-windows-ux-candidate-7f5080c
+          name: pr161-windows-ux-candidate-7f5080cf
           path: |
-            InvoiceHub-pr161-7f5080c-win64-portable.zip
+            InvoiceHub-pr161-7f5080cf-win64-portable.zip
             SHA256SUMS-UX.txt
             UX-CANDIDATE.txt
             ux-candidate-metadata.json
