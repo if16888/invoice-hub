@@ -26,8 +26,10 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository without deleting probe cache
         uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -42,9 +44,6 @@ jobs:
           uname -m
           python --version
           python -m pip --version
-          echo "TMPDIR=$TMPDIR"
-          echo "TMP=$TMP"
-          echo "TEMP=$TEMP"
           python - <<'PY'
           import tempfile
           print('python tempfile =', tempfile.gettempdir())
@@ -54,22 +53,38 @@ jobs:
           free -h
           test -w /var/tmp/actions-invoice-hub
 
-      - name: Install locked PySide6 in isolated venv
+      - name: Reuse or install locked PySide6 probe venv
         shell: bash
         run: |
           set -euxo pipefail
-          rm -rf .venv-selfhosted-probe
-          python -m venv .venv-selfhosted-probe
-          source .venv-selfhosted-probe/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir -r requirements-desktop.lock.txt
-          python - <<'PY'
+          if [ -x .venv-selfhosted-probe/bin/python ] && \
+             .venv-selfhosted-probe/bin/python -c 'import PySide6; assert PySide6.__version__ == "6.11.1"' 2>/dev/null; then
+            echo 'Reusing existing PySide6 probe venv'
+          else
+            rm -rf .venv-selfhosted-probe
+            python -m venv .venv-selfhosted-probe
+            source .venv-selfhosted-probe/bin/activate
+            python -m pip install --upgrade pip
+            python -m pip install --no-cache-dir -r requirements-desktop.lock.txt
+          fi
+          .venv-selfhosted-probe/bin/python - <<'PY'
           import PySide6
           from PySide6.QtCore import qVersion
           print('PySide6 =', PySide6.__version__)
           print('Qt =', qVersion())
           print('PYSIDE6_IMPORT=PASS')
           PY
+
+      - name: Audit Qt shared-library dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          QT_WIDGETS=$(find .venv-selfhosted-probe/lib -path '*/site-packages/PySide6/QtWidgets*.so' -print -quit)
+          echo "QtWidgets module: $QT_WIDGETS"
+          test -n "$QT_WIDGETS"
+          ldd "$QT_WIDGETS" | tee qtwidgets-ldd.txt
+          echo '=== missing shared libraries ==='
+          grep 'not found' qtwidgets-ldd.txt || true
 
       - name: Run Qt offscreen lifecycle
         shell: bash
@@ -78,7 +93,6 @@ jobs:
           source .venv-selfhosted-probe/bin/activate
           python - <<'PY'
           from PySide6.QtWidgets import QApplication, QWidget
-
           app = QApplication([])
           widget = QWidget()
           widget.resize(640, 480)
@@ -92,10 +106,10 @@ jobs:
           PY
 
       - name: Run lightweight repository checks
+        if: always()
         shell: bash
         run: |
           set -euxo pipefail
-          source .venv-selfhosted-probe/bin/activate
           python scripts/check_release_metadata.py
           python scripts/check_architecture_policy.py
           python -m compileall -q scripts/invoice_fetch
