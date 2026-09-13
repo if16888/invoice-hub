@@ -59,7 +59,12 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                     top_left = widget.mapTo(page, QPoint(0, 0))
                     bottom_right = widget.mapTo(page, widget.rect().bottomRight())
                     self.assertGreaterEqual(top_left.x(), 0)
-                    self.assertLessEqual(bottom_right.x() + 1, page.width())
+                    self.assertLessEqual(
+                        bottom_right.x() + 1,
+                        page.width(),
+                        f"{widget.objectName() or type(widget).__name__}: "
+                        f"page_width={page.width()} widget_geometry={widget.geometry()}",
+                    )
             finally:
                 window.close()
 
