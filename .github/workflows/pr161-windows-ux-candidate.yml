@@ -265,26 +265,27 @@ jobs:
             startup-ab-pr161.json
           retention-days: 3
           if-no-files-found: error
-  linux-self-hosted-smoke:
-    name: Linux self-hosted startup lifecycle (non-gating)
+linux-self-hosted-smoke:
+    name: Linux self-hosted candidate preflight (non-gating)
     runs-on: [self-hosted, Linux, X64]
     continue-on-error: true
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
       CANDIDATE_SHA: "7f5080cfc6b2ad9b4f912fd4f5df35b1deb8f2c0"
-      QT_QPA_PLATFORM: "offscreen"
       PYTHONIOENCODING: "utf-8"
+      QT_QPA_PLATFORM: "offscreen"
 
     steps:
       - name: Checkout exact PR161 candidate
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.CANDIDATE_SHA }}
+          ref: \${{ env.CANDIDATE_SHA }}
           fetch-depth: 1
 
       - name: Verify candidate identity
         shell: bash
         run: |
+          set -euo pipefail
           actual="$(git rev-parse HEAD)"
           if [ "$actual" != "$CANDIDATE_SHA" ]; then
             echo "Candidate checkout drift: expected $CANDIDATE_SHA, got $actual"
@@ -293,25 +294,85 @@ jobs:
           echo "Linux self-hosted runner: $(uname -a)"
           echo "Candidate SHA: $actual"
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: |
-            requirements.lock.txt
-            requirements-desktop.lock.txt
-
-      - name: Install desktop test dependencies
+      - name: Select existing Python runtime and inspect capacity
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --disable-pip-version-check --no-input --prefer-binary --no-compile \
-            -r requirements.lock.txt -r requirements-desktop.lock.txt
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            python_bin=python3
+          elif command -v python >/dev/null 2>&1; then
+            python_bin=python
+          else
+            echo "No system Python runtime is available on this self-hosted runner."
+            exit 1
+          fi
+          echo "PYTHON_BIN=$python_bin" >> "$GITHUB_ENV"
+          "$python_bin" --version
+          echo "Runner filesystem capacity:"
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" || df -h
+          "$python_bin" - <<'PY'
+          import importlib.util
+          import platform
+          print(f"Python platform: {platform.platform()}")
+          for module in ("PySide6", "PySide6.QtWidgets", "bs4", "requests"):
+              print(f"{module}: {'available' if importlib.util.find_spec(module) else 'absent'}")
+          PY
 
-      - name: Run focused startup lifecycle tests
+      - name: Run source and non-GUI candidate regression checks
         shell: bash
         run: |
-          python -m compileall -q scripts/invoice_fetch
-          python -m unittest -v tests.test_startup_lifecycle
+          set -euo pipefail
+          "$PYTHON_BIN" -m compileall -q scripts/invoice_fetch
+          "$PYTHON_BIN" - <<'PY'
+          from pathlib import Path
 
+          source = Path("scripts/invoice_fetch/gui/startup_lifecycle.py").read_text(encoding="utf-8")
+          required = (
+              "if not self._startup_first_paint_seen",
+              "self._startup_first_paint_completed_at = time.monotonic()",
+              "self._materialize_startup_page(page_key)",
+              "result = super()._switch_main_page(",
+              "self._reflow_after_lazy_page_switch()",
+              "QTimer.singleShot(0, self._apply_workbench_metrics)",
+              "self._reflow_launch_page_after_first_paint()",
+              "super()._deferred_init()",
+          )
+          missing = [token for token in required if token not in source]
+          if missing:
+              raise SystemExit("Startup lifecycle source contract missing: " + ", ".join(missing))
+          if source.index("self._materialize_startup_page(page_key)") > source.index("result = super()._switch_main_page("):
+              raise SystemExit("Lazy page materialization must precede page switch.")
+          if source.index("result = super()._switch_main_page(") > source.index("self._reflow_after_lazy_page_switch()"):
+              raise SystemExit("Lazy page reflow must follow page switch.")
+          print("Startup lifecycle source contract: PASS")
+          PY
+
+          "$PYTHON_BIN" -m unittest -v \
+            tests.test_release_metadata_gate \
+            tests.test_public_export_check \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_release_workflow_reads_python_version_source \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_release_workflow_accepts_rc_tags_with_matching_base_version \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_build_display_version_resolves_rc_and_stable_without_git \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_embedded_build_version_is_used_without_runtime_environment \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_file_version_probe_writes_resolved_identity_without_stdio \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_file_version_probe_rejects_invalid_or_stale_output \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_desktop_version_probe_precedes_gui_import \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_embedded_build_version_writer_validates_and_writes_module \
+            tests.test_startup_probe_and_packaging.TestVersionSource.test_current_source_and_release_tag_contract \
+            tests.test_startup_probe_and_packaging.TestWindowsVersionInfo.test_generator_uses_stable_product_metadata \
+            tests.test_startup_probe_and_packaging.TestWindowsVersionInfo.test_generator_cli_writes_requested_output_file \
+            tests.test_startup_probe_and_packaging.TestWindowsVersionInfo.test_spec_attaches_generated_version_resource \
+            tests.test_startup_probe_and_packaging.TestPyInstallerSpecIntegrity.test_spec_references_generated_version_file \
+            tests.test_startup_probe_and_packaging.TestPyInstallerSpecIntegrity.test_spec_entry_point_is_desktop_launcher \
+            tests.test_startup_probe_and_packaging.TestPyInstallerSpecIntegrity.test_spec_excludes_runtime_and_private \
+            tests.test_startup_probe_and_packaging.TestPyInstallerSpecIntegrity.test_spec_excludes_chromium_browser
+
+      - name: Run full Qt startup lifecycle tests when preinstalled
+        shell: bash
+        run: |
+          set -euo pipefail
+          if "$PYTHON_BIN" -c 'from PySide6.QtWidgets import QApplication' >/dev/null 2>&1; then
+            "$PYTHON_BIN" -m unittest -v tests.test_startup_lifecycle
+          else
+            echo "::notice::PySide6 is not preinstalled; skipped the disk-heavy GUI dependency install. Source/non-GUI checks above remain required."
+          fi
