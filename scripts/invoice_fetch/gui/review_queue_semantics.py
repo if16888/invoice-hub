@@ -19,7 +19,9 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
+from ..config import RUNTIME_DIR
 from ..review_status import TO_REVIEW
+from .helpers import resolve_stored_path
 
 
 def _query_remaining(window) -> int:
@@ -63,6 +65,25 @@ def _review_progress_text(window) -> str:
     return f"第 {current} / {initial} 张 · {scope_prefix}还剩 {remaining} 张待审核"
 
 
+def _run_enter_preserving_explicit_scope(window, enter):
+    """Enter HCI focus mode without letting it replace an explicit batch query."""
+    scope_ids = tuple(getattr(window, "_review_scope_ids", ()) or ())
+    changer = getattr(window, "_change_filter", None)
+    if not scope_ids or not callable(changer):
+        return enter()
+
+    def preserve_scope(self, status):
+        if status == TO_REVIEW and tuple(getattr(self, "_review_scope_ids", ()) or ()):
+            return None
+        return changer(status)
+
+    window._change_filter = MethodType(preserve_scope, window)
+    try:
+        return enter()
+    finally:
+        window._change_filter = changer
+
+
 def _install_review_progress_semantics(window) -> None:
     if getattr(window, "_review_queue_progress_semantics_installed", False):
         return
@@ -78,10 +99,10 @@ def _install_review_progress_semantics(window) -> None:
     if callable(original_enter):
         @wraps(original_enter)
         def enter_with_queue_total(self):
-            result = original_enter()
-            # The original HCI count is global. At this point the authoritative
-            # Review query is already active, so query_total truthfully reflects
-            # either the import scope or the full pending queue.
+            result = _run_enter_preserving_explicit_scope(self, original_enter)
+            # At this point the authoritative Review query is already active, so
+            # query_total truthfully reflects either the import scope or the full
+            # pending queue.
             self._hci_review_initial_total = _query_remaining(self)
             hci_v1._sync_review_hci(self)
             return result
@@ -91,9 +112,25 @@ def _install_review_progress_semantics(window) -> None:
     window._review_queue_progress_semantics_installed = True
 
 
+def _original_file_is_available(invoice: dict | None) -> bool:
+    invoice = invoice or {}
+    raw_path = str(invoice.get("attachment_path") or "").strip()
+    if not raw_path:
+        return False
+    try:
+        path = resolve_stored_path(raw_path, RUNTIME_DIR)
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False
+        with path.open("rb") as handle:
+            handle.read(10)
+        return True
+    except Exception:
+        return False
+
+
 def _has_redownload_source(invoice: dict | None) -> bool:
     invoice = invoice or {}
-    if str(invoice.get("attachment_path") or "").strip():
+    if _original_file_is_available(invoice):
         return False
     if str(invoice.get("download_url") or "").strip():
         return True
