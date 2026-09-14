@@ -152,6 +152,67 @@ class ReviewQueueSemanticsTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_stale_attachment_path_with_mail_source_exposes_redownload(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                stale_path = Path(td) / "attachments" / "missing-original.pdf"
+                window.current_invoice = {
+                    "id": 103,
+                    "attachment_path": str(stale_path),
+                    "download_url": "",
+                    "mail_uid": "7788",
+                }
+                runner = MagicMock()
+                window._redownload_selected_invoices = runner
+
+                detail = window._detail_panel
+                detail.set_attachment_state(
+                    has_file=False,
+                    has_url=False,
+                    can_download=True,
+                )
+                self.app.processEvents()
+
+                self.assertIs(
+                    detail.original_status_line._action_widget,
+                    detail.btn_retry_download,
+                )
+                self.assertFalse(detail.btn_retry_download.isHidden())
+                detail.btn_retry_download.click()
+                self.app.processEvents()
+                runner.assert_called_once_with()
+            finally:
+                window.close()
+
+    def test_existing_original_does_not_offer_redundant_redownload(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                original = Path(td) / "existing-original.pdf"
+                original.write_bytes(b"%PDF-1.7\ninvoice")
+                window.current_invoice = {
+                    "id": 104,
+                    "attachment_path": str(original),
+                    "download_url": "https://example.invalid/invoice.pdf",
+                    "mail_uid": "8899",
+                }
+
+                detail = window._detail_panel
+                detail.set_attachment_state(
+                    has_file=True,
+                    has_url=True,
+                    can_download=True,
+                )
+                self.app.processEvents()
+
+                self.assertIsNot(
+                    detail.original_status_line._action_widget,
+                    detail.btn_retry_download,
+                )
+            finally:
+                window.close()
+
     def test_missing_original_without_source_keeps_manual_supplement(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
