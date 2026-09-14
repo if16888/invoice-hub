@@ -286,9 +286,18 @@ def apply_import_review_scope_semantics(page: QWidget | None) -> None:
     window = page.window()
     if page is not getattr(window, "imports_page", None):
         return
+
+    # The import HCI layer creates/replaces the visible result CTA and its
+    # closure owns the final post-scan wiring. Never bind before that owner has
+    # settled, otherwise a later HCI callback can restore the legacy full-queue
+    # handler and turn "去审核 N 张" back into the whole historical queue.
+    if not page.property("hciV1ImportClosureApplied"):
+        page_ref = weakref.ref(page)
+        QTimer.singleShot(0, lambda: apply_import_review_scope_semantics(page_ref()))
+        return
+
     button = getattr(window, "btn_hci_import_review_result", None)
     if button is None:
-        # HCI creation itself is queued; retry once after those callbacks settle.
         page_ref = weakref.ref(page)
         QTimer.singleShot(0, lambda: apply_import_review_scope_semantics(page_ref()))
         return
