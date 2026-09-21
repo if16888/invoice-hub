@@ -715,10 +715,36 @@ def _sync_incremental_result(window, res: dict) -> None:
         recent.set_title("✓ 同步完成")
         recent.set_hint("本次同步结果按行展示检查、候选、新增、恢复、重复和失败数量。")
 
+    activity = None
+    pending_ids = ()
+    scope_error = None
+    refresh_scope = getattr(window, "_refresh_import_review_result_scope", None)
+    if callable(refresh_scope):
+        try:
+            result = refresh_scope()
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise TypeError(
+                    "_refresh_import_review_result_scope must return "
+                    "(activity, pending_ids)"
+                )
+            activity, pending_ids = result
+            pending_ids = tuple(pending_ids or ())
+        except Exception as exc:
+            scope_error = exc
     review = getattr(window, "btn_hci_import_review_result", None)
     if review is not None:
-        actionable = new + restored
-        review.setText(f"去审核 {actionable} 张" if actionable else "查看审核工作台")
+        scope_error = scope_error or getattr(
+            window, "_import_review_result_scope_error", None
+        )
+        if scope_error is not None:
+            review.setText("审核范围暂不可用")
+            review.setEnabled(False)
+        elif activity is not None and pending_ids:
+            review.setText(f"去审核 {len(pending_ids)} 张")
+            review.setEnabled(True)
+        else:
+            review.setText("查看审核工作台")
+            review.setEnabled(True)
         review.show()
 
 
