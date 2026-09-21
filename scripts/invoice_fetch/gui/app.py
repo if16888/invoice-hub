@@ -2797,26 +2797,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             activity = None
         explicit_scope = activity is not None or pending_ids is not None
         if not explicit_scope:
-            scope_error = getattr(self, "_import_review_result_scope_error", None)
-            if scope_error is not None:
-                self._report_import_review_scope_failure(scope_error)
+            try:
+                activity, pending_ids = self._latest_new_invoice_activity(
+                    strict=True
+                )
+            except Exception as exc:
+                self._report_import_review_scope_failure(exc)
                 return
-
-            bound_activity = getattr(self, "_import_review_result_activity", None)
-            bound_pending = tuple(
-                getattr(self, "_import_review_result_pending_ids", ()) or ()
-            )
-            if bound_activity is not None and bound_pending:
-                activity = bound_activity
-                pending_ids = bound_pending
-            else:
-                try:
-                    activity, pending_ids = self._latest_new_invoice_activity(
-                        strict=True
-                    )
-                except Exception as exc:
-                    self._report_import_review_scope_failure(exc)
-                    return
 
         if activity is None or not pending_ids:
             self._refresh_overview_page()
