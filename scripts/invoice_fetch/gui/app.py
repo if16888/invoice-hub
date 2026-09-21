@@ -173,6 +173,9 @@ class ReviewViewState:
     search_text: str
 
 
+class ReviewScopeResolutionError(RuntimeError):
+    """Raised when the live review scope cannot be resolved safely."""
+
 @dataclass
 class ImportActivity:
     """Business-facing import outcome kept separate from diagnostic logs."""
@@ -2639,6 +2642,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_value_labels["needs_fix"].set_value(f"{metrics['needs_fix']} 张")
         self.overview_value_labels["export_ready"].set_value(f"{metrics['export_ready']} 组")
         activity, new_pending = self._latest_new_invoice_activity()
+        self._set_import_review_result_scope(
+            activity,
+            new_pending,
+            getattr(self, "_last_review_scope_error", None),
+        )
         if self._mobile_upload_processing:
             self.lbl_overview_recent_imports.setText("正在处理本批手机上传，完成后可进入审核。")
             self.btn_overview_new_review.setText("正在处理本批上传…")
@@ -2699,32 +2707,122 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if performance_trace is not None:
             performance_trace.finish("layout_schedule", surface="overview")
 
-    def _remaining_review_ids(self, activity: ImportActivity) -> tuple[int, ...]:
-        """Return IDs from the activity's review set that still need processing."""
+    def _remaining_review_ids(
+        self,
+        activity: ImportActivity,
+        *,
+        strict: bool = False,
+    ) -> tuple[int, ...]:
+        """Return live IDs from an activity, optionally failing closed."""
         review_ids = activity.review_invoice_ids
         if not review_ids:
             return ()
         try:
             rows = self.db.list_invoices_by_ids(review_ids, include_deleted=False)
-        except Exception:
+            return tuple(
+                int(row["id"])
+                for row in rows
+                if (row.get("review_status") or TO_REVIEW) == TO_REVIEW
+            )
+        except Exception as exc:
+            if strict:
+                raise ReviewScopeResolutionError(
+                    "unable to resolve live review IDs for import activity"
+                ) from exc
+            self._last_review_scope_error = exc
             return ()
-        return tuple(int(row["id"]) for row in rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW)
 
-    def _latest_new_invoice_activity(self) -> tuple[ImportActivity | None, tuple[int, ...]]:
-        """Return the latest import with identities and its live review work."""
+    def _latest_new_invoice_activity(
+        self,
+        *,
+        strict: bool = False,
+    ) -> tuple[ImportActivity | None, tuple[int, ...]]:
+        """Return the newest import activity and its live review work.
+
+        An activity without review IDs is a deliberate barrier: it represents
+        the newest import outcome and must not cause the UI to resurrect an
+        older batch.
+        """
+        self._last_review_scope_error = None
         for activity in getattr(self, "_import_activities", []):
             if not activity.review_invoice_ids:
-                continue
-            pending = self._remaining_review_ids(activity)
+                return activity, ()
+            pending = self._remaining_review_ids(activity, strict=strict)
             return activity, pending
         return None, ()
 
-    def _open_new_invoice_review(self) -> None:
-        activity, pending_ids = self._latest_new_invoice_activity()
+    def _set_import_review_result_scope(
+        self,
+        activity: ImportActivity | None,
+        pending_ids: tuple[int, ...] | list[int] = (),
+        error: Exception | None = None,
+    ) -> None:
+        self._import_review_result_scope_initialized = True
+        self._import_review_result_activity = activity
+        self._import_review_result_pending_ids = tuple(
+            int(invoice_id) for invoice_id in (pending_ids or ())
+        )
+        self._import_review_result_scope_error = error
+
+    def _refresh_import_review_result_scope(
+        self,
+    ) -> tuple[ImportActivity | None, tuple[int, ...]]:
+        try:
+            activity, pending_ids = self._latest_new_invoice_activity(strict=True)
+        except Exception as exc:
+            self._set_import_review_result_scope(None, (), exc)
+            return None, ()
+        pending_ids = tuple(pending_ids or ())
+        self._set_import_review_result_scope(activity, pending_ids)
+        return activity, pending_ids
+
+    def _report_import_review_scope_failure(self, error: Exception) -> None:
+        message = "无法确定本次导入的审核范围，未打开审核队列。"
+        try:
+            self.write_log(f"❌ [审核范围] {message}: {error}")
+        except Exception:
+            pass
+        try:
+            self.statusBar().showMessage(message, 5000)
+        except Exception:
+            pass
+
+    def _open_new_invoice_review(
+        self,
+        activity: ImportActivity | None = None,
+        pending_ids: tuple[int, ...] | list[int] | None = None,
+    ) -> None:
+        explicit_scope = activity is not None or pending_ids is not None
+        if not explicit_scope:
+            scope_error = getattr(self, "_import_review_result_scope_error", None)
+            if scope_error is not None:
+                self._report_import_review_scope_failure(scope_error)
+                return
+
+            bound_activity = getattr(self, "_import_review_result_activity", None)
+            bound_pending = tuple(
+                getattr(self, "_import_review_result_pending_ids", ()) or ()
+            )
+            if bound_activity is not None and bound_pending:
+                activity = bound_activity
+                pending_ids = bound_pending
+            else:
+                try:
+                    activity, pending_ids = self._latest_new_invoice_activity(
+                        strict=True
+                    )
+                except Exception as exc:
+                    self._report_import_review_scope_failure(exc)
+                    return
+
         if activity is None or not pending_ids:
             self._refresh_overview_page()
             return
-        prepared_ids = self._prepare_import_activity_review(activity, pending_ids=pending_ids)
+
+        prepared_ids = self._prepare_import_activity_review(
+            activity,
+            pending_ids=tuple(pending_ids),
+        )
         if not prepared_ids:
             self._refresh_overview_page()
             return
@@ -3160,6 +3258,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         state=timeline_state,
                     )
             latest_act, pending_ids = self._latest_new_invoice_activity()
+            self._set_import_review_result_scope(
+                latest_act,
+                pending_ids,
+                getattr(self, "_last_review_scope_error", None),
+            )
             if hasattr(self, "btn_import_recent_review"):
                 if self._mobile_upload_processing:
                     self.btn_import_recent_review.setText("正在处理本批上传…")
