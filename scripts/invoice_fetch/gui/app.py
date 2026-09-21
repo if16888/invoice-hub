@@ -2792,6 +2792,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         activity: ImportActivity | None = None,
         pending_ids: tuple[int, ...] | list[int] | None = None,
     ) -> None:
+        # Qt's clicked signal may pass its checked boolean to this legacy slot.
+        if isinstance(activity, bool) and pending_ids is None:
+            activity = None
         explicit_scope = activity is not None or pending_ids is not None
         if not explicit_scope:
             scope_error = getattr(self, "_import_review_result_scope_error", None)
