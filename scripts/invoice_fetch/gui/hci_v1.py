@@ -790,9 +790,37 @@ def _history_recheck_finished(window, result: dict) -> None:
             except Exception:
                 pass
 
+    activity = None
+    pending_ids = ()
+    scope_error = None
+    refresh_scope = getattr(window, "_refresh_import_review_result_scope", None)
+    if callable(refresh_scope):
+        try:
+            result = refresh_scope()
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise TypeError(
+                    "_refresh_import_review_result_scope must return "
+                    "(activity, pending_ids)"
+                )
+            activity, pending_ids = result
+            pending_ids = tuple(pending_ids or ())
+        except Exception as exc:
+            scope_error = exc
+
     review_button = getattr(window, "btn_hci_import_review_result", None)
     if review_button is not None:
-        review_button.setText(f"去审核 {added} 张" if added else "查看审核工作台")
+        scope_error = scope_error or getattr(
+            window, "_import_review_result_scope_error", None
+        )
+        if scope_error is not None:
+            review_button.setText("审核范围暂不可用")
+            review_button.setEnabled(False)
+        elif activity is not None and pending_ids:
+            review_button.setText(f"去审核 {len(pending_ids)} 张")
+            review_button.setEnabled(True)
+        else:
+            review_button.setText("查看审核工作台")
+            review_button.setEnabled(True)
         review_button.show()
 
 
