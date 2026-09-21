@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.review_queue_semantics import (
+    _open_import_result_review,
     apply_import_review_scope_semantics,
     apply_review_queue_semantics,
 )
@@ -77,6 +78,27 @@ class ReviewQueueSemanticsTests(unittest.TestCase):
                 self.assertIn("第 1 / 2 张", window.lbl_hci_review_progress.text())
                 self.assertIn("本批还剩 2 张待审核", window.lbl_hci_review_progress.text())
                 self.assertTrue(set(historical).isdisjoint(visible))
+            finally:
+                window.close()
+
+    def test_import_scope_resolution_failure_does_not_open_full_queue(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window._latest_new_invoice_activity = MagicMock(
+                    side_effect=RuntimeError("scope query failed")
+                )
+
+                with patch(
+                    "scripts.invoice_fetch.gui.hci_v1._switch_to_review"
+                ) as full_queue_fallback:
+                    _open_import_result_review(window)
+
+                full_queue_fallback.assert_not_called()
+                self.assertIn(
+                    "无法确定本次导入的审核范围",
+                    window.statusBar().currentMessage(),
+                )
             finally:
                 window.close()
 
