@@ -692,22 +692,6 @@ def _sync_incremental_result(window, res: dict) -> None:
     if bool((res or {}).get("cancelled")):
         _sync_import_primary_bridge(window)
         return
-    summary = getattr(window, "_last_scan_summary", None) or {}
-    scanned = int(
-        summary.get("scanned_headers")
-        or summary.get("scanned")
-        or summary.get("checked")
-        or 0
-    )
-    new = int(
-        summary.get("new_records")
-        or summary.get("new")
-        or summary.get("new_email_headers")
-        or 0
-    )
-    restored = int(summary.get("restored") or 0)
-    duplicates = int(summary.get("duplicates") or 0)
-
     _sync_import_primary_bridge(window)
 
     recent = getattr(window, "import_mail_recent_card", None)
