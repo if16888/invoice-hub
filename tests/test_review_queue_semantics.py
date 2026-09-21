@@ -81,12 +81,20 @@ class ReviewQueueSemanticsTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_import_scope_resolution_failure_does_not_open_full_queue(self):
+    def test_real_scope_query_failure_does_not_open_full_queue(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
-                window._latest_new_invoice_activity = MagicMock(
-                    side_effect=RuntimeError("scope query failed")
+                invoice_id = self._insert_pending(window, "DB-FAILURE")
+                window._record_import_activity(
+                    "邮箱扫描",
+                    added=1,
+                    new_invoice_ids=(invoice_id,),
+                    review_invoice_ids=(invoice_id,),
+                )
+                window._import_review_result_scope_initialized = False
+                window.db.list_invoices_by_ids = MagicMock(
+                    side_effect=RuntimeError("database unavailable")
                 )
 
                 with patch(
@@ -98,6 +106,70 @@ class ReviewQueueSemanticsTests(unittest.TestCase):
                 self.assertIn(
                     "无法确定本次导入的审核范围",
                     window.statusBar().currentMessage(),
+                )
+            finally:
+                window.close()
+
+    def test_import_result_keeps_bound_batch_when_newer_empty_activity_arrives(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                batch = [
+                    self._insert_pending(window, f"BOUND-{index}") for index in range(2)
+                ]
+                activity = window._record_import_activity(
+                    "邮箱扫描",
+                    added=2,
+                    new_invoice_ids=batch,
+                    review_invoice_ids=batch,
+                )
+                bound_activity, bound_pending = (
+                    window._refresh_import_review_result_scope()
+                )
+                self.assertIs(bound_activity, activity)
+                self.assertEqual(tuple(bound_pending), tuple(batch))
+
+                window._record_import_activity("邮箱重新检查", scanned=3, added=0)
+                opener = MagicMock()
+                window._open_new_invoice_review = opener
+
+                with patch(
+                    "scripts.invoice_fetch.gui.review_queue_semantics._enter_current_review_queue"
+                ):
+                    _open_import_result_review(window)
+
+                opener.assert_called_once_with(
+                    activity=activity,
+                    pending_ids=tuple(batch),
+                )
+            finally:
+                window.close()
+
+    def test_newer_empty_activity_enters_generic_queue_without_old_batch(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                batch = [
+                    self._insert_pending(window, f"EMPTY-{index}") for index in range(2)
+                ]
+                window._record_import_activity(
+                    "邮箱扫描",
+                    added=2,
+                    new_invoice_ids=batch,
+                    review_invoice_ids=batch,
+                )
+                window._record_import_activity("邮箱重新检查", scanned=3, added=0)
+                window._refresh_import_review_result_scope()
+
+                with patch(
+                    "scripts.invoice_fetch.gui.hci_v1._switch_to_review"
+                ) as full_queue_fallback:
+                    _open_import_result_review(window)
+
+                full_queue_fallback.assert_called_once_with(
+                    window,
+                    TO_REVIEW,
+                    continuous=True,
                 )
             finally:
                 window.close()
