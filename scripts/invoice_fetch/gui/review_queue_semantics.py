@@ -305,7 +305,27 @@ def _open_import_result_review(window) -> None:
         if callable(opener):
             opener()
             window_ref = weakref.ref(window)
-            QTimer.singleShot(0, lambda: _enter_current_review_queue(window_ref()))
+
+            def enter_first_scope_item():
+                target = window_ref()
+                if target is None or not isValid(target):
+                    return
+                scope_ids = tuple(
+                    getattr(target, "_review_scope_ids", ()) or ()
+                ) or pending_ids
+                selector = getattr(target, "_select_invoice_by_id", None)
+                if callable(selector) and scope_ids:
+                    try:
+                        selector(scope_ids[0])
+                    except Exception as exc:
+                        _log.warning(
+                            "failed to select first import review item: %s",
+                            exc,
+                            exc_info=True,
+                        )
+                _enter_current_review_queue(target)
+
+            QTimer.singleShot(0, enter_first_scope_item)
             return
 
     # No actionable rows from the latest import: the CTA is intentionally a
