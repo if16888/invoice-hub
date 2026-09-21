@@ -11,6 +11,7 @@ another compatibility/closure layer:
 
 from __future__ import annotations
 
+import logging
 import weakref
 from functools import wraps
 from types import MethodType
@@ -22,6 +23,31 @@ from shiboken6 import isValid
 from ..config import RUNTIME_DIR
 from ..review_status import TO_REVIEW
 from .helpers import resolve_stored_path
+
+
+_log = logging.getLogger(__name__)
+
+
+def _report_review_scope_failure(window, error: Exception) -> None:
+    """Fail closed when the import-scope contract cannot be resolved."""
+    message = "无法确定本次导入的审核范围，未打开审核队列。"
+    _log.error("import review scope resolution failed: %s", error, exc_info=True)
+
+    writer = getattr(window, "write_log", None)
+    if callable(writer):
+        try:
+            writer(f"❌ [审核范围] {message}")
+        except Exception:
+            pass
+
+    status_bar_factory = getattr(window, "statusBar", None)
+    if callable(status_bar_factory):
+        try:
+            status_bar = status_bar_factory()
+            if status_bar is not None:
+                status_bar.showMessage(message, 5000)
+        except Exception:
+            pass
 
 
 def _query_remaining(window) -> int:
@@ -253,17 +279,26 @@ def _open_import_result_review(window) -> None:
     if window is None or not isValid(window):
         return
 
-    activity = None
     latest = getattr(window, "_latest_new_invoice_activity", None)
-    if callable(latest):
-        activity = latest()
-    pending_ids: tuple[int, ...] = ()
-    remaining = getattr(window, "_remaining_review_ids", None)
-    if activity is not None and callable(remaining):
-        try:
-            pending_ids = tuple(remaining(activity) or ())
-        except Exception:
-            pending_ids = ()
+    if not callable(latest):
+        _report_review_scope_failure(
+            window,
+            TypeError("_latest_new_invoice_activity is unavailable"),
+        )
+        return
+
+    try:
+        result = latest()
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise TypeError(
+                "_latest_new_invoice_activity must return "
+                "(activity, pending_ids)"
+            )
+        _activity, pending_ids = result
+        pending_ids = tuple(pending_ids or ())
+    except Exception as exc:
+        _report_review_scope_failure(window, exc)
+        return
 
     if pending_ids:
         opener = getattr(window, "_open_new_invoice_review", None)
