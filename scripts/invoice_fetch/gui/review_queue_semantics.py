@@ -275,60 +275,88 @@ def _enter_current_review_queue(window) -> None:
 
 
 def _open_import_result_review(window) -> None:
-    """Prefer the latest live import scope; fall back to the full review queue."""
+    """Open the bound import scope, or explicitly enter the generic queue."""
     if window is None or not isValid(window):
         return
 
-    latest = getattr(window, "_latest_new_invoice_activity", None)
-    if not callable(latest):
-        _report_review_scope_failure(
-            window,
-            TypeError("_latest_new_invoice_activity is unavailable"),
+    scope_initialized = bool(
+        getattr(window, "_import_review_result_scope_initialized", False)
+    )
+    if scope_initialized:
+        scope_error = getattr(window, "_import_review_result_scope_error", None)
+        if scope_error is not None:
+            _report_review_scope_failure(window, scope_error)
+            return
+        activity = getattr(window, "_import_review_result_activity", None)
+        pending_ids = tuple(
+            getattr(window, "_import_review_result_pending_ids", ()) or ()
         )
-        return
-
-    try:
-        result = latest()
-        if not isinstance(result, tuple) or len(result) != 2:
-            raise TypeError(
-                "_latest_new_invoice_activity must return "
-                "(activity, pending_ids)"
+    else:
+        latest = getattr(window, "_latest_new_invoice_activity", None)
+        if not callable(latest):
+            _report_review_scope_failure(
+                window,
+                TypeError("_latest_new_invoice_activity is unavailable"),
             )
-        _activity, pending_ids = result
-        pending_ids = tuple(pending_ids or ())
-    except Exception as exc:
-        _report_review_scope_failure(window, exc)
-        return
-
-    if pending_ids:
-        opener = getattr(window, "_open_new_invoice_review", None)
-        if callable(opener):
-            opener()
-            window_ref = weakref.ref(window)
-
-            def enter_first_scope_item():
-                target = window_ref()
-                if target is None or not isValid(target):
-                    return
-                scope_ids = tuple(
-                    getattr(target, "_review_scope_ids", ()) or ()
-                ) or pending_ids
-                selector = getattr(target, "_select_invoice_by_id", None)
-                if callable(selector) and scope_ids:
-                    try:
-                        selector(scope_ids[0])
-                    except Exception as exc:
-                        _log.warning(
-                            "failed to select first import review item: %s",
-                            exc,
-                            exc_info=True,
-                        )
-                _enter_current_review_queue(target)
-
-            QTimer.singleShot(0, enter_first_scope_item)
+            return
+        try:
+            result = latest(strict=True)
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise TypeError(
+                    "_latest_new_invoice_activity must return "
+                    "(activity, pending_ids)"
+                )
+            activity, pending_ids = result
+            pending_ids = tuple(pending_ids or ())
+        except Exception as exc:
+            _report_review_scope_failure(window, exc)
             return
 
-    # No actionable rows from the latest import: the CTA is intentionally a
+    if pending_ids:
+        if activity is None:
+            _report_review_scope_failure(
+                window,
+                TypeError("an actionable import scope has no activity"),
+            )
+            return
+        opener = getattr(window, "_open_new_invoice_review", None)
+        if not callable(opener):
+            _report_review_scope_failure(
+                window,
+                TypeError("_open_new_invoice_review is unavailable"),
+            )
+            return
+        try:
+            opener(activity=activity, pending_ids=pending_ids)
+        except Exception as exc:
+            _report_review_scope_failure(window, exc)
+            return
+
+        window_ref = weakref.ref(window)
+
+        def enter_first_scope_item():
+            target = window_ref()
+            if target is None or not isValid(target):
+                return
+            scope_ids = tuple(
+                getattr(target, "_review_scope_ids", ()) or ()
+            ) or pending_ids
+            selector = getattr(target, "_select_invoice_by_id", None)
+            if callable(selector) and scope_ids:
+                try:
+                    selector(scope_ids[0])
+                except Exception as exc:
+                    _log.warning(
+                        "failed to select first import review item: %s",
+                        exc,
+                        exc_info=True,
+                    )
+            _enter_current_review_queue(target)
+
+        QTimer.singleShot(0, enter_first_scope_item)
+        return
+
+    # No actionable rows from the newest import: the CTA is intentionally a
     # generic "查看审核工作台" entry instead of pretending a batch still exists.
     from .hci_v1 import _switch_to_review
 
