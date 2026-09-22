@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -104,7 +105,13 @@ class LocalImportCancellationTests(unittest.TestCase):
             source_dir.mkdir()
             archive = source_dir / "bundle.zip"
             next_source = source_dir / "next.pdf"
-            archive.write_bytes(b"zip placeholder")
+            # Use a structurally valid ZIP because local import now performs
+            # a full archive preflight before extraction.  Extraction itself is
+            # still mocked below so this test remains focused on cancellation
+            # boundaries rather than ZIP payload parsing.
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("member-1.pdf", b"%PDF-member-1")
+                zf.writestr("member-2.pdf", b"%PDF-member-2")
             next_source.write_bytes(b"%PDF-next")
             control = ScanControl()
             extracted = [base / "member-1.pdf", base / "member-2.pdf"]
