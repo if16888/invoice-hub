@@ -1611,7 +1611,11 @@ class TestDetailPanelCompact001(unittest.TestCase):
         from scripts.invoice_fetch.gui.app import InvoiceReviewApp
         from scripts.invoice_fetch.db import InvoiceDB
 
-        # Create 1 linked supporting doc
+        # Create 1 real linked supporting doc.  The production UI now
+        # correctly disables "open" for missing/empty evidence, so this fixture
+        # must represent an actually usable linked file.
+        evidence = self.temp_dir / "doc1.pdf"
+        evidence.write_bytes(b"%PDF-1.4 synthetic evidence")
         with InvoiceDB(self.db_path) as db:
             db.insert_invoice({
                 "invoice_number": "111",
@@ -1619,7 +1623,7 @@ class TestDetailPanelCompact001(unittest.TestCase):
                 "seller_name": "销售方A",
                 "total_amount": "100.00",
                 "review_status": "to_review",
-                "extra_paths": json.dumps(["attachments/doc1.pdf"]),
+                "extra_paths": json.dumps([str(evidence)]),
             })
 
         window = InvoiceReviewApp(self.db_path, splash=None)
