@@ -3610,7 +3610,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         QMessageBox.information(
             self,
             "备份完成",
-            f"数据库备份已创建并通过完整性检查。\n\n文件：{backup.name}",
+            (
+                f"数据库备份已创建并通过完整性检查。\n\n文件：{backup.name}\n\n"
+                "注意：该备份不包含发票原件和证明材料。若要完整迁移或灾难恢复，"
+                "还需要同时备份“数据目录”中的附件文件。"
+            ),
         )
 
     def _restore_database_backup_from_settings(self) -> None:
@@ -3638,6 +3642,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self,
             "确认恢复数据库",
             "恢复后，当前发票、审核状态、材料关联和报销组将替换为所选备份中的内容。\n"
+            "数据库备份不包含发票原件和证明材料；完整恢复还需要对应的数据目录附件。\n"
             "系统会先为当前数据库创建安全备份。是否继续？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
@@ -4820,6 +4825,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             more_menu=self.data_more,
         )
         data_tab.layout().addWidget(data_actions)
+        self.lbl_database_backup_scope = QLabel(
+            "数据库备份只包含结构化记录（发票信息、审核状态、材料关联、报销组），"
+            "不包含发票原件或证明材料文件。完整迁移/恢复请同时备份整个数据目录。"
+        )
+        self.lbl_database_backup_scope.setWordWrap(True)
+        self.lbl_database_backup_scope.setProperty("class", "SectionHint")
+        data_tab.layout().addWidget(self.lbl_database_backup_scope)
 
         about_tab = build_info_page("关于", "本地优先的个人报销工作台。", "lbl_settings_about")
         about_actions = CommandBar()
