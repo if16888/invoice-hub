@@ -131,6 +131,10 @@ def _claim_quality_report_gui_prompt(self):
 
                             with patch.object(box_class, "Question", box_class.Question):
                                 window._export_claim_package()
+                                worker = getattr(window, "claim_export_worker", None)
+                                if worker is not None:
+                                    worker.wait(5000)
+                                    QApplication.processEvents()
 
                             texts = [
                                 call.args[0]
@@ -158,6 +162,10 @@ def _claim_quality_report_gui_prompt(self):
 
                             with patch.object(box_class, "Question", box_class.Question):
                                 window._export_claim_package()
+                                worker = getattr(window, "claim_export_worker", None)
+                                if worker is not None:
+                                    worker.wait(5000)
+                                    QApplication.processEvents()
 
                             texts = [
                                 call.args[0]
