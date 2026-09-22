@@ -129,11 +129,20 @@ def _move_to_next_review_row(window) -> None:
     table = getattr(window, "table", None)
     if table is None or not isValid(table) or table.rowCount() <= 0:
         return
+
+    # Continuous review must share the same paging boundary as the normal
+    # Review workspace.  In particular, row 49 of a 50-row page is not the
+    # end of a 61/259-row queue: load the next batch before selecting.
+    paging = getattr(window, "review_paging", None)
+    move_selection = getattr(paging, "move_selection", None)
+    if callable(move_selection):
+        move_selection(1)
+        return
+
+    # Defensive fallback for a partially initialized page.  Never wrap to the
+    # first row because that makes unseen records unreachable.
     row = max(0, table.currentRow())
-    next_row = row + 1
-    if next_row >= table.rowCount():
-        next_row = 0
-    table.selectRow(next_row)
+    table.selectRow(min(table.rowCount() - 1, row + 1))
 
 
 def _install_review_progress_refresh(window, page: QWidget) -> None:
