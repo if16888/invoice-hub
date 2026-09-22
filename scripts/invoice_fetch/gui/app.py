@@ -5149,11 +5149,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_tabs.addTab(data_tab, "数据与备份")
         self.settings_tabs.addTab(about_tab, "关于")
 
-        # The settings workbench needs enough horizontal space for the mailbox
-        # list + detail surface and footer actions at the supported 1366px
-        # desktop baseline.  Equal side stretches previously squeezed this
-        # surface to ~730px even when the window had ample room.
-        self.settings_tabs.setMinimumWidth(900)
+        # Width floors are owned by apply_settings_responsive_metrics():
+        # desktop keeps the 900px Golden Page baseline while constrained
+        # logical widths remain free to stack/shrink for 125%/150% DPI.
         self.settings_tabs.setMaximumWidth(1120)
         settings_row = QHBoxLayout()
         settings_row.setContentsMargins(0, 0, 0, 0)
