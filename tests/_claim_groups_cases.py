@@ -6811,8 +6811,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     "attachment_path": "attachments/dummy.pdf"
                 })
 
-                # Link all to claim
-                for iid in (inv1, inv2, inv3, inv4, inv5, inv6, inv7, inv8, inv9, inv10):
+                # Keep the empty-amount fixture out of the export-guard
+                # phase so this assertion remains scoped to supplemental
+                # material integrity.  It is added back immediately afterwards
+                # for the quality-report empty-amount coverage below.
+                for iid in (inv1, inv2, inv4, inv5, inv6, inv7, inv8, inv9, inv10):
                     db.add_invoice_to_claim(claim_id, iid)
 
                 # Write a dummy attachment file to avoid skipping during copy
@@ -6826,6 +6829,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     export_claim_package(db, claim_id, project_root, runtime_dir)
                 self.assertFalse((project_root / "exports").exists())
                 self.assertEqual(db.list_export_runs(claim_id), [])
+
+                # Restore the empty-amount fixture only for report generation.
+                db.add_invoice_to_claim(claim_id, inv3)
 
                 # Keep the quality-report unit coverage independent from the
                 # export guard: the report still describes incomplete data,
