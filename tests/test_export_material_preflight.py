@@ -580,5 +580,38 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                 self.assertEqual(len(db.list_export_runs(claim_id)), 1)
 
 
+
+    def test_zero_byte_extra_is_unavailable_and_blocks_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{
+                    "invoice_number": "EMPTY-EVIDENCE",
+                    "has_extra": True,
+                    "extra_type": "行程单",
+                    "extra_paths": ["attachments/empty-trip.pdf"],
+                }],
+            )
+            empty_path = runtime_dir / "attachments" / "empty-trip.pdf"
+            empty_path.write_bytes(b"")
+
+            with InvoiceDB(runtime_dir / "invoices.db") as db:
+                invoice = db.get_claim_invoices(claim_id)[0]
+                inspection = inspect_extra_material(invoice, runtime_dir)
+                self.assertTrue(inspection["unavailable_extra"])
+
+                export_root = project_root / "exports"
+                with self.assertRaises(ValueError):
+                    export_claim_package(
+                        db,
+                        claim_id,
+                        project_root,
+                        runtime_dir,
+                        reimbursement_config={},
+                        export_root=export_root,
+                    )
+                self._assert_no_partial_package(export_root)
+                self.assertEqual(db.list_export_runs(claim_id), [])
+
 if __name__ == "__main__":
     unittest.main()
