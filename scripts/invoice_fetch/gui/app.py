@@ -5145,7 +5145,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_tabs.setMaximumWidth(1120)
         settings_row = QHBoxLayout()
         settings_row.setContentsMargins(0, 0, 0, 0)
+        # Symmetric side stretches preserve the wide-screen centered contract.
+        # The explicit 900px minimum prevents those stretches from squeezing
+        # the mailbox/detail workspace below its usable desktop baseline.
+        settings_row.addStretch(1)
         settings_row.addWidget(self.settings_tabs, 1, Qt.AlignTop)
+        settings_row.addStretch(1)
         layout.addLayout(settings_row, 0)
         layout.addStretch(1)
         self._refresh_settings_page()
