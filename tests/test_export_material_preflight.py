@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -38,7 +39,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     "invoice_number": row.get("invoice_number", f"SYN-{index}"),
                     "total_amount": row.get("total_amount", "100.00"),
                     "seller_name": row.get("seller_name", "Synthetic Seller"),
-                    "invoice_date": "2026-08-05",
+                    "invoice_date": row.get("invoice_date", "2026-08-05"),
                     "category": "交通",
                     "review_status": row.get("review_status", review_status.APPROVED),
                     "attachment_path": attachment_path,
@@ -182,7 +183,11 @@ class ExportMaterialPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             project_root, runtime_dir, claim_id = self._create_claim(
                 Path(td),
-                [{"invoice_number": "BAD-AMOUNT", "total_amount": "NaN"}],
+                [{
+                    "invoice_number": "BAD-AMOUNT",
+                    "total_amount": "NaN",
+                    "invoice_date": datetime.now().strftime("%Y-%m-%d"),
+                }],
             )
             with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
                 app_module, "RUNTIME_DIR", runtime_dir
@@ -210,7 +215,13 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     self.assertIn("金额无效 1 张", window.lbl_export_action_hint.text())
                     current_item = window.export_group_list.currentItem()
                     self.assertIsNotNone(current_item)
-                    self.assertIn("待补齐", current_item.text())
+                    row_widget = window.export_group_list.itemWidget(current_item)
+                    self.assertIsNotNone(row_widget)
+                    from PySide6.QtWidgets import QLabel
+                    row_text = "\n".join(
+                        label.text() for label in row_widget.findChildren(QLabel)
+                    )
+                    self.assertIn("待补齐", row_text)
                     metrics = window._collect_overview_metrics()
                     self.assertEqual(metrics["export_ready"], 0)
                     self.assertTrue(metrics["month_total"].is_finite())
