@@ -148,6 +148,86 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     self.assertFalse(window.btn_run_export_page.isEnabled())
                     self.assertEqual(window.export_check_missing_attach.lbl_value.text(), "1 张")
                     self.assertIn("缺原件 1 张", window.lbl_export_action_hint.text())
+
+                    window.combo_claims.clear()
+                    window.combo_claims.addItem("Synthetic Material Preflight", claim_id)
+                    window.combo_claims.setCurrentIndex(0)
+                    approved_button = Mock()
+                    include_button = Mock()
+                    cancel_button = Mock()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker"
+                    ) as worker_cls:
+                        message_box.return_value.addButton.side_effect = [
+                            approved_button,
+                            include_button,
+                            cancel_button,
+                        ]
+                        message_box.return_value.clickedButton.return_value = approved_button
+                        window._export_claim_package()
+                        worker_cls.assert_not_called()
+                        message_box.warning.assert_called_once()
+                        self.assertIn("缺原件 1 张", message_box.warning.call_args.args[2])
+                finally:
+                    if getattr(window, "db", None) is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    self.qt_app.processEvents()
+
+    def test_gui_preflight_rejects_non_finite_amount_before_worker_start(self):
+        from scripts.invoice_fetch.gui import app as app_module
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{"invoice_number": "BAD-AMOUNT", "total_amount": "NaN"}],
+            )
+            with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
+                app_module, "RUNTIME_DIR", runtime_dir
+            ):
+                window = InvoiceReviewApp(runtime_dir / "invoices.db", splash=None)
+                try:
+                    window._deferred_init()
+                    self.qt_app.processEvents()
+                    stats = window._claim_export_preflight_stats(claim_id)
+                    self.assertEqual(stats["missing_amount"], 0)
+                    self.assertEqual(stats["invalid_amount"], 1)
+                    self.assertIn(
+                        "金额无效：1 张",
+                        window._format_claim_export_preflight_text(stats),
+                    )
+
+                    window._refresh_export_page()
+                    window.export_group_list.setCurrentRow(0)
+                    window._sync_export_claim_selection()
+                    self.assertFalse(window.btn_run_export_page.isEnabled())
+                    self.assertEqual(
+                        window.export_check_invalid_amount.lbl_value.text(),
+                        "1 张",
+                    )
+                    self.assertIn("金额无效 1 张", window.lbl_export_action_hint.text())
+
+                    window.combo_claims.clear()
+                    window.combo_claims.addItem("Synthetic Material Preflight", claim_id)
+                    window.combo_claims.setCurrentIndex(0)
+                    approved_button = Mock()
+                    include_button = Mock()
+                    cancel_button = Mock()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker"
+                    ) as worker_cls:
+                        message_box.return_value.addButton.side_effect = [
+                            approved_button,
+                            include_button,
+                            cancel_button,
+                        ]
+                        message_box.return_value.clickedButton.return_value = approved_button
+                        window._export_claim_package()
+                        worker_cls.assert_not_called()
+                        message_box.warning.assert_called_once()
+                        self.assertIn("金额无效 1 张", message_box.warning.call_args.args[2])
                 finally:
                     if getattr(window, "db", None) is not None:
                         window.db.close()
