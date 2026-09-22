@@ -177,6 +177,42 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         )
         self.assertEqual(self.panel.btn_add_evidence.text(), "补充")
 
+    def test_evidence_row_distinguishes_not_required_optional_and_required_missing(self):
+        self.panel.update_evidence_row([], required=False, optional=False)
+        self.assertEqual(self.panel.lbl_evidence_missing.text(), "不需要")
+        self.assertEqual(self.panel.evidence_status_line.lbl_status.text(), "不需要")
+
+        self.panel.update_evidence_row([], required=False, optional=True)
+        self.assertEqual(self.panel.lbl_evidence_missing.text(), "未添加（可选）")
+        self.assertEqual(
+            self.panel.evidence_status_line.lbl_status.text(),
+            "未添加（可选）",
+        )
+
+        self.panel.update_evidence_row([], required=True, optional=False)
+        self.assertEqual(self.panel.lbl_evidence_missing.text(), "必需但缺失")
+        self.assertEqual(
+            self.panel.evidence_status_line.lbl_status.text(),
+            "必需但缺失",
+        )
+
+    def test_evidence_row_marks_linked_zero_byte_file_unavailable(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "empty-trip.pdf"
+            path.write_bytes(b"")
+            self.panel.update_evidence_row(
+                [{"label": path.name, "path": path, "status": "linked"}],
+                required=False,
+            )
+            self.assertEqual(
+                self.panel.evidence_status_line.lbl_status.text(),
+                "已关联不可用",
+            )
+            self.assertFalse(self.panel.btn_open_extra_files.isEnabled())
+
     def test_evidence_row_shows_filename_when_doc_present(self):
         """When a supporting document exists, filename label is visible and badge hidden."""
         items = [{"label": "行程单.pdf", "path": "/tmp/行程单.pdf"}]
