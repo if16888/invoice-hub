@@ -243,9 +243,8 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     include_button = Mock()
                     cancel_button = Mock()
                     with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
-                        "scripts.invoice_fetch.claim_export.export_claim_package",
-                        side_effect=RuntimeError("synthetic approved-only handoff"),
-                    ) as exporter:
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker",
+                    ) as worker_cls:
                         message_box.return_value.addButton.side_effect = [
                             approved_button,
                             include_button,
@@ -254,16 +253,18 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         message_box.return_value.clickedButton.return_value = approved_button
                         window._export_claim_package()
 
-                        exporter.assert_called_once()
-                        self.assertFalse(exporter.call_args.kwargs["include_to_review"])
+                        worker_cls.assert_called_once()
+                        self.assertFalse(worker_cls.call_args.kwargs["include_to_review"])
+                        worker_cls.return_value.start.assert_called_once()
                         message_box.warning.assert_not_called()
+                        window._claim_export_thread_finished()
 
                     approved_button = Mock()
                     include_button = Mock()
                     cancel_button = Mock()
                     with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
-                        "scripts.invoice_fetch.claim_export.export_claim_package",
-                    ) as exporter:
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker",
+                    ) as worker_cls:
                         message_box.return_value.addButton.side_effect = [
                             approved_button,
                             include_button,
@@ -272,7 +273,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         message_box.return_value.clickedButton.return_value = include_button
                         window._export_claim_package()
 
-                        exporter.assert_not_called()
+                        worker_cls.assert_not_called()
                         message_box.warning.assert_called_once()
                         warning_args = message_box.warning.call_args.args
                         self.assertEqual(warning_args[1], "导出已阻断")
