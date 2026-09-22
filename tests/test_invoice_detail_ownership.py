@@ -89,7 +89,10 @@ class InvoiceDetailOwnershipTests(unittest.TestCase):
                 self.assertIs(detail.original_status_line._action_widget, detail.btn_add_attachment)
 
                 detail.update_evidence_row([])
-                self.assertEqual(detail.evidence_status_line.lbl_status.text(), "缺失")
+                self.assertEqual(
+                    detail.evidence_status_line.lbl_status.text(),
+                    "必需但缺失",
+                )
                 self.assertIs(detail.evidence_status_line._action_widget, detail.btn_add_evidence)
             finally:
                 window.close()
