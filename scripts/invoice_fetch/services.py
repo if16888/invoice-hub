@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -2071,6 +2072,28 @@ def _import_local_pdf(
     )
 
 
+_LOCAL_ZIP_MEMBER_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
+_LOCAL_ZIP_MAX_FILES = 20
+_LOCAL_ZIP_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _inspect_local_zip(src: Path) -> tuple[int, int]:
+    """Return supported-member count and total uncompressed bytes.
+
+    The local-import path is fail-closed at the same safety limits used by the
+    attachment handler.  Preflighting the full archive prevents the old
+    partial-success behaviour where member 21 was silently left behind.
+    """
+    with zipfile.ZipFile(src) as zf:
+        members = [
+            member
+            for member in zf.infolist()
+            if not member.is_dir()
+            and Path(member.filename).suffix.lower() in _LOCAL_ZIP_MEMBER_EXTS
+        ]
+        return len(members), sum(int(member.file_size or 0) for member in members)
+
+
 def _extract_local_zip(src: Path, att_dir: Path) -> list[Path]:
     msg = email.message.Message()
     msg["Content-Type"] = f'application/zip; name="{src.name}"'
@@ -2078,7 +2101,11 @@ def _extract_local_zip(src: Path, att_dir: Path) -> list[Path]:
     msg.set_payload(src.read_bytes())
     handler = AttachmentHandler(att_dir)
     attachments = handler.extract(msg, mail_uid=0, date_str="local_import")
-    return [Path(a.file_path) for a in attachments if Path(a.file_path).suffix.lower() in {".pdf", ".ofd"}]
+    return [
+        Path(a.file_path)
+        for a in attachments
+        if Path(a.file_path).suffix.lower() in _LOCAL_ZIP_MEMBER_EXTS
+    ]
 
 
 def _import_local_directory(
@@ -2121,6 +2148,11 @@ def _import_local_directory(
         "review_invoice_ids": [],
         "restored_invoice_ids": [],
         "duplicate_outcomes": [],
+        "archive_members_discovered": 0,
+        "archive_members_processed": 0,
+        "archive_members_unprocessed": 0,
+        "skipped": 0,
+        "skipped_details": [],
     }
 
     # Local import intentionally cancels only between top-level source files.
@@ -2149,7 +2181,7 @@ def _import_local_directory(
             stats["duplicate_outcomes"].append(duplicate_outcome)
 
     if not files:
-        _log.warning("本地导入目录没有发现 PDF/OFD/ZIP: %s", mask_path(root))
+        _log.warning("本地导入目录没有发现 PDF/OFD/ZIP/图片: %s", mask_path(root))
         return stats
 
     _log.info("开始本地导入: %s (%d 个文件)", mask_path(root), len(files))
@@ -2164,19 +2196,80 @@ def _import_local_directory(
                 preserve_source_path = False
 
             if ext == ".zip":
+                discovered, total_uncompressed = _inspect_local_zip(src)
+                stats["archive_members_discovered"] += discovered
+                if discovered > _LOCAL_ZIP_MAX_FILES:
+                    stats["archive_members_unprocessed"] += discovered
+                    stats["skipped"] += discovered
+                    stats["skipped_details"].append({
+                        "source": src.name,
+                        "reason": f"压缩包含 {discovered} 个可处理文件，超过安全上限 {_LOCAL_ZIP_MAX_FILES}，已整包拒绝",
+                        "count": discovered,
+                    })
+                    raise ValueError(
+                        f"ZIP contains {discovered} supported files; limit is {_LOCAL_ZIP_MAX_FILES}"
+                    )
+                if total_uncompressed > _LOCAL_ZIP_MAX_BYTES:
+                    stats["archive_members_unprocessed"] += discovered
+                    stats["skipped"] += discovered
+                    stats["skipped_details"].append({
+                        "source": src.name,
+                        "reason": "压缩包解压后体积超过 50 MB，已整包拒绝",
+                        "count": discovered,
+                    })
+                    raise ValueError("ZIP uncompressed content exceeds 50 MB")
+
                 extracted = _extract_local_zip(src, att_dir)
+                stats["archive_members_processed"] += len(extracted)
+                unprocessed = max(0, discovered - len(extracted))
+                if unprocessed:
+                    stats["archive_members_unprocessed"] += unprocessed
+                    stats["skipped"] += unprocessed
+                    stats["skipped_details"].append({
+                        "source": src.name,
+                        "reason": "压缩包中部分文件格式或内容校验未通过",
+                        "count": unprocessed,
+                    })
                 if not extracted:
                     copied = _copy_local_file_to_staging(src, staging_dir)
-                    res = _insert_local_exception(db, copied, src.name, "ZIP中未发现可处理 ofd/pdf 文件", categories)
+                    res = _insert_local_exception(
+                        db, copied, src.name, "ZIP中未发现可处理 PDF/OFD/图片文件", categories
+                    )
                     record_item_result(res)
                     continue
+
                 for extracted_file in extracted:
-                    if extracted_file.suffix.lower() == ".pdf":
-                        res = _import_local_pdf(src.name, extracted_file, db, parser, categories, att_dir)
+                    inner_ext = extracted_file.suffix.lower()
+                    if inner_ext == ".pdf":
+                        res = _import_local_pdf(
+                            src.name, extracted_file, db, parser, categories, att_dir
+                        )
+                        record_item_result(res)
+                    elif inner_ext in {".png", ".jpg", ".jpeg", ".heic"}:
+                        evidence_result = _import_local_evidence(
+                            db=db,
+                            parsed=None,
+                            file_path=extracted_file,
+                            source_name=extracted_file.name,
+                            categories=categories,
+                            preserve_source_path=True,
+                        )
+                        if evidence_result is None:
+                            res = _insert_local_exception(
+                                db,
+                                extracted_file,
+                                extracted_file.name,
+                                "ZIP内图片待识别，请人工处理",
+                                categories,
+                            )
+                        else:
+                            res = evidence_result
                         record_item_result(res)
                     else:
                         res = _insert_local_exception(
-                            db, extracted_file, extracted_file.name,
+                            db,
+                            extracted_file,
+                            extracted_file.name,
                             "本地导入暂不支持OFD解析，请人工处理",
                             categories,
                         )
@@ -2248,8 +2341,18 @@ def _import_local_directory(
     stats["review_invoice_ids"] = list(stats["review_invoice_ids"])
 
     total_recorded = stats["added"] + stats["conflicts"] + stats["pending_manual"]
-    _log.info("本地导入完成: 入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d)",
-              total_recorded, stats["added"], stats["duplicates"], stats["conflicts"], stats["failed"])
+    _log.info(
+        "本地导入完成: 入库/待处理 %d 条 (新增: %d, 重复: %d, 冲突: %d, 失败: %d, "
+        "压缩包成员: 发现 %d / 已处理 %d / 未处理 %d)",
+        total_recorded,
+        stats["added"],
+        stats["duplicates"],
+        stats["conflicts"],
+        stats["failed"],
+        stats["archive_members_discovered"],
+        stats["archive_members_processed"],
+        stats["archive_members_unprocessed"],
+    )
     return stats
 
 
