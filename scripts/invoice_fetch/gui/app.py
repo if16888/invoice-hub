@@ -3499,7 +3499,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 + int(approved_stats.get("unavailable_extra", 0) or 0)
             )
             ready = int(approved_stats.get(APPROVED, 0) or 0) > 0 and approved_blockers == 0
-            subtitle = f"{count} 张发票 · ¥{Decimal(str(total)).quantize(Decimal('0.00'))}"
+            if int(stats.get("invalid_amount", 0) or 0):
+                subtitle = f"{count} 张发票 · 金额待修复"
+            else:
+                subtitle = f"{count} 张发票 · ¥{Decimal(str(total)).quantize(Decimal('0.00'))}"
             meta = f"完整性缺口 {displayed_missing}"
             badge = "可导出" if ready else "待补齐"
             self.export_group_list.add_entity_row(
