@@ -851,6 +851,8 @@ class IHDS09Tests(unittest.TestCase):
                 self.assertNotIn("测试连接", visible_text)
                 self.assertNotIn("连接成功", visible_text)
                 self.assertIn("校验配置", visible_text)
+                if hasattr(window, "btn_settings_ai_empty_validate"):
+                    self.assertFalse(window.btn_settings_ai_empty_validate.isEnabled())
             finally:
                 window.close()
 
