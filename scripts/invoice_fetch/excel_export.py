@@ -182,7 +182,12 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
     _add_summary_sheet(wb, sorted_rows)
     _add_exception_sheet(wb, sorted_rows)
 
-    wb.save(str(dest))
+    try:
+        wb.save(str(dest))
+    finally:
+        # Make the file-lifecycle boundary explicit for Windows packaging and
+        # tests.  The workbook is never reused after export.
+        wb.close()
     _log.info("Excel 已导出: %s (%d 条记录)", dest.name, len(sorted_rows))
     return dest
 
