@@ -208,6 +208,12 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         "1 张",
                     )
                     self.assertIn("金额无效 1 张", window.lbl_export_action_hint.text())
+                    current_item = window.export_group_list.currentItem()
+                    self.assertIsNotNone(current_item)
+                    self.assertIn("待补齐", current_item.text())
+                    metrics = window._collect_overview_metrics()
+                    self.assertEqual(metrics["export_ready"], 0)
+                    self.assertTrue(metrics["month_total"].is_finite())
 
                     window.combo_claims.clear()
                     window.combo_claims.addItem("Synthetic Material Preflight", claim_id)
