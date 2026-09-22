@@ -8011,7 +8011,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return "导出已阻断：" + "；".join(blockers) + "。请补齐材料后重试。"
 
     def _export_claim_package(self):
-        """Run standard claim export (offering choices for range scope) and offer direct file manager folder opening."""
+        """Validate the selected claim and start a non-blocking package export."""
         claim_idx = self.combo_claims.currentIndex()
         if claim_idx < 0:
             QMessageBox.warning(self, "关联空", "请选择需要导出的报销组！")
@@ -8029,9 +8029,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if total_invoices == 0:
             QMessageBox.warning(self, "关联空", "当前报销组内没有发票，无法导出！")
             return
-        preflight_text = self._format_claim_export_preflight_text(preflight_stats)
 
-        # Premium selection dialog for export range
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
         box.setWindowTitle("确认导出范围")
@@ -8040,17 +8038,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "默认策略仅打包处于「已审核通过 (approved)」状态的合格发票。\n"
             "对于当前处于「待审核」或「异常」状态的关联记录，您希望如何处理？"
         )
-        box.setInformativeText(preflight_text)
+        box.setInformativeText(self._format_claim_export_preflight_text(preflight_stats))
         btn_approved_only = box.addButton("🟢 仅打包已通过发票", QMessageBox.YesRole)
         btn_include_all = box.addButton("🟡 导出已通过 + 待审核发票", QMessageBox.NoRole)
         btn_cancel = box.addButton("取消", QMessageBox.RejectRole)
-
         box.exec()
-
         if box.clickedButton() == btn_cancel:
             return
 
-        include_to_review = (box.clickedButton() == btn_include_all)
+        include_to_review = box.clickedButton() == btn_include_all
         selected_stats = self._claim_export_preflight_stats(
             claim_id,
             include_to_review=include_to_review,
@@ -8059,84 +8055,137 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if material_blocker:
             QMessageBox.warning(self, "导出已阻断", material_blocker)
             return
+        missing_amount = int(selected_stats.get("missing_amount", 0) or 0)
+        if missing_amount:
+            QMessageBox.warning(
+                self,
+                "导出已阻断",
+                f"导出已阻断：缺金额 {missing_amount} 张。请补齐金额后重试。",
+            )
+            return
 
+        if not self._try_begin_data_operation("报销组导出"):
+            return
+
+        cfg = load_config_safe()
+        configured_export_dir = (
+            getattr(self, "_export_dir", None) or resolve_export_directory(cfg)
+        )
+        self._claim_export_context = {
+            "claim_name": claim_name,
+            "configured_export_dir": Path(configured_export_dir),
+        }
         self._set_action_busy(self.btn_toolbar_export, "导出中...")
+        if hasattr(self, "btn_run_export_page"):
+            self._set_action_busy(self.btn_run_export_page, "导出中...")
+        if hasattr(self, "export_progress_bar"):
+            self.export_progress_bar.show()
+        if hasattr(self, "lbl_export_action_hint"):
+            self.lbl_export_action_hint.setText("正在后台生成报销包，界面仍可响应。")
+        self.statusBar().showMessage(f"正在导出报销组【{claim_name}】…")
+
+        worker = ClaimExportWorker(
+            db_path=self.db_path,
+            claim_id=claim_id,
+            project_root=PROJECT_ROOT,
+            runtime_dir=RUNTIME_DIR,
+            include_to_review=include_to_review,
+            reimbursement_config=cfg.get("reimbursement", {}),
+            export_root=Path(configured_export_dir),
+        )
+        self.claim_export_worker = worker
+        worker.result.connect(self._claim_export_finished)
+        worker.error.connect(self._claim_export_error)
+        worker.finished.connect(self._claim_export_thread_finished)
         try:
-            # Trigger standard package exporter
-            from ..claim_export import export_claim_package
-            cfg = load_config_safe()
-            configured_export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(cfg)
-            export_dir = export_claim_package(
-                db=self.db,
-                claim_id=claim_id,
-                project_root=PROJECT_ROOT,
-                runtime_dir=RUNTIME_DIR,
-                include_to_review=include_to_review,
-                reimbursement_config=cfg.get("reimbursement", {}),
-                export_root=Path(configured_export_dir),
-            )
+            worker.start()
+        except Exception as exc:
+            self._claim_export_error(str(exc))
+            self._claim_export_thread_finished()
 
-            # Read manifest.json to get item count and skipped counts
-            summary = _read_manifest_summary(export_dir)
-            item_count = summary.get("item_count", 0)
-            skipped = summary.get("skipped_counts", {})
-            qa_warnings_count = summary.get("qa_warnings_count", 0)
+    def _claim_export_finished(self, export_dir) -> None:
+        if not self._worker_callback_allowed():
+            return
+        context = dict(getattr(self, "_claim_export_context", {}) or {})
+        claim_name = str(context.get("claim_name") or "当前报销组")
+        configured_export_dir = Path(
+            context.get("configured_export_dir") or resolve_export_directory(load_config_safe())
+        )
+        export_dir = Path(export_dir)
 
-            # Format skipped stats neatly
-            skip_items = [f"{k}: {v}张" for k, v in skipped.items() if v > 0]
-            skip_text = ", ".join(skip_items) if skip_items else "无"
+        summary = _read_manifest_summary(export_dir)
+        item_count = int(summary.get("item_count", 0) or 0)
+        skipped = summary.get("skipped_counts", {}) or {}
+        qa_warnings_count = int(summary.get("qa_warnings_count", 0) or 0)
+        skip_items = [f"{key}: {value}张" for key, value in skipped.items() if value > 0]
+        skip_text = ", ".join(skip_items) if skip_items else "无"
 
-            # Render export summary panel
-            summary_msg = f"<b>上一次导出结果：</b><br>" \
-                          f"• 成功打包发票: <font color='#10B981'><b>{item_count}</b></font> 张<br>" \
-                          f"• 过滤跳过记录: {skip_text}"
-            self.lbl_export_summary.setText(summary_msg)
+        summary_msg = (
+            "<b>上一次导出结果：</b><br>"
+            f"• 成功打包发票: <font color='#10B981'><b>{item_count}</b></font> 张<br>"
+            f"• 过滤跳过记录: {skip_text}"
+        )
+        self.lbl_export_summary.setText(summary_msg)
+        self.statusBar().showMessage(
+            f"报销组【{claim_name}】打包导出成功，共计 {item_count} 张",
+            4000,
+        )
 
-            self.statusBar().showMessage(f"报销组【{claim_name}】打包导出成功，共计 {item_count} 张", 4000)
-
-            # Success dialog with direct Open Folder button
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Information)
-            box.setWindowTitle("导出成功")
-
-            # 不要泄露完整本机路径: show path relative to project root
-            relative_export_dir = ""
+        try:
+            relative_export_dir = export_dir.relative_to(configured_export_dir).as_posix()
+        except Exception:
             try:
-                relative_export_dir = Path(export_dir).relative_to(Path(configured_export_dir)).as_posix()
+                relative_export_dir = export_dir.relative_to(PROJECT_ROOT).as_posix()
             except Exception:
-                try:
-                    relative_export_dir = Path(export_dir).relative_to(PROJECT_ROOT).as_posix()
-                except Exception:
-                    from ..log_privacy import mask_path
-                    relative_export_dir = mask_path(export_dir)
+                from ..log_privacy import mask_path
+                relative_export_dir = mask_path(export_dir)
 
-            if qa_warnings_count == 0:
-                qa_text = "导出完成，质量检查未发现需确认项。"
-            else:
-                qa_text = f"导出完成，发现 {qa_warnings_count} 个需确认项，请查看质量报告。"
+        qa_text = (
+            "导出完成，质量检查未发现需确认项。"
+            if qa_warnings_count == 0
+            else f"导出完成，发现 {qa_warnings_count} 个需确认项，请查看质量报告。"
+        )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("导出成功")
+        box.setText(
+            f"{qa_text}\n\n"
+            f"共计打包发票: {item_count} 张\n"
+            f"过滤跳过记录: {skip_text}\n\n"
+            f"输出路径: {relative_export_dir}"
+        )
+        btn_open = box.addButton("📁 打开导出目录", QMessageBox.AcceptRole)
+        box.addButton("关闭", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() == btn_open:
+            self._open_local_path(export_dir)
 
-            box.setText(
-                f"{qa_text}\n\n"
-                f"共计打包发票: {item_count} 张\n"
-                f"过滤跳过记录: {skip_text}\n\n"
-                f"输出路径: {relative_export_dir}"
-            )
-            btn_open = box.addButton("📁 打开导出目录", QMessageBox.AcceptRole)
-            btn_close = box.addButton("关闭", QMessageBox.RejectRole)
-            box.exec()
+        self._load_claims()
+        self._load_invoices()
 
-            if box.clickedButton() == btn_open:
-                self._open_local_path(export_dir)
+    def _claim_export_error(self, err_msg: str) -> None:
+        if not self._worker_callback_allowed():
+            return
+        _log.error("Failed to export claim package: %s", sanitize_log_message(err_msg))
+        self.statusBar().showMessage("报销包导出失败", 4000)
+        QMessageBox.critical(self, "错误", f"打包导出失败: {err_msg}")
 
-            # UX auto-refresh dropdown & tables
-            self._load_claims()
-            self._load_invoices()
-
-        except Exception as e:
-            _log.error("Failed to export claim package: %s", e)
-            QMessageBox.critical(self, "错误", f"打包导出失败: {e}")
-        finally:
-            self._clear_action_busy(self.btn_toolbar_export, "导出")
+    def _claim_export_thread_finished(self) -> None:
+        if not self._worker_callback_allowed():
+            return
+        self._clear_action_busy(self.btn_toolbar_export, "导出")
+        if hasattr(self, "btn_run_export_page"):
+            self._clear_action_busy(self.btn_run_export_page, "导出报销包")
+        if hasattr(self, "export_progress_bar"):
+            self.export_progress_bar.hide()
+        self._end_data_operation("报销组导出")
+        self._claim_export_context = {}
+        worker = getattr(self, "claim_export_worker", None)
+        if worker is not None:
+            worker.deleteLater()
+        self.claim_export_worker = None
+        if hasattr(self, "export_group_list"):
+            self._sync_export_claim_selection()
 
     def _scan_selected_email_accounts(self):
         checked_keys = []
