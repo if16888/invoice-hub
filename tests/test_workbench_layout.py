@@ -676,7 +676,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertFalse(window.settings_ai_profile_list.isVisible())
                 self.assertFalse(hasattr(window, "settings_ai_summary_strip"))
                 self.assertIs(window.settings_tabs.currentWidget(), window.settings_tabs.widget(1))
-                self.assertTrue(window.settings_ai_empty_state.isVisible())
+                self.assertFalse(window.settings_ai_empty_state.isHidden())
                 self.assertTrue(window.settings_ai_detail_panel.isHidden())
                 self.assertFalse(window.btn_settings_ai_edit.isHidden())
                 self.assertTrue(window.btn_settings_ai_edit.isEnabled())
