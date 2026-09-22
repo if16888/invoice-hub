@@ -342,7 +342,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 ]
                 self.assertGreaterEqual(len(visible_nav_buttons), 1)
                 self.assertFalse(window.workbench_nav_buttons["review"].icon().isNull())
-                expected_nav_focus = Qt.NoFocus if window.workbench_nav.width() <= 72 else Qt.TabFocus
+                expected_nav_focus = Qt.TabFocus
                 self.assertEqual(window.workbench_nav_buttons["overview"].focusPolicy(), expected_nav_focus)
                 self.assertEqual(window.btn_scan_email.text(), "扫描邮箱")
                 self.assertEqual(window.btn_toolbar_export.text(), "导出")
@@ -442,7 +442,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                     ["export"],
                 )
                 self.assertTrue(
-                    all(window.workbench_nav_buttons[key].focusPolicy() == Qt.NoFocus for key in selectable)
+                    all(window.workbench_nav_buttons[key].focusPolicy() == Qt.TabFocus for key in selectable)
                 )
                 self.assertTrue(
                     all(not window.workbench_nav_buttons[key].hasFocus() for key in selectable)
