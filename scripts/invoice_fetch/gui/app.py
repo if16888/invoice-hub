@@ -4457,7 +4457,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         source_layout = self.import_source_card.body_layout
         self.import_source_cards = {
             "mail": SelectableSourceCard("mail", "邮箱", "扫描已配置的发票邮箱。"),
-            "local": SelectableSourceCard("local", "本地文件", "导入 PDF、OFD、XML 或压缩包。"),
+            "local": SelectableSourceCard("local", "本地文件", "导入 PDF、OFD、图片或压缩包。"),
             "mobile": SelectableSourceCard("mobile", "手机扫码", "从手机上传原件或材料。"),
         }
         for source_card in self.import_source_cards.values():
@@ -8756,14 +8756,29 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._performance_active_completion_trace = None
 
     def _format_local_import_summary(self, stats: dict) -> str:
-        return (
-            "本地发票批量导入完成：\n\n"
-            f"- 成功识别: {stats.get('added', 0)} 条\n"
-            f"- 重复跳过: {stats.get('duplicates', 0)} 条\n"
-            f"- 冲突待确认: {stats.get('conflicts', 0)} 条\n"
-            f"- 需人工确认材料: {stats.get('pending_manual', 0)} 条\n"
-            f"- 真正失败: {stats.get('failed', 0)} 条"
-        )
+        lines = [
+            "本地发票批量导入完成：",
+            "",
+            f"- 成功识别: {stats.get('added', 0)} 条",
+            f"- 重复跳过: {stats.get('duplicates', 0)} 条",
+            f"- 冲突待确认: {stats.get('conflicts', 0)} 条",
+            f"- 需人工确认材料: {stats.get('pending_manual', 0)} 条",
+            f"- 真正失败: {stats.get('failed', 0)} 条",
+        ]
+        discovered = int(stats.get("archive_members_discovered", 0) or 0)
+        if discovered:
+            processed = int(stats.get("archive_members_processed", 0) or 0)
+            unprocessed = int(stats.get("archive_members_unprocessed", 0) or 0)
+            lines.extend([
+                "",
+                f"- 压缩包成员: 发现 {discovered} / 已处理 {processed} / 未处理 {unprocessed}",
+            ])
+            details = list(stats.get("skipped_details", ()) or ())
+            for item in details[:5]:
+                source = str(item.get("source") or "压缩包")
+                reason = str(item.get("reason") or "未处理")
+                lines.append(f"  · {source}: {reason}")
+        return "\n".join(lines)
 
     def _import_local_finished(self, stats: dict):
         if not self._worker_callback_allowed():
