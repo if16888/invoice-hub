@@ -1816,6 +1816,11 @@ class InvoiceDetailPanel(QWidget):
         unavailable = False
         if has_doc:
             for item in items:
+                # Real preview items carry a linked/pending status.  Keep the
+                # standalone panel API backward-compatible for callers that
+                # only provide a display label/path.
+                if item.get("status") not in {"linked", "pending"}:
+                    continue
                 raw_path = item.get("path")
                 try:
                     path = Path(raw_path)
