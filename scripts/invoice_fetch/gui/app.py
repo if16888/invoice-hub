@@ -4147,7 +4147,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.btn_settings_ai_edit.setVisible(True)
             self.btn_settings_ai_edit.setProperty("variant", "primary")
             self.btn_settings_ai_configure_key.setVisible(False)
-            self.btn_settings_ai_test.setVisible(False)
+            # Keep the validation action discoverable on a clean install, but
+            # disable it until there is a concrete Provider/model profile to
+            # validate.  Hiding it made the UI copy claim a capability that the
+            # page did not visibly expose.
+            self.btn_settings_ai_test.setVisible(True)
+            self.btn_settings_ai_test.setEnabled(False)
+            self.btn_settings_ai_test.setToolTip("请先配置 AI Provider 和模型，再校验本地配置。")
             self.settings_ai_more.setVisible(False)
             self._settings_ai_current_profile_id = ""
             self.lbl_settings_ai_provider.setText("—")
@@ -4170,6 +4176,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_settings_ai_edit.setProperty("variant", "secondary")
         self.btn_settings_ai_configure_key.setVisible(True)
         self.btn_settings_ai_test.setVisible(True)
+        self.btn_settings_ai_test.setEnabled(True)
+        self.btn_settings_ai_test.setToolTip(
+            "仅校验本地 Provider、模型和 API Key 配置；远端连接将在首次使用时确认。"
+        )
         self.btn_settings_ai_test.setProperty("variant", "primary")
         self.settings_ai_more.setVisible(True)
 
@@ -5127,12 +5137,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_tabs.addTab(data_tab, "数据与备份")
         self.settings_tabs.addTab(about_tab, "关于")
 
+        # The settings workbench needs enough horizontal space for the mailbox
+        # list + detail surface and footer actions at the supported 1366px
+        # desktop baseline.  Equal side stretches previously squeezed this
+        # surface to ~730px even when the window had ample room.
+        self.settings_tabs.setMinimumWidth(900)
         self.settings_tabs.setMaximumWidth(1120)
         settings_row = QHBoxLayout()
         settings_row.setContentsMargins(0, 0, 0, 0)
-        settings_row.addStretch(1)
         settings_row.addWidget(self.settings_tabs, 1, Qt.AlignTop)
-        settings_row.addStretch(1)
         layout.addLayout(settings_row, 0)
         layout.addStretch(1)
         self._refresh_settings_page()
