@@ -132,8 +132,14 @@ def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
     for raw_path in extra_paths:
         source_path = _resolve_export_source_path(raw_path, runtime_dir)
         try:
-            if not source_path.is_file() or not os.access(str(source_path), os.R_OK):
+            if not source_path.is_file():
                 unavailable_paths.append(raw_path)
+                continue
+            # Keep preflight and copy-time semantics aligned: an evidence path
+            # is usable only when it is a readable, non-empty regular file.
+            with source_path.open("rb") as stream:
+                if not stream.read(1):
+                    unavailable_paths.append(raw_path)
         except (OSError, ValueError):
             unavailable_paths.append(raw_path)
 
@@ -441,6 +447,7 @@ def export_claim_package(
                     required=True,
                     required_kind="补充材料",
                     required_context=invoice_identity,
+                    require_non_empty=True,
                 )
                 if not copied_extra_path:
                     raise ValueError(
@@ -585,7 +592,14 @@ def _generate_quality_report(
             src_path = Path(extra_path)
             if not src_path.is_absolute():
                 src_path = runtime_dir / extra_path
-            if not src_path.exists() or not src_path.is_file():
+            try:
+                if not src_path.is_file():
+                    missing_evidence_files += 1
+                    continue
+                with src_path.open("rb") as stream:
+                    if not stream.read(1):
+                        missing_evidence_files += 1
+            except OSError:
                 missing_evidence_files += 1
 
     # 9. Suspected duplicate items
