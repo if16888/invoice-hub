@@ -1423,8 +1423,11 @@ class ClaimGroupsTests(unittest.TestCase):
                 db_path = Path(td) / "test_ops.db"
                 with InvoiceDB(db_path) as db:
                     claim_id = db.create_claim_group("Test Claim")
-                    original = Path(td) / "invoice-original.pdf"
-                    original.write_bytes(b"%PDF-1.4 synthetic invoice")
+                    # Use a non-PDF original for this dialog contract test so
+                    # Qt's embedded PDF renderer cannot retain a Windows file handle
+                    # beyond TemporaryDirectory cleanup.
+                    original = Path(td) / "invoice-original.xml"
+                    original.write_text("<invoice>synthetic</invoice>", encoding="utf-8")
                     inv_id = db.insert_invoice({
                         "invoice_number": "INV123",
                         "total_amount": "100.00",
