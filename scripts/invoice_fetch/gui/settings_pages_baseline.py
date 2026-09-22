@@ -413,6 +413,15 @@ def _migrate_ai_page(window) -> None:
     empty_action = make_button("配置 AI", variant="primary", min_width=120)
     empty_action.clicked.connect(window._open_edit_ai_profile_dialog)
     empty_state.set_action(empty_action)
+
+    # Keep the validation capability discoverable even before a profile
+    # exists.  It is intentionally disabled rather than hidden because there
+    # is no Provider/model/API-key configuration to validate yet.
+    empty_validate = make_button("校验配置", variant="secondary", min_width=120)
+    empty_validate.setEnabled(False)
+    empty_validate.setToolTip("请先配置 AI Provider 和模型，再校验本地配置。")
+    empty_state.layout().addWidget(empty_validate, 0, Qt.AlignCenter)
+
     empty_state.setMaximumWidth(520)
     empty_state.setMaximumHeight(190)
     layout.addWidget(empty_state, 0, Qt.AlignTop)
@@ -420,6 +429,7 @@ def _migrate_ai_page(window) -> None:
     window.settings_ai_detail_panel = surface
     window.lbl_settings_ai_status_badge = badge
     window.btn_settings_ai_empty_add = empty_action
+    window.btn_settings_ai_empty_validate = empty_validate
     summary = getattr(window, "settings_ai_summary_strip", None)
     if summary is not None:
         summary.hide()
