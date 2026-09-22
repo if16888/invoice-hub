@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,20 @@ def _resolve_export_source_path(raw_value: str, runtime_dir: Path) -> Path:
     if not source_path.is_absolute():
         source_path = Path(runtime_dir) / source_path
     return source_path
+
+
+def _normalized_finite_amount(value, *, invoice_identity: str = "当前发票") -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"导出已阻断：{invoice_identity}缺少有效金额。")
+    normalized = text.replace(",", "")
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation:
+        raise ValueError(f"导出已阻断：{invoice_identity}金额格式无效。") from None
+    if not amount.is_finite():
+        raise ValueError(f"导出已阻断：{invoice_identity}金额必须是有限数值。")
+    return format(amount, "f")
 
 
 def _invoice_export_identity(invoice: dict) -> str:
@@ -374,6 +389,16 @@ def export_claim_package(
 
     invoices.sort(key=_invoice_sort_key)
 
+    # Amount correctness is a release boundary: do not create any export
+    # directory until every selected invoice has a finite total.
+    normalized_amounts = {}
+    for inv in invoices:
+        identity = _invoice_export_identity(inv)
+        normalized_amounts[id(inv)] = _normalized_finite_amount(
+            inv.get("total_amount"),
+            invoice_identity=identity,
+        )
+
     material_issues = summarize_extra_material_issues(invoices, runtime_dir)
     material_blockers = []
     if material_issues["missing_extra"]:
@@ -410,6 +435,7 @@ def export_claim_package(
         # 2. Process attachments. Every exported invoice original is required.
         for inv in invoices:
             inv_copy = dict(inv)
+            inv_copy["total_amount"] = normalized_amounts[id(inv)]
             b_warning = buyer_warning(inv, reimbursement_config)
             d_warning = get_date_warning(inv)
             if b_warning and d_warning:
@@ -472,7 +498,7 @@ def export_claim_package(
                 "expense_date": inv.get("expense_date") or inv.get("invoice_date"),
                 "date_source": inv.get("date_source", ""),
                 "category": inv.get("category"),
-                "total_amount": inv.get("total_amount"),
+                "total_amount": inv_copy["total_amount"],
                 "currency": inv.get("currency", ""),
                 "extra_type": inv.get("extra_type", ""),
                 "has_extra": bool(inv.get("has_extra")),
