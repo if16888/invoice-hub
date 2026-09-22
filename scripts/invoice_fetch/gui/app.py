@@ -2559,9 +2559,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             date_text = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
             if date_text.startswith(month_prefix):
                 try:
-                    month_total += Decimal(str(inv.get("total_amount") or "0").strip() or "0")
+                    amount_value = Decimal(
+                        str(inv.get("total_amount") or "0").replace(",", "").strip() or "0"
+                    )
                 except (InvalidOperation, ValueError):
-                    pass
+                    amount_value = None
+                if amount_value is not None and amount_value.is_finite():
+                    month_total += amount_value
 
         try:
             for claim in self.db.list_claim_groups():
@@ -2573,6 +2577,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     int(stats.get(APPROVED, 0) or 0)
                     and not int(stats.get("missing_attachment", 0) or 0)
                     and not int(stats.get("missing_amount", 0) or 0)
+                    and not int(stats.get("invalid_amount", 0) or 0)
                     and not int(stats.get("missing_extra", 0) or 0)
                     and not int(stats.get("unavailable_extra", 0) or 0)
                 ):
@@ -3473,6 +3478,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             total_missing += (
                 int(stats.get("missing_attachment", 0) or 0)
                 + int(stats.get("missing_amount", 0) or 0)
+                + int(stats.get("invalid_amount", 0) or 0)
                 + int(stats.get("missing_extra", 0) or 0)
                 + int(stats.get("unavailable_extra", 0) or 0)
             )
@@ -3481,12 +3487,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             displayed_missing = (
                 int(stats.get("missing_attachment", 0) or 0)
                 + int(stats.get("missing_amount", 0) or 0)
+                + int(stats.get("invalid_amount", 0) or 0)
                 + int(stats.get("missing_extra", 0) or 0)
                 + int(stats.get("unavailable_extra", 0) or 0)
             )
             approved_blockers = (
                 int(approved_stats.get("missing_attachment", 0) or 0)
                 + int(approved_stats.get("missing_amount", 0) or 0)
+                + int(approved_stats.get("invalid_amount", 0) or 0)
                 + int(approved_stats.get("missing_extra", 0) or 0)
                 + int(approved_stats.get("unavailable_extra", 0) or 0)
             )
@@ -3518,6 +3526,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self.export_check_pending,
                     self.export_check_missing_attach,
                     self.export_check_missing_amount,
+                    self.export_check_invalid_amount,
                     self.export_check_missing_extra,
                     self.export_check_unavailable_extra,
                     self.export_check_dir,
