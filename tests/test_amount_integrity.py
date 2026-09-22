@@ -87,20 +87,23 @@ class AmountIntegrityTests(unittest.TestCase):
                 path,
             )
             wb = openpyxl.load_workbook(path, data_only=False)
-            ws = wb["发票汇总"]
-            headers = {cell.value: cell.column for cell in ws[1]}
-            number = ws.cell(2, headers["发票号码"])
-            amount = ws.cell(2, headers["金额(税前)"])
-            total = ws.cell(2, headers["价税合计"])
+            try:
+                ws = wb["发票汇总"]
+                headers = {cell.value: cell.column for cell in ws[1]}
+                number = ws.cell(2, headers["发票号码"])
+                amount = ws.cell(2, headers["金额(税前)"])
+                total = ws.cell(2, headers["价税合计"])
 
-            self.assertEqual(number.data_type, "s")
-            self.assertEqual(number.value, "00123456789012345678")
-            self.assertEqual(amount.data_type, "n")
-            self.assertEqual(total.data_type, "n")
-            self.assertAlmostEqual(amount.value, 100.25, places=2)
-            self.assertAlmostEqual(total.value, 128.50, places=2)
-            self.assertEqual(amount.number_format, "#,##0.00")
-            self.assertEqual(total.number_format, "#,##0.00")
+                self.assertEqual(number.data_type, "s")
+                self.assertEqual(number.value, "00123456789012345678")
+                self.assertEqual(amount.data_type, "n")
+                self.assertEqual(total.data_type, "n")
+                self.assertAlmostEqual(amount.value, 100.25, places=2)
+                self.assertAlmostEqual(total.value, 128.50, places=2)
+                self.assertEqual(amount.number_format, "#,##0.00")
+                self.assertEqual(total.number_format, "#,##0.00")
+            finally:
+                wb.close()
 
 
 if __name__ == "__main__":
