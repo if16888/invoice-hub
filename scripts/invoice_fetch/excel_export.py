@@ -61,6 +61,20 @@ def _safe_excel_value(value):
     return value
 
 
+def _excel_amount_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = text.replace(",", "")
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation:
+        raise ValueError(f"金额格式无效，无法导出 Excel: {text[:80]}") from None
+    if not amount.is_finite():
+        raise ValueError("金额必须是有限数值，无法导出 Excel。")
+    return float(amount)
+
+
 def _parse_paths(val) -> list[str]:
     """Safely parse extra_paths (JSON list or single path string) into a list of strings."""
     if not val:
@@ -151,12 +165,16 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
                     val = ""
             elif key == "download_url":
                 val = _mask_url(str(val or ""))
+            elif key in {"amount", "total_amount"}:
+                val = _excel_amount_value(val)
             cell = ws.cell(row=row_idx, column=col_idx, value=_safe_excel_value(val))
             cell.font = _CELL_FONT
             cell.alignment = _CELL_ALIGN
             cell.border = _THIN_BORDER
             if is_alt:
                 cell.fill = _ALT_FILL
+            if key in {"amount", "total_amount"} and val != "":
+                cell.number_format = "#,##0.00"
             if key == "attachment_path" and val:
                 cell.hyperlink = str(val)
                 cell.font = _LINK_FONT
@@ -170,10 +188,14 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
 
 
 def _amount(value) -> Decimal:
+    text = str(value or "").strip()
+    if not text:
+        return Decimal("0")
     try:
-        return Decimal(str(value or "0").replace(",", ""))
+        amount = Decimal(text.replace(",", ""))
     except (InvalidOperation, ValueError):
         return Decimal("0")
+    return amount if amount.is_finite() else Decimal("0")
 
 
 def _style_header(ws, labels: list[str], widths: list[int]):
