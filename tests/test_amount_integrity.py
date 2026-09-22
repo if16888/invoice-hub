@@ -1,5 +1,6 @@
 import os
 import tempfile
+from io import BytesIO
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -86,7 +87,10 @@ class AmountIntegrityTests(unittest.TestCase):
                 ],
                 path,
             )
-            wb = openpyxl.load_workbook(path, data_only=False)
+            # Read into memory before parsing so openpyxl cannot retain
+            # an OS-level handle to the TemporaryDirectory file on Windows.
+            workbook_bytes = path.read_bytes()
+            wb = openpyxl.load_workbook(BytesIO(workbook_bytes), data_only=False)
             try:
                 ws = wb["发票汇总"]
                 headers = {cell.value: cell.column for cell in ws[1]}
