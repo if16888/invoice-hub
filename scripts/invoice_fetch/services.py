@@ -2590,6 +2590,70 @@ def _insert_unsupported_ofd_record(
     return row_id
 
 
+def _insert_pending_archive_record(
+    *,
+    msg: MailMessage,
+    db: InvoiceDB,
+    file_path: str,
+    filename_hint: str,
+    warning: str,
+    mailbox_key: str,
+) -> tuple[dict | None, bool]:
+    """Keep an unprocessed email archive visible in review instead of dropping it."""
+    src = Path(file_path)
+    file_hash = _sha256_file(src) if src.exists() else ""
+    if file_hash:
+        existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+        if existing:
+            existing = _restore_existing_invoice_if_deleted(db, existing, "ZIP待人工检查")
+            needs_path_repair = _resolve_runtime_path(existing.get("attachment_path") or "") is None
+            if needs_path_repair:
+                db.update_invoice_file_paths(
+                    existing["id"],
+                    attachment_path=_runtime_relative(src),
+                    file_hash=file_hash,
+                )
+                existing["attachment_path"] = _runtime_relative(src)
+                existing["_archive_path_repaired"] = True
+            changed = bool(existing.get("_was_restored") or needs_path_repair)
+            return existing, changed
+
+    rec = {
+        "invoice_number": "",
+        "invoice_code": "",
+        "invoice_date": msg.date or "",
+        "expense_date": msg.date or "",
+        "date_source": "mail_date",
+        "amount": "",
+        "total_amount": "",
+        "seller_name": msg.sender or "",
+        "buyer_name": "",
+        "invoice_type": "ZIP待人工检查",
+        "category": "其他",
+        "has_extra": False,
+        "extra_type": "",
+        "missing_extra": False,
+        "mail_uid": msg.uid,
+        "mail_subject": msg.subject,
+        "mail_date": msg.date,
+        "mail_sender": msg.sender,
+        "parse_success": False,
+        "parse_note": warning,
+        "attachment_path": _runtime_relative(src),
+        "extra_paths": [],
+        "download_url": "",
+        "mailbox_key": mailbox_key,
+        "file_hash": file_hash,
+    }
+    row_id = db.insert_invoice(rec)
+    if not row_id:
+        return None, False
+    rec["id"] = row_id
+    rec["_archive_created"] = True
+    _log.info("  邮件 ZIP 已保留到人工审核队列: %s", mask_filename(filename_hint))
+    return rec, True
+
+
 def _process_email(
     msg: MailMessage,
     att_handler: AttachmentHandler,
@@ -2647,6 +2711,39 @@ def _process_email(
             link_dl.last_process_outcome = status
         except (AttributeError, TypeError):
             pass
+
+    for att in attachments:
+        if not att.extraction_warning:
+            continue
+        archive_record, changed = _insert_pending_archive_record(
+            msg=msg,
+            db=db,
+            file_path=att.file_path,
+            filename_hint=att.original_name,
+            warning=att.extraction_warning,
+            mailbox_key=mailbox_key,
+        )
+        if not archive_record:
+            continue
+        archive_id = int(archive_record.get("id") or 0)
+        if changed:
+            recorded += 1
+            manual_required_recorded = True
+            if archive_record.get("_archive_created"):
+                _track_inserted(archive_id)
+            else:
+                if archive_record.get("_was_restored"):
+                    _track_restored(archive_record)
+                if (
+                    archive_id
+                    and (archive_record.get("review_status") or review_status.TO_REVIEW)
+                    == review_status.TO_REVIEW
+                    and archive_id not in review_invoice_ids
+                ):
+                    review_invoice_ids.append(archive_id)
+        stored_archive = _resolve_runtime_path(archive_record.get("attachment_path") or "")
+        if stored_archive and stored_archive.resolve() == Path(att.file_path).resolve():
+            kept_paths.add(str(stored_archive.resolve()))
 
     for att in invoice_ofds:
         row_id = _insert_unsupported_ofd_record(
