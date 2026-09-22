@@ -4489,7 +4489,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.import_rules_detail = ReadOnlyDetailPanel("当前规则", "当前生效的扫描范围和去重策略。")
         self.lbl_import_rule_time_range = self.import_rules_detail.add_row("时间范围", "最近 3 个月增量抓取")
-        self.lbl_import_rule_attachment_types = self.import_rules_detail.add_row("附件类型", "PDF / OFD / XML / 常用图片")
+        self.lbl_import_rule_attachment_types = self.import_rules_detail.add_row("附件类型", "PDF / OFD / 常用图片 / ZIP")
         self.lbl_import_rule_subject_filter = self.import_rules_detail.add_row("主题过滤", "发票 / 行程单 / 电子发票 / 账单")
         self.lbl_import_rule_duplicate = self.import_rules_detail.add_row("重复处理", "按发票代码与号码自动去重")
         self.lbl_import_rule_failure = self.import_rules_detail.add_row("失败处理", "失败记录汇总到最近结果，可直接查看失败明细")
@@ -4501,6 +4501,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.btn_import_scan_selected = make_button("开始扫描", variant="primary")
         self.btn_import_scan_selected.clicked.connect(self._run_import_primary_action)
+
+        self.btn_import_mail_settings = make_button("配置邮箱", variant="secondary")
+        self.btn_import_mail_settings.clicked.connect(
+            lambda: self._switch_main_page("settings", sub_tab=1)
+        )
 
         self.btn_import_scan_default = make_button("扫默认", variant="secondary")
         self.btn_import_scan_default.clicked.connect(self._scan_default_email_clicked)
@@ -4521,6 +4526,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_mail_command_bar.set_actions(
             primary_action=self.btn_import_scan_selected,
             secondary_actions=[
+                self.btn_import_mail_settings,
                 self.btn_import_scan_default,
                 self.btn_import_scan_cancel,
             ],
@@ -4537,7 +4543,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_local_task_card._layout.setAlignment(Qt.AlignTop)
         self.import_local_task_card.body_layout.setAlignment(Qt.AlignTop)
         self.import_local_task_card.body_layout.setSpacing(8)
-        self.import_local_types = CompactFieldRow("支持类型", "PDF / OFD / XML / 图片 / ZIP")
+        self.import_local_types = CompactFieldRow("支持类型", "PDF / OFD / 图片 / ZIP")
         self.import_local_processing = CompactFieldRow("处理", "自动识别、自动去重，冲突项进入待审核")
         self.import_local_task_card.body_layout.addWidget(self.import_local_types)
         self.import_local_task_card.body_layout.addWidget(self.import_local_processing)
