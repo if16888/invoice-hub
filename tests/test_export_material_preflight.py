@@ -613,5 +613,30 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                 self._assert_no_partial_package(export_root)
                 self.assertEqual(db.list_export_runs(claim_id), [])
 
+
+    def test_claim_export_rejects_non_finite_amount_before_package_creation(self):
+        for bad_amount in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(amount=bad_amount), tempfile.TemporaryDirectory() as td:
+                project_root, runtime_dir, claim_id = self._create_claim(
+                    Path(td),
+                    [{
+                        "invoice_number": "BAD-AMOUNT",
+                        "total_amount": bad_amount,
+                    }],
+                )
+                export_root = project_root / "exports"
+                with InvoiceDB(runtime_dir / "invoices.db") as db:
+                    with self.assertRaises(ValueError):
+                        export_claim_package(
+                            db,
+                            claim_id,
+                            project_root,
+                            runtime_dir,
+                            reimbursement_config={},
+                            export_root=export_root,
+                        )
+                    self.assertEqual(db.list_export_runs(claim_id), [])
+                self.assertFalse(export_root.exists())
+
 if __name__ == "__main__":
     unittest.main()
