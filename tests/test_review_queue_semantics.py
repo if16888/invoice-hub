@@ -211,6 +211,34 @@ class ReviewQueueSemanticsTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_later_crosses_first_page_without_wrapping(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                invoice_ids = [
+                    self._insert_pending(window, f"PAGE-{index:03d}") for index in range(61)
+                ]
+                window._load_invoices()
+                for _ in range(4):
+                    self.app.processEvents()
+                window._enter_hci_continuous_review()
+                for _ in range(3):
+                    self.app.processEvents()
+
+                visited = []
+                for _ in range(61):
+                    current = window.current_invoice or {}
+                    if current.get("id") is not None:
+                        visited.append(int(current["id"]))
+                    window.btn_hci_review_later.click()
+                    self.app.processEvents()
+
+                self.assertEqual(len(set(visited)), 61)
+                self.assertEqual(set(visited), set(invoice_ids))
+                self.assertGreaterEqual(len(window.invoices_list), 61)
+            finally:
+                window.close()
+
     def test_mail_only_missing_original_exposes_general_redownload(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
