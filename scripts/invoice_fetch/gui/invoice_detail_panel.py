@@ -4795,11 +4795,16 @@ class EditFieldsDialog(QDialog):
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额不能为空。")
             return None
+        normalized_amount = amount.replace(",", "")
         try:
-            Decimal(amount)
+            amount_value = Decimal(normalized_amount)
         except InvalidOperation:
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额格式不正确。")
+            return None
+        if not amount_value.is_finite():
+            self.txt_amount.setFocus()
+            QMessageBox.warning(self, "字段校验", "金额必须是有限数值。")
             return None
         if expense_date:
             try:
@@ -4811,7 +4816,7 @@ class EditFieldsDialog(QDialog):
         return {
             "number": number,
             "date": expense_date,
-            "amount": amount,
+            "amount": normalized_amount,
             "category": self.combo_category.currentText().strip(),
             "buyer": self.txt_buyer.text().strip(),
             "seller": self.txt_seller.text().strip(),
