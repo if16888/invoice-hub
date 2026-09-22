@@ -161,7 +161,7 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         )
         self.assertEqual(
             self.panel.lbl_evidence_missing.text(),
-            "缺失"
+            "必需但缺失"
         )
         self.assertTrue(
             self.panel.lbl_evidence_name.isHidden(),
