@@ -1452,6 +1452,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     mock_qmessagebox.Information = QMessageBox.Information
 
                     app._export_claim_package()
+                    worker = getattr(app, "claim_export_worker", None)
+                    if worker is not None:
+                        worker.wait(5000)
+                        QApplication.processEvents()
                     mock_export_claim_package.assert_called_once()
                     app.db.close()
 
@@ -1534,6 +1538,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 with patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
                     window._export_claim_package()
+                    worker = getattr(window, "claim_export_worker", None)
+                    if worker is not None:
+                        worker.wait(5000)
+                        QApplication.processEvents()
                     mock_warn.assert_called_once_with(window, "关联空", "当前报销组内没有发票，无法导出！")
             finally:
                 if hasattr(window, "db") and window.db is not None:
@@ -1644,6 +1652,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Spy on db.add_export_run
                     with patch.object(app.db, "add_export_run", wraps=app.db.add_export_run) as mock_add_export_run:
                         app._export_claim_package()
+                        worker = getattr(app, "claim_export_worker", None)
+                        if worker is not None:
+                            worker.wait(5000)
+                            QApplication.processEvents()
                         # Assert db.add_export_run was not called directly by the GUI layer (app.py)
                         mock_add_export_run.assert_not_called()
                     app.db.close()
@@ -6904,6 +6916,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                                 with patch.object(mock_box_class, "Question", mock_box_class.Question):
                                     window._export_claim_package()
+                                    worker = getattr(window, "claim_export_worker", None)
+                                    if worker is not None:
+                                        worker.wait(5000)
+                                        QApplication.processEvents()
 
                                 setText_calls = [c for c in mock_box_instance.setText.call_args_list]
                                 self.assertTrue(any("发现 1 个需确认项" in call[0][0] for call in setText_calls))
@@ -6932,6 +6948,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                                 with patch.object(mock_box_class, "Question", mock_box_class.Question):
                                     window._export_claim_package()
+                                    worker = getattr(window, "claim_export_worker", None)
+                                    if worker is not None:
+                                        worker.wait(5000)
+                                        QApplication.processEvents()
 
                                 setText_calls = [c for c in mock_box_instance.setText.call_args_list]
                                 self.assertTrue(any("质量检查未发现需确认项" in call[0][0] for call in setText_calls))
