@@ -834,6 +834,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ("scan_worker", "邮箱扫描"),
             ("import_worker", "本地导入"),
             ("_export_migration_worker", "旧导出目录迁移"),
+            ("claim_export_worker", "报销组导出"),
             ("_hci_history_worker", "历史记录重检"),
             ("_redownload_worker", "重新下载发票"),
             ("_reparse_worker", "重新解析发票"),
