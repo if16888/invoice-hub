@@ -65,7 +65,10 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
 
                 self.assertEqual(len(visible_copy), 4)
                 self.assertIn("PDF / OFD / PNG / JPG / HEIC / ZIP", visible_copy[0])
-                self.assertIn("PDF / OFD / PNG / JPG / HEIC / ZIP", visible_copy[2])
+                self.assertEqual(
+                    visible_copy[2],
+                    "网络：局域网 · 自动检测\n支持：PDF / OFD / PNG / JPG / JPEG / HEIC\n上传后：自动进入审核队列",
+                )
                 for text in visible_copy:
                     self.assertNotIn("XML", text.upper())
             finally:
