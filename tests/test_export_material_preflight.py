@@ -222,6 +222,8 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         label.text() for label in row_widget.findChildren(QLabel)
                     )
                     self.assertIn("待补齐", row_text)
+                    self.assertIn("金额待修复", row_text)
+                    self.assertNotIn("¥NaN", row_text)
                     metrics = window._collect_overview_metrics()
                     self.assertEqual(metrics["export_ready"], 0)
                     self.assertTrue(metrics["month_total"].is_finite())
