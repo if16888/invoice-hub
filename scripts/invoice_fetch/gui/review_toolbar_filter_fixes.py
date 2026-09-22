@@ -230,7 +230,7 @@ def _clarify_review_toolbar(window) -> None:
         _set_compact_button(import_button, 76, 92)
 
     for attr, text, tooltip in (
-        ("action_import_local", "本地文件", "选择 PDF、OFD、XML 或压缩包导入"),
+        ("action_import_local", "本地文件", "选择 PDF、OFD、图片或压缩包导入"),
         ("action_import_mobile", "手机上传", "打开手机扫码上传"),
         ("action_import_mail", "邮箱扫描", "进入导入中心查看邮箱账号和扫描结果"),
     ):
