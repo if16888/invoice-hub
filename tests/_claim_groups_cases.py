@@ -1423,10 +1423,13 @@ class ClaimGroupsTests(unittest.TestCase):
                 db_path = Path(td) / "test_ops.db"
                 with InvoiceDB(db_path) as db:
                     claim_id = db.create_claim_group("Test Claim")
+                    original = Path(td) / "invoice-original.pdf"
+                    original.write_bytes(b"%PDF-1.4 synthetic invoice")
                     inv_id = db.insert_invoice({
                         "invoice_number": "INV123",
                         "total_amount": "100.00",
                         "review_status": "approved",
+                        "attachment_path": str(original),
                     })
                     db.add_invoice_to_claim(claim_id, inv_id)
                     from PySide6.QtWidgets import QApplication
