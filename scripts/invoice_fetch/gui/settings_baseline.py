@@ -26,6 +26,7 @@ from .ui_components import ElidedTextLabel, make_badge, make_button
 
 # Invoice Hub Design Baseline v1.0: settings Golden Page geometry.
 _SETTINGS_MAX_WIDTH = 1120
+_SETTINGS_DESKTOP_MIN_WIDTH = 900
 _SETTINGS_NAV_WIDTH = 168
 _PAGE_MARGIN = 24
 _HEADER_CONTENT_GAP = 20
@@ -276,7 +277,7 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
     available_width = int(width or getattr(window, "width", lambda: 0)() or 0)
     compact = available_width < 1100
 
-    settings_tabs.setMinimumWidth(0)
+    settings_tabs.setMinimumWidth(0 if compact else _SETTINGS_DESKTOP_MIN_WIDTH)
     settings_tabs.setMaximumWidth(_SETTINGS_MAX_WIDTH)
     settings_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     nav_list = getattr(settings_tabs, "nav_list", None)
