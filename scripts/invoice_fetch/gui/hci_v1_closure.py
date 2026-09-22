@@ -137,12 +137,21 @@ def _move_to_next_review_row(window) -> None:
     move_selection = getattr(paging, "move_selection", None)
     if callable(move_selection):
         move_selection(1)
+        # “稍后处理” leaves review status unchanged, so the queue count does
+        # not trigger the normal progress refresh. Update the cursor position
+        # after selecting the next invoice.
+        from .hci_v1 import _sync_review_hci
+
+        _sync_review_hci(window)
         return
 
     # Defensive fallback for a partially initialized page.  Never wrap to the
     # first row because that makes unseen records unreachable.
     row = max(0, table.currentRow())
     table.selectRow(min(table.rowCount() - 1, row + 1))
+    from .hci_v1 import _sync_review_hci
+
+    _sync_review_hci(window)
 
 
 def _install_review_progress_refresh(window, page: QWidget) -> None:

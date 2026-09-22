@@ -3942,7 +3942,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
             self.lbl_detail_scan_folder.setText(str(search_cfg.get("folder") or "INBOX"))
             self.lbl_detail_scan_range.setText(f"最近 {months} 个月")
-            self.lbl_detail_attachment_types.setText("PDF / OFD / XML / 图片")
+            self.lbl_detail_attachment_types.setText("PDF / OFD / 图片 / ZIP")
             self.lbl_detail_header_name.setText(name)
             self.lbl_detail_header_email.setText(mask_email(addr))
             self.lbl_detail_header_name.setToolTip(name)
@@ -4566,7 +4566,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_local_task_card._layout.setAlignment(Qt.AlignTop)
         self.import_local_task_card.body_layout.setAlignment(Qt.AlignTop)
         self.import_local_task_card.body_layout.setSpacing(8)
-        self.import_local_types = CompactFieldRow("支持类型", "PDF / OFD / 图片 / ZIP")
+        self.import_local_types = CompactFieldRow(
+            "支持类型", "PDF / OFD / PNG / JPG / HEIC / ZIP"
+        )
         self.import_local_processing = CompactFieldRow("处理", "自动识别、自动去重，冲突项进入待审核")
         self.import_local_task_card.body_layout.addWidget(self.import_local_types)
         self.import_local_task_card.body_layout.addWidget(self.import_local_processing)
@@ -5022,7 +5024,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_detail_credential_status = QLabel("未配置", self.mailbox_detail_surface)
         self.lbl_detail_scan_folder = MiddleElidedTextLabel("—", self.mailbox_detail_surface)
         self.lbl_detail_scan_range = WrappedTextLabel("—", self.mailbox_detail_surface)
-        self.lbl_detail_attachment_types = ElidedTextLabel("PDF / OFD / XML / 图片", self.mailbox_detail_surface)
+        self.lbl_detail_attachment_types = ElidedTextLabel(
+            "PDF / OFD / 图片 / ZIP", self.mailbox_detail_surface
+        )
         self.lbl_detail_scan_rule = self.lbl_detail_scan_range  # compatibility alias
         for label in (
             self.lbl_detail_is_default,

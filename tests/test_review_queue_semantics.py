@@ -203,6 +203,7 @@ class ReviewQueueSemanticsTests(unittest.TestCase):
 
                 self.assertIn("第 2 / 3 张", window.lbl_hci_review_progress.text())
                 self.assertIn("本批还剩 3 张待审核", window.lbl_hci_review_progress.text())
+                self.assertEqual(int(window.current_invoice["id"]), batch[1])
                 for invoice_id in batch:
                     invoice = next(
                         item for item in window.db.get_all_invoices() if int(item["id"]) == invoice_id
