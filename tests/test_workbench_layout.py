@@ -667,7 +667,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_ai_page_uses_single_detail_surface_without_summary_duplication(self):
+    def test_ai_page_uses_actionable_empty_state_without_summary_duplication(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
@@ -676,7 +676,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertFalse(window.settings_ai_profile_list.isVisible())
                 self.assertFalse(hasattr(window, "settings_ai_summary_strip"))
                 self.assertIs(window.settings_tabs.currentWidget(), window.settings_tabs.widget(1))
-                self.assertFalse(window.settings_ai_detail_panel.isHidden())
+                self.assertTrue(window.settings_ai_empty_state.isVisible())
+                self.assertTrue(window.settings_ai_detail_panel.isHidden())
+                self.assertFalse(window.btn_settings_ai_edit.isHidden())
+                self.assertTrue(window.btn_settings_ai_edit.isEnabled())
+                self.assertEqual(window.btn_settings_ai_edit.property("variant"), "primary")
             finally:
                 self._close_window(window)
 
