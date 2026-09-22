@@ -100,6 +100,7 @@ from .performance_probe import (
     performance_stage,
 )
 from .workers import (
+    ClaimExportWorker,
     EmailScanWorker,
     ExportMigrationWorker,
     InvoiceRedownloadRequest,
@@ -4718,6 +4719,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_run_export_page = make_button("导出报销包", variant="primary", min_width=120)
         self.btn_run_export_page.clicked.connect(self._export_claim_package)
         self.export_integrity_card.body_layout.addWidget(self.btn_run_export_page)
+        self.export_progress_bar = QProgressBar()
+        self.export_progress_bar.setRange(0, 0)
+        self.export_progress_bar.setTextVisible(False)
+        self.export_progress_bar.setAccessibleName("报销包导出进度")
+        self.export_progress_bar.hide()
+        self.export_integrity_card.body_layout.addWidget(self.export_progress_bar)
         shell.addWidget(self.export_integrity_card, 0)
 
         layout.addLayout(shell, 0)
