@@ -1217,12 +1217,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             full_text = self._workbench_nav_button_texts.get(key, "")
             button.setText("" if nav_collapsed else full_text)
             button.setToolTip(full_text if nav_collapsed else "")
-            # In the icon-only rail a focused inactive button is visually
-            # indistinguishable from a second selected page.  Keep collapsed
-            # navigation mouse-only and let the checked tile be the sole page
-            # indicator; expanded navigation remains available in the Tab
-            # focus chain with its normal focus treatment.
-            button.setFocusPolicy(Qt.NoFocus if nav_collapsed else Qt.TabFocus)
+            # Collapsing the rail must not remove primary navigation from
+            # the keyboard focus chain.  Checked state remains the page
+            # indicator; focus styling is an independent accessibility state.
+            button.setFocusPolicy(Qt.TabFocus)
             button.setProperty("collapsed", nav_collapsed)
             button.setMinimumHeight(36 if not nav_collapsed else 44)
             button.style().unpolish(button)
