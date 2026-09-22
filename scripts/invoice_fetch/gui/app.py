@@ -4702,6 +4702,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_check_pending = ChecklistRow("待处理", "—")
         self.export_check_missing_attach = ChecklistRow("缺原件", "—")
         self.export_check_missing_amount = ChecklistRow("缺金额", "—")
+        self.export_check_invalid_amount = ChecklistRow("金额无效", "—")
         self.export_check_missing_extra = ChecklistRow("缺补充材料", "—")
         self.export_check_unavailable_extra = ChecklistRow("材料不可用", "—")
         self.export_check_dir = ChecklistRow("导出目录", "未设置")
@@ -4709,6 +4710,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_integrity_card.body_layout.addWidget(self.export_check_pending)
         self.export_integrity_card.body_layout.addWidget(self.export_check_missing_attach)
         self.export_integrity_card.body_layout.addWidget(self.export_check_missing_amount)
+        self.export_integrity_card.body_layout.addWidget(self.export_check_invalid_amount)
         self.export_integrity_card.body_layout.addWidget(self.export_check_missing_extra)
         self.export_integrity_card.body_layout.addWidget(self.export_check_unavailable_extra)
         self.export_integrity_card.body_layout.addWidget(self.export_check_dir)
@@ -5155,6 +5157,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.export_check_pending.set_value("—", None)
                 self.export_check_missing_attach.set_value("—", None)
                 self.export_check_missing_amount.set_value("—", None)
+                self.export_check_invalid_amount.set_value("—", None)
                 self.export_check_missing_extra.set_value("—", None)
                 self.export_check_unavailable_extra.set_value("—", None)
                 self.export_check_dir.set_value("—", None)
@@ -5191,6 +5194,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         pending_cnt = int(stats.get(TO_REVIEW, 0) or 0)
         missing_attach = int(stats.get("missing_attachment", 0) or 0)
         missing_amount = int(stats.get("missing_amount", 0) or 0)
+        invalid_amount = int(stats.get("invalid_amount", 0) or 0)
         missing_extra = int(stats.get("missing_extra", 0) or 0)
         unavailable_extra = int(stats.get("unavailable_extra", 0) or 0)
 
@@ -5203,12 +5207,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             blockers.append("没有已通过发票")
         approved_missing_attach = int(approved_stats.get("missing_attachment", 0) or 0)
         approved_missing_amount = int(approved_stats.get("missing_amount", 0) or 0)
+        approved_invalid_amount = int(approved_stats.get("invalid_amount", 0) or 0)
         approved_missing_extra = int(approved_stats.get("missing_extra", 0) or 0)
         approved_unavailable_extra = int(approved_stats.get("unavailable_extra", 0) or 0)
         if approved_missing_attach > 0:
             blockers.append(f"缺原件 {approved_missing_attach} 张")
         if approved_missing_amount > 0:
             blockers.append(f"缺金额 {approved_missing_amount} 张")
+        if approved_invalid_amount > 0:
+            blockers.append(f"金额无效 {approved_invalid_amount} 张")
         if approved_missing_extra > 0:
             blockers.append(f"缺补充材料 {approved_missing_extra} 张")
         if approved_unavailable_extra > 0:
@@ -5228,6 +5235,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 "无" if missing_amount == 0 else f"{missing_amount} 张",
                 ok=missing_amount == 0,
             )
+            self.export_check_invalid_amount.set_value(
+                "无" if invalid_amount == 0 else f"{invalid_amount} 张",
+                ok=invalid_amount == 0,
+            )
             self.export_check_missing_extra.set_value(
                 "无" if missing_extra == 0 else f"{missing_extra} 张",
                 ok=missing_extra == 0,
@@ -5246,10 +5257,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 pending_scope_issues = (
                     missing_attach
                     + missing_amount
+                    + invalid_amount
                     + missing_extra
                     + unavailable_extra
                     - approved_missing_attach
                     - approved_missing_amount
+                    - approved_invalid_amount
                     - approved_missing_extra
                     - approved_unavailable_extra
                 )
@@ -7974,6 +7987,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ERROR: 0,
             "missing_attachment": 0,
             "missing_amount": 0,
+            "invalid_amount": 0,
             "missing_extra": 0,
             "unavailable_extra": 0,
         }
@@ -7988,8 +8002,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 material_invoices.append(inv)
                 if not str(inv.get("attachment_path") or "").strip():
                     stats["missing_attachment"] += 1
-                if not str(inv.get("total_amount") or "").strip():
+                amount_text = str(inv.get("total_amount") or "").strip()
+                if not amount_text:
                     stats["missing_amount"] += 1
+                else:
+                    try:
+                        amount_value = Decimal(amount_text.replace(",", ""))
+                    except InvalidOperation:
+                        stats["invalid_amount"] += 1
+                    else:
+                        if not amount_value.is_finite():
+                            stats["invalid_amount"] += 1
         stats.update(summarize_extra_material_issues(material_invoices, RUNTIME_DIR))
         return stats
 
@@ -8000,22 +8023,33 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"待处理：{stats.get(TO_REVIEW, 0)} 张\n"
             f"缺原件：{stats.get('missing_attachment', 0)} 张\n"
             f"缺金额：{stats.get('missing_amount', 0)} 张\n"
+            f"金额无效：{stats.get('invalid_amount', 0)} 张\n"
             f"缺补充材料：{stats.get('missing_extra', 0)} 张\n"
             f"材料不可用：{stats.get('unavailable_extra', 0)} 张\n"
             "已忽略和异常发票不会进入报销包。"
         )
 
     def _claim_export_material_blocker_text(self, stats: dict) -> str:
+        """Return one fail-closed preflight message for all export invariants."""
         blockers = []
+        missing_attachment = int(stats.get("missing_attachment", 0) or 0)
+        missing_amount = int(stats.get("missing_amount", 0) or 0)
+        invalid_amount = int(stats.get("invalid_amount", 0) or 0)
         missing_extra = int(stats.get("missing_extra", 0) or 0)
         unavailable_extra = int(stats.get("unavailable_extra", 0) or 0)
+        if missing_attachment:
+            blockers.append(f"缺原件 {missing_attachment} 张")
+        if missing_amount:
+            blockers.append(f"缺金额 {missing_amount} 张")
+        if invalid_amount:
+            blockers.append(f"金额无效 {invalid_amount} 张")
         if missing_extra:
             blockers.append(f"缺补充材料 {missing_extra} 张")
         if unavailable_extra:
             blockers.append(f"补充材料不可用 {unavailable_extra} 张")
         if not blockers:
             return ""
-        return "导出已阻断：" + "；".join(blockers) + "。请补齐材料后重试。"
+        return "导出已阻断：" + "；".join(blockers) + "。请修复后重试。"
 
     def _export_claim_package(self):
         """Validate the selected claim and start a non-blocking package export."""
@@ -8062,15 +8096,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if material_blocker:
             QMessageBox.warning(self, "导出已阻断", material_blocker)
             return
-        missing_amount = int(selected_stats.get("missing_amount", 0) or 0)
-        if missing_amount:
-            QMessageBox.warning(
-                self,
-                "导出已阻断",
-                f"导出已阻断：缺金额 {missing_amount} 张。请补齐金额后重试。",
-            )
-            return
-
         if not self._try_begin_data_operation("报销组导出"):
             return
 
