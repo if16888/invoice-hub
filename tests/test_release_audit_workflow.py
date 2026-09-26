@@ -35,11 +35,39 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
         self.assertIn("if ($actual -ne $eventSha)", manual_block)
         self.assertNotIn("$eventSha = $env:EVENT_SHA.Trim().ToLowerInvariant()", self.workflow[:manual_start])
 
-    def test_dispatch_input_is_not_interpolated_into_powershell_code(self) -> None:
-        self.assertNotIn('$thresh = "${{ github.event.inputs.strict_startup_ms }}"', self.workflow)
-        self.assertIn("REQUESTED_STARTUP_MS: ${{ github.event.inputs.strict_startup_ms }}", self.workflow)
-        self.assertIn("$thresh = $env:REQUESTED_STARTUP_MS", self.workflow)
+    def test_dispatch_startup_inputs_are_validated_without_code_interpolation(self) -> None:
+        self.assertNotIn('$portable = "${{ github.event.inputs.portable_startup_ms }}"', self.workflow)
+        self.assertNotIn('$installed = "${{ github.event.inputs.strict_startup_ms }}"', self.workflow)
+        self.assertIn(
+            "REQUESTED_PORTABLE_STARTUP_MS: ${{ github.event.inputs.portable_startup_ms }}",
+            self.workflow,
+        )
+        self.assertIn(
+            "REQUESTED_INSTALLED_STARTUP_MS: ${{ github.event.inputs.strict_startup_ms }}",
+            self.workflow,
+        )
+        self.assertIn("$portable = $env:REQUESTED_PORTABLE_STARTUP_MS", self.workflow)
+        self.assertIn("$installed = $env:REQUESTED_INSTALLED_STARTUP_MS", self.workflow)
+        self.assertIn("portable_startup_ms must be a positive integer", self.workflow)
         self.assertIn("strict_startup_ms must be a positive integer", self.workflow)
+
+    def test_portable_and_installed_startup_gates_are_distinct(self) -> None:
+        self.assertIn('default: "6000"', self.workflow)
+        self.assertIn('default: "3000"', self.workflow)
+        self.assertIn("PORTABLE_STARTUP_THRESHOLD_MS=$portable", self.workflow)
+        self.assertIn("INSTALLED_STARTUP_THRESHOLD_MS=$installed", self.workflow)
+        self.assertIn(
+            "check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $env:PORTABLE_STARTUP_THRESHOLD_MS",
+            self.workflow,
+        )
+        self.assertIn(
+            "-StartupThresholdMs $env:INSTALLED_STARTUP_THRESHOLD_MS",
+            self.workflow,
+        )
+        self.assertNotIn(
+            "-StartupThresholdMs $env:PORTABLE_STARTUP_THRESHOLD_MS",
+            self.workflow,
+        )
 
     def test_tag_publication_remains_tag_only_and_requires_annotated_tag(self) -> None:
         release_job = self.workflow.split("\n  release:\n", 1)[1]
