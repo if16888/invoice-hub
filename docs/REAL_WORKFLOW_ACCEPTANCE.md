@@ -1,65 +1,114 @@
-# Real workflow acceptance record
+# Invoice Hub v0.1.8 — real workflow acceptance
 
-Target: current head of PR #50 on `agent/ui-stabilization-real-workflow`.
+This document defines the **final release acceptance boundary** for the current v0.1.8 source line.
 
-## Safety boundary
+The exact release SHA is not hard-coded here. The authoritative candidate is the SHA recorded by the final release audit and must remain identical across exact-SHA CI, Windows pre-tag audit, and manual acceptance evidence.
 
-Automated acceptance uses temporary SQLite databases, synthetic accounts and
-synthetic UI state only. It does not open, copy, export, or describe production
-invoices, credentials, API keys, authorization codes, or user databases.
+## Evidence classes
 
-Runtime screenshots, disposable packages and temporary databases remain outside
-Git. `email_report.html` is not part of the acceptance evidence.
+Do not conflate these evidence types:
 
-## Completed automated workflow acceptance
-
-| Workflow checkpoint | Evidence | Result |
+| Evidence | What it proves | What it does not prove |
 | --- | --- | --- |
-| App Shell and five primary pages | Isolated `InvoiceReviewApp` tests navigate Dashboard, Review, Import, Export and Settings | Pass |
-| Review count and selection truthfulness | `ReviewViewState`, zero-result, no-record and no-selection tests | Pass |
-| Mailbox account states | Normal, missing credential, disabled, empty and long-text tests | Pass |
-| AI configuration states | Zero, one and multiple profiles; local-only configuration validation copy | Pass |
-| Embedded mobile upload | Idle, starting, active, error, network switch and shutdown ordering tests | Pass |
-| Import activity ownership | One controller event updates one business activity batch | Pass |
-| Export preflight | Approved/pending/evidence/file/directory/naming checklist and blocked state | Pass |
-| DPI/geometry | Isolated 100%, 125% and 150% Qt-scale control-bound and text-fit checks | Pass |
-| Privacy/public source | Repository privacy and public-export gates | Pass |
+| Local preflight | source, unit and HCI checks pass in the developer environment | packaged Windows behavior |
+| PR / exact-SHA CI | repository tree passes required automated gates | physical Windows typography or upgrade UX |
+| Windows build audit | PyInstaller/Inno build, startup, payload hygiene, install/start/uninstall | real user upgrade/persistence and visual quality |
+| Synthetic UI matrix | layout/control contracts at declared sizes/scales | human visual balance on a physical display |
+| Physical Windows acceptance | real installer, upgrade, restart persistence and DPI behavior | Android/WeChat mobile behavior |
+| Real-device mobile acceptance | LAN/firewall/browser/upload behavior | broader desktop release quality |
 
-## Source-matched build evidence
+A final stable GO needs the evidence classes that correspond to features claimed as supported.
 
-A disposable PyInstaller onedir build was produced from the PR worktree in a
-TEMP directory. It was not installed over the user's existing application and
-was not committed. The earlier recorded test executable SHA256 was:
+## Privacy boundary
 
-`CDD874FA650962E9DEDCDEEC831BBB67F41EAF305B6E5C7F2050EB9ABFE78C00`
+Acceptance data must be disposable and synthetic unless the release owner is performing a private local-only personal workflow check.
 
-That build proves packaging can complete; it does not prove installer, upgrade,
-persistence, uninstall or final Windows typography behavior for the current
-head after all Design Baseline changes.
+Never commit or upload:
 
-## Required controlled manual run
+- real invoices, receipts, itineraries or claim packages;
+- production SQLite databases;
+- mailbox authorization codes or API keys;
+- real email addresses, tax IDs or company consumption data;
+- local private paths or full tokenized URLs.
 
-Use a new disposable validation profile and synthetic fixtures only:
+Public evidence records only pass/fail, counts, timings and interaction findings.
 
-1. Build a fresh source-matched package from the final PR head.
-2. Clean-install it without replacing the production profile.
-3. Start with an empty database and verify Dashboard/Settings empty states.
-4. Import a synthetic invoice file.
-5. Review and edit one synthetic field.
-6. Attach synthetic proof material.
-7. Create a synthetic reimbursement group and add the invoice.
-8. Verify export preflight and export a synthetic reimbursement package.
-9. Close and restart; verify records, group, settings and layout persist.
-10. Upgrade from the previous installed release in a disposable profile.
-11. Uninstall and reinstall; verify the documented user-data policy.
-12. Review Chinese typography at physical Windows 100%, 125% and 150% scaling.
+## Automated acceptance required on the final candidate
 
-Record only pass/fail, counts and interaction findings. Do not record real
-addresses, invoice fields, keys, tokens or private local paths.
+Run local preflight before remote CI:
 
-## Acceptance decision
+~~~powershell
+python scripts/dev/run_local_ci_preflight.py
+~~~
 
-- **Design Baseline source implementation:** complete.
-- **Automated workflow acceptance:** complete when the final PR CI is green.
-- **Physical Windows and installer acceptance:** pending.
-- **Release/UI Freeze:** not approved until the controlled manual run passes.
+The exact final candidate must then have successful authority for:
+
+- source/privacy/architecture gates;
+- all unit-test shards;
+- HCI acceptance;
+- release metadata and public-export contracts;
+- Qt startup warning regression;
+- repeated PDF preview replacement without the known QPdfLinkModel/null-document warning.
+
+The native geometry lane remains diagnostic when the hosted environment cannot satisfy the physical desktop geometry contract.
+
+## Windows pre-tag release audit
+
+Dispatch **Windows Build & Release** in pre-tag audit mode from the exact master candidate.
+
+The audit must verify:
+
+- checked-out SHA equals the candidate and origin/master;
+- PyInstaller frozen build succeeds;
+- packaged embedded version matches the source release line;
+- portable startup stays within the configured startup threshold;
+- payload contains required license/notice files and no runtime/private/browser payload;
+- Inno Setup installer builds successfully;
+- historical installer ownership recovery remains safe;
+- generated installer completes install → startup → uninstall;
+- SHA256 evidence is generated for release artifacts.
+
+Pre-tag audit evidence must not create a release tag or public GitHub Release.
+
+## Controlled physical-Windows workflow
+
+Use a disposable Windows profile/data directory.
+
+1. Clean-install the final source-matched installer.
+2. Launch with an empty database and verify Dashboard/Settings empty states.
+3. Import a synthetic PDF/OFD/image/ZIP set.
+4. Review a synthetic invoice and edit one field.
+5. Repeatedly switch between PDF records and confirm no Qt PDF/font warnings.
+6. Associate synthetic proof material.
+7. Create a reimbursement group and add approved invoices.
+8. Run export preflight and export the synthetic reimbursement package.
+9. Open the Excel file and a copied attachment.
+10. Close and restart; confirm records, settings, claim group and layout persist.
+11. Upgrade from the previous stable installed release using a disposable profile.
+12. Uninstall and reinstall; verify the documented user-data retention policy.
+13. Review the main pages at physical Windows 100%, 125% and 150% scaling.
+
+## Mobile acceptance when mobile upload is a supported release claim
+
+For a packaged Windows build:
+
+- start a mobile upload session;
+- confirm the intended Private-network firewall flow;
+- open the session from a real phone on the same LAN;
+- upload PDF/image files and confirm they enter the desktop import/review flow;
+- stop the session and confirm the URL/token no longer works.
+
+Android Chrome/system browser is the minimum real-device browser target. WeChat-specific behavior should be claimed only after its own acceptance is complete.
+
+## GO / NO-GO
+
+Stable GO requires all of the following on one final candidate:
+
+- local preflight PASS;
+- exact-SHA CI PASS;
+- Windows pre-tag audit PASS;
+- physical Windows clean install / upgrade / restart / DPI acceptance PASS;
+- no P0/P1 data-loss, privacy, export-integrity or GUI-lifecycle blocker;
+- known limitations documented in release notes.
+
+If the candidate changes after any release-blocking fix, previous exact-SHA evidence is stale and the required gates must be rerun for the new candidate.
