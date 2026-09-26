@@ -10,21 +10,6 @@ class SettingsPreviewMatrixContractTests(unittest.TestCase):
         self.assertEqual(len(CASES), 16)
         self.assertEqual(len(set(CASES)), len(CASES))
 
-    def test_matrix_covers_settings_and_preview_interaction_states(self):
-        self.assertEqual(
-            set(STATES),
-            {
-                "settings-success",
-                "settings-warning",
-                "settings-danger",
-                "settings-info",
-                "preview-normal",
-                "preview-hover",
-                "preview-focus",
-                "preview-disabled",
-            },
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

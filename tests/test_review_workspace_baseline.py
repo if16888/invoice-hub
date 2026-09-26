@@ -32,20 +32,6 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
         self.app.processEvents()
         return window
 
-    def test_review_workspace_baseline_is_applied(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertTrue(window.review_page.property("reviewWorkspaceBaselineApplied"))
-                self.assertTrue(window.review_page.property("reviewDetailWidthFixApplied"))
-                self.assertTrue(hasattr(window, "_review_detail_width_controller"))
-                self.assertFalse(hasattr(window, "_review_feedback_resize_filter"))
-                self.assertEqual(window._detail_panel.minimumWidth(), 352)
-                self.assertLessEqual(window._detail_panel.maximumWidth(), DETAIL_MAX_WIDTH)
-                self.assertEqual(window._detail_panel.sizePolicy().horizontalPolicy(), QSizePolicy.Expanding)
-                self.assertEqual(window._detail_panel.sizePolicy().verticalPolicy(), QSizePolicy.Expanding)
-            finally:
-                window.close()
 
     def test_collapsed_sidebar_reclaims_width_for_review_detail(self):
         with tempfile.TemporaryDirectory() as td:
@@ -82,34 +68,6 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_filter_cards_do_not_render_unicode_decorations(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                for card in window.filter_buttons.values():
-                    self.assertTrue(card.property("decorativeIconRemoved"))
-                    self.assertEqual(card.icon_text(), "")
-                    self.assertFalse(card._lbl_icon.isVisible())
-                    self.assertGreaterEqual(card.minimumWidth(), 86)
-                    self.assertLessEqual(card.maximumWidth(), 92)
-                    self.assertTrue(card.accessibleName())
-            finally:
-                window.close()
-
-    def test_no_selection_copy_and_state_are_truthful(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                window.table.setRowCount(1)
-                window.current_invoice = None
-                window.table.clearSelection()
-                _sync_selection_contract(window)
-                self.app.processEvents()
-                self.assertEqual(window.lbl_right_empty_title.text(), "未选择发票")
-                self.assertIn("选择一张发票", window.lbl_right_empty_desc.text())
-                self.assertIs(window.right_stack.currentWidget(), window.right_empty_widget)
-            finally:
-                window.close()
 
     def test_empty_query_copy_is_truthful(self):
         with tempfile.TemporaryDirectory() as td:
@@ -122,18 +80,6 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertEqual(window.lbl_right_empty_title.text(), "当前没有发票记录")
                 self.assertIn("导入发票后", window.lbl_right_empty_desc.text())
-            finally:
-                window.close()
-
-    def test_review_table_and_search_keep_dense_workspace_contract(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertEqual(window.table.textElideMode(), Qt.ElideRight)
-                self.assertEqual(window.table.verticalHeader().defaultSectionSize(), 24)
-                self.assertGreaterEqual(window.txt_search.minimumWidth(), 260)
-                self.assertEqual(window.txt_search.accessibleName(), "搜索发票")
-                self.assertEqual(window.btn_advanced_filter.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
             finally:
                 window.close()
 

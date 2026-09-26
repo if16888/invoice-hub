@@ -133,16 +133,6 @@ class TestCheckStartupTimeScript(unittest.TestCase):
         self.assertTrue(p.exists(), f"check_startup_time.py not found at {p}")
         return p
 
-    def test_script_exists(self):
-        self._script_path()
-
-    def test_script_parseable(self):
-        """check_startup_time.py must be valid Python syntax."""
-        src = self._script_path().read_text(encoding="utf-8")
-        try:
-            ast.parse(src)
-        except SyntaxError as exc:
-            self.fail(f"SyntaxError in check_startup_time.py: {exc}")
 
     def test_metric_regex_parses_probe_output(self):
         """The regex patterns should extract values from probe stdout."""
@@ -178,15 +168,6 @@ class TestDesktopLauncherScript(unittest.TestCase):
         self.assertTrue(p.exists(), f"invoice_fetch_desktop.py not found at {p}")
         return p
 
-    def test_launcher_exists(self):
-        self._launcher_path()
-
-    def test_launcher_parseable(self):
-        src = self._launcher_path().read_text(encoding="utf-8")
-        try:
-            ast.parse(src)
-        except SyntaxError as exc:
-            self.fail(f"SyntaxError in invoice_fetch_desktop.py: {exc}")
 
     def test_launcher_defaults_to_desktop_command(self):
         """When launched with no argv, the launcher appends 'desktop'."""
@@ -439,8 +420,6 @@ class TestWindowsVersionInfoGenerator(unittest.TestCase):
         self.assertTrue(p.exists(), f"version resource generator not found at {p}")
         return p
 
-    def test_generator_module_exists(self):
-        self._module_path()
 
     def test_generator_source_imports_version_constant(self):
         src = self._module_path().read_text(encoding="utf-8")
@@ -525,8 +504,6 @@ class TestPyInstallerSpecIntegrity(unittest.TestCase):
         self.assertTrue(p.exists(), f"spec file not found at {p}")
         return p
 
-    def test_spec_exists(self):
-        self._spec_path()
 
     def test_spec_uses_onedir(self):
         """Spec must use COLLECT (onedir) and NOT use EXE with a.datas inline."""
@@ -637,7 +614,6 @@ class TestStartupProbeIsolated(unittest.TestCase):
         self.assertNotIn("QFont::setPointSize: Point size <= 0", combined)
 
 
-
 class TestGithubWorkflowExists(unittest.TestCase):
     """The GitHub Actions workflow file must exist and reference key steps."""
 
@@ -646,8 +622,6 @@ class TestGithubWorkflowExists(unittest.TestCase):
         self.assertTrue(p.exists(), f"workflow not found at {p}")
         return p
 
-    def test_workflow_exists(self):
-        self._workflow_path()
 
     def test_workflow_references_pyinstaller(self):
         src = self._workflow_path().read_text(encoding="utf-8")

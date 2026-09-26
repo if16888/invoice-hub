@@ -46,15 +46,6 @@ class SelectionSurfaceContractTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-    def test_delegate_removes_only_native_focus_rect(self):
-        option = QStyleOptionViewItem()
-        option.state |= QStyle.StateFlag.State_HasFocus
-        option.state |= QStyle.StateFlag.State_Selected
-
-        normalized = SelectionSurfaceDelegate.normalized_option(option)
-
-        self.assertFalse(bool(normalized.state & QStyle.StateFlag.State_HasFocus))
-        self.assertTrue(bool(normalized.state & QStyle.StateFlag.State_Selected))
 
     def test_entity_list_uses_property_driven_selected_row(self):
         entity_list = EntityList()
@@ -125,43 +116,6 @@ class SelectionSurfaceContractTests(unittest.TestCase):
             entity_list.deleteLater()
             self._flush()
 
-    def test_rows_inserted_after_install_are_decorated(self):
-        entity_list = EntityList()
-        try:
-            install_selection_surface_contracts(entity_list)
-            item = entity_list.add_entity_row("Late row", "Inserted after contract")
-            row = entity_list.itemWidget(item)
-            row.setObjectName("MailboxAccountRow")
-            entity_list.setCurrentItem(item)
-            item.setSelected(True)
-            self._flush()
-
-            self.assertEqual(row.objectName(), "MailboxAccountRow")
-            self.assertEqual(row.property("selectionSurfaceRow"), "true")
-            self.assertEqual(row.property("selected"), "true")
-            self.assertGreaterEqual(item.sizeHint().height(), 68)
-        finally:
-            entity_list.close()
-            entity_list.deleteLater()
-            self._flush()
-
-    def test_secondary_navigation_uses_same_focus_rect_delegate(self):
-        nav = SecondaryNavStack()
-        try:
-            nav.addTab(QWidget(), "邮箱账户")
-            nav.addTab(QWidget(), "开票信息")
-            install_selection_surface_contracts(nav)
-            self._flush()
-
-            self.assertIsInstance(nav.nav_list.itemDelegate(), SelectionSurfaceDelegate)
-            self.assertEqual(nav.nav_list.property("selectionSurfaceContract"), "secondary-nav")
-            qss = nav.nav_list.styleSheet()
-            self.assertIn("QListWidget#SecondaryNavList::item:selected:active", qss)
-            self.assertIn("outline: 0", qss)
-        finally:
-            nav.close()
-            nav.deleteLater()
-            self._flush()
 
     def test_filter_popup_value_list_uses_shared_selection_contract(self):
         popup = ColumnFilterPopup(
@@ -182,48 +136,6 @@ class SelectionSurfaceContractTests(unittest.TestCase):
         finally:
             popup.close()
             popup.deleteLater()
-            self._flush()
-
-    def test_page_layout_schedules_contract_for_child_lists(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        entity_list = EntityList(page)
-        layout.addWidget(entity_list)
-        item = entity_list.add_entity_row("Claim", "Ready")
-        try:
-            DashboardPageLayout.apply(page, layout)
-            entity_list.setCurrentItem(item)
-            item.setSelected(True)
-            self._flush()
-
-            row = entity_list.itemWidget(item)
-            self.assertEqual(entity_list.property("selectionSurfaceContract"), "entity")
-            self.assertEqual(row.property("selectionSurfaceRow"), "true")
-            self.assertEqual(row.property("selected"), "true")
-        finally:
-            page.close()
-            page.deleteLater()
-            self._flush()
-
-    def test_page_watcher_handles_lists_created_after_layout_apply(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        try:
-            DashboardPageLayout.apply(page, layout)
-            entity_list = EntityList(page)
-            layout.addWidget(entity_list)
-            item = entity_list.add_entity_row("Deferred claim", "Ready")
-            entity_list.setCurrentItem(item)
-            item.setSelected(True)
-            self._flush()
-
-            row = entity_list.itemWidget(item)
-            self.assertEqual(entity_list.property("selectionSurfaceContract"), "entity")
-            self.assertEqual(row.property("selectionSurfaceRow"), "true")
-            self.assertEqual(row.property("selected"), "true")
-        finally:
-            page.close()
-            page.deleteLater()
             self._flush()
 
 

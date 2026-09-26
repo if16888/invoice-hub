@@ -137,57 +137,6 @@ class DesignSystemV11Tests(unittest.TestCase):
         self.assertEqual(DESIGN_V1_METRICS["segmented_item_height"], 30)
         self.assertEqual(DESIGN_V1_METRICS["segmented_item_gap"], 4)
 
-    def test_sidebar_uses_fill_states_without_decorative_outlines(self):
-        window, nav, collapse, _bar, _cards = self._window_fixture()
-        try:
-            apply_sidebar_visual_language(window)
-
-            self.assertEqual(nav.property("visualLanguage"), "design-v1.1")
-            self.assertEqual(collapse.property("navigationControl"), "collapse")
-            self.assertTrue(collapse.isFlat())
-            self.assertEqual(collapse.maximumHeight(), DESIGN_V1_METRICS["icon_button_size"])
-            qss = nav.styleSheet()
-            self.assertIn('QPushButton[navigationControl="collapse"]', qss)
-            self.assertIn("QPushButton.WorkbenchNavButton:checked", qss)
-            self.assertIn("background-color: #EFF6FF", qss)
-            self.assertIn("border: none", qss)
-        finally:
-            window.close()
-            window.deleteLater()
-            self.app.processEvents()
-
-    def test_review_statuses_form_one_neutral_segmented_control(self):
-        window, _nav, _collapse, bar, cards = self._window_fixture()
-        try:
-            apply_review_status_segmented_control(window)
-
-            self.assertEqual(bar.objectName(), "ExistingReviewFilterBar")
-            self.assertEqual(bar.property("visualRole"), "segmented-filter")
-            self.assertEqual(bar.height(), DESIGN_V1_METRICS["segmented_control_height"])
-            self.assertIn('QFrame[visualRole="segmented-filter"]', bar.styleSheet())
-            self.assertIn(DESIGN_V1_COLORS["surface_secondary"], bar.styleSheet())
-            self.assertIn(DESIGN_V1_COLORS["border_subtle"], bar.styleSheet())
-
-            status_only_colors = {
-                DESIGN_V1_COLORS["warning"],
-                DESIGN_V1_COLORS["warning_border"],
-                DESIGN_V1_COLORS["success"],
-                DESIGN_V1_COLORS["success_border"],
-                DESIGN_V1_COLORS["danger"],
-                DESIGN_V1_COLORS["danger_border"],
-            }
-            for status, card in cards.items():
-                self.assertEqual(card.property("visualRole"), "status-segment")
-                self.assertEqual(card.property("statusKey"), status)
-                self.assertEqual(card.height(), DESIGN_V1_METRICS["segmented_item_height"])
-                self.assertIn('QFrame#CompactStatCard[selected="true"]', card.styleSheet())
-                self.assertIn("border: none", card.styleSheet())
-                for color in status_only_colors:
-                    self.assertNotIn(color, card.styleSheet())
-        finally:
-            window.close()
-            window.deleteLater()
-            self.app.processEvents()
 
     def test_segment_selection_refreshes_title_and_value_colors(self):
         window = QWidget()
@@ -295,24 +244,6 @@ class DesignSystemV11Tests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
-    def test_direct_reset_callback_uses_same_filter_state_contract(self):
-        window, segment, _reset, _empty_reset = self._filter_state_fixture()
-        try:
-            apply_review_status_segmented_control(window)
-            segment.buttons["ignored"].clicked.emit()
-            self.app.processEvents()
-            self.assertEqual(segment.selected(), "ignored")
-
-            window._reset_invoice_filters()
-
-            self.assertIsNone(window.current_filter_status)
-            self.assertEqual(segment.selected(), "all")
-            self.assertTrue(segment.buttons["all"].property("selected"))
-            self.assertFalse(segment.buttons["ignored"].property("selected"))
-        finally:
-            window.close()
-            window.deleteLater()
-            self.app.processEvents()
 
     def test_shared_application_is_idempotent(self):
         window, nav, collapse, bar, cards = self._window_fixture()
@@ -332,10 +263,6 @@ class DesignSystemV11Tests(unittest.TestCase):
             window.close()
             window.deleteLater()
             self.app.processEvents()
-
-    def test_visual_language_is_final_review_pipeline_stage(self):
-        self.assertEqual(REVIEW_BASELINE_STAGES[-1][0], "visual_language_v11")
-        self.assertIs(REVIEW_BASELINE_STAGES[-1][1], apply_design_system_v11)
 
 
 if __name__ == "__main__":

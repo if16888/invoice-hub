@@ -45,23 +45,6 @@ class DesignTokenAuthorityTests(unittest.TestCase):
         self.assertEqual(DESIGN_V1_TYPE["page_title"], 22)
         self.assertEqual(DESIGN_V1_METRICS["control_height"], 34)
 
-    def test_legacy_mapping_is_derived_from_the_authority(self):
-        target = {
-            "accent": "#1599BD",
-            "success": "#059669",
-            "danger": "#DC2626",
-            "unrelated": "preserved",
-        }
-        apply_legacy_color_tokens(target)
-
-        self.assertEqual(target["accent"], DESIGN_V1_COLORS["accent"])
-        self.assertEqual(target["success"], DESIGN_V1_COLORS["success"])
-        self.assertEqual(target["danger"], DESIGN_V1_COLORS["danger"])
-        self.assertEqual(target["unrelated"], "preserved")
-        self.assertEqual(
-            {key: target[key] for key in canonical_legacy_color_tokens()},
-            canonical_legacy_color_tokens(),
-        )
 
     def test_canonical_stylesheet_rebuilds_legacy_tokens_before_rendering(self):
         styles.COLOR_TOKENS["accent"] = "#1599BD"

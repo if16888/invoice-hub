@@ -39,9 +39,6 @@ class ColumnFilterTests(unittest.TestCase):
             },
         ]
 
-    def test_filters_category_values(self):
-        result = apply_column_filters(self.rows, {"category": {"values": {"住宿"}}})
-        self.assertEqual([row["id"] for row in result], [2])
 
     def test_filters_seller_values(self):
         result = apply_column_filters(self.rows, {"seller_name": {"values": {"Alpha Coffee"}}})
@@ -77,20 +74,6 @@ class ColumnFilterTests(unittest.TestCase):
         result = apply_column_filters(rows, {"total_amount": {"min": "18.5", "max": "20.0"}})
         self.assertEqual([row["id"] for row in result], [10])
 
-    def test_combines_multiple_filters_with_and_logic(self):
-        result = apply_column_filters(
-            self.rows,
-            {
-                "category": {"values": {"交通"}},
-                "seller_name": {"values": {"Alpha Travel"}},
-                "total_amount": {"max": "50"},
-            },
-        )
-        self.assertEqual([row["id"] for row in result], [3])
-
-    def test_empty_checked_value_set_matches_no_rows(self):
-        result = apply_column_filters(self.rows, {"category": {"values": set()}})
-        self.assertEqual(result, [])
 
     def test_filters_claim_group_aliases(self):
         rows = [

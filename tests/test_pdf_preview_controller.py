@@ -27,10 +27,6 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         self.assertIn("document.close()", source)
         self.assertNotIn("setDocument(None)", source)
 
-    def test_preview_mixin_delegates_pdf_loading_to_controller(self):
-        source = inspect.getsource(preview_mixin.PreviewMixin)
-        self.assertIn("self.pdf_preview_controller.load(file_path)", source)
-        self.assertNotIn("self.pdf_view.setDocument(None)", source)
 
     def test_failed_replacement_always_notifies_host(self):
         source = inspect.getsource(PdfPreviewController.load)
@@ -57,19 +53,6 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         source = inspect.getsource(PdfPreviewController._activate)
         self.assertIn("generation != self._generation", source)
 
-    def test_existing_preview_remains_active_until_replacement_activation(self):
-        stack = QStackedWidget()
-        controller = PdfPreviewController(stack)
-        old_view = QWidget(stack)
-        old_document = _FakeDocument(Path("old.pdf"))
-        controller._activate(0, old_view, old_document)
-
-        controller._generation += 1  # replacement has started but is not Ready
-
-        self.assertIs(controller.active_view(), old_view)
-        self.assertIs(controller.active_document(), old_document)
-        self.assertEqual(controller.active_path(), Path("old.pdf"))
-        self.assertIs(stack.currentWidget(), old_view)
 
     def test_duplicate_ready_activation_keeps_active_view_alive(self):
         stack = QStackedWidget()

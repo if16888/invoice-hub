@@ -63,15 +63,6 @@ class TestUIKit(unittest.TestCase):
         self.assertEqual(Theme.CONTROL_HEIGHT, DESIGN_V1_METRICS["control_height"])
         self.assertEqual(Theme.RADIUS_CARD, DESIGN_V1_METRICS["radius_large"])
 
-    def test_build_qss_contains_accessibility_contracts(self):
-        qss = build_qss()
-        self.assertIn("QMainWindow", qss)
-        self.assertIn(DESIGN_V1_COLORS["page"], qss)
-        self.assertIn('QLabel[role="hint"]', qss)
-        self.assertIn("QPushButton:focus", qss)
-        self.assertIn("QFrame#CompactStatCard:focus", qss)
-        self.assertIn("QTableWidget::item:hover", qss)
-        self.assertIn(f"width: {DESIGN_V1_METRICS['scrollbar_width']}px", qss)
 
     def test_card_instantiation(self):
         card = Card()

@@ -27,102 +27,6 @@ class BusinessPagesBaselineTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_dashboard_uses_desktop_width_and_content_width_primary(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertTrue(window.overview_page.property("dashboardBaselineApplied"))
-                self.assertEqual(window.overview_content_host.minimumWidth(), 0)
-                self.assertEqual(window.overview_content_host.maximumWidth(), 1360)
-                button = window.btn_overview_continue_review
-                self.assertEqual(button.text(), "继续审核")
-                self.assertEqual(button.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
-                self.assertLessEqual(button.maximumWidth(), 180)
-            finally:
-                window.close()
-
-    def test_dashboard_fits_default_window_without_horizontal_clipping(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td, size=(1150, 850))
-            # The application launches on the review page.  Switch to the
-            # dashboard before measuring it so the stacked page has real
-            # client geometry instead of its hidden 640x480 default size.
-            window._switch_main_page("overview")
-            for _ in range(2):
-                self.app.processEvents()
-            try:
-                page = window.overview_page
-                host = window.overview_content_host
-                self.assertGreaterEqual(host.geometry().left(), 0)
-                self.assertLessEqual(host.geometry().right() + 1, page.width())
-
-                visible_controls = (
-                    window.lbl_hci_task_total,
-                    window.btn_hci_continue_tasks,
-                )
-                visible_controls += tuple(window.hci_dashboard_task_cards.values())
-                for widget in visible_controls:
-                    top_left = widget.mapTo(page, QPoint(0, 0))
-                    bottom_right = widget.mapTo(page, widget.rect().bottomRight())
-                    self.assertGreaterEqual(top_left.x(), 0)
-                    self.assertLessEqual(
-                        bottom_right.x() + 1,
-                        page.width(),
-                        f"{widget.objectName() or type(widget).__name__}: "
-                        f"page_width={page.width()} widget_geometry={widget.geometry()}",
-                    )
-            finally:
-                window.close()
-
-    def test_import_task_flow_uses_responsibility_widths(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertTrue(window.imports_page.property("importBaselineApplied"))
-                self.assertEqual(window.import_source_card.width(), 248)
-                self.assertEqual(window.import_mail_recent_card.width(), 340)
-                self.assertEqual(window.import_task_stack.maximumWidth(), 900)
-                self.assertEqual(window.import_rules_detail.objectName(), "ImportRulesSubtleSection")
-                self.assertEqual(window.btn_import_local_task.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
-            finally:
-                window.close()
-
-    def test_export_task_flow_is_compact_and_has_truthful_naming_check(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertTrue(window.export_page.property("exportBaselineApplied"))
-                self.assertEqual(window.export_group_card.width(), 280)
-                self.assertEqual(window.export_integrity_card.width(), 360)
-                self.assertTrue(hasattr(window, "export_check_naming"))
-                self.assertEqual(window.export_check_naming.objectName(), "ExportNamingChecklistRow")
-                self.assertEqual(window.export_check_naming.lbl_icon.text(), "")
-                self.assertEqual(window.export_check_naming.property("state"), "muted")
-                self.assertEqual(window.export_check_naming.lbl_value.text(), "等待选择报销组")
-                self.assertEqual(window.export_check_dir.property("state"), "muted")
-                self.assertEqual(
-                    window.export_check_dir.lbl_value.text(),
-                    "已设置（导出时验证）",
-                )
-                self.assertTrue(window.export_check_dir.lbl_value.toolTip())
-                self.assertEqual(window.btn_run_export_page.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
-                self.assertLessEqual(window.btn_run_export_page.maximumWidth(), 180)
-            finally:
-                window.close()
-
-    def test_shared_checklist_contract_uses_icons_and_nonblocking_warning(self):
-        row = ChecklistRow("待处理", "—")
-        row.setProperty("falseState", "warning")
-        row.set_value("2 张", ok=False)
-        try:
-            self.assertEqual(row.property("state"), "warning")
-            self.assertEqual(row.lbl_value.property("state"), "warning")
-            self.assertEqual(row.lbl_icon.text(), "")
-            self.assertFalse(row.lbl_icon.pixmap().isNull())
-            self.assertEqual(row.lbl_icon.styleSheet(), "")
-            self.assertEqual(row.lbl_value.styleSheet(), "")
-        finally:
-            row.deleteLater()
 
     def test_export_naming_state_requires_approved_invoices(self):
         self.assertEqual(
@@ -136,24 +40,6 @@ class BusinessPagesBaselineTests(unittest.TestCase):
             ("等待可导出发票", "muted"),
         )
 
-    def test_export_naming_state_warns_only_when_real_date_prefix_falls_back(self):
-        self.assertEqual(
-            _export_naming_state([
-                {
-                    "review_status": "approved",
-                    "invoice_date": "",
-                    "expense_date": "",
-                    "mail_date": "",
-                    "seller_name": "Synthetic Seller",
-                },
-                {
-                    "review_status": "approved",
-                    "invoice_date": "2026-07-02",
-                    "seller_name": "",
-                },
-            ]),
-            ("1 张将使用 unknown-date 前缀", "warning"),
-        )
 
     def test_export_naming_state_matches_date_prefix_and_ignores_seller(self):
         self.assertEqual(

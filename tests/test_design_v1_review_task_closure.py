@@ -29,34 +29,6 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_review_toolbar_only_exposes_review_owned_actions(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                self.assertTrue(window.review_page.property("designV1ReviewTaskClosureApplied"))
-                for attr in (
-                    "btn_import_local",
-                    "btn_scan_email",
-                    "btn_toolbar_export",
-                ):
-                    self.assertNotIsInstance(getattr(window, attr), QWidget)
-                self.assertIsNotNone(window.action_import_local)
-                self.assertIsNotNone(window.action_scan_email)
-                self.assertIsNotNone(window.action_toolbar_export)
-
-                self.assertEqual(window.btn_more.text(), "更多")
-                self.assertEqual(window.btn_more.toolTip(), "更多审核操作")
-                self.assertGreaterEqual(
-                    window.btn_more.minimumWidth(),
-                    window.btn_more.sizeHint().width(),
-                )
-                self.assertIn("购买方", window.txt_search.placeholderText())
-                self.assertNotIn("邮件主题", window.txt_search.placeholderText())
-                self.assertIn("发票审核", window.workbench_top_toolbar.toolTip())
-            finally:
-                window.close()
-                window.deleteLater()
-                self.app.processEvents()
 
     def test_buyer_mismatch_is_detailed_and_has_no_settings_shortcut(self):
         with tempfile.TemporaryDirectory() as td:

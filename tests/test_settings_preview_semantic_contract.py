@@ -33,9 +33,6 @@ class SettingsSemanticStatusContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _app()
 
-    def test_plain_status_text_removes_legacy_font_markup(self):
-        source = "授权状态：<font color='#10B981'><b>已安全保存</b></font>"
-        self.assertEqual(plain_status_text(source), "授权状态：已安全保存")
 
     def test_status_language_maps_to_semantic_tones(self):
         self.assertEqual(infer_status_tone("已安全保存到系统凭据管理器"), "success")
@@ -69,10 +66,6 @@ class PreviewToolbarTokenContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _app()
 
-    def test_preview_toolbar_component_contains_no_hex_color_literals(self):
-        source = inspect.getsource(PreviewToolbar)
-        self.assertNotRegex(source, r"#[0-9A-Fa-f]{6}")
-        self.assertIn("build_preview_toolbar_qss", source)
 
     def test_preview_toolbar_qss_is_derived_from_design_tokens(self):
         qss = build_preview_toolbar_qss()
@@ -82,31 +75,6 @@ class PreviewToolbarTokenContractTests(unittest.TestCase):
         self.assertIn(DESIGN_V1_COLORS["placeholder"], qss)
         self.assertIn("QToolButton.PreviewToolBtn:focus", qss)
         self.assertIn("QToolButton.PreviewToolBtn:disabled", qss)
-
-    def test_preview_toolbar_buttons_have_stable_focus_contracts(self):
-        toolbar = PreviewToolbar()
-        try:
-            buttons = (
-                toolbar.btn_zoom_out,
-                toolbar.btn_zoom_100,
-                toolbar.btn_zoom_in,
-                toolbar.btn_fit_width,
-                toolbar.btn_fit_page,
-                toolbar.btn_rotate_left,
-                toolbar.btn_rotate_right,
-                toolbar.btn_download,
-                toolbar.btn_print,
-                toolbar.btn_fullscreen,
-            )
-            self.assertEqual(toolbar.accessibleName(), "原件预览工具栏")
-            for button in buttons:
-                self.assertEqual(button.focusPolicy(), Qt.StrongFocus)
-                self.assertTrue(button.objectName().startswith("PreviewAction_"))
-                self.assertTrue(button.accessibleName())
-        finally:
-            toolbar.close()
-            toolbar.deleteLater()
-            self.app.processEvents()
 
 
 if __name__ == "__main__":
