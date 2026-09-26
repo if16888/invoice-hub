@@ -23,13 +23,16 @@ class TestCIWorkflowPolicy(unittest.TestCase):
         self.assertIn("PREVIOUS_STABLE_VERSION", workflow)
         self.assertIn("git fetch --force --no-tags --depth=1 origin $refspec", workflow)
         self.assertIn("needs.master_ci_attestation.result == 'success'", workflow)
-        self.assertIn(
-            'attest_master_ci.py --sha "${{ github.event.pull_request.base.sha }}"',
-            workflow,
-        )
         self.assertIn("Source gates were successful on the identical PR tree", workflow)
         self.assertIn("Unit shard ${{ matrix.shard }} passed on the identical PR tree", workflow)
         self.assertIn("HCI acceptance passed on the identical PR tree", workflow)
+
+    def test_pull_request_gates_do_not_depend_on_existing_master_attestation(self):
+        workflow = self.workflow
+        source_gates = workflow.split("  source_gates:", 1)[1].split("\n  unit_tests:", 1)[0]
+        self.assertNotIn("Verify master attestation against exact base commit", source_gates)
+        self.assertNotIn("attest_master_ci.py --sha", source_gates)
+        self.assertNotIn("permissions:", source_gates)
 
     def test_full_source_unit_and_hci_runs_are_pr_only(self):
         workflow = self.workflow
