@@ -82,11 +82,12 @@ class ClaimGroupsTests(unittest.TestCase):
 
         stdout = Mock()
         stderr = Mock()
+        kernel32 = Mock()
         with patch.object(cli.os, "name", "nt"), patch.object(
             cli.sys, "stdout", stdout
         ), patch.object(cli.sys, "stderr", stderr), patch(
-            "ctypes.windll.kernel32"
-        ) as kernel32:
+            "ctypes.windll", Mock(kernel32=kernel32), create=True
+        ):
             cli._configure_console_utf8()
 
         kernel32.SetConsoleOutputCP.assert_called_once_with(65001)

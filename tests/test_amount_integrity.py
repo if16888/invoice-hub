@@ -11,7 +11,7 @@ import openpyxl
 from PySide6.QtWidgets import QApplication, QComboBox, QWidget
 
 from scripts.invoice_fetch.claim_export import _normalized_finite_amount
-from scripts.invoice_fetch.excel_export import export_excel
+from scripts.invoice_fetch.excel_export import export_excel, _excel_amount_value
 from scripts.invoice_fetch.gui.invoice_detail_panel import EditFieldsDialog
 
 
@@ -55,6 +55,23 @@ class AmountIntegrityTests(unittest.TestCase):
         warning.assert_not_called()
         self.assertEqual(values["amount"], "1234.56")
 
+    def test_editor_rejects_malformed_thousands_grouping(self):
+        for raw in ("12,34", "1,23,456.78"):
+            dialog = self._dialog(raw)
+            with patch(
+                "scripts.invoice_fetch.gui.invoice_detail_panel.QMessageBox.warning"
+            ) as warning:
+                self.assertIsNone(dialog.values())
+                warning.assert_called_once()
+
+    def test_editor_rejects_subcent_precision(self):
+        dialog = self._dialog("0.005")
+        with patch(
+            "scripts.invoice_fetch.gui.invoice_detail_panel.QMessageBox.warning"
+        ) as warning:
+            self.assertIsNone(dialog.values())
+            warning.assert_called_once()
+
     def test_claim_amount_boundary_rejects_non_finite_values(self):
         for raw in ("", "NaN", "Infinity", "-Infinity", "not-a-number"):
             with self.assertRaises(ValueError):
@@ -67,6 +84,17 @@ class AmountIntegrityTests(unittest.TestCase):
             _normalized_finite_amount("1,234.56", invoice_identity="发票号 TEST"),
             "1234.56",
         )
+        for raw in ("12,34", "1,23,456.78"):
+            with self.assertRaises(ValueError):
+                _normalized_finite_amount(raw, invoice_identity="发票号 TEST")
+            with self.assertRaises(ValueError):
+                _excel_amount_value(raw)
+        self.assertEqual(_excel_amount_value("1,234.56"), 1234.56)
+        for raw in ("0.005", "1.23001"):
+            with self.assertRaises(ValueError):
+                _normalized_finite_amount(raw, invoice_identity="发票号 TEST")
+            with self.assertRaises(ValueError):
+                _excel_amount_value(raw)
 
     def test_excel_amount_cells_are_numeric_but_invoice_number_stays_text(self):
         with tempfile.TemporaryDirectory() as td:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from .url_utils import _mask_url
+from .amount_utils import parse_amount
 
 _log = logging.getLogger(__name__)
 
@@ -65,13 +66,10 @@ def _excel_amount_value(value):
     text = str(value or "").strip()
     if not text:
         return ""
-    normalized = text.replace(",", "")
     try:
-        amount = Decimal(normalized)
-    except InvalidOperation:
+        amount = parse_amount(text)
+    except ValueError:
         raise ValueError(f"金额格式无效，无法导出 Excel: {text[:80]}") from None
-    if not amount.is_finite():
-        raise ValueError("金额必须是有限数值，无法导出 Excel。")
     return float(amount)
 
 

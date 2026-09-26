@@ -60,7 +60,9 @@ def _normalize_path_list(raw_value) -> list[str]:
 
 def resolve_stored_path(raw_path: str | Path, runtime_dir: Path) -> Path:
     """Resolve a stored attachment path using the same candidates as the GUI."""
-    raw_path = Path(str(raw_path))
+    # Older Windows installations may persist backslash-separated relative paths.
+    # Normalize before constructing Path so those records also resolve on POSIX.
+    raw_path = Path(str(raw_path).replace("\\", "/"))
     if raw_path.is_absolute():
         return raw_path
 

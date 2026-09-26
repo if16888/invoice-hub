@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 
 
 from pathlib import Path
+from ..amount_utils import parse_amount
 
 
 
@@ -4839,10 +4840,9 @@ class EditFieldsDialog(QDialog):
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额不能为空。")
             return None
-        normalized_amount = amount.replace(",", "")
         try:
-            amount_value = Decimal(normalized_amount)
-        except InvalidOperation:
+            amount_value = parse_amount(amount)
+        except ValueError:
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额格式不正确。")
             return None
@@ -4860,7 +4860,7 @@ class EditFieldsDialog(QDialog):
         return {
             "number": number,
             "date": expense_date,
-            "amount": normalized_amount,
+            "amount": format(amount_value, "f"),
             "category": self.combo_category.currentText().strip(),
             "buyer": self.txt_buyer.text().strip(),
             "seller": self.txt_seller.text().strip(),

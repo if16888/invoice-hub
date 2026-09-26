@@ -651,6 +651,27 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertTrue(attachments[0].file_path.endswith(".pdf"))
             self.assertTrue(Path(attachments[0].file_path).exists())
 
+    def test_zip_parent_detail_keyword_does_not_hide_explicit_invoice_member(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            archive = base / "发票明细.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("invoice.pdf", b"%PDF- invoice")
+                zf.writestr("行程单.pdf", b"%PDF- itinerary")
+                zf.writestr("page1.pdf", b"%PDF- generic page")
+
+            msg = email.message.EmailMessage()
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename=archive.name
+            )
+            attachments = AttachmentHandler(base / "out").extract(msg, 801, "2026-05-18")
+
+        by_name = {item.original_name: item for item in attachments}
+        self.assertTrue(by_name["invoice.pdf"].is_invoice)
+        self.assertFalse(by_name["invoice.pdf"].is_extra)
+        self.assertTrue(by_name["行程单.pdf"].is_extra)
+        self.assertTrue(by_name["page1.pdf"].is_extra)
+
     def test_attachment_handler_extracts_zip_even_when_email_also_has_invoice_pdf(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

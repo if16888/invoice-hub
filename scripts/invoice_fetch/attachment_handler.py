@@ -392,10 +392,17 @@ class AttachmentHandler:
                                     break
 
                                 inner_lower = inner_name.lower()
-                                is_extra = c["is_ext"] or any(k in inner_lower for k in _EXTRA_NAME_KW)
+                                member_has_invoice_name = any(
+                                    k in inner_lower for k in _INVOICE_NAME_KW
+                                )
+                                member_is_extra = any(k in inner_lower for k in _EXTRA_NAME_KW)
+                                # Explicit invoice filenames inside an archive take
+                                # precedence over a broad parent name such as 明细.zip.
+                                is_extra = member_is_extra or (
+                                    c["is_ext"] and not member_has_invoice_name
+                                )
                                 is_invoice = (
-                                    inner_ext in _INVOICE_EXTS
-                                    or any(k in inner_lower for k in _INVOICE_NAME_KW)
+                                    inner_ext in _INVOICE_EXTS or member_has_invoice_name
                                 ) and not is_extra
                                 staged_members.append((
                                     inner_name, len(inner_payload), inner_payload,

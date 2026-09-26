@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +15,7 @@ if TYPE_CHECKING:
     from .db import InvoiceDB
 
 from . import review_status
+from .amount_utils import parse_amount
 from .config import load_config_safe
 from .db import is_pending_evidence_invoice
 from .excel_export import export_excel
@@ -82,13 +82,10 @@ def _normalized_finite_amount(value, *, invoice_identity: str = "当前发票") 
     text = str(value or "").strip()
     if not text:
         raise ValueError(f"导出已阻断：{invoice_identity}缺少有效金额。")
-    normalized = text.replace(",", "")
     try:
-        amount = Decimal(normalized)
-    except InvalidOperation:
+        amount = parse_amount(text)
+    except ValueError:
         raise ValueError(f"导出已阻断：{invoice_identity}金额格式无效。") from None
-    if not amount.is_finite():
-        raise ValueError(f"导出已阻断：{invoice_identity}金额必须是有限数值。")
     return format(amount, "f")
 
 
