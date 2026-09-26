@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QWidgetAction, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QBoxLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
-    QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog
+    QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog,
+    QDialogButtonBox,
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -300,6 +301,60 @@ def _format_redownload_bucket_summary(count: int, buckets: dict, failure_details
         if len(failure_details) > 10:
             msg += f"\n... 以及其他 {len(failure_details) - 10} 个文件"
     return msg
+
+
+class DuplicateOutcomesDialog(QDialog):
+    """Scrollable, bounded dialog for duplicate import explanations."""
+
+    def __init__(self, parent=None, detail_text: str = "", duplicate_count: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle("重复项详情")
+        self.setObjectName("DuplicateOutcomesDialog")
+        self.setModal(True)
+        self.setSizeGripEnabled(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(10)
+
+        summary = QLabel(
+            f"本次发现 {max(0, int(duplicate_count or 0))} 个重复文件。可滚动查看完整判定依据。",
+            self,
+        )
+        summary.setWordWrap(True)
+        summary.setProperty("class", "SectionHint")
+        layout.addWidget(summary)
+
+        self.details = QPlainTextEdit(self)
+        self.details.setObjectName("DuplicateOutcomesDetails")
+        self.details.setReadOnly(True)
+        self.details.setPlainText(str(detail_text or ""))
+        self.details.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.details.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.details.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.details.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.details.setFont(QFont("Segoe UI", 10))
+        layout.addWidget(self.details, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        buttons.button(QDialogButtonBox.Close).setText("关闭")
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._resize_to_available_screen()
+
+    def _resize_to_available_screen(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(720, 520)
+            return
+
+        available = screen.availableGeometry()
+        width = min(760, max(420, int(available.width() * 0.70)))
+        height = min(560, max(300, int(available.height() * 0.74)))
+        width = min(width, max(320, available.width() - 32))
+        height = min(height, max(240, available.height() - 32))
+        self.resize(width, height)
 
 
 class SingleTaskMailboxDialog(QDialog):
@@ -3377,27 +3432,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             performance_trace.mark("widget_rebuild")
             performance_trace.finish("layout_schedule", surface="imports")
 
-    def _show_duplicate_outcomes(self, _checked: bool = False) -> None:
-        sender = self.sender()
-        review_button = getattr(self, "btn_review_scope_duplicates", None)
-        import_button = getattr(self, "btn_import_recent_duplicates", None)
-        if sender is review_button:
-            outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
-        elif sender is import_button:
-            activities = list(getattr(self, "_import_activities", ()))
-            outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
-        elif (
-            getattr(self, "center_stack", None) is not None
-            and self.center_stack.currentWidget() is getattr(self, "review_page", None)
-        ):
-            outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
-        else:
-            activities = list(getattr(self, "_import_activities", ()))
-            outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
-        if not outcomes:
-            QMessageBox.information(self, "重复项", "本次运行没有重复项。")
-            return
-
+    @staticmethod
+    def _format_duplicate_outcome_details(outcomes) -> str:
         kind_labels = {
             "exact_file": "文件内容完全相同",
             "invoice_identity": "发票业务身份一致",
@@ -3438,7 +3474,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 else:
                     lines.append("△ 文件内容不同，但发票业务身份一致；可能为同一发票的不同下载版本")
             sections.append("\n".join(lines))
-        QMessageBox.information(self, "重复项详情", "\n\n".join(sections))
+        return "\n\n".join(sections)
+
+    def _show_duplicate_outcomes(self, _checked: bool = False) -> None:
+        sender = self.sender()
+        review_button = getattr(self, "btn_review_scope_duplicates", None)
+        import_button = getattr(self, "btn_import_recent_duplicates", None)
+        if sender is review_button:
+            outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
+        elif sender is import_button:
+            activities = list(getattr(self, "_import_activities", ()))
+            outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
+        elif (
+            getattr(self, "center_stack", None) is not None
+            and self.center_stack.currentWidget() is getattr(self, "review_page", None)
+        ):
+            outcomes = tuple(getattr(self, "_review_scope_duplicate_outcomes", ()))
+        else:
+            activities = list(getattr(self, "_import_activities", ()))
+            outcomes = tuple(activities[0].duplicate_outcomes) if activities else ()
+        if not outcomes:
+            QMessageBox.information(self, "重复项", "本次运行没有重复项。")
+            return
+
+        detail_text = self._format_duplicate_outcome_details(outcomes)
+        DuplicateOutcomesDialog(self, detail_text, len(outcomes)).exec()
 
     @staticmethod
     def _format_scan_result_for_people(summary: dict) -> str:

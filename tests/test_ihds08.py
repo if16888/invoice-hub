@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QBoxLayout, QPushButton
+from PySide6.QtWidgets import QApplication, QBoxLayout, QDialog, QPlainTextEdit, QPushButton
 
-from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.gui.app import DuplicateOutcomesDialog, InvoiceReviewApp
 from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary
 from scripts.invoice_fetch.review_status import APPROVED, TO_REVIEW
@@ -124,23 +124,57 @@ class IHDS08Tests(unittest.TestCase):
                 window._refresh_imports_page()
                 self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（3）")
 
-                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                with patch.object(
+                    DuplicateOutcomesDialog,
+                    "exec",
+                    autospec=True,
+                    return_value=QDialog.Accepted,
+                ) as dialog_exec:
                     window.btn_review_scope_duplicates.click()
                     self.app.processEvents()
-                    information.assert_called_once()
-                    self.assertIs(information.call_args.args[0], window)
-                    self.assertEqual(information.call_args.args[2].count("重复文件 "), 3)
-                    self.assertNotIn("发票 #0", information.call_args.args[2])
+                    dialog_exec.assert_called_once()
+                    detail = window._format_duplicate_outcome_details(
+                        window._review_scope_duplicate_outcomes
+                    )
+                    self.assertEqual(detail.count("重复文件 "), 3)
+                    self.assertNotIn("发票 #0", detail)
 
                 window._switch_main_page("imports")
                 self.app.processEvents()
-                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                with patch.object(
+                    DuplicateOutcomesDialog,
+                    "exec",
+                    autospec=True,
+                    return_value=QDialog.Accepted,
+                ) as dialog_exec:
                     window.btn_import_recent_duplicates.click()
                     self.app.processEvents()
-                    information.assert_called_once()
-                    self.assertIs(information.call_args.args[0], window)
-                    self.assertEqual(information.call_args.args[2].count("重复文件 "), 3)
+                    dialog_exec.assert_called_once()
+                    detail = window._format_duplicate_outcome_details(
+                        window._import_activities[0].duplicate_outcomes
+                    )
+                    self.assertEqual(detail.count("重复文件 "), 3)
             finally: window.close()
+
+    def test_duplicate_outcomes_dialog_is_bounded_and_scrollable(self):
+        detail = "\n".join(
+            f"重复文件 {index}\n"
+            f"very-long-invoice-file-name-{index}-发票号码-20260926.pdf\n"
+            "重复类型：文件内容完全相同\n"
+            "判定依据：\n"
+            "✓ 文件内容完全相同"
+            for index in range(1, 21)
+        )
+        dialog = DuplicateOutcomesDialog(detail_text=detail, duplicate_count=20)
+        try:
+            available = self.app.primaryScreen().availableGeometry()
+            self.assertLessEqual(dialog.width(), available.width())
+            self.assertLessEqual(dialog.height(), available.height())
+            self.assertTrue(dialog.details.isReadOnly())
+            self.assertEqual(dialog.details.lineWrapMode(), QPlainTextEdit.WidgetWidth)
+            self.assertEqual(dialog.details.toPlainText(), detail)
+        finally:
+            dialog.close()
 
     def test_duplicate_only_mobile_batch_clears_stale_review_scope_and_stays_in_imports(self):
         with tempfile.TemporaryDirectory() as td:
@@ -199,11 +233,18 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertEqual(len(window._import_activities), 2)
                 self.assertEqual(len(window._import_activities[0].duplicate_outcomes), 1)
                 self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（1）")
-                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                with patch.object(
+                    DuplicateOutcomesDialog,
+                    "exec",
+                    autospec=True,
+                    return_value=QDialog.Accepted,
+                ) as dialog_exec:
                     window.btn_import_recent_duplicates.click()
                     self.app.processEvents()
-                    information.assert_called_once()
-                    detail = information.call_args.args[2]
+                    dialog_exec.assert_called_once()
+                    detail = window._format_duplicate_outcome_details(
+                        window._import_activities[0].duplicate_outcomes
+                    )
                     self.assertEqual(detail.count("重复文件 "), 1)
                     self.assertIn("batch-b-1.pdf", detail)
                     self.assertNotIn("batch-a", detail)
