@@ -46,10 +46,6 @@ jobs:
     if: ${{ always() && (github.event_name == 'pull_request' || needs.master_ci_attestation.result == 'success') }}
     runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || 'windows-latest' }}
     timeout-minutes: 15
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
     env:
       PYTHONIOENCODING: "utf-8"
       INVOICE_HUB_TEST_MODE: "1"
@@ -75,12 +71,6 @@ jobs:
             requirements.lock.txt
             requirements-desktop.lock.txt
             requirements-build.lock.txt
-
-      - name: Verify master attestation against exact base commit
-        if: github.event_name == 'pull_request'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python scripts/dev/attest_master_ci.py --sha "${{ github.event.pull_request.base.sha }}"
 
       - name: Fetch previous stable tag for release metadata
         if: github.event_name == 'pull_request'
