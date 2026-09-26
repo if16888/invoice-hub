@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+<title id="title">Invoice Hub 报销导出示意</title><desc id="desc">完全合成的报销组、完整性预检和导出包示意图。</desc>
+<style>.bg{fill:#f7f8fa}.card{fill:#fff;stroke:#e5e7eb;stroke-width:2}.accent{fill:#2563eb}.soft{fill:#eff6ff}.ok{fill:#16803c}.muted{fill:#667085}.t{fill:#182230;font:22px "Segoe UI","Microsoft YaHei",sans-serif}.s{fill:#667085;font:16px "Segoe UI","Microsoft YaHei",sans-serif}.w{fill:#fff;font:18px "Segoe UI","Microsoft YaHei",sans-serif}.b{font-weight:700}</style>
+<rect class="bg" width="1200" height="720" rx="24"/><text class="t b" x="64" y="72">报销导出：先完整性预检，再生成资料包</text><text class="s" x="64" y="106">缺原件、缺必需证明材料或金额异常时，导出会 fail closed</text>
+<rect class="card" x="64" y="150" width="280" height="500" rx="18"/><text class="t b" x="88" y="190">报销组</text><rect class="soft" x="84" y="218" width="240" height="78" rx="12"/><text class="t" x="104" y="250">本月交通与差旅</text><text class="s" x="104" y="278">多张已通过记录</text><text class="t" x="104" y="344">办公采购</text><text class="s" x="104" y="372">待补充材料</text>
+<rect class="card" x="376" y="150" width="354" height="500" rx="18"/><text class="t b" x="400" y="190">完整性预检</text>
+<circle class="ok" cx="416" cy="246" r="9"/><text class="t" x="440" y="254">发票均已审核</text><circle class="ok" cx="416" cy="304" r="9"/><text class="t" x="440" y="312">原件可读取</text><circle class="ok" cx="416" cy="362" r="9"/><text class="t" x="440" y="370">必需材料齐全</text><circle class="ok" cx="416" cy="420" r="9"/><text class="t" x="440" y="428">金额字段有效</text>
+<rect class="accent" x="400" y="520" width="306" height="54" rx="12"/><text class="w b" x="487" y="554">生成报销包</text>
+<rect class="card" x="762" y="150" width="374" height="500" rx="18"/><text class="t b" x="786" y="190">导出内容</text>
+<rect class="soft" x="786" y="224" width="326" height="72" rx="12"/><text class="t" x="812" y="254">Excel 台账</text><text class="s" x="812" y="280">结构化字段与审核状态</text>
+<rect class="soft" x="786" y="318" width="326" height="72" rx="12"/><text class="t" x="812" y="348">manifest</text><text class="s" x="812" y="374">机器可读的包清单</text>
+<rect class="soft" x="786" y="412" width="326" height="98" rx="12"/><text class="t" x="812" y="444">发票 + 证明材料</text><text class="s" x="812" y="472">按安全文件名复制</text><text class="s" x="812" y="496">不包含应用数据库</text>
+</svg>

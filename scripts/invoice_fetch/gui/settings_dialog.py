@@ -2260,14 +2260,14 @@ class SettingsDialog(QDialog):
         self.ai_step_stack.setCurrentIndex(self.ai_current_step - 1)
 
         if self.ai_current_step == 1:
-            self.lbl_ai_step_indicator.setText('<font color="#2563EB"><b>① 基本信息</b></font>  ➜  ② 模型与密钥  ➜  ③ 确认并保存')
+            self.lbl_ai_step_indicator.setText('当前：① 基本信息  ➜  ② 模型与密钥  ➜  ③ 确认并保存')
             self.btn_ai_prev.setEnabled(False)
             self.btn_ai_next.setVisible(True)
             self.btn_ai_save_only.setVisible(False)
             self.btn_ai_save_and_activate.setVisible(False)
             self.btn_ai_next.setEnabled(bool(self.txt_ai_name.text().strip()))
         elif self.ai_current_step == 2:
-            self.lbl_ai_step_indicator.setText('① 基本信息  ➜  <font color="#2563EB"><b>② 模型与密钥</b></font>  ➜  ③ 确认并保存')
+            self.lbl_ai_step_indicator.setText('① 基本信息  ➜  当前：② 模型与密钥  ➜  ③ 确认并保存')
             self.btn_ai_prev.setEnabled(True)
             self.btn_ai_next.setVisible(True)
             self.btn_ai_save_only.setVisible(False)
@@ -2280,28 +2280,28 @@ class SettingsDialog(QDialog):
 
             if key_source == "profile":
                 self.lbl_ai_wizard_key_status.setText(
-                    f"API Key 状态：<font color='#10B981'><b>当前配置专属 Key</b></font>（{source_label}）"
+                    f"API Key 状态：当前配置专属 Key（{source_label}）"
                 )
                 self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             elif key_source == "provider":
                 self.lbl_ai_wizard_key_status.setText(
-                    f"API Key 状态：<font color='#3B82F6'><b>旧版 Provider Key</b></font>（{source_label}）"
+                    f"API Key 状态：旧版 Provider Key（{source_label}）"
                 )
                 self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             elif key_source == "env":
                 self.lbl_ai_wizard_key_status.setText(
-                    f"API Key 状态：<font color='#8B5CF6'><b>环境变量提供</b></font>（{source_label}）"
+                    f"API Key 状态：环境变量提供（{source_label}）"
                 )
                 self.txt_ai_key.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             else:
                 self.lbl_ai_wizard_key_status.setText(
-                    f"API Key 状态：<font color='#B42318'><b>未配置</b></font>（{source_label}）"
+                    f"API Key 状态：未配置（{source_label}）"
                 )
                 self.txt_ai_key.setPlaceholderText("请输入 API Key")
 
             self.btn_ai_next.setEnabled(True)
         elif self.ai_current_step == 3:
-            self.lbl_ai_step_indicator.setText('① 基本信息  ➜  ② 模型与密钥  ➜  <font color="#2563EB"><b>③ 确认并保存</b></font>')
+            self.lbl_ai_step_indicator.setText('① 基本信息  ➜  ② 模型与密钥  ➜  当前：③ 确认并保存')
             self.btn_ai_prev.setEnabled(True)
             self.btn_ai_next.setVisible(False)
             self.btn_ai_save_only.setVisible(True)
@@ -2941,7 +2941,7 @@ class SettingsDialog(QDialog):
         self._update_delete_button_state()
 
         if not email:
-            self.lbl_cred_status.setText("🔒 授权状态：<b>未输入邮箱地址</b>")
+            self.lbl_cred_status.setText("🔒 授权状态：未输入邮箱地址")
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
             return
 
@@ -2958,17 +2958,17 @@ class SettingsDialog(QDialog):
         if is_outlook_like:
             email_clean = self._normalize_address(email)
             if email_clean in self._saved_accounts_by_address:
-                self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>已保存 Outlook 账号，但当前版本暂不支持测试/扫描</b></font>")
+                self.lbl_cred_status.setText("🔒 授权状态：已保存 Outlook 账号，但当前版本暂不支持测试/扫描")
             else:
-                self.lbl_cred_status.setText("🔒 授权状态：<font color='#D97706'><b>Outlook 当前版本暂不支持配置/测试</b></font>")
+                self.lbl_cred_status.setText("🔒 授权状态：Outlook 当前版本暂不支持配置/测试")
             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
             return
 
         if has_auth_code(email):
-            self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
+            self.lbl_cred_status.setText("🔒 授权状态：已安全保存到系统凭据管理器")
             self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
         else:
-            self.lbl_cred_status.setText("🔒 授权状态：<font color='#B42318'><b>尚未配置 (点击下一步并保存时将自动加密保存)</b></font>")
+            self.lbl_cred_status.setText("🔒 授权状态：尚未配置 (点击下一步并保存时将自动加密保存)")
             self.txt_auth_code.setPlaceholderText("请输入邮箱授权码（非登录密码）")
 
 
@@ -3115,7 +3115,7 @@ class SettingsDialog(QDialog):
 
         # Update step highlights
         if self.current_step == 1:
-            self.lbl_step_indicator.setText('<font color="#2563EB"><b>① 选择邮箱</b></font>  ➜  ② 填写授权码  ➜  ③ 测试并保存')
+            self.lbl_step_indicator.setText('当前：① 选择邮箱  ➜  ② 填写授权码  ➜  ③ 测试并保存')
             self.btn_prev.setEnabled(False)
             self.btn_next.setVisible(True)
             is_valid = self._is_valid_email(self.txt_email.text())
@@ -3131,13 +3131,13 @@ class SettingsDialog(QDialog):
             self.btn_next.setEnabled(provider != "outlook" and not is_outlook_like and is_valid and domain_ok)
             self.btn_save_wizard.setVisible(False)
         elif self.current_step == 2:
-            self.lbl_step_indicator.setText('① 选择邮箱  ➜  <font color="#2563EB"><b>② 填写授权码</b></font>  ➜  ③ 测试并保存')
+            self.lbl_step_indicator.setText('① 选择邮箱  ➜  当前：② 填写授权码  ➜  ③ 测试并保存')
             self.btn_prev.setEnabled(True)
             self.btn_next.setVisible(True)
             self.btn_save_wizard.setVisible(False)
             self._update_cred_status_label()
         elif self.current_step == 3:
-            self.lbl_step_indicator.setText('① 选择邮箱  ➜  ② 填写授权码  ➜  <font color="#2563EB"><b>③ 测试并保存</b></font>')
+            self.lbl_step_indicator.setText('① 选择邮箱  ➜  ② 填写授权码  ➜  当前：③ 测试并保存')
             self.btn_prev.setEnabled(True)
             self.btn_next.setVisible(False)
             self.btn_save_wizard.setVisible(True)
@@ -3766,7 +3766,7 @@ class SettingsDialog(QDialog):
             self.txt_auth_code.clear()
             if credential_available:
                 self.txt_auth_code.setPlaceholderText(SAVED_SECRET_PLACEHOLDER)
-                self.lbl_cred_status.setText("🔒 授权状态：<font color='#10B981'><b>已安全保存到系统凭据管理器</b></font>")
+                self.lbl_cred_status.setText("🔒 授权状态：已安全保存到系统凭据管理器")
             else:
                 self._update_cred_status_label()
             QMessageBox.information(self, "成功", "邮箱设置已成功保存！")

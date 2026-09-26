@@ -56,7 +56,6 @@ FROZEN_PATCH_MODULES = frozenset(
 FROZEN_HIDDEN_COMPAT_SCOPES = frozenset(
     {
         "preview_mixin.py:PreviewMixin._init_legacy_preview_controls",
-        "preview_mixin.py:PreviewMixin._init_overlay_toolbar",
         "review_legacy_contract.py:install_claim_summary_layout_compatibility",
         "settings_dialog.py:SettingsDialog._init_settings_home_page",
     }

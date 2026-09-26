@@ -1,26 +1,34 @@
-# README image assets
+# README / documentation image assets
 
-This directory stores synthetic or fully redacted images used by README and documentation pages.
+This directory contains only synthetic or fully redacted visuals used by README and documentation.
 
-Rules:
+## Current assets
 
-- Use only synthetic or fully redacted data.
-- Do not include real invoices, receipts, email addresses, tax IDs, amounts, authorization codes, API keys, database contents, local private paths, or full download links.
-- Use stable ASCII filenames such as `invoice-hub-overview.png`, `desktop-review.png`, `mobile-upload.png`, and `claim-export.png`.
-- Add image files only after they have been visually reviewed for privacy.
+- `invoice-hub-overview-v2.svg` — local-first product workflow overview.
+- `desktop-review.svg` — synthetic desktop review-workbench illustration.
+- `mobile-upload.svg` — synthetic LAN/mobile-upload illustration.
+- `claim-export.svg` — synthetic claim-group and export illustration.
 
-## Current Images
+These SVGs are deliberately **editable vector source**, not base64-wrapped raster screenshots. They can be reviewed in diffs, stay small, and avoid accidental private metadata.
 
-- `invoice-hub-overview.png`: README top product overview image. It must use synthetic or fully redacted data only.
+## Privacy rules
 
-## Planned Screenshots
+Never include:
 
-- `desktop-review.png`: future desktop review workbench screenshot.
-- `mobile-upload.png`: future QR/mobile upload screenshot.
-- `claim-export.png`: future reimbursement export screenshot.
+- real invoices, receipts, itineraries or mailbox screenshots;
+- real email addresses, tax IDs, amounts or database content;
+- authorization codes, API keys, cookies or tokens;
+- local private paths or full tokenized download URLs.
 
-Before committing any image:
+Use stable ASCII filenames and manually inspect every new visual before committing it.
 
-- Use synthetic/mock data only.
-- Manually inspect the image for privacy leaks.
-- Confirm there are no real invoices, receipts, emails, file paths, tax IDs, amounts, database contents, authorization codes, API keys, or full download links.
+## Real screenshots
+
+Real application screenshots may be useful for releases, but repository screenshots must still use isolated synthetic data. Preferred flow:
+
+1. run the existing native screenshot matrix with a disposable database;
+2. inspect every image manually at 100% and 150% scale;
+3. verify no real file path, account, invoice or credential appears;
+4. only then copy an approved screenshot into this directory.
+
+Do not treat offscreen/synthetic geometry evidence as a substitute for physical-Windows visual acceptance.

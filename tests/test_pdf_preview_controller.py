@@ -3,16 +3,45 @@
 from __future__ import annotations
 
 import inspect
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent, qInstallMessageHandler
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QStackedWidget, QWidget
 
 from scripts.invoice_fetch.gui.pdf_preview_controller import PdfPreviewController
 from scripts.invoice_fetch.gui import preview_mixin
+
+
+def _make_pdf(path: Path) -> None:
+    """Write a tiny valid PDF for native QtPdf lifecycle tests."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R /Resources << >> >>",
+        b"<< /Length 0 >>\nstream\n\nendstream",
+    ]
+    data = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(data))
+        data.extend(f"{index} 0 obj\n".encode("ascii"))
+        data.extend(body)
+        data.extend(b"\nendobj\n")
+    xref_offset = len(data)
+    data.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    data.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        data.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    data.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    path.write_bytes(data)
 
 
 class PdfPreviewControllerContracts(unittest.TestCase):
@@ -98,6 +127,48 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         self.app.processEvents()
         self.assertIsNone(controller.active_document())
         self.assertEqual(stack.count(), 0)
+
+    def test_repeated_real_pdf_switches_emit_no_known_qt_lifecycle_warnings(self):
+        try:
+            from PySide6.QtPdf import QPdfDocument  # noqa: F401
+        except ImportError:
+            self.skipTest("QtPdf is unavailable")
+
+        messages: list[str] = []
+
+        def capture_message(_kind, _context, message):
+            messages.append(str(message))
+
+        previous_handler = qInstallMessageHandler(capture_message)
+        stack = QStackedWidget()
+        controller = PdfPreviewController(stack)
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                paths = [Path(td) / "first.pdf", Path(td) / "second.pdf"]
+                for path in paths:
+                    _make_pdf(path)
+
+                for _ in range(5):
+                    for path in paths:
+                        controller.load(path)
+                        deadline = time.monotonic() + 2.0
+                        while controller.active_path() != path and time.monotonic() < deadline:
+                            self.app.processEvents()
+                            QTest.qWait(5)
+                        self.assertEqual(controller.active_path(), path)
+
+                controller.clear()
+                QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+                self.app.processEvents()
+        finally:
+            qInstallMessageHandler(previous_handler)
+
+        blocked = (
+            "QObject::connect(QPdfDocument, QPdfLinkModel): invalid nullptr parameter",
+            "QFont::setPointSize: Point size <= 0",
+        )
+        offenders = [message for message in messages if any(token in message for token in blocked)]
+        self.assertEqual(offenders, [], "\n".join(offenders))
 
 
 class _FakeDocument:

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+<title id="title">Invoice Hub 发票审核工作台示意</title><desc id="desc">完全合成的桌面审核界面示意图，不包含真实票据信息。</desc>
+<style>
+.bg{fill:#f7f8fa}.surface{fill:#fff;stroke:#e5e7eb;stroke-width:2}.nav{fill:#182230}.accent{fill:#2563eb}.soft{fill:#eff6ff}.line{stroke:#e5e7eb;stroke-width:2}
+.t{fill:#182230;font:22px "Segoe UI","Microsoft YaHei",sans-serif}.s{fill:#667085;font:16px "Segoe UI","Microsoft YaHei",sans-serif}.w{fill:#fff;font:18px "Segoe UI","Microsoft YaHei",sans-serif}.b{font-weight:700}
+</style>
+<rect class="bg" width="1200" height="720" rx="24"/><rect class="nav" x="24" y="24" width="170" height="672" rx="20"/>
+<text class="w b" x="54" y="74">Invoice Hub</text><rect class="accent" x="44" y="112" width="130" height="44" rx="10"/><text class="w" x="66" y="141">发票审核</text>
+<text class="w" x="66" y="196">今日工作台</text><text class="w" x="66" y="238">导入中心</text><text class="w" x="66" y="280">报销导出</text><text class="w" x="66" y="322">系统设置</text>
+<rect class="surface" x="218" y="24" width="958" height="672" rx="20"/><text class="t b" x="250" y="70">发票审核</text><text class="s" x="250" y="100">快速切换候选记录，核对原件并完成审核</text>
+<rect class="surface" x="250" y="128" width="316" height="530" rx="16"/><rect class="soft" x="266" y="152" width="284" height="64" rx="12"/>
+<text class="t" x="284" y="180">模拟记录 A</text><text class="s" x="284" y="204">待审核 · 餐饮</text>
+<text class="t" x="284" y="258">模拟记录 B</text><text class="s" x="284" y="282">已通过 · 交通</text><line class="line" x1="266" y1="302" x2="550" y2="302"/>
+<text class="t" x="284" y="344">模拟记录 C</text><text class="s" x="284" y="368">待补全 · 住宿</text><line class="line" x1="266" y1="388" x2="550" y2="388"/>
+<text class="t" x="284" y="430">模拟记录 D</text><text class="s" x="284" y="454">异常 · 其他</text>
+<rect class="surface" x="586" y="128" width="326" height="530" rx="16"/><text class="t b" x="610" y="168">原件预览</text>
+<rect x="618" y="196" width="262" height="354" rx="10" fill="#fbfcfd" stroke="#d0d5dd" stroke-width="2"/><rect x="648" y="232" width="202" height="18" rx="4" fill="#d0d5dd"/>
+<rect x="648" y="270" width="154" height="12" rx="4" fill="#e4e7ec"/><rect x="648" y="298" width="180" height="12" rx="4" fill="#e4e7ec"/><rect x="648" y="352" width="202" height="118" rx="8" fill="#f2f4f7"/>
+<text class="s" x="646" y="588">合成预览 · 无真实票据</text>
+<rect class="surface" x="932" y="128" width="212" height="530" rx="16"/><text class="t b" x="956" y="168">审核信息</text>
+<text class="s" x="956" y="214">销售方</text><text class="t" x="956" y="244">模拟商户</text><text class="s" x="956" y="290">消费日期</text><text class="t" x="956" y="320">已识别</text>
+<text class="s" x="956" y="366">分类</text><text class="t" x="956" y="396">餐饮</text><rect class="accent" x="956" y="520" width="164" height="48" rx="10"/><text class="w b" x="986" y="551">通过并下一张</text>
+</svg>

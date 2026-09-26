@@ -2,6 +2,7 @@ import inspect
 import os
 import sys
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -60,6 +61,13 @@ class SettingsSemanticStatusContractTests(unittest.TestCase):
         self.assertIn("semantic_status", names)
         self.assertGreater(names.index("semantic_status"), names.index("token_contract"))
 
+    def test_settings_source_contains_no_inline_font_color_markup(self):
+        source = Path("scripts/invoice_fetch/gui/settings_dialog.py").read_text(encoding="utf-8")
+        self.assertNotIn("<font", source.lower())
+        self.assertNotIn("color=#", source.lower())
+        self.assertNotIn("color='#", source.lower())
+        self.assertNotIn('color="#', source.lower())
+
 
 class PreviewToolbarTokenContractTests(unittest.TestCase):
     @classmethod
@@ -75,6 +83,11 @@ class PreviewToolbarTokenContractTests(unittest.TestCase):
         self.assertIn(DESIGN_V1_COLORS["placeholder"], qss)
         self.assertIn("QToolButton.PreviewToolBtn:focus", qss)
         self.assertIn("QToolButton.PreviewToolBtn:disabled", qss)
+
+    def test_preview_mixin_does_not_keep_unreachable_legacy_toolbar_source(self):
+        source = Path("scripts/invoice_fetch/gui/preview_mixin.py").read_text(encoding="utf-8")
+        self.assertNotIn("self.old_tb = QWidget", source)
+        self.assertNotIn("QWidget#OverlayToolbar", source)
 
 
 if __name__ == "__main__":
