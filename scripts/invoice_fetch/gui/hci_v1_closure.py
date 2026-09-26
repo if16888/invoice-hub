@@ -363,6 +363,7 @@ def _render_scan_terminal(
     summary = summary or {}
     result = result or {}
     window._hci_scan_terminal_stage = terminal
+    window._hci_history_terminal_card = None
     window._hci_scan_elapsed_frozen = float(elapsed)
     elapsed_text = _format_scan_elapsed(elapsed)
 
@@ -411,6 +412,7 @@ def _begin_scan_presentation(window, stage: str = "connect") -> None:
     if not _qt_dispatch_allowed(window=window):
         return
     window._hci_scan_terminal_stage = None
+    window._hci_history_terminal_card = None
     window._hci_scan_elapsed_frozen = None
     window._hci_scan_terminal_text = None
     window._hci_scan_presentation_state = "active"
@@ -423,11 +425,14 @@ def _begin_scan_presentation(window, stage: str = "connect") -> None:
 
 
 def _render_history_recheck_terminal(window, result: dict | None = None) -> None:
-    """Render a history-recheck completion using the same terminal contract."""
+    """An empty history selection is not evidence of a successful mail sync."""
+    if not _qt_dispatch_allowed(window=window):
+        return
     result = result or {}
+    failed = int(result.get("failed", 0) or 0)
     _render_scan_terminal(
         window,
-        "complete",
+        "failed" if failed else "complete",
         elapsed=_scan_elapsed(window),
         summary={
             "scanned_headers": result.get("processed_emails", 0),
@@ -436,6 +441,25 @@ def _render_history_recheck_terminal(window, result: dict | None = None) -> None
         },
         result=result,
     )
+    processed = int(result.get("processed_emails", 0) or 0)
+    added = int(result.get("added_or_restored", 0) or 0)
+    if not processed:
+        title = "暂无可重新检查的历史邮件"
+        hint = "所选范围内没有已知邮件，本次未连接邮箱。请先补齐授权码并测试连接，再同步新邮件。"
+    else:
+        title = "历史重新检查存在失败" if failed else "历史重新检查完成"
+        suffix = "（达到本次 200 封上限）" if result.get("limit_reached") else ""
+        hint = f"处理 {processed} 封已知邮件，新增或恢复 {added} 条记录，失败 {failed} 封{suffix}。此操作不是新邮件同步。"
+        if failed:
+            hint += "请检查授权码、连接状态及失败日志。"
+    text = f"{title}\n{hint}\n已运行 {_format_scan_elapsed(_scan_elapsed(window))}"
+    window._hci_scan_terminal_text = text
+    window._hci_history_terminal_card = (title, hint)
+    _set_scan_status_label(window, text)
+    recent = getattr(window, "import_mail_recent_card", None)
+    if recent is not None:
+        recent.set_title(title)
+        recent.set_hint(hint)
 
 
 def _render_history_recheck_failed(window, reason: str) -> None:
@@ -457,6 +481,11 @@ def _sync_import_scan_state(window) -> None:
         terminal_text = str(getattr(window, "_hci_scan_terminal_text", "") or "")
         if terminal_text:
             _set_scan_status_label(window, terminal_text)
+        history_card = getattr(window, "_hci_history_terminal_card", None)
+        recent = getattr(window, "import_mail_recent_card", None)
+        if history_card and recent is not None:
+            recent.set_title(history_card[0])
+            recent.set_hint(history_card[1])
         return
     if state == "active":
         _render_scan_active(window)

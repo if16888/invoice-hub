@@ -53,7 +53,7 @@ class SettingsPagesBaselineTests(unittest.TestCase):
                     self.assertEqual(len(surfaces), 1, index)
                     surface = getattr(window, attr)
                     self.assertIsInstance(surface, StructuredSettingsSurface)
-                    self.assertEqual(surface.minimumWidth(), 560)
+                    self.assertEqual(surface.minimumWidth(), 0)
                     self.assertEqual(surface.maximumWidth(), 760)
                     self.assertEqual(page.findChildren(ReadOnlyDetailPanel), [])
             finally:

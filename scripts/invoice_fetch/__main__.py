@@ -1178,6 +1178,9 @@ def _reprocess_email_records(
     print(f"- 恢复已删除记录：{restored_deleted_count} 条")
     print(f"- 重复：{duplicates_count} 条")
     print(f"- 失败：{failed_count} 封")
+    # The GUI needs the same outcome as the CLI; printing failures alone makes
+    # a completed worker look like a successful history recheck.
+    return {"succeeded": reprocessed_count, "failed": failed_count}
 
 
 if __name__ == "__main__":

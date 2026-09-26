@@ -191,7 +191,7 @@ def _build_company_settings_page(window) -> QWidget:
     surface = QFrame(page)
     surface.setObjectName("CompanyTaxProfileSurface")
     surface.setProperty("class", "SettingsDetailSurface")
-    surface.setMinimumWidth(560)
+    surface.setMinimumWidth(0)
     surface.setMaximumWidth(760)
     surface.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
     surface_layout = QVBoxLayout(surface)
