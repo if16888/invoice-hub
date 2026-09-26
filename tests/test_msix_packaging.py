@@ -289,19 +289,23 @@ class TestStoreWorkflowPolicy(unittest.TestCase):
         self.assertNotIn("Sign installer", workflow)
         self.assertNotIn("SIGNTOOL_PATH", workflow)
 
-    def test_store_source_gates_are_independent_fail_fast_steps(self):
+    def test_store_reuses_exact_sha_ci_for_shared_source_gates(self):
         workflow = self._workflow()
-        gate_commands = (
+        self.assertIn("Verify exact-SHA unittest and HCI CI authority", workflow)
+        self.assertIn('"Source gates"', workflow)
+        self.assertIn('"Unit shard 2"', workflow)
+        self.assertIn('"HCI acceptance lane"', workflow)
+        self.assertIn("Source/privacy/architecture gates: reused from exact-SHA CI", workflow)
+        duplicated_gate_commands = (
             "python scripts/check_repo_privacy.py",
             "python scripts/check_public_export.py .",
             "python scripts/check_release_metadata.py",
             "python scripts/check_architecture_policy.py",
-            "python -m compileall -q scripts/invoice_fetch scripts/dev/prepare_msix.py",
         )
-        self.assertNotIn("- name: Run release source gates", workflow)
-        for command in gate_commands:
+        for command in duplicated_gate_commands:
             with self.subTest(command=command):
-                self.assertEqual(workflow.count(f"run: {command}"), 1)
+                self.assertNotIn(f"run: {command}", workflow)
+        self.assertIn("python -m compileall -q scripts/dev/prepare_msix.py", workflow)
 
     def test_existing_inno_release_path_remains_present_during_migration(self):
         self.assertTrue((PROJECT_ROOT / "packaging" / "invoice_hub_windows.iss").is_file())
