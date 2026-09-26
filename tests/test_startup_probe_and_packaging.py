@@ -404,6 +404,7 @@ class TestWindowsVersionInfo(unittest.TestCase):
 class TestOptionalWindowsSigning(unittest.TestCase):
     """Optional signing should be warning-only when no certificate is configured."""
 
+    @unittest.skipUnless(os.name == "nt", "requires the Windows PowerShell executable")
     def test_missing_certificate_configuration_warns_without_modifying_file(self):
         script = PROJECT_ROOT / "scripts" / "sign_windows.ps1"
         with tempfile.TemporaryDirectory() as td:
@@ -619,7 +620,10 @@ class TestStartupProbeIsolated(unittest.TestCase):
     def test_startup_probe_has_no_invalid_qfont_point_size_warning(self):
         """The source/dev desktop startup must never pass -1 to QFont.setPointSize."""
         env = os.environ.copy()
-        env.pop("QT_QPA_PLATFORM", None)
+        if sys.platform.startswith("linux"):
+            env["QT_QPA_PLATFORM"] = "offscreen"
+        else:
+            env.pop("QT_QPA_PLATFORM", None)
         result = subprocess.run(
             [sys.executable, "-m", "scripts.invoice_fetch", "desktop", "--startup-probe"],
             cwd=PROJECT_ROOT,

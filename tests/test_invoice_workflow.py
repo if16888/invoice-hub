@@ -651,6 +651,99 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertTrue(attachments[0].file_path.endswith(".pdf"))
             self.assertTrue(Path(attachments[0].file_path).exists())
 
+    def test_zip_parent_detail_keyword_does_not_hide_explicit_invoice_member(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            archive = base / "发票明细.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("invoice.pdf", b"%PDF- invoice")
+                zf.writestr("行程单.pdf", b"%PDF- itinerary")
+                zf.writestr("page1.pdf", b"%PDF- generic page")
+
+            msg = email.message.EmailMessage()
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename=archive.name
+            )
+            attachments = AttachmentHandler(base / "out").extract(msg, 801, "2026-05-18")
+
+        by_name = {item.original_name: item for item in attachments}
+        self.assertTrue(by_name["invoice.pdf"].is_invoice)
+        self.assertFalse(by_name["invoice.pdf"].is_extra)
+        self.assertTrue(by_name["行程单.pdf"].is_extra)
+        self.assertTrue(by_name["page1.pdf"].is_extra)
+
+    def test_attachment_handler_extracts_zip_even_when_email_also_has_invoice_pdf(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            archive = base / "bundle.zip"
+            itinerary_png = b"\x89PNG\r\n\x1a\ntrip image"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("行程单.png", itinerary_png)
+
+            msg = email.message.EmailMessage()
+            msg.add_attachment(
+                b"%PDF- invoice", maintype="application", subtype="pdf", filename="发票.pdf"
+            )
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename="bundle.zip"
+            )
+
+            handler = AttachmentHandler(base / "out")
+            attachments = handler.extract(msg, 18, "2026-05-18")
+            extracted_files_exist = all(Path(att.file_path).exists() for att in attachments)
+
+        self.assertEqual({Path(att.file_path).suffix.lower() for att in attachments}, {".pdf", ".png"})
+        invoice = next(att for att in attachments if att.file_path.lower().endswith(".pdf"))
+        itinerary = next(att for att in attachments if att.file_path.lower().endswith(".png"))
+        self.assertTrue(invoice.is_invoice)
+        self.assertTrue(itinerary.is_extra)
+        self.assertTrue(extracted_files_exist)
+
+    def test_attachment_handler_preserves_over_limit_zip_without_partial_extraction(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            archive = base / "bundle.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                for index in range(21):
+                    zf.writestr(f"proof_{index}.png", b"\x89PNG\r\n\x1a\nimage")
+
+            msg = email.message.EmailMessage()
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename="bundle.zip"
+            )
+            out_dir = base / "out"
+            attachments = AttachmentHandler(out_dir).extract(msg, 19, "2026-05-18")
+
+            self.assertEqual(len(attachments), 1)
+            self.assertTrue(attachments[0].file_path.lower().endswith(".zip"))
+            self.assertIn("最多 20 个文件", attachments[0].extraction_warning)
+            self.assertTrue(Path(attachments[0].file_path).exists())
+            self.assertEqual(list(out_dir.rglob("*.png")), [])
+
+    def test_attachment_handler_preserves_zip_over_uncompressed_size_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            archive = base / "bundle.zip"
+            png_payload = b"\x89PNG\r\n\x1a\n12345678"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("proof.png", png_payload)
+
+            msg = email.message.EmailMessage()
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename="bundle.zip"
+            )
+            out_dir = base / "out"
+            with patch(
+                "scripts.invoice_fetch.attachment_handler._ZIP_MAX_UNCOMPRESSED_BYTES",
+                len(png_payload) - 1,
+            ):
+                attachments = AttachmentHandler(out_dir).extract(msg, 20, "2026-05-18")
+
+            self.assertEqual(len(attachments), 1)
+            self.assertIn("超过安全展开限制", attachments[0].extraction_warning)
+            self.assertTrue(Path(attachments[0].file_path).exists())
+            self.assertEqual(list(out_dir.rglob("*.png")), [])
+
     def test_attachment_handler_rejects_disguised_file_inside_zip(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -667,7 +760,10 @@ class InvoiceWorkflowTests(unittest.TestCase):
             handler = AttachmentHandler(out_dir)
             attachments = handler.extract(msg, 8, "2026-05-18")
 
-            self.assertEqual(attachments, [])
+            self.assertEqual(len(attachments), 1)
+            self.assertTrue(attachments[0].file_path.lower().endswith(".zip"))
+            self.assertIn("格式校验失败", attachments[0].extraction_warning)
+            self.assertTrue(Path(attachments[0].file_path).exists())
             self.assertEqual(list(out_dir.rglob("*.pdf")), [])
 
     def test_invoice_parser_prefers_sales_section_over_generic_company_fallback(self):
@@ -2924,6 +3020,120 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertIn("DIDI999888_证明材料.pdf", extra_paths[0].replace("\\", "/"))
             self.assertTrue(rows[0]["has_extra"])
             self.assertFalse(rows[0]["missing_extra"])
+
+    def test_email_zip_itinerary_survives_invoice_processing(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir(parents=True)
+
+            archive = base / "itinerary.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("行程单.png", b"\x89PNG\r\n\x1a\ntrip image")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "滴滴打车发票及行程单"
+            msg["From"] = "didi@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0000"
+            msg.add_attachment(
+                b"%PDF- invoice", maintype="application", subtype="pdf", filename="发票.pdf"
+            )
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename="itinerary.zip"
+            )
+            mail_msg = cli.MailMessage(uid=2027, raw_msg=msg)
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="ZIP-ITINERARY-2026",
+                invoice_code="ZIP-ITINERARY-CODE",
+                invoice_date="2026-05-18",
+                total_amount="88.00",
+                seller_name="南京滴滴出行科技有限公司",
+                invoice_type="电子发票",
+                parse_success=True,
+            ))
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=AttachmentHandler(attachments_dir),
+                    parser=parser,
+                    link_dl=NoopLinkDownloader(),
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+                evidence_paths = []
+                for row in rows:
+                    paths = [row.get("attachment_path") or ""]
+                    extras = row.get("extra_paths") or []
+                    if isinstance(extras, str):
+                        extras = json.loads(extras)
+                    for path in paths + extras:
+                        if str(path).lower().endswith(".png"):
+                            evidence_paths.append(runtime / path)
+
+            invoice_row = next(row for row in rows if row["invoice_number"] == "ZIP-ITINERARY-2026")
+
+            self.assertGreaterEqual(recorded, 1)
+            self.assertTrue(any(path and path.exists() for path in evidence_paths))
+            self.assertTrue(invoice_row["attachment_path"])
+
+    def test_email_over_limit_zip_is_preserved_in_manual_review_with_invoice(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments_dir = runtime / "attachments"
+            attachments_dir.mkdir(parents=True)
+
+            archive = base / "proofs.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                for index in range(21):
+                    zf.writestr(f"proof_{index}.png", b"\x89PNG\r\n\x1a\nimage")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "报销发票和行程材料"
+            msg["From"] = "traveler@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0000"
+            msg.add_attachment(
+                b"%PDF- invoice", maintype="application", subtype="pdf", filename="发票.pdf"
+            )
+            msg.add_attachment(
+                archive.read_bytes(), maintype="application", subtype="zip", filename="proofs.zip"
+            )
+            mail_msg = cli.MailMessage(uid=2026, raw_msg=msg)
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="ZIP-REVIEW-2026",
+                invoice_date="2026-05-18",
+                total_amount="88.00",
+                seller_name="Synthetic Seller",
+                invoice_type="电子发票",
+                parse_success=True,
+            ))
+            downloader = NoopLinkDownloader()
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                recorded = cli._process_email(
+                    msg=mail_msg,
+                    att_handler=AttachmentHandler(attachments_dir),
+                    parser=parser,
+                    link_dl=downloader,
+                    db=db,
+                    categories={},
+                )
+                rows = db.get_all_invoices()
+
+            by_type = {row["invoice_type"]: row for row in rows}
+            self.assertEqual(recorded, 2)
+            self.assertIn("ZIP待人工检查", by_type)
+            self.assertIn("ZIP-REVIEW-2026", {row["invoice_number"] for row in rows})
+            archive_row = by_type["ZIP待人工检查"]
+            self.assertFalse(archive_row["parse_success"])
+            self.assertEqual(archive_row["review_status"], "to_review")
+            self.assertIn("最多 20 个文件", archive_row["parse_note"])
+            self.assertTrue((runtime / archive_row["attachment_path"]).exists())
+            self.assertEqual(list(attachments_dir.rglob("*.png")), [])
+            self.assertEqual(downloader.last_process_outcome, "manual_required")
 
     def test_multi_invoice_email_keeps_unmatched_evidence_pending(self):
         class MappingParser:

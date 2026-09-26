@@ -504,7 +504,9 @@ class MobileUploadSessionPanel(QFrame):
         title = QLabel("手机扫码上传"); title.setProperty("class", "SectionTitle")
         desc = QLabel("从手机上传发票原件、行程单或证明材料。\n手机和电脑需要连接同一局域网。")
         desc.setWordWrap(True); desc.setProperty("class", "SectionHint")
-        self.lbl_idle_network = QLabel("网络：局域网 · 自动检测\n支持：PDF / OFD / XML / 图片\n上传后：自动进入审核队列")
+        self.lbl_idle_network = QLabel(
+            "网络：局域网 · 自动检测\n支持：PDF / OFD / PNG / JPG / JPEG / HEIC\n上传后：自动进入审核队列"
+        )
         self.lbl_idle_network.setWordWrap(True)
         self.lbl_idle_firewall = QLabel("Windows 防火墙：启动手机上传后检查")
         self.lbl_idle_firewall.setWordWrap(True)

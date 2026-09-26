@@ -517,6 +517,22 @@ class WorkerShutdownTests(unittest.TestCase):
             window.deleteLater()
             self._QCoreApplication.processEvents()
 
+    def test_claim_export_waits_before_database_close(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td)
+            worker = _ControlledWorker(window, running=True, cancellable=False)
+            self.assertTrue(
+                window._try_begin_data_operation("报销组导出", notify=False)
+            )
+            window.claim_export_worker = worker
+
+            self._close(window)
+
+            self.assertEqual(worker.wait_calls, 1)
+            self.assertEqual(worker.db_open_during_wait, [True])
+            self.assertFalse(window.db.is_open)
+            self.assertEqual(window._data_operation_gate.owner, "")
+
     def test_scan_requests_cancel_then_waits_before_database_close(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._window(td)

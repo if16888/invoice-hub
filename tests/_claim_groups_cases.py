@@ -82,11 +82,12 @@ class ClaimGroupsTests(unittest.TestCase):
 
         stdout = Mock()
         stderr = Mock()
+        kernel32 = Mock()
         with patch.object(cli.os, "name", "nt"), patch.object(
             cli.sys, "stdout", stdout
         ), patch.object(cli.sys, "stderr", stderr), patch(
-            "ctypes.windll.kernel32"
-        ) as kernel32:
+            "ctypes.windll", Mock(kernel32=kernel32), create=True
+        ):
             cli._configure_console_utf8()
 
         kernel32.SetConsoleOutputCP.assert_called_once_with(65001)
@@ -1423,10 +1424,16 @@ class ClaimGroupsTests(unittest.TestCase):
                 db_path = Path(td) / "test_ops.db"
                 with InvoiceDB(db_path) as db:
                     claim_id = db.create_claim_group("Test Claim")
+                    # Use a non-PDF original for this dialog contract test so
+                    # Qt's embedded PDF renderer cannot retain a Windows file handle
+                    # beyond TemporaryDirectory cleanup.
+                    original = Path(td) / "invoice-original.xml"
+                    original.write_text("<invoice>synthetic</invoice>", encoding="utf-8")
                     inv_id = db.insert_invoice({
                         "invoice_number": "INV123",
                         "total_amount": "100.00",
                         "review_status": "approved",
+                        "attachment_path": str(original),
                     })
                     db.add_invoice_to_claim(claim_id, inv_id)
                     from PySide6.QtWidgets import QApplication
@@ -1452,6 +1459,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     mock_qmessagebox.Information = QMessageBox.Information
 
                     app._export_claim_package()
+                    worker = getattr(app, "claim_export_worker", None)
+                    if worker is not None:
+                        worker.wait(5000)
+                        QApplication.processEvents()
                     mock_export_claim_package.assert_called_once()
                     app.db.close()
 
@@ -1534,6 +1545,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 with patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warn:
                     window._export_claim_package()
+                    worker = getattr(window, "claim_export_worker", None)
+                    if worker is not None:
+                        worker.wait(5000)
+                        QApplication.processEvents()
                     mock_warn.assert_called_once_with(window, "关联空", "当前报销组内没有发票，无法导出！")
             finally:
                 if hasattr(window, "db") and window.db is not None:
@@ -1644,6 +1659,10 @@ class ClaimGroupsTests(unittest.TestCase):
                     # Spy on db.add_export_run
                     with patch.object(app.db, "add_export_run", wraps=app.db.add_export_run) as mock_add_export_run:
                         app._export_claim_package()
+                        worker = getattr(app, "claim_export_worker", None)
+                        if worker is not None:
+                            worker.wait(5000)
+                            QApplication.processEvents()
                         # Assert db.add_export_run was not called directly by the GUI layer (app.py)
                         mock_add_export_run.assert_not_called()
                     app.db.close()
@@ -6793,8 +6812,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     "attachment_path": "attachments/dummy.pdf"
                 })
 
-                # Link all to claim
-                for iid in (inv1, inv2, inv3, inv4, inv5, inv6, inv7, inv8, inv9, inv10):
+                # Keep the empty-amount fixture out of the export-guard
+                # phase so this assertion remains scoped to supplemental
+                # material integrity.  It is added back immediately afterwards
+                # for the quality-report empty-amount coverage below.
+                for iid in (inv1, inv2, inv4, inv5, inv6, inv7, inv8, inv9, inv10):
                     db.add_invoice_to_claim(claim_id, iid)
 
                 # Write a dummy attachment file to avoid skipping during copy
@@ -6808,6 +6830,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     export_claim_package(db, claim_id, project_root, runtime_dir)
                 self.assertFalse((project_root / "exports").exists())
                 self.assertEqual(db.list_export_runs(claim_id), [])
+
+                # Restore the empty-amount fixture only for report generation.
+                db.add_invoice_to_claim(claim_id, inv3)
 
                 # Keep the quality-report unit coverage independent from the
                 # export guard: the report still describes incomplete data,
@@ -6904,6 +6929,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                                 with patch.object(mock_box_class, "Question", mock_box_class.Question):
                                     window._export_claim_package()
+                                    worker = getattr(window, "claim_export_worker", None)
+                                    if worker is not None:
+                                        worker.wait(5000)
+                                        QApplication.processEvents()
 
                                 setText_calls = [c for c in mock_box_instance.setText.call_args_list]
                                 self.assertTrue(any("发现 1 个需确认项" in call[0][0] for call in setText_calls))
@@ -6932,6 +6961,10 @@ class ClaimGroupsTests(unittest.TestCase):
 
                                 with patch.object(mock_box_class, "Question", mock_box_class.Question):
                                     window._export_claim_package()
+                                    worker = getattr(window, "claim_export_worker", None)
+                                    if worker is not None:
+                                        worker.wait(5000)
+                                        QApplication.processEvents()
 
                                 setText_calls = [c for c in mock_box_instance.setText.call_args_list]
                                 self.assertTrue(any("质量检查未发现需确认项" in call[0][0] for call in setText_calls))

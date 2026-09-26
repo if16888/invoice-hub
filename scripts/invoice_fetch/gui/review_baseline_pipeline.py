@@ -27,6 +27,7 @@ from .review_layout import (
     install_review_vertical_workspace,
 )
 from .review_paging import install_review_paging
+from .review_queue_semantics import apply_review_queue_semantics
 from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .review_workspace_baseline import apply_review_workspace_baseline
@@ -114,6 +115,9 @@ def apply_review_hci_pipeline(page: QWidget | None) -> None:
         active_property="reviewHciPipelineActiveStage",
         failed_property="reviewHciPipelineFailedStage",
     )
+    # Keep the established HCI stage identity stable. Queue semantics are a
+    # post-HCI behavioral contract, not another migration/closure stage.
+    apply_review_queue_semantics(page)
     page.setProperty("reviewHciPipelineStages", completed)
     page.setProperty("reviewHciPipelineApplied", True)
 

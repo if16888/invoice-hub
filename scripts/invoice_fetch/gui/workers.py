@@ -257,6 +257,53 @@ class InvoiceRedownloadWorker(QThread):
             self.request = None
 
 
+class ClaimExportWorker(QThread):
+    """Generate one claim package without blocking the Qt GUI thread."""
+
+    result = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        db_path: Path,
+        claim_id: int,
+        project_root: Path,
+        runtime_dir: Path,
+        include_to_review: bool,
+        reimbursement_config: dict,
+        export_root: Path,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.db_path = Path(db_path)
+        self.claim_id = int(claim_id)
+        self.project_root = Path(project_root)
+        self.runtime_dir = Path(runtime_dir)
+        self.include_to_review = bool(include_to_review)
+        self.reimbursement_config = deepcopy(reimbursement_config)
+        self.export_root = Path(export_root)
+
+    def run(self):
+        try:
+            from ..claim_export import export_claim_package
+            from ..db import InvoiceDB
+
+            with InvoiceDB(self.db_path) as db:
+                export_dir = export_claim_package(
+                    db=db,
+                    claim_id=self.claim_id,
+                    project_root=self.project_root,
+                    runtime_dir=self.runtime_dir,
+                    include_to_review=self.include_to_review,
+                    reimbursement_config=self.reimbursement_config,
+                    export_root=self.export_root,
+                )
+            self.result.emit(export_dir)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class ExportMigrationWorker(QThread):
     """Move legacy install-local exports without delaying UI construction."""
 

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .db import InvoiceDB
 
 from . import review_status
+from .amount_utils import parse_amount
 from .config import load_config_safe
 from .db import is_pending_evidence_invoice
 from .excel_export import export_excel
@@ -77,6 +78,17 @@ def _resolve_export_source_path(raw_value: str, runtime_dir: Path) -> Path:
     return source_path
 
 
+def _normalized_finite_amount(value, *, invoice_identity: str = "当前发票") -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"导出已阻断：{invoice_identity}缺少有效金额。")
+    try:
+        amount = parse_amount(text)
+    except ValueError:
+        raise ValueError(f"导出已阻断：{invoice_identity}金额格式无效。") from None
+    return format(amount, "f")
+
+
 def _invoice_export_identity(invoice: dict) -> str:
     """Return a user-visible invoice identity without exposing local paths."""
     invoice_number = str(invoice.get("invoice_number") or "").strip()
@@ -132,8 +144,14 @@ def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
     for raw_path in extra_paths:
         source_path = _resolve_export_source_path(raw_path, runtime_dir)
         try:
-            if not source_path.is_file() or not os.access(str(source_path), os.R_OK):
+            if not source_path.is_file():
                 unavailable_paths.append(raw_path)
+                continue
+            # Keep preflight and copy-time semantics aligned: an evidence path
+            # is usable only when it is a readable, non-empty regular file.
+            with source_path.open("rb") as stream:
+                if not stream.read(1):
+                    unavailable_paths.append(raw_path)
         except (OSError, ValueError):
             unavailable_paths.append(raw_path)
 
@@ -368,6 +386,16 @@ def export_claim_package(
 
     invoices.sort(key=_invoice_sort_key)
 
+    # Amount correctness is a release boundary: do not create any export
+    # directory until every selected invoice has a finite total.
+    normalized_amounts = {}
+    for inv in invoices:
+        identity = _invoice_export_identity(inv)
+        normalized_amounts[id(inv)] = _normalized_finite_amount(
+            inv.get("total_amount"),
+            invoice_identity=identity,
+        )
+
     material_issues = summarize_extra_material_issues(invoices, runtime_dir)
     material_blockers = []
     if material_issues["missing_extra"]:
@@ -404,6 +432,7 @@ def export_claim_package(
         # 2. Process attachments. Every exported invoice original is required.
         for inv in invoices:
             inv_copy = dict(inv)
+            inv_copy["total_amount"] = normalized_amounts[id(inv)]
             b_warning = buyer_warning(inv, reimbursement_config)
             d_warning = get_date_warning(inv)
             if b_warning and d_warning:
@@ -441,6 +470,7 @@ def export_claim_package(
                     required=True,
                     required_kind="补充材料",
                     required_context=invoice_identity,
+                    require_non_empty=True,
                 )
                 if not copied_extra_path:
                     raise ValueError(
@@ -465,7 +495,7 @@ def export_claim_package(
                 "expense_date": inv.get("expense_date") or inv.get("invoice_date"),
                 "date_source": inv.get("date_source", ""),
                 "category": inv.get("category"),
-                "total_amount": inv.get("total_amount"),
+                "total_amount": inv_copy["total_amount"],
                 "currency": inv.get("currency", ""),
                 "extra_type": inv.get("extra_type", ""),
                 "has_extra": bool(inv.get("has_extra")),
@@ -585,7 +615,14 @@ def _generate_quality_report(
             src_path = Path(extra_path)
             if not src_path.is_absolute():
                 src_path = runtime_dir / extra_path
-            if not src_path.exists() or not src_path.is_file():
+            try:
+                if not src_path.is_file():
+                    missing_evidence_files += 1
+                    continue
+                with src_path.open("rb") as stream:
+                    if not stream.read(1):
+                        missing_evidence_files += 1
+            except OSError:
                 missing_evidence_files += 1
 
     # 9. Suspected duplicate items

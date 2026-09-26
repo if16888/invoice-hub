@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from .url_utils import _mask_url
+from .amount_utils import parse_amount
 
 _log = logging.getLogger(__name__)
 
@@ -59,6 +60,17 @@ def _safe_excel_value(value):
     if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
         return "'" + value
     return value
+
+
+def _excel_amount_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        amount = parse_amount(text)
+    except ValueError:
+        raise ValueError(f"金额格式无效，无法导出 Excel: {text[:80]}") from None
+    return float(amount)
 
 
 def _parse_paths(val) -> list[str]:
@@ -151,12 +163,16 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
                     val = ""
             elif key == "download_url":
                 val = _mask_url(str(val or ""))
+            elif key in {"amount", "total_amount"}:
+                val = _excel_amount_value(val)
             cell = ws.cell(row=row_idx, column=col_idx, value=_safe_excel_value(val))
             cell.font = _CELL_FONT
             cell.alignment = _CELL_ALIGN
             cell.border = _THIN_BORDER
             if is_alt:
                 cell.fill = _ALT_FILL
+            if key in {"amount", "total_amount"} and val != "":
+                cell.number_format = "#,##0.00"
             if key == "attachment_path" and val:
                 cell.hyperlink = str(val)
                 cell.font = _LINK_FONT
@@ -164,16 +180,25 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
     _add_summary_sheet(wb, sorted_rows)
     _add_exception_sheet(wb, sorted_rows)
 
-    wb.save(str(dest))
+    try:
+        wb.save(str(dest))
+    finally:
+        # Make the file-lifecycle boundary explicit for Windows packaging and
+        # tests.  The workbook is never reused after export.
+        wb.close()
     _log.info("Excel 已导出: %s (%d 条记录)", dest.name, len(sorted_rows))
     return dest
 
 
 def _amount(value) -> Decimal:
+    text = str(value or "").strip()
+    if not text:
+        return Decimal("0")
     try:
-        return Decimal(str(value or "0").replace(",", ""))
+        amount = Decimal(text.replace(",", ""))
     except (InvalidOperation, ValueError):
         return Decimal("0")
+    return amount if amount.is_finite() else Decimal("0")
 
 
 def _style_header(ws, labels: list[str], widths: list[int]):

@@ -468,7 +468,7 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
 
 
 def load_config_safe(path: str | Path | None = None) -> dict[str, Any]:
-    """Load configuration safely without raising SystemExit if validation or reading fails."""
+    """Load configuration safely without treating example data as user state."""
     import copy
     import sys
 
@@ -480,8 +480,10 @@ def load_config_safe(path: str | Path | None = None) -> dict[str, Any]:
             path = RUNTIME_DIR / "config.json"
         else:
             path = PROJECT_ROOT / "config.json"
+        # A clean install has no config.json.  The distributable example is
+        # documentation only and must never become live company/email data.
         if not path.exists():
-            path = PROJECT_ROOT / "config.example.json"
+            return defaults_with_presets()
 
     path = Path(path)
     if not path.exists():
@@ -500,7 +502,6 @@ def load_config_safe(path: str | Path | None = None) -> dict[str, Any]:
         return cfg
     except Exception:
         return defaults_with_presets()
-
 
 def validate_config_gui(cfg: dict) -> None:
     """Validate configuration fields for GUI settings. Raises ValueError if invalid."""

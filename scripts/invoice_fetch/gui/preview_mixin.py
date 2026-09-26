@@ -1210,7 +1210,13 @@ class PreviewMixin:
 
         self.combo_supporting_docs.blockSignals(False)
         if hasattr(self, "update_evidence_row"):
-            self.update_evidence_row(self.supporting_doc_items)
+            required = bool(inv.get("missing_extra"))
+            optional = bool(str(inv.get("extra_type") or "").strip()) and not required
+            self.update_evidence_row(
+                self.supporting_doc_items,
+                required=required,
+                optional=optional,
+            )
 
     def _link_current_evidence_to_invoice(self):
         """Link the currently previewed evidence document to the current invoice."""

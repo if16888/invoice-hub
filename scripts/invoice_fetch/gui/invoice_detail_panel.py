@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 
 
 from pathlib import Path
+from ..amount_utils import parse_amount
 
 
 
@@ -965,7 +966,7 @@ class InvoiceDetailPanel(QWidget):
         self.combo_supporting_docs.addItem("暂无证明材料")
         self.combo_supporting_docs.setToolTip("酒店水单、行程记录、支付截图等证明材料会显示在这里。")
         self.combo_supporting_docs.blockSignals(False)
-        self.update_evidence_row([])
+        self.update_evidence_row([], required=False)
         self.lbl_sum_amount.setText("¥—")
 
 
@@ -1804,15 +1805,41 @@ class InvoiceDetailPanel(QWidget):
         self.combo_supporting_docs.blockSignals(False)
         self.update_evidence_row(items)
 
-    def update_evidence_row(self, items: list[dict]):
-        """Update the row-style evidence display from a list of supporting-doc items."""
+    def update_evidence_row(
+        self,
+        items: list[dict],
+        *,
+        required: bool = True,
+        optional: bool = False,
+    ):
+        """Render evidence truthfully: present, unavailable, required, optional or not needed."""
         has_doc = bool(items)
+        unavailable = False
         if has_doc:
+            for item in items:
+                # Real preview items carry a linked/pending status.  Keep the
+                # standalone panel API backward-compatible for callers that
+                # only provide a display label/path.
+                if item.get("status") not in {"linked", "pending"}:
+                    continue
+                raw_path = item.get("path")
+                try:
+                    path = Path(raw_path)
+                    if not path.is_file() or path.stat().st_size <= 0:
+                        unavailable = True
+                        break
+                    with path.open("rb") as stream:
+                        if not stream.read(1):
+                            unavailable = True
+                            break
+                except (OSError, TypeError, ValueError):
+                    unavailable = True
+                    break
+
             doc = items[0]
-            label = doc.get("label") or doc.get("path", "").split("/")[-1].split("\\")[-1]
+            label = doc.get("label") or str(doc.get("path", "")).split("/")[-1].split("\\")[-1]
             max_chars = 40
             display_name = (label[:max_chars] + "…") if len(label) > max_chars else label
-
             if len(items) > 1:
                 self.lbl_evidence_name.setText(f"{display_name} +{len(items)-1}")
                 self.btn_add_evidence.setText("管理")
@@ -1820,32 +1847,50 @@ class InvoiceDetailPanel(QWidget):
                 self.lbl_evidence_name.setText(display_name)
                 self.btn_add_evidence.setText("替换/管理")
 
-            self.lbl_evidence_name.setToolTip(f"{doc.get('path', '') or label}\n双击管理/替换证明材料")
+            self.lbl_evidence_name.setToolTip(
+                f"{doc.get('path', '') or label}\n双击管理/替换证明材料"
+            )
             self.evidence_content_widget.setCurrentWidget(self.evidence_name_page)
             self.lbl_evidence_name.setVisible(True)
             self.lbl_evidence_missing.setVisible(False)
-            self.btn_open_extra_files.setEnabled(True)
-            # The final review layout removes the legacy evidence card and
-            # preserves this button only as a compatibility callback target.
-            # Never surface an unlaid-out preserved widget over the summary.
-            self.btn_open_extra_files.setVisible(self.evidence_card is not None)
+            self.btn_open_extra_files.setEnabled(not unavailable)
+            self.btn_open_extra_files.setVisible(
+                self.evidence_card is not None and not unavailable
+            )
             self.btn_add_evidence.setEnabled(True)
             self.btn_add_evidence.setVisible(True)
         else:
             self.evidence_content_widget.setCurrentWidget(self.evidence_missing_page)
             self.lbl_evidence_name.setVisible(False)
             self.lbl_evidence_missing.setVisible(True)
+            if required:
+                self.lbl_evidence_missing.setText("必需但缺失")
+                self.btn_add_evidence.setText("补充")
+            elif optional:
+                self.lbl_evidence_missing.setText("未添加（可选）")
+                self.btn_add_evidence.setText("添加")
+            else:
+                self.lbl_evidence_missing.setText("不需要")
+                self.btn_add_evidence.setText("添加（可选）")
             self.btn_open_extra_files.setEnabled(False)
             self.btn_open_extra_files.setVisible(False)
-            self.btn_add_evidence.setText("补充")
             self.btn_add_evidence.setEnabled(True)
             self.btn_add_evidence.setVisible(True)
+
         if hasattr(self, "evidence_status_line"):
-            status = f"正常 · {len(items)} 份" if has_doc else "缺失"
-            self.evidence_status_line.set_status(status, "success" if has_doc else "warning")
-            self.evidence_status_line.replace_action(
-                self.btn_add_evidence
-            )
+            if unavailable:
+                status, state = "已关联不可用", "warning"
+            elif has_doc:
+                status, state = f"正常 · {len(items)} 份", "success"
+            elif required:
+                status, state = "必需但缺失", "warning"
+            elif optional:
+                status, state = "未添加（可选）", "muted"
+            else:
+                status, state = "不需要", "muted"
+            self.evidence_status_line.set_status(status, state)
+            self.evidence_status_line.replace_action(self.btn_add_evidence)
+
     def get_selected_supporting_document(self) -> dict | None:
 
 
@@ -4796,10 +4841,14 @@ class EditFieldsDialog(QDialog):
             QMessageBox.warning(self, "字段校验", "金额不能为空。")
             return None
         try:
-            Decimal(amount)
-        except InvalidOperation:
+            amount_value = parse_amount(amount)
+        except ValueError:
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额格式不正确。")
+            return None
+        if not amount_value.is_finite():
+            self.txt_amount.setFocus()
+            QMessageBox.warning(self, "字段校验", "金额必须是有限数值。")
             return None
         if expense_date:
             try:
@@ -4811,7 +4860,7 @@ class EditFieldsDialog(QDialog):
         return {
             "number": number,
             "date": expense_date,
-            "amount": amount,
+            "amount": format(amount_value, "f"),
             "category": self.combo_category.currentText().strip(),
             "buyer": self.txt_buyer.text().strip(),
             "seller": self.txt_seller.text().strip(),

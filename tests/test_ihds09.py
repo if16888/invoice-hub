@@ -851,6 +851,8 @@ class IHDS09Tests(unittest.TestCase):
                 self.assertNotIn("测试连接", visible_text)
                 self.assertNotIn("连接成功", visible_text)
                 self.assertIn("校验配置", visible_text)
+                if hasattr(window, "btn_settings_ai_empty_validate"):
+                    self.assertFalse(window.btn_settings_ai_empty_validate.isEnabled())
             finally:
                 window.close()
 
@@ -928,12 +930,15 @@ print(json.dumps(failures, ensure_ascii=False))
         failures = json.loads(completed.stdout.strip().splitlines()[-1])
         self.assertEqual(failures, [], failures)
 
+    @unittest.skipUnless(os.name == "nt", "requires native Windows display geometry")
     def test_real_window_1366_has_no_clipped_controls(self):
         self._assert_real_window_controls_fit(1.0)
 
+    @unittest.skipUnless(os.name == "nt", "requires native Windows display geometry")
     def test_real_window_125_percent_has_no_clipped_controls(self):
         self._assert_real_window_controls_fit(1.25)
 
+    @unittest.skipUnless(os.name == "nt", "requires native Windows display geometry")
     def test_real_window_150_percent_has_no_clipped_controls(self):
         self._assert_real_window_controls_fit(1.5)
 

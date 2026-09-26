@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -38,7 +39,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     "invoice_number": row.get("invoice_number", f"SYN-{index}"),
                     "total_amount": row.get("total_amount", "100.00"),
                     "seller_name": row.get("seller_name", "Synthetic Seller"),
-                    "invoice_date": "2026-08-05",
+                    "invoice_date": row.get("invoice_date", "2026-08-05"),
                     "category": "交通",
                     "review_status": row.get("review_status", review_status.APPROVED),
                     "attachment_path": attachment_path,
@@ -148,6 +149,104 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     self.assertFalse(window.btn_run_export_page.isEnabled())
                     self.assertEqual(window.export_check_missing_attach.lbl_value.text(), "1 张")
                     self.assertIn("缺原件 1 张", window.lbl_export_action_hint.text())
+
+                    window.combo_claims.clear()
+                    window.combo_claims.addItem("Synthetic Material Preflight", claim_id)
+                    window.combo_claims.setCurrentIndex(0)
+                    approved_button = Mock()
+                    include_button = Mock()
+                    cancel_button = Mock()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker"
+                    ) as worker_cls:
+                        message_box.return_value.addButton.side_effect = [
+                            approved_button,
+                            include_button,
+                            cancel_button,
+                        ]
+                        message_box.return_value.clickedButton.return_value = approved_button
+                        window._export_claim_package()
+                        worker_cls.assert_not_called()
+                        message_box.warning.assert_called_once()
+                        self.assertIn("缺原件 1 张", message_box.warning.call_args.args[2])
+                finally:
+                    if getattr(window, "db", None) is not None:
+                        window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    self.qt_app.processEvents()
+
+    def test_gui_preflight_rejects_non_finite_amount_before_worker_start(self):
+        from scripts.invoice_fetch.gui import app as app_module
+        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{
+                    "invoice_number": "BAD-AMOUNT",
+                    "total_amount": "NaN",
+                    "invoice_date": datetime.now().strftime("%Y-%m-%d"),
+                }],
+            )
+            with patch.object(app_module, "PROJECT_ROOT", project_root), patch.object(
+                app_module, "RUNTIME_DIR", runtime_dir
+            ):
+                window = InvoiceReviewApp(runtime_dir / "invoices.db", splash=None)
+                try:
+                    window._deferred_init()
+                    self.qt_app.processEvents()
+                    stats = window._claim_export_preflight_stats(claim_id)
+                    self.assertEqual(stats["missing_amount"], 0)
+                    self.assertEqual(stats["invalid_amount"], 1)
+                    self.assertIn(
+                        "金额无效：1 张",
+                        window._format_claim_export_preflight_text(stats),
+                    )
+
+                    window._refresh_export_page()
+                    window.export_group_list.setCurrentRow(0)
+                    window._sync_export_claim_selection()
+                    self.assertFalse(window.btn_run_export_page.isEnabled())
+                    self.assertEqual(
+                        window.export_check_invalid_amount.lbl_value.text(),
+                        "1 张",
+                    )
+                    self.assertIn("金额无效 1 张", window.lbl_export_action_hint.text())
+                    current_item = window.export_group_list.currentItem()
+                    self.assertIsNotNone(current_item)
+                    row_widget = window.export_group_list.itemWidget(current_item)
+                    self.assertIsNotNone(row_widget)
+                    from PySide6.QtWidgets import QLabel
+                    row_text = "\n".join(
+                        label.text() for label in row_widget.findChildren(QLabel)
+                    )
+                    self.assertIn("待补齐", row_text)
+                    self.assertIn("金额待修复", row_text)
+                    self.assertNotIn("¥NaN", row_text)
+                    metrics = window._collect_overview_metrics()
+                    self.assertEqual(metrics["export_ready"], 0)
+                    self.assertTrue(metrics["month_total"].is_finite())
+
+                    window.combo_claims.clear()
+                    window.combo_claims.addItem("Synthetic Material Preflight", claim_id)
+                    window.combo_claims.setCurrentIndex(0)
+                    approved_button = Mock()
+                    include_button = Mock()
+                    cancel_button = Mock()
+                    with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker"
+                    ) as worker_cls:
+                        message_box.return_value.addButton.side_effect = [
+                            approved_button,
+                            include_button,
+                            cancel_button,
+                        ]
+                        message_box.return_value.clickedButton.return_value = approved_button
+                        window._export_claim_package()
+                        worker_cls.assert_not_called()
+                        message_box.warning.assert_called_once()
+                        self.assertIn("金额无效 1 张", message_box.warning.call_args.args[2])
                 finally:
                     if getattr(window, "db", None) is not None:
                         window.db.close()
@@ -243,9 +342,8 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     include_button = Mock()
                     cancel_button = Mock()
                     with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
-                        "scripts.invoice_fetch.claim_export.export_claim_package",
-                        side_effect=RuntimeError("synthetic approved-only handoff"),
-                    ) as exporter:
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker",
+                    ) as worker_cls:
                         message_box.return_value.addButton.side_effect = [
                             approved_button,
                             include_button,
@@ -254,16 +352,18 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         message_box.return_value.clickedButton.return_value = approved_button
                         window._export_claim_package()
 
-                        exporter.assert_called_once()
-                        self.assertFalse(exporter.call_args.kwargs["include_to_review"])
+                        worker_cls.assert_called_once()
+                        self.assertFalse(worker_cls.call_args.kwargs["include_to_review"])
+                        worker_cls.return_value.start.assert_called_once()
                         message_box.warning.assert_not_called()
+                        window._claim_export_thread_finished()
 
                     approved_button = Mock()
                     include_button = Mock()
                     cancel_button = Mock()
                     with patch("scripts.invoice_fetch.gui.app.QMessageBox") as message_box, patch(
-                        "scripts.invoice_fetch.claim_export.export_claim_package",
-                    ) as exporter:
+                        "scripts.invoice_fetch.gui.app.ClaimExportWorker",
+                    ) as worker_cls:
                         message_box.return_value.addButton.side_effect = [
                             approved_button,
                             include_button,
@@ -272,7 +372,7 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                         message_box.return_value.clickedButton.return_value = include_button
                         window._export_claim_package()
 
-                        exporter.assert_not_called()
+                        worker_cls.assert_not_called()
                         message_box.warning.assert_called_once()
                         warning_args = message_box.warning.call_args.args
                         self.assertEqual(warning_args[1], "导出已阻断")
@@ -579,6 +679,64 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     )
                 self.assertEqual(len(db.list_export_runs(claim_id)), 1)
 
+
+
+    def test_zero_byte_extra_is_unavailable_and_blocks_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_root, runtime_dir, claim_id = self._create_claim(
+                Path(td),
+                [{
+                    "invoice_number": "EMPTY-EVIDENCE",
+                    "has_extra": True,
+                    "extra_type": "行程单",
+                    "extra_paths": ["attachments/empty-trip.pdf"],
+                }],
+            )
+            empty_path = runtime_dir / "attachments" / "empty-trip.pdf"
+            empty_path.write_bytes(b"")
+
+            with InvoiceDB(runtime_dir / "invoices.db") as db:
+                invoice = db.get_claim_invoices(claim_id)[0]
+                inspection = inspect_extra_material(invoice, runtime_dir)
+                self.assertTrue(inspection["unavailable_extra"])
+
+                export_root = project_root / "exports"
+                with self.assertRaises(ValueError):
+                    export_claim_package(
+                        db,
+                        claim_id,
+                        project_root,
+                        runtime_dir,
+                        reimbursement_config={},
+                        export_root=export_root,
+                    )
+                self._assert_no_partial_package(export_root)
+                self.assertEqual(db.list_export_runs(claim_id), [])
+
+
+    def test_claim_export_rejects_non_finite_amount_before_package_creation(self):
+        for bad_amount in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(amount=bad_amount), tempfile.TemporaryDirectory() as td:
+                project_root, runtime_dir, claim_id = self._create_claim(
+                    Path(td),
+                    [{
+                        "invoice_number": "BAD-AMOUNT",
+                        "total_amount": bad_amount,
+                    }],
+                )
+                export_root = project_root / "exports"
+                with InvoiceDB(runtime_dir / "invoices.db") as db:
+                    with self.assertRaises(ValueError):
+                        export_claim_package(
+                            db,
+                            claim_id,
+                            project_root,
+                            runtime_dir,
+                            reimbursement_config={},
+                            export_root=export_root,
+                        )
+                    self.assertEqual(db.list_export_runs(claim_id), [])
+                self.assertFalse(export_root.exists())
 
 if __name__ == "__main__":
     unittest.main()

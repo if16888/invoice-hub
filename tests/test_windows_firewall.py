@@ -1,5 +1,6 @@
 import base64
 import ctypes
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -482,6 +483,7 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
         with patch.object(firewall, "is_windows", return_value=False):
             self.assertEqual(firewall._hidden_subprocess_kwargs(), {})
 
+    @unittest.skipUnless(os.name == "nt", "requires native Windows process APIs")
     def test_windows_firewall_query_uses_hidden_argv_subprocess(self):
         startupinfo = SimpleNamespace(dwFlags=0, wShowWindow=99)
         completed = SimpleNamespace(returncode=0, stdout="[]")
@@ -501,6 +503,7 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
         self.assertTrue(startupinfo.dwFlags & firewall.subprocess.STARTF_USESHOWWINDOW)
         self.assertEqual(startupinfo.wShowWindow, firewall.subprocess.SW_HIDE)
 
+    @unittest.skipUnless(os.name == "nt", "requires native Windows process APIs")
     def test_elevated_netsh_hides_child_console_but_keeps_runas(self):
         captured = {}
 
@@ -600,6 +603,7 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
         self.assertEqual(run_pwsh.call_count, 1)
         self.assertEqual(result.status.local_port, "43210")
 
+    @unittest.skipUnless(os.name == "nt", "requires native Windows process APIs")
     def test_run_elevated_powershell_script_passes_encoded_command_and_hides_console(self):
         captured = {}
 

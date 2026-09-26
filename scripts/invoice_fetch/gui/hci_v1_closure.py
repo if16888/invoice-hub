@@ -129,11 +129,29 @@ def _move_to_next_review_row(window) -> None:
     table = getattr(window, "table", None)
     if table is None or not isValid(table) or table.rowCount() <= 0:
         return
+
+    # Continuous review must share the same paging boundary as the normal
+    # Review workspace.  In particular, row 49 of a 50-row page is not the
+    # end of a 61/259-row queue: load the next batch before selecting.
+    paging = getattr(window, "review_paging", None)
+    move_selection = getattr(paging, "move_selection", None)
+    if callable(move_selection):
+        move_selection(1)
+        # “稍后处理” leaves review status unchanged, so the queue count does
+        # not trigger the normal progress refresh. Update the cursor position
+        # after selecting the next invoice.
+        from .hci_v1 import _sync_review_hci
+
+        _sync_review_hci(window)
+        return
+
+    # Defensive fallback for a partially initialized page.  Never wrap to the
+    # first row because that makes unseen records unreachable.
     row = max(0, table.currentRow())
-    next_row = row + 1
-    if next_row >= table.rowCount():
-        next_row = 0
-    table.selectRow(next_row)
+    table.selectRow(min(table.rowCount() - 1, row + 1))
+    from .hci_v1 import _sync_review_hci
+
+    _sync_review_hci(window)
 
 
 def _install_review_progress_refresh(window, page: QWidget) -> None:
@@ -692,22 +710,6 @@ def _sync_incremental_result(window, res: dict) -> None:
     if bool((res or {}).get("cancelled")):
         _sync_import_primary_bridge(window)
         return
-    summary = getattr(window, "_last_scan_summary", None) or {}
-    scanned = int(
-        summary.get("scanned_headers")
-        or summary.get("scanned")
-        or summary.get("checked")
-        or 0
-    )
-    new = int(
-        summary.get("new_records")
-        or summary.get("new")
-        or summary.get("new_email_headers")
-        or 0
-    )
-    restored = int(summary.get("restored") or 0)
-    duplicates = int(summary.get("duplicates") or 0)
-
     _sync_import_primary_bridge(window)
 
     recent = getattr(window, "import_mail_recent_card", None)
@@ -715,10 +717,36 @@ def _sync_incremental_result(window, res: dict) -> None:
         recent.set_title("✓ 同步完成")
         recent.set_hint("本次同步结果按行展示检查、候选、新增、恢复、重复和失败数量。")
 
+    activity = None
+    pending_ids = ()
+    scope_error = None
+    refresh_scope = getattr(window, "_refresh_import_review_result_scope", None)
+    if callable(refresh_scope):
+        try:
+            result = refresh_scope()
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise TypeError(
+                    "_refresh_import_review_result_scope must return "
+                    "(activity, pending_ids)"
+                )
+            activity, pending_ids = result
+            pending_ids = tuple(pending_ids or ())
+        except Exception as exc:
+            scope_error = exc
     review = getattr(window, "btn_hci_import_review_result", None)
     if review is not None:
-        actionable = new + restored
-        review.setText(f"去审核 {actionable} 张" if actionable else "查看审核工作台")
+        scope_error = scope_error or getattr(
+            window, "_import_review_result_scope_error", None
+        )
+        if scope_error is not None:
+            review.setText("审核范围暂不可用")
+            review.setEnabled(False)
+        elif activity is not None and pending_ids:
+            review.setText(f"去审核 {len(pending_ids)} 张")
+            review.setEnabled(True)
+        else:
+            review.setText("查看审核工作台")
+            review.setEnabled(True)
         review.show()
 
 
