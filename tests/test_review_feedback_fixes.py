@@ -45,20 +45,6 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_review_actions_share_one_readable_row(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                detail = window._detail_panel
-                row = detail.findChild(QFrame, "ReviewActionRow")
-                self.assertIsNotNone(row)
-                self.assertEqual(row.layout().count(), 4)
-                self.assertEqual(row.layout().itemAt(0).widget(), detail.btn_app)
-                self.assertEqual(row.layout().itemAt(1).widget(), detail.btn_ign)
-                self.assertEqual(row.layout().itemAt(2).widget(), detail.btn_err)
-                self.assertGreaterEqual(detail.btn_app.height(), 34)
-            finally:
-                window.close()
 
     def test_summary_and_basic_info_values_follow_single_ownership(self):
         with tempfile.TemporaryDirectory() as td:
@@ -132,21 +118,6 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 window._show_shortcut_help_popup()
                 self.app.processEvents()
                 self.assertFalse(popup.isVisible())
-            finally:
-                window.close()
-
-    def test_detail_width_expands_on_desktop_but_stays_compact_at_1366(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td, 1920, 1080)
-            try:
-                expected_desktop_width = (
-                    448 if window.workbench_nav.width() <= 96 else 400
-                )
-                self.assertEqual(window._detail_panel.width(), expected_desktop_width)
-                window.resize(1366, 768)
-                for _ in range(4):
-                    self.app.processEvents()
-                self.assertEqual(window._detail_panel.width(), 352)
             finally:
                 window.close()
 

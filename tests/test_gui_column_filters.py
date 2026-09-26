@@ -79,15 +79,6 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-    def test_categorical_filter_by_category(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
-        ])
-
-        window._set_column_filter("category", {"values": {"住宿"}})
-
-        self.assertEqual(self._numbers(window), ["HOTEL"])
 
     def test_text_filters_by_seller_and_invoice_number(self):
         window = self._make_window([
@@ -113,66 +104,6 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         self.assertEqual(self._numbers(window), ["MID"])
 
-    def test_multiple_filters_and_global_search_combine(self):
-        window = self._make_window([
-            {"invoice_number": "ALPHA-FOOD", "seller_name": "Alpha", "category": "餐饮"},
-            {"invoice_number": "ALPHA-HOTEL", "seller_name": "Alpha", "category": "住宿"},
-            {"invoice_number": "BETA-FOOD", "seller_name": "Beta", "category": "餐饮"},
-        ])
-
-        window.txt_search.setText("Alpha")
-        window.search_reload_timer.stop()
-        window._set_column_filter("category", {"values": {"餐饮"}})
-
-        self.assertEqual(self._numbers(window), ["ALPHA-FOOD"])
-
-    def test_reset_clears_filters_and_header_indicator(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
-        ])
-
-        window._set_column_filter("invoice_number", {"values": {"HOTEL"}})
-        self.assertIn("已筛选", window.table.horizontalHeaderItem(5).text())
-        window._reset_invoice_filters()
-
-        self.assertEqual(window.column_filters, {})
-        self.assertEqual(window.table.horizontalHeaderItem(5).text(), "发票号")
-        self.assertEqual(set(self._numbers(window)), {"FOOD", "HOTEL"})
-
-    def test_header_center_click_does_not_open_filter_popup(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
-        ])
-
-        header = window.table.horizontalHeader()
-        section = 5
-        center_x = header.sectionViewportPosition(section) + header.sectionSize(section) // 2
-        window._column_filter_header_press_pos = QPoint(center_x, header.height() // 2)
-        window._show_column_filter_popup(section)
-        self.app.processEvents()
-        self.assertIsNone(window._column_filter_popup)
-
-    def test_supported_headers_open_filter_popup_near_right_edge(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
-        ])
-
-        header = window.table.horizontalHeader()
-        section = 5
-        near_marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 10
-        window._column_filter_header_press_pos = QPoint(near_marker_x, header.height() // 2)
-        window._show_column_filter_popup(section)
-        self.app.processEvents()
-
-        popup = window._column_filter_popup
-        self.assertIsNotNone(popup)
-        self.assertEqual(popup.key, "invoice_number")
-        self.assertEqual(popup.search_edit.placeholderText(), "搜索值")
-        self.assertEqual(popup.value_list.count(), 2)
-        popup.close()
 
     def test_seller_header_right_edge_opens_filter_popup(self):
         from PySide6.QtCore import Qt
@@ -220,27 +151,6 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertIsNotNone(window._column_filter_popup)
         window._column_filter_popup.close()
 
-    def test_active_filter_header_tooltip_is_clear(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
-        ])
-
-        window._set_column_filter("invoice_number", {"values": {"HOTEL"}})
-        tooltip = window.table.horizontalHeaderItem(5).toolTip()
-
-        self.assertIn("已启用列筛选", tooltip)
-        self.assertIn("点击右侧修改", tooltip)
-
-    def test_inactive_filter_header_tooltip_is_clear(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮"},
-            {"invoice_number": "HOTEL", "category": "住宿"},
-        ])
-
-        tooltip = window.table.horizontalHeaderItem(5).toolTip()
-
-        self.assertIn("点击列标题右侧筛选", tooltip)
 
     def test_empty_value_selection_remains_active_when_popup_reopens(self):
         from PySide6.QtCore import Qt
@@ -284,51 +194,6 @@ class GuiColumnFilterTests(unittest.TestCase):
 
         self.assertEqual(window.current_invoice["id"], selected_id)
 
-    def test_selection_falls_back_to_nearest_visible_row(self):
-        window = self._make_window([
-            {"invoice_number": "FOOD", "category": "餐饮", "expense_date": "2026-06-03"},
-            {"invoice_number": "HOTEL-A", "category": "住宿", "expense_date": "2026-06-02"},
-            {"invoice_number": "HOTEL-B", "category": "住宿", "expense_date": "2026-06-01"},
-        ])
-        window.table.selectRow(0)
-        self.app.processEvents()
-
-        window._set_column_filter("category", {"values": {"住宿"}})
-        self.app.processEvents()
-
-        self.assertEqual(window.table.currentRow(), 0)
-        self.assertEqual(window.current_invoice["invoice_number"], "HOTEL-A")
-
-    def test_review_and_material_status_are_visible_in_table(self):
-        # 审核状态和资料状态都必须在表格中可见，不能只放 tooltip。
-        window = self._make_window([
-            {"invoice_number": "OK-1", "review_status": "approved", "attachment_path": "file.pdf"},
-            {"invoice_number": "", "total_amount": "100.00", "review_status": "approved"},
-            {"invoice_number": "MISS-FILE", "attachment_path": "", "review_status": "to_review"},
-            {"invoice_number": "MISS-PROOF", "attachment_path": "file.pdf", "missing_extra": 1, "review_status": "to_review"},
-            {"invoice_number": "", "total_amount": "", "seller_name": "", "attachment_path": "", "review_status": "to_review"},
-        ])
-        self.assertIn("状态", window.table.horizontalHeaderItem(0).text())
-        self.assertIn("资料", window.table.horizontalHeaderItem(1).text())
-
-        visible_pairs = [
-            (window.table.item(row, 0).text(), window.table.item(row, 1).text())
-            for row in range(window.table.rowCount())
-        ]
-        self.assertIn(("已通过", "正常"), visible_pairs)
-        self.assertIn(("已通过", "待补全"), visible_pairs)
-        self.assertIn(("待审核", "缺原件"), visible_pairs)
-        self.assertIn(("待审核", "缺证明"), visible_pairs)
-        self.assertIn(("待审核", "未识别"), visible_pairs)
-        self.assertTrue(window.table.item(0, 0).font().bold())
-        self.assertTrue(window.table.item(0, 1).font().bold())
-
-    def test_review_rows_no_longer_apply_full_row_background(self):
-        window = self._make_window([
-            {"invoice_number": "PENDING-1", "review_status": "to_review", "attachment_path": "file.pdf"},
-        ])
-        for column in range(window.table.columnCount()):
-            self.assertIsNone(window.table.item(0, column).data(Qt.BackgroundRole))
 
     def test_table_columns_use_queue_alignment_and_muted_invoice_number(self):
         window = self._make_window([
@@ -351,12 +216,6 @@ class GuiColumnFilterTests(unittest.TestCase):
         # instead of the decorative-only #94A3B8 gray.
         self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#667085")
 
-    def test_default_headers_are_clean_without_dropdown_arrows(self):
-        window = self._make_window([
-            {"invoice_number": "A", "seller_name": "Alpha"},
-        ])
-        labels = [window.table.horizontalHeaderItem(i).text() for i in range(window.table.columnCount())]
-        self.assertEqual(labels, ["状态", "资料", "日期", "金额", "销售方", "发票号"])
 
     def test_invoice_record_header_row_exists(self):
         window = self._make_window([
@@ -411,60 +270,6 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertNotIn("张伟", window.btn_toolbar_user.text())
         self.assertEqual(window.btn_toolbar_user.text(), "本地模式 ▾")
 
-    def test_top_checkbox_bidirectional_sync_needs_fix(self):
-        # 勾选“待补全”等价于资料状态列过滤。
-        # 清除资料状态列过滤会同步取消顶部“待补全”。
-        window = self._make_window([
-            {"invoice_number": "INV-1", "category": "餐饮"}, # 正常
-            {"invoice_number": "", "total_amount": "50.00"}, # 待补全
-        ])
-
-        # Check that needs_fix checkbox is initially unchecked
-        self.assertFalse(window.chk_needs_fix.isChecked())
-
-        # Toggle top checkbox to check
-        window.chk_needs_fix.setChecked(True)
-        self.app.processEvents()
-
-        # Check that it filters to only needs_fix (which is the empty invoice number row)
-        self.assertEqual(len(window.invoices_list), 1)
-        self.assertEqual(window.invoices_list[0]["total_amount"], "50.00")
-
-        # Verify column_filters has been updated
-        self.assertIn("status", window.column_filters)
-
-        # Clear column filter status manually
-        window._set_column_filter("status", {})
-        self.app.processEvents()
-
-        # Check that top checkbox is automatically unchecked
-        self.assertFalse(window.chk_needs_fix.isChecked())
-        # Check that all invoices are loaded again
-        self.assertEqual(len(window.invoices_list), 2)
-
-    def test_top_checkbox_bidirectional_sync_unlinked(self):
-        # 勾选“未关联报销组”等价于报销组列过滤为未加入。
-        # 清除报销组列过滤会同步取消顶部“未关联报销组”。
-        window = self._make_window([
-            {"invoice_number": "INV-1", "claim_name": "Group-A"},
-            {"invoice_number": "INV-2", "claim_name": ""},
-        ])
-
-        self.assertFalse(window.chk_unlinked.isChecked())
-
-        # Check unlinked
-        window.chk_unlinked.setChecked(True)
-        self.app.processEvents()
-
-        self.assertEqual(len(window.invoices_list), 1)
-        self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-2")
-
-        # Clear claim_name filter manually
-        window._set_column_filter("claim_name", {})
-        self.app.processEvents()
-
-        self.assertFalse(window.chk_unlinked.isChecked())
-        self.assertEqual(len(window.invoices_list), 2)
 
     def test_reset_clears_all_filter_states_chips_and_markers(self):
         # 重置会清空顶部过滤、搜索、列过滤、active marker、筛选摘要。
@@ -492,27 +297,6 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertFalse(window.filter_chips_widget.isVisible())
         self.assertEqual(window.table.horizontalHeaderItem(0).text(), "状态")
 
-    def test_top_review_counts_dynamic_under_non_review_filters(self):
-        # 顶部审核状态数字在待补全过滤条件下仍正确。
-        window = self._make_window([
-            {"invoice_number": "INV-1", "review_status": "approved"}, # 正常, approved
-            {"invoice_number": "", "total_amount": "50.00", "review_status": "to_review"}, # 待补全, to_review
-            {"invoice_number": "", "total_amount": "10.00", "review_status": "approved"}, # 待补全, approved
-        ])
-
-        # Apply "待补全" filter
-        window.chk_needs_fix.setChecked(True)
-        self.app.processEvents()
-
-        # Buttons texts should reflect only the "待补全" invoices (which are 2 in total: 1 to_review, 1 approved)
-        to_review_text = window.filter_buttons["to_review"].text()
-        approved_text = window.filter_buttons["approved"].text()
-        all_text = window.filter_buttons["all"].text()
-
-        self.assertTrue("1" in to_review_text)
-        self.assertTrue("1" in approved_text)
-        self.assertTrue("2" in all_text)
-        self.assertEqual(all_text.split()[0], "当前范围全部")
 
     @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
     @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")

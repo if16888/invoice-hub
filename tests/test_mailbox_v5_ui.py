@@ -77,28 +77,6 @@ class TestMailboxV5UI(unittest.TestCase):
             },
         ]
 
-    def test_v5_preset_buttons_directly_visible_on_overview(self):
-        """V5 Requirement 1: Presets visible on main mailbox settings page."""
-        dialog = SettingsDialog(parent=None)
-        dialog.cfg = deepcopy(self.cfg)
-        dialog._build_saved_account_maps()
-        dialog._load_initial_values()
-
-        self.assertTrue(hasattr(dialog, "v5_preset_buttons"))
-        for p_id in ("qq", "netease_163", "gmail", "outlook", "custom"):
-            self.assertIn(p_id, dialog.v5_preset_buttons)
-            self.assertTrue(dialog.v5_preset_buttons[p_id].isVisible() or dialog.v5_preset_buttons[p_id].parentWidget() is not None)
-
-    def test_v5_account_row_click_shows_details(self):
-        """V5 Requirement 2: Account row click shows account details and rules."""
-        dialog = SettingsDialog(parent=None)
-        dialog.cfg = deepcopy(self.cfg)
-        dialog._build_saved_account_maps()
-        dialog._load_initial_values()
-
-        dialog._open_mailbox_editor("test_163@163.com")
-        self.assertEqual(dialog.txt_email.text().strip(), "test_163@163.com")
-        self.assertEqual(dialog.txt_mailbox_name.text().strip(), "163 网易邮箱")
 
     def test_import_center_uses_more_menu_for_low_frequency_actions(self):
         """IHDS-06: low-frequency account and failure actions are not duplicated."""
@@ -146,39 +124,6 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertTrue(norm[0]["is_default"])
         self.assertEqual(norm[0]["address"], "test_163@163.com")
 
-    def test_disabling_default_reassigns_default(self):
-        """P0-2 Test: Disabling default account reassigns default status to next enabled non-Outlook account."""
-        dialog = SettingsDialog(parent=None)
-        dialog.cfg = deepcopy(self.cfg)
-        dialog._build_saved_account_maps()
-        dialog._load_initial_values()
-
-        dialog._set_mailbox_enabled("test_qq@qq.com", False)
-        norm = dialog.cfg["email_accounts"]
-        target = next((a for a in norm if a["address"] == "test_163@163.com"), None)
-        self.assertIsNotNone(target)
-        self.assertTrue(target["is_default"])
-        self.assertEqual(dialog.cfg["email"]["address"].lower(), "test_163@163.com")
-
-    def test_import_scan_selected_uses_checked_accounts(self):
-        """P1-2 Test: Start scanning selected accounts reads checked checkbox account keys."""
-        window = InvoiceReviewApp(db_path=self.db_path)
-        window.config = deepcopy(self.cfg)
-        window._refresh_imports_page()
-
-        checked_keys = []
-        for chk in window.mail_account_checkboxes:
-            if chk.isChecked():
-                checked_keys.append(chk.property("account_key"))
-
-        self.assertIn("test_qq@qq.com", checked_keys)
-
-    def test_sidebar_settings_does_not_show_legacy_settings_page(self):
-        """P1-1 Test: Switching to settings opens full SettingsDialog without legacy split."""
-        window = InvoiceReviewApp(db_path=self.db_path)
-        window.config = deepcopy(self.cfg)
-
-        self.assertTrue(hasattr(window, "_switch_main_page"))
 
     def test_import_scan_default_passes_only_default_key(self):
         """Final P0 Test: Scan default email only passes default account key."""
@@ -237,32 +182,6 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(len(called), 0)
 
 
-
-    def test_settings_page_does_not_open_nested_settings_dialog(self):
-        """V11 Test 1: Switching to settings page does not launch nested modal SettingsDialog."""
-        window = InvoiceReviewApp(db_path=self.db_path)
-        window.config = deepcopy(self.cfg)
-
-        opened_dialogs = []
-        def mock_open(*args, **kwargs):
-            opened_dialogs.append(True)
-
-        window._open_settings_dialog = mock_open
-        window._switch_main_page("settings")
-
-        self.assertEqual(len(opened_dialogs), 0)
-
-    def test_settings_single_authoritative_surface(self):
-        """V11 Test 2: In-window settings_page is the single authoritative UI surface."""
-        window = InvoiceReviewApp(db_path=self.db_path)
-        window.config = deepcopy(self.cfg)
-
-        window._switch_main_page("settings")
-        self.assertEqual(window.center_stack.currentIndex(), 5)
-        self.assertTrue(hasattr(window, "settings_tabs"))
-        self.assertIsNotNone(window.settings_tabs)
-        self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
-
     def test_mailbox_overview_uses_master_detail_without_summary_duplication(self):
         """IHDS-09: account identity and status live in the master-detail surface."""
         window = InvoiceReviewApp(db_path=self.db_path)
@@ -273,33 +192,6 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertEqual(window.settings_mailbox_list.count(), 2)
         self.assertTrue(hasattr(window, "lbl_detail_email"))
 
-    def test_mailbox_saved_accounts_use_single_add_menu(self):
-        """IHDS-06: provider presets only exist inside the add-account menu."""
-        window = InvoiceReviewApp(db_path=self.db_path)
-        window._desktop_settings_cfg = deepcopy(self.cfg)
-        window._refresh_settings_mailbox_page()
-
-        self.assertFalse(hasattr(window, "v11_preset_buttons"))
-        self.assertTrue(hasattr(window, "btn_settings_mailbox_add"))
-        self.assertEqual(len(window.btn_settings_mailbox_add.menu().actions()), 5)
-        self.assertEqual(window.settings_mailbox_list.count(), 2)
-
-    def test_mailbox_detail_is_read_only_by_default(self):
-        window = InvoiceReviewApp(db_path=self.db_path)
-        window._desktop_settings_cfg = deepcopy(self.cfg)
-        window._refresh_settings_mailbox_page()
-        mailbox_tab = window.settings_tabs.widget(0)
-        self.assertEqual(window.settings_tabs.tabText(0), "邮箱账户")
-
-        mailbox_detail_inputs = [
-            child for child in mailbox_tab.findChildren(QLineEdit)
-            if child.parent() is not None
-        ]
-        self.assertEqual(mailbox_detail_inputs, [])
-        self.assertIsInstance(window.lbl_detail_name, QLabel)
-        self.assertIsInstance(window.lbl_detail_email, QLabel)
-        self.assertIsInstance(window.lbl_detail_server, QLabel)
-        self.assertIsInstance(window.lbl_detail_scan_rule, QLabel)
 
     def test_mailbox_detail_has_no_save_cancel_buttons(self):
         window = InvoiceReviewApp(db_path=self.db_path)

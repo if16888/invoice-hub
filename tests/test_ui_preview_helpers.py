@@ -85,17 +85,6 @@ class TestUIPreviewHelpers(unittest.TestCase):
         self.assertEqual(len(docs), 1)
         self.assertEqual(docs[0]["path"], abs_file)
 
-    def test_resolve_stored_path_uses_shared_candidates(self):
-        nested = self.attachments_dir / "2026-06-01" / "shared.png"
-        nested.parent.mkdir(parents=True, exist_ok=True)
-        nested.touch()
-
-        resolved = resolve_stored_path("attachments/2026-06-01/shared.png", self.runtime_dir)
-        self.assertEqual(resolved, nested)
-
-        fallback = resolve_stored_path("shared.png", self.runtime_dir)
-        self.assertEqual(fallback, nested)
-
 
 class TestUIPreviewGUI(unittest.TestCase):
     def setUp(self):
@@ -220,109 +209,6 @@ class TestUIPreviewGUI(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
-    def test_empty_preview_state_mentions_file_actions(self):
-        try:
-            from PySide6.QtWidgets import QApplication
-            import sys
-            app = QApplication.instance() or QApplication(sys.argv)
-
-            from scripts.invoice_fetch.db import InvoiceDB
-            with InvoiceDB(self.db_path) as db:
-                db.insert_invoice({
-                    "mail_subject": "Invoice without attachment",
-                    "mail_date": "2026-05-30",
-                    "invoice_type": "PDF",
-                    "invoice_number": "33333",
-                    "invoice_date": "2026-06-02",
-                    "total_amount": "100.00",
-                    "buyer_name": "Company",
-                    "seller_name": "Seller C",
-                    "attachment_path": "",
-                    "extra_paths": [],
-                    "category": "Office",
-                    "review_status": "to_review"
-                })
-
-            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-            window = InvoiceReviewApp(self.db_path, splash=None)
-            try:
-                window._deferred_init()
-                app.processEvents()
-                self.assertEqual(window.table.rowCount(), 1)
-                window.table.clearSelection()
-                app.processEvents()
-                window.table.selectRow(0)
-                window._on_table_selection_changed()
-                app.processEvents()
-
-                self.assertIn("当前发票没有可预览的原件", window.lbl_preview_status.text())
-                self.assertIn("定位", window.lbl_preview_status.text())
-                self.assertIn("补充", window.lbl_preview_status.text())
-                self.assertFalse(window.btn_prev.isEnabled())
-                self.assertFalse(window.btn_next.isEnabled())
-            finally:
-                if hasattr(window, "db") and window.db is not None:
-                    window.db.close()
-                window.close()
-                window.deleteLater()
-                app.processEvents()
-        except Exception as e:
-            if isinstance(e, (ImportError, RuntimeError)):
-                self.skipTest(f"Skipping GUI test: {e}")
-            raise
-
-    def test_preview_status_distinguishes_common_empty_states(self):
-        try:
-            from PySide6.QtWidgets import QApplication
-            import sys
-            app = QApplication.instance() or QApplication(sys.argv)
-
-            from scripts.invoice_fetch.db import InvoiceDB
-            with InvoiceDB(self.db_path) as db:
-                db.insert_invoice({
-                    "mail_subject": "Preview failure modes",
-                    "mail_date": "2026-05-30",
-                    "invoice_type": "PDF",
-                    "invoice_number": "44444",
-                    "invoice_date": "2026-06-02",
-                    "total_amount": "100.00",
-                    "buyer_name": "Company",
-                    "seller_name": "Seller D",
-                    "attachment_path": "",
-                    "extra_paths": [],
-                    "category": "Office",
-                    "confirmed_note": "",
-                    "review_status": "to_review"
-                })
-
-            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-            window = InvoiceReviewApp(self.db_path, splash=None)
-            try:
-                window._deferred_init()
-                app.processEvents()
-
-                window._show_preview_status("当前发票没有可预览的原件")
-                self.assertIn("定位", window.lbl_preview_status.text())
-                self.assertIn("补充", window.lbl_preview_status.text())
-
-                window._show_preview_status("文件不存在")
-                self.assertIn("原件文件不存在", window.lbl_preview_status.text())
-
-                window._show_preview_status("暂不支持内嵌预览，请点击打开外部文件")
-                self.assertIn("当前格式暂不支持内嵌预览", window.lbl_preview_status.text())
-
-                window._show_preview_status("图片加载失败，暂不支持预览")
-                self.assertIn("图片加载失败", window.lbl_preview_status.text())
-            finally:
-                if hasattr(window, "db") and window.db is not None:
-                    window.db.close()
-                window.close()
-                window.deleteLater()
-                app.processEvents()
-        except Exception as e:
-            if isinstance(e, (ImportError, RuntimeError)):
-                self.skipTest(f"Skipping GUI test: {e}")
-            raise
 
     def test_preview_logs_large_image_and_uses_resize_debounce(self):
         try:

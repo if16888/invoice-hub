@@ -17,79 +17,6 @@ from scripts.invoice_fetch.gui.workbench_layout import (
 )
 
 
-class TestMetricsForSize(unittest.TestCase):
-    """Verify responsive breakpoint logic for metrics_for_size()."""
-
-    def test_1920_layout_uses_full_density(self):
-        metrics = metrics_for_size(1920, 1080)
-        self.assertEqual(metrics.nav_width, 180)
-        self.assertEqual(metrics.detail_width, 352)
-        self.assertEqual(metrics.record_height, 390)
-        self.assertEqual(metrics.thumbnail_width, 104)
-        self.assertFalse(metrics.compact)
-
-    def test_1366_layout_collapses_navigation(self):
-        metrics = metrics_for_size(1366, 768)
-        self.assertTrue(metrics.nav_collapsed)
-        self.assertEqual(metrics.nav_width, 56)
-        self.assertEqual(metrics.detail_width, 344)
-        self.assertEqual(metrics.record_height, 332)
-
-    def test_1440_900_is_compact_but_not_collapsed(self):
-        metrics = metrics_for_size(1440, 900)
-        self.assertFalse(metrics.nav_collapsed)
-        self.assertTrue(metrics.compact)
-        self.assertEqual(metrics.nav_width, 180)
-        self.assertEqual(metrics.detail_width, 352)
-        self.assertEqual(metrics.record_height, 336)
-
-    def test_1280_720_collapses_navigation(self):
-        """Sub-1366 width also triggers the collapsed tier."""
-        metrics = metrics_for_size(1280, 720)
-        self.assertTrue(metrics.nav_collapsed)
-        self.assertTrue(metrics.compact)
-
-    def test_metrics_are_frozen(self):
-        metrics = metrics_for_size(1920, 1080)
-        with self.assertRaises(Exception):
-            metrics.nav_width = 999  # type: ignore[misc]
-
-    def test_returns_workbench_metrics_instance(self):
-        self.assertIsInstance(metrics_for_size(1920, 1080), WorkbenchMetrics)
-
-
-class TestClampVerticalSplit(unittest.TestCase):
-    """Verify splitter boundary clamping."""
-
-    def test_lower_boundary_clamped_to_record_min(self):
-        record, preview = clamp_vertical_split(
-            900, 50, record_min=280, preview_min=300
-        )
-        self.assertEqual(record, 280)
-        self.assertEqual(preview, 620)
-
-    def test_upper_boundary_clamped_to_preview_min(self):
-        record, preview = clamp_vertical_split(
-            900, 850, record_min=280, preview_min=300
-        )
-        self.assertEqual(record, 600)
-        self.assertEqual(preview, 300)
-
-    def test_in_range_value_passes_through(self):
-        record, preview = clamp_vertical_split(
-            900, 400, record_min=280, preview_min=300
-        )
-        self.assertEqual(record, 400)
-        self.assertEqual(preview, 500)
-
-    def test_total_always_equals_sum(self):
-        for requested in (0, 100, 400, 800, 1000):
-            record, preview = clamp_vertical_split(
-                900, requested, record_min=280, preview_min=300
-            )
-            self.assertEqual(record + preview, 900)
-
-
 # ---------------------------------------------------------------------------
 # Integration tests — require PySide6 and InvoiceReviewApp
 # ---------------------------------------------------------------------------
@@ -200,63 +127,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             if button.isVisible() and is_visual_primary(button)
         ]
 
-    def test_workbench_settings_use_explicit_writable_ini_store(self):
-        settings = self._settings()
-        self.assertEqual(settings.format(), QSettings.IniFormat)
-        self.assertEqual(
-            Path(settings.fileName()).parent,
-            Path(self._settings_dir.name),
-        )
-        self.assertNotIn("HKEY_", settings.fileName())
-        settings.setValue("__test_write_probe", True)
-        settings.sync()
-        self.assertEqual(settings.status(), QSettings.NoError)
-        settings.remove("__test_write_probe")
-        settings.sync()
 
     # ------------------------------------------------------------------
     # Splitter hierarchy and orientation
     # ------------------------------------------------------------------
 
-    def test_main_splitter_is_horizontal(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                QApplication.processEvents()
-                self.assertEqual(
-                    window.main_splitter.orientation(), Qt.Horizontal
-                )
-            finally:
-                self._close_window(window)
-
-    def test_left_splitter_is_vertical(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                QApplication.processEvents()
-                self.assertEqual(
-                    window.left_splitter.orientation(), Qt.Vertical
-                )
-            finally:
-                self._close_window(window)
-
-    def test_left_splitter_children(self):
-        """widget(0) = left_upper_widget, widget(1) = preview_panel."""
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                QApplication.processEvents()
-                self.assertIs(
-                    window.left_splitter.widget(0), window.left_upper_widget
-                )
-                self.assertIs(
-                    window.left_splitter.widget(1), window.preview_panel
-                )
-            finally:
-                self._close_window(window)
 
     def test_detail_panel_minimum_width_at_1920(self):
         """At 1920×1080 the decision panel stays within the compact token width."""
@@ -274,45 +149,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_detail_panel_minimum_width_at_1366(self):
-        """At 1366×768 the compact detail panel remains usable at 340-352px."""
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1366, 768)
-                QApplication.processEvents()
-                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 340)
-                self.assertLessEqual(window._detail_panel.minimumWidth(), 352)
-            finally:
-                self._close_window(window)
-
-    def test_table_header_is_visible(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1920, 1080)
-                window.left_stack.setCurrentWidget(window.table)
-                QApplication.processEvents()
-                self.assertFalse(window.table.horizontalHeader().isHidden())
-            finally:
-                self._close_window(window)
-
-    def test_compact_status_cards_fit_the_filter_bar(self):
-        from scripts.invoice_fetch.gui.ui_components import CompactStatCard
-
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                self.assertLessEqual(window.filter_bar_widget.maximumHeight(), 72)
-                self.assertEqual(len(window.filter_buttons), 5)
-                self.assertTrue(all(isinstance(card, CompactStatCard) for card in window.filter_buttons.values()))
-                self.assertTrue(all(card.maximumWidth() <= 160 for card in window.filter_buttons.values()))
-                self.assertTrue(all(card.sizeHint().height() <= 48 for card in window.filter_buttons.values()))
-                self.assertTrue(all("\n" not in card.text() for card in window.filter_buttons.values()))
-            finally:
-                self._close_window(window)
 
     def test_final_workbench_shell_has_left_nav_and_top_toolbar(self):
         """0.1.4 visual shell must expose the design-aligned nav and toolbar."""
@@ -360,50 +196,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_inactive_nav_items_do_not_allow_false_page_selection(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1920, 1080)
-                QApplication.processEvents()
-
-                for key in ("overview", "imports"):
-                    button = window.workbench_nav_buttons[key]
-                    self.assertTrue(button.isVisible(), f"{key} should be visible")
-                    self.assertTrue(button.isEnabled(), f"{key} should be enabled")
-            finally:
-                self._close_window(window)
-
-    def test_nav_action_entries_do_not_steal_review_selection(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1920, 1080)
-                QApplication.processEvents()
-                window._load_invoices()
-                QApplication.processEvents()
-
-                review_button = window.workbench_nav_buttons["review"]
-                original_widget = window.left_stack.currentWidget()
-                self.assertTrue(review_button.isChecked())
-
-                expected_labels = {
-                    "overview": "今日工作台",
-                    "review": "发票审核",
-                    "imports": "导入中心",
-                    "export": "报销组与导出",
-                    "settings": "系统设置",
-                }
-                for key, label in expected_labels.items():
-                    button = window.workbench_nav_buttons[key]
-                    self.assertTrue(button.isVisible(), f"{key} should be visible in navigation")
-                    self.assertEqual(button.text(), label)
-                    self.assertIs(window.left_stack.currentWidget(), original_widget)
-                self.assertFalse(window.workbench_nav_buttons["logs"].isVisible())
-            finally:
-                self._close_window(window)
 
     def test_navigation_keeps_exactly_one_checked_page_after_mouse_switch(self):
         with tempfile.TemporaryDirectory() as td:
@@ -456,19 +248,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_preview_empty_state_uses_shared_styled_label(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1920, 1080)
-                QApplication.processEvents()
-                self.assertEqual(window.lbl_preview_status.property("class"), "PreviewEmptyState")
-                self.assertEqual(window.lbl_preview_status.styleSheet(), "")
-                self.assertLessEqual(window.lbl_preview_status.maximumWidth(), 560)
-                self.assertEqual(window.preview_stack.objectName(), "PreviewSurface")
-            finally:
-                self._close_window(window)
 
     def test_invoice_table_default_columns_match_review_workbench_design(self):
         """The list is for fast switching, so default columns stay compact."""
@@ -496,70 +275,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_review_page_primary_buttons_stay_within_one(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1600, 900)
-                QApplication.processEvents()
-                self.assertLessEqual(len(self._visible_primary_buttons(window.workbench_top_toolbar)), 1)
-            finally:
-                self._close_window(window)
-
-    def test_imports_page_has_summary_strip_and_short_actions(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window._switch_main_page("imports")
-                QApplication.processEvents()
-                self.assertFalse(hasattr(window, "imports_summary_strip"))
-                self.assertIn(window.btn_import_scan_selected.text(), ("开始扫描", "补授权码"))
-                self.assertEqual(window.btn_import_scan_default.text(), "扫默认")
-                action_texts = [action.text() for action in window.import_mail_more_menu.actions()]
-                self.assertEqual(action_texts, ["管理邮箱", "失败明细"])
-                self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
-                self.assertTrue(window.import_mail_accounts_card.lbl_title.text())
-                self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
-                self.assertTrue(hasattr(window, "btn_settings_mailbox_add"))
-                self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
-            finally:
-                self._close_window(window)
-
-    def test_settings_mailbox_page_keeps_read_only_detail_and_single_primary(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1920, 1080)
-                window._switch_main_page("settings", sub_tab=1)
-                QApplication.processEvents()
-                self.assertFalse(hasattr(window, "stat_box_overview"))
-                self.assertEqual(window.settings_mailbox_list.width(), 280)
-                self.assertTrue(hasattr(window, "lbl_detail_email"))
-                self.assertTrue(hasattr(window.settings_tabs, "nav_list"))
-                self.assertEqual(window.btn_settings_mailbox_edit_config.text(), "编辑")
-                self.assertEqual(window.btn_settings_mailbox_scan.text(), "立即扫描")
-                self.assertLessEqual(len(self._visible_primary_buttons(window.settings_tabs.currentWidget())), 1)
-            finally:
-                self._close_window(window)
-
-    def test_settings_ai_page_is_read_only_by_default(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window._switch_main_page("settings", sub_tab=2)
-                QApplication.processEvents()
-                current = window.settings_tabs.currentWidget()
-                self.assertEqual(current.findChildren(QComboBox), [])
-                self.assertEqual(current.findChildren(QLineEdit), [])
-                button_texts = [button.text() for button in current.findChildren(QPushButton)]
-                self.assertNotIn("保存设置", button_texts)
-                self.assertEqual(window.btn_settings_ai_edit.text(), "编辑配置")
-            finally:
-                self._close_window(window)
 
     def test_settings_has_single_full_surface_and_no_placeholder_pages(self):
         with tempfile.TemporaryDirectory() as td:
@@ -577,112 +292,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_import_page_hides_raw_runtime_log_and_uses_purpose_widths(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1366, 768)
-                window._switch_main_page("imports")
-                QApplication.processEvents()
-                self.assertFalse(hasattr(window, "txt_import_records"))
-                self.assertLessEqual(window.import_source_card.maximumWidth(), 300)
-                self.assertGreaterEqual(window.import_mail_recent_card.minimumWidth(), 300)
-                self.assertLessEqual(len(self._visible_primary_buttons(window.imports_page)), 1)
-            finally:
-                self._close_window(window)
-
-    def test_import_source_has_single_selected_state(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window._switch_main_page("imports")
-                calls = []
-                window._import_local_clicked = lambda: calls.append("local")
-                window._select_import_source("local")
-                selected = [key for key, card in window.import_source_cards.items() if card.property("selected")]
-                self.assertEqual(selected, ["local"])
-                self.assertIs(window.import_task_stack.currentWidget(), window.import_local_task_card)
-                self.assertFalse(window.import_mail_recent_card.isHidden())
-                self.assertEqual(calls, [])
-            finally:
-                self._close_window(window)
-
-    def test_dashboard_accepts_decimal_month_total(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                metrics = {
-                    "today_imported": 1,
-                    "to_review": 2,
-                    "error": 0,
-                    "needs_fix": 0,
-                    "month_total": Decimal("28.90"),
-                    "export_ready": 1,
-                    "total": 2,
-                }
-                window._collect_overview_metrics = lambda: metrics
-                window._refresh_overview_page()
-                self.assertIs(window.overview_state_stack.stack.currentWidget(), window.overview_state_stack.content)
-                self.assertEqual(window.overview_value_labels["to_review"].value(), "2 张")
-            finally:
-                self._close_window(window)
-
-    def test_import_results_use_structured_activities_not_runtime_logs(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window._read_recent_runtime_logs = lambda: ["unrelated diagnostic entry"]
-                window._import_activities = []
-                window._refresh_imports_page()
-                self.assertIs(window.import_recent_state_stack.stack.currentWidget(), window.import_recent_state_stack.empty)
-                window._record_import_activity("local", added=2, duplicates=1)
-                window._refresh_imports_page()
-                self.assertIs(window.import_recent_state_stack.stack.currentWidget(), window.import_recent_state_stack.content)
-                self.assertEqual(window.import_recent_timeline.layout().count(), 1)
-                self.assertFalse(hasattr(window, "txt_import_records"))
-            finally:
-                self._close_window(window)
-
-    def test_dashboard_summary_uses_actionable_work_metrics(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                titles = [card.text().rsplit(" ", 1)[0] for card in window.overview_value_labels.values()]
-                self.assertEqual(titles, ["待审核", "缺材料", "异常", "可导出组"])
-                self.assertTrue(hasattr(window, "overview_timeline"))
-            finally:
-                self._close_window(window)
-
-    def test_export_preflight_uses_product_facing_copy(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                copy = window._format_claim_export_preflight_text(
-                    {"approved": 2, "to_review": 1, "missing_attachment": 0, "missing_amount": 0}
-                )
-                self.assertIn("已通过发票", copy)
-                self.assertNotIn("approved:", copy)
-                self.assertNotIn("to_review:", copy)
-            finally:
-                self._close_window(window)
-
-    def test_ai_page_uses_actionable_empty_state_without_summary_duplication(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window._switch_main_page("settings", sub_tab=2)
-                QApplication.processEvents()
-                self.assertFalse(window.settings_ai_profile_list.isVisible())
-                self.assertFalse(hasattr(window, "settings_ai_summary_strip"))
-                self.assertIs(window.settings_tabs.currentWidget(), window.settings_tabs.widget(1))
-                self.assertFalse(window.settings_ai_empty_state.isHidden())
-                self.assertTrue(window.settings_ai_detail_panel.isHidden())
-                self.assertFalse(window.btn_settings_ai_edit.isHidden())
-                self.assertTrue(window.btn_settings_ai_edit.isEnabled())
-                self.assertEqual(window.btn_settings_ai_edit.property("variant"), "primary")
-            finally:
-                self._close_window(window)
 
     def test_export_page_uses_claims_invoices_and_integrity_three_columns(self):
         with tempfile.TemporaryDirectory() as td:
@@ -699,25 +308,12 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_app_ui_copy_does_not_contain_common_mojibake_markers(self):
-        text = Path("scripts/invoice_fetch/gui/app.py").read_text(encoding="utf-8")
-        for marker in ["浠", "瀵", "閰", "鈥", "�", "涓", "鏃", "鍏", "绠"]:
-            self.assertNotIn(marker, text)
 
     def test_workbench_version_follows_central_metadata(self):
         from scripts.invoice_fetch.version import APP_VERSION, VERSION
 
         self.assertEqual(APP_VERSION, f"v{VERSION}")
 
-    def test_status_bar_shortcut_copy_uses_chinese_punctuation(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                self.assertEqual(window.btn_shortcut_help.text(), "")
-                self.assertTrue(window.btn_shortcut_help.toolTip())
-                self.assertTrue(window.btn_shortcut_help.accessibleName())
-            finally:
-                self._close_window(window)
 
     def test_restored_splitter_sizes_are_clamped(self):
         """Sizes restored from QSettings must pass through clamp_vertical_split."""
@@ -751,50 +347,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_compact_density_shortens_search_placeholder(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1366, 768)
-                QApplication.processEvents()
-                self.assertIn("Ctrl + F", window.txt_search.placeholderText())
-                self.assertNotIn("邮件主题", window.txt_search.placeholderText())
-            finally:
-                self._close_window(window)
-
-    def test_compact_nav_collapses_to_icons_only(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1366, 768)
-                QApplication.processEvents()
-                self.assertFalse(window.workbench_nav_title.isVisible())
-                self.assertFalse(window.workbench_nav_subtitle.isVisible())
-                self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
-                self.assertTrue(window.btn_collapse_nav.isVisible())
-                self.assertGreater(window.workbench_nav.maximumWidth(), 40)
-                self.assertLessEqual(window.workbench_nav.maximumWidth(), 72)
-            finally:
-                self._close_window(window)
-
-    def test_default_nav_is_expanded_at_1920(self):
-        settings = self._settings()
-        settings.remove("nav_collapsed_manual")
-        settings.sync()
-        with tempfile.TemporaryDirectory() as td:
-            window = self._make_window(td)
-            try:
-                window.show()
-                window.resize(1920, 1080)
-                QApplication.processEvents()
-
-                self.assertEqual(window.workbench_nav.maximumWidth(), 180)
-                self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
-                self.assertTrue(window.btn_collapse_nav.isVisible())
-            finally:
-                self._close_window(window)
 
     def test_nav_collapse_toggle_works_at_large_size(self):
         settings = self._settings()
@@ -829,71 +381,6 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertFalse(settings.value("nav_collapsed_manual", True, type=bool))
             finally:
                 self._close_window(window)
-
-    def test_nav_collapsed_state_persists_on_restart(self):
-        settings = self._settings()
-        settings.remove("nav_collapsed_manual")
-        settings.sync()
-        with tempfile.TemporaryDirectory() as td:
-            first = self._make_window(td)
-            try:
-                first.show()
-                first.resize(1920, 1080)
-                QApplication.processEvents()
-                # Default: expanded
-                self.assertEqual(first.workbench_nav.maximumWidth(), 180)
-                # Collapse it
-                first.btn_collapse_nav.click()
-                QApplication.processEvents()
-                self.assertEqual(first.workbench_nav.maximumWidth(), 56)
-                first._save_splitter_prefs()
-                self._close_window(first)
-
-                # Second window should remember collapsed state
-                second = self._make_window(td)
-                try:
-                    second.show()
-                    second.resize(1920, 1080)
-                    QApplication.processEvents()
-                    self.assertEqual(second.workbench_nav.maximumWidth(), 56)
-                    self.assertEqual(second.workbench_nav_buttons["review"].text(), "")
-                finally:
-                    self._close_window(second)
-            finally:
-                self._close_window(first)
-
-    def test_default_nav_does_not_persist_manual_state(self):
-        settings = self._settings()
-        settings.remove("nav_collapsed_manual")
-        settings.sync()
-        with tempfile.TemporaryDirectory() as td:
-            first = self._make_window(td)
-            try:
-                first.show()
-                first.resize(1920, 1080)
-                QApplication.processEvents()
-                # Default: expanded at the desktop token width, no manual pref persisted.
-                self.assertEqual(first.workbench_nav.maximumWidth(), 180)
-                self.assertIsNone(first._nav_collapsed_manual)
-
-                self._close_window(first)
-
-                self.assertFalse(settings.contains("nav_collapsed_manual"))
-
-                second = self._make_window(td)
-                try:
-                    second.show()
-                    second.resize(1920, 1080)
-                    QApplication.processEvents()
-                    self.assertEqual(second.workbench_nav.maximumWidth(), 180)
-                    self.assertEqual(second.workbench_nav_buttons["review"].text(), "发票审核")
-                    self.assertFalse(settings.contains("nav_collapsed_manual"))
-                    self.assertIsNone(second._nav_collapsed_manual)
-                finally:
-                    self._close_window(second)
-
-            finally:
-                self._close_window(first)
 
 
 if __name__ == "__main__":

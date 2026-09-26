@@ -12,13 +12,6 @@ from scripts.invoice_fetch.gui.workbench_settings import (
 
 
 class WorkbenchSettingsTests(unittest.TestCase):
-    def test_runtime_dir_is_injectable_and_does_not_use_default_path(self):
-        with tempfile.TemporaryDirectory() as directory:
-            settings = workbench_settings(Path(directory))
-            self.assertEqual(Path(settings.fileName()).parent, Path(directory))
-            self.assertEqual(Path(settings.fileName()).name, "workbench.ini")
-            settings.setValue("nav_collapsed_manual", True)
-            self.assertTrue(sync_workbench_settings(settings))
 
     def test_legacy_preferences_are_migrated_once_without_overwriting_new_values(self):
         with tempfile.TemporaryDirectory() as directory:

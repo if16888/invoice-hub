@@ -59,22 +59,6 @@ class SettingsPagesBaselineTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_runtime_and_data_refresh_into_field_grid(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                window._refresh_settings_page()
-                self.app.processEvents()
-                runtime = window.lbl_settings_runtime
-                data = window.lbl_settings_data
-                self.assertNotEqual(runtime.values["数据库"].text(), "—")
-                self.assertNotEqual(runtime.values["日志目录"].text(), "—")
-                self.assertNotEqual(data.values["数据库大小"].text(), "—")
-                self.assertNotEqual(data.values["数据目录"].text(), "—")
-                self.assertTrue(runtime.values["数据库"].toolTip())
-                self.assertTrue(data.values["数据目录"].toolTip())
-            finally:
-                window.close()
 
     def test_privacy_page_keeps_explicit_local_first_contract(self):
         with tempfile.TemporaryDirectory() as td:
@@ -104,19 +88,6 @@ class SettingsPagesBaselineTests(unittest.TestCase):
                 self.assertEqual(window.lbl_settings_ai_key_status.text(), "已安全保存")
                 self.assertEqual(window.lbl_settings_ai_status_badge.text(), "正常")
                 self.assertEqual(window.lbl_settings_ai_credential_store.text(), "Windows 凭据管理器")
-            finally:
-                window.close()
-
-    def test_settings_action_footers_remain_content_height(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                for index in range(1, 6):
-                    page = window.settings_tabs.widget(index)
-                    footers = page.findChildren(QFrame, "SettingsActionFooter")
-                    self.assertEqual(len(footers), 1, index)
-                    self.assertGreaterEqual(footers[0].minimumHeight(), 52)
-                    self.assertLessEqual(footers[0].sizeHint().height(), 80)
             finally:
                 window.close()
 

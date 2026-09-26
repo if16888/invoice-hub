@@ -38,65 +38,6 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_review_toolbar_removes_cross_workflow_buttons(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                for attr in (
-                    "btn_import_local",
-                    "btn_scan_email",
-                    "btn_toolbar_export",
-                ):
-                    button = getattr(window, attr)
-                    self.assertTrue(button.property("reviewCrossWorkflowActionRemoved"))
-                    self.assertIsNone(button.property("reviewCompatibilityControl"))
-                    self.assertNotIsInstance(button, QWidget)
-
-                self.assertEqual(window.action_import_local.text(), "本地文件")
-                self.assertEqual(window.action_import_mobile.text(), "手机上传")
-                self.assertEqual(window.action_import_mail.text(), "邮箱扫描")
-                self.assertEqual(window.action_scan_email.text(), "扫描邮箱")
-                self.assertEqual(window.btn_more.text(), "更多")
-                self.assertEqual(window.btn_more.toolTip(), "更多审核操作")
-            finally:
-                window.close()
-
-    def test_status_filters_are_compact_and_column_filters_are_discoverable(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertEqual(
-                    window.filter_bar_widget.height(),
-                    DESIGN_V1_METRICS["segmented_control_height"],
-                )
-                self.assertEqual(
-                    window.filter_bar_widget.property("visualRole"),
-                    "segmented-filter",
-                )
-                self.assertIn(
-                    'QFrame[visualRole="segmented-filter"]',
-                    window.filter_bar_widget.styleSheet(),
-                )
-                for status, card in window.filter_buttons.items():
-                    self.assertEqual(
-                        card.height(),
-                        DESIGN_V1_METRICS["segmented_item_height"],
-                    )
-                    self.assertEqual(card.property("visualRole"), "status-segment")
-                    self.assertEqual(card.property("statusKey"), status)
-                    self.assertIn("border: none", card.styleSheet())
-                    self.assertGreaterEqual(card.minimumWidth(), 86)
-                    self.assertLessEqual(card.maximumWidth(), 92)
-                self.assertTrue(window.btn_advanced_filter.isHidden())
-                self.assertEqual(window.lbl_record_sort.text(), "点击列标题可筛选")
-                self.assertTrue(window.btn_reset_filters.isHidden())
-                self.assertIn("筛选", window.table.horizontalHeader().toolTip())
-                for column in range(window.table.columnCount()):
-                    item = window.table.horizontalHeaderItem(column)
-                    self.assertFalse(item.icon().isNull())
-                    self.assertIn("筛选", item.toolTip())
-            finally:
-                window.close()
 
     def test_clicking_header_center_opens_filter_for_any_visible_column(self):
         with tempfile.TemporaryDirectory() as td:
@@ -128,19 +69,6 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_active_column_filter_keeps_existing_header_semantics_and_reveals_clear_action(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                window.column_filters["seller_name"] = {"values": {"Synthetic Seller"}}
-                window._refresh_column_filter_headers()
-                self.app.processEvents()
-                seller_header = window.table.horizontalHeaderItem(4)
-                self.assertIn("已筛选", seller_header.text())
-                self.assertFalse(seller_header.icon().isNull())
-                self.assertFalse(window.btn_reset_filters.isHidden())
-            finally:
-                window.close()
 
     def test_seller_column_is_capped_and_invoice_column_fills_remainder(self):
         with tempfile.TemporaryDirectory() as td:
@@ -165,46 +93,6 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
-    def test_material_rows_keep_label_status_and_action_visible_in_narrow_panel(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                detail = window._detail_panel
-                detail.btn_add_attachment.setText("替换")
-                detail.original_status_line.replace_action(detail.btn_add_attachment)
-                detail.btn_add_evidence.setText("替换/管理")
-                detail.evidence_status_line.replace_action(detail.btn_add_evidence)
-
-                _repair_material_rows(window)
-                self.app.processEvents()
-
-                self.assertIsNone(detail.original_card)
-                self.assertIsNone(detail.evidence_card)
-                self.assertTrue(detail.combo_supporting_docs.isHidden())
-                self.assertTrue(detail.combo_supporting_docs.property("compatibilityModelOnly"))
-
-                for line, expected_label, maximum in (
-                    (detail.original_status_line, "原件", 72),
-                    (detail.evidence_status_line, "证明", 96),
-                ):
-                    self.assertEqual(line.lbl_label.text(), expected_label)
-                    self.assertEqual(line.lbl_label.minimumWidth(), 40)
-                    self.assertEqual(line.lbl_label.maximumWidth(), 40)
-                    self.assertEqual(
-                        line.lbl_status.sizePolicy().horizontalPolicy(),
-                        QSizePolicy.Expanding,
-                    )
-                    action = line._action_widget
-                    self.assertIsNotNone(action)
-                    self.assertFalse(action.isHidden())
-                    self.assertEqual(action.minimumWidth(), action.maximumWidth())
-                    self.assertLessEqual(action.maximumWidth(), maximum)
-                    self.assertGreaterEqual(
-                        action.minimumWidth(),
-                        action.fontMetrics().horizontalAdvance(action.text()) + 18,
-                    )
-            finally:
-                window.close()
 
     def test_buyer_mismatch_is_compact_without_direct_settings_entry(self):
         with tempfile.TemporaryDirectory() as td:

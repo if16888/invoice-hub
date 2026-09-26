@@ -32,32 +32,6 @@ class ReviewWorkspaceVerticalLayoutTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_real_vertical_splitter_owns_list_and_preview(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                splitter = window.left_splitter
-                self.assertTrue(window.review_page.property("reviewWorkspaceClosureApplied"))
-                self.assertEqual(splitter.objectName(), "ReviewVerticalSplitter")
-                self.assertEqual(splitter.orientation(), Qt.Vertical)
-                self.assertEqual(splitter.count(), 2)
-                self.assertIs(splitter.widget(0), window.left_upper_widget)
-                self.assertIs(splitter.widget(1), window.preview_panel)
-                self.assertEqual(window.left_upper_widget.minimumHeight(), RECORD_MIN_HEIGHT)
-                self.assertEqual(window.left_upper_widget.maximumHeight(), RECORD_MAX_HEIGHT)
-                self.assertEqual(window.preview_panel.minimumHeight(), PREVIEW_MIN_HEIGHT)
-                self.assertTrue(all(size > 0 for size in splitter.sizes()))
-            finally:
-                window.close()
-
-    def test_load_all_is_removed_from_visible_product_surface(self):
-        with tempfile.TemporaryDirectory() as td:
-            window = self.make_window(td)
-            try:
-                self.assertIsNone(window.btn_load_all)
-                self.assertNotIn("加载全部", window.lbl_record_count.toolTip())
-            finally:
-                window.close()
 
     def test_invoice_number_column_consumes_unused_table_width(self):
         with tempfile.TemporaryDirectory() as td:

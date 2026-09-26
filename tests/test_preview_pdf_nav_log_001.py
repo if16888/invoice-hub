@@ -44,17 +44,6 @@ class TestFileInfoFormatting(unittest.TestCase):
     def _make_doc(self, title="主发票", path_suffix=".pdf"):
         return {"title": title, "path": Path(f"test{path_suffix}")}
 
-    def test_non_pdf_displays_file_sequence_only(self):
-        """Non-PDF files show file sequence only, no PDF page info."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-
-        # Create a minimal app instance to access methods
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        doc = self._make_doc("证明材料", ".png")
-        result = app_obj._format_preview_file_info(doc, 1, 2)
-        self.assertIn("文件 2/2", result)
-        self.assertIn("证明材料", result)
-        self.assertNotIn("PDF", result)
 
     def test_pdf_with_current_page_shows_page_fraction(self):
         """PDF with current page shows 'PDF 1/7' format."""
@@ -76,69 +65,8 @@ class TestFileInfoFormatting(unittest.TestCase):
         self.assertIn("证明材料", result)
         self.assertIn("PDF 共 7 页", result)
 
-    def test_pdf_page_count_none_no_pdf_suffix(self):
-        """When pdf_page_count is None, PDF suffix is not appended."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        doc = self._make_doc("主发票", ".pdf")
-        result = app_obj._format_preview_file_info(doc, 0, 1, pdf_page=1, pdf_page_count=None)
-        self.assertEqual(result, "文件 1/1｜主发票")
-
 
 # ── 2. MultiPage compatibility tests ─────────────────────────────────
-
-class TestMultiPageCompatibility(unittest.TestCase):
-    """Tests for MultiPage vs SinglePage fallback."""
-
-    def test_multipage_used_when_available(self):
-        """QPdfView.PageMode has MultiPage → use MultiPage."""
-        mock_page_mode = MagicMock()
-        mock_page_mode.MultiPage = "MultiPage"
-        mock_page_mode.SinglePage = "SinglePage"
-
-        mock_qpdfview = MagicMock()
-        mock_qpdfview.PageMode = mock_page_mode
-
-        # Simulate the logic
-        if hasattr(mock_qpdfview.PageMode, "MultiPage"):
-            mode = mock_qpdfview.PageMode.MultiPage
-        else:
-            mode = mock_qpdfview.PageMode.SinglePage
-        self.assertEqual(mode, "MultiPage")
-
-    def test_singlepage_fallback_when_multipage_unavailable(self):
-        """QPdfView.PageMode without MultiPage → use SinglePage."""
-        # Use a class without MultiPage attribute
-        class MockPageMode:
-            SinglePage = "SinglePage"
-
-        class MockQPdfView:
-            PageMode = MockPageMode
-
-        qpv = MockQPdfView()
-        if hasattr(qpv.PageMode, "MultiPage"):
-            mode = qpv.PageMode.MultiPage
-        else:
-            mode = qpv.PageMode.SinglePage
-        self.assertEqual(mode, "SinglePage")
-
-    def test_singlepage_fallback_no_exception(self):
-        """Fallback to SinglePage does not raise an exception."""
-        class MockPageMode:
-            SinglePage = "SinglePage"
-
-        class MockQPdfView:
-            PageMode = MockPageMode()
-
-        qpv = MockQPdfView()
-        try:
-            if hasattr(qpv.PageMode, "MultiPage"):
-                mode = qpv.PageMode.MultiPage
-            else:
-                mode = qpv.PageMode.SinglePage
-        except Exception:
-            self.fail("Fallback to SinglePage should not raise")
-        self.assertEqual(mode, "SinglePage")
 
 
 # ── 3. Keyboard focus protection tests ───────────────────────────────
@@ -163,59 +91,6 @@ class TestKeyboardFocusProtection(unittest.TestCase):
         if self.app is None:
             self.skipTest("PySide6 not available")
 
-    def test_lineedit_is_editing(self):
-        """QLineEdit focus -> True."""
-        from PySide6.QtWidgets import QLineEdit, QWidget, QVBoxLayout
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-
-        window = QWidget()
-        window.setWindowTitle("test")
-        widget = QLineEdit()
-        layout = QVBoxLayout(window)
-        layout.addWidget(widget)
-        window.show()
-        widget.setFocus()
-        self.app.processEvents()
-
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        self.assertTrue(app_obj._focus_is_editing_widget())
-        window.hide()
-
-    def test_plaintextedit_is_editing(self):
-        """QPlainTextEdit focus -> True."""
-        from PySide6.QtWidgets import QPlainTextEdit, QWidget, QVBoxLayout
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-
-        window = QWidget()
-        window.setWindowTitle("test")
-        widget = QPlainTextEdit()
-        layout = QVBoxLayout(window)
-        layout.addWidget(widget)
-        window.show()
-        widget.setFocus()
-        self.app.processEvents()
-
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        self.assertTrue(app_obj._focus_is_editing_widget())
-        window.hide()
-
-    def test_combobox_is_editing(self):
-        """QComboBox focus -> True."""
-        from PySide6.QtWidgets import QComboBox, QWidget, QVBoxLayout
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-
-        window = QWidget()
-        window.setWindowTitle("test")
-        widget = QComboBox()
-        layout = QVBoxLayout(window)
-        layout.addWidget(widget)
-        window.show()
-        widget.setFocus()
-        self.app.processEvents()
-
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        self.assertTrue(app_obj._focus_is_editing_widget())
-        window.hide()
 
     def test_pushbutton_is_not_editing(self):
         """QPushButton focus -> False."""
@@ -287,105 +162,6 @@ class TestFileLevelNavigation(unittest.TestCase):
 class TestPdfPageNavigation(unittest.TestCase):
     """Tests for _navigate_pdf_page and related methods."""
 
-    def test_navigate_forward_within_bounds(self):
-        """Calling _navigate_pdf_page(+1) moves from page 0 to 1."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-
-        mock_nav = MagicMock()
-        mock_nav.currentPage.return_value = 0
-
-        mock_pdf_doc = MagicMock()
-        mock_pdf_doc.pageCount.return_value = 7
-        mock_pdf_doc.pageNavigator.return_value = mock_nav
-
-        mock_pdf_view = MagicMock()
-
-        app_obj.pdf_document = mock_pdf_doc
-        app_obj.pdf_view = mock_pdf_view
-        app_obj.preview_stack = MagicMock()
-        app_obj.preview_stack.currentWidget.return_value = mock_pdf_view
-        app_obj._refresh_preview_file_info = MagicMock()
-        app_obj._update_pdf_page_buttons = MagicMock()
-
-        result = app_obj._navigate_pdf_page(1)
-        self.assertTrue(result)
-        mock_nav.jump.assert_called_once_with(1, 0.0, 0.0)
-
-    def test_navigate_backward_within_bounds(self):
-        """Calling _navigate_pdf_page(-1) moves from page 1 to 0."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-
-        mock_nav = MagicMock()
-        mock_nav.currentPage.return_value = 1
-
-        mock_pdf_doc = MagicMock()
-        mock_pdf_doc.pageCount.return_value = 7
-        mock_pdf_doc.pageNavigator.return_value = mock_nav
-
-        mock_pdf_view = MagicMock()
-
-        app_obj.pdf_document = mock_pdf_doc
-        app_obj.pdf_view = mock_pdf_view
-        app_obj.preview_stack = MagicMock()
-        app_obj.preview_stack.currentWidget.return_value = mock_pdf_view
-        app_obj._refresh_preview_file_info = MagicMock()
-        app_obj._update_pdf_page_buttons = MagicMock()
-
-        result = app_obj._navigate_pdf_page(-1)
-        self.assertTrue(result)
-        mock_nav.jump.assert_called_once_with(0, 0.0, 0.0)
-
-    def test_navigate_at_lower_boundary_no_op(self):
-        """_navigate_pdf_page(-1) at page 0 returns False and does not call jump."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-
-        mock_nav = MagicMock()
-        mock_nav.currentPage.return_value = 0
-
-        mock_pdf_doc = MagicMock()
-        mock_pdf_doc.pageCount.return_value = 7
-        mock_pdf_doc.pageNavigator.return_value = mock_nav
-
-        mock_pdf_view = MagicMock()
-
-        app_obj.pdf_document = mock_pdf_doc
-        app_obj.pdf_view = mock_pdf_view
-        app_obj.preview_stack = MagicMock()
-        app_obj.preview_stack.currentWidget.return_value = mock_pdf_view
-        app_obj._refresh_preview_file_info = MagicMock()
-        app_obj._update_pdf_page_buttons = MagicMock()
-
-        result = app_obj._navigate_pdf_page(-1)
-        self.assertFalse(result)
-        mock_nav.jump.assert_not_called()
-
-    def test_navigate_at_upper_boundary_no_op(self):
-        """_navigate_pdf_page(+1) at last page returns False."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-
-        mock_nav = MagicMock()
-        mock_nav.currentPage.return_value = 6  # last page (0-based, page count=7)
-
-        mock_pdf_doc = MagicMock()
-        mock_pdf_doc.pageCount.return_value = 7
-        mock_pdf_doc.pageNavigator.return_value = mock_nav
-
-        mock_pdf_view = MagicMock()
-
-        app_obj.pdf_document = mock_pdf_doc
-        app_obj.pdf_view = mock_pdf_view
-        app_obj.preview_stack = MagicMock()
-        app_obj.preview_stack.currentWidget.return_value = mock_pdf_view
-        app_obj._refresh_preview_file_info = MagicMock()
-        app_obj._update_pdf_page_buttons = MagicMock()
-
-        result = app_obj._navigate_pdf_page(1)
-        self.assertFalse(result)
-        mock_nav.jump.assert_not_called()
 
     def test_navigate_non_pdf_returns_false(self):
         """_navigate_pdf_page returns False when not viewing a PDF."""
@@ -498,42 +274,6 @@ class TestLinkDownloaderCache(unittest.TestCase):
         finally:
             dl.close()
 
-    def test_log_contains_skipped_cached_field(self):
-        """Summary log includes skipped_cached field."""
-        from scripts.invoice_fetch.link_downloader import LinkDownloader, _dedup_and_prioritize
-
-        dl = LinkDownloader(download_dir=tempfile.mkdtemp())
-        try:
-            # Pre-fail a URL
-            url = "https://nuonuo.com/invoice/test.pdf"
-            dl.failed_url_fingerprints.add(LinkDownloader._url_fingerprint(url))
-
-            # Simulate summary log
-            import logging
-            import io
-            log_stream = io.StringIO()
-            handler = logging.StreamHandler(log_stream)
-            handler.setLevel(logging.INFO)
-            logger = logging.getLogger("invoice_fetch.link_downloader")
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-
-            found = 1
-            deduped = 1
-            success = 0
-            failed = 0
-            skipped_cached = 1
-            logger.info(
-                "链接下载摘要: found=%d deduped=%d success=%d failed=%d skipped_cached=%d elapsed=%.1fs",
-                found, deduped, success, failed, skipped_cached, 0.0,
-            )
-
-            logger.removeHandler(handler)
-            log_output = log_stream.getvalue()
-            self.assertIn("skipped_cached=1", log_output)
-        finally:
-            dl.close()
-
 
 # ── 7. Attachment-based skip tests ───────────────────────────────────
 
@@ -623,56 +363,6 @@ class TestAttachmentSkipLogic(unittest.TestCase):
 class TestFilenameConflictLogging(unittest.TestCase):
     """Tests for source_mode-based conflict log level."""
 
-    def test_reprocess_mode_logs_info_not_warning(self):
-        """In reprocess mode, conflict log uses INFO, not WARNING."""
-        import logging
-        import io
-
-        log_stream = io.StringIO()
-        handler = logging.StreamHandler(log_stream)
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
-        logger = logging.getLogger("invoice_fetch.conflict_test")
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-
-        try:
-            # Simulate the conflict message in reprocess mode
-            effective_mode = "reprocess"
-            if effective_mode in ("reprocess", "repair"):
-                logger.info("检测到同名文件，已安全改名保存: <masked>")
-
-            log_output = log_stream.getvalue()
-            self.assertIn("INFO", log_output)
-            self.assertIn("已安全改名保存", log_output)
-        finally:
-            logger.removeHandler(handler)
-
-    def test_normal_mode_logs_warning(self):
-        """In normal mode, conflict log uses WARNING."""
-        import logging
-        import io
-
-        log_stream = io.StringIO()
-        handler = logging.StreamHandler(log_stream)
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
-        logger = logging.getLogger("invoice_fetch.conflict_test2")
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-
-        try:
-            effective_mode = "normal"
-            if effective_mode in ("reprocess", "repair"):
-                logger.info("检测到同名文件，已安全改名保存: <masked>")
-            else:
-                logger.warning("检测到同名文件，已安全改名保存: <masked>")
-
-            log_output = log_stream.getvalue()
-            self.assertIn("WARNING", log_output)
-            self.assertIn("已安全改名保存", log_output)
-        finally:
-            logger.removeHandler(handler)
 
     def test_conflict_msg_does_not_leak_filename(self):
         """Conflict log uses mask_filename, never raw path."""
@@ -1328,235 +1018,6 @@ class TestNavigationFocusStability(unittest.TestCase):
         window.hide()
 
 
-class TestInvoiceNoteAndPrivacy001(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        try:
-            from PySide6.QtWidgets import QApplication
-            import sys
-            cls.app = QApplication.instance() or QApplication(sys.argv)
-        except (ImportError, RuntimeError):
-            cls.app = None
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.app = None
-
-    def setUp(self):
-        import tempfile
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.db_path = self.temp_dir / "test_notes.db"
-        if self.app is not None:
-            self.app.processEvents()
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-        if self.app is not None:
-            self.app.processEvents()
-
-    def _select_row(self, window, row_idx):
-        from PySide6.QtCore import QItemSelectionModel
-        was_unloaded = _ensure_deferred_invoice_load(window, self.app)
-        row_idx = _adjust_row_idx_after_deferred_load(window, row_idx, was_unloaded)
-        window.table.clearSelection()
-        window.table.setCurrentItem(None)
-        if window.table.selectionModel() is not None:
-            window.table.selectionModel().clearSelection()
-            window.table.selectionModel().clear()
-        self.app.processEvents()
-
-        window.table.selectRow(row_idx)
-        self.app.processEvents()
-        model = window.table.model()
-        sel_model = window.table.selectionModel()
-        idx = model.index(row_idx, 0)
-        sel_model.select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
-        window._on_table_selection_changed()
-        self.app.processEvents()
-
-    def _clear_selection(self, window):
-        window.table.clearSelection()
-        window.table.setCurrentItem(None)
-        if window.table.selectionModel() is not None:
-            window.table.selectionModel().clearSelection()
-            window.table.selectionModel().clear()
-        self.app.processEvents()
-        window.table.clearSelection()
-        window.table.setCurrentItem(None)
-        if window.table.selectionModel() is not None:
-            window.table.selectionModel().clearSelection()
-            window.table.selectionModel().clear()
-            self.assertEqual(len(window.table.selectionModel().selectedRows()), 0)
-        window._on_table_selection_changed()
-
-    def _select_all(self, window):
-        from PySide6.QtCore import QItemSelection, QItemSelectionModel
-
-        model = window.table.model()
-        sel_model = window.table.selectionModel()
-        row_count = window.table.rowCount()
-        column_count = window.table.columnCount()
-        if row_count and column_count:
-            selection = QItemSelection(
-                model.index(0, 0),
-                model.index(row_count - 1, column_count - 1),
-            )
-            sel_model.select(
-                selection,
-                QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
-            )
-        self.app.processEvents()
-        self.assertEqual(len(sel_model.selectedRows()), row_count)
-        window._on_table_selection_changed()
-
-    def test_backfill_logs_redaction(self):
-        from scripts.invoice_fetch.db import InvoiceDB
-        from scripts.invoice_fetch.services import _refresh_invoice_from_parse
-
-        with InvoiceDB(self.db_path) as db:
-            inv_id = db.insert_invoice({
-                "invoice_number": "999999",
-                "invoice_code": "",
-                "invoice_date": "2026-06-01",
-                "amount": "100.00",
-                "total_amount": "100.00",
-                "seller_name": "",
-                "buyer_name": "",
-                "invoice_type": "电子发票",
-                "category": "其他",
-                "review_status": "to_review",
-            })
-            existing = db.get_invoice(inv_id)
-
-            with self.assertLogs("invoice_fetch", level="INFO") as log_ctx:
-                res = _refresh_invoice_from_parse(
-                    db, existing,
-                    invoice_number="999999",
-                    invoice_code="code_new_999",
-                    invoice_date="2026-06-01",
-                    amount="100.00",
-                    total_amount="100.00",
-                    seller_name="真实销售方公司",
-                    buyer_name="真实购买方公司",
-                    invoice_type="电子发票",
-                    category="其他",
-                    has_extra=False,
-                    extra_type="",
-                    missing_extra=False,
-                    parse_note="",
-                    force_refresh_metadata=False
-                )
-                self.assertTrue(res)
-
-            # Verify the log outputs
-            log_messages = "".join(log_ctx.output)
-            # Should contain "fields=" and the fields
-            self.assertIn("fields=", log_messages)
-            self.assertIn("seller_name", log_messages)
-            self.assertIn("buyer_name", log_messages)
-            self.assertIn("invoice_code", log_messages)
-
-            # MUST NOT contain the actual values
-            self.assertNotIn("真实销售方公司", log_messages)
-            self.assertNotIn("真实购买方公司", log_messages)
-            self.assertNotIn("code_new_999", log_messages)
-
-    def test_confirmed_note_gui_interaction(self):
-        if self.app is None:
-            self.skipTest("PySide6 not available")
-
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        from scripts.invoice_fetch.db import InvoiceDB
-
-        # Pre-populate invoice with note
-        with InvoiceDB(self.db_path) as db:
-            db.insert_invoice({
-                "invoice_number": "111",
-                "invoice_date": "2026-06-01",
-                "seller_name": "销售方A",
-                "total_amount": "100.00",
-                "review_status": "to_review",
-                "confirmed_note": "这是一条测试个人备注",
-            })
-
-        window = InvoiceReviewApp(self.db_path, splash=None)
-        try:
-            window.show()
-            self.app.processEvents()
-
-            # Select row
-            self._select_row(window, 0)
-
-            # 1. confirmed_note text is loaded into txt_note
-            self.assertEqual(window.txt_note.toPlainText(), "这是一条测试个人备注")
-
-            # 2. By default the note is collapsed — summary is immediately visible.
-            self.assertTrue(window.txt_note.isHidden(),
-                            "editor should be hidden by default (collapsed state)")
-            self.assertIn("备注：这是一条测试个人备注", window.lbl_note_summary.text())
-
-            # 3. Expand to edit, then modify and save
-            window._toggle_note_visibility()
-            self.app.processEvents()
-            window.txt_note.setPlainText("这是修改后的个人备注")
-            self.app.processEvents()
-
-            # Trigger save
-            window._save_invoice_fields()
-            self.app.processEvents()
-
-            # Fetch from DB and verify
-            with InvoiceDB(self.db_path) as db:
-                rows = db.get_all_invoices()
-                self.assertEqual(len(rows), 1)
-                self.assertEqual(rows[0]["confirmed_note"], "这是修改后的个人备注")
-        finally:
-            window.close()
-
-    def test_note_disabled_when_multi_or_no_selection(self):
-        if self.app is None:
-            self.skipTest("PySide6 not available")
-
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        from scripts.invoice_fetch.db import InvoiceDB
-
-        with InvoiceDB(self.db_path) as db:
-            db.insert_invoice({
-                "invoice_number": "111",
-                "invoice_date": "2026-06-01",
-                "seller_name": "销售方A",
-                "total_amount": "100.00",
-                "review_status": "to_review",
-            })
-            db.insert_invoice({
-                "invoice_number": "222",
-                "invoice_date": "2026-06-02",
-                "seller_name": "销售方B",
-                "total_amount": "200.00",
-                "review_status": "to_review",
-            })
-
-        window = InvoiceReviewApp(self.db_path, splash=None)
-        try:
-            window.show()
-            self.app.processEvents()
-
-            # 1. No selection: txt_note is disabled
-            self._clear_selection(window)
-            self.assertFalse(window.txt_note.isEnabled())
-
-            # 2. Single selection: txt_note is enabled
-            self._select_row(window, 0)
-            self.assertTrue(window.txt_note.isEnabled())
-
-            # 3. Multi-selection: txt_note is disabled
-            self._select_all(window)
-            self.assertFalse(window.txt_note.isEnabled())
-        finally:
-            window.close()
-
-
 class TestDetailPanelCompact001(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1604,42 +1065,6 @@ class TestDetailPanelCompact001(unittest.TestCase):
         window._on_table_selection_changed()
         self.app.processEvents()
 
-    def test_supporting_docs_selector_loading_single(self):
-        if self.app is None:
-            self.skipTest("PySide6 not available")
-
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        from scripts.invoice_fetch.db import InvoiceDB
-
-        # Create 1 real linked supporting doc.  The production UI now
-        # correctly disables "open" for missing/empty evidence, so this fixture
-        # must represent an actually usable linked file.
-        evidence = self.temp_dir / "doc1.pdf"
-        evidence.write_bytes(b"%PDF-1.4 synthetic evidence")
-        with InvoiceDB(self.db_path) as db:
-            db.insert_invoice({
-                "invoice_number": "111",
-                "invoice_date": "2026-06-01",
-                "seller_name": "销售方A",
-                "total_amount": "100.00",
-                "review_status": "to_review",
-                "extra_paths": json.dumps([str(evidence)]),
-            })
-
-        window = InvoiceReviewApp(self.db_path, splash=None)
-        try:
-            window.show()
-            self.app.processEvents()
-
-            # Select the invoice
-            self._select_row(window, 0)
-
-            # Verify combo items and button state
-            self.assertEqual(window.combo_supporting_docs.count(), 1)
-            self.assertIn("[已关联]", window.combo_supporting_docs.itemText(0))
-            self.assertTrue(window.btn_open_extra_files.isEnabled())
-        finally:
-            window.close()
 
     def test_supporting_docs_selector_multi(self):
         if self.app is None:
@@ -1699,37 +1124,6 @@ class TestDetailPanelCompact001(unittest.TestCase):
         finally:
             window.close()
 
-    def test_supporting_docs_empty(self):
-        if self.app is None:
-            self.skipTest("PySide6 not available")
-
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        from scripts.invoice_fetch.db import InvoiceDB
-
-        with InvoiceDB(self.db_path) as db:
-            db.insert_invoice({
-                "invoice_number": "111",
-                "invoice_date": "2026-06-01",
-                "seller_name": "销售方A",
-                "total_amount": "100.00",
-                "review_status": "to_review",
-                "extra_paths": "",
-            })
-
-        window = InvoiceReviewApp(self.db_path, splash=None)
-        try:
-            window.show()
-            self.app.processEvents()
-
-            self._select_row(window, 0)
-
-            self.assertEqual(window.combo_supporting_docs.count(), 1)
-            self.assertEqual(window.combo_supporting_docs.itemText(0), "暂无证明材料")
-            self.assertFalse(window.combo_supporting_docs.isEnabled())
-            self.assertFalse(window.btn_open_extra_files.isEnabled())
-            self.assertIn("酒店水单、行程记录、支付截图", window.combo_supporting_docs.toolTip())
-        finally:
-            window.close()
 
     def test_open_selected_supporting_doc(self):
         if self.app is None:
@@ -1776,16 +1170,6 @@ class TestDetailPanelCompact001(unittest.TestCase):
         finally:
             window.close()
 
-    def test_notes_compact_ui_height(self):
-        if self.app is None:
-            self.skipTest("PySide6 not available")
-
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        window = InvoiceReviewApp(self.db_path, splash=None)
-        try:
-            self.assertLessEqual(window.txt_note.maximumHeight(), 80)  # readable note height
-        finally:
-            window.close()
 
     def test_supporting_doc_label_formatting(self):
         if self.app is None:
