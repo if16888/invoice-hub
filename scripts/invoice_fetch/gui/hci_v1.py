@@ -768,17 +768,12 @@ def _history_recheck_finished(window, result: dict) -> None:
 
     processed = int(result.get("processed_emails", 0) or 0)
     added = int(result.get("added_or_restored", 0) or 0)
-    recent = getattr(window, "import_mail_recent_card", None)
-    if recent is not None:
-        suffix = "（达到本次 200 封上限）" if result.get("limit_reached") else ""
-        recent.set_hint(
-            f"重新检查完成：处理 {processed} 封已知邮件，新增或恢复 {added} 条记录{suffix}。"
-        )
-
     recorder = getattr(window, "_record_import_activity", None)
-    if callable(recorder):
+    if callable(recorder) and processed:
         try:
-            recorder("邮箱重新检查", scanned=processed, added=added)
+            failed = int(result.get("failed", 0) or 0)
+            recorder("邮箱重新检查", scanned=processed, added=added, failed=failed,
+                     status="failed" if failed else "complete")
         except TypeError:
             pass
 

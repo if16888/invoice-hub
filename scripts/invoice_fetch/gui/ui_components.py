@@ -43,6 +43,7 @@ try:
         QListWidget,
         QListWidgetItem,
         QStackedWidget,
+        QScrollArea,
     )
 
     _HAS_QT = True
@@ -275,6 +276,9 @@ if _HAS_QT:
             self.setWordWrap(True)
             self.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            policy = self.sizePolicy()
+            policy.setHeightForWidth(True)
+            self.setSizePolicy(policy)
             self.setMinimumHeight(0)
             self.setMaximumHeight(16777215)
             self.set_value(text)
@@ -815,6 +819,8 @@ if _HAS_QT:
             self.setObjectName("EntityList")
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self.setAlternatingRowColors(True)
+            self.setResizeMode(QListWidget.Adjust)
+            self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         def add_entity_row(
             self,
@@ -923,8 +929,32 @@ if _HAS_QT:
             self.host_layout.setSpacing(0)
             layout.addWidget(self.host)
 
+    class SettingsPageStack(QStackedWidget):
+        """Only the active page determines the scrollable content height."""
+
+        def sizeHint(self):
+            page = self.currentWidget()
+            return page.sizeHint() if page is not None else QSize(0, 0)
+
+        def minimumSizeHint(self):
+            page = self.currentWidget()
+            return QSize(0, page.minimumSizeHint().height() if page is not None else 0)
+
+        def hasHeightForWidth(self):
+            return True
+
+        def heightForWidth(self, width):
+            page = self.currentWidget()
+            if page is None:
+                return 0
+            layout = page.layout()
+            height = layout.totalHeightForWidth(width) if layout is not None else -1
+            return max(page.minimumSizeHint().height(), height)
+
     class SecondaryNavStack(QFrame):
         """Two-column secondary navigation with a compatibility tab-like API."""
+
+        viewportResized = Signal()
 
         def __init__(self, parent: QWidget | None = None) -> None:
             super().__init__(parent)
@@ -942,8 +972,22 @@ if _HAS_QT:
             self.nav_list.currentRowChanged.connect(self._on_nav_changed)
             layout.addWidget(self.nav_list, 0)
 
-            self.stack = QStackedWidget(self)
-            layout.addWidget(self.stack, 1)
+            self.scroll_area = QScrollArea(self)
+            self.scroll_area.setFrameShape(QFrame.NoFrame)
+            self.scroll_area.setWidgetResizable(True)
+            self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.stack = SettingsPageStack(self)
+            self.stack.setObjectName("SettingsPageStack")
+            policy = self.stack.sizePolicy()
+            policy.setHeightForWidth(True)
+            self.stack.setSizePolicy(policy)
+            self.stack.currentChanged.connect(self.stack.updateGeometry)
+            self.scroll_area.setWidget(self.stack)
+            layout.addWidget(self.scroll_area, 1)
+
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            self.viewportResized.emit()
 
         def addTab(self, widget: QWidget, label: str) -> None:  # noqa: N802
             self.stack.addWidget(widget)

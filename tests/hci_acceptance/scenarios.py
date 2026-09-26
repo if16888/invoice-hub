@@ -774,7 +774,7 @@ def run_mail_03(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
     post_tick_text = window.lbl_import_scan_status.text() if hasattr(window, "lbl_import_scan_status") else ""
 
     ui_expected = {
-        "terminal_complete": True,
+        "terminal_with_failures": True,
         "active_before_finish": True,
         "contains_processed_800": True,
         "contains_added_39": True,
@@ -792,16 +792,16 @@ def run_mail_03(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
     broken = None
     if "正在" not in active_text and "查询" not in active_text and "重新检查" not in active_text:
         broken = f"History recheck did not render an active state: '{active_text}'"
-    elif "完成" not in status_text:
-        broken = f"Completed status '{status_text}' does not contain '完成'"
+    elif "历史重新检查存在失败" not in status_text:
+        broken = f"History outcome '{status_text}' does not disclose partial failure"
     elif "未开始" in status_text:
         broken = f"Completed status regressed to idle after refresh: '{status_text}'"
     elif "正在" in status_text:
         broken = f"Completed status '{status_text}' should not contain '正在'"
     elif "800" not in status_text or "39" not in status_text:
         broken = f"Completed status '{status_text}' missing summary counts (800, 39)"
-    elif "失败 9 项" not in status_text:
-        broken = f"Completed status '{status_text}' missing expected failure text '失败 9 项'"
+    elif "失败 9 封" not in status_text:
+        broken = f"Completed status '{status_text}' missing expected failure text '失败 9 封'"
     elif not worker_cleared:
         broken = "History recheck worker was not cleared by completion handler"
     elif status_text != post_tick_text:

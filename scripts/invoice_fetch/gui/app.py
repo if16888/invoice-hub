@@ -91,6 +91,7 @@ from .api_key_dialog import ApiKeyDialog
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
 from .settings_baseline import apply_settings_responsive_metrics
+from .mailbox_feedback import connection_feedback, forget_connection_result, test_mailbox_connection
 from .ui.components import SegmentControl, PageHeader
 from .preview_mixin import PreviewMixin, check_has_qt_pdf, get_qt_pdf_classes
 from .performance_probe import (
@@ -3781,6 +3782,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if ok and code.strip():
             from ..credentials import set_auth_code
             set_auth_code(email, code.strip())
+            forget_connection_result(self, account)
             QMessageBox.information(self, "凭据保存", f"[{email}] 的授权码已成功存入系统安全凭据库。")
             self._refresh_settings_page()
 
@@ -3810,6 +3812,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._desktop_settings_cfg = deepcopy(cfg)
         self.config = deepcopy(cfg)
         self._settings_mailbox_current_key = key
+        forget_connection_result(self, account)
 
         if auth_code:
             from ..credentials import set_auth_code
@@ -3859,9 +3862,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for account in accounts:
             label = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
             addr = str(account.get("address") or "").strip()
-            enabled = bool(account.get("enabled", True))
             has_credential = has_auth_code(addr)
-            state = "已停用" if not enabled else ("缺授权" if not has_credential else "正常")
+            state, _, _ = connection_feedback(self, account, has_credential)
             item = self.settings_mailbox_list.add_entity_row(
                 title=label,
                 subtitle=mask_email(addr),
@@ -3929,6 +3931,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         from ..credentials import has_auth_code
         cred_ok = has_auth_code(addr)
+        connection_state, _, connection_message = connection_feedback(self, account, cred_ok)
+        self.lbl_settings_mailbox_test_status.setText(connection_message)
 
         if hasattr(self, "lbl_detail_name"):
             self.lbl_detail_name.setText(name)
@@ -3947,7 +3951,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_detail_header_email.setText(mask_email(addr))
             self.lbl_detail_header_name.setToolTip(name)
             self.lbl_detail_header_email.setToolTip(addr)
-            self.lbl_detail_header_status.setText("已停用" if not account.get("enabled", True) else ("需要授权" if not cred_ok else "正常"))
+            self.lbl_detail_header_status.setText(connection_state)
 
         enabled = bool(account.get("enabled", True))
         self.btn_settings_mailbox_add_credential.setVisible(enabled and not cred_ok)
@@ -4088,34 +4092,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         if not account:
             return
-        email = str(account.get("address") or "").strip()
-        imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
-        server = str(imap_cfg.get("server") or "").strip()
-        if not email or not server:
-            QMessageBox.warning(self, "校验提示", "当前账号缺少邮箱地址或 IMAP 服务器。")
-            return
-        provider = self._infer_mail_provider(email, server)
-        if provider == "outlook":
-            QMessageBox.warning(self, "测试连接", "Outlook 邮箱当前仍需要 OAuth2/XOAUTH2，桌面页不支持授权码直连测试。")
-            return
-        from ..credentials import get_auth_code
-        from ..mail_fetcher import MailFetcher
-        try:
-            auth_code = get_auth_code(email)
-        except SystemExit:
-            QMessageBox.warning(self, "缺少授权码", "未检测到该邮箱的授权码，请在系统设置的邮箱账户页补充凭据。")
-            return
-        port = int(imap_cfg.get("port") or 993)
-        try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            fetcher = MailFetcher(address=email, auth_code=auth_code, server=server, port=port)
-            fetcher.connect()
-            fetcher.disconnect()
-            self.lbl_settings_mailbox_test_status.setText(f"测试连接成功：{email} 可连接 {server}:{port}。")
-        except Exception as exc:
-            self.lbl_settings_mailbox_test_status.setText(f"测试连接失败：{sanitize_log_message(str(exc))}")
-        finally:
-            QApplication.restoreOverrideCursor()
+        test_mailbox_connection(self, account)
 
     def _scan_settings_mailbox_now(self) -> None:
         current_key = getattr(self, "_settings_mailbox_current_key", "")
@@ -5042,6 +5019,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         add_detail_section("扫描规则", [("文件夹", self.lbl_detail_scan_folder), ("时间范围", self.lbl_detail_scan_range), ("附件类型", self.lbl_detail_attachment_types)])
         # Status labels: value-only, no repeated field-name prefix
         self.lbl_settings_mailbox_test_status = QLabel("尚未执行。")
+        self.lbl_settings_mailbox_test_status.setTextFormat(Qt.PlainText)
         self.lbl_settings_mailbox_test_status.setWordWrap(True)
         self.lbl_settings_mailbox_test_status.setStyleSheet("color: #667085; font-size: 12px;")
         self.lbl_settings_mailbox_scan_result = QLabel("暂无记录。")
@@ -5153,20 +5131,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_tabs.addTab(data_tab, "数据与备份")
         self.settings_tabs.addTab(about_tab, "关于")
 
-        # Width floors are owned by apply_settings_responsive_metrics():
-        # desktop keeps the 900px Golden Page baseline while constrained
-        # logical widths remain free to stack/shrink for 125%/150% DPI.
+        # Give the settings shell the available space (up to its visual cap).
+        # Equal *non-stretching* gutters center it only after it reaches the cap.
         self.settings_tabs.setMaximumWidth(1120)
         settings_row = QHBoxLayout()
         settings_row.setContentsMargins(0, 0, 0, 0)
-        # Symmetric side stretches preserve the wide-screen centered contract.
-        # The explicit 900px minimum prevents those stretches from squeezing
-        # the mailbox/detail workspace below its usable desktop baseline.
-        settings_row.addStretch(1)
-        settings_row.addWidget(self.settings_tabs, 1, Qt.AlignTop)
-        settings_row.addStretch(1)
-        layout.addLayout(settings_row, 0)
-        layout.addStretch(1)
+        settings_row.addStretch(0)
+        settings_row.addWidget(self.settings_tabs, 1)
+        settings_row.addStretch(0)
+        layout.addLayout(settings_row, 1)
         self._refresh_settings_page()
         return page
 
