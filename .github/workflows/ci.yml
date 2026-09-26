@@ -16,21 +16,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  master_ci_attestation:
+    name: Exact-master CI attestation
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout exact master commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify matching successful PR CI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/dev/attest_master_ci.py
+
   source_gates:
     name: Source gates
-    runs-on: windows-latest
+    needs: master_ci_attestation
+    if: ${{ always() && (github.event_name == 'pull_request' || needs.master_ci_attestation.result == 'success') }}
+    runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || 'windows-latest' }}
     timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     env:
       PYTHONIOENCODING: "utf-8"
       INVOICE_HUB_TEST_MODE: "1"
 
     steps:
+      - name: Reuse the exact-tree source gate from PR CI
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          echo "Source gates were successful on the identical PR tree; see the Exact-master CI attestation job." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout repository
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python 3.11
+        if: github.event_name == 'pull_request'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -40,32 +76,60 @@ jobs:
             requirements-desktop.lock.txt
             requirements-build.lock.txt
 
+      - name: Verify master attestation against exact base commit
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/dev/attest_master_ci.py --sha "${{ github.event.pull_request.base.sha }}"
+
+      - name: Fetch previous stable tag for release metadata
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $stableVersion = (python -c "from scripts.invoice_fetch.version import PREVIOUS_STABLE_VERSION; print(PREVIOUS_STABLE_VERSION)").Trim()
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tagRef = "refs/tags/v$stableVersion"
+          $refspec = $tagRef + ":" + $tagRef
+          git fetch --force --no-tags --depth=1 origin $refspec
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not fetch previous stable tag $tagRef for release metadata validation."
+          }
+
       - name: Install Python dependencies
+        if: github.event_name == 'pull_request'
         run: |
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
       - name: Verify CLI help output
+        if: github.event_name == 'pull_request'
         run: python -m scripts.invoice_fetch --help
 
       - name: Run repository privacy gate
+        if: github.event_name == 'pull_request'
         run: python scripts/check_repo_privacy.py
 
       - name: Run public export/source tree gate
+        if: github.event_name == 'pull_request'
         run: python scripts/check_public_export.py .
 
       - name: Verify release metadata consistency
+        if: github.event_name == 'pull_request'
         run: python scripts/check_release_metadata.py
 
       - name: Enforce architecture debt baseline
+        if: github.event_name == 'pull_request'
         run: python scripts/check_architecture_policy.py
 
       - name: Compile-check Python sources
+        if: github.event_name == 'pull_request'
         run: python -m compileall -q scripts/invoice_fetch
 
   unit_tests:
     name: Unit shard ${{ matrix.shard }}
-    runs-on: windows-latest
+    needs: master_ci_attestation
+    if: ${{ always() && (github.event_name == 'pull_request' || needs.master_ci_attestation.result == 'success') }}
+    runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || 'windows-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -76,10 +140,18 @@ jobs:
       INVOICE_HUB_TEST_MODE: "1"
 
     steps:
+      - name: Reuse the exact-tree unit shard from PR CI
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          echo "Unit shard ${{ matrix.shard }} passed on the identical PR tree; see the Exact-master CI attestation job." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout repository
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        if: github.event_name == 'pull_request'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -91,18 +163,20 @@ jobs:
             requirements-test.lock.txt
 
       - name: Install application and test dependencies
+        if: github.event_name == 'pull_request'
         run: |
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
 
       - name: Run isolated unit-test shard
+        if: github.event_name == 'pull_request'
         shell: pwsh
         run: |
           python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_native_geometry --module-timeout-seconds 900 --shard-count 3 --shard-index ${{ matrix.shard }} 2>&1 | Tee-Object -FilePath ci-test-output-${{ matrix.shard }}.txt
           exit $LASTEXITCODE
 
       - name: Upload unit-test shard output
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: ci-unit-test-output-${{ matrix.shard }}
@@ -112,7 +186,9 @@ jobs:
 
   hci_acceptance:
     name: HCI acceptance lane
-    runs-on: windows-latest
+    needs: master_ci_attestation
+    if: ${{ always() && (github.event_name == 'pull_request' || needs.master_ci_attestation.result == 'success') }}
+    runs-on: ${{ github.event_name == 'push' && 'ubuntu-latest' || 'windows-latest' }}
     timeout-minutes: 30
     env:
       PYTHONIOENCODING: "utf-8"
@@ -120,10 +196,18 @@ jobs:
       HCI_ARTIFACT_DIR: artifacts/hci_acceptance
 
     steps:
+      - name: Reuse the exact-tree HCI gate from PR CI
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          echo "HCI acceptance passed on the identical PR tree; see the Exact-master CI attestation job." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout repository
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        if: github.event_name == 'pull_request'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -135,11 +219,13 @@ jobs:
             requirements-test.lock.txt
 
       - name: Install application and test dependencies
+        if: github.event_name == 'pull_request'
         run: |
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
 
       - name: Run authoritative HCI acceptance
+        if: github.event_name == 'pull_request'
         shell: pwsh
         run: |
           python scripts/dev/run_hci_acceptance.py 2>&1 | Tee-Object -FilePath hci-acceptance-output.txt
@@ -148,11 +234,11 @@ jobs:
           exit $code
 
       - name: Run HCI oracle contract tests
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         run: python -m pytest -q tests/hci_acceptance/test_mutation_selftest.py tests/hci_acceptance/test_report_verdict.py
 
       - name: Upload HCI acceptance evidence
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: hci-acceptance-evidence
@@ -164,6 +250,7 @@ jobs:
 
   native_geometry_preflight:
     name: Native GUI geometry preflight (non-gating)
+    if: github.event_name == 'pull_request'
     runs-on: windows-latest
     continue-on-error: true
     timeout-minutes: 15
@@ -191,6 +278,7 @@ jobs:
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
       - name: Classify native GUI geometry
+        id: native_geometry_classification
         shell: pwsh
         run: |
           python scripts/dev/check_native_gui_geometry.py 2>&1 | Tee-Object -FilePath native-geometry-preflight.txt
@@ -199,7 +287,7 @@ jobs:
           exit $code
 
       - name: Run native workbench geometry tests
-        if: always()
+        if: steps.native_geometry_classification.outcome == 'success'
         shell: pwsh
         run: |
           python -m unittest -v tests.test_workbench_native_geometry 2>&1 | Tee-Object -FilePath native-workbench-geometry-tests.txt

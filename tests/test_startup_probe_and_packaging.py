@@ -673,10 +673,12 @@ class TestGithubWorkflowExists(unittest.TestCase):
 
     def test_workflow_runs_release_readiness_gates(self):
         src = self._workflow_path().read_text(encoding="utf-8")
-        self.assertIn("Run repository privacy gate", src)
-        self.assertIn("python scripts/check_repo_privacy.py", src)
-        self.assertIn("Run public export/source tree gate", src)
-        self.assertIn("python scripts/check_public_export.py .", src)
+        self.assertIn("Verify exact-SHA unittest and HCI CI authority", src)
+        self.assertIn('"Source gates"', src)
+        self.assertIn('"Unit shard 2"', src)
+        self.assertIn('"HCI acceptance lane"', src)
+        self.assertNotIn("python scripts/check_repo_privacy.py", src)
+        self.assertNotIn("python scripts/check_public_export.py .", src)
 
     def test_workflow_uses_minimal_build_and_release_permissions(self):
         src = self._workflow_path().read_text(encoding="utf-8")

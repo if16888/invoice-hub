@@ -175,24 +175,6 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
-      - name: Verify CLI help output
-        run: python -m scripts.invoice_fetch --help
-
-      - name: Run repository privacy gate
-        run: python scripts/check_repo_privacy.py
-
-      - name: Run public export/source tree gate
-        run: python scripts/check_public_export.py .
-
-      - name: Verify release metadata consistency
-        run: python scripts/check_release_metadata.py
-
-      - name: Enforce architecture debt baseline
-        run: python scripts/check_architecture_policy.py
-
-      - name: Compile-check Python sources
-        run: python -m compileall -q scripts/invoice_fetch
-
       - name: Resolve build display version
         shell: pwsh
         run: |
@@ -465,7 +447,7 @@ jobs:
           - Source authority: CI #$env:CI_AUTHORITY_RUN_NUMBER
           - CI URL: $env:CI_AUTHORITY_RUN_URL
           - Unit shards/HCI: reused from exact-SHA CI; not repeated here
-          - Cheap source/privacy gates: rerun in this lane
+          - Source/privacy/architecture gates: reused from exact-SHA CI; not repeated in this build lane
           - Release-specific gates: frozen build, startup, embedded version, payload hygiene, installer lifecycle, real install/start/uninstall, SHA256
           - Build-lane elapsed: $elapsed
           - Distribution: GitHub release keeps setup EXE + portable ZIP; Microsoft Store MSIX remains a separate Store submission artifact until Store signing/distribution is live
