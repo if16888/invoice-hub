@@ -2854,6 +2854,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self._review_scope_duplicate_outcomes = tuple(activity.duplicate_outcomes)
         self.current_filter_status = TO_REVIEW
+        self._sync_review_filter_control()
         return pending_ids
 
     def _open_import_activity_review(
@@ -5828,15 +5829,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     # Controller & Data loading
 
+    def _sync_review_filter_control(self) -> None:
+        """Keep the status segment aligned with the query used by the table.
+
+        Completion and review-scope transitions can change
+        ``current_filter_status`` without coming from a segment click.  The
+        control must still reflect that programmatic state change; otherwise
+        the table can show a filtered subset while ``全部`` looks selected.
+        """
+        selected = self.current_filter_status or "all"
+        segment = getattr(self, "status_segment_control", None)
+        if segment is not None and hasattr(segment, "set_selected"):
+            segment.set_selected(selected)
+            return
+        for status, button in getattr(self, "filter_buttons", {}).items():
+            if hasattr(button, "set_selected"):
+                button.set_selected(status == selected)
+            elif hasattr(button, "setChecked"):
+                button.setChecked(status == selected)
+
     def _change_filter(self, status):
         # Handle top-bar filter button clicks and update UI checked state.
         self._column_filters_load_all = False
         self.current_filter_status = None if status == "all" else status
-        for s, btn in self.filter_buttons.items():
-            if hasattr(btn, "set_selected"):
-                btn.set_selected(s == status)
-            else:
-                btn.setChecked(s == status)
+        self._sync_review_filter_control()
         self._load_invoices()
         self.statusBar().showMessage(f"已切换筛选条件: {self.filter_buttons[status].text()}", 2000)
 
@@ -5880,6 +5896,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _load_invoices(self, *, append=False, preserve_invoice_id=_SELECTION_ID_UNSET):
         # SQLite owns review filtering, counting, ordering, and page boundaries.
+        self._sync_review_filter_control()
         performance_trace = self._performance_probe.begin("list_refresh")
         self._performance_list_trace = performance_trace
         db_elapsed_ms = 0
