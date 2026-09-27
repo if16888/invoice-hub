@@ -124,22 +124,26 @@ class IHDS08Tests(unittest.TestCase):
                 window._refresh_imports_page()
                 self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（3）")
 
-                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                with patch("scripts.invoice_fetch.gui.app.DuplicateOutcomesDialog") as dialog_cls:
                     window.btn_review_scope_duplicates.click()
                     self.app.processEvents()
-                    information.assert_called_once()
-                    self.assertIs(information.call_args.args[0], window)
-                    self.assertEqual(information.call_args.args[2].count("重复文件 "), 3)
-                    self.assertNotIn("发票 #0", information.call_args.args[2])
+                    dialog_cls.assert_called_once()
+                    self.assertIs(dialog_cls.call_args.args[0], window)
+                    detail = dialog_cls.call_args.args[1]
+                    self.assertEqual(dialog_cls.call_args.args[2], 3)
+                    self.assertEqual(detail.count("重复文件 "), 3)
+                    self.assertNotIn("发票 #0", detail)
+                    dialog_cls.return_value.exec.assert_called_once()
 
                 window._switch_main_page("imports")
                 self.app.processEvents()
-                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                with patch("scripts.invoice_fetch.gui.app.DuplicateOutcomesDialog") as dialog_cls:
                     window.btn_import_recent_duplicates.click()
                     self.app.processEvents()
-                    information.assert_called_once()
-                    self.assertIs(information.call_args.args[0], window)
-                    self.assertEqual(information.call_args.args[2].count("重复文件 "), 3)
+                    dialog_cls.assert_called_once()
+                    self.assertIs(dialog_cls.call_args.args[0], window)
+                    self.assertEqual(dialog_cls.call_args.args[1].count("重复文件 "), 3)
+                    dialog_cls.return_value.exec.assert_called_once()
             finally: window.close()
 
     def test_duplicate_only_mobile_batch_clears_stale_review_scope_and_stays_in_imports(self):
@@ -199,14 +203,16 @@ class IHDS08Tests(unittest.TestCase):
                 self.assertEqual(len(window._import_activities), 2)
                 self.assertEqual(len(window._import_activities[0].duplicate_outcomes), 1)
                 self.assertEqual(window.btn_import_recent_duplicates.text(), "查看重复项（1）")
-                with patch("scripts.invoice_fetch.gui.app.QMessageBox.information") as information:
+                with patch("scripts.invoice_fetch.gui.app.DuplicateOutcomesDialog") as dialog_cls:
                     window.btn_import_recent_duplicates.click()
                     self.app.processEvents()
-                    information.assert_called_once()
-                    detail = information.call_args.args[2]
+                    dialog_cls.assert_called_once()
+                    detail = dialog_cls.call_args.args[1]
+                    self.assertEqual(dialog_cls.call_args.args[2], 1)
                     self.assertEqual(detail.count("重复文件 "), 1)
                     self.assertIn("batch-b-1.pdf", detail)
                     self.assertNotIn("batch-a", detail)
+                    dialog_cls.return_value.exec.assert_called_once()
             finally:
                 window.close()
 

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -457,14 +458,26 @@ def _install_buyer_title_entry(window) -> None:
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
         parent_layout.replaceWidget(warning, row)
-        warning.setParent(row)
-        row_layout.addWidget(warning, 1)
+        warning_scroll = QScrollArea(row)
+        warning_scroll.setObjectName("BuyerWarningScrollArea")
+        warning_scroll.setWidgetResizable(True)
+        warning_scroll.setFrameShape(QFrame.NoFrame)
+        warning_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        warning_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        warning_scroll.setMinimumWidth(0)
+        warning_scroll.setMinimumHeight(44)
+        warning_scroll.setMaximumHeight(76)
+        warning_scroll.setWidget(warning)
+        row_layout.addWidget(warning_scroll, 1)
         edit_button = make_button("设置抬头", variant="secondary", min_width=76)
         edit_button.setMaximumWidth(92)
         edit_button.setFixedHeight(30)
         edit_button.clicked.connect(lambda _checked=False: _open_reimbursement_title_dialog(window))
         row_layout.addWidget(edit_button, 0, Qt.AlignTop)
+        row.setMinimumHeight(44)
+        row.setMaximumHeight(76)
         detail.buyer_warning_action_row = row
+        detail.buyer_warning_scroll = warning_scroll
         detail.btn_edit_reimbursement_title = edit_button
         window.btn_edit_reimbursement_title = edit_button
 

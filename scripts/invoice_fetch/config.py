@@ -208,16 +208,18 @@ def _normalize_email_account(
     }
 
 
-def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return normalized enabled mailbox accounts from config."""
+def get_all_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return every normalized mailbox account, including disabled accounts.
+
+    Settings and persistence use this view so editing one account cannot erase
+    disabled accounts. Call :func:`get_email_accounts` for scan operations.
+    """
     raw_accounts = cfg.get("email_accounts")
     accounts = []
     if isinstance(raw_accounts, list) and raw_accounts:
         for raw in raw_accounts:
             if not isinstance(raw, dict):
                 raise SystemExit("email_accounts 中的每个账号都必须是对象")
-            if raw.get("enabled", True) is False:
-                continue
             if str(raw.get("address") or "").strip().lower() in _PLACEHOLDER_EMAIL_ADDRESSES:
                 continue
             accounts.append(_normalize_email_account(raw, source_cfg=cfg))
@@ -245,6 +247,12 @@ def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             }
             accounts.append(_normalize_email_account(legacy_account, source_cfg=cfg, legacy=True))
 
+    return _normalize_default_email_account(accounts)
+
+
+def get_email_accounts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return normalized enabled mailbox accounts from config."""
+    accounts = [account for account in get_all_email_accounts(cfg) if account.get("enabled", True)]
     return _normalize_default_email_account(accounts)
 
 
@@ -446,7 +454,7 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
             message = "至少配置一个启用的邮箱账号后才能扫描邮件"
             _log.error(message)
             raise SystemExit(message)
-        _apply_primary_email_account(cfg, accounts)
+        _apply_primary_email_account(cfg, get_all_email_accounts(cfg))
     else:
         # Validate legacy single-account config for backward compatibility.
         email_addr = cfg.get("email", {}).get("address", "")
@@ -494,7 +502,7 @@ def load_config_safe(path: str | Path | None = None) -> dict[str, Any]:
             raw = json.load(fh)
         cfg = _normalize_config(_deep_merge(_DEFAULTS, raw), raw)
         try:
-            accounts = get_email_accounts(cfg)
+            accounts = get_all_email_accounts(cfg)
             if accounts:
                 return _apply_primary_email_account(cfg, accounts)
         except SystemExit:

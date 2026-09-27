@@ -52,6 +52,7 @@ LONG_VALUE_FIELDS = {
     "本地保护",
     "扫描规则",
     "最近运行",
+    "最近校验",
     "最近扫描",
     "最近错误",
     "配置与日志",
@@ -278,7 +279,9 @@ def _configure_value_label(value: QLabel, key: str) -> None:
     value.setMaximumHeight(16777215)
     if key in LONG_VALUE_FIELDS:
         value.setWordWrap(True)
-        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        policy = QSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        value.setSizePolicy(policy)
     else:
         value.setWordWrap(False)
         value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -312,6 +315,12 @@ def _migrate_ai_page(window) -> None:
     if page is None or page.property("settingsBaselineMigrated"):
         return
     page.setProperty("settingsBaselineMigrated", True)
+    for attr in ("lbl_settings_ai_provider", "lbl_settings_ai_model", "lbl_settings_ai_enabled",
+                 "lbl_settings_ai_key_status", "lbl_settings_ai_session_state"):
+        old = getattr(window, attr)
+        label = ElidedTextLabel(old.text(), page)
+        label.setProperty("class", old.property("class"))
+        setattr(window, attr, label)
     profile_list = window.settings_ai_profile_list
     empty_state = window.settings_ai_empty_state
     labels = [
@@ -390,8 +399,7 @@ def _migrate_ai_page(window) -> None:
     ])
     window.lbl_settings_ai_failure_status.setParent(surface)
     window.lbl_settings_ai_failure_status.setProperty("class", "SettingsInlineStatus")
-    window.lbl_settings_ai_failure_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-    window.lbl_settings_ai_failure_status.setMaximumHeight(16777215)
+    _configure_value_label(window.lbl_settings_ai_failure_status, "最近校验")
     root.addWidget(window.lbl_settings_ai_failure_status)
     root.addWidget(_divider(surface))
     footer = QFrame(surface)
@@ -407,7 +415,6 @@ def _migrate_ai_page(window) -> None:
     footer_layout.addStretch(1)
     root.addWidget(footer)
     shell.addWidget(surface, 1, Qt.AlignTop)
-    shell.addStretch(1)
     layout.addLayout(shell)
 
     empty_action = make_button("配置 AI", variant="primary", min_width=120)
@@ -438,6 +445,10 @@ def _migrate_ai_page(window) -> None:
 def _normalize_ai(window) -> None:
     if not hasattr(window, "lbl_settings_ai_status_badge"):
         return
+    for attr in ("lbl_settings_ai_provider", "lbl_settings_ai_model", "lbl_settings_ai_enabled",
+                 "lbl_settings_ai_key_status", "lbl_settings_ai_session_state"):
+        label = getattr(window, attr)
+        label.setToolTip(label.text())
     key_text = window.lbl_settings_ai_key_status.text().strip()
     window.lbl_settings_ai_key_status.setText("未配置" if "未配置" in key_text or key_text in {"", "—"} else "已安全保存")
     window.lbl_settings_ai_key_status.setToolTip("API Key 保存于 Windows 凭据管理器")
