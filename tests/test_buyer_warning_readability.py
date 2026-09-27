@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -43,7 +44,7 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
         names = [name for name, _stage in REVIEW_BASELINE_STAGES]
         self.assertNotIn("buyer_warning_readability", names)
         self.assertIn("task_ownership", names)
-        self.assertIn(
+        self.assertNotIn(
             f"max-height: {BUYER_WARNING_MAX_HEIGHT}px",
             APP_STYLESHEET,
         )
@@ -53,7 +54,7 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
         )
         self.assertNotIn("max-height: 64px", APP_STYLESHEET)
 
-    def test_long_buyer_warning_fits_inside_compact_height(self):
+    def test_long_buyer_warning_keeps_full_text_inside_bounded_scroll_viewport(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
@@ -72,6 +73,7 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
 
                 detail = window._detail_panel
                 label = detail.lbl_buyer_warning
+                scroll = detail.buyer_warning_scroll
                 self.assertEqual(label.property("buyerWarningLayout"), "tokenized")
                 self.assertIn(
                     f"padding: {BUYER_WARNING_VERTICAL_PADDING}px "
@@ -80,15 +82,24 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
                 )
                 self.assertIn("margin-top: 0px", APP_STYLESHEET)
                 self.assertIn("margin-bottom: 0px", APP_STYLESHEET)
+                self.assertNotIn(
+                    f"max-height: {BUYER_WARNING_MAX_HEIGHT}px",
+                    APP_STYLESHEET,
+                )
+                self.assertIs(scroll.widget(), label)
+                self.assertEqual(scroll.maximumHeight(), BUYER_WARNING_MAX_HEIGHT)
+                self.assertGreater(label.maximumHeight(), BUYER_WARNING_MAX_HEIGHT)
+                self.assertEqual(scroll.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
 
-                label.setFixedWidth(300)
+                window.config["reimbursement"]["buyer_name"] = "默认开票主体" * 24
+                window.current_invoice["buyer_name"] = "当前发票购买方" * 24
+                _refresh_compact_buyer_warning(window)
                 for _ in range(4):
                     self.app.processEvents()
-                required_height = label.heightForWidth(label.width())
-                self.assertGreater(required_height, 0)
-                self.assertLessEqual(required_height, label.maximumHeight())
-                self.assertIn("上海远景科创智能科技有限公司", label.text())
-                self.assertIn("示例科技有限公司", label.text())
+                self.assertGreater(label.heightForWidth(label.width()), scroll.viewport().height())
+                self.assertGreater(scroll.verticalScrollBar().maximum(), 0)
+                self.assertIn("当前发票购买方" * 24, label.text())
+                self.assertIn("默认开票主体" * 24, label.text())
             finally:
                 window.close()
                 window.deleteLater()

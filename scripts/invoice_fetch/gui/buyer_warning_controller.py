@@ -71,7 +71,10 @@ class BuyerWarningController:
             label.setMinimumWidth(0)
             label.setMaximumWidth(16777215)
             label.setMinimumHeight(BUYER_WARNING_MIN_HEIGHT)
-            label.setMaximumHeight(BUYER_WARNING_MAX_HEIGHT)
+            # The visible warning viewport is bounded, while its wrapped text
+            # remains full-height inside the scroll area installed by the
+            # review layout. Capping the QLabel itself silently clipped text.
+            label.setMaximumHeight(16777215)
             label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             label.setProperty("buyerWarningLayout", "tokenized")
             self._label_layout_applied = True
@@ -87,6 +90,13 @@ class BuyerWarningController:
                 row_layout.setContentsMargins(0, 0, 0, 0)
                 row_layout.invalidate()
             self._row_layout_applied = True
+
+        scroll = getattr(_detail, "buyer_warning_scroll", None) if _detail is not None else None
+        if scroll is not None and isValid(scroll):
+            scroll.setMinimumHeight(BUYER_WARNING_MIN_HEIGHT)
+            scroll.setMaximumHeight(BUYER_WARNING_MAX_HEIGHT)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     def refresh(self, full_text: str | None = None) -> None:
         """Refresh the warning from the selected invoice and current config."""

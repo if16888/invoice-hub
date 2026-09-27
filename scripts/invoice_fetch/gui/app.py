@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QWidgetAction, QSizePolicy,
     QButtonGroup, QGridLayout, QStyle, QLayout, QBoxLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
-    QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog
+    QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog,
+    QDialogButtonBox,
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QPoint, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -443,6 +444,54 @@ class SingleTaskMailboxDialog(QDialog):
         return dict(self._result_account or {}), str(self._result_auth_code or "")
 
 
+class DuplicateOutcomesDialog(QDialog):
+    """Scrollable, screen-bounded dialog for duplicate import explanations."""
+
+    def __init__(self, parent=None, detail_text: str = "", duplicate_count: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle("重复项详情")
+        self.setObjectName("DuplicateOutcomesDialog")
+        self.setModal(True)
+        self.setSizeGripEnabled(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(10)
+
+        summary = QLabel(
+            f"本次发现 {max(0, int(duplicate_count or 0))} 个重复文件。可滚动查看完整判定依据。",
+            self,
+        )
+        summary.setWordWrap(True)
+        summary.setProperty("class", "SectionHint")
+        layout.addWidget(summary)
+
+        self.details = QPlainTextEdit(self)
+        self.details.setObjectName("DuplicateOutcomesDetails")
+        self.details.setReadOnly(True)
+        self.details.setPlainText(str(detail_text or ""))
+        self.details.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.details.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.details.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.details.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.details.setFont(QFont("Segoe UI", 10))
+        layout.addWidget(self.details, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        buttons.button(QDialogButtonBox.Close).setText("关闭")
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(720, 520)
+        else:
+            available = screen.availableGeometry()
+            width = min(760, max(320, int(available.width() * 0.70)), max(320, available.width() - 32))
+            height = min(560, max(240, int(available.height() * 0.74)), max(240, available.height() - 32))
+            self.resize(width, height)
+
+
 class SingleTaskAiProfileDialog(QDialog):
     def __init__(self, parent=None, profile: dict | None = None):
         super().__init__(parent)
@@ -843,12 +892,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             worker = getattr(self, attr, None)
             if worker is not None:
                 yield attr, label, worker
+        for request_id, worker in getattr(self, "_settings_mailbox_test_workers", {}).items():
+            if worker is not None:
+                yield f"settings_mailbox_test_{request_id}", "邮箱连接测试", worker
 
     @staticmethod
     def _disconnect_worker_signals(worker) -> None:
         """Stop queued worker callbacks from targeting a closing window."""
         for signal_name in (
-            "progress", "log", "stage", "result", "finished", "error", "cancelled",
+            "progress", "log", "stage", "result", "success", "finished", "error", "cancelled",
             "finished_result", "failed",
         ):
             signal = getattr(worker, signal_name, None)
@@ -3439,7 +3491,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 else:
                     lines.append("△ 文件内容不同，但发票业务身份一致；可能为同一发票的不同下载版本")
             sections.append("\n".join(lines))
-        QMessageBox.information(self, "重复项详情", "\n\n".join(sections))
+        detail_text = "\n\n".join(sections)
+        DuplicateOutcomesDialog(self, detail_text, len(outcomes)).exec()
 
     @staticmethod
     def _format_scan_result_for_people(summary: dict) -> str:
@@ -3788,9 +3841,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _save_mailbox_account_entry(self, account: dict, auth_code: str = "") -> None:
         cfg = deepcopy(getattr(self, "_desktop_settings_cfg", load_config_safe()))
-        from ..config import get_email_accounts, _normalize_default_email_account, _apply_primary_email_account, save_config
+        from ..config import get_all_email_accounts, _normalize_default_email_account, _apply_primary_email_account, save_config
 
-        accounts = [dict(a) for a in get_email_accounts(cfg)]
+        accounts = [dict(a) for a in get_all_email_accounts(cfg)]
         key = account.get("mailbox_key") or account.get("address", "").lower()
         replaced = False
 
@@ -3823,12 +3876,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         QMessageBox.information(self, "保存成功", f"邮箱账户 [{account.get('address')}] 设置已保存。")
 
     def _mailbox_accounts_for_settings(self) -> list[dict]:
-        from ..config import get_email_accounts
+        from ..config import get_all_email_accounts
         cfg = getattr(self, "_desktop_settings_cfg", None)
         if not isinstance(cfg, dict):
             cfg = deepcopy(load_config_safe())
             self._desktop_settings_cfg = cfg
-        return [dict(account) for account in get_email_accounts(cfg)]
+        return [dict(account) for account in get_all_email_accounts(cfg)]
 
     def _ai_profiles_for_settings(self) -> list[dict]:
         from ..ai_profiles import get_ai_profiles
@@ -3862,7 +3915,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for account in accounts:
             label = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
             addr = str(account.get("address") or "").strip()
-            has_credential = has_auth_code(addr)
+            has_credential = bool(account.get("enabled", True) and has_auth_code(addr))
             state, _, _ = connection_feedback(self, account, has_credential)
             item = self.settings_mailbox_list.add_entity_row(
                 title=label,
@@ -3930,9 +3983,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         months = search_cfg.get("months_back") or 3
 
         from ..credentials import has_auth_code
-        cred_ok = has_auth_code(addr)
+        cred_ok = bool(account.get("enabled", True) and has_auth_code(addr))
         connection_state, _, connection_message = connection_feedback(self, account, cred_ok)
-        self.lbl_settings_mailbox_test_status.setText(connection_message)
+        visible_connection_message = connection_message
+        if len(visible_connection_message) > 240:
+            visible_connection_message = visible_connection_message[:237].rstrip() + "…（悬停查看）"
+        self.lbl_settings_mailbox_test_status.setText(visible_connection_message)
+        self.lbl_settings_mailbox_test_status.setToolTip(connection_message)
 
         if hasattr(self, "lbl_detail_name"):
             self.lbl_detail_name.setText(name)
@@ -4093,6 +4150,54 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not account:
             return
         test_mailbox_connection(self, account)
+
+    def _settings_mailbox_connection_succeeded(self, request_id: int) -> None:
+        context = getattr(self, "_settings_mailbox_test_contexts", {}).get(request_id)
+        if context is None or not self._worker_callback_allowed():
+            return
+        identity, _address = context
+        self._mailbox_connection_results[identity] = (
+            True,
+            "测试连接成功：本次已完成 IMAP 登录验证。",
+        )
+        self._refresh_settings_mailbox_page()
+
+    def _settings_mailbox_connection_failed(self, error_text: str) -> None:
+        worker = self.sender()
+        request_id = getattr(worker, "_settings_request_id", -1)
+        context = getattr(self, "_settings_mailbox_test_contexts", {}).get(request_id)
+        if context is None or not self._worker_callback_allowed():
+            return
+        identity, _address = context
+        safe_error = sanitize_log_message(str(error_text or "测试连接失败"))
+        self._mailbox_connection_results[identity] = (False, f"测试连接失败：{safe_error}")
+        self._refresh_settings_mailbox_page()
+
+    def _settings_mailbox_connection_cancelled(self) -> None:
+        worker = self.sender()
+        request_id = getattr(worker, "_settings_request_id", -1)
+        context = getattr(self, "_settings_mailbox_test_contexts", {}).get(request_id)
+        if context is None or not self._worker_callback_allowed():
+            return
+        identity, _address = context
+        self._mailbox_connection_results[identity] = (None, "连接测试已取消。")
+        self._refresh_settings_mailbox_page()
+
+    def _settings_mailbox_connection_thread_done(self) -> None:
+        worker = self.sender()
+        request_id = getattr(worker, "_settings_request_id", -1)
+        workers = getattr(self, "_settings_mailbox_test_workers", {})
+        workers.pop(request_id, None)
+        context = getattr(self, "_settings_mailbox_test_contexts", {}).pop(request_id, None)
+        if context is not None and self._worker_callback_allowed():
+            identity, _address = context
+            if identity not in self._mailbox_connection_results:
+                self._mailbox_connection_results[identity] = (None, "连接测试已结束，请重新测试。")
+                self._refresh_settings_mailbox_page()
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
 
     def _scan_settings_mailbox_now(self) -> None:
         current_key = getattr(self, "_settings_mailbox_current_key", "")

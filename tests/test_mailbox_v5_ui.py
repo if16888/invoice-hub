@@ -13,7 +13,7 @@ from shiboken6 import isValid
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
-from scripts.invoice_fetch.config import load_config_safe, get_email_accounts, _normalize_default_email_account, _select_primary_email_account
+from scripts.invoice_fetch.config import get_email_accounts, _normalize_default_email_account, _select_primary_email_account
 
 app = QApplication.instance() or QApplication(sys.argv)
 
@@ -50,8 +50,8 @@ class TestMailboxV5UI(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-        self.cfg = deepcopy(load_config_safe())
-        self.cfg["email"] = {}
+        # UI tests must never read or write the developer's real config.json.
+        self.cfg = {"email": {}, "imap": {}, "search": {}, "ai": {}}
         self.cfg["email_accounts"] = [
             {
                 "name": "QQ 个人邮箱",
@@ -76,6 +76,36 @@ class TestMailboxV5UI(unittest.TestCase):
                 "mailbox_key": "test_163@163.com",
             },
         ]
+
+        self._save_config_patch = patch("scripts.invoice_fetch.config.save_config")
+        self._save_config_patch.start()
+        self.addCleanup(self._save_config_patch.stop)
+        self._app_save_config_patch = patch("scripts.invoice_fetch.gui.app.save_config")
+        self._app_save_config_patch.start()
+        self.addCleanup(self._app_save_config_patch.stop)
+        self._settings_save_config_patch = patch("scripts.invoice_fetch.gui.review_toolbar_filter_fixes.save_config")
+        self._settings_save_config_patch.start()
+        self.addCleanup(self._settings_save_config_patch.stop)
+
+        isolated_config = lambda *args, **kwargs: deepcopy(self.cfg)
+        self._load_config_patch = patch(
+            "scripts.invoice_fetch.config.load_config_safe",
+            side_effect=isolated_config,
+        )
+        self._load_config_patch.start()
+        self.addCleanup(self._load_config_patch.stop)
+        self._app_load_config_patch = patch(
+            "scripts.invoice_fetch.gui.app.load_config_safe",
+            side_effect=isolated_config,
+        )
+        self._app_load_config_patch.start()
+        self.addCleanup(self._app_load_config_patch.stop)
+        self._dialog_load_config_patch = patch(
+            "scripts.invoice_fetch.gui.settings_dialog.load_config_safe",
+            side_effect=isolated_config,
+        )
+        self._dialog_load_config_patch.start()
+        self.addCleanup(self._dialog_load_config_patch.stop)
 
 
     def test_import_center_uses_more_menu_for_low_frequency_actions(self):
@@ -209,6 +239,54 @@ class TestMailboxV5UI(unittest.TestCase):
         mailbox_detail_combos = mailbox_tab.findChildren(QComboBox)
         self.assertEqual(mailbox_detail_spins, [])
         self.assertEqual(mailbox_detail_combos, [])
+
+    def test_editing_account_preserves_disabled_account_after_reopening_settings(self):
+        cfg = deepcopy(self.cfg)
+        disabled = deepcopy(cfg["email_accounts"][1])
+        disabled.update(
+            name="Previously disabled account",
+            mailbox_key="disabled@example.invalid",
+            address="disabled@example.invalid",
+            username="disabled@example.invalid",
+            enabled=False,
+            is_default=False,
+        )
+        cfg["email_accounts"].append(disabled)
+        window = InvoiceReviewApp(db_path=self.db_path)
+        window.config = deepcopy(cfg)
+        window._desktop_settings_cfg = deepcopy(cfg)
+        persisted_cfg = deepcopy(cfg)
+
+        def fake_load_config(*_args, **_kwargs):
+            return deepcopy(persisted_cfg)
+
+        def fake_save_config(updated, *_args, **_kwargs):
+            nonlocal persisted_cfg
+            persisted_cfg = deepcopy(updated)
+
+        try:
+            with patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=False), \
+                 patch("scripts.invoice_fetch.gui.app.load_config_safe", side_effect=fake_load_config), \
+                 patch("scripts.invoice_fetch.config.save_config", side_effect=fake_save_config):
+                window._refresh_settings_mailbox_page()
+                edited = deepcopy(cfg["email_accounts"][0])
+                edited["name"] = "Updated primary"
+                window._settings_mailbox_current_key = edited["mailbox_key"]
+                window._save_mailbox_account_entry(edited)
+
+                # Re-entering the settings page rebuilds the account list from
+                # the just-saved snapshot, not the enabled-only scan view.
+                window._refresh_settings_mailbox_page()
+                addresses = {
+                    account["address"]: account
+                    for account in window._mailbox_accounts_for_settings()
+                }
+                self.assertEqual(window.settings_mailbox_list.count(), 3)
+                self.assertEqual(addresses["test_qq@qq.com"]["name"], "Updated primary")
+                self.assertFalse(addresses["disabled@example.invalid"]["enabled"])
+        finally:
+            window.close()
+            app.processEvents()
 
     def test_edit_config_opens_single_task_dialog(self):
         window = InvoiceReviewApp(db_path=self.db_path)

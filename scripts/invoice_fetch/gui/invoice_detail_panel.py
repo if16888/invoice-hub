@@ -1230,7 +1230,7 @@ class InvoiceDetailPanel(QWidget):
 
     def _update_fixed_header_height_cap(self):
         compact_header = not self.lbl_date_warning.isVisible() and not self.lbl_buyer_warning.isVisible()
-        self.fixed_header_container.setMaximumHeight(280)
+        self.fixed_header_container.setMaximumHeight(280 if compact_header else 310)
 
     def set_multi_selection_state(self, count: int):
 
