@@ -1239,7 +1239,7 @@ class SettingsDialog(QDialog):
         status_layout.setContentsMargins(10, 8, 10, 8)
         status_layout.setSpacing(6)
 
-        self.lbl_v4_status_conn = QLabel("连接状态: 连接正常 (SSL 993)")
+        self.lbl_v4_status_conn = QLabel("连接状态：尚未验证")
         self.lbl_v4_status_time = QLabel("最近扫描: 2026-07-05 17:30")
         self.lbl_v4_status_scanned = QLabel("已抓取邮件: 12 封")
         self.lbl_v4_status_imported = QLabel("成功导入发票: 10 张")
@@ -2719,7 +2719,7 @@ class SettingsDialog(QDialog):
             if hasattr(self, "chk_is_default"):
                 self.chk_is_default.setChecked(bool(account.get("is_default") or account.get("default")))
             if hasattr(self, "lbl_v4_status_conn"):
-                self.lbl_v4_status_conn.setText("连接正常" if account.get("enabled", True) else "已停用")
+                self.lbl_v4_status_conn.setText("尚未验证连接" if account.get("enabled", True) else "已停用")
         finally:
             self._loading_account_values = False
 

@@ -5,8 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit
 
+from scripts.invoice_fetch.gui.app import DuplicateOutcomesDialog
 from scripts.invoice_fetch.gui import startup_lifecycle
 from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import (
@@ -35,6 +37,32 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
                 panel.close()
                 controller.shutdown(timeout_ms=50)
                 self.qt_app.processEvents()
+
+    def test_duplicate_outcomes_dialog_keeps_long_report_scrollable_and_screen_bounded(self):
+        detail_text = "\n\n".join(
+            f"重复文件 {index}\n"
+            + (f"中文长文件名-{index}-" + "发票号" * 50 + ".pdf\n")
+            + "匹配结果：与此前已上传文件内容完全相同\n"
+            + "判定依据：" + "文件内容一致；业务字段尚未重新解析。" * 8
+            for index in range(1, 40)
+        )
+        dialog = DuplicateOutcomesDialog(None, detail_text, 39)
+        try:
+            dialog.show()
+            self.qt_app.processEvents()
+            screen = dialog.screen() or self.qt_app.primaryScreen()
+            available = screen.availableGeometry()
+            self.assertLessEqual(dialog.width(), available.width())
+            self.assertLessEqual(dialog.height(), available.height())
+            self.assertIsInstance(dialog.details, QPlainTextEdit)
+            self.assertTrue(dialog.details.isReadOnly())
+            self.assertEqual(dialog.details.lineWrapMode(), QPlainTextEdit.WidgetWidth)
+            self.assertEqual(dialog.details.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
+            self.assertEqual(dialog.details.toPlainText(), detail_text)
+            self.assertGreater(dialog.details.verticalScrollBar().maximum(), 0)
+        finally:
+            dialog.close()
+            self.qt_app.processEvents()
 
     def test_intake_format_copy_does_not_claim_xml_support(self):
         with tempfile.TemporaryDirectory(prefix="invoice-hub-format-copy-") as td:

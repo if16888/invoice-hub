@@ -5,7 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.invoice_fetch.config import get_email_accounts, load_config, load_config_safe, validate_config_gui
+from scripts.invoice_fetch.config import (
+    get_all_email_accounts,
+    get_email_accounts,
+    load_config,
+    load_config_safe,
+    save_config,
+    validate_config_gui,
+)
 
 
 class GenericImapConfigTests(unittest.TestCase):
@@ -191,6 +198,58 @@ class GenericImapConfigTests(unittest.TestCase):
         self.assertEqual(len(accounts), 1)
         self.assertEqual(accounts[0]["address"], "synthetic_user@qq.com")
         self.assertEqual(accounts[0]["mailbox_key"], "legacy")
+
+    def test_safe_config_round_trip_preserves_disabled_account_without_enabling_it(self):
+        path = self._write_config({
+            "email": {"provider": "qq", "address": "active@qq.com"},
+            "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+            "email_accounts": [
+                {
+                    "name": "Active",
+                    "enabled": True,
+                    "is_default": True,
+                    "provider": "qq",
+                    "address": "active@qq.com",
+                    "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                },
+                {
+                    "name": "Disabled historical account",
+                    "enabled": False,
+                    "provider": "qq",
+                    "address": "disabled@qq.com",
+                    "imap": {"server": "imap.qq.com", "port": 993, "ssl": True},
+                },
+            ],
+        })
+
+        cfg = load_config_safe(path)
+        accounts = get_all_email_accounts(cfg)
+        self.assertEqual({account["address"] for account in accounts}, {"active@qq.com", "disabled@qq.com"})
+        self.assertEqual([account["address"] for account in get_email_accounts(cfg)], ["active@qq.com"])
+
+        accounts[0]["name"] = "Edited active account"
+        cfg["email_accounts"] = accounts
+        save_config(cfg, path=path)
+        reopened = load_config_safe(path)
+
+        reopened_accounts = {account["address"]: account for account in get_all_email_accounts(reopened)}
+        self.assertEqual(set(reopened_accounts), {"active@qq.com", "disabled@qq.com"})
+        self.assertFalse(reopened_accounts["disabled@qq.com"]["enabled"])
+        self.assertEqual(reopened_accounts["active@qq.com"]["name"], "Edited active account")
+        self.assertEqual([account["address"] for account in get_email_accounts(reopened)], ["active@qq.com"])
+
+    def test_safe_config_does_not_resurrect_deleted_last_mailbox_from_legacy_projection(self):
+        path = self._write_config({
+            "email": {"provider": "qq", "address": ""},
+            "imap": {"server": "", "port": 993, "ssl": True},
+            "search": {"folder": "INBOX", "months_back": 3},
+            "email_accounts": [],
+        })
+
+        cfg = load_config_safe(path)
+        self.assertEqual(get_all_email_accounts(cfg), [])
+        self.assertEqual(get_email_accounts(cfg), [])
 
     def test_placeholder_accounts_are_not_returned_as_enabled_mailboxes(self):
         cfg = {

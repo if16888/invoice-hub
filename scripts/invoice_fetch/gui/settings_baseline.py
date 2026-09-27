@@ -22,11 +22,11 @@ from PySide6.QtWidgets import (
 from ..credentials import has_auth_code
 from ..log_privacy import mask_email
 from .ui_components import ElidedTextLabel, make_badge, make_button
+from .mailbox_feedback import connection_feedback
 
 
 # Invoice Hub Design Baseline v1.0: settings Golden Page geometry.
 _SETTINGS_MAX_WIDTH = 1120
-_SETTINGS_DESKTOP_MIN_WIDTH = 900
 _SETTINGS_NAV_WIDTH = 168
 _PAGE_MARGIN = 24
 _HEADER_CONTENT_GAP = 20
@@ -77,6 +77,7 @@ def apply_settings_baseline(page: QWidget) -> None:
     _polish_mailbox_structure(window)
     _install_empty_state_action(window)
     _connect_mailbox_refresh(window)
+    settings_tabs.viewportResized.connect(lambda: apply_settings_responsive_metrics(window))
     _refresh_mailbox_visuals(window)
 
 
@@ -102,6 +103,7 @@ def _install_settings_styles(settings_tabs: QWidget) -> None:
             border: 1px solid {_BORDER_SUBTLE};
             border-radius: 8px;
         }}
+        QStackedWidget#SettingsPageStack {{ background: {_BG_SURFACE}; }}
         QListWidget#SecondaryNavList {{
             background: {_BG_SURFACE_SECONDARY};
             border: none;
@@ -249,6 +251,12 @@ def _polish_mailbox_structure(window) -> None:
     for label in surface.findChildren(QLabel):
         if label.property("class") == "DetailFieldKey":
             label.setFixedWidth(_FIELD_LABEL_WIDTH)
+        elif label.wordWrap():
+            policy = QSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            policy.setHeightForWidth(True)
+            label.setSizePolicy(policy)
+            label.setMinimumHeight(0)
+            label.setMaximumHeight(16777215)
 
     _replace_mailbox_header(window, surface, surface_layout)
     _move_action_footer_into_surface(window, surface, surface_layout)
@@ -274,10 +282,13 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
     settings_tabs = getattr(window, "settings_tabs", None)
     if settings_tabs is None:
         return
-    available_width = int(width or getattr(window, "width", lambda: 0)() or 0)
-    compact = available_width < 1100
+    # The centered settings shell can be far narrower than the main window.
+    # Reserve scrollbar/frame space so its appearance cannot flip the layout.
+    available_width = settings_tabs.contentsRect().width()
+    compact = available_width < (_SETTINGS_NAV_WIDTH + _MAILBOX_LIST_WIDTH
+                                 + _MAILBOX_DETAIL_MIN_WIDTH + 16 + 24)
 
-    settings_tabs.setMinimumWidth(0 if compact else _SETTINGS_DESKTOP_MIN_WIDTH)
+    settings_tabs.setMinimumWidth(0)
     settings_tabs.setMaximumWidth(_SETTINGS_MAX_WIDTH)
     settings_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     nav_list = getattr(settings_tabs, "nav_list", None)
@@ -293,6 +304,9 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
     mailbox_surface = getattr(window, "mailbox_detail_surface", None)
     if mailbox_shell is not None:
         mailbox_shell.setDirection(QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
+        mailbox_shell.setAlignment(Qt.AlignTop)
+        if account_list is not None:
+            mailbox_shell.setAlignment(account_list, Qt.AlignTop)
     if account_list is not None:
         if compact:
             account_list.setMinimumWidth(0)
@@ -304,9 +318,9 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
             account_list.setFixedWidth(_MAILBOX_LIST_WIDTH)
             account_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
     if mailbox_editor is not None:
-        mailbox_editor.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+        mailbox_editor.setMinimumWidth(0)
     if mailbox_surface is not None:
-        mailbox_surface.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+        mailbox_surface.setMinimumWidth(0)
         mailbox_surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
 
     ai_shell = getattr(window, "settings_ai_shell", None)
@@ -325,7 +339,7 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
             profile_list.setFixedWidth(_PROFILE_LIST_WIDTH)
             profile_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
     if ai_surface is not None:
-        ai_surface.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+        ai_surface.setMinimumWidth(0)
         ai_surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
 
     for attr in (
@@ -336,7 +350,7 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
     ):
         surface = getattr(window, attr, None)
         if surface is not None:
-            surface.setMinimumWidth(0 if compact else _MAILBOX_DETAIL_MIN_WIDTH)
+            surface.setMinimumWidth(0)
             surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
 
     label_width = 88 if compact else _FIELD_LABEL_WIDTH
@@ -347,10 +361,12 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
                 label.setMaximumWidth(label_width)
                 label.setFixedWidth(label_width)
 
+    # Stacking the list does not imply that three short buttons need three rows.
+    narrow_actions = available_width - nav_list.width() < 470 if nav_list is not None else compact
     for layout_attr in ("mailbox_action_footer_layout", "settings_ai_footer_layout"):
         footer_layout = getattr(window, layout_attr, None)
         if footer_layout is not None:
-            footer_layout.setDirection(QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight)
+            footer_layout.setDirection(QBoxLayout.TopToBottom if narrow_actions else QBoxLayout.LeftToRight)
 
 
 def _replace_mailbox_header(window, surface: QFrame, surface_layout: QVBoxLayout) -> None:
@@ -507,14 +523,10 @@ def _account_key(account: dict) -> str:
     return str(account.get("mailbox_key") or account.get("address") or "").strip()
 
 
-def _account_state(account: dict) -> tuple[str, str]:
-    enabled = bool(account.get("enabled", True))
+def _account_state(account: dict, window=None) -> tuple[str, str]:
     address = str(account.get("address") or "").strip()
-    if not enabled:
-        return "已停用", "ignored"
-    if not has_auth_code(address):
-        return "需要授权", "review"
-    return "正常", "approved"
+    state, variant, _ = connection_feedback(window, account, has_auth_code(address))
+    return state, variant
 
 
 def _rebuild_mailbox_rows(window) -> None:
@@ -550,7 +562,7 @@ def _rebuild_mailbox_rows(window) -> None:
 
         if account.get("is_default"):
             top.addWidget(make_badge("默认", variant="muted"), 0, Qt.AlignRight)
-        state_text, state_variant = _account_state(account)
+        state_text, state_variant = _account_state(account, window)
         top.addWidget(make_badge(state_text, variant=state_variant), 0, Qt.AlignRight)
 
         address = str(account.get("address") or "").strip()
@@ -587,6 +599,8 @@ def _sync_mailbox_empty_state(window) -> None:
 def _set_status_badge(label: QLabel, text: str) -> None:
     variants = {
         "正常": "approved",
+        "连接成功": "approved",
+        "尚未验证": "muted",
         "需要授权": "review",
         "已停用": "ignored",
         "连接失败": "error",

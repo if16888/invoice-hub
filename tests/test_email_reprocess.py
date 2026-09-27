@@ -12,6 +12,19 @@ from scripts.invoice_fetch.__main__ import (
 )
 
 class TestEmailReprocess(unittest.TestCase):
+    def test_reprocess_returns_connection_failure_count_for_gui(self):
+        self.db._conn.execute(
+            "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
+            "VALUES ('a', 901, 'Synthetic', 'fixture', '2026-06-01', 1, 0)"
+        )
+        self.db._conn.commit()
+        records = self.db.find_emails_for_reprocess(mailbox_key="a", uids=[901], only_downloaded=False)
+        with patch("scripts.invoice_fetch.__main__.MailFetcher") as fetcher, \
+             patch("scripts.invoice_fetch.__main__.LinkDownloader"):
+            fetcher.return_value.__enter__.side_effect = RuntimeError("LOGIN failed")
+            outcome = _reprocess_email_records(self.db, self.cfg, records, dry_run=False)
+        self.assertEqual(outcome, {"succeeded": 0, "failed": 1})
+
     def setUp(self):
         self.temp_dir = Path(tempfile.mkdtemp())
         self.db_path = self.temp_dir / "test_reprocess.db"

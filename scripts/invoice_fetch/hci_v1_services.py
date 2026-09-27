@@ -107,12 +107,13 @@ def recheck_known_email_history(
                 "added_or_restored": 0,
                 "removed_or_replaced": 0,
                 "limit_reached": False,
+                "failed": 0,
             }
 
         before_rows = db.get_all_invoices(include_deleted=True)
         before_ids = {int(row["id"]) for row in before_rows if row.get("id") is not None}
 
-        _reprocess_email_records(
+        outcome = _reprocess_email_records(
             db=db,
             cfg=cfg,
             records=records,
@@ -133,6 +134,7 @@ def recheck_known_email_history(
         "added_or_restored": len(after_ids - before_ids),
         "removed_or_replaced": len(before_ids - after_ids),
         "limit_reached": len(records) >= int(limit),
+        "failed": int(outcome.get("failed", 0)) if isinstance(outcome, dict) else 0,
     }
 
 

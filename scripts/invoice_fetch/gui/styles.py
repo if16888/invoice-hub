@@ -616,7 +616,6 @@ QLabel.InlineWarning {
 }
 QLabel#CompactBuyerWarning {
     min-height: __BUYER_WARNING_MIN_HEIGHT__px;
-    max-height: __BUYER_WARNING_MAX_HEIGHT__px;
     padding: __BUYER_WARNING_PADDING_Y__px __BUYER_WARNING_PADDING_X__px;
     margin-top: __BUYER_WARNING_MARGIN_Y__px;
     margin-bottom: __BUYER_WARNING_MARGIN_Y__px;
@@ -1554,7 +1553,6 @@ QLabel.InlineWarning {
 }
 QLabel#CompactBuyerWarning {
     min-height: __BUYER_WARNING_MIN_HEIGHT__px;
-    max-height: __BUYER_WARNING_MAX_HEIGHT__px;
     padding: __BUYER_WARNING_PADDING_Y__px __BUYER_WARNING_PADDING_X__px;
     margin-top: __BUYER_WARNING_MARGIN_Y__px;
     margin-bottom: __BUYER_WARNING_MARGIN_Y__px;
