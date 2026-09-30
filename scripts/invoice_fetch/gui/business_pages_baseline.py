@@ -96,8 +96,11 @@ def apply_import_baseline(page: QWidget) -> None:
 
     source = getattr(window, "import_source_card", None)
     if source is not None:
-        source.setFixedWidth(IMPORT_SOURCE_WIDTH)
-        source.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        # Source selection is a full-width row above the task. A fixed
+        # sidebar width squeezes three horizontal choices and clips text.
+        source.setMinimumWidth(0)
+        source.setMaximumWidth(16777215)
+        source.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
     task = getattr(window, "import_task_stack", None)
     if task is not None:
         task.setMaximumWidth(900)

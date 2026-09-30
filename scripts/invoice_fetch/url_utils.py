@@ -2,26 +2,21 @@
 
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import urlparse
 
 
 def _mask_url(url: str) -> str:
-    """Mask query parameter values and strip fragments from a URL."""
+    """Keep only the public origin; paths may also contain access tokens."""
     if not url:
         return ""
     try:
         parsed = urlparse(url)
-        query_params = parse_qsl(parsed.query, keep_blank_values=True)
-        masked_query = urlencode([(k, "***") for k, _ in query_params], doseq=True) if query_params else ""
-        return urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                parsed.path,
-                parsed.params,
-                masked_query,
-                "",
-            )
-        )
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return "<url:redacted>"
+        host = parsed.hostname
+        if ":" in host:
+            host = f"[{host}]"
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        return f"{parsed.scheme}://{host}{port}/<redacted>"
     except Exception:
-        return url
+        return "<url:redacted>"

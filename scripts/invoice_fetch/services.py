@@ -25,7 +25,8 @@ from .config import (
 from .credentials import get_auth_code, has_auth_code
 from .mail_fetcher import MailFetcher, MailMessage
 from .attachment_handler import AttachmentHandler, build_managed_attachment_name
-from .invoice_parser import InvoiceParser, parse_html_body, parse_subject
+from .invoice_parser import IsolatedInvoiceParser as InvoiceParser, parse_html_body, parse_subject
+from .pdf_boundary import extract_pdf_text
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .db import InvoiceDB, is_pending_evidence_invoice
 from .excel_export import export_excel
@@ -579,19 +580,9 @@ def _semantic_evidence_fingerprint(path: str | Path) -> str:
     if not p.exists() or p.suffix.lower() != ".pdf":
         return ""
     try:
-        import pdfplumber
-        with pdfplumber.open(str(p)) as pdf:
-            # Semantic dedup must never ignore later pages.  For unusually
-            # long documents, fail open to byte/path dedup instead of risking
-            # a false duplicate while doing expensive full-document parsing.
-            if not pdf.pages or len(pdf.pages) > 32:
-                return ""
-            parts: list[str] = []
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    parts.append(page_text)
-            visible_text = "\n".join(parts)
+        # Semantic matching needs every page and fails open to byte dedup
+        # when the isolated parser cannot safely read the complete document.
+        visible_text = extract_pdf_text(p, semantic=True)
     except Exception:
         return ""
     visible_text = visible_text.replace("\u2f26", "月").replace("\u2f49", "月")
@@ -794,17 +785,9 @@ def _extract_pdf_text_simple(path: Path) -> str:
     if not path or not path.exists() or path.suffix.lower() != ".pdf":
         return ""
     try:
-        import pdfplumber
-        with pdfplumber.open(str(path)) as pdf:
-            text = ""
-            for p in pdf.pages[:2]:
-                t = p.extract_text()
-                if t:
-                    text += t + "\n"
-            # Normalize radical variants
-            text = text.replace("\u2f26", "月").replace("\u2f49", "月")
-            text = text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
-            return text
+        text = extract_pdf_text(path)
+        text = text.replace("\u2f26", "月").replace("\u2f49", "月")
+        return text.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
     except Exception as e:
         _log.debug("PDF 文本提取失败 %s: %s", path, e)
         return ""
@@ -3694,6 +3677,7 @@ def _scan_mailboxes_with_db(
     att_dir.mkdir(parents=True, exist_ok=True)
     att_handler = AttachmentHandler(att_dir)
     parser = InvoiceParser()
+    parser.cancel_check = (lambda: scan_control.cancelled) if scan_control is not None else None
     link_dl = LinkDownloader(att_dir, headed=headed, scan_control=scan_control)
 
     scanned_headers = 0
@@ -4330,6 +4314,7 @@ def import_local_directory(
         att_dir.mkdir(parents=True, exist_ok=True)
 
         parser = InvoiceParser()
+        parser.cancel_check = (lambda: scan_control.cancelled) if scan_control is not None else None
         with InvoiceDB(db_path) as db:
             stats = _import_local_directory(
                 import_dir=import_dir,

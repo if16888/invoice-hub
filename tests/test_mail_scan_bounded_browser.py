@@ -337,7 +337,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
             b = Path(td) / "b.pdf"
             a.write_bytes(b"a")
             b.write_bytes(b"b")
-            with patch.dict(sys.modules, {"pdfplumber": fake_pdfplumber}):
+            with patch.object(services, "extract_pdf_text", side_effect=lambda path, **_: "\n".join(page.extract_text() for page in fake_open(path).pages)):
                 a_fingerprint = services._semantic_evidence_fingerprint(a)
                 b_fingerprint = services._semantic_evidence_fingerprint(b)
 
@@ -362,7 +362,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="invoice-hub-evidence-long-") as td:
             document = Path(td) / "long.pdf"
             document.write_bytes(b"long")
-            with patch.dict(sys.modules, {"pdfplumber": fake_pdfplumber}):
+            with patch.object(services, "extract_pdf_text", return_value=""):
                 fingerprint = services._semantic_evidence_fingerprint(document)
 
         self.assertEqual(fingerprint, "")

@@ -6,7 +6,7 @@ Invoice Hub is a local-first reimbursement preparation tool. This document defin
 
 By default, invoices, receipts, email bodies, attachments, downloaded files, SQLite databases, and Excel exports remain on the user's machine.
 
-Cloud AI classification is optional. When enabled, the current implementation only sends masked email subject and masked sender information. It must not send email bodies, attachments, PDF text, receipt images, databases, or exports.
+Cloud AI classification is optional. When enabled, the current implementation only sends an integer UID, fixed allowlisted classification keywords, and a coarse sender type. It must not send email bodies, attachments, PDF text, receipt images, databases, or exports.
 
 ## Data Inventory
 
@@ -16,8 +16,8 @@ Cloud AI classification is optional. When enabled, the current implementation on
 | QQ Mail auth code | OS credential store | Windows Credential Manager / keyring backend | No | Stored under service `invoice_mail_auth_code`. |
 | AI API key | environment variable | process environment | Only sent to selected AI provider as auth | Never store in config or logs. |
 | Email UID | IMAP server | `runtime/invoices.db` | No | Used for incremental scan and retry. |
-| Email subject | IMAP header | `runtime/invoices.db` | Optional | Sent to AI only when cloud AI provider is explicitly enabled, after masking. |
-| Email sender | IMAP header | `runtime/invoices.db` | Optional | Sent to AI only when cloud AI provider is explicitly enabled, after masking. |
+| Email subject | IMAP header | `runtime/invoices.db` | Optional | Raw value is never sent; only fixed classification keywords are derived locally. |
+| Email sender | IMAP header | `runtime/invoices.db` | Optional | Raw value is never sent; only a coarse sender type is derived locally. |
 | Email date | IMAP header / INTERNALDATE | `runtime/invoices.db` | No | Used for filtering and grouping. |
 | Email body | IMAP message | local memory during processing | No | Used for link extraction and fallback parsing only. |
 | Attachments | email MIME parts | `runtime/attachments/` | No | Saved locally; untrusted input. |
@@ -49,8 +49,8 @@ When a user explicitly enables `deepseek` or `gemini`:
 
 1. Local rules run first.
 2. Only still-unclassified email headers are considered.
-3. The classifier builds a prompt from UID, subject, and sender.
-4. Subject and sender are masked locally before the request.
+3. The classifier extracts only fixed classification keywords and a coarse sender type locally.
+4. The request contains those derived signals and an integer UID; free-form subjects, personal names, project names, addresses, and domains are omitted.
 5. The AI response is used only as a classification suggestion.
 6. Failed AI calls leave emails unclassified for future retry.
 
@@ -126,7 +126,7 @@ Future improvements should add:
 
 - full file hashing
 - domain-level download audit fields
-- optional hiding or masking of full download URLs in exports
+- The current Excel export retains only HTTP(S) origins; credentials, paths, queries, and fragments are redacted.
 - stronger link-scheme filtering
 
 ## Future Hardening

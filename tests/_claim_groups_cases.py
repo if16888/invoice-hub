@@ -939,18 +939,18 @@ class ClaimGroupsTests(unittest.TestCase):
     def test_url_masking_with_multiple_query_params(self):
         from scripts.invoice_fetch.__main__ import _mask_url
         url = "http://example.com/download?token=abcdef&id=123&user=john"
-        expected = "http://example.com/download?token=%2A%2A%2A&id=%2A%2A%2A&user=%2A%2A%2A"
+        expected = "http://example.com/<redacted>"
         self.assertEqual(_mask_url(url), expected)
 
     def test_url_without_query_params_remains_unchanged(self):
         from scripts.invoice_fetch.__main__ import _mask_url
         url = "https://example.com/path/to/invoice.pdf"
-        self.assertEqual(_mask_url(url), url)
+        self.assertEqual(_mask_url(url), "https://example.com/<redacted>")
 
     def test_url_fragment_is_not_exposed(self):
         from scripts.invoice_fetch.__main__ import _mask_url
         url = "https://example.com/invoice#section-3"
-        expected = "https://example.com/invoice"
+        expected = "https://example.com/<redacted>"
         self.assertEqual(_mask_url(url), expected)
 
     @patch("sys.exit")
@@ -972,7 +972,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     _cmd_invoice_show(args, db)
 
-                expected_url = "https://example.com/bill?secret=%2A%2A%2A"
+                expected_url = "https://example.com/<redacted>"
                 mock_print.assert_any_call(f"下载链接:       {expected_url}")
 
     def test_list_invoices_rejects_invalid_status(self):
@@ -1283,7 +1283,7 @@ class ClaimGroupsTests(unittest.TestCase):
     def test_gui_mask_url_behavior(self):
         from scripts.invoice_fetch.gui.helpers import _mask_url
         url = "https://example.com/pay?token=secret123&user=456#frag"
-        expected = "https://example.com/pay?token=%2A%2A%2A&user=%2A%2A%2A"
+        expected = "https://example.com/<redacted>"
         self.assertEqual(_mask_url(url), expected)
 
     def test_gui_stylesheet_uses_status_badge_tokens(self):
@@ -4236,7 +4236,7 @@ class ClaimGroupsTests(unittest.TestCase):
                             return False
 
                         with patch("scripts.invoice_fetch.link_downloader.LinkDownloader", FakeDownloader), \
-                                patch("scripts.invoice_fetch.invoice_parser.InvoiceParser", return_value=FakeParser()), \
+                                patch("scripts.invoice_fetch.invoice_parser.IsolatedInvoiceParser", return_value=FakeParser()), \
                                 patch.object(InvoiceDB, "update_invoice_parsed_metadata", conflict_update), \
                                 patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as mock_warning:
                             window._redownload_selected_invoices()

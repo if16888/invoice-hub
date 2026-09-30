@@ -544,7 +544,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 ws.cell(row=2, column=18).value,
-                "https://example.com/pdf?token=%2A%2A%2A&invoice=%2A%2A%2A",
+                "https://example.com/<redacted>",
             )
             wb.close()
             del ws, wb

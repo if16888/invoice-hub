@@ -81,6 +81,18 @@ def parse_railway_invoice_date(text: str) -> str | None:
 
 # ── PDF parsing ──────────────────────────────────────────────────────
 
+class IsolatedInvoiceParser:
+    """Production parser; field extraction itself remains independently testable."""
+
+    def __init__(self, cancel_check=None):
+        self.cancel_check = cancel_check
+
+    def parse_pdf(self, path: str) -> InvoiceInfo:
+        from .pdf_boundary import run_pdf_operation
+        ok, result = run_pdf_operation(path, cancel_check=self.cancel_check)
+        return InvoiceInfo(**result) if ok else InvoiceInfo(parse_note=result)
+
+
 class InvoiceParser:
     """Extract invoice metadata from PDF files."""
 

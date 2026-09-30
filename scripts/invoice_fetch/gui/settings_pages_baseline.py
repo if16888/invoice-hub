@@ -531,7 +531,7 @@ def apply_remaining_settings_baseline(page: QWidget) -> None:
     _migrate_info_page(window, 3, "安全与隐私", "默认本地处理；凭据、日志和诊断包遵循最小披露原则。", "lbl_settings_privacy", [
         ("处理方式", "本地处理"), ("凭据存储", "Windows 凭据管理器"),
         ("配置与日志", "仅保留脱敏内容"), ("诊断包", "仅导出白名单与脱敏信息")])
-    _migrate_info_page(window, 4, "数据与备份", "查看本地数据、备份和导出位置；页面不展示技术日志。", "lbl_settings_data", [
+    _migrate_info_page(window, 4, "数据与备份", "完整备份包含记录、原件和证明材料，可用于换机；数据库备份仅包含记录。两者均不包含邮箱或 AI 凭据。", "lbl_settings_data", [
         ("数据库大小", "—"), ("数据目录", "—"), ("备份目录", "—"), ("导出目录", "—")])
     _migrate_info_page(window, 5, "关于", "Invoice Hub 是本地优先的个人报销工作台。", "lbl_settings_about", [
         ("产品", "Invoice Hub"), ("版本与构建", "—"), ("产品定位", "本地优先的个人报销工作台")])
