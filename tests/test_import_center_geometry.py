@@ -8,6 +8,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QBoxLayout, QSizePolicy
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -37,6 +38,21 @@ class ImportCenterGeometryTests(unittest.TestCase):
         window.show()
         self.app.processEvents()
         return window
+
+    def test_first_open_keeps_source_cards_in_a_full_width_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.resize(1440, 900)
+                QTest.qWait(150)
+                window._switch_main_page("imports")
+                QTest.qWait(100)
+                self.assertGreater(window.import_source_card.width(), 1000)
+                for card in window.import_source_cards.values():
+                    self.assertGreater(card.width(), 250)
+                self.assertEqual(window.btn_import_local_task.text(), "选择文件夹")
+            finally:
+                window.close()
 
     def test_test9_import_responsive_geometry_across_window_sizes(self):
         """TEST 9: Verify responsive layout states for Wide, Medium, and Narrow desktop viewports."""

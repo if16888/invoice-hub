@@ -311,6 +311,11 @@ def _switch_to_review(window, status: str = TO_REVIEW, *, continuous: bool = Fal
     def after_switch() -> None:
         if not isValid(window):
             return
+        # Dashboard counts describe all live invoices. A previous review search
+        # or column filter must not hide the tasks the user just selected.
+        resetter = getattr(window, "_reset_invoice_filters", None)
+        if callable(resetter):
+            resetter()
         changer = getattr(window, "_change_filter", None)
         if callable(changer):
             changer(status)

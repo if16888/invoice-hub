@@ -149,6 +149,8 @@ class StartupProbeExecutionBoundaryTests(unittest.TestCase):
             env["QT_QPA_PLATFORM"] = "offscreen"
             env["INVOICE_HUB_TEST_MODE"] = "1"
             env["INVOICE_HUB_RUNTIME_DIR"] = str(Path(td) / "runtime")
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
             result = subprocess.run(
                 [
                     sys.executable,

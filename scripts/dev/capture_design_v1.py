@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractScrollArea,
     QApplication,
+    QFormLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -156,7 +157,9 @@ def _seed_database(db_path: Path, runtime: Path, *, page: str, state: str) -> No
         if page == "export" and state in {"export-ready", "export-blocked"}:
             claim_name = "2026 年 7 月差旅报销" if state == "export-ready" else "待补材料报销组"
             claim_id = db.create_claim_group(claim_name, "2026-07-01", "2026-07-31")
-            invoice_number = 246 if state == "export-ready" else 1
+            # Index 245 (invoice 246) requires missing evidence. Use the next
+            # approved record, which has its original and no evidence gap.
+            invoice_number = 247 if state == "export-ready" else 1
             if not db.add_invoice_to_claim(claim_id, invoice_ids[invoice_number]):
                 raise RuntimeError(f"failed to seed {state} claim group")
     finally:
@@ -255,11 +258,24 @@ def _apply_capture_state(window, app: QApplication, *, page: str, state: str, ru
         if state == "missing-authorization" and window.btn_import_scan_selected.text() != "补授权码":
             raise RuntimeError("imports missing-authorization state is not visible")
         if state == "error":
-            visible_copy = "\n".join(
-                label.text() for label in window.import_recent_content.findChildren(QLabel)
-                if label.isVisible()
-            )
-            if "失败 2" not in visible_copy:
+            # Result cards now render labels and counts as separate form rows.
+            # Verify the visible label/value pair instead of the retired prose.
+            failure_rows = []
+            for label in window.import_recent_content.findChildren(QLabel):
+                if label.isVisible() and label.text() == "失败":
+                    layout = label.parentWidget().layout()
+                    for index in range(layout.count()):
+                        form = layout.itemAt(index).layout()
+                        if form is None or not hasattr(form, "getWidgetPosition"):
+                            continue
+                        row, _role = form.getWidgetPosition(label)
+                        if row >= 0:
+                            value_item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+                            if value_item is not None:
+                                value = value_item.widget()
+                                if isinstance(value, QLabel) and value.isVisible():
+                                    failure_rows.append(value.text())
+            if "2" not in failure_rows:
                 raise RuntimeError("imports error state is not visible")
         return
 
