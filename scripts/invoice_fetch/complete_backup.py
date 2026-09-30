@@ -27,6 +27,38 @@ MAX_BACKUP_FILES = 10_000
 MATERIAL_PREFIX = "attachments/complete-restore/"
 
 
+class MissingMaterialsError(ValueError):
+    """Actionable local-only summary; never includes filesystem paths."""
+
+    def __init__(self, issues):
+        self.issues = tuple(issues)
+        lines = []
+        for item in self.issues[:20]:
+            number = str(item["invoice_number"] or "").replace("\n", " ").replace("\r", " ")[:64]
+            identifier = f"发票 ID {item['invoice_id']}" + (f"（票号 {number}）" if number else "")
+            lines.append(f"{identifier}：{item['kind']}缺失")
+        if len(self.issues) > 20:
+            lines.append(f"另外 {len(self.issues) - 20} 处缺失关联")
+        super().__init__("完整备份未创建，以下材料缺失，请先补齐；可先创建数据库备份保留记录。\n" + "\n".join(lines))
+
+
+def _verify_materials(connection, runtime, cancel_check):
+    issues = []
+    for invoice_id, number, original, extras in connection.execute(
+        "SELECT id, invoice_number, attachment_path, extra_paths FROM invoices"
+    ):
+        _check_cancel(cancel_check)
+        references = ([("原件", original)] if original else []) + [("证明材料", p) for p in _paths(extras)]
+        for kind, reference in references:
+            source = Path(reference)
+            if not source.is_absolute():
+                source = runtime / source
+            if not source.is_file():
+                issues.append({"invoice_id": invoice_id, "invoice_number": number, "kind": kind})
+    if issues:
+        raise MissingMaterialsError(issues)
+
+
 def _check_cancel(cancel_check):
     if cancel_check is not None and cancel_check():
         raise ValueError("备份操作已取消，原数据保留")
@@ -70,6 +102,7 @@ def create_complete_backup(db_path, runtime_dir, *, backup_dir=None, cancel_chec
             mapping = {}
             total = snapshot.stat().st_size
             with closing(sqlite3.connect(snapshot)) as connection:
+                _verify_materials(connection, runtime, cancel_check)
                 for invoice_id, original, extras in _rows(connection):
                     references = ([original] if original else []) + _paths(extras)
                     for reference in references:

@@ -3714,7 +3714,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _complete_backup_error(self, message):
         if not self._worker_callback_allowed():
             return
-        QMessageBox.warning(self, "备份操作未完成", message)
+        summary, separator, details = message.partition("\n")
+        if separator:
+            dialog = QMessageBox(QMessageBox.Warning, "备份操作未完成", summary, QMessageBox.Ok, self)
+            dialog.setDetailedText(details)
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "备份操作未完成", message)
 
     def _complete_backup_finished(self):
         if not self._worker_callback_allowed():

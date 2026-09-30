@@ -39,13 +39,52 @@ MAX_TOTAL_BYTES = 200 * 1024 * 1024
 MAX_UPLOAD_FILES = 100
 
 
+class HeaderDeadlineHandlerMixin:
+    """An absolute header deadline also stops peers that dribble bytes."""
+
+    def handle_one_request(self):
+        request = self.connection
+        self._header_expired = threading.Event()
+
+        def expire_headers():
+            self._header_expired.set()
+            try:
+                request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        self._header_timer = threading.Timer(self.server.read_timeout, expire_headers)
+        self._header_timer.daemon = True
+        self._header_timer.start()
+        try:
+            return super().handle_one_request()
+        except ConnectionError:
+            self.close_connection = True
+        finally:
+            self._header_timer.cancel()
+            self._header_timer.join(timeout=0.1)
+
+    def parse_request(self):
+        try:
+            parsed = super().parse_request()
+            if self._header_expired.is_set():
+                self.close_connection = True
+                return False
+            return parsed
+        finally:
+            # Body reads have their own absolute deadline. Importing uploaded
+            # materials must not be interrupted by the header watchdog.
+            self._header_timer.cancel()
+
+
 class BoundedUploadHTTPServer(ThreadingHTTPServer):
     """Bound connection threads, including clients that never send headers."""
 
     def __init__(self, address, handler, *, read_timeout=15.0, max_connections=4):
         self.read_timeout = read_timeout
         self._connections = threading.BoundedSemaphore(max_connections)
-        super().__init__(address, handler)
+        bounded_handler = type("HeaderBoundedHandler", (HeaderDeadlineHandlerMixin, handler), {})
+        super().__init__(address, bounded_handler)
 
     def get_request(self):
         request, address = super().get_request()

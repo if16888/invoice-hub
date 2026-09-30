@@ -208,6 +208,10 @@ def test_real_pdf_is_read_in_isolated_process(tmp_path):
     painter = QPainter(writer)
     painter.drawText(QPoint(500, 500), "SYNTHETIC invoice 100.00")
     painter.end()
+    del painter, writer  # Release the PDF output device before Windows readers.
+    ok, text = run_pdf_operation(sample, mode="text")
+    assert ok, text
+    assert "SYNTHETIC" in text
     assert "SYNTHETIC" in extract_pdf_text(sample)
     ok, result = run_pdf_operation(sample)
     assert ok and isinstance(result, dict) and "parse_success" in result
@@ -293,3 +297,111 @@ def test_complete_backup_gui_reopens_database_and_releases_operation_gate(window
         assert not view._data_operation_busy_reason()
         warning.assert_not_called()
         critical.assert_not_called()
+
+
+def _partial_result_parser(output, path, mode):
+    Path(output).with_suffix('.part').write_text('[true, "unfinished')
+    time.sleep(3)
+
+
+def test_partial_pdf_result_does_not_suspend_deadline_or_cancel(tmp_path):
+    sample = tmp_path / 'partial.pdf'
+    sample.write_bytes(b'%PDF synthetic')
+    before = {child.pid for child in multiprocessing.active_children()}
+    started = time.monotonic()
+    ok, reason = run_pdf_operation(sample, timeout=0.3, child_target=_partial_result_parser)
+    assert not ok and '超时' in reason
+    assert time.monotonic() - started < 2
+    started = time.monotonic()
+    ok, reason = run_pdf_operation(sample, timeout=5, cancel_check=lambda: time.monotonic() - started > 0.3, child_target=_partial_result_parser)
+    assert not ok and '取消' in reason
+    assert time.monotonic() - started < 2
+    assert {child.pid for child in multiprocessing.active_children()} == before
+
+
+def test_slow_headers_release_connection_slot_by_absolute_deadline(tmp_path):
+    server = MobileUploadServer(runtime_dir=tmp_path, host='127.0.0.1', bind_host='127.0.0.1', max_connections=1, read_timeout_seconds=0.3)
+    session = server.start()
+    try:
+        with socket.create_connection(('127.0.0.1', session.port), timeout=2) as slow:
+            slow.sendall(b'GET / HTTP/1.0\r\nHost: localhost\r\nX-Synthetic: ')
+            start = time.monotonic()
+            for _ in range(12):
+                time.sleep(0.08)
+                try:
+                    slow.sendall(b'x')
+                except OSError:
+                    break
+            assert time.monotonic() - start < 0.95
+        with socket.create_connection(('127.0.0.1', session.port), timeout=2) as valid:
+            valid.sendall(f'GET /u/{session.token} HTTP/1.0\r\nHost: localhost\r\n\r\n'.encode())
+            assert '200' in valid.recv(1024).decode()
+    finally:
+        server.stop()
+
+
+def test_missing_backup_materials_list_affected_invoices_without_private_paths(tmp_path):
+    from scripts.invoice_fetch.complete_backup import MissingMaterialsError
+    runtime, path, invoice_id = _backup_source(tmp_path)
+    (runtime / 'attachments' / 'original.pdf').unlink()
+    (runtime / 'attachments' / 'proof.txt').unlink()
+    with pytest.raises(MissingMaterialsError) as captured:
+        create_complete_backup(path, runtime)
+    error = captured.value
+    assert len(error.issues) == 2
+    assert {issue['invoice_id'] for issue in error.issues} == {invoice_id}
+    assert 'BACKUP' in str(error) and '原件' in str(error) and '证明材料' in str(error)
+    assert str(runtime) not in str(error)
+    assert '数据库备份' in str(error)
+    assert not list((runtime / 'backups').glob('*.zip'))
+
+
+def test_header_deadline_does_not_cut_off_valid_server_work():
+    import threading
+    from http.server import BaseHTTPRequestHandler
+    from scripts.invoice_fetch.mobile_upload import BoundedUploadHTTPServer
+    class SlowWork(BaseHTTPRequestHandler):
+        def do_GET(self):
+            time.sleep(0.5)
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+    server = BoundedUploadHTTPServer(('127.0.0.1', 0), SlowWork, read_timeout=0.2)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with socket.create_connection(server.server_address, timeout=2) as client:
+            client.sendall(b'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n')
+            assert '200' in client.recv(1024).decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+        assert not thread.is_alive()
+
+
+def _oversize_result_parser(output, path, mode):
+    from scripts.invoice_fetch.pdf_boundary import MAX_RESULT_BYTES
+    with Path(output).open('wb') as stream:
+        stream.truncate(MAX_RESULT_BYTES + 1)
+
+
+def test_pdf_result_size_is_checked_before_read(tmp_path):
+    sample = tmp_path / 'oversized-result.pdf'
+    sample.write_bytes(b'%PDF synthetic')
+    ok, reason = run_pdf_operation(sample, child_target=_oversize_result_parser)
+    assert not ok and '预算' in reason
+    assert sample.is_file()
+
+
+def test_backup_missing_list_uses_scrollable_dialog_details(window):
+    from PySide6.QtWidgets import QMessageBox
+    view, app = window
+    captured = []
+    with patch.object(QMessageBox, 'exec', new=lambda box: captured.append((box.text(), box.detailedText())) or 0):
+        view._complete_backup_error('完整备份未创建，可先创建数据库备份。\n发票 ID 1：原件缺失\n发票 ID 2：证明材料缺失')
+    assert len(captured) == 1
+    summary, details = captured[0]
+    assert '\n' not in summary
+    assert '发票 ID 1' in details and '发票 ID 2' in details
