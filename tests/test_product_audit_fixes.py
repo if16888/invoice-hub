@@ -198,17 +198,32 @@ def test_pdf_timeout_and_cancellation_leave_no_parser_process(tmp_path):
 
 
 def test_real_pdf_is_read_in_isolated_process(tmp_path):
-    from PySide6.QtCore import QPoint
-    from PySide6.QtGui import QPainter, QPdfWriter
-    from PySide6.QtWidgets import QApplication
+    import pdfplumber
     from scripts.invoice_fetch.pdf_boundary import extract_pdf_text
-    app = QApplication.instance() or QApplication([])
     sample = tmp_path / "synthetic.pdf"
-    writer = QPdfWriter(str(sample))
-    painter = QPainter(writer)
-    painter.drawText(QPoint(500, 500), "SYNTHETIC invoice 100.00")
-    painter.end()
-    del painter, writer  # Release the PDF output device before Windows readers.
+    # Use actual PDF text operators and a standard font, independently of the
+    # runner's native fonts and Qt's platform-specific PDF drawing backend.
+    stream = b"BT /F1 12 Tf 72 720 Td (SYNTHETIC invoice 100.00) Tj ET\n"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream",
+    ]
+    document = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, content in enumerate(objects, 1):
+        offsets.append(len(document))
+        document.extend(f"{number} 0 obj\n".encode("ascii") + content + b"\nendobj\n")
+    xref = len(document)
+    document.extend(f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets[1:]:
+        document.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    document.extend(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii"))
+    sample.write_bytes(document)
+    with pdfplumber.open(sample) as pdf:
+        assert "SYNTHETIC" in pdf.pages[0].extract_text()
     ok, text = run_pdf_operation(sample, mode="text")
     assert ok, text
     assert "SYNTHETIC" in text
