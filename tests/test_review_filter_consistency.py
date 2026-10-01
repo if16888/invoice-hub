@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.review_status import APPROVED, IGNORED, TO_REVIEW
@@ -83,6 +84,33 @@ class ReviewFilterConsistencyTests(unittest.TestCase):
                 self.assertTrue(window.filter_buttons["all"].property("selected"))
                 self.assertEqual(window.table.rowCount(), 39)
                 self.assertIn("39", window.lbl_record_count.text())
+            finally:
+                window.close()
+
+    def test_dashboard_continue_clears_stale_search_and_quick_filters(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window_with_status_mix(td)
+            try:
+                QTest.qWait(100)  # Finish the scheduled desktop initialization.
+                window.txt_search.setText("APPROVED-00")
+                window.chk_unlinked.setChecked(True)
+                window.column_filters["seller_name"] = {"mode": "values", "values": ["Other Seller"]}
+                window._load_invoices()
+                window._switch_main_page("overview")
+                self.app.processEvents()
+                window.btn_hci_continue_tasks.click()
+                for _ in range(40):
+                    QTest.qWait(25)
+                    if window.review_page.property("hciContinuousReview"):
+                        break
+
+                self.assertEqual(window.txt_search.text(), "")
+                self.assertFalse(window.chk_unlinked.isChecked())
+                self.assertEqual(window.column_filters, {})
+                self.assertEqual(window.current_filter_status, TO_REVIEW)
+                self.assertEqual(window.table.rowCount(), 11)
+                self.assertTrue(window.review_page.property("hciContinuousReview"))
+                self.assertNotIn("没有待审核", window.lbl_hci_review_progress.text())
             finally:
                 window.close()
 

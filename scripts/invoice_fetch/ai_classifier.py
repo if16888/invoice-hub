@@ -156,7 +156,7 @@ class AIClassifier:
     def _call_api(self, chunk: list[dict]) -> list[dict]:
         """Single API call for a chunk of emails."""
         if self.provider in {"deepseek", "openai"}:
-            return self._call_deepseek(chunk)
+            return self._call_chat_completions(chunk)
         elif self.provider == "gemini":
             return self._call_gemini(chunk)
         else:
@@ -230,12 +230,12 @@ class AIClassifier:
             )
         return "\n".join(lines)
 
-    def _call_deepseek(self, chunk: list[dict]) -> list[dict]:
-        """Call DeepSeek chat completions API."""
+    def _call_chat_completions(self, chunk: list[dict]) -> list[dict]:
+        """Call the selected provider's chat completions API."""
         user_msg = self._build_user_message(chunk)
         try:
             resp = self._post_with_retry(
-                _ENDPOINTS["deepseek"],
+                _ENDPOINTS[self.provider],
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -254,7 +254,7 @@ class AIClassifier:
             raise
         except requests.RequestException as exc:
             _log.error(
-                "DeepSeek API 调用失败: provider=%s, model=%s, error=%s",
+                "AI API 调用失败: provider=%s, model=%s, error=%s",
                 self.provider,
                 self.model,
                 self._safe_request_error(exc),

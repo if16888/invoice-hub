@@ -1535,6 +1535,7 @@ let activePreview = null;
 let activePreviewIndex = -1;
 let activePreviewPage = 1;
 let renderSerial = 0;
+let previewRenderTask = null;
 let previewTouchStart = null;
 
 const SWIPE_THRESHOLD_PX = 64;
@@ -1929,6 +1930,13 @@ async function renderPdfPage(record, pageNumber) {
   previewCanvas.hidden = true;
   previewImage.hidden = true;
   updatePreviewControls(fileIndex, normalizedPage);
+  const previousRender = previewRenderTask;
+  if (previousRender) {
+    previousRender.cancel();
+    try { await previousRender.promise; } catch (_) {}
+    if (serial !== renderSerial || activePreview !== record || activePreviewIndex !== fileIndex) return;
+  }
+  let renderTask = null;
   try {
     const pdfDocument = await ensurePdfDocument(record);
     if (serial !== renderSerial || activePreview !== record || activePreviewIndex !== fileIndex) return;
@@ -1946,11 +1954,13 @@ async function renderPdfPage(record, pageNumber) {
     const context = previewCanvas.getContext("2d", { alpha: false });
     context.fillStyle = "#fff";
     context.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
-    await page.render({
+    renderTask = page.render({
       canvasContext: context,
       viewport,
       transform: dpr === 1 ? null : [dpr, 0, 0, dpr, 0, 0],
-    }).promise;
+    });
+    previewRenderTask = renderTask;
+    await renderTask.promise;
     if (serial !== renderSerial || activePreview !== record || activePreviewIndex !== fileIndex) return;
     previewLoading.hidden = true;
     previewCanvas.hidden = false;
@@ -1963,6 +1973,8 @@ async function renderPdfPage(record, pageNumber) {
     releasePdfDocument(record);
     showPreviewError("无法预览，但仍可移除/重新选择。");
     renderFileList();
+  } finally {
+    if (previewRenderTask === renderTask) previewRenderTask = null;
   }
 }
 

@@ -1252,7 +1252,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.workbench_nav.setMaximumWidth(16777215)
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
-        row_h = 28
+        from .review_workspace_baseline import REVIEW_ROW_HEIGHT
+        row_h = REVIEW_ROW_HEIGHT
         self.table.verticalHeader().setDefaultSectionSize(row_h)
         self.table.verticalHeader().setMinimumSectionSize(row_h)
         self.table.verticalHeader().setMaximumSectionSize(row_h + 4)
@@ -1263,7 +1264,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.setMinimumSize(min_window_width, 530)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
-        self.btn_more.setText("更多操作  ▼" if not metrics.compact else "更多")
+        self.btn_more.setText("更多")
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
         for card in self.filter_buttons.values():
             card.setMinimumWidth(118)
@@ -4741,7 +4742,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.import_local_task_card = SectionCard(
             "本地导入",
-            hint="选择文件或文件夹后，按当前规则完成导入。",
+            hint="选择包含票据的文件夹后，按当前规则完成导入。",
         )
         self.import_local_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.import_local_task_card._layout.setAlignment(Qt.AlignTop)
@@ -4753,7 +4754,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_local_processing = CompactFieldRow("处理", "自动识别、自动去重，冲突项进入待审核")
         self.import_local_task_card.body_layout.addWidget(self.import_local_types)
         self.import_local_task_card.body_layout.addWidget(self.import_local_processing)
-        self.btn_import_local_task = make_button("选择文件", variant="primary")
+        self.btn_import_local_task = make_button("选择文件夹", variant="primary")
         self.btn_import_local_task.clicked.connect(self._import_local_clicked)
         self.import_local_task_card.body_layout.addWidget(self.btn_import_local_task)
 

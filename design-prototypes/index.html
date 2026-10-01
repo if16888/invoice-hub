@@ -1,0 +1,1556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice Hub — 智能发票归集与审核工作台 (Open Design Prototype)</title>
+  <style>
+    :root {
+      --primary-50:  #EFF6FF;
+      --primary-100: #DBEAFE;
+      --primary-500: #2563EB;
+      --primary-600: #1D4ED8;
+      --primary-700: #1E40AF;
+
+      --bg-page:     #F8FAFC;
+      --bg-surface:  #FFFFFF;
+      --bg-subtle:   #F1F5F9;
+      --border-light:#E2E8F0;
+      --border-dark: #CBD5E1;
+
+      --text-main:   #0F172A;
+      --text-sub:    #475569;
+      --text-muted:  #94A3B8;
+
+      --success:     #059669;
+      --success-bg:  #ECFDF5;
+      --success-border: #A7F3D0;
+
+      --warning:     #D97706;
+      --warning-bg:  #FFFBEB;
+      --warning-border: #FDE68A;
+
+      --danger:      #DC2626;
+      --danger-bg:   #FEF2F2;
+      --danger-border: #FECACA;
+
+      --info:        #0284C7;
+      --info-bg:     #F0F9FF;
+      --info-border: #BAE6FD;
+
+      --sidebar-width: 220px;
+      --header-height: 56px;
+      --radius: 8px;
+      --radius-sm: 6px;
+      --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Sidebar Navigation ── */
+    aside.sidebar {
+      width: var(--sidebar-width);
+      background-color: #0F172A;
+      color: #F8FAFC;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      border-right: 1px solid #1E293B;
+      user-select: none;
+    }
+
+    .brand-header {
+      height: var(--header-height);
+      display: flex;
+      align-items: center;
+      padding: 0 18px;
+      gap: 10px;
+      border-bottom: 1px solid #1E293B;
+    }
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFF;
+      font-weight: 700;
+      font-size: 14px;
+      box-shadow: 0 2px 4px rgba(37,99,235,0.4);
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+      color: #F8FAFC;
+    }
+
+    .brand-tag {
+      font-size: 10px;
+      background: #1E293B;
+      color: #94A3B8;
+      padding: 2px 5px;
+      border-radius: 4px;
+      margin-left: auto;
+    }
+
+    nav.nav-list {
+      flex: 1;
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      color: #94A3B8;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .nav-item:hover {
+      background-color: #1E293B;
+      color: #F8FAFC;
+    }
+
+    .nav-item.active {
+      background-color: var(--primary-600);
+      color: #FFF;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 11px;
+      background: #334155;
+      color: #E2E8F0;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .nav-item.active .nav-badge {
+      background: rgba(255, 255, 255, 0.2);
+      color: #FFF;
+    }
+
+    .sidebar-footer {
+      padding: 14px 16px;
+      border-top: 1px solid #1E293B;
+      font-size: 11px;
+      color: #64748B;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .company-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #CBD5E1;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background-color: var(--success);
+      box-shadow: 0 0 6px rgba(5,150,105,0.6);
+    }
+
+    /* ── Main Layout ── */
+    main.main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      background-color: var(--bg-page);
+    }
+
+    header.topbar {
+      height: var(--header-height);
+      background-color: var(--bg-surface);
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      flex-shrink: 0;
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-sub);
+    }
+
+    .breadcrumb-current {
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: 1px solid transparent;
+      user-select: none;
+    }
+
+    .btn-primary {
+      background-color: var(--primary-600);
+      color: #FFF;
+      box-shadow: 0 1px 2px rgba(37,99,235,0.2);
+    }
+
+    .btn-primary:hover {
+      background-color: var(--primary-700);
+    }
+
+    .btn-secondary {
+      background-color: #FFF;
+      border-color: var(--border-light);
+      color: var(--text-main);
+    }
+
+    .btn-secondary:hover {
+      background-color: var(--bg-subtle);
+      border-color: var(--border-dark);
+    }
+
+    .btn-success {
+      background-color: var(--success);
+      color: #FFF;
+    }
+    .btn-success:hover {
+      background-color: #047857;
+    }
+
+    .btn-danger {
+      background-color: #FFF;
+      border-color: var(--danger-border);
+      color: var(--danger);
+    }
+    .btn-danger:hover {
+      background-color: var(--danger-bg);
+    }
+
+    /* ── Content Viewports ── */
+    .view-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: none;
+    }
+
+    .view-container.active {
+      display: block;
+    }
+
+    /* ── Common Typography & Cards ── */
+    .page-header {
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .page-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: -0.3px;
+    }
+
+    .page-subtitle {
+      font-size: 13px;
+      color: var(--text-sub);
+      margin-top: 3px;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* ── PAGE 1: Overview ── */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .metric-card {
+      padding: 18px 20px;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-sub);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .metric-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin: 10px 0 6px 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-footer {
+      font-size: 11.5px;
+      color: var(--text-sub);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .trend-badge {
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .trend-up { background: var(--success-bg); color: var(--success); }
+    .trend-warn { background: var(--warning-bg); color: var(--warning); }
+
+    .overview-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    /* ── PAGE 2: Review Workbench (Split View) ── */
+    .workbench-layout {
+      display: grid;
+      grid-template-columns: 1fr 480px;
+      gap: 20px;
+      height: calc(100vh - var(--header-height) - 48px);
+    }
+
+    .workbench-table-pane {
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .filter-bar {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg-surface);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .search-input {
+      padding: 6px 12px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      width: 220px;
+      outline: none;
+      transition: border 0.15s ease;
+    }
+    .search-input:focus {
+      border-color: var(--primary-500);
+      box-shadow: 0 0 0 2px var(--primary-50);
+    }
+
+    .filter-select {
+      padding: 6px 10px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      background: #FFF;
+      color: var(--text-main);
+      outline: none;
+    }
+
+    .table-container {
+      flex: 1;
+      overflow: auto;
+    }
+
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    table.data-table th {
+      position: sticky;
+      top: 0;
+      background: var(--bg-subtle);
+      padding: 9px 12px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-sub);
+      border-bottom: 1px solid var(--border-light);
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    table.data-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-light);
+      font-size: 12.5px;
+      color: var(--text-main);
+      white-space: nowrap;
+    }
+
+    table.data-table tr {
+      cursor: pointer;
+      transition: background 0.1s ease;
+    }
+
+    table.data-table tr:hover {
+      background-color: #F8FAFC;
+    }
+
+    table.data-table tr.selected {
+      background-color: var(--primary-50);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .badge-success { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+    .badge-warning { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+    .badge-danger  { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
+    .badge-neutral { background: var(--bg-subtle);  color: var(--text-sub); border: 1px solid var(--border-light); }
+
+    /* ── Right Panel: Invoice Detail & Verification ── */
+    .workbench-detail-pane {
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow-y: auto;
+    }
+
+    .detail-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-subtle);
+    }
+
+    .detail-content {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+    }
+
+    /* Simulated Real Invoice Paper */
+    .invoice-paper {
+      background: #FFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 6px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+      position: relative;
+    }
+
+    .invoice-paper-title {
+      text-align: center;
+      font-size: 16px;
+      font-weight: 700;
+      color: #991B1B; /* 增值税发票红 */
+      letter-spacing: 2px;
+      margin-bottom: 12px;
+      border-bottom: 2px double #991B1B;
+      padding-bottom: 6px;
+    }
+
+    .invoice-meta-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-sub);
+      margin-bottom: 10px;
+    }
+
+    .invoice-party-box {
+      border: 1px solid var(--border-light);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 11.5px;
+      margin-bottom: 8px;
+      display: grid;
+      grid-template-columns: 60px 1fr;
+      row-gap: 4px;
+    }
+    .party-label { color: var(--text-sub); }
+    .party-val { font-weight: 500; color: var(--text-main); }
+
+    .invoice-calc-box {
+      background: #F8FAFC;
+      border: 1px solid var(--border-light);
+      border-radius: 4px;
+      padding: 10px 12px;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+
+    .calc-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 5px;
+    }
+    .calc-row.total {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-main);
+      border-top: 1px dashed var(--border-dark);
+      padding-top: 6px;
+      margin-top: 6px;
+    }
+
+    /* Verification Status Banner */
+    .verify-banner {
+      padding: 12px;
+      border-radius: 6px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .verify-banner.ok {
+      background: var(--success-bg);
+      border: 1px solid var(--success-border);
+      color: var(--success);
+    }
+    .verify-banner.warn {
+      background: var(--warning-bg);
+      border: 1px solid var(--warning-border);
+      color: var(--warning);
+    }
+
+    .detail-actions {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border-light);
+      display: flex;
+      gap: 10px;
+      background: var(--bg-subtle);
+    }
+
+    /* ── PAGE 3: Import Hub ── */
+    .import-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .dropzone-box {
+      border: 2px dashed var(--border-dark);
+      border-radius: var(--radius);
+      padding: 36px 20px;
+      text-align: center;
+      background: #FFF;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .dropzone-box:hover {
+      border-color: var(--primary-500);
+      background: var(--primary-50);
+    }
+
+    .drop-icon {
+      font-size: 36px;
+      color: var(--primary-500);
+      margin-bottom: 10px;
+    }
+
+    .mailbox-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mailbox-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: #F8FAFC;
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+    }
+
+    /* ── PAGE 4: Export & Reimbursement ── */
+    .export-layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 24px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+    .form-control {
+      width: 100%;
+      padding: 7px 12px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      outline: none;
+    }
+    .form-control:focus {
+      border-color: var(--primary-500);
+    }
+
+    /* Floating Batch Bar */
+    .floating-batch-bar {
+      position: fixed;
+      bottom: 24px;
+      left: calc(var(--sidebar-width) + (100vw - var(--sidebar-width)) / 2);
+      transform: translateX(-50%);
+      background: #0F172A;
+      color: #FFF;
+      padding: 10px 20px;
+      border-radius: 30px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+      z-index: 100;
+      font-size: 12.5px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Synthetic demonstration only: all identifiers and companies are placeholders. -->
+
+  <!-- ── 1. Sidebar ── -->
+  <aside class="sidebar">
+    <div class="brand-header">
+      <div class="brand-icon">IH</div>
+      <div>
+        <div class="brand-title">Invoice Hub</div>
+      </div>
+      <span class="brand-tag">v0.1.8</span>
+    </div>
+
+    <nav class="nav-list">
+      <div class="nav-item active" onclick="switchTab('overview')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        <span>数据概览</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('review')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+        <span>审核工作台</span>
+        <span class="nav-badge" id="pending-badge">8</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('imports')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        <span>归集与同步</span>
+      </div>
+      <div class="nav-item" onclick="switchTab('export')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <span>报销归档</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="company-pill">
+        <div class="status-dot"></div>
+        <span>合成购买方示例公司</span>
+      </div>
+      <div>税号: SYNTHETIC-TAX-0001</div>
+      <div style="margin-top: 4px; color: #475569;">Open Design 联动协议: 就绪</div>
+    </div>
+  </aside>
+
+  <!-- ── 2. Main Viewport ── -->
+  <main class="main-content">
+    <header class="topbar">
+      <div class="breadcrumb">
+        <span>Invoice Hub</span>
+        <span>/</span>
+        <span class="breadcrumb-current" id="breadcrumb-title">数据概览</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-secondary" onclick="syncMailboxMock()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          一键拉取发票
+        </button>
+        <button class="btn btn-primary" onclick="switchTab('review')">
+          继续审核 (8)
+        </button>
+      </div>
+    </header>
+
+    <!-- ────────────────────────────────────────── -->
+    <!-- VIEW 1: Overview & Analytics               -->
+    <!-- ────────────────────────────────────────── -->
+    <div id="view-overview" class="view-container active">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">发票概览与运营看板</h1>
+          <p class="page-subtitle">当前归集周期：2026年9月 · 严守企业税号合规与价税核验准则</p>
+        </div>
+        <div style="font-size: 12px; color: var(--text-sub);">
+          更新于: <span class="tabular-nums">2026-09-27 13:40</span>
+        </div>
+      </div>
+
+      <!-- Metric Cards -->
+      <div class="metric-grid">
+        <div class="card metric-card">
+          <div class="metric-label">
+            <span>待审核票据</span>
+            <span class="badge badge-warning">待处理</span>
+          </div>
+          <div class="metric-value">8 <span style="font-size: 14px; font-weight: normal; color: var(--text-sub);">张</span></div>
+          <div class="metric-footer">
+            <span class="trend-badge trend-warn">+2 张</span> 较昨日新增邮件
+          </div>
+        </div>
+
+        <div class="card metric-card">
+          <div class="metric-label">
+            <span>本月报销总额</span>
+            <span class="badge badge-success">正常</span>
+          </div>
+          <div class="metric-value tabular-nums">¥ 14,820.50</div>
+          <div class="metric-footer">
+            <span class="trend-badge trend-up">↑ 12%</span> 较上月同期
+          </div>
+        </div>
+
+        <div class="card metric-card">
+          <div class="metric-label">
+            <span>价税合规通过率</span>
+            <span class="badge badge-success">98.4%</span>
+          </div>
+          <div class="metric-value tabular-nums">126 / 128</div>
+          <div class="metric-footer">
+            <span>2 张存在抬头税号异常</span>
+          </div>
+        </div>
+
+        <div class="card metric-card">
+          <div class="metric-label">
+            <span>已归档报销包</span>
+            <span class="badge badge-neutral">累计</span>
+          </div>
+          <div class="metric-value tabular-nums">14 <span style="font-size: 14px; font-weight: normal; color: var(--text-sub);">批</span></div>
+          <div class="metric-footer">
+            <span>最近归档：2026-08 差旅批次</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Content Split: Recent Risk Items & Flow -->
+      <div class="overview-row">
+        <!-- Left: Pending Risk Table -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">待办发票与合规预警 (Top 5)</div>
+            <a href="javascript:void(0)" onclick="switchTab('review')" style="color: var(--primary-600); text-decoration: none; font-size: 12px;">查看全部 &rarr;</a>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>票号</th>
+                <th>销售方名称</th>
+                <th>开票日期</th>
+                <th style="text-align: right;">含税总额</th>
+                <th>合规预检</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge-warning">待复核</span></td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0001</td>
+                <td>合成云服务示例公司</td>
+                <td class="tabular-nums">2026-09-25</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 1,272.00</td>
+                <td><span class="badge badge-success">税号及金额平齐</span></td>
+                <td><a href="javascript:void(0)" onclick="openReviewDetail(0)" style="color: var(--primary-600); text-decoration: none;">审查</a></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-danger">抬头不符</span></td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0002</td>
+                <td>合成餐饮示例公司</td>
+                <td class="tabular-nums">2026-09-24</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 216.50</td>
+                <td><span class="badge badge-danger">购买方税号缺少末位</span></td>
+                <td><a href="javascript:void(0)" onclick="openReviewDetail(1)" style="color: var(--primary-600); text-decoration: none;">核实</a></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-warning">待复核</span></td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0003</td>
+                <td>合成交通示例公司</td>
+                <td class="tabular-nums">2026-09-23</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 565.00</td>
+                <td><span class="badge badge-success">旅客运输扣税合规</span></td>
+                <td><a href="javascript:void(0)" onclick="openReviewDetail(2)" style="color: var(--primary-600); text-decoration: none;">审查</a></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success">已通过</span></td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0004</td>
+                <td>合成办公用品示例公司</td>
+                <td class="tabular-nums">2026-09-20</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 400.00</td>
+                <td><span class="badge badge-success">已通过全部校验</span></td>
+                <td><span style="color: var(--text-muted);">已归档</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Right: Actions & Category Breakdown -->
+        <div class="card" style="display: flex; flex-direction: column;">
+          <div class="card-header">
+            <div class="card-title">费用归属分布</div>
+          </div>
+          <div style="padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 14px;">
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                <span>云资源与研发费用</span>
+                <span class="tabular-nums" style="font-weight: 600;">¥ 8,420.00 (56.8%)</span>
+              </div>
+              <div style="height: 6px; background: var(--bg-subtle); border-radius: 3px; overflow: hidden;">
+                <div style="width: 56.8%; height: 100%; background: var(--primary-500);"></div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                <span>差旅交通 (高铁/机票/酒店)</span>
+                <span class="tabular-nums" style="font-weight: 600;">¥ 4,120.50 (27.8%)</span>
+              </div>
+              <div style="height: 6px; background: var(--bg-subtle); border-radius: 3px; overflow: hidden;">
+                <div style="width: 27.8%; height: 100%; background: #0EA5E9;"></div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                <span>办公日用与耗材</span>
+                <span class="tabular-nums" style="font-weight: 600;">¥ 1,480.00 (10.0%)</span>
+              </div>
+              <div style="height: 6px; background: var(--bg-subtle); border-radius: 3px; overflow: hidden;">
+                <div style="width: 10.0%; height: 100%; background: #10B981;"></div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                <span>业务招待</span>
+                <span class="tabular-nums" style="font-weight: 600;">¥ 800.00 (5.4%)</span>
+              </div>
+              <div style="height: 6px; background: var(--bg-subtle); border-radius: 3px; overflow: hidden;">
+                <div style="width: 5.4%; height: 100%; background: #F59E0B;"></div>
+              </div>
+            </div>
+
+            <div style="margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border-light); font-size: 11.5px; color: var(--text-sub);">
+              💡 提示：符合数电票标准的开票文件会自动完成结构化解析与真伪验真。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────────────── -->
+    <!-- VIEW 2: Review Workbench (Split View)      -->
+    <!-- ────────────────────────────────────────── -->
+    <div id="view-review" class="view-container">
+      <div class="workbench-layout">
+        <!-- Left: Table & Filters -->
+        <div class="workbench-table-pane">
+          <div class="filter-bar">
+            <input type="text" class="search-input" placeholder="搜索销售方、票号..." onkeyup="filterTable(this.value)">
+            <select class="filter-select" onchange="filterStatus(this.value)">
+              <option value="all">全部状态 (8)</option>
+              <option value="pending">待复核 (6)</option>
+              <option value="warning">存在预警 (2)</option>
+              <option value="approved">已核准</option>
+            </select>
+            <select class="filter-select">
+              <option>2026年9月</option>
+              <option>2026年8月</option>
+              <option>2026年7月</option>
+            </select>
+            <div style="margin-left: auto; font-size: 12px; color: var(--text-sub);">
+              共 <b id="table-count" style="color: var(--text-main);">4</b> 条记录
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table class="data-table" id="review-table">
+              <thead>
+                <tr>
+                  <th style="width: 32px;"><input type="checkbox" id="select-all" onclick="toggleSelectAll(this)"></th>
+                  <th>状态</th>
+                  <th>票号</th>
+                  <th>销售方名称</th>
+                  <th>开票日期</th>
+                  <th style="text-align: right;">含税总额</th>
+                  <th>费用类别</th>
+                </tr>
+              </thead>
+              <tbody id="invoice-tbody">
+                <!-- Dynamically populated or rendered -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Right: Inspector & Verification Panel -->
+        <div class="workbench-detail-pane">
+          <div class="detail-header">
+            <div>
+              <div style="font-weight: 600; font-size: 13.5px;" id="detail-title">发票详情与票面核验</div>
+              <div style="font-size: 11.5px; color: var(--text-sub);" id="detail-subtitle">选中发票以查看原件凭证</div>
+            </div>
+            <span class="badge badge-warning" id="detail-status-badge">待复核</span>
+          </div>
+
+          <div class="detail-content" id="detail-body">
+            <!-- Simulated Standard Digital Invoice Paper -->
+            <div class="invoice-paper">
+              <div class="invoice-paper-title">电子发票（增值税专用发票）</div>
+              <div class="invoice-meta-row">
+                <span>票号: <strong class="tabular-nums" id="p-invoice-num">DEMO-INVOICE-0001</strong></span>
+                <span>开票日期: <strong class="tabular-nums" id="p-invoice-date">2026年09月25日</strong></span>
+              </div>
+
+              <!-- Buyer Box -->
+              <div class="invoice-party-box">
+                <span class="party-label">购买方:</span>
+                <span class="party-val" id="p-buyer-name">合成购买方示例公司</span>
+                <span class="party-label">税　号:</span>
+                <span class="party-val tabular-nums" id="p-buyer-tax">SYNTHETIC-TAX-0001</span>
+              </div>
+
+              <!-- Seller Box -->
+              <div class="invoice-party-box">
+                <span class="party-label">销售方:</span>
+                <span class="party-val" id="p-seller-name">合成云服务示例公司</span>
+                <span class="party-label">税　号:</span>
+                <span class="party-val tabular-nums" id="p-seller-tax">SYNTHETIC-TAX-0002</span>
+              </div>
+
+              <!-- Item Detail Box -->
+              <div style="border: 1px solid var(--border-light); border-radius: 4px; padding: 6px 10px; font-size: 11.5px; margin-top: 8px;">
+                <div style="display: flex; justify-content: space-between; font-weight: 600; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px;">
+                  <span>项目名称</span>
+                  <span>金额 (不含税)</span>
+                  <span>税率</span>
+                  <span>税额</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding-top: 4px;">
+                  <span id="p-item-name">*信息技术服务*云服务器ECS</span>
+                  <span class="tabular-nums" id="p-amount-untaxed">¥ 1,200.00</span>
+                  <span class="tabular-nums" id="p-tax-rate">6%</span>
+                  <span class="tabular-nums" id="p-tax-amount">¥ 72.00</span>
+                </div>
+              </div>
+
+              <!-- Mathematical Equality Check -->
+              <div class="invoice-calc-box">
+                <div class="calc-row">
+                  <span>不含税金额合计:</span>
+                  <span class="tabular-nums" id="calc-untaxed">¥ 1,200.00</span>
+                </div>
+                <div class="calc-row">
+                  <span>增值税额合计:</span>
+                  <span class="tabular-nums" id="calc-tax">¥ 72.00</span>
+                </div>
+                <div class="calc-row total">
+                  <span>(小写) 含税总额:</span>
+                  <span class="tabular-nums" id="calc-total" style="color: var(--primary-600);">¥ 1,272.00</span>
+                </div>
+                <div class="calc-row" style="font-size: 11.5px; color: var(--text-sub); margin-top: 4px;">
+                  <span>(大写) 含税总额:</span>
+                  <span id="calc-chinese" style="font-weight: 600; color: var(--text-main);">壹仟贰佰柒拾贰元整</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Compliance Checklist -->
+            <div id="verify-box" class="verify-banner ok">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <div>
+                <strong id="verify-title">全项合规校验通过</strong>
+                <div style="font-size: 11.5px; margin-top: 2px;" id="verify-desc">购买方税号与本企业一致 · 价税平衡恒等式检验平齐 · 无历史重复入库记录。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Action Buttons -->
+          <div class="detail-actions">
+            <button class="btn btn-success" style="flex: 1;" onclick="approveCurrent()">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+              核准通过 (Ctrl+Enter)
+            </button>
+            <button class="btn btn-danger" onclick="rejectCurrent()">
+              驳回退回
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────────────── -->
+    <!-- VIEW 3: Import & Sync Hub                  -->
+    <!-- ────────────────────────────────────────── -->
+    <div id="view-imports" class="view-container">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">发票归集与自动化导入</h1>
+          <p class="page-subtitle">支持邮箱自动拉取、本地批量拖拽及手机局域网扫码直传</p>
+        </div>
+      </div>
+
+      <div class="import-grid">
+        <!-- 邮箱同步通道 -->
+        <div class="card" style="padding: 20px;">
+          <div class="card-header" style="padding: 0 0 14px 0;">
+            <div class="card-title">绑定邮箱自动拉取通道</div>
+            <button class="btn btn-secondary" onclick="syncMailboxMock()">立即检查所有邮箱</button>
+          </div>
+          <div class="mailbox-list" style="margin-top: 14px;">
+            <div class="mailbox-item">
+              <div>
+                <div style="font-weight: 600;">finance-inbox@example.invalid (合成企业邮箱)</div>
+                <div style="font-size: 11.5px; color: var(--text-sub); margin-top: 2px;">
+                  协议: IMAP (SSL:993) · 上次同步: 12分钟前 · 累计归集 84 张
+                </div>
+              </div>
+              <span class="badge badge-success">监听中</span>
+            </div>
+            <div class="mailbox-item">
+              <div>
+                <div style="font-weight: 600;">synthetic-travel@example.invalid (合成差旅邮箱)</div>
+                <div style="font-size: 11.5px; color: var(--text-sub); margin-top: 2px;">
+                  协议: IMAP (SSL:993) · 上次同步: 1小时前 · 累计归集 42 张
+                </div>
+              </div>
+              <span class="badge badge-success">正常</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 手机扫码上传 -->
+        <div class="card" style="padding: 20px; display: flex; flex-direction: column;">
+          <div class="card-header" style="padding: 0 0 14px 0;">
+            <div class="card-title">局域网手机扫码协同</div>
+            <span class="badge badge-success">局域网服务就绪</span>
+          </div>
+          <div style="display: flex; gap: 18px; align-items: center; margin-top: 14px; flex: 1;">
+            <div style="width: 100px; height: 100px; background: #F1F5F9; border: 1px solid var(--border-light); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-sub); text-align: center; padding: 6px;">
+              [模拟局域网上传二维码]
+            </div>
+            <div style="font-size: 12px; color: var(--text-sub); line-height: 1.6;">
+              <div>• 访问地址: <strong class="tabular-nums" style="color: var(--primary-600);">http://192.168.31.88:8080/upload</strong></div>
+              <div>• 一次性安全配对码: <strong class="tabular-nums">7429</strong></div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 4px;">手机与电脑接入同一 Wi-Fi，即可拍照直接上传打车发票、餐饮发票等。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 本地拖拽上传区域 -->
+      <div class="dropzone-box" onclick="simulateFileUpload()">
+        <div class="drop-icon">📁</div>
+        <div style="font-size: 15px; font-weight: 600; color: var(--text-main);">点击或拖拽发票文件/目录至此</div>
+        <div style="font-size: 12px; color: var(--text-sub); margin-top: 6px;">
+          支持 PDF、OFD、XML 数电发票文件、微信/支付宝导出的 ZIP 压缩包
+        </div>
+        <div style="margin-top: 14px;">
+          <button class="btn btn-secondary">选择本地文件</button>
+        </div>
+      </div>
+
+      <!-- 去重与审计日志流 -->
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-header">
+          <div class="card-title">去重与智能过滤审计流水</div>
+          <span style="font-size: 12px; color: var(--text-sub);">依据物理 Hash 及发票二元唯一键排重</span>
+        </div>
+        <div style="padding: 14px 20px; font-family: monospace; font-size: 12px; line-height: 1.8; color: var(--text-sub); background: #FAFAFA;">
+          <div>[13:30:12] <span style="color: var(--success);">SUCCESS</span>: 邮箱 finance-inbox 同步完成，扫描邮件 12 封，抓取附件 3 个。</div>
+          <div>[13:30:13] <span style="color: var(--info);">SKIP_DUP</span>: 发现发票 DEMO-INVOICE-0001 (合成云服务) SHA256 物理哈希已存在，跳过物理重复写入。</div>
+          <div>[13:30:15] <span style="color: var(--success);">PARSED</span>: 发票 DEMO-INVOICE-0003 (合成交通) 结构化解析成功，价税 ¥565.00 平齐。</div>
+          <div>[13:30:18] <span style="color: var(--warning);">AUDIT_WARN</span>: 发票 DEMO-INVOICE-0002 (合成餐饮) 购买方税号校验失败，已自动移入【待核验】队列。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────────────── -->
+    <!-- VIEW 4: Export & Reimbursement             -->
+    <!-- ────────────────────────────────────────── -->
+    <div id="view-export" class="view-container">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">报销归档与数据导出</h1>
+          <p class="page-subtitle">按财务标准生成报销明细清单 (Excel) 及规整重命名的附件包 (ZIP)</p>
+        </div>
+        <div>
+          <button class="btn btn-primary" onclick="simulateExport()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            生成并下载报销归档包 (.zip)
+          </button>
+        </div>
+      </div>
+
+      <div class="export-layout">
+        <!-- Configuration Card -->
+        <div class="card" style="padding: 20px;">
+          <div style="font-weight: 600; font-size: 14px; margin-bottom: 16px; border-bottom: 1px solid var(--border-light); padding-bottom: 10px;">
+            报销批次基本信息
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">报销单名称</label>
+            <input type="text" class="form-control" value="2026年09月_研发部_技术服务与差旅报销单">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">报销人姓名</label>
+            <input type="text" class="form-control" value="李工 (研发部)">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">归属项目编号</label>
+            <select class="form-control">
+              <option>PRJ-2026-INV01 (Invoice-Hub 智能化归集)</option>
+              <option>PRJ-2026-DEV02 (基础设施与云服务)</option>
+              <option>日常行政运营费用</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">附件重命名标准规则</label>
+            <select class="form-control">
+              <option>[序号]_[报销人]_[日期]_[类别]_[金额]元_[销售方]</option>
+              <option>[日期]_[票号]_[销售方]_[金额]元</option>
+              <option>[序号]_[票号]_[开票日期]</option>
+            </select>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+              样例: <code>01_李工_20260925_信息技术服务_1272.00元_合成云服务.pdf</code>
+            </div>
+          </div>
+
+          <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--border-light);">
+            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 600;">
+              <span>已选报销张数:</span>
+              <span class="tabular-nums" id="export-count">3 张</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; color: var(--primary-600); margin-top: 6px;">
+              <span>拟报销总额:</span>
+              <span class="tabular-nums" id="export-total">¥ 2,237.00</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Selected Invoices Table -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">归档包包含的发票明细</div>
+            <span style="font-size: 12px; color: var(--text-sub);">仅允许状态为【已核准】的发票加入导出包</span>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>序号</th>
+                <th>票号</th>
+                <th>销售方名称</th>
+                <th>开票日期</th>
+                <th>费用类别</th>
+                <th style="text-align: right;">不含税金额</th>
+                <th style="text-align: right;">税额</th>
+                <th style="text-align: right;">含税总额</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="tabular-nums">01</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0001</td>
+                <td>合成云服务示例公司</td>
+                <td class="tabular-nums">2026-09-25</td>
+                <td>信息技术服务</td>
+                <td class="tabular-nums" style="text-align: right;">¥ 1,200.00</td>
+                <td class="tabular-nums" style="text-align: right;">¥ 72.00</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 1,272.00</td>
+              </tr>
+              <tr>
+                <td class="tabular-nums">02</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0003</td>
+                <td>合成交通示例公司</td>
+                <td class="tabular-nums">2026-09-23</td>
+                <td>差旅交通</td>
+                <td class="tabular-nums" style="text-align: right;">¥ 518.35</td>
+                <td class="tabular-nums" style="text-align: right;">¥ 46.65</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 565.00</td>
+              </tr>
+              <tr>
+                <td class="tabular-nums">03</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0004</td>
+                <td>合成办公用品示例公司</td>
+                <td class="tabular-nums">2026-09-20</td>
+                <td>办公用品</td>
+                <td class="tabular-nums" style="text-align: right;">¥ 353.98</td>
+                <td class="tabular-nums" style="text-align: right;">¥ 46.02</td>
+                <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 400.00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // ── Synthetic Demo Data (Not Valid Financial Identifiers) ──
+    const invoices = [
+      {
+        id: 0,
+        invoiceNum: "DEMO-INVOICE-0001",
+        seller: "合成云服务示例公司",
+        sellerTax: "SYNTHETIC-TAX-0002",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-0001",
+        date: "2026-09-25",
+        itemName: "*信息技术服务*云服务器ECS",
+        untaxed: 1200.00,
+        taxRate: "6%",
+        tax: 72.00,
+        total: 1272.00,
+        chineseTotal: "壹仟贰佰柒拾贰元整",
+        category: "云资源与研发",
+        status: "pending",
+        statusLabel: "待复核",
+        badgeClass: "badge-warning",
+        complianceOk: true,
+        complianceMsg: "购买方税号与本企业一致 · 价税平衡恒等式检验平齐 · 无历史重复记录"
+      },
+      {
+        id: 1,
+        invoiceNum: "DEMO-INVOICE-0002",
+        seller: "合成餐饮示例公司",
+        sellerTax: "SYNTHETIC-TAX-0003",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-000", // 合成数据：故意少一位演示预警
+        date: "2026-09-24",
+        itemName: "*餐饮服务*工作餐费",
+        untaxed: 204.25,
+        taxRate: "6%",
+        tax: 12.25,
+        total: 216.50,
+        chineseTotal: "贰佰壹拾陆元伍角整",
+        category: "业务招待",
+        status: "warning",
+        statusLabel: "抬头不符",
+        badgeClass: "badge-danger",
+        complianceOk: false,
+        complianceMsg: "预警：购买方税号缺少1位校验码，与本公司官方税号(SYNTHETIC-TAX-0001)不符！请向开票方申请红冲重开。"
+      },
+      {
+        id: 2,
+        invoiceNum: "DEMO-INVOICE-0003",
+        seller: "合成交通示例公司",
+        sellerTax: "SYNTHETIC-TAX-0004",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-0001",
+        date: "2026-09-23",
+        itemName: "*旅客运输服务*高铁客票(苏州北-北京南)",
+        untaxed: 518.35,
+        taxRate: "9%",
+        tax: 46.65,
+        total: 565.00,
+        chineseTotal: "伍佰陆拾伍元整",
+        category: "差旅交通",
+        status: "pending",
+        statusLabel: "待复核",
+        badgeClass: "badge-warning",
+        complianceOk: true,
+        complianceMsg: "增值税电子普通发票（铁路客票）· 税额计算平齐 (9%) · 实名乘车人信息吻合"
+      },
+      {
+        id: 3,
+        invoiceNum: "DEMO-INVOICE-0004",
+        seller: "合成办公用品示例公司",
+        sellerTax: "SYNTHETIC-TAX-0005",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-0001",
+        date: "2026-09-20",
+        itemName: "*办公用品*打印纸与文具耗材",
+        untaxed: 353.98,
+        taxRate: "13%",
+        tax: 46.02,
+        total: 400.00,
+        chineseTotal: "肆佰圆整",
+        category: "办公耗材",
+        status: "approved",
+        statusLabel: "已通过",
+        badgeClass: "badge-success",
+        complianceOk: true,
+        complianceMsg: "已通过全部财务合规核验，已纳入本期报销导出清单"
+      }
+    ];
+
+    let currentSelectedId = 0;
+
+    // ── Navigation Switching ──
+    function switchTab(viewId) {
+      document.querySelectorAll('.view-container').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+
+      const targetView = document.getElementById('view-' + viewId);
+      if (targetView) targetView.classList.add('active');
+
+      const titles = {
+        'overview': '数据概览',
+        'review': '审核工作台',
+        'imports': '归集与同步',
+        'export': '报销归档'
+      };
+      document.getElementById('breadcrumb-title').innerText = titles[viewId] || '';
+
+      const navMap = {
+        'overview': 0,
+        'review': 1,
+        'imports': 2,
+        'export': 3
+      };
+      const items = document.querySelectorAll('.nav-item');
+      if (items[navMap[viewId]]) items[navMap[viewId]].classList.add('active');
+    }
+
+    // ── Table Rendering ──
+    function renderTable(data) {
+      const tbody = document.getElementById('invoice-tbody');
+      tbody.innerHTML = '';
+      data.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.id = 'row-' + item.id;
+        if (item.id === currentSelectedId) tr.classList.add('selected');
+        tr.onclick = (e) => {
+          if (e.target.type !== 'checkbox') {
+            openReviewDetail(item.id);
+          }
+        };
+
+        tr.innerHTML = `
+          <td><input type="checkbox" class="row-checkbox" value="${item.id}" onclick="event.stopPropagation()"></td>
+          <td><span class="badge ${item.badgeClass}">${item.statusLabel}</span></td>
+          <td class="tabular-nums" style="font-weight: 500;">${item.invoiceNum}</td>
+          <td>${item.seller}</td>
+          <td class="tabular-nums">${item.date}</td>
+          <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ ${item.total.toFixed(2)}</td>
+          <td>${item.category}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+      document.getElementById('table-count').innerText = data.length;
+    }
+
+    // ── Detail Inspector ──
+    function openReviewDetail(id) {
+      currentSelectedId = id;
+      const item = invoices.find(x => x.id === id);
+      if (!item) return;
+
+      document.querySelectorAll('#review-table tr').forEach(r => r.classList.remove('selected'));
+      const activeRow = document.getElementById('row-' + id);
+      if (activeRow) activeRow.classList.add('selected');
+
+      document.getElementById('p-invoice-num').innerText = item.invoiceNum;
+      document.getElementById('p-invoice-date').innerText = item.date;
+      document.getElementById('p-buyer-name').innerText = item.buyer;
+      document.getElementById('p-buyer-tax').innerText = item.buyerTax;
+      document.getElementById('p-seller-name').innerText = item.seller;
+      document.getElementById('p-seller-tax').innerText = item.sellerTax;
+      document.getElementById('p-item-name').innerText = item.itemName;
+      document.getElementById('p-amount-untaxed').innerText = '¥ ' + item.untaxed.toFixed(2);
+      document.getElementById('p-tax-rate').innerText = item.taxRate;
+      document.getElementById('p-tax-amount').innerText = '¥ ' + item.tax.toFixed(2);
+
+      document.getElementById('calc-untaxed').innerText = '¥ ' + item.untaxed.toFixed(2);
+      document.getElementById('calc-tax').innerText = '¥ ' + item.tax.toFixed(2);
+      document.getElementById('calc-total').innerText = '¥ ' + item.total.toFixed(2);
+      document.getElementById('calc-chinese').innerText = item.chineseTotal;
+
+      const badge = document.getElementById('detail-status-badge');
+      badge.className = 'badge ' + item.badgeClass;
+      badge.innerText = item.statusLabel;
+
+      const verifyBox = document.getElementById('verify-box');
+      if (item.complianceOk) {
+        verifyBox.className = 'verify-banner ok';
+        document.getElementById('verify-title').innerText = '全项合规校验通过';
+      } else {
+        verifyBox.className = 'verify-banner warn';
+        document.getElementById('verify-title').innerText = '合规预警：请人工复核';
+      }
+      document.getElementById('verify-desc').innerText = item.complianceMsg;
+
+      switchTab('review');
+    }
+
+    // ── Actions ──
+    function approveCurrent() {
+      const item = invoices.find(x => x.id === currentSelectedId);
+      if (item) {
+        item.status = 'approved';
+        item.statusLabel = '已通过';
+        item.badgeClass = 'badge-success';
+        renderTable(invoices);
+        openReviewDetail(currentSelectedId);
+        alert('发票 ' + item.invoiceNum + ' 已审核通过并归入待报销清单！');
+      }
+    }
+
+    function rejectCurrent() {
+      const reason = prompt('请输入驳回退回的原因（该信息将记录到审计日志并通知报销人）：', '购买方税号与企业不一致');
+      if (reason) {
+        const item = invoices.find(x => x.id === currentSelectedId);
+        if (item) {
+          item.status = 'rejected';
+          item.statusLabel = '已驳回';
+          item.badgeClass = 'badge-danger';
+          renderTable(invoices);
+          openReviewDetail(currentSelectedId);
+        }
+      }
+    }
+
+    function toggleSelectAll(master) {
+      document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = master.checked);
+    }
+
+    function filterTable(keyword) {
+      const filtered = invoices.filter(x =>
+        x.seller.includes(keyword) || x.invoiceNum.includes(keyword)
+      );
+      renderTable(filtered);
+    }
+
+    function filterStatus(val) {
+      if (val === 'all') renderTable(invoices);
+      else renderTable(invoices.filter(x => x.status === val));
+    }
+
+    function syncMailboxMock() {
+      alert('正在连接已绑定的 2 个企业邮箱并同步最新发票...\n\n[IMAP 握手成功] 抓取到 1 封新发票邮件，已完成无损格式解析。');
+    }
+
+    function simulateFileUpload() {
+      alert('模拟选择本地发票文件：\n已成功解析 20260927_合成快递_电子发票.pdf，含税总额 ¥38.00 平齐入库。');
+    }
+
+    function simulateExport() {
+      alert('报销归档生成完毕！\n\n已打包 3 张已核准发票：\n- Excel 台账: 2026年09月_研发部_技术服务与差旅报销单.xlsx\n- 附件目录: 3 个规范命名的 PDF 文件\n- 状态: 校验平齐，可直接交财务入账。');
+    }
+
+    // Initialize
+    window.onload = () => {
+      renderTable(invoices);
+      openReviewDetail(0);
+    };
+  </script>
+</body>
+</html>

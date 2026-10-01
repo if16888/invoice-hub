@@ -24,7 +24,6 @@ install_semantic_checklist_contract(ChecklistRow)
 
 
 DASHBOARD_MAX_WIDTH = 1360
-IMPORT_SOURCE_WIDTH = 248
 IMPORT_RESULT_WIDTH = 340
 EXPORT_GROUP_WIDTH = 280
 EXPORT_CHECK_WIDTH = 360
@@ -96,8 +95,8 @@ def apply_import_baseline(page: QWidget) -> None:
 
     source = getattr(window, "import_source_card", None)
     if source is not None:
-        # Source selection is a full-width row above the task. A fixed
-        # sidebar width squeezes three horizontal choices and clips text.
+        # The source selector is the full top row of the import workspace.
+        # A fixed sidebar width clips its three horizontally arranged cards.
         source.setMinimumWidth(0)
         source.setMaximumWidth(16777215)
         source.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)

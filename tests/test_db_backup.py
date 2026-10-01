@@ -15,6 +15,7 @@ from scripts.invoice_fetch.db_backup import (
     create_verified_database_backup,
     prune_database_backups,
     restore_verified_database_backup,
+    validate_current_database,
     validate_sqlite_database,
 )
 from scripts.invoice_fetch.migrations import LATEST_SCHEMA_VERSION, validate_latest_schema
@@ -112,6 +113,55 @@ class DatabaseBackupTests(unittest.TestCase):
                     LATEST_SCHEMA_VERSION,
                 )
                 validate_latest_schema(conn)
+
+    def test_backup_validators_reject_inert_triggers_in_current_and_legacy_databases(self):
+        for legacy in (False, True):
+            for timing in ("BEFORE", "AFTER"):
+                with self.subTest(legacy=legacy, timing=timing), tempfile.TemporaryDirectory() as td:
+                    path = Path(td) / "synthetic.db"
+                    if legacy:
+                        self.make_legacy_database(path)
+                    else:
+                        self.make_database(path)
+                    with closing(sqlite3.connect(path)) as conn:
+                        conn.execute(f"CREATE TRIGGER inert_check {timing} UPDATE ON invoices BEGIN SELECT 1; END")
+                        conn.commit()
+                    before = path.read_bytes()
+                    for validator in (validate_sqlite_database, validate_current_database):
+                        with self.assertRaisesRegex(ValueError, "非应用触发器"):
+                            validator(path)
+                    self.assertEqual(path.read_bytes(), before)
+
+    def test_restore_rejects_inert_trigger_before_live_backup_or_migration(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            live, selected = root / "live.db", root / "selected.db"
+            self.make_database(live, "live")
+            self.make_database(selected, "selected")
+            with closing(sqlite3.connect(selected)) as conn:
+                conn.execute("CREATE TRIGGER inert_check AFTER UPDATE ON invoices BEGIN SELECT 1; END")
+                conn.commit()
+            live_before, selected_before = live.read_bytes(), selected.read_bytes()
+            with patch("scripts.invoice_fetch.db_backup.create_verified_database_backup") as backup, patch("scripts.invoice_fetch.db.InvoiceDB") as opener:
+                with self.assertRaisesRegex(ValueError, "非应用触发器"):
+                    restore_verified_database_backup(selected, live, backup_dir=root / "backups")
+            backup.assert_not_called()
+            opener.assert_not_called()
+            self.assertEqual(live.read_bytes(), live_before)
+            self.assertEqual(selected.read_bytes(), selected_before)
+
+    def test_private_copy_is_validated_before_application_initialization(self):
+        from scripts.invoice_fetch.db_backup import _migrate_and_validate_database
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "staging.db"
+            self.make_database(path)
+            with closing(sqlite3.connect(path)) as conn:
+                conn.execute("CREATE TRIGGER inert_check AFTER UPDATE ON invoices BEGIN SELECT 1; END")
+                conn.commit()
+            with patch("scripts.invoice_fetch.db.InvoiceDB") as opener:
+                with self.assertRaisesRegex(DatabaseBackupError, "非应用触发器"):
+                    _migrate_and_validate_database(path)
+            opener.assert_not_called()
 
     def test_create_database_backup_copies_file_with_sanitized_reason(self):
         with tempfile.TemporaryDirectory() as td:

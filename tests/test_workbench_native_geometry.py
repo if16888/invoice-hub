@@ -163,6 +163,27 @@ class TestWorkbenchNativeGeometry(unittest.TestCase):
             finally:
                 self._close_window(window)
 
+    def test_manual_navigation_collapse_preserves_review_density_and_toolbar(self):
+        from scripts.invoice_fetch.gui.review_workspace_baseline import REVIEW_ROW_HEIGHT
+        from PySide6.QtTest import QTest
+
+        with tempfile.TemporaryDirectory() as td:
+            window = self._make_window(td)
+            try:
+                window.show()
+                QTest.qWait(150)
+                for width, height in ((1920, 1080), (1366, 768)):
+                    window.resize(width, height)
+                    QTest.qWait(100)
+                    window._nav_collapsed_manual = True
+                    window._apply_workbench_metrics(width, height)
+                    QTest.qWait(100)
+                    self.assertEqual(window.btn_more.text(), "更多")
+                    self.assertEqual(window.table.verticalHeader().defaultSectionSize(), REVIEW_ROW_HEIGHT)
+                    self.assertGreaterEqual(window.table.viewport().height() // REVIEW_ROW_HEIGHT, 7)
+            finally:
+                self._close_window(window)
+
     def test_workbench_core_surfaces_do_not_overflow_at_target_widths(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)

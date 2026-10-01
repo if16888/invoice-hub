@@ -60,6 +60,7 @@ The audit must verify:
 
 - checked-out SHA equals the candidate and origin/master;
 - PyInstaller frozen build succeeds;
+- an actual synthetic text PDF parses in the frozen application via the child-process boundary, without recursive GUI startup or orphan processes;
 - packaged embedded version matches the source release line;
 - portable startup stays within the configured startup threshold;
 - payload contains required license/notice files and no runtime/private/browser payload;
@@ -76,17 +77,18 @@ Use a disposable Windows profile/data directory.
 
 1. Clean-install the final source-matched installer.
 2. Launch with an empty database and verify Dashboard/Settings empty states.
-3. Import a synthetic PDF/OFD/image/ZIP set.
+3. Import a synthetic PDF/OFD/image/ZIP set in the installed application; confirm the text PDF actually produces parsed fields, and timeout/cancel leaves no parser process.
 4. Review a synthetic invoice and edit one field.
 5. Repeatedly switch between PDF records and confirm no Qt PDF/font warnings.
-6. Associate synthetic proof material.
+6. Associate synthetic proof material and save a note; switch records/pages, restart and confirm the note persists. Exercise failed-save retry without losing the editor contents.
 7. Create a reimbursement group and add approved invoices.
 8. Run export preflight and export the synthetic reimbursement package.
 9. Open the Excel file and a copied attachment.
-10. Close and restart; confirm records, settings, claim group and layout persist.
-11. Upgrade from the previous stable installed release using a disposable profile.
-12. Uninstall and reinstall; verify the documented user-data retention policy.
-13. Review the main pages at physical Windows 100%, 125% and 150% scaling.
+10. Create a complete backup, restore into another disposable data directory, and confirm original/proof bytes, notes, review states and group membership. Re-run export preflight. Test a missing-material backup and a rejected/cancelled restore; verify actionable errors and preservation of existing records/files. Confirm credentials and configuration need separate setup.
+11. Close and restart; confirm records, settings, claim group and layout persist.
+12. Upgrade from the previous stable installed release using a disposable profile.
+13. Uninstall and reinstall; verify the documented user-data retention policy.
+14. Review the main pages at physical Windows 100%, 125% and 150% scaling.
 
 ## Mobile acceptance when mobile upload is a supported release claim
 

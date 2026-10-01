@@ -182,6 +182,24 @@ def test_corrupted_complete_backup_keeps_existing_database_and_originals(tmp_pat
     assert not list((runtime / "attachments").glob("complete-restore-*"))
 
 
+def test_complete_restore_validates_schema_before_path_writes_or_material_install(tmp_path):
+    runtime, path, invoice_id = _backup_source(tmp_path)
+    archive = create_complete_backup(path, runtime)
+    before = path.read_bytes()
+    with patch("scripts.invoice_fetch.complete_backup.validate_current_database", side_effect=ValueError("数据库包含非应用触发器")) as validate, \
+            patch("scripts.invoice_fetch.complete_backup.sqlite3.connect") as connect, \
+            patch("scripts.invoice_fetch.complete_backup.restore_verified_database_backup") as restore:
+        with pytest.raises(ValueError, match="非应用触发器"):
+            restore_complete_backup(archive, path, runtime)
+    validate.assert_called_once()
+    connect.assert_not_called()
+    restore.assert_not_called()
+    assert path.read_bytes() == before
+    assert (runtime / "attachments" / "original.pdf").read_bytes() == b"Synthetic original"
+    assert not list((runtime / "attachments").glob("complete-restore-*"))
+    assert not list(runtime.glob("ih-restore-*"))
+
+
 def _hung_parser(connection, path, mode):
     time.sleep(10)
 
