@@ -415,9 +415,14 @@ def test_header_deadline_does_not_cut_off_valid_server_work():
 
 
 def _oversize_result_parser(output, path, mode):
+    import os
     from scripts.invoice_fetch.pdf_boundary import MAX_RESULT_BYTES
-    with Path(output).open('wb') as stream:
+    # Follow the production publication protocol even for an oversized reply:
+    # exposing the final name before truncate lets Windows read an empty file.
+    staging = Path(output).with_suffix('.part')
+    with staging.open('wb') as stream:
         stream.truncate(MAX_RESULT_BYTES + 1)
+    os.replace(staging, output)
 
 
 def test_pdf_result_size_is_checked_before_read(tmp_path):
