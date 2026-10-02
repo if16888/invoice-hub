@@ -583,8 +583,13 @@ def _save_download_to_path(download, dest: Path) -> bool:
         get_path = getattr(download, "path", None)
         if callable(get_path):
             source = get_path()
-            if source and Path(source).stat().st_size > MAX_DOWNLOAD_BYTES:
-                return False
+            # Playwright returns a concrete str/Path here.  Test doubles and
+            # alternate implementations may expose a callable placeholder;
+            # never interpret an arbitrary object as a filesystem path.
+            if isinstance(source, (str, Path)):
+                source_path = Path(source)
+                if source_path.is_file() and source_path.stat().st_size > MAX_DOWNLOAD_BYTES:
+                    return False
         download.save_as(str(staging))
         if not staging.is_file() or staging.stat().st_size > MAX_DOWNLOAD_BYTES:
             return False

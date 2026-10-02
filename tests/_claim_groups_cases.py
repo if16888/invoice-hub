@@ -3711,7 +3711,8 @@ class ClaimGroupsTests(unittest.TestCase):
                         )
                     app.processEvents()
                     self.assertTrue(window.btn_add_to_claim.isEnabled())
-                    self.assertTrue(window.btn_add_to_claim.text().startswith("加入 "))
+                    self.assertEqual(window.btn_add_to_claim.text(), "加入")
+                    self.assertIn("Synthetic mixed claim", window.btn_add_to_claim.toolTip())
 
                     with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok) as mock_info:
                         result = window._link_invoices_to_claim()
@@ -3909,7 +3910,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("已选中 2 张", status_text)
                     self.assertIn("合计 ¥12.30", status_text)
                     self.assertIn("部分金额缺失", status_text)
-                    self.assertIn("sum claim：2 条记录 · 合计 ¥12.30", window.lbl_claim_total.text())
+                    self.assertIn("2 条记录 · 合计 ¥12.30", window.lbl_claim_total.text())
                     self.assertIn("部分金额缺失", window.lbl_claim_total.text())
                     self.assertFalse(window.lbl_claim_total.isHidden())
                     self.assertFalse(window.btn_delete_claim.isEnabled())
@@ -6310,7 +6311,8 @@ class ClaimGroupsTests(unittest.TestCase):
                 window.combo_claims.setCurrentIndex(idx)
                 app.processEvents()
                 self.assertTrue(window.new_claim_widget.isHidden())
-                self.assertEqual(window.btn_add_to_claim.text(), "加入 Claim B")
+                self.assertEqual(window.btn_add_to_claim.text(), "加入")
+                self.assertIn("Claim B", window.btn_add_to_claim.toolTip())
                 self.assertTrue(window.btn_add_to_claim.isEnabled())
                 self.assertTrue(window.btn_delete_claim.isEnabled())
                 with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
@@ -6319,7 +6321,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
                 self.assertEqual(window.combo_claims.currentData(), claim_b)
                 self.assertEqual(window._get_invoice_claim_group(window.current_invoice), "Claim B")
-                self.assertEqual(window.btn_add_to_claim.text(), "已在 Claim B")
+                self.assertEqual(window.btn_add_to_claim.text(), "已加入")
+                self.assertIn("不能重复加入", window.btn_add_to_claim.toolTip())
                 self.assertFalse(window.btn_add_to_claim.isEnabled())
                 self.assertFalse(window.btn_delete_claim.isEnabled())
             finally:

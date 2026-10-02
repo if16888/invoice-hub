@@ -25,7 +25,12 @@ from .config import (
 from .credentials import get_auth_code, has_auth_code
 from .mail_fetcher import MailFetcher, MailMessage
 from .attachment_handler import AttachmentHandler, build_managed_attachment_name
-from .invoice_parser import IsolatedInvoiceParser as InvoiceParser, parse_html_body, parse_subject
+from .invoice_parser import (
+    IsolatedInvoiceParser as InvoiceParser,
+    InvoiceParser as StructuredInvoiceParser,
+    parse_html_body,
+    parse_subject,
+)
 from .pdf_boundary import extract_pdf_text
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .db import InvoiceDB, is_pending_evidence_invoice
@@ -358,7 +363,7 @@ def _needs_original_replacement(stored_path: str, candidate_path: str) -> bool:
         return False
     if existing.suffix.lower() not in (".xml", ".zip"):
         return False
-    return InvoiceParser().parse_einvoice_xml(str(existing)).parse_success
+    return StructuredInvoiceParser().parse_einvoice_xml(str(existing)).parse_success
 
 
 def _normalize_path_list(raw_value) -> list[str]:

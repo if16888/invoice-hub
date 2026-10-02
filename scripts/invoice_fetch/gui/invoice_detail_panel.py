@@ -769,7 +769,11 @@ class InvoiceDetailPanel(QWidget):
         if not hasattr(self, "txt_note") or not hasattr(self, "btn_toggle_note"):
             return
 
-        expanding = self.txt_note.isHidden()
+        # The editor lives inside note_content_row.  Checking the child alone is
+        # incorrect when only the parent row is hidden: QWidget.isHidden() tracks
+        # the widget's own explicit state, not the effective ancestor visibility.
+        note_row = getattr(self, "note_content_row", None)
+        expanding = note_row.isHidden() if note_row is not None else self.txt_note.isHidden()
         self._apply_note_state(expanded=expanding)
 
 
