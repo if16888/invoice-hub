@@ -204,12 +204,10 @@ def _payload_matches_extension(payload: bytes, ext: str) -> bool:
     if ext == ".pdf":
         return payload.startswith(b"%PDF-")
     if ext == ".xml":
-        if len(payload) > 2 * 1024 * 1024 or b'<!DOCTYPE' in payload.upper() or b'<!ENTITY' in payload.upper():
-            return False
-        import xml.etree.ElementTree as ET
+        from .xml_boundary import parse_invoice_xml
         try:
-            return ET.fromstring(payload).tag.rsplit('}', 1)[-1] == 'EInvoice'
-        except ET.ParseError:
+            return parse_invoice_xml(payload).tag.rsplit('}', 1)[-1] == 'EInvoice'
+        except ValueError:
             return False
     if ext in {".zip", ".ofd"}:
         return payload.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"))

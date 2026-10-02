@@ -299,10 +299,20 @@ class AIClassifier:
         The URL may carry provider credentials for some APIs, so never log the
         raw URL or the raw RequestException string here.
         """
+        # Enforce a finite timeout even for callers that omit it or pass None.
+        timeout = kwargs.pop("timeout", 60)
+        if timeout is None:
+            timeout = 60
+        values = timeout if isinstance(timeout, tuple) else (timeout,)
+        if (isinstance(timeout, tuple) and len(timeout) != 2) or any(
+            isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 60
+            for value in values
+        ):
+            raise ValueError("AI request timeout must be finite and at most 60 seconds")
         last_exc = None
         for attempt in range(2):
             try:
-                resp = requests.post(url, **kwargs)
+                resp = requests.post(url, timeout=timeout, **kwargs)
                 resp.raise_for_status()
                 return resp
             except requests.RequestException as exc:

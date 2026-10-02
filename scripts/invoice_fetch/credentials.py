@@ -92,7 +92,8 @@ def _resolve_ai_api_key(provider: str, profile_id: str = "") -> tuple[str, str]:
             if secret:
                 _log.debug("Loaded AI key from keyring (service=%s)", service)
                 return secret, source
-        except Exception:
+        except Exception as exc:
+            _log.debug("AI credential lookup unavailable: error_type=%s", type(exc).__name__)
             continue
 
     env_key = _get_ai_key_from_environment_if_any(provider)
@@ -151,8 +152,9 @@ def delete_ai_api_key(provider: str, profile_id: str = "") -> None:
     try:
         keyring.delete_password(service, "default")
         _log.info("Deleted AI key from keyring (service=%s)", service)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Do not log backend messages, which may contain account/key material.
+        _log.warning("AI credential deletion failed: error_type=%s", type(exc).__name__)
 
 
 def set_auth_code(email: str, auth_code: str) -> None:

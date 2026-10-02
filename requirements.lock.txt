@@ -20,6 +20,8 @@ cryptography==50.0.0
     # via
     #   -r requirements.txt
     #   pdfminer-six
+defusedxml==0.7.1
+    # via -r requirements.txt
 et-xmlfile==2.0.0
     # via openpyxl
 greenlet==3.0.1
@@ -69,7 +71,7 @@ typing-extensions==4.15.0
     # via
     #   pyee
     #   qrcode
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   -r requirements.txt
     #   requests

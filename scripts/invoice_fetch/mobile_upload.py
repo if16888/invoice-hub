@@ -20,8 +20,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterable
-from urllib import error as urllib_error
-from urllib import request as urllib_request
+from http.client import HTTPConnection
 from urllib.parse import urlparse
 
 from .gui.performance_probe import performance_stage
@@ -450,7 +449,11 @@ class MobileUploadServer:
             _log.info("[手机上传] server stop batch_id=<redacted>")
 
     def is_token_valid(self, token: str) -> bool:
-        if not self.session or not self._httpd or token != self.session.token:
+        if not self.session or not self._httpd or not isinstance(token, str):
+            return False
+        if len(token) != len(self.session.token) or not secrets.compare_digest(
+            token.encode("utf-8"), self.session.token.encode("utf-8")
+        ):
             return False
         now = datetime.now()
         if now > self.session.expires_at:
@@ -525,20 +528,23 @@ class MobileUploadServer:
             self._local_self_check = "fail"
             self._local_self_check_error = "server_not_running"
             return False
+        connection = None
         try:
-            request = urllib_request.Request(
-                session.upload_url,
+            # Use the actual listener, never a mutable URL, proxy or redirect.
+            host, port = self._httpd.server_address[:2]
+            if host == "0.0.0.0":
+                host = "127.0.0.1"
+            connection = HTTPConnection(host, port, timeout=timeout)
+            connection.request(
+                "GET", f"/u/{session.token}",
                 headers={"User-Agent": "InvoiceHub/LocalSelfCheck", "X-InvoiceHub-Self-Check": "1"},
             )
-            with urllib_request.urlopen(request, timeout=timeout) as response:
-                status = int(response.status)
+            response = connection.getresponse()
+            status = int(response.status)
+            response.close()
             self._local_self_check = "pass" if status == 200 else "fail"
             self._local_self_check_error = "" if status == 200 else f"http_{status}"
             _log.info("[手机上传] local self-check result=%s status=%s", self._local_self_check, status)
-        except urllib_error.HTTPError as exc:
-            self._local_self_check = "fail"
-            self._local_self_check_error = f"http_{exc.code}"
-            _log.info("[手机上传] local self-check result=fail status=%s", exc.code)
         except Exception as exc:
             self._local_self_check = "fail"
             self._local_self_check_error = _safe_log_reason(exc, session.token)
@@ -547,6 +553,9 @@ class MobileUploadServer:
                 type(exc).__name__,
                 self._local_self_check_error,
             )
+        finally:
+            if connection is not None:
+                connection.close()
         return self._local_self_check == "pass"
 
     def _record_request(

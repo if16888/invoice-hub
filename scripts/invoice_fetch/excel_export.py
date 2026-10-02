@@ -89,8 +89,8 @@ def _parse_paths(val) -> list[str]:
                 parsed = json.loads(val)
                 if isinstance(parsed, list):
                     return [str(p) for p in parsed if str(p).strip()]
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                _log.debug("Attachment paths are not a JSON list; using legacy path format")
         return [val]
     return [str(val)]
 

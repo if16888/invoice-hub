@@ -5253,6 +5253,14 @@ class ClaimGroupsTests(unittest.TestCase):
                 window = InvoiceReviewApp(db_path, splash=None)
                 try:
                     window.show()
+                    from PySide6.QtTest import QTest
+                    # Navigation is normalized by the 50-ms startup callback.
+                    # Wait for readiness before simulating a user's action.
+                    for _ in range(200):
+                        if window._deferred_init_done:
+                            break
+                        QTest.qWait(10)
+                    self.assertTrue(window._deferred_init_done)
                     app.processEvents()
                     window.action_toolbar_export.trigger()
                     app.processEvents()

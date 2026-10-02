@@ -104,10 +104,10 @@ class InvoiceParser:
         import zipfile
         from pathlib import Path
         from decimal import Decimal, InvalidOperation
-        import xml.etree.ElementTree as ET
+        from .xml_boundary import MAX_XML_BYTES, parse_invoice_xml
 
         info = InvoiceInfo()
-        limit = 2 * 1024 * 1024
+        limit = MAX_XML_BYTES
         try:
             if str(path).lower().endswith('.zip'):
                 with zipfile.ZipFile(path) as archive:
@@ -122,9 +122,7 @@ class InvoiceParser:
             else:
                 with Path(path).open('rb') as stream:
                     data = stream.read(limit + 1)
-            if len(data) > limit or b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
-                raise ValueError('XML 发票内容不受支持')
-            root = ET.fromstring(data)
+            root = parse_invoice_xml(data)
             for element in root.iter():
                 element.tag = element.tag.rsplit('}', 1)[-1]
             if root.tag != 'EInvoice':
@@ -146,7 +144,7 @@ class InvoiceParser:
                 raise ValueError('XML 发票关键字段缺失')
             info.parse_success = True
             info.parse_note = '已解析电子发票 XML（未验证数字签名）'
-        except (OSError, ValueError, ET.ParseError, zipfile.BadZipFile, RuntimeError, InvalidOperation):
+        except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, InvalidOperation):
             info.parse_note = 'XML 发票解析失败或压缩包包含多张发票，请通过导入展开检查'
         return info
 

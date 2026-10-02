@@ -6462,11 +6462,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             performance_trace.mark("selection_restore")
         if len(self.invoices_list) == 0:
             # Check if total records in DB is 0
-            total_in_db = 0
+            total_in_db = None
             try:
                 total_in_db = self.db.count_invoices(include_deleted=True)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.error("Invoice count query failed: error_type=%s", type(exc).__name__)
 
             if total_in_db == 0:
                 self.lbl_empty_title.setText("当前没有发票记录")
@@ -6486,8 +6486,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.empty_btn_clear_search.setVisible(False)
                 self.empty_btn_reset_filters.setVisible(False)
             else:
-                self.lbl_empty_title.setText("没有符合条件的发票")
-                self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
+                if total_in_db is None:
+                    self.lbl_empty_title.setText("暂时无法读取发票记录")
+                    self.lbl_guide.setText("数据库查询失败，请重试；此状态不表示数据为空。")
+                else:
+                    self.lbl_empty_title.setText("没有符合条件的发票")
+                    self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
                 self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
                 self.lbl_guide.setVisible(True)
 
@@ -7567,7 +7571,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             try:
                 import os
                 if hasattr(os, "startfile"):
-                    os.startfile(str(path))
+                    # Resolve before ShellExecute so relative input cannot be
+                    # interpreted against an unexpected working directory.
+                    os.startfile(str(Path(path).resolve()))
             except Exception as ex:
                 _log.error("Failed to open local path fallback startfile: %s", ex)
 
@@ -7947,7 +7953,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if sys.platform == "win32":
             try:
                 import subprocess
-                subprocess.run(["explorer.exe", "/select,", str(file_path.resolve())])
+                from ..windows_paths import windows_system_executable
+                subprocess.run(
+                    [windows_system_executable("explorer.exe"), "/select,", str(file_path.resolve())],
+                    shell=False,
+                    timeout=10,
+                    check=False,
+                )
                 return
             except Exception as e:
                 _log.error("Failed to run explorer /select: %s", e)

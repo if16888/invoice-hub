@@ -13,6 +13,7 @@ from importlib.metadata import version
 from pathlib import Path
 import unittest
 
+from packaging.requirements import Requirement
 from packaging.version import Version
 
 
@@ -45,6 +46,7 @@ class RuntimeDependencySecurityTests(unittest.TestCase):
             "pdfminer.six": "20251230",
             "Pillow": "12.3.0",
             "cryptography": "50.0.0",
+            "urllib3": "2.8.0",
         }
         for package_name, floor in floors.items():
             with self.subTest(package=package_name):
@@ -55,6 +57,7 @@ class RuntimeDependencySecurityTests(unittest.TestCase):
             "pdfminer-six": "20251230",
             "pillow": "12.3.0",
             "cryptography": "50.0.0",
+            "urllib3": "2.8.0",
         }
         for package_name, floor in floors.items():
             with self.subTest(package=package_name):
@@ -62,6 +65,19 @@ class RuntimeDependencySecurityTests(unittest.TestCase):
                     _locked_version("requirements.lock.txt", package_name),
                     Version(floor),
                 )
+
+    def test_source_urllib3_requirement_excludes_vulnerable_versions(self):
+        requirements = [
+            Requirement(line.strip())
+            for line in (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        requirement = next(item for item in requirements if item.name.lower() == "urllib3")
+        for vulnerable in ("1.26.20", "2.6.2", "2.7.0"):
+            with self.subTest(version=vulnerable):
+                self.assertNotIn(Version(vulnerable), requirement.specifier)
+        self.assertIn(Version("2.8.0"), requirement.specifier)
+        self.assertIn(_locked_version("requirements.lock.txt", "urllib3"), requirement.specifier)
 
     def test_pdfminer_cmap_loader_has_no_pickle_loading_path(self):
         import pdfminer.cmapdb as cmapdb

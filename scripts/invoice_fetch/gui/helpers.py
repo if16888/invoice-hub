@@ -1,6 +1,9 @@
 """Invoice Hub GUI Helpers."""
 
+import logging
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 from ..url_utils import _mask_url
 
@@ -35,8 +38,8 @@ def _read_manifest_summary(export_dir) -> dict:
             summary["skipped_counts"] = data.get("skipped_counts", {})
             summary["export_filter"] = data.get("export_filter", {})
             summary["qa_warnings_count"] = data.get("qa_warnings_count", 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("Export manifest summary unavailable: error_type=%s", type(exc).__name__)
     return summary
 
 
@@ -149,8 +152,8 @@ def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path
             try:
                 resolved_abs_lower = str(p.resolve()).lower()
                 seen_paths.add(resolved_abs_lower)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("Preview path normalization unavailable: error_type=%s", type(exc).__name__)
         docs.append({
             "type": doc["type"],
             "title": doc["title"],
@@ -188,7 +191,7 @@ def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path
                     "invoice_id": invoice.get("id"),
                     "evidence_id": rec.get("id"),
                 })
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("Pending evidence preview query failed: error_type=%s", type(exc).__name__)
 
     return docs

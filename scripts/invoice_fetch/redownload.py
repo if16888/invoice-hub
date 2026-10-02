@@ -307,8 +307,8 @@ def _restore_invoice_state(db: InvoiceDB, original: Mapping[str, object] | None)
             attachment_path=str(original.get("attachment_path") or ""),
             file_hash=str(original.get("file_hash") or ""),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.error("Invoice state compensation failed: error_type=%s", type(exc).__name__)
 
 
 def _persist_attachment_reference(

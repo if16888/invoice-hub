@@ -42,6 +42,47 @@ class EInvoiceXmlTests(unittest.TestCase):
             self.assertFalse(_payload_matches_extension(data, ".xml"))
             self.assertFalse(InvoiceParser().parse_pdf(str(path)).parse_success)
 
+    def test_dtd_and_entities_rejected_independently_of_encoding(self):
+        declarations = (
+            '<!DOCTYPE EInvoice>',
+            '<!DOCTYPE EInvoice [<!ENTITY demo "SYNTHETIC">]>',
+            '<!DOCTYPE EInvoice SYSTEM "https://example.invalid/external.dtd">',
+            '<!DOCTYPE EInvoice [<!ENTITY demo SYSTEM "file:///synthetic-secret">]>',
+            '<!DOCTYPE EInvoice [<!ENTITY % demo SYSTEM "https://example.invalid/entity">%demo;]>',
+        )
+        for encoding in ("utf-8", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"):
+            for declaration in declarations:
+                with self.subTest(encoding=encoding, declaration=declaration), tempfile.TemporaryDirectory() as td:
+                    text = f'<?xml version="1.0" encoding="{encoding}"?>' + declaration + XML.decode("utf-8")
+                    data = text.encode(encoding)
+                    self.assertFalse(_payload_matches_extension(data, ".xml"))
+                    path = Path(td) / "unsafe.xml"
+                    path.write_bytes(data)
+                    self.assertFalse(InvoiceParser().parse_einvoice_xml(str(path)).parse_success)
+                    archive_path = Path(td) / "unsafe.zip"
+                    with zipfile.ZipFile(archive_path, "w") as archive:
+                        archive.writestr("invoice.xml", data)
+                    self.assertFalse(InvoiceParser().parse_einvoice_xml(str(archive_path)).parse_success)
+
+    def test_safe_utf16_invoice_still_parses(self):
+        data = ('<?xml version="1.0" encoding="utf-16"?>' + XML.decode("utf-8")).encode("utf-16")
+        self.assertTrue(_payload_matches_extension(data, ".xml"))
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "safe.xml"
+            path.write_bytes(data)
+            result = InvoiceParser().parse_einvoice_xml(str(path))
+            self.assertTrue(result.parse_success)
+            self.assertEqual(result.total_amount, "106.00")
+
+    def test_xml_size_limit_and_malformed_input_fail_closed(self):
+        from scripts.invoice_fetch.xml_boundary import MAX_XML_BYTES, parse_invoice_xml
+
+        for data in (XML + b" " * MAX_XML_BYTES, b"<EInvoice>"):
+            with self.subTest(size=len(data)):
+                self.assertFalse(_payload_matches_extension(data, ".xml"))
+                with self.assertRaises(ValueError):
+                    parse_invoice_xml(data)
+
     def test_pdf_upgrades_xml_original_without_downgrading_pdf(self):
         from scripts.invoice_fetch.services import _needs_original_replacement
 

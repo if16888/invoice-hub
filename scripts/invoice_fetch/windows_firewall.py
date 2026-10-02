@@ -24,8 +24,14 @@ from typing import Any, Iterable
 FIREWALL_RULE_NAME = "Invoice Hub Mobile Upload"
 DEV_FIREWALL_RULE_NAME = "Invoice Hub Mobile Upload Dev Session"
 _DEVELOPMENT_EXECUTABLE_NAMES = {"python.exe", "pythonw.exe", "pytest.exe"}
-_POWERSHELL = "powershell.exe"
-_NETSH = "netsh.exe"
+from .windows_paths import windows_system_executable
+
+# Non-Windows names are only used by mocked platform-contract tests.
+_POWERSHELL = (
+    windows_system_executable("System32/WindowsPowerShell/v1.0/powershell.exe")
+    if os.name == "nt" else "powershell.exe"
+)
+_NETSH = windows_system_executable("System32/netsh.exe") if os.name == "nt" else "netsh.exe"
 _POWERSHELL_TIMEOUT_SECONDS = 8
 _ELEVATED_TIMEOUT_SECONDS = 30
 _SEE_MASK_NOCLOSEPROCESS = 0x00000040
