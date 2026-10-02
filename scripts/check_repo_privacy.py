@@ -51,6 +51,14 @@ ALLOWED_BINARY_PREFIXES = [
     "tests/fixtures/synthetic/",
 ]
 
+# Exact, reviewed text artifacts whose sensitive-looking words are part of
+# synthetic product/design documentation. Keep this list deliberately narrow:
+# no directory wildcard is allowed here, so new design files remain scanned.
+ALLOWED_SYNTHETIC_TEXT_PATHS = {
+    "DESIGN.md",
+    "design-prototypes/index.html",
+}
+
 def run_cmd(args, cwd=None):
     """Run a shell command and return its output lines."""
     try:
@@ -75,15 +83,19 @@ def should_skip_keyword_check(file_path):
     if file_path == "scripts/check_repo_privacy.py":
         return True
 
-    # 2. Skip synthetic test fixtures
+    # 2. Skip only exact, reviewed synthetic design/documentation artifacts.
+    if posix_path in ALLOWED_SYNTHETIC_TEXT_PATHS:
+        return True
+
+    # 3. Skip synthetic test fixtures
     if "tests/fixtures/synthetic" in posix_path:
         return True
 
-    # 3. Skip .py code files (containing parsing logic, assertions, regexes)
+    # 4. Skip .py code files (containing parsing logic, assertions, regexes)
     if Path(file_path).suffix.lower() == ".py":
         return True
 
-    # 4. Skip repository documentation which explains the rules and keywords
+    # 5. Skip repository documentation which explains the rules and keywords
     if file_path in ["README.md", "AGENTS.md"] or posix_path.startswith("docs/"):
         return True
 
