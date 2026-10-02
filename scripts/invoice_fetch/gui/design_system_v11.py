@@ -33,8 +33,8 @@ def _sidebar_stylesheet() -> str:
     metrics = DESIGN_V1_METRICS
     return f"""
 QFrame#WorkbenchNav {{
-    background-color: {colors['surface']};
-    border-right: 1px solid {colors['border']};
+    background-color: {colors['navigation']};
+    border-right: 1px solid {colors['navigation_border']};
 }}
 QPushButton.WorkbenchNavButton {{
     background-color: transparent;
@@ -43,6 +43,8 @@ QPushButton.WorkbenchNavButton {{
     border-radius: {metrics['radius_medium']}px;
     padding: 0 12px;
     text-align: left;
+    font-size: {DESIGN_V1_TYPE['section_title']}px;
+    font-weight: 600;
 }}
 QPushButton.WorkbenchNavButton:hover {{
     background-color: {colors['surface_secondary']};
@@ -56,11 +58,11 @@ QPushButton.WorkbenchNavButton:focus {{
 }}
 QPushButton.WorkbenchNavButton:checked,
 QPushButton.WorkbenchNavButton:checked:focus {{
-    background-color: {colors['selected']};
+    background-color: {colors['navigation_selected']};
     color: {colors['accent_hover']};
     border: none;
     outline: 0;
-    font-weight: 600;
+    font-weight: 700;
 }}
 QPushButton[navigationControl="collapse"] {{
     min-height: {metrics['icon_button_size']}px;

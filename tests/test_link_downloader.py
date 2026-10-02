@@ -313,6 +313,56 @@ class TestLinkDownloader(unittest.TestCase):
         browser_internal_route.continue_.assert_called_once_with()
         browser_internal_route.abort.assert_not_called()
 
+    def test_nuonuo_pdf_file_button_precedes_generic_xml_download(self):
+        page = MagicMock()
+        page.evaluate.return_value = '下载XML文件 下载OFD文件 下载PDF文件'
+        page.frames = []
+        page.locator.return_value.count.return_value = 1
+        download = MagicMock()
+        download.suggested_filename = 'official.pdf'
+        download.failure.return_value = None
+        download.save_as.side_effect = lambda path: Path(path).write_bytes(b'%PDF-1.4\n' + b'x' * 1000)
+        page.expect_download.return_value.__enter__.return_value.value = download
+        dl = LinkDownloader(self.tmp_dir)
+        result = dl._handle_nuonuo_invoice_page(
+            page, 'https://nnfp.jss.com.cn/synthetic-token', Path(self.tmp_dir), 123, 0,
+            disable_fallback=True,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result[1], 'official_download')
+        self.assertEqual(page.locator.call_args_list[0].args[0], 'a:has-text("下载PDF")')
+        page.wait_for_function.assert_called_once()
+        self.assertNotIn('networkidle', [call.args[0] for call in page.wait_for_load_state.call_args_list])
+
+    def test_new_tab_download_is_dispatched_before_context_closes(self):
+        dl = LinkDownloader(self.tmp_dir)
+        browser = MagicMock()
+        dl._browser = browser
+        ctx = browser.new_context.return_value
+        page = ctx.new_page.return_value
+        page.url = 'https://nnfp.jss.com.cn/synthetic-token'
+        popup = MagicMock()
+        download = MagicMock()
+        download.suggested_filename = 'popup.pdf'
+        download.save_as.side_effect = lambda path: Path(path).write_bytes(b'%PDF-1.4\n' + b'x' * 1000)
+
+        def open_popup(*args, **kwargs):
+            callback = next(call.args[1] for call in ctx.on.call_args_list if call.args[0] == 'page')
+            callback(popup)
+            def dispatch(_milliseconds):
+                receiver = next(call.args[1] for call in popup.on.call_args_list if call.args[0] == 'download')
+                receiver(download)
+            page.wait_for_timeout.side_effect = dispatch
+            return None
+
+        with patch.object(dl, '_ensure_browser'), patch.object(dl, '_handle_nuonuo_invoice_page', side_effect=open_popup):
+            result = dl._download_url(page.url, 123, 0, '2026-07-22', disable_fallback=True)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_type, 'official_download')
+        self.assertTrue(Path(result.file_path).exists())
+        ctx.route.assert_called_once()
+        ctx.close.assert_called_once()
+
     @patch("playwright.sync_api.sync_playwright")
     def test_invoice_page_detection_and_processor(self, mock_playwright):
         # 1. 模拟 Playwright page

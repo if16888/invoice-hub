@@ -804,7 +804,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-    def _set_new_claim_input_visible(self, visible: bool):
+    def _set_new_claim_input_visible(self, visible: bool, *, focus: bool = True):
 
 
 
@@ -820,7 +820,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        if visible:
+        if visible and focus:
 
 
 
@@ -1845,7 +1845,8 @@ class InvoiceDetailPanel(QWidget):
                 self.btn_add_evidence.setText("管理")
             else:
                 self.lbl_evidence_name.setText(display_name)
-                self.btn_add_evidence.setText("替换/管理")
+                self.btn_add_evidence.setText("管理")
+                self.btn_add_evidence.setToolTip("管理或替换证明材料")
 
             self.lbl_evidence_name.setToolTip(
                 f"{doc.get('path', '') or label}\n双击管理/替换证明材料"
@@ -1871,7 +1872,8 @@ class InvoiceDetailPanel(QWidget):
                 self.btn_add_evidence.setText("添加")
             else:
                 self.lbl_evidence_missing.setText("不需要")
-                self.btn_add_evidence.setText("添加（可选）")
+                self.btn_add_evidence.setText("添加")
+                self.btn_add_evidence.setToolTip("按需添加证明材料，当前发票不要求证明")
             self.btn_open_extra_files.setEnabled(False)
             self.btn_open_extra_files.setVisible(False)
             self.btn_add_evidence.setEnabled(True)
@@ -4368,6 +4370,13 @@ class InvoiceDetailPanel(QWidget):
         note_content_row_layout.setContentsMargins(10, 8, 10, 8)
         note_content_row_layout.setSpacing(0)
         note_content_row_layout.addLayout(self.note_editor_row)
+        note_save_row = QHBoxLayout()
+        note_save_row.addStretch()
+        self.btn_save_draft.setText("保存备注")
+        self.btn_save_draft.setToolTip("保存当前发票的备注")
+        self.btn_save_draft.setVisible(True)
+        note_save_row.addWidget(self.btn_save_draft)
+        note_content_row_layout.addLayout(note_save_row)
         self.note_content_row.setVisible(False)
 
         review_note_layout.addWidget(self.note_content_row)
@@ -4818,12 +4827,14 @@ class EditFieldsDialog(QDialog):
         form.addRow("购买方", self.txt_buyer)
         form.addRow("销售方", self.txt_seller)
         layout.addLayout(form)
+        from .dialog_form import style_dialog_form
+        style_dialog_form(self, layout, form, "编辑发票", "核对票面信息后保存，备注在审核页单独填写。")
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         cancel = make_button("取消", variant="secondary")
         cancel.clicked.connect(self.reject)
-        confirm = make_button("确定", variant="primary")
+        confirm = make_button("保存修改", variant="primary")
         confirm.clicked.connect(self._accept_if_valid)
         buttons.addWidget(cancel)
         buttons.addWidget(confirm)

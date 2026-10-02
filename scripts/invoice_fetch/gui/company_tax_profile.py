@@ -94,14 +94,14 @@ class CompanyTaxProfileDialog(QDialog):
         root.setSpacing(14)
 
         title = QLabel("公司开票信息", self)
-        title.setProperty("class", "SettingsSurfaceTitle")
+        title.setProperty("class", "DialogTitle")
         root.addWidget(title)
 
         hint = QLabel(
             "用于向商户提供开票资料，并在审核时核对发票购买方。信息仅保存在本机。",
             self,
         )
-        hint.setProperty("class", "SettingsSurfaceHint")
+        hint.setProperty("class", "DialogHint")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
@@ -147,6 +147,8 @@ class CompanyTaxProfileDialog(QDialog):
         form.addRow("", self.chk_strict_name)
         form.addRow("", self.chk_strict_tax)
         root.addLayout(form)
+        from .dialog_form import style_dialog_form
+        style_dialog_form(self, root, form, "")
 
         footer = QHBoxLayout()
         footer.setSpacing(8)

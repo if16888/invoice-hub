@@ -17,6 +17,9 @@ DESIGN_V1_COLORS = {
     "surface": "#FFFFFF",
     "surface_secondary": "#F8FAFC",
     "canvas": "#F1F5F9",
+    "navigation": "#EDF2F8",
+    "navigation_border": "#CBD5E1",
+    "navigation_selected": "#D7E5FB",
     "selected": "#EFF6FF",
     "border": "#E5E7EB",
     "border_subtle": "#E4E7EC",
@@ -54,14 +57,14 @@ DESIGN_V1_COLORS = {
 }
 
 DESIGN_V1_TYPE = {
-    "page_title": 22,
-    "surface_title": 16,
-    "subpage_title": 15,
-    "section_title": 14,
-    "body": 13,
+    "page_title": 20,
+    "surface_title": 15,
+    "subpage_title": 14,
+    "section_title": 13,
+    "body": 12,
     "secondary": 12,
     "caption": 11,
-    "metric": 18,
+    "metric": 16,
     "badge": 12,
 }
 

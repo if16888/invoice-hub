@@ -45,6 +45,34 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_note_has_visible_save_action_and_survives_reload(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                invoice_id = window.db.insert_invoice({
+                    "invoice_number": "NOTE-ACCEPTANCE-001",
+                    "seller_name": "Synthetic Note Supplier",
+                    "total_amount": "12.50",
+                    "invoice_date": "2026-10-02",
+                    "review_status": "待审核",
+                })
+                window._load_invoices()
+                window._ensure_single_row_selection(0)
+                window._on_table_selection_changed()
+                detail = window._detail_panel
+                detail.btn_toggle_note.click()
+                self.app.processEvents()
+                self.assertTrue(detail.btn_save_draft.isVisible())
+                note = "客户项目办公采购，凭证已核对。" * 6
+                detail.txt_note.setPlainText(note)
+                self.assertTrue(detail.btn_save_draft.isEnabled())
+                detail.btn_save_draft.click()
+                self.app.processEvents()
+                self.assertEqual(window.db.get_invoice(invoice_id)["confirmed_note"], note)
+                self.assertEqual(detail.txt_note.toPlainText(), note)
+            finally:
+                window.close()
+
 
     def test_summary_and_basic_info_values_follow_single_ownership(self):
         with tempfile.TemporaryDirectory() as td:
@@ -95,10 +123,11 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 self.assertEqual(detail.claim_section_title.text(), "当前报销组")
                 self.assertEqual(detail.claim_action_row.count(), 3)
                 self.assertIs(detail.claim_action_row.itemAt(0).widget(), detail.btn_add_to_claim)
-                detail.btn_add_to_claim.setText("加入 示例报销组")
+                detail.btn_add_to_claim.setText("加入")
+                detail.btn_add_to_claim.setToolTip("将当前发票加入“示例报销组”")
                 sync_review_feedback_state(window)
-                self.assertEqual(detail.btn_add_to_claim.text(), "加入 示例报销组")
-                self.assertEqual(detail.btn_add_to_claim.toolTip(), "加入 示例报销组")
+                self.assertEqual(detail.btn_add_to_claim.text(), "加入")
+                self.assertEqual(detail.btn_add_to_claim.toolTip(), "将当前发票加入“示例报销组”")
             finally:
                 window.close()
 

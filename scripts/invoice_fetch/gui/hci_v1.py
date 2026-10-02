@@ -99,6 +99,8 @@ class ResponsiveTaskCardRow(QWidget):
         for index, card in enumerate(self._cards):
             self._layout.addWidget(card, index // columns, index % columns)
         self._layout.invalidate()
+        self.setMinimumHeight(self._layout.minimumSize().height())
+        self.updateGeometry()
 
 def _repolish(widget: QWidget | None) -> None:
     if widget is None:
@@ -186,7 +188,7 @@ class HciTaskCard(QFrame):
             }}
             QLabel[class="HciTaskMetric"] {{
                 color: {metric};
-                font-size: 26px;
+                font-size: 22px;
                 font-weight: 700;
                 border: none;
                 background: transparent;

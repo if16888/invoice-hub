@@ -191,10 +191,14 @@ class ImportReviewIdentityTests(unittest.TestCase):
                     for i in range(2)
                 ]
 
+                window.txt_search.setText("H-0")
+                window.column_filters["seller_name"] = {"values": {"历史"}}
                 window._record_import_activity("local", added=2, new_invoice_ids=new_ids, review_invoice_ids=new_ids)
                 window._open_new_invoice_review()
                 self.app.processEvents()
 
+                self.assertEqual(window.txt_search.text(), "")
+                self.assertEqual(window.column_filters, {})
                 visible_ids = {int(inv["id"]) for inv in window.invoices_list}
                 self.assertEqual(visible_ids, set(new_ids))
                 for hid in h_ids:

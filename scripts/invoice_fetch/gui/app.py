@@ -89,6 +89,7 @@ from .mobile_upload_dialog import MobileUploadDialog
 from .mobile_upload_session import MobileUploadSessionController, MobileUploadSessionPanel
 from .design_tokens import DESIGN_V1_COLORS
 from .api_key_dialog import ApiKeyDialog
+from .dialog_form import style_dialog_form, complete_mailbox_address, MAILBOX_DOMAINS
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
 from .settings_baseline import apply_settings_responsive_metrics
@@ -313,27 +314,35 @@ class SingleTaskMailboxDialog(QDialog):
         self._result_auth_code = ""
 
         self.setWindowTitle("邮箱账户配置")
-        self.resize(540, 420)
+        self.resize(540, 440)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("单任务邮箱配置")
-        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        layout.addWidget(title)
-
-        hint = QLabel("仅处理当前邮箱账号的新增或编辑，保存后返回桌面系统设置页。")
-        hint.setWordWrap(True)
-        hint.setProperty("role", "hint")
-        layout.addWidget(hint)
-
         form = QFormLayout()
+        self.mailbox_form = form
         form.setSpacing(10)
         self.txt_name = QLineEdit()
         self.txt_email = QLineEdit()
         self.combo_provider = QComboBox()
-        self.combo_provider.addItems(["qq", "netease_163", "netease_126", "gmail", "outlook", "custom"])
+        for label, key in [("QQ 邮箱", "qq"), ("网易 163", "netease_163"),
+                           ("网易 126", "netease_126"), ("Gmail", "gmail"),
+                           ("Outlook", "outlook"), ("其他 / 企业邮箱", "custom")]:
+            self.combo_provider.addItem(label, key)
+        self.txt_name.setPlaceholderText("选填，例如：工作邮箱")
+        self.txt_email.setClearButtonEnabled(True)
+        self.email_suffix = QLabel()
+        self.email_suffix.setProperty("class", "EmailSuffix")
+        email_row = QHBoxLayout()
+        email_row.setSpacing(8)
+        email_row.addWidget(self.txt_email, 1)
+        email_row.addWidget(self.email_suffix)
+        self.email_preview = QLabel()
+        self.email_preview.setWordWrap(True)
+        self.email_preview.setProperty("class", "DialogHint")
+        self.btn_server_options = make_button("服务器设置", variant="secondary")
+        self.btn_server_options.setCheckable(True)
         self.txt_server = QLineEdit()
         self.spin_port = QSpinBox()
         self.spin_port.setRange(1, 65535)
@@ -342,20 +351,30 @@ class SingleTaskMailboxDialog(QDialog):
         self.chk_enabled.setChecked(True)
         self.chk_default = QCheckBox("设为默认扫描账号")
         self.combo_months = QComboBox()
-        self.combo_months.addItems(["1", "3", "6", "12"])
+        for months in (1, 3, 6, 12):
+            self.combo_months.addItem(f"最近 {months} 个月", months)
         self.txt_auth_code = QLineEdit()
         self.txt_auth_code.setEchoMode(QLineEdit.Password)
         self.txt_auth_code.setPlaceholderText("仅在新增或补录授权码时填写")
-        form.addRow("邮箱名称", self.txt_name)
-        form.addRow("邮箱地址", self.txt_email)
-        form.addRow("Provider", self.combo_provider)
-        form.addRow("IMAP 服务器", self.txt_server)
-        form.addRow("端口", self.spin_port)
-        form.addRow("扫描规则（月）", self.combo_months)
+        form.addRow("邮箱类型", self.combo_provider)
+        form.addRow("邮箱账号", email_row)
+        form.addRow("", self.email_preview)
+        form.addRow("备注名称", self.txt_name)
+        form.addRow("授权码", self.txt_auth_code)
+        form.addRow("扫描范围", self.combo_months)
         form.addRow("", self.chk_enabled)
         form.addRow("", self.chk_default)
-        form.addRow("授权码", self.txt_auth_code)
+        form.addRow("", self.btn_server_options)
+        form.addRow("IMAP 服务器", self.txt_server)
+        form.addRow("端口", self.spin_port)
         layout.addLayout(form)
+        style_dialog_form(self, layout, form, "添加邮箱" if not account else "编辑邮箱",
+                          "选择邮箱类型后，只需填写账号；也支持粘贴完整邮箱地址。")
+        self.lbl_form_error = QLabel()
+        self.lbl_form_error.setWordWrap(True)
+        self.lbl_form_error.setProperty("class", "DialogError")
+        self.lbl_form_error.hide()
+        layout.addWidget(self.lbl_form_error)
 
         footer = QHBoxLayout()
         footer.addStretch(1)
@@ -367,8 +386,40 @@ class SingleTaskMailboxDialog(QDialog):
         footer.addWidget(btn_save)
         layout.addLayout(footer)
 
-        self.combo_provider.currentTextChanged.connect(self._apply_provider_defaults)
+        self.combo_provider.currentIndexChanged.connect(
+            self._on_mailbox_provider_changed)
+        self.txt_email.textChanged.connect(self._update_email_preview)
+        self.btn_server_options.toggled.connect(self._show_server_options)
         self._load_initial_values()
+
+    def _on_mailbox_provider_changed(self):
+        self.txt_server.setProperty("auto_fill", True)
+        self._apply_provider_defaults(self.combo_provider.currentData())
+
+    def _update_email_preview(self):
+        provider = self.combo_provider.currentData()
+        value = self.txt_email.text().strip()
+        if "@" in value and value != str(self._source_account.get("address") or ""):
+            pasted_domain = value.rsplit("@", 1)[-1].lower()
+            domain_providers = {domain: key for key, domain in MAILBOX_DOMAINS.items()}
+            domain_providers.update({"foxmail.com": "qq", "googlemail.com": "gmail",
+                                     "hotmail.com": "outlook", "live.com": "outlook"})
+            detected = domain_providers.get(pasted_domain)
+            if detected and detected != provider:
+                self.combo_provider.setCurrentIndex(self.combo_provider.findData(detected))
+                provider = detected
+        domain = MAILBOX_DOMAINS.get(provider, "")
+        self.email_suffix.setText(f"@{domain}" if domain else "")
+        self.email_suffix.setVisible(bool(domain) and "@" not in value)
+        self.txt_email.setPlaceholderText("输入账号或粘贴完整地址" if domain else "例如：name@company.com")
+        address = complete_mailbox_address(value, provider)
+        self.email_preview.setText(f"邮箱地址：{address}" if address else
+                                   ("后缀会自动补全" if domain else "企业邮箱请填写完整地址"))
+        self.lbl_form_error.hide()
+
+    def _show_server_options(self, expanded):
+        self.mailbox_form.setRowVisible(self.txt_server, expanded)
+        self.mailbox_form.setRowVisible(self.spin_port, expanded)
 
     def _provider_defaults(self, provider: str) -> tuple[str, int]:
         defaults = {
@@ -389,11 +440,14 @@ class SingleTaskMailboxDialog(QDialog):
             self.txt_server.setProperty("auto_fill", True)
         if self.spin_port.value() in {0, 993}:
             self.spin_port.setValue(port)
+        self._update_email_preview()
+        self.btn_server_options.setChecked(provider == "custom")
+        self._show_server_options(provider == "custom")
 
     def _load_initial_values(self) -> None:
         account = self._source_account
         provider = str(account.get("provider") or self._preset_id or "qq").strip()
-        self.combo_provider.setCurrentText(provider)
+        self.combo_provider.setCurrentIndex(max(0, self.combo_provider.findData(provider)))
         self.txt_name.setText(str(account.get("name") or "").strip())
         self.txt_email.setText(str(account.get("address") or "").strip())
         imap_cfg = account.get("imap", {}) if isinstance(account.get("imap"), dict) else {}
@@ -405,21 +459,26 @@ class SingleTaskMailboxDialog(QDialog):
             self.spin_port.setValue(993)
         self.chk_enabled.setChecked(bool(account.get("enabled", True)))
         self.chk_default.setChecked(bool(account.get("is_default", False)))
-        months = str((account.get("search") or {}).get("months_back") or "3")
-        if self.combo_months.findText(months) == -1:
-            self.combo_months.addItem(months)
-        self.combo_months.setCurrentText(months)
+        months = int((account.get("search") or {}).get("months_back") or 3)
+        if self.combo_months.findData(months) == -1:
+            self.combo_months.addItem(f"最近 {months} 个月", months)
+        self.combo_months.setCurrentIndex(self.combo_months.findData(months))
         self._apply_provider_defaults(provider)
 
     def _accept_form(self) -> None:
-        email = self.txt_email.text().strip()
-        if not email:
-            QMessageBox.warning(self, "邮箱地址为空", "请先填写邮箱地址。")
+        provider = self.combo_provider.currentData()
+        email = complete_mailbox_address(self.txt_email.text(), provider)
+        if not email or email.count("@") != 1 or any(c.isspace() for c in email) or not all(email.split("@")) or "." not in email.split("@")[-1]:
+            self.lbl_form_error.setText("请填写有效的邮箱账号或完整邮箱地址。")
+            self.lbl_form_error.show()
+            self.txt_email.setFocus()
             return
-        provider = self.combo_provider.currentText().strip()
         server = self.txt_server.text().strip()
         if not server:
-            QMessageBox.warning(self, "IMAP 未配置", "请先填写 IMAP 服务器。")
+            self.btn_server_options.setChecked(True)
+            self.lbl_form_error.setText("请填写企业邮箱的 IMAP 服务器。")
+            self.lbl_form_error.show()
+            self.txt_server.setFocus()
             return
         name = self.txt_name.text().strip() or email
         account = dict(self._source_account)
@@ -433,7 +492,7 @@ class SingleTaskMailboxDialog(QDialog):
                 "enabled": self.chk_enabled.isChecked(),
                 "is_default": self.chk_default.isChecked(),
                 "imap": {"server": server, "port": int(self.spin_port.value()), "ssl": True},
-                "search": {"folder": "INBOX", "months_back": int(self.combo_months.currentText())},
+                "search": {"folder": "INBOX", "months_back": self.combo_months.currentData()},
             }
         )
         self._result_account = account
@@ -474,7 +533,9 @@ class DuplicateOutcomesDialog(QDialog):
         self.details.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.details.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.details.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.details.setFont(QFont("Segoe UI", 10))
+        detail_font = QFont("Microsoft YaHei UI")
+        detail_font.setPixelSize(12)
+        self.details.setFont(detail_font)
         layout.addWidget(self.details, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
@@ -499,28 +560,31 @@ class SingleTaskAiProfileDialog(QDialog):
         self._result_profile: dict | None = None
 
         self.setWindowTitle("AI 配置")
-        self.resize(520, 320)
+        self.resize(480, 280)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("单任务 AI 配置")
-        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.setProperty("inputDialog", True)
+        layout.setContentsMargins(20, 18, 20, 16)
+        title = QLabel("AI 配置")
+        title.setProperty("class", "DialogTitle")
         layout.addWidget(title)
 
-        hint = QLabel("默认页面只读展示 Provider、模型、Key 和会话状态；需要修改时通过这个弹窗单独编辑。")
+        hint = QLabel("选择服务并填写模型，保存后用于发票提取与分类。")
         hint.setWordWrap(True)
-        hint.setProperty("role", "hint")
+        hint.setProperty("class", "DialogHint")
         layout.addWidget(hint)
 
         form = QFormLayout()
         form.setSpacing(10)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.combo_provider = QComboBox()
         self.combo_provider.addItems(["deepseek", "gemini", "openai"])
         self.txt_model = QLineEdit()
         self.chk_enabled = QCheckBox("启用 AI 提取与分类")
-        form.addRow("Provider", self.combo_provider)
+        form.addRow("AI 服务", self.combo_provider)
         form.addRow("模型", self.txt_model)
         form.addRow("", self.chk_enabled)
         layout.addLayout(form)
@@ -1858,6 +1922,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
         self.table.horizontalHeader().viewport().installEventFilter(self)
         self.table.installEventFilter(self)
+        self.table.viewport().installEventFilter(self)
         self._badge_delegate = QueueBadgeDelegate(self.table)
         self.table.setItemDelegateForColumn(0, self._badge_delegate)
         self.table.setItemDelegateForColumn(1, self._badge_delegate)
@@ -2464,6 +2529,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def eventFilter(self, obj, event):
         header = self.table.horizontalHeader() if hasattr(self, "table") else None
+        table = getattr(self, "table", None)
+        if table is not None and obj in (table, table.viewport()):
+            if event.type() == QEvent.MouseButtonPress:
+                table.setFocus(Qt.MouseFocusReason)
+            if event.type() in (QEvent.ShortcutOverride, QEvent.KeyPress):
+                if event.key() in (Qt.Key_Up, Qt.Key_Down) and event.modifiers() == Qt.NoModifier:
+                    # The invoice table owns arrow navigation, including paging.
+                    # Do not rely on a window shortcut and its editor-focus guard.
+                    event.accept()
+                    if event.type() == QEvent.KeyPress:
+                        self._move_invoice_selection(1 if event.key() == Qt.Key_Down else -1)
+                    return True
         preview_focus_dialog = getattr(self, "preview_focus_dialog", None)
         preview_workbench = getattr(self, "preview_workbench", None)
         if event.type() == QEvent.KeyPress and preview_focus_dialog is not None and hasattr(self, "_handle_preview_focus_keypress"):
@@ -2907,6 +2984,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
         )
         self._review_scope_duplicate_outcomes = tuple(activity.duplicate_outcomes)
+        # A batch handoff owns its filter scope. Historical searches must not
+        # hide the records behind the explicit "处理新增" action.
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+        if hasattr(self, "search_reload_timer"):
+            self.search_reload_timer.stop()
+        self.column_filters.clear()
+        self._column_filters_load_all = False
+        self._sync_column_filters_to_checkboxes()
+        self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
         self.current_filter_status = TO_REVIEW
         self._sync_review_filter_control()
         return pending_ids
@@ -4458,8 +4547,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _build_overview_page_view(self) -> QWidget:
         page = QWidget()
-        outer_layout = QVBoxLayout(page)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        overview_scroll = QScrollArea(page)
+        overview_scroll.setWidgetResizable(True)
+        overview_scroll.setFrameShape(QFrame.NoFrame)
+        overview_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        overview_body = QWidget(page)
+        outer_layout = QVBoxLayout(overview_body)
+        outer_layout.setSizeConstraint(QLayout.SetMinimumSize)
         DashboardPageLayout.apply(page, outer_layout)
+        overview_scroll.setWidget(overview_body)
+        page_layout.addWidget(overview_scroll)
+        self.overview_scroll = overview_scroll
         self.overview_content_host = QWidget(page)
         self.overview_content_host.setMaximumWidth(1360)
         self.overview_content_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
@@ -4750,8 +4850,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _build_export_page_view(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        export_scroll = QScrollArea(page)
+        export_scroll.setWidgetResizable(True)
+        export_scroll.setFrameShape(QFrame.NoFrame)
+        export_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        export_body = QWidget(page)
+        layout = QVBoxLayout(export_body)
+        layout.setSizeConstraint(QLayout.SetMinimumSize)
         TaskFlowPageLayout.apply(page, layout)
+        export_scroll.setWidget(export_body)
+        page_layout.addWidget(export_scroll)
+        self.export_scroll = export_scroll
 
         self.export_header = PageHeader(
             "报销组与导出",
@@ -6344,7 +6455,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         claim_id = self.combo_claims.itemData(claim_idx)
         if claim_id == self._NEW_CLAIM_VALUE:
-            self._detail_panel._set_new_claim_input_visible(True)
+            self._detail_panel._set_new_claim_input_visible(True, focus=False)
             self.lbl_claim_total.setText("输入名称并确认后即可加入发票")
             if hasattr(self._detail_panel, "lbl_claim_assignment"):
                 self._detail_panel.lbl_claim_assignment.set_value("未关联报销组")
@@ -6369,7 +6480,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         from ..reimbursement import amount_total
         count, total, has_missing = amount_total(invoices)
         suffix = "，部分金额缺失" if has_missing else ""
-        self.lbl_claim_total.setText(f"{group_name}：{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
+        self.lbl_claim_total.setText(f"{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
+        self.lbl_claim_total.setToolTip(group_name)
         if hasattr(self._detail_panel, "lbl_claim_assignment"):
             self._detail_panel.lbl_claim_assignment.set_value(group_name)
             self._detail_panel.btn_claim_assignment.setText("更换")
@@ -6395,14 +6507,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             break
                     except Exception as exc:
                         _log.debug("Failed to inspect selected invoice claim links: %s", exc)
-            display_group = group_name if len(group_name) <= 12 else f"{group_name[:12]}…"
             if can_add:
-                self.btn_add_to_claim.setText(f"加入 {display_group}")
+                self.btn_add_to_claim.setText("加入")
                 self.btn_add_to_claim.setToolTip(f"将当前选中的未归组发票加入“{group_name}”")
             else:
-                assigned_name = existing_group or "其他报销组"
-                display_assigned = assigned_name if len(assigned_name) <= 12 else f"{assigned_name[:12]}…"
-                self.btn_add_to_claim.setText(f"已在 {display_assigned}")
+                self.btn_add_to_claim.setText("已加入")
                 self.btn_add_to_claim.setToolTip("当前发票已有报销组，不能重复加入")
             self.btn_add_to_claim.setEnabled(can_add)
         if hasattr(self, "btn_export"):

@@ -341,6 +341,11 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
     if ai_surface is not None:
         ai_surface.setMinimumWidth(0)
         ai_surface.setMaximumWidth(_MAILBOX_DETAIL_MAX_WIDTH)
+    ai_empty = getattr(window, "settings_ai_empty_state", None)
+    if ai_empty is not None:
+        content_width = max(0, available_width - (nav_list.width() if nav_list else 0) - 24)
+        ai_empty.setMinimumWidth(min(520, content_width))
+        ai_empty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
     for attr in (
         "lbl_settings_runtime",

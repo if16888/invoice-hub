@@ -155,7 +155,8 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
             self.panel.btn_open_extra_files.isHidden(),
             "Open button should be visible in the ActionCluster when file exists"
         )
-        self.assertEqual(self.panel.btn_add_evidence.text(), "替换/管理")
+        self.assertEqual(self.panel.btn_add_evidence.text(), "管理")
+        self.assertEqual(self.panel.btn_add_evidence.toolTip(), "管理或替换证明材料")
 
     def test_evidence_row_filename_truncated_when_long(self):
         """Filenames longer than 40 chars are truncated with ellipsis."""

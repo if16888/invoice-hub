@@ -32,7 +32,7 @@ class DateRangeDialog(QDialog):
         layout.setSpacing(12)
 
         title = QLabel("时间范围", self)
-        title.setProperty("class", "SectionTitle")
+        title.setProperty("class", "DialogTitle")
         layout.addWidget(title)
 
         presets = QHBoxLayout()
@@ -53,6 +53,7 @@ class DateRangeDialog(QDialog):
         form = QFormLayout()
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(8)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         form.addRow("开始日期", self.start_date_edit)
         form.addRow("结束日期", self.end_date_edit)
         layout.addLayout(form)

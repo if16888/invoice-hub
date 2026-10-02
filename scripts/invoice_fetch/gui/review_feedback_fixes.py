@@ -415,7 +415,8 @@ def sync_review_feedback_state(window) -> None:
 
     claim_text = detail.lbl_claim_total.text().strip()
     detail.lbl_claim_total.setToolTip(claim_text)
-    detail.btn_add_to_claim.setToolTip(detail.btn_add_to_claim.text())
+    # Keep the full group context supplied by the app; the compact label only
+    # describes the action and no longer repeats a potentially long name.
     valid_claims = any(
         isinstance(detail.combo_claims.itemData(index), int)
         and detail.combo_claims.itemData(index) > 0

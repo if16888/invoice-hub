@@ -145,6 +145,15 @@ class HciV1DesktopTests(unittest.TestCase):
                     window.overview_activity_card.lbl_title.text(),
                     "今天已完成",
                 )
+                window.resize(1180, 500)
+                window._switch_main_page("overview")
+                for _ in range(10):
+                    self.app.processEvents()
+                cards = list(window.hci_dashboard_task_cards.values())
+                for i, card in enumerate(cards):
+                    for other in cards[i + 1:]:
+                        self.assertFalse(card.geometry().intersects(other.geometry()))
+                self.assertGreater(window.overview_scroll.verticalScrollBar().maximum(), 0)
             finally:
                 window.db.close()
                 window.close()

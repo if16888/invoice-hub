@@ -14,7 +14,7 @@ class ApiKeyDialog(QDialog):
         self.save_and_test = False  # backward-compat alias
         self.setWindowTitle(f"配置 {self.provider} API Key")
         self.setModal(True)
-        self.setFixedWidth(560)
+        self.resize(480, 280)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)

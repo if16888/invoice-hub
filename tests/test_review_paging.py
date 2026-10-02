@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -122,13 +123,42 @@ class ReviewPagingTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_mouse_click_then_arrow_keys_updates_current_invoice(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td)
+            try:
+                window.activateWindow()
+                self._events()
+                window.txt_search.setFocus()
+                index = window.table.model().index(1, 3)
+                QTest.mouseClick(window.table.viewport(), Qt.LeftButton,
+                                 pos=window.table.visualRect(index).center())
+                self._events()
+                self.assertTrue(window.table.hasFocus())
+                self.assertEqual(window.table.currentRow(), 1)
+                for row in (2, 3):
+                    QTest.keyClick(window.table, Qt.Key_Down)
+                    self._events()
+                    self.assertEqual(window.table.currentRow(), row)
+                    self.assertEqual(window.current_invoice['id'], window.invoices_list[row]['id'])
+                QTest.keyClick(window.table, Qt.Key_Up)
+                self._events()
+                self.assertEqual(window.table.currentRow(), 2)
+                window.txt_search.setFocus()
+                QTest.keyClick(window.txt_search, Qt.Key_Down)
+                self._events()
+                self.assertEqual(window.table.currentRow(), 2)
+            finally:
+                window.close()
+
     def test_boundary_selection_enters_next_batch(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._window(td)
             try:
                 window.table.selectRow(49)
                 window._on_table_selection_changed()
-                window._move_invoice_selection(1)
+                window.table.setFocus()
+                QTest.keyClick(window.table, Qt.Key_Down)
                 self._events()
                 self.assertGreaterEqual(window.table.currentRow(), 50)
                 self.assertGreaterEqual(len(window.invoices_list), 100)

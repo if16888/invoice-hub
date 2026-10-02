@@ -42,7 +42,7 @@ class DesignTokenAuthorityTests(unittest.TestCase):
         self.assertEqual(DESIGN_V1_COLORS["accent"], "#2563EB")
         self.assertEqual(DESIGN_V1_COLORS["success"], "#16803C")
         self.assertEqual(DESIGN_V1_COLORS["danger"], "#B42318")
-        self.assertEqual(DESIGN_V1_TYPE["page_title"], 22)
+        self.assertEqual(DESIGN_V1_TYPE["page_title"], 20)
         self.assertEqual(DESIGN_V1_METRICS["control_height"], 34)
 
 

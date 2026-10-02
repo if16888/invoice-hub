@@ -69,7 +69,7 @@ class ReimbursementTitleDialog(QDialog):
         root.setSpacing(14)
 
         title = QLabel("报销抬头")
-        title.setProperty("class", "SettingsSurfaceTitle")
+        title.setProperty("class", "DialogTitle")
         root.addWidget(title)
         hint = QLabel("用于核对发票购买方是否与实际报销单位一致。此设置只保存在本地。")
         hint.setWordWrap(True)
@@ -79,6 +79,7 @@ class ReimbursementTitleDialog(QDialog):
         form = QFormLayout()
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.txt_buyer_name = QLineEdit(str(cfg.get("buyer_name") or ""))
         self.txt_buyer_name.setPlaceholderText("例如：示例科技有限公司")
         self.txt_buyer_name.setClearButtonEnabled(True)

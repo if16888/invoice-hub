@@ -87,6 +87,57 @@ class InvoiceParser:
     def __init__(self):
         self._pdfplumber = None
 
+    def parse_einvoice_xml(self, path: str) -> InvoiceInfo:
+        """Read structured EInvoice data, including a single XML in a saved ZIP."""
+        import zipfile
+        from pathlib import Path
+        from decimal import Decimal, InvalidOperation
+        import xml.etree.ElementTree as ET
+
+        info = InvoiceInfo()
+        limit = 2 * 1024 * 1024
+        try:
+            if str(path).lower().endswith('.zip'):
+                with zipfile.ZipFile(path) as archive:
+                    members = [m for m in archive.infolist()
+                               if not m.is_dir() and m.filename.lower().endswith('.xml')]
+                    if len(members) != 1:
+                        raise ValueError('压缩包不是单张 XML 发票，请通过导入展开处理')
+                    if members[0].file_size > limit:
+                        raise ValueError('XML 发票超过大小限制')
+                    with archive.open(members[0]) as stream:
+                        data = stream.read(limit + 1)
+            else:
+                with Path(path).open('rb') as stream:
+                    data = stream.read(limit + 1)
+            if len(data) > limit or b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
+                raise ValueError('XML 发票内容不受支持')
+            root = ET.fromstring(data)
+            for element in root.iter():
+                element.tag = element.tag.rsplit('}', 1)[-1]
+            if root.tag != 'EInvoice':
+                raise ValueError('不是 EInvoice 电子发票')
+            def field(tag):
+                return (root.findtext('.//' + tag) or '').strip()
+            info.invoice_number = field('InvoiceNumber')
+            info.invoice_date = normalize_date(field('IssueTime'))[:10]
+            info.seller_name = field('SellerName')
+            info.buyer_name = field('BuyerName')
+            info.amount = field('TotalAmWithoutTax')
+            info.total_amount = field('TotalTax-includedAmount') or field('TotaltaxIncludedAmount')
+            info.item_name = field('ItemName')
+            info.invoice_type = '电子发票'
+            info.expense_date = info.invoice_date
+            info.date_source = 'invoice_date'
+            total = Decimal(info.total_amount)
+            if not total.is_finite() or not info.invoice_number or not info.invoice_date:
+                raise ValueError('XML 发票关键字段缺失')
+            info.parse_success = True
+            info.parse_note = '已解析电子发票 XML（未验证数字签名）'
+        except (OSError, ValueError, ET.ParseError, zipfile.BadZipFile, RuntimeError, InvalidOperation):
+            info.parse_note = 'XML 发票解析失败或压缩包包含多张发票，请通过导入展开检查'
+        return info
+
     def _plumber(self):
         if self._pdfplumber is None:
             import pdfplumber
@@ -94,6 +145,8 @@ class InvoiceParser:
         return self._pdfplumber
 
     def parse_pdf(self, path: str) -> InvoiceInfo:
+        if str(path).lower().endswith((".xml", ".zip")):
+            return self.parse_einvoice_xml(path)
         info = InvoiceInfo()
         if not os.path.exists(path):
             info.parse_note = "文件不存在"

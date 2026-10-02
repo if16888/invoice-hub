@@ -31,7 +31,7 @@ class Attachment:
 
 
 # File extensions we care about
-_INVOICE_EXTS = {".pdf", ".ofd"}
+_INVOICE_EXTS = {".pdf", ".ofd", ".xml"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".heic"}
 _ALL_EXTS = _INVOICE_EXTS | _IMAGE_EXTS | {".zip"}
 _ZIP_MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
@@ -51,7 +51,7 @@ def _ext_priority(ext: str) -> int:
         return 1
     if ext in _IMAGE_EXTS:
         return 2
-    if ext == ".ofd":
+    if ext in {".ofd", ".xml"}:
         return 3
     if ext == ".zip":
         return 4
@@ -203,6 +203,14 @@ def _payload_matches_extension(payload: bytes, ext: str) -> bool:
     """Return whether file bytes match the claimed safe extension."""
     if ext == ".pdf":
         return payload.startswith(b"%PDF-")
+    if ext == ".xml":
+        if len(payload) > 2 * 1024 * 1024 or b'<!DOCTYPE' in payload.upper() or b'<!ENTITY' in payload.upper():
+            return False
+        import xml.etree.ElementTree as ET
+        try:
+            return ET.fromstring(payload).tag.rsplit('}', 1)[-1] == 'EInvoice'
+        except ET.ParseError:
+            return False
     if ext in {".zip", ".ofd"}:
         return payload.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"))
     if ext == ".png":

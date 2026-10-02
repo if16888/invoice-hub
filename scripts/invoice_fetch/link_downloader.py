@@ -623,6 +623,7 @@ class LinkDownloader:
             float(link_cfg.get("budget_seconds_per_url", legacy_url_budget)),
         )
         self._max_links_per_email = max(1, int(link_cfg.get("max_links_per_email", 5)))
+        self._nuonuo_budget_seconds = max(self._url_budget_seconds, float(link_cfg.get("nuonuo_budget_seconds", 45.0)))
         legacy_email_budget = link_cfg.get("max_seconds_per_email", 60.0)
         self._email_budget_seconds = max(
             self._url_budget_seconds,
@@ -983,12 +984,11 @@ class LinkDownloader:
             pass
 
         try:
-            page.wait_for_load_state("networkidle", timeout=self._remaining_timeout_ms(deadline, 5000) if deadline is not None else 5000)
-        except Exception:
-            pass
-
-        try:
-            page.wait_for_timeout(min(1000, self._remaining_timeout_ms(deadline, 1000)) if deadline is not None else 1000)
+            # Analytics can keep this SPA busy after invoice controls are ready.
+            page.wait_for_function(
+                "() => /下载.*(?:PDF|OFD)|发票号码/.test(document.body?.innerText || '')",
+                timeout=self._remaining_timeout_ms(deadline, 8000) if deadline is not None else 8000,
+            )
         except Exception:
             pass
 
@@ -1083,6 +1083,10 @@ class LinkDownloader:
         # 1. Try clicking download button
         try:
             selectors = [
+                'a:has-text("下载PDF")',
+                'button:has-text("下载PDF")',
+                'a:has-text("PDF下载")',
+                'button:has-text("PDF下载")',
                 'text="下载发票"',
                 'text="下载PDF"',
                 'text="PDF下载"',
@@ -1217,8 +1221,9 @@ class LinkDownloader:
             return None
 
         attempt_started = time.monotonic()
-        url_deadline = attempt_started + self._url_budget_seconds
-        deadline = min(url_deadline, deadline) if deadline is not None else url_deadline
+        email_deadline = deadline
+        startup_deadline = attempt_started + self._url_budget_seconds
+        deadline = min(startup_deadline, email_deadline) if email_deadline is not None else startup_deadline
         fingerprint = self._url_fingerprint(url)
         _log.info("Browser download: %s", mask_url_for_log(url))
 
@@ -1234,6 +1239,12 @@ class LinkDownloader:
             return None
 
         save_dir = self._dir / (date_str or "unknown_date")
+        # Browser startup is shared overhead; retain the email-wide bound, but
+        # give the actual invoice page its own configured URL processing budget.
+        invoice_host = (urlparse(url).hostname or "").lower()
+        page_budget = self._nuonuo_budget_seconds if invoice_host == "nnfp.jss.com.cn" else self._url_budget_seconds
+        url_deadline = time.monotonic() + page_budget
+        deadline = min(url_deadline, email_deadline) if email_deadline is not None else url_deadline
         save_dir.mkdir(parents=True, exist_ok=True)
 
         ctx = None
@@ -1247,13 +1258,14 @@ class LinkDownloader:
             bounded_timeout = self._remaining_timeout_ms(deadline)
             ctx.set_default_timeout(bounded_timeout)
             ctx.set_default_navigation_timeout(bounded_timeout)
-            page.route("**/*", _route_browser_request)
+            ctx.route("**/*", _route_browser_request)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             downloaded_path: str | None = None
             source_type: str | None = None
             parse_note: str | None = None
             download_started = False
+            popup_opened = False
             download_done = threading.Event()
 
             def _on_download(download):
@@ -1308,10 +1320,23 @@ class LinkDownloader:
                 except Exception:
                     pass
 
-            page.on("response", on_response)
+            # Observe responses at context level: a PDF popup can receive its
+            # first response before the new Page object's handlers are attached.
+            ctx.on("response", on_response)
+
+            def on_popup(popup):
+                nonlocal popup_opened
+                if popup is page:
+                    return
+                popup_opened = True
+                popup.on("download", _on_download)
+
+            # Nuonuo's PDF control opens a new tab. Its download event belongs
+            # to that tab, not the invoice display page.
+            ctx.on("page", on_popup)
 
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=self._remaining_timeout_ms(deadline))
+                page.goto(url, wait_until="commit", timeout=self._remaining_timeout_ms(deadline))
             except Exception:
                 self._check_cancelled()
             self._check_cancelled()
@@ -1331,12 +1356,19 @@ class LinkDownloader:
                 save_dir,
                 mail_uid,
                 idx,
-                disable_fallback=disable_fallback,
+                # A Nuonuo display-page printout must not preempt the original
+                # PDF opened in its new tab while that download is still pending.
+                disable_fallback=disable_fallback or invoice_host == "nnfp.jss.com.cn",
                 deadline=deadline,
             )
             self._check_cancelled()
-            if res_handle:
+            if res_handle and not downloaded_path:
                 downloaded_path, source_type, parse_note = res_handle
+
+            if popup_opened and not downloaded_path:
+                self._wait_browser_download(page, download_done, deadline, 10.0)
+            if downloaded_path and source_type is None:
+                source_type = "official_download"
 
             # 2. General logic
             if not downloaded_path:
@@ -1344,7 +1376,7 @@ class LinkDownloader:
                 if not downloaded_path:
                     self._try_click_download(page, deadline)
                 if download_started and not downloaded_path:
-                    self._wait_event_until(download_done, deadline, 5.0)
+                    self._wait_browser_download(page, download_done, deadline, 5.0)
                     if downloaded_path:
                         source_type = "official_download"
                 if not downloaded_path:
@@ -1390,6 +1422,15 @@ class LinkDownloader:
                     ctx.close()
                 except Exception:
                     pass
+
+    def _wait_browser_download(self, page, event, deadline: float, cap_seconds: float) -> bool:
+        # Sync Playwright dispatches callbacks only while its API is running.
+        # threading.Event.wait() starves new-tab download events.
+        stop = min(deadline, time.monotonic() + cap_seconds)
+        while not event.is_set() and time.monotonic() < stop:
+            self._check_cancelled()
+            page.wait_for_timeout(max(1, min(100, int((stop - time.monotonic()) * 1000))))
+        return event.is_set()
 
     def _try_click_download(self, page, deadline: float | None = None) -> None:
         selectors = [

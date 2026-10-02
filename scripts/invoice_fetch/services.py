@@ -348,6 +348,18 @@ def _resolve_runtime_path(stored_path: str) -> Path | None:
     return None
 
 
+def _needs_original_replacement(stored_path: str, candidate_path: str) -> bool:
+    """Upgrade an XML-only original to a successfully parsed PDF ticket."""
+    existing = _resolve_runtime_path(stored_path)
+    if existing is None:
+        return True
+    if Path(candidate_path).suffix.lower() != ".pdf":
+        return False
+    if existing.suffix.lower() not in (".xml", ".zip"):
+        return False
+    return InvoiceParser().parse_einvoice_xml(str(existing)).parse_success
+
+
 def _normalize_path_list(raw_value) -> list[str]:
     if not raw_value:
         return []
@@ -2072,7 +2084,7 @@ def _import_local_pdf(
     )
 
 
-_LOCAL_ZIP_MEMBER_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
+_LOCAL_ZIP_MEMBER_EXTS = {".pdf", ".ofd", ".xml", ".png", ".jpg", ".jpeg", ".heic"}
 _LOCAL_ZIP_MAX_FILES = 20
 _LOCAL_ZIP_MAX_BYTES = 50 * 1024 * 1024
 
@@ -2124,7 +2136,7 @@ def _import_local_directory(
     root = root.resolve()
     runtime_root = RUNTIME_DIR.resolve()
     staging_dir = att_dir / "local_import"
-    supported_exts = {".pdf", ".ofd", ".zip", ".png", ".jpg", ".jpeg", ".heic"}
+    supported_exts = {".pdf", ".ofd", ".xml", ".zip", ".png", ".jpg", ".jpeg", ".heic"}
     if file_paths is None:
         files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in supported_exts)
     else:
@@ -2240,7 +2252,7 @@ def _import_local_directory(
 
                 for extracted_file in extracted:
                     inner_ext = extracted_file.suffix.lower()
-                    if inner_ext == ".pdf":
+                    if inner_ext in {".pdf", ".xml"}:
                         res = _import_local_pdf(
                             src.name, extracted_file, db, parser, categories, att_dir
                         )
@@ -2277,7 +2289,7 @@ def _import_local_directory(
                 continue
 
             working_file = src if preserve_source_path else _copy_local_file_to_staging(src, staging_dir)
-            if ext == ".pdf":
+            if ext in {".pdf", ".xml"}:
                 res = _import_local_pdf(
                     src.name,
                     working_file,
@@ -2670,7 +2682,7 @@ def _process_email(
 
     # 1. Extract attachments
     attachments = att_handler.extract(msg.raw_msg, msg.uid, date_str=msg.date)
-    invoice_pdfs = [a for a in attachments if a.is_invoice and a.file_path.lower().endswith(".pdf")]
+    invoice_pdfs = [a for a in attachments if a.is_invoice and a.file_path.lower().endswith((".pdf", ".xml"))]
     invoice_ofds = [a for a in attachments if a.is_invoice and a.file_path.lower().endswith(".ofd")]
     extra_files = [a for a in attachments if a.is_extra]
     parsed_invoice_pdfs = [
@@ -2773,11 +2785,11 @@ def _process_email(
         if getattr(link_dl, "_skip_when_attachment_invoice_present", True):
             success_attachment_pdfs = [
                 att for att, info in parsed_invoice_pdfs
-                if info.parse_success
+                if info.parse_success and att.file_path.lower().endswith(".pdf")
             ]
             if success_attachment_pdfs:
                 skip_for_attachment = True
-                _log.info("附件中已存在可解析发票，跳过浏览器链接下载")
+                _log.info("附件中已存在可解析 PDF 票面，跳过浏览器链接下载")
 
         if not skip_for_attachment:
             downloaded = link_dl.download_from_email(msg.raw_msg, msg.uid, msg.date)
@@ -2878,7 +2890,7 @@ def _process_email(
                     was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "链接下载")
                     _track_restored(existing)
-                    existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
+                    existing_attachment_missing = _needs_original_replacement(existing.get("attachment_path") or "", dl.file_path)
                     repaired_attachment_path = ""
                     category, extra_type, extra_req = _classify(
                         msg.subject, msg.sender, info.seller_name, categories,
@@ -3143,7 +3155,7 @@ def _process_email(
                 item_name=info.item_name, invoice_type=info.invoice_type,
                 raw_text=info.raw_text, parse_note=info.parse_note
             )
-            existing_attachment_missing = _resolve_runtime_path(existing.get("attachment_path") or "") is None
+            existing_attachment_missing = _needs_original_replacement(existing.get("attachment_path") or "", att.file_path)
             repaired_attachment_path = ""
             if existing_attachment_missing:
                 code = info.invoice_code or info.invoice_number
