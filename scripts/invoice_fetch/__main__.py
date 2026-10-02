@@ -29,7 +29,7 @@ from .credentials import get_auth_code
 from .db import InvoiceDB, is_pending_evidence_invoice
 from .excel_export import export_excel
 from .attachment_handler import AttachmentHandler, build_managed_attachment_name
-from .invoice_parser import InvoiceParser, parse_html_body, parse_subject
+from .invoice_parser import IsolatedInvoiceParser as InvoiceParser, parse_html_body, parse_subject
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .mail_fetcher import MailFetcher
 from .log_privacy import mask_email, sanitize_log_message, mask_filename, mask_invoice_number, mask_path, mask_uid, redact_text
@@ -1184,4 +1184,6 @@ def _reprocess_email_records(
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

@@ -65,10 +65,10 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
                 self.assertTrue(detail.btn_save_draft.isVisible())
                 note = "客户项目办公采购，凭证已核对。" * 6
                 detail.txt_note.setPlainText(note)
-                self.assertTrue(detail.btn_save_draft.isEnabled())
-                detail.btn_save_draft.click()
                 self.app.processEvents()
                 self.assertEqual(window.db.get_invoice(invoice_id)["confirmed_note"], note)
+                self.assertEqual(detail.lbl_note_save_status.text(), "已自动保存")
+                self.assertFalse(detail.btn_save_draft.isEnabled())
                 self.assertEqual(detail.txt_note.toPlainText(), note)
             finally:
                 window.close()

@@ -952,6 +952,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             ("_hci_history_worker", "历史记录重检"),
             ("_redownload_worker", "重新下载发票"),
             ("_reparse_worker", "重新解析发票"),
+            ("_complete_backup_worker", "完整备份操作"),
         ):
             worker = getattr(self, attr, None)
             if worker is not None:
@@ -1147,6 +1148,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage(status_msg, 4000)
 
     def closeEvent(self, event):
+        if not self._persist_invoice_note():
+            event.ignore()
+            return
         self._shutdown_requested = True
         shutdown_trace = self._performance_shutdown_trace
         if shutdown_trace is None:
@@ -2254,6 +2258,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_refresh_claims=self._load_claims,
             on_export_claim=self._export_claim_package,
             on_save_fields=self._save_invoice_fields,
+            on_save_note=self._persist_invoice_note,
+            on_discard_note=self._discard_invoice_note,
             on_form_dirty=self._mark_invoice_form_dirty,
             on_supporting_doc_changed=self._on_supporting_docs_combo_changed,
             on_claim_combo_changed=self._update_claim_total,
@@ -3126,6 +3132,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._selected_import_source = source
         for key, card in getattr(self, "import_source_cards", {}).items():
             card.set_selected(key == source)
+        source_card = getattr(self, "import_source_card", None)
+        if source_card is not None:
+            source_card.lbl_hint.setText({
+                "mail": "同步已配置邮箱中的新邮件；查找历史材料可使用重新检查。",
+                "local": "选择 PDF、OFD、图片或 ZIP；原文件保留，材料复制到本机。",
+                "mobile": "手机与电脑连接同一可信局域网，启动临时会话后扫码上传。",
+            }.get(source, "选择这次导入的来源。"))
         if hasattr(self, "import_task_stack"):
             task_page = getattr(self, "_import_task_pages", {}).get(source)
             if task_page is not None:
@@ -3740,6 +3753,89 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         finally:
             if candidate is not None:
                 candidate.close()
+
+    def _start_complete_backup(self, mode="create"):
+        if not self._persist_invoice_note():
+            return
+        archive = None
+        if mode == "restore":
+            if self._data_operation_busy_reason():
+                QMessageBox.warning(self, "暂时无法恢复", "请先完成当前数据操作。")
+                return
+            archive, _ = QFileDialog.getOpenFileName(self, "选择完整备份", str(Path(self.db_path).parent / "backups"), "完整备份 (*.zip)")
+            if not archive:
+                return
+            answer = QMessageBox.question(
+                self, "确认完整恢复",
+                "将恢复备份中的发票记录、审核状态、报销组、原件和证明材料。\n"
+                "当前数据库会先保留安全副本，现有原件不会覆盖；邮箱和AI凭据不会恢复。是否继续？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        if not self._try_begin_data_operation("完整备份操作"):
+            return
+        from .workers import CompleteBackupWorker
+        self._complete_backup_mode = mode
+        self._complete_backup_result_path = None
+        if mode == "restore":
+            self.current_invoice = None
+            self.db.close()
+            self.center_stack.setEnabled(False)
+        worker = CompleteBackupWorker(mode, self.db_path, RUNTIME_DIR, archive, self)
+        self._complete_backup_worker = worker
+        worker.result.connect(self._complete_backup_result)
+        worker.error.connect(self._complete_backup_error)
+        worker.finished.connect(self._complete_backup_finished)
+        self.btn_create_complete_backup.setEnabled(False)
+        self.btn_restore_complete_backup.setEnabled(False)
+        self.statusBar().showMessage("正在后台校验并恢复完整备份…" if mode == "restore" else "正在后台打包数据库与全部关联材料…")
+        try:
+            worker.start()
+        except Exception:
+            self._complete_backup_error("备份任务未能启动，原数据保留。")
+            self._complete_backup_finished()
+
+    def _complete_backup_result(self, path):
+        if not self._worker_callback_allowed():
+            return
+        self._complete_backup_result_path = Path(path)
+
+    def _complete_backup_error(self, message):
+        if not self._worker_callback_allowed():
+            return
+        summary, separator, details = message.partition("\n")
+        if separator:
+            dialog = QMessageBox(QMessageBox.Warning, "备份操作未完成", summary, QMessageBox.Ok, self)
+            dialog.setDetailedText(details)
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "备份操作未完成", message)
+
+    def _complete_backup_finished(self):
+        if not self._worker_callback_allowed():
+            return
+        mode = self._complete_backup_mode
+        result = self._complete_backup_result_path
+        if mode == "restore":
+            try:
+                self.db = InvoiceDB(self.db_path)
+                self._load_invoices()
+                self._load_claims()
+                self._refresh_overview_page()
+            except Exception:
+                result = None
+                QMessageBox.critical(self, "数据未能重新打开", "请重启后核对数据；恢复前的安全副本和原件仍保留。")
+            else:
+                self.center_stack.setEnabled(True)
+        self._end_data_operation("完整备份操作")
+        self.btn_create_complete_backup.setEnabled(True)
+        self.btn_restore_complete_backup.setEnabled(True)
+        self._refresh_settings_page()
+        if result is not None:
+            text = f"完整备份已创建：{result.name}" if mode == "create" else "完整备份已恢复，原件和证明材料关联已校验。"
+            self.statusBar().showMessage(text, 8000)
+            QMessageBox.information(self, "备份完成" if mode == "create" else "恢复完成", text)
 
     def _create_database_backup_from_settings(self) -> None:
         if not self._try_begin_data_operation("数据库备份"):
@@ -4672,6 +4768,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "mobile": SelectableSourceCard("mobile", "手机扫码", "从手机上传原件或材料。"),
         }
         for source_card in self.import_source_cards.values():
+            source_card.lbl_description.hide()
+            source_card.setMinimumHeight(48)
             source_card.clicked.connect(self._select_import_source)
             source_layout.addWidget(source_card)
         self._selected_import_source = "mail"
@@ -4886,12 +4984,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_group_card = SectionCard("报销组", hint="左侧按组查看发票数、金额和完整性缺口；检查会随选择更新。")
         self.export_group_card.setFixedWidth(300)
         self.export_group_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        self.btn_export_create_group = make_button("新建报销组", variant="secondary")
+        self.btn_export_create_group.clicked.connect(self._create_export_claim)
+        self.export_group_card.body_layout.addWidget(self.btn_export_create_group)
         self.export_empty_state = EmptyStateCard(
             "还没有报销组",
             "在审核页将发票加入报销组后，即可检查并导出。",
         )
         self.export_empty_state.setVisible(False)
         self.export_group_card.body_layout.addWidget(self.export_empty_state)
+        self.btn_export_choose_invoices = make_button("去选择发票", variant="primary")
+        self.btn_export_choose_invoices.clicked.connect(self._choose_claim_invoices)
+        self.export_group_card.body_layout.addWidget(self.btn_export_choose_invoices)
         self.export_group_list = EntityList()
         self.export_group_list.currentRowChanged.connect(self._sync_export_claim_selection)
         self.export_group_card.body_layout.addWidget(self.export_group_list, 1)
@@ -5037,7 +5141,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         privacy_tab.layout().addWidget(privacy_actions)
 
         data_tab = build_info_page("数据与备份", "创建或恢复数据库备份，并查看本地数据位置。", "lbl_settings_data")
-        self.btn_create_database_backup = make_button("创建数据库备份", variant="primary")
+        self.btn_create_complete_backup = make_button("完整备份", variant="primary")
+        self.btn_restore_complete_backup = make_button("恢复完整备份", variant="secondary")
+        self.btn_create_complete_backup.clicked.connect(lambda: self._start_complete_backup("create"))
+        self.btn_restore_complete_backup.clicked.connect(lambda: self._start_complete_backup("restore"))
+        complete_actions = CommandBar()
+        complete_actions.set_actions(primary_action=self.btn_create_complete_backup, secondary_actions=[self.btn_restore_complete_backup])
+        complete_hint = QLabel("完整备份包含数据库、全部关联原件和证明材料，可用于换机恢复；不包含邮箱或AI凭据。")
+        complete_hint.setWordWrap(True)
+        data_tab.layout().addWidget(complete_hint)
+        data_tab.layout().addWidget(complete_actions)
+        self.btn_create_database_backup = make_button("创建数据库备份", variant="secondary")
         self.btn_restore_database_backup = make_button("恢复数据库备份", variant="secondary")
         self.btn_open_database_backups = make_button("打开备份目录", variant="secondary")
         self.btn_create_database_backup.clicked.connect(self._create_database_backup_from_settings)
@@ -5285,7 +5399,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_validation_status = self.settings_ai_detail_panel.add_row("最近校验", "尚未校验本地配置")
         self.lbl_settings_ai_send_boundary = self.settings_ai_detail_panel.add_row(
             "隐私边界",
-            "仅发送脱敏邮件头与最小分类元数据，不发送正文、附件、PDF、图片和本地路径。",
+            "仅发送 UID、固定分类关键词和发件类型，不发送原始主题、地址、正文或附件。",
         )
         self.lbl_settings_ai_log_redaction = self.settings_ai_detail_panel.add_row(
             "日志脱敏",
@@ -5502,6 +5616,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_run_export_page.setEnabled(is_ready)
 
     def _switch_main_page(self, page_key: str, sub_tab: int = 0, *, preserve_review_scope: bool = False) -> None:
+        if (getattr(self, "_complete_backup_mode", "") == "restore"
+                and self._data_operation_gate.owner == "完整备份操作"):
+            self.statusBar().showMessage("完整恢复正在进行，请等待校验完成。")
+            return
+        if not self._persist_invoice_note():
+            return
         page_trace = self._performance_probe.begin("page_switch", page=page_key)
         if not hasattr(self, "center_stack") or self.center_stack is None:
             if page_trace is not None:
@@ -6004,6 +6124,54 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _mark_invoice_form_dirty(self):
         if self._suspend_dirty_tracking:
             return
+        self._persist_invoice_note()
+        self._update_save_button_state()
+
+    def _persist_invoice_note(self) -> bool:
+        """Save each note edit before any action can replace the detail form."""
+        invoice = getattr(self, "current_invoice", None)
+        editor = getattr(self, "txt_note", None)
+        if not invoice or editor is None or getattr(self, "_suspend_dirty_tracking", False):
+            return True
+        note = editor.toPlainText().strip()
+        if note == str(invoice.get("confirmed_note") or "").strip():
+            return True
+        try:
+            saved = self.db.update_invoice_note(invoice["id"], note)
+        except Exception:
+            saved = False
+        hint = getattr(self._detail_panel, "lbl_note_save_status", None)
+        if not saved:
+            if hint is not None:
+                hint.setText("保存失败，请重试")
+            self._detail_panel.note_save_actions.show()
+            self.statusBar().showMessage("备注未能保存，请检查磁盘空间；当前内容已保留。", 8000)
+            return False
+        invoice["confirmed_note"] = note
+        snapshot = getattr(self, "_invoice_snapshot", None)
+        if snapshot is not None:
+            snapshot["confirmed_note"] = note
+        if hint is not None:
+            hint.setText("已自动保存")
+        self._detail_panel.note_save_actions.hide()
+        return True
+
+    def _discard_invoice_note(self):
+        if not self.current_invoice:
+            return
+        answer = QMessageBox.question(
+            self, "放弃备注修改", "当前备注未保存，是否放弃本次修改？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._suspend_dirty_tracking = True
+        try:
+            self.txt_note.setPlainText(str(self.current_invoice.get("confirmed_note") or ""))
+        finally:
+            self._suspend_dirty_tracking = False
+        self._detail_panel.lbl_note_save_status.setText("自动保存")
+        self._detail_panel.note_save_actions.hide()
         self._update_save_button_state()
 
 
@@ -6085,6 +6253,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _load_invoices(self, *, append=False, preserve_invoice_id=_SELECTION_ID_UNSET):
+        if not self._persist_invoice_note():
+            return
         # SQLite owns review filtering, counting, ordering, and page boundaries.
         self._sync_review_filter_control()
         performance_trace = self._performance_probe.begin("list_refresh")
@@ -6641,6 +6811,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _on_table_selection_changed(self):
         # Triggered when users select table rows. Handles single and multi-selection modes.
+        if not self._persist_invoice_note():
+            current_id = self.current_invoice["id"]
+            for row, inv in enumerate(self.invoices_list):
+                if inv["id"] == current_id:
+                    self.table.blockSignals(True)
+                    self._ensure_single_row_selection(row)
+                    self.table.blockSignals(False)
+                    break
+            return
         selected_indexes = self.table.selectionModel().selectedRows()
         num_selected = len(selected_indexes)
 
@@ -8034,6 +8213,26 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if performance_trace is not None:
                 performance_trace.finish("failed", selected=len(selected_indexes))
             return result
+
+    def _choose_claim_invoices(self):
+        self._switch_main_page("review")
+        if self.center_stack.currentWidget() is self.review_page:
+            self._detail_panel.detail_tabs.setCurrentIndex(1)
+            self.statusBar().showMessage("选择发票后，在右侧“报销信息”中加入报销组。", 8000)
+
+    def _create_export_claim(self):
+        from PySide6.QtWidgets import QInputDialog
+        name, accepted = QInputDialog.getText(self, "新建报销组", "报销组名称（例如：九月项目出差）")
+        name = name.strip()
+        if not accepted or not name:
+            return
+        try:
+            claim_id = self.db.create_claim_group(name)
+            self._load_claims(selected_claim_id=claim_id)
+            self._refresh_export_page()
+            self._choose_claim_invoices()
+        except Exception:
+            QMessageBox.warning(self, "创建失败", "报销组未能创建，请检查名称或数据目录。")
 
     def _create_claim(self):
         """Insert a new claim group into DB and reload dropdown."""

@@ -299,7 +299,7 @@ class GuiColumnFilterTests(unittest.TestCase):
 
 
     @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
-    @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")
+    @patch("scripts.invoice_fetch.invoice_parser.IsolatedInvoiceParser")
     def test_redownload_direct_ofd_download_should_not_call_pdf_parser(self, mock_parser_cls, mock_dl_cls):
         mock_dl = mock_dl_cls.return_value
         temp_dir = tempfile.TemporaryDirectory()
@@ -335,7 +335,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         mock_parser.parse_pdf.assert_not_called()
 
     @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
-    @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")
+    @patch("scripts.invoice_fetch.invoice_parser.IsolatedInvoiceParser")
     def test_redownload_direct_ofd_download_should_keep_original_and_mark_manual_required(self, mock_parser_cls, mock_dl_cls):
         mock_dl = mock_dl_cls.return_value
         temp_dir = tempfile.TemporaryDirectory()
@@ -383,7 +383,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertIn("下载失败: 0 张", summary_msg)
 
     @patch("scripts.invoice_fetch.link_downloader.LinkDownloader")
-    @patch("scripts.invoice_fetch.invoice_parser.InvoiceParser")
+    @patch("scripts.invoice_fetch.invoice_parser.IsolatedInvoiceParser")
     def test_redownload_direct_pdf_parse_failure_should_keep_failure_bucket(self, mock_parser_cls, mock_dl_cls):
         mock_dl = mock_dl_cls.return_value
         temp_dir = tempfile.TemporaryDirectory()

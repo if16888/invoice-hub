@@ -690,7 +690,8 @@ def run_invoice_redownload(
         downloader = link_downloader.LinkDownloader(
             download_dir=attachments_root,
         )
-        parser = _invoice_parser.InvoiceParser()
+        parser = _invoice_parser.IsolatedInvoiceParser()
+        parser.cancel_check = lambda: control.cancelled
         att_handler = _attachment_handler.AttachmentHandler(attachments_root)
 
         for inv in items:

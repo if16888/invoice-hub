@@ -32,6 +32,8 @@ def preflight_commands() -> list[tuple[str, list[str]]]:
                     "tests/hci_acceptance",
                     "--exclude-module",
                     "tests.test_workbench_native_geometry",
+                    "--exclude-module",
+                    "tests.test_product_audit_fixes",
                     "--module-timeout-seconds",
                     "900",
                     "--shard-count",
@@ -43,6 +45,7 @@ def preflight_commands() -> list[tuple[str, list[str]]]:
         )
     commands.extend(
         [
+            ("product audit regressions", [python, "-m", "pytest", "-q", "tests/test_product_audit_fixes.py"]),
             ("HCI acceptance", [python, "scripts/dev/run_hci_acceptance.py"]),
             (
                 "HCI oracle contract tests",

@@ -757,7 +757,7 @@ class ImportReviewIdentityTests(unittest.TestCase):
             )
 
             # 1. Local import test
-            with patch("scripts.invoice_fetch.invoice_parser.InvoiceParser.parse_pdf", return_value=mock_parsed):
+            with patch("scripts.invoice_fetch.invoice_parser.IsolatedInvoiceParser.parse_pdf", return_value=mock_parsed):
                 stats = import_local_directory(import_dir, db_path)
 
             self.assertEqual(stats["conflicts"], 1)
@@ -789,7 +789,7 @@ class ImportReviewIdentityTests(unittest.TestCase):
                 invoice_date="2026-08-22",
                 parse_success=True,
             )
-            with patch("scripts.invoice_fetch.invoice_parser.InvoiceParser.parse_pdf", return_value=mock_mob):
+            with patch("scripts.invoice_fetch.invoice_parser.IsolatedInvoiceParser.parse_pdf", return_value=mock_mob):
                 internal_result = server.save_uploads([UploadedFile("mobile_conflict.pdf", b"%PDF-1.4 mob conflict", "application/pdf")])
 
             self.assertEqual(len(internal_result["new_invoice_ids"]), 1)

@@ -42,6 +42,8 @@ def _run_version_probe_if_requested(argv: list[str]) -> bool:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     if _run_version_probe_if_requested(sys.argv):
         raise SystemExit(0)
 

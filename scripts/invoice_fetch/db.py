@@ -790,6 +790,20 @@ class InvoiceDB:
         self._set_last_error("")
         return True
 
+    def update_invoice_note(self, invoice_id: int, note: str) -> bool:
+        """Persist a note without rewriting parsed or edited financial fields."""
+        try:
+            cursor = self._conn.execute(
+                "UPDATE invoices SET confirmed_note=? WHERE id=?", (note, invoice_id)
+            )
+            self._conn.commit()
+            self._set_last_error("" if cursor.rowcount else "not_found")
+            return cursor.rowcount == 1
+        except sqlite3.Error:
+            self._conn.rollback()
+            self._set_last_error("write_failed")
+            return False
+
     def update_invoice_fields(
         self,
         invoice_id: int,

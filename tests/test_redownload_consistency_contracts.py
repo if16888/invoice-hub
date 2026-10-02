@@ -105,7 +105,7 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
 
             with patch.object(redownload, "InvoiceDB", return_value=db), \
                  patch.object(redownload, "_link_downloader", downloader_ns), \
-                 patch.object(redownload._invoice_parser, "InvoiceParser", return_value=object()), \
+                 patch.object(redownload._invoice_parser, "IsolatedInvoiceParser", return_value=SimpleNamespace()), \
                  patch.object(redownload._attachment_handler, "AttachmentHandler", return_value=object()), \
                  patch("scripts.invoice_fetch.services._classify", return_value=("交通", "", False)), \
                  patch("scripts.invoice_fetch.services._rename_by_invoice_code", side_effect=rename):

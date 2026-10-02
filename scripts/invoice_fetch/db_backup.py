@@ -114,6 +114,12 @@ def _validate_database_file(
     try:
         uri = path.resolve().as_uri() + "?mode=ro"
         with closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn:
+            # Application schemas have no triggers. Reject executable schema
+            # before migrations or material-reference updates can run it.
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' LIMIT 1"
+            ).fetchone() is not None:
+                raise ValueError("数据库包含非应用触发器，无法安全备份或恢复")
             checks = conn.execute("PRAGMA quick_check").fetchall()
             if not checks or any(str(row[0]).lower() != "ok" for row in checks):
                 raise ValueError("所选数据库未通过完整性检查")
@@ -142,6 +148,9 @@ def _migrate_and_validate_database(
     """Run the real application migrations on a private copy, then verify it."""
     db = None
     try:
+        # Check the actual private copy, not only the selected source. Opening
+        # InvoiceDB initializes/migrates schema and may write immediately.
+        validate_sqlite_database(db_path)
         # Import lazily so db.py does not depend on this module at import time.
         from .db import InvoiceDB
 

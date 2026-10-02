@@ -223,12 +223,15 @@ class BoundedBrowserScanTests(unittest.TestCase):
 
     def test_url_deadline_and_cancellation_are_part_of_download_contract(self):
         source = inspect.getsource(LinkDownloader._download_url)
-        self.assertIn("url_deadline = attempt_started + self._url_budget_seconds", source)
-        self.assertIn("min(url_deadline, deadline)", source)
+        self.assertIn("startup_deadline = attempt_started + self._url_budget_seconds", source)
+        self.assertIn("min(startup_deadline, email_deadline)", source)
+        self.assertIn("page_budget = self._nuonuo_budget_seconds", source)
+        self.assertIn("url_deadline = time.monotonic() + page_budget", source)
+        self.assertIn("min(url_deadline, email_deadline)", source)
         self.assertIn("self._ensure_browser(deadline)", source)
         self.assertIn("self._remaining_timeout_ms(deadline)", source)
         self.assertIn("self._try_click_download(page, deadline)", source)
-        self.assertIn("self._wait_event_until(download_done, deadline, 5.0)", source)
+        self.assertIn("self._wait_browser_download(page, download_done, deadline, 5.0)", source)
         self.assertIn("self._check_cancelled()", source)
         self.assertIn("Browser download attempt finished", source)
 
@@ -337,7 +340,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
             b = Path(td) / "b.pdf"
             a.write_bytes(b"a")
             b.write_bytes(b"b")
-            with patch.dict(sys.modules, {"pdfplumber": fake_pdfplumber}):
+            with patch.object(services, "extract_pdf_text", side_effect=lambda path, **_: "\n".join(page.extract_text() for page in fake_open(path).pages)):
                 a_fingerprint = services._semantic_evidence_fingerprint(a)
                 b_fingerprint = services._semantic_evidence_fingerprint(b)
 
@@ -362,7 +365,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="invoice-hub-evidence-long-") as td:
             document = Path(td) / "long.pdf"
             document.write_bytes(b"long")
-            with patch.dict(sys.modules, {"pdfplumber": fake_pdfplumber}):
+            with patch.object(services, "extract_pdf_text", return_value=""):
                 fingerprint = services._semantic_evidence_fingerprint(document)
 
         self.assertEqual(fingerprint, "")

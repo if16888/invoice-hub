@@ -151,7 +151,7 @@ class RedownloadServiceTests(unittest.TestCase):
                     raise AssertionError(f"PDF parser must not parse OFD: {path}")
 
             with patch.object(redownload_module, "_link_downloader", SimpleNamespace(LinkDownloader=FakeDownloader)), \
-                    patch.object(redownload_module._invoice_parser, "InvoiceParser", ParserMustNotRun), \
+                    patch.object(redownload_module._invoice_parser, "IsolatedInvoiceParser", ParserMustNotRun), \
                     _patched_services(root / "runtime"):
                 result = run_invoice_redownload(
                     [{"id": invoice_id, "download_url": "https://example.test/invoice.ofd", "invoice_number": "OFD-1"}],
@@ -212,7 +212,7 @@ class RedownloadServiceTests(unittest.TestCase):
                 "_link_downloader",
                 SimpleNamespace(LinkDownloader=FakeDownloader),
             ), patch.object(
-                redownload_module._invoice_parser, "InvoiceParser", ParserMustNotRun
+                redownload_module._invoice_parser, "IsolatedInvoiceParser", ParserMustNotRun
             ), patch.object(
                 redownload_module._mail_fetcher, "MailFetcher", MailFetcherMustNotRun
             ):
@@ -291,7 +291,7 @@ class RedownloadServiceTests(unittest.TestCase):
                     )
 
             with patch.object(redownload_module, "_link_downloader", SimpleNamespace(LinkDownloader=FakeDownloader)), \
-                    patch.object(redownload_module._invoice_parser, "InvoiceParser", FakeParser), \
+                    patch.object(redownload_module._invoice_parser, "IsolatedInvoiceParser", FakeParser), \
                     _patched_services(root / "runtime"), \
                     patch("scripts.invoice_fetch.redownload.InvoiceDB", wraps=InvoiceDB) as db_factory:
                 result = run_invoice_redownload(
@@ -373,7 +373,7 @@ class RedownloadServiceTests(unittest.TestCase):
                 redownload_module,
                 "_link_downloader",
                 SimpleNamespace(LinkDownloader=FakeDownloader),
-            ), patch.object(redownload_module._invoice_parser, "InvoiceParser", FakeParser), _patched_services(
+            ), patch.object(redownload_module._invoice_parser, "IsolatedInvoiceParser", FakeParser), _patched_services(
                 root / "runtime"
             ):
                 result = run_invoice_redownload(
@@ -628,7 +628,7 @@ class RedownloadServiceTests(unittest.TestCase):
                 "_link_downloader",
                 SimpleNamespace(LinkDownloader=FakeDownloader),
             ), patch.object(
-                redownload_module._invoice_parser, "InvoiceParser", ParserSetupFailure
+                redownload_module._invoice_parser, "IsolatedInvoiceParser", ParserSetupFailure
             ):
                 with self.assertRaises(RuntimeError):
                     run_invoice_redownload(

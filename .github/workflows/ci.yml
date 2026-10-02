@@ -162,7 +162,7 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: pwsh
         run: |
-          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_native_geometry --module-timeout-seconds 900 --shard-count 3 --shard-index ${{ matrix.shard }} 2>&1 | Tee-Object -FilePath ci-test-output-${{ matrix.shard }}.txt
+          python scripts/dev/run_isolated_unittest.py --exclude-dir tests/hci_acceptance --exclude-module tests.test_workbench_native_geometry --exclude-module tests.test_product_audit_fixes --module-timeout-seconds 900 --shard-count 3 --shard-index ${{ matrix.shard }} 2>&1 | Tee-Object -FilePath ci-test-output-${{ matrix.shard }}.txt
           exit $LASTEXITCODE
 
       - name: Upload unit-test shard output
@@ -223,9 +223,9 @@ jobs:
           Write-Host "HCI authoritative exit code: $code"
           exit $code
 
-      - name: Run HCI oracle contract tests
+      - name: Run HCI oracle and product audit regressions
         if: always() && github.event_name == 'pull_request'
-        run: python -m pytest -q tests/hci_acceptance/test_mutation_selftest.py tests/hci_acceptance/test_report_verdict.py
+        run: python -m pytest -q tests/hci_acceptance/test_mutation_selftest.py tests/hci_acceptance/test_report_verdict.py tests/test_product_audit_fixes.py
 
       - name: Upload HCI acceptance evidence
         if: always() && github.event_name == 'pull_request'
