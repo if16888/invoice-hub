@@ -30,23 +30,24 @@ class RepoPrivacyPolicyTests(unittest.TestCase):
 
     def test_sensitive_keyword_outside_allowlist_is_still_rejected(self):
         previous_cwd = Path.cwd()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                candidate = root / "design-prototypes" / "real-export.html"
-                candidate.parent.mkdir(parents=True)
-                candidate.write_text(
-                    "<p>纳税人识别号: REAL-COMPANY-VALUE</p>",
-                    encoding="utf-8",
-                )
-                import os
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = root / "design-prototypes" / "real-export.html"
+            candidate.parent.mkdir(parents=True)
+            candidate.write_text(
+                "<p>纳税人识别号: REAL-COMPANY-VALUE</p>",
+                encoding="utf-8",
+            )
+            try:
                 os.chdir(root)
                 self.assertFalse(
                     privacy.check_file_leak("design-prototypes/real-export.html")
                 )
-        finally:
-            import os
-            os.chdir(previous_cwd)
+            finally:
+                # Windows cannot remove the active working directory.
+                os.chdir(previous_cwd)
 
     def test_reviewed_synthetic_path_still_obeys_forbidden_extension_rules(self):
         # Keyword exemptions must not become a general file-format bypass.
