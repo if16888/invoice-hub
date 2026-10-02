@@ -35,6 +35,15 @@ class IHDS09Tests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        # Isolate all config reads (including deferred GUI callbacks) from the
+        # developer's mailbox/company settings without changing live files.
+        self._config_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._config_dir.cleanup)
+        config_root = patch("scripts.invoice_fetch.config.PROJECT_ROOT", Path(self._config_dir.name))
+        config_root.start()
+        self.addCleanup(config_root.stop)
+
     def tearDown(self):
         """Flush closed Qt windows before the next fixture is constructed.
 
@@ -464,19 +473,28 @@ class IHDS09Tests(unittest.TestCase):
 
 
     def test_mailbox_identity_is_not_repeated(self):
-        """Mailbox name and email must be different label widgets with different texts."""
+        """Distinct fields display their respective synthetic account values."""
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
                 # Both must be distinct widget objects
                 self.assertIsNot(window.lbl_detail_name, window.lbl_detail_email)
-                # When a mailbox is selected, name text and email text must differ
-                # (they represent different fields, not the same value twice).
-                # Even in empty state, the placeholder texts differ.
-                name_text = window.lbl_detail_name.text()
-                email_text = window.lbl_detail_email.text()
-                self.assertNotEqual(name_text, email_text,
-                    "lbl_detail_name and lbl_detail_email must not show the same text")
+                self.assertEqual(window.lbl_detail_name.text(), "未选择邮箱账号")
+                self.assertEqual(window.lbl_detail_email.text(), "—")
+                account = {
+                    "name": "Synthetic mailbox",
+                    "address": "invoice-test@example.invalid",
+                    "enabled": False,
+                }
+                with patch.object(window, "_mailbox_accounts_for_settings", return_value=[account]):
+                    window._load_settings_mailbox_form(0)
+                    self.assertEqual(window.lbl_detail_name.text(), account["name"])
+                    self.assertEqual(window.lbl_detail_email.text(), account["address"])
+                    # A user may legitimately use the address as the name.
+                    account["name"] = account["address"]
+                    window._load_settings_mailbox_form(0)
+                    self.assertEqual(window.lbl_detail_name.text(), account["name"])
+                    self.assertEqual(window.lbl_detail_email.text(), account["address"])
             finally: window.close()
 
 
