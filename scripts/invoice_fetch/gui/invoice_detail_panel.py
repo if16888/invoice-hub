@@ -418,6 +418,8 @@ class InvoiceDetailCallbacks:
 
 
     on_save_fields: Callable[[], None] = lambda: None
+    on_save_note: Callable[[], None] = lambda: None
+    on_discard_note: Callable[[], None] = lambda: None
 
 
 
@@ -4305,6 +4307,9 @@ class InvoiceDetailPanel(QWidget):
 
 
         note_row.addWidget(self.btn_toggle_note)
+        self.lbl_note_save_status = QLabel("自动保存")
+        self.lbl_note_save_status.setProperty("class", "SectionHint")
+        note_row.addWidget(self.lbl_note_save_status)
 
 
 
@@ -4329,6 +4334,17 @@ class InvoiceDetailPanel(QWidget):
 
 
         review_note_layout.addLayout(note_row)
+        self.note_save_actions = QWidget()
+        note_actions = QHBoxLayout(self.note_save_actions)
+        note_actions.setContentsMargins(0, 0, 0, 0)
+        retry_note = make_button("重试保存", variant="secondary")
+        retry_note.clicked.connect(self._cb.on_save_note)
+        discard_note = make_button("放弃修改", variant="secondary")
+        discard_note.clicked.connect(self._cb.on_discard_note)
+        note_actions.addWidget(retry_note)
+        note_actions.addWidget(discard_note)
+        self.note_save_actions.hide()
+        review_note_layout.addWidget(self.note_save_actions)
 
 
 
@@ -4810,6 +4826,7 @@ class EditFieldsDialog(QDialog):
         self.txt_number = QLineEdit(number)
         self.txt_date = QLineEdit(date)
         self.txt_amount = QLineEdit(amount)
+        self.txt_amount.setPlaceholderText("可稍后补全；通过和导出时会检查")
         self.combo_category = QComboBox()
         self.combo_category.setEditable(True)
         categories = [
@@ -4847,17 +4864,13 @@ class EditFieldsDialog(QDialog):
         number = self.txt_number.text().strip()
         expense_date = self.txt_date.text().strip()
         amount = self.txt_amount.text().strip()
-        if not amount:
-            self.txt_amount.setFocus()
-            QMessageBox.warning(self, "字段校验", "金额不能为空。")
-            return None
         try:
-            amount_value = parse_amount(amount)
+            amount_value = parse_amount(amount) if amount else None
         except ValueError:
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额格式不正确。")
             return None
-        if not amount_value.is_finite():
+        if amount_value is not None and not amount_value.is_finite():
             self.txt_amount.setFocus()
             QMessageBox.warning(self, "字段校验", "金额必须是有限数值。")
             return None
@@ -4871,7 +4884,7 @@ class EditFieldsDialog(QDialog):
         return {
             "number": number,
             "date": expense_date,
-            "amount": format(amount_value, "f"),
+            "amount": format(amount_value, "f") if amount_value is not None else "",
             "category": self.combo_category.currentText().strip(),
             "buyer": self.txt_buyer.text().strip(),
             "seller": self.txt_seller.text().strip(),

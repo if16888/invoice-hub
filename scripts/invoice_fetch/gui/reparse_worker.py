@@ -18,7 +18,7 @@ from typing import Callable, Mapping
 from PySide6.QtCore import QThread, Signal
 
 from ..db import InvoiceDB
-from ..invoice_parser import InvoiceParser
+from ..invoice_parser import IsolatedInvoiceParser as InvoiceParser
 from ..reparse_reconciliation import (
     MERGED_INTO_CLAIMED_DUPLICATE,
     REPLACED_UNLINKED_DUPLICATE,
@@ -115,6 +115,7 @@ def run_invoice_reparse(
     processed_count = 0
 
     parser = InvoiceParser()
+    parser.cancel_check = should_cancel
     db = InvoiceDB(request.db_path)
     try:
         for snapshot in request.invoice_snapshots:

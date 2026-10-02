@@ -240,7 +240,7 @@ class MobileUploadDiagnosticsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0)
             with patch(
-                "scripts.invoice_fetch.mobile_upload.ThreadingHTTPServer",
+                "scripts.invoice_fetch.mobile_upload.BoundedUploadHTTPServer",
                 side_effect=OSError("synthetic port unavailable"),
             ):
                 with self.assertLogs("invoice_fetch.mobile_upload", level="INFO") as captured:

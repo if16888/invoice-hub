@@ -13,6 +13,7 @@ import re
 import socket
 import time
 import threading
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -23,6 +24,23 @@ from bs4 import BeautifulSoup
 from .log_privacy import mask_filename, mask_sender_header, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+
+
+def _bounded_response_body(response):
+    """Read only identity responses with a bounded, declared wire size.
+
+    Chunked or compressed invoice responses use the browser's streamed
+    download path instead; they are not buffered into the Python process.
+    """
+    headers = response.headers
+    length = str(headers.get("content-length", ""))
+    if headers.get("transfer-encoding") or not re.fullmatch(r"[0-9]+", length) or headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
+        return b""
+    if int(length) > MAX_DOWNLOAD_BYTES:
+        return b""
+    body = response.body()
+    return body if len(body) <= MAX_DOWNLOAD_BYTES else b""
 
 
 @dataclass
@@ -558,12 +576,25 @@ def _save_download_to_path(download, dest: Path) -> bool:
     """Persist a completed Playwright download without implying a fake save timeout."""
     if dest.exists():
         return True
+    staging = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.part")
     try:
-        download.save_as(str(dest))
+        # Playwright streams to disk. Check its completed temporary file
+        # before copying when available, then check the staged output too.
+        get_path = getattr(download, "path", None)
+        if callable(get_path):
+            source = get_path()
+            if source and Path(source).stat().st_size > MAX_DOWNLOAD_BYTES:
+                return False
+        download.save_as(str(staging))
+        if not staging.is_file() or staging.stat().st_size > MAX_DOWNLOAD_BYTES:
+            return False
+        os.replace(staging, dest)
         return True
     except Exception as exc:
         _log.warning("Download save failed for %s: %s", mask_filename(dest.name), exc)
         return False
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 def _verify_and_clean_file(path: str | Path) -> bool:
@@ -1062,7 +1093,7 @@ class LinkDownloader:
                     is_target = True
 
                 if is_target:
-                    body = response.body()
+                    body = _bounded_response_body(response)
                     if len(body) > 100:
                         is_pdf = body.startswith(b"%PDF")
                         is_zip = body.startswith(b"PK\x03\x04")
@@ -1304,7 +1335,7 @@ class LinkDownloader:
                         is_target = True
 
                     if is_target:
-                        body = response.body()
+                        body = _bounded_response_body(response)
                         if len(body) > 100:
                             is_pdf = body.startswith(b"%PDF")
                             is_zip = body.startswith(b"PK\x03\x04")

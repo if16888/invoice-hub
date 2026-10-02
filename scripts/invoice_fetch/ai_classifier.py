@@ -1,7 +1,8 @@
 """Optional AI-powered email classifier.
 
 The local-first default is provider='none'. When a cloud provider is enabled,
-only masked email subjects and senders are sent to the model. Email bodies,
+only allowlisted classification keywords and sender types are sent to the model.
+Raw subjects and senders, email bodies,
 attachments, PDFs, and downloaded files must not be sent through this module.
 """
 
@@ -60,7 +61,8 @@ _DEFAULT_MODELS = {
 }
 
 _SYSTEM_PROMPT = """\
-你是一个邮件分类助手。判断以下邮件是否与"发票"相关。
+你是一个邮件分类助手。根据固定分类关键词判断邮件是否与"发票"相关。
+你不会收到原始主题、地址或正文；不得猜测未提供的内容。信号不足或冲突时返回 is_invoice: null，保留待分类。
 
 发票相关包括：电子发票通知、发票下载链接、报销凭证、行程单、水单、开票通知等。
 不相关包括：广告、验证码、账单提醒、快递通知、促销、系统通知等。
@@ -154,7 +156,7 @@ class AIClassifier:
     def _call_api(self, chunk: list[dict]) -> list[dict]:
         """Single API call for a chunk of emails."""
         if self.provider in {"deepseek", "openai"}:
-            return self._call_deepseek(chunk)
+            return self._call_chat_completions(chunk)
         elif self.provider == "gemini":
             return self._call_gemini(chunk)
         else:
@@ -173,14 +175,14 @@ class AIClassifier:
             return ""
 
         # 1. Mask 11-digit phone numbers: 13812345678 -> 138****5678
-        text = re.sub(r'\b(1[3-9]\d)\d{4}(\d{4})\b', r'\1****\2', text)
+        text = re.sub(r'(?<!\d)(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', text)
 
         # 2. Mask long numeric codes (10+ digits, e.g., order IDs, bank cards, ID numbers)
         # Keep first 2 and last 2 digits, replace middle with ****
         def mask_code(m):
             code = m.group(0)
             return code[:2] + "****" + code[-2:]
-        text = re.sub(r'\b\d{10,24}\b', mask_code, text)
+        text = re.sub(r'(?<!\d)\d{10,24}(?!\d)', mask_code, text)
 
         # 3. Mask email prefix if it's not a common system email
         def mask_email(m):
@@ -204,22 +206,36 @@ class AIClassifier:
         return text
 
     def _build_user_message(self, chunk: list[dict]) -> str:
-        """Build the user prompt from masked email headers."""
+        """Send allowlisted classification signals, never free-form headers.
+
+        Regex masking cannot reliably recognize names or project identifiers.
+        Keeping only fixed vocabulary makes the outbound boundary independent
+        of the input language, numeric format, and sender display name.
+        """
+        vocabulary = (
+            "发票", "行程单", "水单", "报销", "开票", "收据", "账单",
+            "验证码", "广告", "促销", "快递", "系统通知", "付款", "下载",
+            "invoice", "receipt", "folio", "itinerary", "billing", "statement",
+            "verification", "promotion", "newsletter", "pdf", "ofd",
+        )
         lines = []
         for e in chunk:
-            clean_subject = self._mask_sensitive_info(e['subject'])
-            clean_sender = self._mask_sensitive_info(e['sender'])
+            subject = str(e.get('subject') or '').casefold()
+            clean_subject = ' / '.join(word for word in vocabulary if word in subject) or '无已知分类关键词'
+            sender = str(e.get('sender') or '').casefold()
+            system_sender = bool(re.search(r'(?:no-reply|noreply|service|invoice|fapiao|notification|support)@', sender))
+            clean_sender = '系统邮箱' if system_sender else '其他邮箱'
             lines.append(
-                f"UID={e['uid']} | 主题: {clean_subject} | 发件人: {clean_sender}"
+                f"UID={int(e['uid'])} | 主题关键词: {clean_subject} | 发件类型: {clean_sender}"
             )
         return "\n".join(lines)
 
-    def _call_deepseek(self, chunk: list[dict]) -> list[dict]:
-        """Call DeepSeek chat completions API."""
+    def _call_chat_completions(self, chunk: list[dict]) -> list[dict]:
+        """Call the selected provider's chat completions API."""
         user_msg = self._build_user_message(chunk)
         try:
             resp = self._post_with_retry(
-                _ENDPOINTS["deepseek"],
+                _ENDPOINTS[self.provider],
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -238,7 +254,7 @@ class AIClassifier:
             raise
         except requests.RequestException as exc:
             _log.error(
-                "DeepSeek API 调用失败: provider=%s, model=%s, error=%s",
+                "AI API 调用失败: provider=%s, model=%s, error=%s",
                 self.provider,
                 self.model,
                 self._safe_request_error(exc),
@@ -339,7 +355,7 @@ class AIClassifier:
             parsed = [
                 {
                     "uid": item["uid"],
-                    "is_invoice": bool(item["is_invoice"]),
+                    "is_invoice": item["is_invoice"] if isinstance(item["is_invoice"], bool) else None,
                     "reason": item.get("reason", ""),
                 }
                 for item in data

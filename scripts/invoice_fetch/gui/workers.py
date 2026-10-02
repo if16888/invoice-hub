@@ -19,6 +19,37 @@ from ..redownload import (
 from ..scan_lifecycle import ScanCancelled, ScanControl
 
 
+class CompleteBackupWorker(QThread):
+    """Keep copying and integrity checks off the Qt event loop."""
+
+    result = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, mode, db_path, runtime_dir, archive=None, parent=None):
+        super().__init__(parent)
+        self.mode = mode
+        self.db_path = Path(db_path)
+        self.runtime_dir = Path(runtime_dir)
+        self.archive = archive
+        self.control = ScanControl()
+
+    def request_cancel(self):
+        self.control.cancel()
+
+    def run(self):
+        from ..complete_backup import create_complete_backup, restore_complete_backup
+        try:
+            if self.mode == "create":
+                result = create_complete_backup(self.db_path, self.runtime_dir, cancel_check=lambda: self.control.cancelled)
+            else:
+                result = restore_complete_backup(self.archive, self.db_path, self.runtime_dir, cancel_check=lambda: self.control.cancelled)
+            self.result.emit(result)
+        except Exception as exc:
+            # Raw filesystem exceptions can contain private paths.
+            message = str(exc) if isinstance(exc, ValueError) else "完整备份操作失败，请检查空间、权限和备份文件。"
+            self.error.emit(message)
+
+
 @dataclass(frozen=True)
 class MailboxConnectionTestRequest:
     """Immutable, non-UI input snapshot for one mailbox connection test."""

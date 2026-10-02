@@ -21,6 +21,7 @@ class TestLocalCIPreflight(unittest.TestCase):
                 "unit shard 0",
                 "unit shard 1",
                 "unit shard 2",
+                "product audit regressions",
                 "HCI acceptance",
                 "HCI oracle contract tests",
             ],

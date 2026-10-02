@@ -25,6 +25,50 @@ class AIClassifierAuthTests(unittest.TestCase):
         classifier.auth_failed = False
         return classifier
 
+    def test_chat_provider_destination_matches_selected_credential_and_model(self):
+        emails = [{"uid": 1, "subject": "Private project 发票", "sender": "private@example.invalid"}]
+        for provider, endpoint, model in (
+            ("openai", "https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
+            ("deepseek", "https://api.deepseek.com/v1/chat/completions", "deepseek-chat"),
+        ):
+            with self.subTest(provider=provider):
+                key = f"synthetic-{provider}-key"
+                with patch("scripts.invoice_fetch.ai_classifier.get_ai_api_key", return_value=key) as credentials:
+                    classifier = AIClassifier(provider=provider, profile_id="synthetic-profile")
+                credentials.assert_called_once_with(provider, profile_id="synthetic-profile")
+                response = Mock()
+                response.json.return_value = {"choices": [{"message": {"content": '[{"uid":1,"is_invoice":null}]'}}]}
+                with patch.object(classifier, "_post_with_retry", return_value=response) as post:
+                    result = classifier._call_api(emails)
+                self.assertIsNone(result[0]["is_invoice"])
+                self.assertEqual(post.call_args.args, (endpoint,))
+                request = post.call_args.kwargs
+                self.assertEqual(request["headers"]["Authorization"], f"Bearer {key}")
+                self.assertEqual(request["json"]["model"], model)
+                message = request["json"]["messages"][1]["content"]
+                self.assertIn("发票", message)
+                self.assertNotIn("Private project", message)
+                self.assertNotIn("example.invalid", message)
+
+    def test_gemini_keeps_its_own_transport(self):
+        classifier = self._classifier()
+        classifier.provider = "gemini"
+        emails = [{"uid": 1}]
+        with patch.object(classifier, "_call_gemini", return_value=[]) as gemini, patch.object(classifier, "_call_chat_completions") as chat:
+            self.assertEqual(classifier._call_api(emails), [])
+        gemini.assert_called_once_with(emails)
+        chat.assert_not_called()
+
+    def test_disabled_or_unknown_provider_never_posts(self):
+        for provider in ("none", "unknown"):
+            with self.subTest(provider=provider):
+                classifier = self._classifier()
+                classifier.provider = provider
+                with patch.object(classifier, "_post_with_retry") as post:
+                    result = classifier._call_api([{"uid": 1}])
+                post.assert_not_called()
+                self.assertIsNone(result[0]["is_invoice"])
+
     def test_deepseek_401_does_not_retry(self):
         response = Mock(status_code=401)
         error = requests.HTTPError("contains synthetic-secret-key", response=response)

@@ -600,6 +600,7 @@ class TestLinkDownloader(unittest.TestCase):
             def save_as(self, path):
                 self.called = True
                 self.thread_id = threading.current_thread().ident
+                Path(path).write_bytes(b"synthetic download")
 
         mock_download = MockDownload()
         dest = Path(self.tmp_dir) / "test_thread.pdf"
@@ -610,6 +611,8 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(mock_download.called)
         self.assertEqual(mock_download.thread_id, current_thread_id)
+        self.assertEqual(dest.read_bytes(), b"synthetic download")
+        self.assertEqual(list(dest.parent.glob("*.part")), [])
 
 if __name__ == "__main__":
     unittest.main()

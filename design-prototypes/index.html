@@ -715,6 +715,7 @@
   </style>
 </head>
 <body>
+  <!-- Synthetic demonstration only: all identifiers and companies are placeholders. -->
 
   <!-- ── 1. Sidebar ── -->
   <aside class="sidebar">
@@ -749,9 +750,9 @@
     <div class="sidebar-footer">
       <div class="company-pill">
         <div class="status-dot"></div>
-        <span>苏州未来信息技术有限公司</span>
+        <span>合成购买方示例公司</span>
       </div>
-      <div>纳税人识别号: 91320500MA1XXXXXX8</div>
+      <div>税号: SYNTHETIC-TAX-0001</div>
       <div style="margin-top: 4px; color: #475569;">Open Design 联动协议: 就绪</div>
     </div>
   </aside>
@@ -848,10 +849,10 @@
             <thead>
               <tr>
                 <th>状态</th>
-                <th>发票号码</th>
+                <th>票号</th>
                 <th>销售方名称</th>
                 <th>开票日期</th>
-                <th style="text-align: right;">价税合计</th>
+                <th style="text-align: right;">含税总额</th>
                 <th>合规预检</th>
                 <th>操作</th>
               </tr>
@@ -859,8 +860,8 @@
             <tbody>
               <tr>
                 <td><span class="badge badge-warning">待复核</span></td>
-                <td class="tabular-nums" style="font-weight: 500;">24112000000088921034</td>
-                <td>阿里云计算有限公司</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0001</td>
+                <td>合成云服务示例公司</td>
                 <td class="tabular-nums">2026-09-25</td>
                 <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 1,272.00</td>
                 <td><span class="badge badge-success">税号及金额平齐</span></td>
@@ -868,8 +869,8 @@
               </tr>
               <tr>
                 <td><span class="badge badge-danger">抬头不符</span></td>
-                <td class="tabular-nums" style="font-weight: 500;">04231890</td>
-                <td>北京三快在线科技有限公司 (美团)</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0002</td>
+                <td>合成餐饮示例公司</td>
                 <td class="tabular-nums">2026-09-24</td>
                 <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 216.50</td>
                 <td><span class="badge badge-danger">购买方税号缺少末位</span></td>
@@ -877,8 +878,8 @@
               </tr>
               <tr>
                 <td><span class="badge badge-warning">待复核</span></td>
-                <td class="tabular-nums" style="font-weight: 500;">24312000000019482711</td>
-                <td>中国铁路网络有限公司</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0003</td>
+                <td>合成交通示例公司</td>
                 <td class="tabular-nums">2026-09-23</td>
                 <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 565.00</td>
                 <td><span class="badge badge-success">旅客运输扣税合规</span></td>
@@ -886,8 +887,8 @@
               </tr>
               <tr>
                 <td><span class="badge badge-success">已通过</span></td>
-                <td class="tabular-nums" style="font-weight: 500;">24442000000038472910</td>
-                <td>得力集团有限公司</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0004</td>
+                <td>合成办公用品示例公司</td>
                 <td class="tabular-nums">2026-09-20</td>
                 <td class="tabular-nums" style="text-align: right; font-weight: 600;">¥ 400.00</td>
                 <td><span class="badge badge-success">已通过全部校验</span></td>
@@ -959,7 +960,7 @@
         <!-- Left: Table & Filters -->
         <div class="workbench-table-pane">
           <div class="filter-bar">
-            <input type="text" class="search-input" placeholder="搜索销售方、发票号码..." onkeyup="filterTable(this.value)">
+            <input type="text" class="search-input" placeholder="搜索销售方、票号..." onkeyup="filterTable(this.value)">
             <select class="filter-select" onchange="filterStatus(this.value)">
               <option value="all">全部状态 (8)</option>
               <option value="pending">待复核 (6)</option>
@@ -982,10 +983,10 @@
                 <tr>
                   <th style="width: 32px;"><input type="checkbox" id="select-all" onclick="toggleSelectAll(this)"></th>
                   <th>状态</th>
-                  <th>发票号码</th>
+                  <th>票号</th>
                   <th>销售方名称</th>
                   <th>开票日期</th>
-                  <th style="text-align: right;">价税合计</th>
+                  <th style="text-align: right;">含税总额</th>
                   <th>费用类别</th>
                 </tr>
               </thead>
@@ -1011,24 +1012,24 @@
             <div class="invoice-paper">
               <div class="invoice-paper-title">电子发票（增值税专用发票）</div>
               <div class="invoice-meta-row">
-                <span>发票号码: <strong class="tabular-nums" id="p-invoice-num">24112000000088921034</strong></span>
+                <span>票号: <strong class="tabular-nums" id="p-invoice-num">DEMO-INVOICE-0001</strong></span>
                 <span>开票日期: <strong class="tabular-nums" id="p-invoice-date">2026年09月25日</strong></span>
               </div>
 
               <!-- Buyer Box -->
               <div class="invoice-party-box">
                 <span class="party-label">购买方:</span>
-                <span class="party-val" id="p-buyer-name">苏州未来信息技术有限公司</span>
+                <span class="party-val" id="p-buyer-name">合成购买方示例公司</span>
                 <span class="party-label">税　号:</span>
-                <span class="party-val tabular-nums" id="p-buyer-tax">91320500MA1XXXXXX8</span>
+                <span class="party-val tabular-nums" id="p-buyer-tax">SYNTHETIC-TAX-0001</span>
               </div>
 
               <!-- Seller Box -->
               <div class="invoice-party-box">
                 <span class="party-label">销售方:</span>
-                <span class="party-val" id="p-seller-name">阿里云计算有限公司</span>
+                <span class="party-val" id="p-seller-name">合成云服务示例公司</span>
                 <span class="party-label">税　号:</span>
-                <span class="party-val tabular-nums" id="p-seller-tax">91330106673959654K</span>
+                <span class="party-val tabular-nums" id="p-seller-tax">SYNTHETIC-TAX-0002</span>
               </div>
 
               <!-- Item Detail Box -->
@@ -1058,11 +1059,11 @@
                   <span class="tabular-nums" id="calc-tax">¥ 72.00</span>
                 </div>
                 <div class="calc-row total">
-                  <span>(小写) 价税合计:</span>
+                  <span>(小写) 含税总额:</span>
                   <span class="tabular-nums" id="calc-total" style="color: var(--primary-600);">¥ 1,272.00</span>
                 </div>
                 <div class="calc-row" style="font-size: 11.5px; color: var(--text-sub); margin-top: 4px;">
-                  <span>(大写) 价税合计:</span>
+                  <span>(大写) 含税总额:</span>
                   <span id="calc-chinese" style="font-weight: 600; color: var(--text-main);">壹仟贰佰柒拾贰元整</span>
                 </div>
               </div>
@@ -1073,7 +1074,7 @@
               <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               <div>
                 <strong id="verify-title">全项合规校验通过</strong>
-                <div style="font-size: 11.5px; margin-top: 2px;" id="verify-desc">购买方纳税人识别号与本企业一致 · 价税平衡恒等式检验平齐 · 无历史重复入库记录。</div>
+                <div style="font-size: 11.5px; margin-top: 2px;" id="verify-desc">购买方税号与本企业一致 · 价税平衡恒等式检验平齐 · 无历史重复入库记录。</div>
               </div>
             </div>
           </div>
@@ -1113,7 +1114,7 @@
           <div class="mailbox-list" style="margin-top: 14px;">
             <div class="mailbox-item">
               <div>
-                <div style="font-weight: 600;">finance-inbox@company.com (企业邮箱)</div>
+                <div style="font-weight: 600;">finance-inbox@example.invalid (合成企业邮箱)</div>
                 <div style="font-size: 11.5px; color: var(--text-sub); margin-top: 2px;">
                   协议: IMAP (SSL:993) · 上次同步: 12分钟前 · 累计归集 84 张
                 </div>
@@ -1122,7 +1123,7 @@
             </div>
             <div class="mailbox-item">
               <div>
-                <div style="font-weight: 600;">alex_travel@163.com (员工差旅专邮)</div>
+                <div style="font-weight: 600;">synthetic-travel@example.invalid (合成差旅邮箱)</div>
                 <div style="font-size: 11.5px; color: var(--text-sub); margin-top: 2px;">
                   协议: IMAP (SSL:993) · 上次同步: 1小时前 · 累计归集 42 张
                 </div>
@@ -1171,9 +1172,9 @@
         </div>
         <div style="padding: 14px 20px; font-family: monospace; font-size: 12px; line-height: 1.8; color: var(--text-sub); background: #FAFAFA;">
           <div>[13:30:12] <span style="color: var(--success);">SUCCESS</span>: 邮箱 finance-inbox 同步完成，扫描邮件 12 封，抓取附件 3 个。</div>
-          <div>[13:30:13] <span style="color: var(--info);">SKIP_DUP</span>: 发现发票 24112000000088921034 (阿里云) SHA256 物理哈希已存在，跳过物理重复写入。</div>
-          <div>[13:30:15] <span style="color: var(--success);">PARSED</span>: 发票 24312000000019482711 (铁路网络) 结构化解析成功，价税 ¥565.00 平齐。</div>
-          <div>[13:30:18] <span style="color: var(--warning);">AUDIT_WARN</span>: 发票 04231890 (美团) 购买方税号校验失败，已自动移入【待核验】队列。</div>
+          <div>[13:30:13] <span style="color: var(--info);">SKIP_DUP</span>: 发现发票 DEMO-INVOICE-0001 (合成云服务) SHA256 物理哈希已存在，跳过物理重复写入。</div>
+          <div>[13:30:15] <span style="color: var(--success);">PARSED</span>: 发票 DEMO-INVOICE-0003 (合成交通) 结构化解析成功，价税 ¥565.00 平齐。</div>
+          <div>[13:30:18] <span style="color: var(--warning);">AUDIT_WARN</span>: 发票 DEMO-INVOICE-0002 (合成餐饮) 购买方税号校验失败，已自动移入【待核验】队列。</div>
         </div>
       </div>
     </div>
@@ -1225,11 +1226,11 @@
             <label class="form-label">附件重命名标准规则</label>
             <select class="form-control">
               <option>[序号]_[报销人]_[日期]_[类别]_[金额]元_[销售方]</option>
-              <option>[日期]_[发票号码]_[销售方]_[金额]元</option>
-              <option>[序号]_[发票号码]_[开票日期]</option>
+              <option>[日期]_[票号]_[销售方]_[金额]元</option>
+              <option>[序号]_[票号]_[开票日期]</option>
             </select>
             <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-              样例: <code>01_李工_20260925_信息技术服务_1272.00元_阿里云.pdf</code>
+              样例: <code>01_李工_20260925_信息技术服务_1272.00元_合成云服务.pdf</code>
             </div>
           </div>
 
@@ -1255,20 +1256,20 @@
             <thead>
               <tr>
                 <th>序号</th>
-                <th>发票号码</th>
+                <th>票号</th>
                 <th>销售方名称</th>
                 <th>开票日期</th>
                 <th>费用类别</th>
                 <th style="text-align: right;">不含税金额</th>
                 <th style="text-align: right;">税额</th>
-                <th style="text-align: right;">价税合计</th>
+                <th style="text-align: right;">含税总额</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td class="tabular-nums">01</td>
-                <td class="tabular-nums" style="font-weight: 500;">24112000000088921034</td>
-                <td>阿里云计算有限公司</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0001</td>
+                <td>合成云服务示例公司</td>
                 <td class="tabular-nums">2026-09-25</td>
                 <td>信息技术服务</td>
                 <td class="tabular-nums" style="text-align: right;">¥ 1,200.00</td>
@@ -1277,8 +1278,8 @@
               </tr>
               <tr>
                 <td class="tabular-nums">02</td>
-                <td class="tabular-nums" style="font-weight: 500;">24312000000019482711</td>
-                <td>中国铁路网络有限公司</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0003</td>
+                <td>合成交通示例公司</td>
                 <td class="tabular-nums">2026-09-23</td>
                 <td>差旅交通</td>
                 <td class="tabular-nums" style="text-align: right;">¥ 518.35</td>
@@ -1287,8 +1288,8 @@
               </tr>
               <tr>
                 <td class="tabular-nums">03</td>
-                <td class="tabular-nums" style="font-weight: 500;">24442000000038472910</td>
-                <td>得力集团有限公司</td>
+                <td class="tabular-nums" style="font-weight: 500;">DEMO-INVOICE-0004</td>
+                <td>合成办公用品示例公司</td>
                 <td class="tabular-nums">2026-09-20</td>
                 <td>办公用品</td>
                 <td class="tabular-nums" style="text-align: right;">¥ 353.98</td>
@@ -1303,15 +1304,15 @@
   </main>
 
   <script>
-    // ── Sample Model Data (Consistent & Domain Accurate) ──
+    // ── Synthetic Demo Data (Not Valid Financial Identifiers) ──
     const invoices = [
       {
         id: 0,
-        invoiceNum: "24112000000088921034",
-        seller: "阿里云计算有限公司",
-        sellerTax: "91330106673959654K",
-        buyer: "苏州未来信息技术有限公司",
-        buyerTax: "91320500MA1XXXXXX8",
+        invoiceNum: "DEMO-INVOICE-0001",
+        seller: "合成云服务示例公司",
+        sellerTax: "SYNTHETIC-TAX-0002",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-0001",
         date: "2026-09-25",
         itemName: "*信息技术服务*云服务器ECS",
         untaxed: 1200.00,
@@ -1324,15 +1325,15 @@
         statusLabel: "待复核",
         badgeClass: "badge-warning",
         complianceOk: true,
-        complianceMsg: "购买方纳税人识别号与本企业一致 · 价税平衡恒等式检验平齐 · 无历史重复记录"
+        complianceMsg: "购买方税号与本企业一致 · 价税平衡恒等式检验平齐 · 无历史重复记录"
       },
       {
         id: 1,
-        invoiceNum: "04231890",
-        seller: "北京三快在线科技有限公司 (美团)",
-        sellerTax: "91110108573199824L",
-        buyer: "苏州未来信息技术有限公司",
-        buyerTax: "91320500MA1XXXXXX", // 故意少一位制造真实预警
+        invoiceNum: "DEMO-INVOICE-0002",
+        seller: "合成餐饮示例公司",
+        sellerTax: "SYNTHETIC-TAX-0003",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-000", // 合成数据：故意少一位演示预警
         date: "2026-09-24",
         itemName: "*餐饮服务*工作餐费",
         untaxed: 204.25,
@@ -1345,15 +1346,15 @@
         statusLabel: "抬头不符",
         badgeClass: "badge-danger",
         complianceOk: false,
-        complianceMsg: "预警：购买方税号缺少1位校验码，与本公司官方税号(91320500MA1XXXXXX8)不符！请向开票方申请红冲重开。"
+        complianceMsg: "预警：购买方税号缺少1位校验码，与本公司官方税号(SYNTHETIC-TAX-0001)不符！请向开票方申请红冲重开。"
       },
       {
         id: 2,
-        invoiceNum: "24312000000019482711",
-        seller: "中国铁路网络有限公司",
-        sellerTax: "91110000717871234T",
-        buyer: "苏州未来信息技术有限公司",
-        buyerTax: "91320500MA1XXXXXX8",
+        invoiceNum: "DEMO-INVOICE-0003",
+        seller: "合成交通示例公司",
+        sellerTax: "SYNTHETIC-TAX-0004",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-0001",
         date: "2026-09-23",
         itemName: "*旅客运输服务*高铁客票(苏州北-北京南)",
         untaxed: 518.35,
@@ -1370,11 +1371,11 @@
       },
       {
         id: 3,
-        invoiceNum: "24442000000038472910",
-        seller: "得力集团有限公司",
-        sellerTax: "91330200144059881A",
-        buyer: "苏州未来信息技术有限公司",
-        buyerTax: "91320500MA1XXXXXX8",
+        invoiceNum: "DEMO-INVOICE-0004",
+        seller: "合成办公用品示例公司",
+        sellerTax: "SYNTHETIC-TAX-0005",
+        buyer: "合成购买方示例公司",
+        buyerTax: "SYNTHETIC-TAX-0001",
         date: "2026-09-20",
         itemName: "*办公用品*打印纸与文具耗材",
         untaxed: 353.98,
@@ -1504,7 +1505,7 @@
     }
 
     function rejectCurrent() {
-      const reason = prompt('请输入驳回退回的原因（该信息将记录到审计日志并通知报销人）：', '购买方纳税人识别号与企业不一致');
+      const reason = prompt('请输入驳回退回的原因（该信息将记录到审计日志并通知报销人）：', '购买方税号与企业不一致');
       if (reason) {
         const item = invoices.find(x => x.id === currentSelectedId);
         if (item) {
@@ -1522,7 +1523,7 @@
     }
 
     function filterTable(keyword) {
-      const filtered = invoices.filter(x => 
+      const filtered = invoices.filter(x =>
         x.seller.includes(keyword) || x.invoiceNum.includes(keyword)
       );
       renderTable(filtered);
@@ -1538,7 +1539,7 @@
     }
 
     function simulateFileUpload() {
-      alert('模拟选择本地发票文件：\n已成功解析 20260927_顺丰速运_电子发票.pdf，价税合计 ¥38.00 平齐入库。');
+      alert('模拟选择本地发票文件：\n已成功解析 20260927_合成快递_电子发票.pdf，含税总额 ¥38.00 平齐入库。');
     }
 
     function simulateExport() {

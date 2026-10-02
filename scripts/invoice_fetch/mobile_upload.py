@@ -36,6 +36,80 @@ _log = logging.getLogger("invoice_fetch.mobile_upload")
 ALLOWED_UPLOAD_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
+MAX_UPLOAD_FILES = 100
+
+
+class HeaderDeadlineHandlerMixin:
+    """An absolute header deadline also stops peers that dribble bytes."""
+
+    def handle_one_request(self):
+        request = self.connection
+        self._header_expired = threading.Event()
+
+        def expire_headers():
+            self._header_expired.set()
+            try:
+                request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        self._header_timer = threading.Timer(self.server.read_timeout, expire_headers)
+        self._header_timer.daemon = True
+        self._header_timer.start()
+        try:
+            return super().handle_one_request()
+        except ConnectionError:
+            self.close_connection = True
+        finally:
+            self._header_timer.cancel()
+            self._header_timer.join(timeout=0.1)
+
+    def parse_request(self):
+        try:
+            parsed = super().parse_request()
+            if self._header_expired.is_set():
+                self.close_connection = True
+                return False
+            return parsed
+        finally:
+            # Body reads have their own absolute deadline. Importing uploaded
+            # materials must not be interrupted by the header watchdog.
+            self._header_timer.cancel()
+
+
+class BoundedUploadHTTPServer(ThreadingHTTPServer):
+    """Bound connection threads, including clients that never send headers."""
+
+    def __init__(self, address, handler, *, read_timeout=15.0, max_connections=4):
+        self.read_timeout = read_timeout
+        self._connections = threading.BoundedSemaphore(max_connections)
+        bounded_handler = type("HeaderBoundedHandler", (HeaderDeadlineHandlerMixin, handler), {})
+        super().__init__(address, bounded_handler)
+
+    def get_request(self):
+        request, address = super().get_request()
+        request.settimeout(self.read_timeout)
+        return request, address
+
+    def process_request(self, request, client_address):
+        if not self._connections.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._connections.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._connections.release()
 
 _PDFJS_ASSET_ROOT = Path(__file__).resolve().parent / "web_assets" / "pdfjs"
 _PDFJS_ASSET_PREFIX = "/assets/pdfjs/"
@@ -189,6 +263,8 @@ class MobileUploadServer:
         network_priority: int = 50,
         network_virtual: bool = False,
         local_host_addresses: Iterable[str] | None = None,
+        read_timeout_seconds: float = 15.0,
+        max_connections: int = 4,
     ):
         self.runtime_dir = Path(runtime_dir)
         self.db_path = Path(db_path) if db_path else None
@@ -198,6 +274,10 @@ class MobileUploadServer:
         self.ttl_seconds = ttl_seconds
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+        self.read_timeout_seconds = max(0.1, float(read_timeout_seconds))
+        self.max_connections = max(1, int(max_connections))
+        self._request_bytes_lock = threading.Lock()
+        self._request_bytes = 0
         self.import_on_upload = import_on_upload
         self.interface_name = str(interface_name or "")
         self.network_priority = int(network_priority)
@@ -267,7 +347,10 @@ class MobileUploadServer:
         try:
             original_dir.mkdir(parents=True, exist_ok=True)
             handler = self._make_handler()
-            self._httpd = ThreadingHTTPServer((self.bind_host, self.port), handler)
+            self._httpd = BoundedUploadHTTPServer(
+                (self.bind_host, self.port), handler,
+                read_timeout=self.read_timeout_seconds, max_connections=self.max_connections,
+            )
             actual_port = int(self._httpd.server_address[1])
             self.port = actual_port
             base_url = f"http://{self.host}:{actual_port}"
@@ -911,22 +994,58 @@ class MobileUploadServer:
                     self._send_text(403, "Upload link expired or invalid.")
                     return
 
+                lengths = self.headers.get_all("Content-Length", [])
+                if self.headers.get("Transfer-Encoding") or len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]):
+                    self._send_text(400, "Invalid content length.")
+                    return
                 try:
-                    content_length = int(self.headers.get("Content-Length") or "0")
+                    content_length = int(lengths[0])
                 except ValueError:
+                    self._send_text(400, "Invalid content length.")
+                    return
+                if content_length <= 0:
                     self._send_text(400, "Invalid content length.")
                     return
                 if content_length > owner.max_total_bytes:
                     self._send_text(413, "Upload is too large.")
                     return
-                body = self.rfile.read(content_length)
-                files = _parse_multipart_upload(body, self.headers.get("Content-Type", ""))
+                with owner._request_bytes_lock:
+                    if owner._request_bytes + content_length > owner.max_total_bytes:
+                        self._send_text(503, "Upload memory budget is busy. Please retry.")
+                        return
+                    owner._request_bytes += content_length
                 try:
+                    # Reserve before allocation. The aggregate budget includes
+                    # bodies waiting for the serialized import operation.
+                    deadline = time.monotonic() + owner.read_timeout_seconds
+                    body = bytearray()
+                    while len(body) < content_length:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("upload deadline")
+                        self.connection.settimeout(remaining)
+                        chunk = self.rfile.read1(min(64 * 1024, content_length - len(body)))
+                        if not chunk:
+                            raise ValueError("truncated body")
+                        body.extend(chunk)
+                    files = _parse_multipart_upload(bytes(body), self.headers.get("Content-Type", ""))
+                    del body
+                    if not files or len(files) > MAX_UPLOAD_FILES:
+                        raise ValueError("invalid file count")
                     result = owner.save_uploads(files)
+                except (TimeoutError, socket.timeout):
+                    self._send_text(408, "Upload timed out. Please retry.")
+                    return
+                except ValueError:
+                    self._send_text(400, "Invalid upload body.")
+                    return
                 except Exception:
                     _log.info("[手机上传] upload processing failed exception_type=server_error")
                     self._send_text(500, "Upload processing failed.")
                     return
+                finally:
+                    with owner._request_bytes_lock:
+                        owner._request_bytes -= content_length
                 self._send_json(200, public_upload_result(result))
 
             def _send_html(self, status: int, body: str):
@@ -1156,20 +1275,24 @@ def _runtime_relative(path: Path, runtime_dir: Path) -> str:
 
 def _parse_multipart_upload(body: bytes, content_type: str) -> list[UploadedFile]:
     match = re.search(r"boundary=(?P<boundary>[^;]+)", content_type)
-    if not match:
-        return []
+    if not match or not content_type.lower().startswith("multipart/form-data"):
+        raise ValueError("missing multipart boundary")
     boundary = match.group("boundary").strip('"').encode("utf-8")
+    if not boundary or len(boundary) > 70 or b"\r" in boundary or b"\n" in boundary:
+        raise ValueError("invalid multipart boundary")
+    marker = b"--" + boundary
+    if not body.startswith(marker + b"\r\n") or not body.endswith((marker + b"--\r\n", marker + b"--")):
+        raise ValueError("incomplete multipart body")
     files: list[UploadedFile] = []
     for raw_part in body.split(b"--" + boundary):
-        part = raw_part.strip()
-        if not part or part == b"--":
+        if not raw_part or raw_part in (b"--", b"--\r\n"):
             continue
-        if part.endswith(b"--"):
-            part = part[:-2].strip()
+        if not raw_part.startswith(b"\r\n") or not raw_part.endswith(b"\r\n"):
+            raise ValueError("invalid multipart separator")
+        part = raw_part[2:-2]
         if b"\r\n\r\n" not in part:
             continue
         header_blob, content = part.split(b"\r\n\r\n", 1)
-        content = content.rstrip(b"\r\n")
         headers = header_blob.decode("utf-8", errors="replace")
         filename_match = re.search(r'filename="(?P<filename>[^"]*)"', headers)
         if not filename_match:
