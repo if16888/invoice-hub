@@ -1547,8 +1547,16 @@ class InvoiceDB:
         self._conn.commit()
         return cursor.lastrowid
 
+    def get_invoice_claim_id(self, invoice_id: int) -> int | None:
+        """Return the claim_id this invoice belongs to, or None."""
+        row = self._conn.execute(
+            "SELECT claim_id FROM claim_group_items WHERE invoice_id = ? LIMIT 1",
+            (invoice_id,)
+        ).fetchone()
+        return int(row["claim_id"]) if row else None
+
     def add_invoice_to_claim(self, claim_id: int, invoice_id: int, note: str = "") -> bool:
-        """Map an invoice to a claim group. Returns False on IntegrityError (e.g. duplicate)."""
+        """Map an invoice to a claim group. Returns False on duplicate or error."""
         invoice = self.get_invoice(invoice_id)
         if not invoice:
             self._set_last_error("not_found")
@@ -1556,6 +1564,20 @@ class InvoiceDB:
         if is_pending_evidence_invoice(invoice):
             self._set_last_error("evidence_only")
             return False
+
+        # Cross-claim check: an invoice can belong to at most one claim group
+        existing_other = self._conn.execute(
+            "SELECT claim_id FROM claim_group_items WHERE invoice_id = ? AND claim_id != ?",
+            (invoice_id, claim_id)
+        ).fetchone()
+        if existing_other:
+            self._set_last_error("already_in_other_claim")
+            _log.info(
+                "Cross-claim duplicate: invoice_id %d already in claim_id %d, cannot add to claim_id %d",
+                invoice_id, existing_other[0], claim_id
+            )
+            return False
+
         try:
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",

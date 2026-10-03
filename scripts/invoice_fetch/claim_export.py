@@ -405,6 +405,17 @@ def export_claim_package(
     if material_blockers:
         raise ValueError("导出已阻断：" + "；".join(material_blockers) + "。请补齐材料后重试。")
 
+    # Cross-claim duplicate preflight: prevent invoices associated with multiple claims from exporting
+    cross_claim_invoices = [
+        inv for inv in invoices
+        if inv.get("id") is not None and db.count_claim_links(int(inv["id"])) > 1
+    ]
+    if cross_claim_invoices:
+        dup_count = len(cross_claim_invoices)
+        raise ValueError(
+            f"导出已阻断：报销组内有 {dup_count} 张发票同时关联了其他报销组。为防止重复报销，请先移除重复归组关系后再导出。"
+        )
+
     if reimbursement_config is None:
         reimbursement_config = load_config_safe().get("reimbursement", {})
 

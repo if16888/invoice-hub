@@ -8323,21 +8323,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_name = self.combo_claims.currentText()
         linked_count = 0
         assigned_count = 0
+        other_claim_count = 0
         evidence_only_count = 0
         failed_count = 0
 
         try:
             for idx in selected_indexes:
                 inv = self.invoices_list[idx.row()]
-                if self.db.count_claim_links(inv["id"]) > 0:
-                    assigned_count += 1
-                    continue
                 success = self.db.add_invoice_to_claim(claim_id, inv["id"])
                 if success:
                     linked_count += 1
                     continue
                 error = getattr(self.db, "last_error", "")
-                if error == "integrity_error":
+                if error == "already_in_other_claim":
+                    other_claim_count += 1
+                elif error == "integrity_error":
                     assigned_count += 1
                 elif error == "evidence_only":
                     evidence_only_count += 1
@@ -8349,11 +8349,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 message_parts.append(f"成功关联 {linked_count} 张发票")
             if assigned_count:
                 message_parts.append(f"已归组跳过 {assigned_count} 张")
+            if other_claim_count:
+                if len(selected_indexes) == 1 and not linked_count:
+                    message_parts.append("这张发票已经属于另一个报销组，请先从原报销组移除后再加入当前组")
+                else:
+                    message_parts.append(f"已属于其他报销组（请先从原报销组移除） {other_claim_count} 张")
             if evidence_only_count:
                 message_parts.append(f"跳过待关联证明材料 {evidence_only_count} 张")
             if failed_count:
                 message_parts.append(f"失败 {failed_count} 张")
-            if not linked_count:
+            if not linked_count and not other_claim_count:
                 message_parts.insert(0, "未关联任何发票")
             msg = "；".join(message_parts) + "。"
             self.statusBar().showMessage(
@@ -8365,12 +8370,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._load_claims()
             self._select_row_hint = self._capture_selection_row_hint()
             self._load_invoices()
-            return {
+            res = {
                 "linked": linked_count,
                 "assigned": assigned_count,
                 "evidence_only": evidence_only_count,
                 "failed": failed_count,
             }
+            if other_claim_count:
+                res["other_claim"] = other_claim_count
+            return res
 
         except Exception as e:
             _log.error("Failed to link invoices to claim: %s", e)
