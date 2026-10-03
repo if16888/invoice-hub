@@ -522,40 +522,33 @@ def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFi
                 best_ofd_by_stem[stem] = item
     unique_ofds = list(best_ofd_by_stem.values())
 
-    # 3. Match OFDs with homologous PDFs and mark for discard
-    discarded_ofd_ids = set()
+    # 3. Keep all OFDs: business records are deduplicated, but different source
+    #    formats (PDF vs OFD) must not be discarded because a parseable PDF exists.
+    #    PDF remains the primary parse/preview file; OFD is retained as the
+    #    original invoice artifact.  Log retained pairs for transparency.
+    for ofd in unique_ofds:
+        ofd_stem = Path(ofd.filename or ofd.file_path or "").stem
+        matched_pdf = None
+        for pdf in unique_pdfs:
+            pdf_stem = Path(pdf.filename or pdf.file_path or "").stem
+            if _are_stems_homologous(pdf_stem, ofd_stem):
+                matched_pdf = pdf
+                break
+        if matched_pdf:
+            _log.info(
+                "PDF/OFD: Retaining both PDF '%s' and OFD '%s' — "
+                "PDF used for parsing/preview, OFD kept as source artifact.",
+                mask_filename(matched_pdf.filename),
+                mask_filename(ofd.filename),
+            )
+        else:
+            _log.info(
+                "PDF/OFD: OFD '%s' has no homologous PDF. Keeping it.",
+                mask_filename(ofd.filename),
+            )
 
-    # Special Rule: If exactly 1 PDF and 1 OFD total in the batch, prioritize PDF and discard OFD.
-    if len(unique_pdfs) == 1 and len(unique_ofds) == 1:
-        discarded_ofd_ids.add(id(unique_ofds[0]))
-        _log.info(
-            "PDF/OFD Deduplication: Exactly 1 PDF and 1 OFD found. Retaining PDF '%s' and discarding OFD '%s'",
-            mask_filename(unique_pdfs[0].filename),
-            mask_filename(unique_ofds[0].filename)
-        )
-    else:
-        for ofd in unique_ofds:
-            ofd_stem = Path(ofd.filename or ofd.file_path or "").stem
-            matched_pdf = None
-            for pdf in unique_pdfs:
-                pdf_stem = Path(pdf.filename or pdf.file_path or "").stem
-                if _are_stems_homologous(pdf_stem, ofd_stem):
-                    matched_pdf = pdf
-                    break
-            if matched_pdf:
-                discarded_ofd_ids.add(id(ofd))
-                _log.info(
-                    "PDF/OFD Deduplication: Found homologous PDF '%s' for OFD '%s'. Discarding OFD.",
-                    mask_filename(matched_pdf.filename),
-                    mask_filename(ofd.filename)
-                )
-            else:
-                _log.info(
-                    "PDF/OFD Deduplication: OFD '%s' has no homologous PDF. Keeping it.",
-                    mask_filename(ofd.filename)
-                )
-
-    # Reconstruct the list preserving the original order of items that are kept
+    # Reconstruct the list preserving the original order of items that are kept.
+    # All unique PDFs, all unique OFDs, and all others are included.
     final_results = []
     seen_ids = set()
     for item in results:
@@ -563,13 +556,14 @@ def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFi
         if item_id in seen_ids:
             continue
         is_kept_pdf = any(id(p) == item_id for p in unique_pdfs)
-        is_kept_ofd = any(id(o) == item_id for o in unique_ofds) and item_id not in discarded_ofd_ids
+        is_kept_ofd = any(id(o) == item_id for o in unique_ofds)
         is_other = any(id(x) == item_id for x in others)
 
         if is_kept_pdf or is_kept_ofd or is_other:
             final_results.append(item)
             seen_ids.add(item_id)
     return final_results
+
 
 
 def _save_download_to_path(download, dest: Path) -> bool:

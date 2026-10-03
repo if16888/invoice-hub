@@ -196,25 +196,32 @@ class TestLinkDownloader(unittest.TestCase):
         with patch.object(dl, "_download_url", side_effect=fake_download):
             results = dl.download_from_email(msg, 77, "2026-06-13")
 
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].filename, "invoice.pdf")
+        # RR-1: Both PDF and OFD must be retained from the email download
+        self.assertEqual(len(results), 2)
+        result_filenames = [r.filename for r in results]
+        self.assertIn("invoice.pdf", result_filenames)
+        self.assertIn("invoice.ofd", result_filenames)
 
     def test_download_from_email_dedupes_homologous_pdf_and_ofd(self):
         from scripts.invoice_fetch.link_downloader import DownloadedFile, _dedupe_downloaded_files
 
-        # 1. invoice_77_0_resp.pdf + invoice_77_1_resp.ofd -> Keep PDF
+        # 1. invoice_77_0_resp.pdf + invoice_77_1_resp.ofd -> Keep BOTH (RR-1: do not discard OFD)
         f1 = DownloadedFile("url1", "p1", "invoice_77_0_resp.pdf", 100, True, "official_download")
         f2 = DownloadedFile("url2", "p2", "invoice_77_1_resp.ofd", 200, True, "official_download")
         res1 = _dedupe_downloaded_files([f1, f2])
-        self.assertEqual(len(res1), 1)
-        self.assertEqual(res1[0].filename, "invoice_77_0_resp.pdf")
+        self.assertEqual(len(res1), 2)
+        filenames1 = [f.filename for f in res1]
+        self.assertIn("invoice_77_0_resp.pdf", filenames1)
+        self.assertIn("invoice_77_1_resp.ofd", filenames1)
 
-        # 2. 狮王府电子发票.pdf + 电子发票.ofd -> Keep PDF
+        # 2. 狮王府电子发票.pdf + 电子发票.ofd -> Keep BOTH
         f3 = DownloadedFile("url3", "p3", "狮王府电子发票.pdf", 100, True, "official_download")
         f4 = DownloadedFile("url4", "p4", "电子发票.ofd", 200, True, "official_download")
         res2 = _dedupe_downloaded_files([f3, f4])
-        self.assertEqual(len(res2), 1)
-        self.assertEqual(res2[0].filename, "狮王府电子发票.pdf")
+        self.assertEqual(len(res2), 2)
+        filenames2 = [f.filename for f in res2]
+        self.assertIn("狮王府电子发票.pdf", filenames2)
+        self.assertIn("电子发票.ofd", filenames2)
 
         # 3. invoice_a.pdf + invoice_b.pdf -> Keep both
         f5 = DownloadedFile("url5", "p5", "invoice_a.pdf", 100, True, "official_download")
@@ -222,14 +229,34 @@ class TestLinkDownloader(unittest.TestCase):
         res3 = _dedupe_downloaded_files([f5, f6])
         self.assertEqual(len(res3), 2)
 
-        # 4. invoice_a.pdf + invoice_b.pdf + invoice_b.ofd -> Keep invoice_a.pdf & invoice_b.pdf
+        # 4. invoice_a.pdf + invoice_b.pdf + invoice_b.ofd -> Keep all 3 (invoice_b.ofd is NOT discarded)
         f7 = DownloadedFile("url7", "p7", "invoice_b.ofd", 150, True, "official_download")
         res4 = _dedupe_downloaded_files([f5, f6, f7])
-        self.assertEqual(len(res4), 2)
-        filenames = [f.filename for f in res4]
-        self.assertIn("invoice_a.pdf", filenames)
-        self.assertIn("invoice_b.pdf", filenames)
-        self.assertNotIn("invoice_b.ofd", filenames)
+        self.assertEqual(len(res4), 3)
+        filenames4 = [f.filename for f in res4]
+        self.assertIn("invoice_a.pdf", filenames4)
+        self.assertIn("invoice_b.pdf", filenames4)
+        self.assertIn("invoice_b.ofd", filenames4)
+
+        # 5. Same-format duplicates are still deduplicated
+        f8_dup_pdf = DownloadedFile("url8", "p8", "invoice_a.pdf", 50, True, "print_fallback")
+        res5 = _dedupe_downloaded_files([f5, f8_dup_pdf])
+        self.assertEqual(len(res5), 1)
+        self.assertEqual(res5[0].source_type, "official_download")  # better priority retained
+
+        f9_dup_ofd = DownloadedFile("url9", "p9", "invoice_b.ofd", 50, True, "print_fallback")
+        res6 = _dedupe_downloaded_files([f7, f9_dup_ofd])
+        self.assertEqual(len(res6), 1)
+        self.assertEqual(res6[0].source_type, "official_download")  # better priority retained
+
+        # 6. Other file types (images, etc.) are preserved
+        f10_img = DownloadedFile("url10", "p10", "receipt.png", 300, True, "official_download")
+        res7 = _dedupe_downloaded_files([f1, f2, f10_img])
+        self.assertEqual(len(res7), 3)
+        filenames7 = [f.filename for f in res7]
+        self.assertIn("invoice_77_0_resp.pdf", filenames7)
+        self.assertIn("invoice_77_1_resp.ofd", filenames7)
+        self.assertIn("receipt.png", filenames7)
 
     def test_verify_and_clean_file(self):
         # 1. 测试 PDF (必须大于等于 500 字节)
