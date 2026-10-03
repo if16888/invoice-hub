@@ -148,6 +148,29 @@ class StartupLifecycleOrderingTests(unittest.TestCase):
         self.assertIn(class_name, build_source)
         self.assertIn(class_name, probe_source)
 
+    def test_export_migration_is_deferred_to_post_paint_init(self):
+        app_source = inspect.getsource(startup_lifecycle.InvoiceReviewApp.__init__)
+        self.assertNotIn("self._start_export_migration()", app_source)
+        deferred_source = inspect.getsource(startup_lifecycle.InvoiceReviewApp._deferred_init)
+        self.assertIn("self._start_export_migration()", deferred_source)
+
+    def test_workbench_metrics_avoids_redundant_unpolish_on_stable_state(self):
+        with tempfile.TemporaryDirectory(prefix="invoice-hub-metrics-polish-") as td:
+            window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
+                Path(td) / "startup.db",
+                splash=None,
+            )
+            try:
+                btn = window.workbench_nav_buttons.get("review")
+                self.assertIsNotNone(btn)
+                with patch.object(btn.style(), "unpolish") as mock_unpolish, \
+                     patch.object(btn.style(), "polish") as mock_polish:
+                    window._apply_workbench_metrics()
+                    mock_unpolish.assert_not_called()
+                    mock_polish.assert_not_called()
+            finally:
+                window.close()
+
 
 class StartupLazyPageIntegrationTests(unittest.TestCase):
     @classmethod
@@ -359,6 +382,17 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
             finally:
                 window.close()
                 self.qt_app.processEvents()
+
+    def test_splash_show_message_skips_process_events_when_hidden(self):
+        from scripts.invoice_fetch.gui.app import StartupSplash
+        splash = StartupSplash()
+        try:
+            self.assertFalse(splash.isVisible())
+            with patch.object(QApplication, "processEvents") as mock_pe:
+                splash.show_message("test", 10)
+                mock_pe.assert_not_called()
+        finally:
+            splash.close()
 
 
 if __name__ == "__main__":
