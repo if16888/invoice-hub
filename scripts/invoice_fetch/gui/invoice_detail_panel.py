@@ -511,7 +511,12 @@ class InvoiceDetailPanel(QWidget):
 
         self._setup_ui()
 
-
+        # Read-only business text must remain selectable; preserve link flags.
+        for label in self.findChildren(QLabel):
+            label.setTextInteractionFlags(
+                label.textInteractionFlags() | Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard
+            )
+            label.setFocusPolicy(Qt.ClickFocus)
 
         self.blockSignals(False)
 
@@ -1576,7 +1581,14 @@ class InvoiceDetailPanel(QWidget):
 
         """Set bottom status bar — only shown for warnings."""
 
-
+        # Keep the short error status on one line; allow long guidance to grow
+        # at narrow widths instead of clipping its completion instructions.
+        self.lbl_closing_desc.setWordWrap(bool(missing_fields))
+        policy = QSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred if missing_fields else QSizePolicy.Fixed
+        )
+        policy.setHeightForWidth(bool(missing_fields))
+        self.lbl_closing_desc.setSizePolicy(policy)
 
         if missing_fields:
 
@@ -4667,7 +4679,9 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.lbl_closing_desc.setWordWrap(True)
+        self.lbl_closing_desc.setWordWrap(False)
+        self.lbl_closing_desc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.lbl_closing_desc.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
 
 
 
@@ -4679,11 +4693,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        closing_layout.addWidget(self.lbl_closing_desc)
-
-
-
-        closing_layout.addStretch(1)
+        closing_layout.addWidget(self.lbl_closing_desc, 1)
 
 
 
