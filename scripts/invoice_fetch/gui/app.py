@@ -746,7 +746,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._scan_elapsed_timer = QTimer(self)
         self._scan_elapsed_timer.timeout.connect(self._refresh_scan_elapsed)
         self._restore_splitter_prefs()
-        self._start_export_migration()
         init_time = _time_mod.time()
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
@@ -1146,6 +1145,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if getattr(self, "_first_load_notice", None):
             status_msg = f"{status_msg}｜{self._first_load_notice}"
         self.statusBar().showMessage(status_msg, 4000)
+        self._start_export_migration()
 
     def closeEvent(self, event):
         if not self._persist_invoice_note():
@@ -1339,28 +1339,36 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.workbench_nav_spacer.setVisible(not nav_collapsed)
         for key, button in self.workbench_nav_buttons.items():
             full_text = self._workbench_nav_button_texts.get(key, "")
-            button.setText("" if nav_collapsed else full_text)
-            button.setToolTip(full_text if nav_collapsed else "")
+            target_text = "" if nav_collapsed else full_text
+            if button.text() != target_text:
+                button.setText(target_text)
+            target_tip = full_text if nav_collapsed else ""
+            if button.toolTip() != target_tip:
+                button.setToolTip(target_tip)
             # Collapsing the rail must not remove primary navigation from
             # the keyboard focus chain.  Checked state remains the page
             # indicator; focus styling is an independent accessibility state.
             button.setFocusPolicy(Qt.TabFocus)
-            button.setProperty("collapsed", nav_collapsed)
-            button.setMinimumHeight(36 if not nav_collapsed else 44)
-            button.style().unpolish(button)
-            button.style().polish(button)
-        self.btn_collapse_nav.setText("" if nav_collapsed else "收起侧边栏")
-        self.btn_collapse_nav.setToolTip("展开侧边栏" if nav_collapsed else "收起侧边栏")
-        self.btn_collapse_nav.setIcon(IconProvider.icon("expand" if nav_collapsed else "collapse"))
-        self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
-        self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
-        self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
+            if button.property("collapsed") != nav_collapsed:
+                button.setProperty("collapsed", nav_collapsed)
+                button.setMinimumHeight(36 if not nav_collapsed else 44)
+                button.style().unpolish(button)
+                button.style().polish(button)
+        if self.btn_collapse_nav.property("collapsed") != nav_collapsed:
+            self.btn_collapse_nav.setText("" if nav_collapsed else "收起侧边栏")
+            self.btn_collapse_nav.setToolTip("展开侧边栏" if nav_collapsed else "收起侧边栏")
+            self.btn_collapse_nav.setIcon(IconProvider.icon("expand" if nav_collapsed else "collapse"))
+            self.btn_collapse_nav.setProperty("collapsed", nav_collapsed)
+            self.btn_collapse_nav.style().unpolish(self.btn_collapse_nav)
+            self.btn_collapse_nav.style().polish(self.btn_collapse_nav)
         self.btn_collapse_nav.setVisible(True)
         help_text = self.btn_shortcut_help.accessibleName() or self.btn_shortcut_help.text()
         collapse_tip = self.btn_collapse_nav.toolTip()
         self.btn_shortcut_help.setAccessibleName(help_text)
         self.btn_shortcut_help.setToolTip(help_text)
-        self.btn_shortcut_help.setText("" if nav_collapsed else help_text)
+        target_help = "" if nav_collapsed else help_text
+        if self.btn_shortcut_help.text() != target_help:
+            self.btn_shortcut_help.setText(target_help)
         self.btn_collapse_nav.setAccessibleName(collapse_tip)
         if nav_collapsed:
             self.btn_shortcut_help.setFixedSize(40, 40)
@@ -6080,7 +6088,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for value in DEFAULT_CATEGORY_OPTIONS:
             add_option(value)
 
-        cfg = load_config_safe()
+        cfg = getattr(self, "config", None)
+        if cfg is None:
+            cfg = load_config_safe()
         cfg_categories = cfg.get("categories", {})
         if isinstance(cfg_categories, dict):
             for key, value in cfg_categories.items():
@@ -9675,7 +9685,8 @@ class StartupSplash(QWidget):
         if progress_val is not None:
             self.progress_bar.setValue(progress_val)
         # Force processing of events to update immediately!
-        QApplication.processEvents()
+        if self.isVisible():
+            QApplication.processEvents()
 
 
 def start_gui_app(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
