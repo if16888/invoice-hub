@@ -330,9 +330,38 @@ class TestLinkDownloader(unittest.TestCase):
         )
         self.assertIsNotNone(result)
         self.assertEqual(result[1], 'official_download')
-        self.assertEqual(page.locator.call_args_list[0].args[0], 'a:has-text("下载PDF")')
+        self.assertIn('a:has-text("下载PDF")', page.locator.call_args_list[0].args[0])
+        page.locator.return_value.first.wait_for.assert_called_once()
+        wait_options = page.locator.return_value.first.wait_for.call_args.kwargs
+        self.assertEqual(wait_options["state"], "visible")
+        self.assertLessEqual(wait_options["timeout"], 250)
+        self.assertEqual(page.locator.call_args_list[1].args[0], 'a:has-text("下载PDF")')
         page.wait_for_function.assert_called_once()
         self.assertNotIn('networkidle', [call.args[0] for call in page.wait_for_load_state.call_args_list])
+
+    def test_pdf_control_wait_retries_late_control_without_exceeding_slices(self):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        page = MagicMock()
+        waiter = page.locator.return_value.first.wait_for
+        waiter.side_effect = [PlaywrightTimeoutError("not ready"), None]
+        dl = LinkDownloader(self.tmp_dir)
+        self.assertTrue(dl._wait_for_original_pdf_control(page))
+        self.assertEqual(waiter.call_count, 2)
+        self.assertTrue(all(call.kwargs["timeout"] <= 250 for call in waiter.call_args_list))
+
+    def test_pdf_control_wait_observes_cancellation(self):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from scripts.invoice_fetch.scan_lifecycle import ScanControl, ScanCancelled
+        control = ScanControl()
+        dl = LinkDownloader(self.tmp_dir, scan_control=control)
+        page = MagicMock()
+        def cancel(**kwargs):
+            control.cancel()
+            raise PlaywrightTimeoutError("not ready")
+        page.locator.return_value.first.wait_for.side_effect = cancel
+        with self.assertRaises(ScanCancelled):
+            dl._wait_for_original_pdf_control(page)
+        page.locator.return_value.first.wait_for.assert_called_once()
 
     def test_new_tab_download_is_dispatched_before_context_closes(self):
         dl = LinkDownloader(self.tmp_dir)

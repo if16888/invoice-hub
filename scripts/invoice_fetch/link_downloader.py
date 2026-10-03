@@ -694,6 +694,30 @@ class LinkDownloader:
             remaining_ms = min(remaining_ms, int(cap_ms))
         return max(1, min(remaining_ms, self._timeout))
 
+    def _wait_for_original_pdf_control(self, page, deadline: float | None = None) -> bool:
+        """Wait for SPA controls in short slices so close/cancel stays responsive."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        end = time.monotonic() + 20.0
+        if deadline is not None:
+            end = min(end, deadline)
+        locator = page.locator(
+            'a:has-text("下载PDF"), button:has-text("下载PDF"), '
+            'a:has-text("PDF下载"), button:has-text("PDF下载")'
+        ).first
+        while time.monotonic() < end:
+            self._check_cancelled()
+            timeout = self._remaining_timeout_ms(end, 250)
+            try:
+                locator.wait_for(state="visible", timeout=timeout)
+                return True
+            except PlaywrightTimeoutError:
+                continue
+        self._check_cancelled()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("browser link download deadline exceeded")
+        return False
+
     def _sleep_with_cancel(self, seconds: float, deadline: float | None = None) -> None:
         wait_deadline = time.monotonic() + max(0.0, float(seconds))
         if deadline is not None:
@@ -1115,6 +1139,14 @@ class LinkDownloader:
                 pass
 
         page.on("response", on_response)
+
+        # Invoice text can appear before the SPA's original-file controls.
+        # Do not exhaust the selector list while those controls are still loading.
+        if host == "nnfp.jss.com.cn" or host.endswith(".nnfp.jss.com.cn"):
+            try:
+                self._wait_for_original_pdf_control(page, deadline)
+            except Exception:
+                self._check_cancelled()
 
         # 1. Try clicking download button
         try:

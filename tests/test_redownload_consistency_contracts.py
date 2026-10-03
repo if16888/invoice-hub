@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from scripts.invoice_fetch import redownload
 from tests.test_redownload_consistency import _FakeDB, _FakeDownloader, _snapshot
@@ -83,6 +83,30 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
                 sorted(p.name for p in dest_dir.iterdir() if p.is_file()),
                 ["managed.pdf", "managed_1.pdf"],
             )
+
+    def test_failed_email_download_with_metadata_update_is_counted_as_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td)
+            db = _FakeDB()
+            downloader = _FakeDownloader(runtime / "attachments")
+            downloader.last_download_diagnostics = {"attempted": 1, "failed": 1}
+            namespace = SimpleNamespace(LinkDownloader=lambda **kwargs: downloader)
+            with patch.object(redownload, "InvoiceDB", return_value=db), \
+                 patch.object(redownload, "_link_downloader", namespace), \
+                 patch.object(redownload._config, "get_email_accounts", return_value=[]), \
+                 patch.object(redownload._credentials, "has_auth_code", return_value=True), \
+                 patch.object(redownload._credentials, "get_auth_code", return_value="synthetic-code"), \
+                 patch.object(redownload._mail_fetcher, "MailFetcher", return_value=MagicMock()), \
+                 patch.object(redownload._invoice_parser, "IsolatedInvoiceParser", return_value=SimpleNamespace()), \
+                 patch.object(redownload._attachment_handler, "AttachmentHandler", return_value=object()), \
+                 patch("scripts.invoice_fetch.services._handle_pending_email", return_value=SimpleNamespace(status="metadata_refreshed")):
+                result = redownload.run_invoice_redownload(
+                    [_snapshot(url="", mail_uid=1)], runtime / "invoices.db",
+                    runtime_dir=runtime, config={"email": {"address": "synthetic@example.invalid"}},
+                )
+            self.assertEqual(result["buckets"]["download_failed"], 1)
+            self.assertEqual(result["failed_count"], 1)
+            self.assertEqual(result["buckets"]["metadata_refreshed"], 0)
 
     def test_unsupported_direct_download_keeps_metadata_refreshed_contract(self):
         with tempfile.TemporaryDirectory() as td:

@@ -44,6 +44,8 @@ try:
         QListWidgetItem,
         QStackedWidget,
         QScrollArea,
+        QMenu,
+        QApplication,
     )
 
     _HAS_QT = True
@@ -235,7 +237,10 @@ if _HAS_QT:
         def __init__(self, text: str = "", parent: QWidget | None = None):
             super().__init__(parent)
             self.setProperty("class", "ElidedValue")
-            self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.setTextFormat(Qt.PlainText)
+            self.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            # Copy via click/selection without inserting every value into Tab order.
+            self.setFocusPolicy(Qt.ClickFocus)
             self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             self.set_value(text)
 
@@ -244,12 +249,33 @@ if _HAS_QT:
             self.setText(value)
             self.setToolTip("" if value == "—" else value)
 
-        def paintEvent(self, event):
+        def contextMenuEvent(self, event):
+            menu = QMenu(self)
+            value = self.text()
+            selection = self.selectedText()
+            copy_full = menu.addAction("复制完整内容")
+            copy_full.triggered.connect(lambda: QApplication.clipboard().setText(value))
+            if selection:
+                copy_selection = menu.addAction("复制选中内容")
+                copy_selection.triggered.connect(lambda: QApplication.clipboard().setText(selection))
+            try:
+                menu.exec(event.globalPos())
+            finally:
+                menu.deleteLater()
+
+        def _paint_value(self, event, elide_mode):
+            # Native QLabel painting is required to display selection highlights.
+            if self.hasSelectedText() or self.fontMetrics().horizontalAdvance(self.text()) <= self.width():
+                super().paintEvent(event)
+                return
             painter = QPainter(self)
             painter.setFont(self.font())
             painter.setPen(self.palette().color(self.foregroundRole()))
-            text = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, max(0, self.width()))
+            text = self.fontMetrics().elidedText(self.text(), elide_mode, max(0, self.width()))
             painter.drawText(self.rect(), self.alignment() or (Qt.AlignLeft | Qt.AlignVCenter), text)
+
+        def paintEvent(self, event):
+            self._paint_value(event, Qt.ElideRight)
 
     class ElidedTextLabel(ElidedValueLabel):
         """Semantic alias for long product text such as paths, names and IDs."""
@@ -258,11 +284,7 @@ if _HAS_QT:
         """Single-line value that preserves both ends of a path or identifier."""
 
         def paintEvent(self, event):
-            painter = QPainter(self)
-            painter.setFont(self.font())
-            painter.setPen(self.palette().color(self.foregroundRole()))
-            text = self.fontMetrics().elidedText(self.text(), Qt.ElideMiddle, max(0, self.width()))
-            painter.drawText(self.rect(), self.alignment() or (Qt.AlignLeft | Qt.AlignVCenter), text)
+            self._paint_value(event, Qt.ElideMiddle)
 
     class MiddleElidedTextLabel(MiddleElidedValueLabel):
         """Semantic path/identifier label with a complete-value tooltip."""
@@ -891,6 +913,11 @@ if _HAS_QT:
                 widget = QLabel(str(value))
                 widget.setWordWrap(True)
                 widget.setProperty("class", "DetailValue")
+            if isinstance(widget, QLabel):
+                widget.setTextInteractionFlags(
+                    widget.textInteractionFlags() | Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard
+                )
+                widget.setFocusPolicy(Qt.ClickFocus)
             self.rows_layout.addRow(key, widget)
             label = self.rows_layout.labelForField(widget)
             if label is not None:

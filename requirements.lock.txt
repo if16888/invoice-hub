@@ -24,7 +24,7 @@ defusedxml==0.7.1
     # via -r requirements.txt
 et-xmlfile==2.0.0
     # via openpyxl
-greenlet==3.0.1
+greenlet==3.5.6
     # via playwright
 idna==3.18
     # via requests
@@ -49,11 +49,11 @@ pillow==12.3.0
     #   -r requirements.txt
     #   pdfplumber
     #   qrcode
-playwright==1.40.0
+playwright==1.63.0
     # via -r requirements.txt
 pycparser==3.0
     # via cffi
-pyee==11.0.1
+pyee==13.0.1
     # via playwright
 pypdfium2==5.13.0
     # via pdfplumber

@@ -928,7 +928,13 @@ def run_invoice_redownload(
                         reread_status = getattr(reread_ok, "status", "")
                         if reread_ok:
                             raw_status = reread_status or "recorded"
-                            if raw_status == "duplicate":
+                            diagnostics = getattr(downloader, "last_download_diagnostics", {}) or {}
+                            attempted = int(diagnostics.get("attempted", 0) or 0)
+                            download_failures = int(diagnostics.get("failed", 0) or 0)
+                            if raw_status == "duplicate" or (
+                                raw_status in {"metadata_refreshed", "manual_required", "recorded"}
+                                and attempted > 0 and download_failures > 0
+                            ):
                                 refreshed = db.get_invoice(inv_id)
                                 refreshed_att_path = refreshed.get("attachment_path") if refreshed else None
                                 resolved_path = _resolve_stored_attachment(refreshed_att_path, runtime_dir) if refreshed_att_path else None
