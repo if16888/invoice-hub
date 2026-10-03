@@ -1992,8 +1992,11 @@ class InvoiceWorkflowTests(unittest.TestCase):
             with patch.object(dl, "_download_url", side_effect=fake_download):
                 results = dl.download_from_email(msg, 77, "2026-06-13")
 
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].filename, "invoice.pdf")
+            # RR-1: Both PDF and OFD from the same email are retained
+            self.assertEqual(len(results), 2)
+            result_filenames = [r.filename for r in results]
+            self.assertIn("invoice.pdf", result_filenames)
+            self.assertIn("invoice.ofd", result_filenames)
 
     def test_process_email_prefers_downloaded_pdf_over_failed_ofd(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2072,9 +2075,10 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 )
                 rows = db.get_all_invoices()
 
-            self.assertEqual(recorded, 1)
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["invoice_number"], "PAIR-001")
+            # RR-1: Both PDF (parsed invoice) and OFD (source artifact record) are preserved
+            self.assertEqual(recorded, 2)
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(any(r["invoice_number"] == "PAIR-001" for r in rows))
 
     def test_excel_export_adds_summary_exception_sheet_and_file_links(self):
         rows = [
