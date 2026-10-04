@@ -50,8 +50,12 @@ VISIBLE_COLUMN_DEFINITIONS = (
 COLUMN_KEYS = tuple(item[0] for item in COLUMN_DEFINITIONS)
 COLUMN_LABELS = {key: label for key, label, _kind in COLUMN_DEFINITIONS}
 COLUMN_LABELS["review_status"] = "状态"
+COLUMN_LABELS["missing_extra"] = "证明材料"
+COLUMN_LABELS["buyer_warning"] = "购买方"
 COLUMN_KINDS = {key: kind for key, _label, kind in COLUMN_DEFINITIONS}
 COLUMN_KINDS["review_status"] = "values"
+COLUMN_KINDS["missing_extra"] = "values"
+COLUMN_KINDS["buyer_warning"] = "values"
 CLAIM_GROUP_FIELD_KEYS = ("claim_name", "claim_group_name", "claim_group")
 
 
@@ -69,6 +73,10 @@ def column_value(row: dict, key: str, value_getters: dict[str, ValueGetter] | No
         return ""
     if key == "expense_date":
         return str(row.get("expense_date") or row.get("invoice_date") or "").strip()
+    if key == "missing_extra":
+        return "缺证明" if bool(row.get("missing_extra")) else "正常"
+    if key == "buyer_warning":
+        return "异常" if bool(row.get("buyer_warning")) else "正常"
     return str(row.get(key) or "").strip()
 
 

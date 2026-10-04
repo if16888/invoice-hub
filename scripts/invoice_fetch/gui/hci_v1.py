@@ -282,9 +282,6 @@ def _dashboard_counts(window) -> dict[str, int]:
         except Exception:
             invoices = []
         for invoice in invoices:
-            status = str(invoice.get("review_status") or TO_REVIEW)
-            if status not in {TO_REVIEW, ERROR}:
-                continue
             if bool(invoice.get("missing_extra")):
                 missing += 1
             warning = getattr(window, "_buyer_warning", None)
@@ -295,7 +292,6 @@ def _dashboard_counts(window) -> dict[str, int]:
                 except Exception:
                     pass
 
-    missing = max(missing, int(metrics.get("needs_fix", 0) or 0))
     return {
         "to_review": to_review,
         "missing_evidence": missing,
@@ -305,7 +301,13 @@ def _dashboard_counts(window) -> dict[str, int]:
     }
 
 
-def _switch_to_review(window, status: str = TO_REVIEW, *, continuous: bool = False) -> None:
+def _switch_to_review(
+    window,
+    status: str = TO_REVIEW,
+    *,
+    continuous: bool = False,
+    extra_filters: dict | None = None,
+) -> None:
     switcher = getattr(window, "_switch_main_page", None)
     if callable(switcher):
         switcher("review")
@@ -313,14 +315,36 @@ def _switch_to_review(window, status: str = TO_REVIEW, *, continuous: bool = Fal
     def after_switch() -> None:
         if not isValid(window):
             return
+
+        # Ensure continuous review mode is exited when jumping in non-continuous mode
+        if not continuous:
+            exit_review = getattr(window, "_exit_hci_continuous_review", None)
+            if callable(exit_review):
+                exit_review()
+
         # Dashboard counts describe all live invoices. A previous review search
         # or column filter must not hide the tasks the user just selected.
         resetter = getattr(window, "_reset_invoice_filters", None)
         if callable(resetter):
             resetter()
+
+        if extra_filters:
+            if hasattr(window, "column_filters"):
+                window.column_filters.update(extra_filters)
+            sync_cb = getattr(window, "_sync_column_filters_to_checkboxes", None)
+            if callable(sync_cb):
+                sync_cb()
+            refresh_headers = getattr(window, "_refresh_column_filter_headers", None)
+            if callable(refresh_headers):
+                refresh_headers()
+            update_chips = getattr(window, "_update_filter_summary_chips", None)
+            if callable(update_chips):
+                update_chips()
+
         changer = getattr(window, "_change_filter", None)
         if callable(changer):
             changer(status)
+
         if continuous:
             enter = getattr(window, "_enter_hci_continuous_review", None)
             if callable(enter):
@@ -332,8 +356,24 @@ def _switch_to_review(window, status: str = TO_REVIEW, *, continuous: bool = Fal
 def _dashboard_task_clicked(window, key: str) -> None:
     if key == "parse_error":
         _switch_to_review(window, ERROR, continuous=False)
-        return
-    _switch_to_review(window, TO_REVIEW, continuous=True)
+    elif key == "to_review":
+        _switch_to_review(window, TO_REVIEW, continuous=False)
+    elif key == "missing_evidence":
+        _switch_to_review(
+            window,
+            "all",
+            continuous=False,
+            extra_filters={"missing_extra": {"values": {"缺证明"}}},
+        )
+    elif key == "buyer_mismatch":
+        _switch_to_review(
+            window,
+            "all",
+            continuous=False,
+            extra_filters={"buyer_warning": {"values": {"异常"}}},
+        )
+    else:
+        _switch_to_review(window, TO_REVIEW, continuous=False)
 
 
 def _sync_dashboard_hci(window) -> None:
@@ -622,13 +662,12 @@ def _exit_hci_continuous_review(window) -> None:
             header.set_title("发票审核")
             header.set_subtitle("逐张确认原件、状态和报销组，处理完成后再进入导出。")
 
-    visibility = getattr(window, "_hci_review_visibility_restore", {}) or {}
     upper = getattr(window, "left_upper_widget", None)
     filter_bar = getattr(window, "filter_bar_widget", None)
     if upper is not None:
-        upper.setVisible(bool(visibility.get("upper", True)))
+        upper.setVisible(True)
     if filter_bar is not None:
-        filter_bar.setVisible(bool(visibility.get("filter", True)))
+        filter_bar.setVisible(True)
 
     bar = getattr(window, "hci_review_mode_bar", None)
     if bar is not None:
@@ -638,6 +677,15 @@ def _exit_hci_continuous_review(window) -> None:
         getattr(window, "btn_hci_exit_review").hide()
         getattr(window, "lbl_hci_review_shortcuts").hide()
         _repolish(bar)
+
+    preview = getattr(window, "preview_panel", None)
+    if preview is not None:
+        preview.setProperty("hciContinuousReview", False)
+        _repolish(preview)
+    detail = getattr(window, "_detail_panel", None)
+    if detail is not None:
+        detail.setProperty("hciContinuousReview", False)
+        _repolish(detail)
 
 
 def apply_review_hci_v1(page: QWidget | None) -> None:

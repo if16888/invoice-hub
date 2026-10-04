@@ -563,6 +563,132 @@ class HciV1DesktopTests(unittest.TestCase):
                 window.deleteLater()
                 self.app.processEvents()
 
+    def test_dashboard_task_card_clicks_navigate_without_stuck_continuous_review(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.config = {
+                    "reimbursement": {
+                        "strict_buyer_check": True,
+                        "buyer_name": "TargetCorp",
+                    }
+                }
+                if window.db is not None:
+                    window.db.set_buyer_warning_checker(lambda inv: bool(window._buyer_warning(inv)))
+
+                window.db.insert_invoice({
+                    "invoice_number": "INV-NORMAL",
+                    "total_amount": "10.00",
+                    "seller_name": "Seller A",
+                    "buyer_name": "TargetCorp",
+                    "review_status": TO_REVIEW,
+                    "missing_extra": 0,
+                })
+                window.db.insert_invoice({
+                    "invoice_number": "INV-ERR",
+                    "total_amount": "20.00",
+                    "seller_name": "Seller B",
+                    "buyer_name": "TargetCorp",
+                    "review_status": ERROR,
+                    "missing_extra": 0,
+                })
+                window.db.insert_invoice({
+                    "invoice_number": "INV-MISSING",
+                    "total_amount": "30.00",
+                    "seller_name": "Seller C",
+                    "buyer_name": "TargetCorp",
+                    "review_status": IGNORED,
+                    "missing_extra": 1,
+                })
+                window.db.insert_invoice({
+                    "invoice_number": "INV-MISMATCH",
+                    "total_amount": "40.00",
+                    "seller_name": "Seller D",
+                    "buyer_name": "WrongCorp",
+                    "review_status": APPROVED,
+                    "missing_extra": 0,
+                })
+                window.db._conn.commit()
+
+                # Verify dashboard counts
+                from scripts.invoice_fetch.gui.hci_v1 import _dashboard_counts, _dashboard_task_clicked
+                counts = _dashboard_counts(window)
+                self.assertEqual(counts["to_review"], 1)
+                self.assertEqual(counts["parse_error"], 1)
+                self.assertEqual(counts["missing_evidence"], 1)
+                self.assertEqual(counts["buyer_mismatch"], 1)
+
+                # Test 1: Click missing_evidence card
+                window._switch_main_page("overview")
+                for _ in range(5):
+                    self.app.processEvents()
+
+                _dashboard_task_clicked(window, "missing_evidence")
+                for _ in range(10):
+                    self.app.processEvents()
+
+                self.assertFalse(window.review_page.property("hciContinuousReview"))
+                self.assertTrue(window.left_upper_widget.isVisible())
+                self.assertTrue(window.filter_bar_widget.isVisible())
+                self.assertTrue(window.chk_missing_evidence.isChecked())
+                self.assertEqual(window.table.rowCount(), 1)
+                self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-MISSING")
+
+                # Test 2: Click buyer_mismatch card
+                window._switch_main_page("overview")
+                for _ in range(5):
+                    self.app.processEvents()
+
+                _dashboard_task_clicked(window, "buyer_mismatch")
+                for _ in range(10):
+                    self.app.processEvents()
+
+                self.assertFalse(window.review_page.property("hciContinuousReview"))
+                self.assertTrue(window.left_upper_widget.isVisible())
+                self.assertTrue(window.filter_bar_widget.isVisible())
+                self.assertTrue(window.chk_buyer_mismatch.isChecked())
+                self.assertEqual(window.table.rowCount(), 1)
+                self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-MISMATCH")
+
+                # Test 3: Click parse_error card
+                window._switch_main_page("overview")
+                for _ in range(5):
+                    self.app.processEvents()
+
+                _dashboard_task_clicked(window, "parse_error")
+                for _ in range(10):
+                    self.app.processEvents()
+
+                self.assertFalse(window.review_page.property("hciContinuousReview"))
+                self.assertEqual(window.current_filter_status, ERROR)
+                self.assertEqual(window.table.rowCount(), 1)
+                self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-ERR")
+
+                # Test 4: Enter continuous review, then jump to missing_evidence -> must exit continuous review
+                window._enter_hci_continuous_review()
+                for _ in range(5):
+                    self.app.processEvents()
+                self.assertTrue(window.review_page.property("hciContinuousReview"))
+
+                _dashboard_task_clicked(window, "missing_evidence")
+                for _ in range(10):
+                    self.app.processEvents()
+                self.assertFalse(window.review_page.property("hciContinuousReview"))
+                self.assertTrue(window.left_upper_widget.isVisible())
+                self.assertTrue(window.filter_bar_widget.isVisible())
+
+                # Test 5: Reset filters clears checkboxes
+                window._reset_invoice_filters()
+                self.assertFalse(window.chk_missing_evidence.isChecked())
+                self.assertFalse(window.chk_buyer_mismatch.isChecked())
+                self.assertNotIn("missing_extra", window.column_filters)
+                self.assertNotIn("buyer_warning", window.column_filters)
+            finally:
+                window.db.close()
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,7 @@ SQLITE_CONNECT_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_MS / 1_000
 _REVIEW_FILTER_KEYS = {
     "status", "expense_date", "total_amount", "invoice_number",
     "seller_name", "category", "source", "claim_name", "review_status",
+    "missing_extra", "buyer_warning",
 }
 
 
@@ -159,6 +160,10 @@ class InvoiceDB:
             timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
         )
         self._conn.row_factory = sqlite3.Row
+        self._buyer_warning_checker = None
+        self._conn.create_function(
+            "review_buyer_has_warning", 1, self._eval_buyer_warning, deterministic=False
+        )
         self._conn.create_function(
             "review_amount_at_least", 2,
             lambda value, boundary: _review_amount_compare(value, boundary, 1),
@@ -195,6 +200,19 @@ class InvoiceDB:
     def is_open(self) -> bool:
         """Return True if the database connection is open and active."""
         return self._conn is not None
+
+    def set_buyer_warning_checker(self, checker) -> None:
+        """Register an in-memory predicate Callable[[dict], bool] to evaluate buyer warnings."""
+        self._buyer_warning_checker = checker
+
+    def _eval_buyer_warning(self, buyer_name: object) -> int:
+        checker = getattr(self, "_buyer_warning_checker", None)
+        if callable(checker):
+            try:
+                return 1 if checker({"buyer_name": str(buyer_name or "")}) else 0
+            except Exception:
+                return 0
+        return 0
 
     def __enter__(self):
         return self
@@ -1229,6 +1247,18 @@ class InvoiceDB:
                          OR TRIM(COALESCE(i.seller_name, '')) = '' THEN '待补全'
                     WHEN TRIM(COALESCE(i.attachment_path, '')) = '' THEN '缺原件'
                     WHEN COALESCE(i.missing_extra, 0) <> 0 THEN '缺证明'
+                    ELSE '正常'
+                END
+            """,
+            "missing_extra": """
+                CASE
+                    WHEN COALESCE(i.missing_extra, 0) <> 0 THEN '缺证明'
+                    ELSE '正常'
+                END
+            """,
+            "buyer_warning": """
+                CASE
+                    WHEN review_buyer_has_warning(COALESCE(i.buyer_name, '')) = 1 THEN '异常'
                     ELSE '正常'
                 END
             """,

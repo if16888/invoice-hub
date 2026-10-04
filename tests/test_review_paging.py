@@ -229,6 +229,46 @@ class ReviewPagingTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_scroll_towards_bottom_loads_next_page_and_preserves_scroll_position(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td, count=125)
+            try:
+                window.table.selectRow(7)
+                window._on_table_selection_changed()
+                self._events()
+                selected_id = window.current_invoice["id"]
+                sb = window.table.verticalScrollBar()
+                self.assertGreater(sb.maximum(), 0)
+
+                # Simulate scrolling down towards the bottom
+                sb.setValue(sb.maximum())
+                self._events()
+                saved_scroll = sb.value()
+
+                # Trigger scroll check
+                window._maybe_load_more_invoices(sb.value())
+                QTest.qWait(150)
+                self._events()
+
+                self.assertGreaterEqual(len(window.invoices_list), 100)
+                self.assertEqual(window.current_invoice["id"], selected_id)
+                self.assertEqual(window.table.currentRow(), 7)
+                self.assertEqual(sb.value(), saved_scroll)
+            finally:
+                window.close()
+
+    def test_click_record_count_loads_all_invoices(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self._window(td, count=125)
+            try:
+                self.assertEqual(len(window.invoices_list), 50)
+                QTest.mouseClick(window.lbl_record_count, Qt.LeftButton)
+                self._events()
+                self.assertEqual(len(window.invoices_list), 125)
+                self.assertIn("125", window.lbl_record_count.text())
+            finally:
+                window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

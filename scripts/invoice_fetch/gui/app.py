@@ -668,6 +668,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if self.splash:
             self.splash.show_message("正在打开本地数据库...", 40)
         self.db = InvoiceDB(db_path)
+        self.db.set_buyer_warning_checker(lambda inv: bool(self._buyer_warning(inv)))
         self._data_operation_gate = DataOperationGate()
         self.config = load_config_safe()
         self._export_dir = resolve_export_directory(self.config)
@@ -1848,6 +1849,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_needs_fix.setDefaultWidget(self.chk_needs_fix)
         self.advanced_filter_menu.addAction(action_needs_fix)
 
+        self.chk_missing_evidence = QCheckBox("缺证明材料", self)
+        self.chk_missing_evidence.stateChanged.connect(self._on_chk_missing_evidence_changed)
+        action_missing = QWidgetAction(self)
+        action_missing.setDefaultWidget(self.chk_missing_evidence)
+        self.advanced_filter_menu.addAction(action_missing)
+
+        self.chk_buyer_mismatch = QCheckBox("购买方异常", self)
+        self.chk_buyer_mismatch.stateChanged.connect(self._on_chk_buyer_mismatch_changed)
+        action_buyer = QWidgetAction(self)
+        action_buyer.setDefaultWidget(self.chk_buyer_mismatch)
+        self.advanced_filter_menu.addAction(action_buyer)
+
         self.chk_show_deleted = QCheckBox("显示已删除", self)
         self.chk_show_deleted.stateChanged.connect(self._schedule_invoice_reload)
         action_show_deleted = QWidgetAction(self)
@@ -1907,6 +1920,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         record_header_layout.addWidget(self.lbl_record_section_title)
         self.lbl_record_count = QLabel("当前 0 / 0")
         self.lbl_record_count.setObjectName("InvoiceRecordMeta")
+
+        def on_record_count_clicked(event):
+            if event.button() == Qt.LeftButton:
+                shown = len(getattr(self, "invoices_list", []) or [])
+                total = int(getattr(self, "_record_total_matching", shown) or shown)
+                if shown < total:
+                    self._load_all_invoices_clicked()
+                    event.accept()
+                    return
+            QLabel.mousePressEvent(self.lbl_record_count, event)
+
+        self.lbl_record_count.mousePressEvent = on_record_count_clicked
         record_header_layout.addWidget(self.lbl_record_count)
         record_header_layout.addStretch(1)
         self.lbl_record_sort = QLabel("按费用日期倒序")
@@ -2406,6 +2431,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Block signals to prevent redundant loads during reset
         self.chk_unlinked.blockSignals(True)
         self.chk_needs_fix.blockSignals(True)
+        if hasattr(self, "chk_missing_evidence"):
+            self.chk_missing_evidence.blockSignals(True)
+            self.chk_missing_evidence.setChecked(False)
+            self.chk_missing_evidence.blockSignals(False)
+        if hasattr(self, "chk_buyer_mismatch"):
+            self.chk_buyer_mismatch.blockSignals(True)
+            self.chk_buyer_mismatch.setChecked(False)
+            self.chk_buyer_mismatch.blockSignals(False)
         self.chk_unlinked.setChecked(False)
         self.chk_needs_fix.setChecked(False)
         self.chk_unlinked.blockSignals(False)
@@ -2437,6 +2470,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "status": self._get_invoice_data_status,
             "source": self._get_invoice_source,
             "review_status": self._get_invoice_review_status_chinese,
+            "missing_extra": lambda inv: "缺证明" if bool(inv.get("missing_extra")) else "正常",
+            "buyer_warning": lambda inv: "异常" if bool(self._buyer_warning(inv)) else "正常",
         }
 
     def _refresh_column_filter_headers(self):
@@ -2547,6 +2582,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if table is not None and obj in (table, table.viewport()):
             if event.type() == QEvent.MouseButtonPress:
                 table.setFocus(Qt.MouseFocusReason)
+            if event.type() == QEvent.Wheel and event.angleDelta().y() < 0:
+                scrollbar = table.verticalScrollBar()
+                if scrollbar is not None and scrollbar.maximum() > 0:
+                    threshold = (
+                        max(150, scrollbar.pageStep() // 2)
+                        if table.verticalScrollMode() == QAbstractItemView.ScrollPerPixel
+                        else 5
+                    )
+                    if scrollbar.value() >= scrollbar.maximum() - threshold:
+                        self._maybe_load_more_invoices(scrollbar.value())
             if event.type() in (QEvent.ShortcutOverride, QEvent.KeyPress):
                 if event.key() in (Qt.Key_Up, Qt.Key_Down) and event.modifiers() == Qt.NoModifier:
                     # The invoice table owns arrow navigation, including paging.
@@ -3959,6 +4004,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._end_data_operation("数据库恢复")
         if not restored_db or safety_backup is None:
             return
+        if self.db is not None:
+            self.db.set_buyer_warning_checker(lambda inv: bool(self._buyer_warning(inv)))
         self._load_invoices()
         self._load_claims()
         self._refresh_overview_page()
@@ -5869,7 +5916,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         scrollbar = self.table.verticalScrollBar()
         if scrollbar is None or scrollbar.maximum() <= 0:
             return
-        threshold = 10
+        if self.table.verticalScrollMode() == QAbstractItemView.ScrollPerPixel:
+            threshold = max(150, scrollbar.pageStep() // 2)
+        else:
+            threshold = 5
         if value < scrollbar.maximum() - threshold:
             return
         if getattr(self, "_is_loading_more_invoices", False):
@@ -5891,14 +5941,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         QTimer.singleShot(100, self._append_next_invoice_batch)
 
     def _append_next_invoice_batch(self):
-        paging = getattr(self, "review_paging", None)
-        if paging is not None and not getattr(self, "_paging_append_in_progress", False):
-            self._paging_append_in_progress = True
-            try:
-                return paging.append_next_batch()
-            finally:
-                self._paging_append_in_progress = False
-        return self._append_next_invoice_batch_impl()
+        try:
+            paging = getattr(self, "review_paging", None)
+            if paging is not None and not getattr(self, "_paging_append_in_progress", False):
+                self._paging_append_in_progress = True
+                try:
+                    return paging.append_next_batch()
+                finally:
+                    self._paging_append_in_progress = False
+            return self._append_next_invoice_batch_impl()
+        finally:
+            self._is_loading_more_invoices = False
 
     def _append_next_invoice_batch_impl(self):
         selected_id = None
@@ -5906,17 +5959,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         advance_to_next_row = selected_row == len(getattr(self, "invoices_list", []) or []) - 1
         if 0 <= selected_row < len(getattr(self, "invoices_list", []) or []):
             selected_id = self.invoices_list[selected_row].get("id")
+        saved_scroll_value = (
+            self.table.verticalScrollBar().value()
+            if hasattr(self, "table") and self.table and self.table.verticalScrollBar()
+            else 0
+        )
         try:
             if not hasattr(self, "db") or self.db is None:
                 return
             self._limited_first_load_active = False
             self._is_first_load = False
             self._load_invoices(append=True)
-            target_row = selected_row + 1 if advance_to_next_row else -1
-            if target_row < 0 and selected_id is not None:
-                target_row = next((row for row, invoice in enumerate(self.invoices_list) if invoice.get("id") == selected_id), -1)
-            if 0 <= target_row < len(self.invoices_list):
-                self._ensure_single_row_selection(target_row)
+            if advance_to_next_row:
+                target_row = selected_row + 1
+                if 0 <= target_row < len(self.invoices_list):
+                    self._ensure_single_row_selection(target_row)
+            else:
+                if hasattr(self, "table") and self.table and self.table.verticalScrollBar():
+                    self.table.verticalScrollBar().setValue(saved_scroll_value)
         finally:
             self._is_loading_more_invoices = False
             self._update_record_header_summary()
@@ -5933,6 +5993,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else:
                 count_text = f"当前筛选 {state.visible_count} 张"
             self.lbl_record_count.setText(count_text)
+            if state.loaded_count < state.query_total:
+                self.lbl_record_count.setToolTip("点击可直接加载全部发票，也可向下滚动自动加载")
+                self.lbl_record_count.setCursor(Qt.PointingHandCursor)
+            else:
+                self.lbl_record_count.setToolTip("")
+                self.lbl_record_count.setCursor(Qt.ArrowCursor)
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if state.selected_count <= 0 else f"已选 {state.selected_count} 张")
 
@@ -5954,6 +6020,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._update_filter_summary_chips()
         self._load_invoices()
 
+    def _on_chk_missing_evidence_changed(self, state):
+        if state == Qt.Checked or state == 2:
+            self.column_filters["missing_extra"] = {"values": {"缺证明"}}
+        else:
+            self.column_filters.pop("missing_extra", None)
+        self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
+        self._load_invoices()
+
+    def _on_chk_buyer_mismatch_changed(self, state):
+        if state == Qt.Checked or state == 2:
+            self.column_filters["buyer_warning"] = {"values": {"异常"}}
+        else:
+            self.column_filters.pop("buyer_warning", None)
+        self._refresh_column_filter_headers()
+        self._update_filter_summary_chips()
+        self._load_invoices()
+
     def _sync_column_filters_to_checkboxes(self):
         if hasattr(self, "chk_needs_fix"):
             self.chk_needs_fix.blockSignals(True)
@@ -5964,6 +6048,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             else:
                 self.chk_needs_fix.setChecked(False)
             self.chk_needs_fix.blockSignals(False)
+
+        if hasattr(self, "chk_missing_evidence"):
+            self.chk_missing_evidence.blockSignals(True)
+            missing_filter = self.column_filters.get("missing_extra")
+            if missing_filter and "values" in missing_filter:
+                self.chk_missing_evidence.setChecked(set(missing_filter["values"]) == {"缺证明"})
+            else:
+                self.chk_missing_evidence.setChecked(False)
+            self.chk_missing_evidence.blockSignals(False)
+
+        if hasattr(self, "chk_buyer_mismatch"):
+            self.chk_buyer_mismatch.blockSignals(True)
+            buyer_filter = self.column_filters.get("buyer_warning")
+            if buyer_filter and "values" in buyer_filter:
+                self.chk_buyer_mismatch.setChecked(set(buyer_filter["values"]) == {"异常"})
+            else:
+                self.chk_buyer_mismatch.setChecked(False)
+            self.chk_buyer_mismatch.blockSignals(False)
 
         if hasattr(self, "chk_unlinked"):
             self.chk_unlinked.blockSignals(True)
@@ -6004,6 +6106,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     if len(summary) > 15:
                         summary = summary[:12] + "..."
                     chips_to_add.append((f"{label}: {summary}", key))
+            elif key == "missing_extra":
+                vals = set(spec.get("values") or ())
+                if vals == {"缺证明"}:
+                    chips_to_add.append(("缺证明材料", key))
+                else:
+                    summary = ",".join(sorted(vals))
+                    chips_to_add.append((f"证明材料: {summary}", key))
+            elif key == "buyer_warning":
+                vals = set(spec.get("values") or ())
+                if vals == {"异常"}:
+                    chips_to_add.append(("购买方异常", key))
+                else:
+                    summary = ",".join(sorted(vals))
+                    chips_to_add.append((f"购买方: {summary}", key))
             elif "values" in spec:
                 vals = set(spec["values"] or ())
                 summary = ",".join(sorted(vals))
@@ -6265,6 +6381,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _load_invoices(self, *, append=False, preserve_invoice_id=_SELECTION_ID_UNSET):
         if not self._persist_invoice_note():
             return
+        if not append:
+            self._is_loading_more_invoices = False
         # SQLite owns review filtering, counting, ordering, and page boundaries.
         self._sync_review_filter_control()
         performance_trace = self._performance_probe.begin("list_refresh")
@@ -6367,16 +6485,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.setUpdatesEnabled(False)
         self.table.blockSignals(True)
         try:
-            self.table.clearSelection()
-            self.table.setCurrentItem(None)
-            if self.table.selectionModel() is not None:
-                self.table.selectionModel().clearCurrentIndex()
+            if not append:
+                self.table.clearSelection()
+                self.table.setCurrentItem(None)
+                if self.table.selectionModel() is not None:
+                    self.table.selectionModel().clearCurrentIndex()
             if performance_trace is not None:
                 performance_trace.mark("row_allocation")
             self.table.setRowCount(len(self.invoices_list))
             if performance_trace is not None:
                 performance_trace.mark("item_population")
-            for idx, inv in enumerate(self.invoices_list):
+            start_idx = offset if append else 0
+            for idx in range(start_idx, len(self.invoices_list)):
+                inv = self.invoices_list[idx]
                 inv_num = str(inv.get("invoice_number") or "")
                 inv_date = str(inv.get("invoice_date") or "")
                 expense_date = str(inv.get("expense_date") or "")
@@ -6524,42 +6645,43 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._set_right_panel_state(False)
         else:
             self.left_stack.setCurrentWidget(self.table)
-            target_row = -1
-            if prev_id is not None:
-                for idx, inv in enumerate(self.invoices_list):
-                    if inv.get("id") == prev_id:
-                        target_row = idx
-                        break
+            if not append:
+                target_row = -1
+                if prev_id is not None:
+                    for idx, inv in enumerate(self.invoices_list):
+                        if inv.get("id") == prev_id:
+                            target_row = idx
+                            break
 
-            # Clear selection and focus to prevent carryover of multi-selection
-            self.table.clearSelection()
-            self.table.setCurrentItem(None)
-            if self.table.selectionModel() is not None:
-                self.table.selectionModel().clearCurrentIndex()
+                # Clear selection and focus to prevent carryover of multi-selection
+                self.table.clearSelection()
+                self.table.setCurrentItem(None)
+                if self.table.selectionModel() is not None:
+                    self.table.selectionModel().clearCurrentIndex()
 
-            if target_row == -1 and len(self.invoices_list) > 0:
-                # Use row hint from delete operation if available, else fall back to row 0
-                hint = getattr(self, "_select_row_hint", -1)
-                if hint < 0:
-                    hint = prev_row
-                if hint >= 0:
-                    target_row = min(hint, len(self.invoices_list) - 1)
-                else:
-                    target_row = 0
-            # Consume the hint after use so it doesn't affect unrelated reloads
-            self._select_row_hint = -1
-            if target_row != -1:
-                self.table.blockSignals(True)
-                try:
-                    self._apply_single_row_selection(target_row)
-                finally:
-                    self.table.blockSignals(False)
-                self._ensure_single_row_selection(target_row)
-                self._on_table_selection_changed()
-                selection_model = self.table.selectionModel()
-                if selection_model is not None and not selection_model.selectedRows():
-                    self._apply_single_row_selection(target_row)
+                if target_row == -1 and len(self.invoices_list) > 0:
+                    # Use row hint from delete operation if available, else fall back to row 0
+                    hint = getattr(self, "_select_row_hint", -1)
+                    if hint < 0:
+                        hint = prev_row
+                    if hint >= 0:
+                        target_row = min(hint, len(self.invoices_list) - 1)
+                    else:
+                        target_row = 0
+                # Consume the hint after use so it doesn't affect unrelated reloads
+                self._select_row_hint = -1
+                if target_row != -1:
+                    self.table.blockSignals(True)
+                    try:
+                        self._apply_single_row_selection(target_row)
+                    finally:
+                        self.table.blockSignals(False)
+                    self._ensure_single_row_selection(target_row)
                     self._on_table_selection_changed()
+                    selection_model = self.table.selectionModel()
+                    if selection_model is not None and not selection_model.selectedRows():
+                        self._apply_single_row_selection(target_row)
+                        self._on_table_selection_changed()
             self._set_right_panel_state(True)
 
         # Synchronously refresh the status bar to reflect the current limited-load state,
