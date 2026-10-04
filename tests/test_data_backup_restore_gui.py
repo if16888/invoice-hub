@@ -251,6 +251,63 @@ class DataBackupRestoreGuiTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_settings_database_restore_failure_preserves_original_buyer_warning_filter(self):
+        test_cfg = {
+            "reimbursement": {
+                "strict_buyer_check": True,
+                "buyer_name": "TargetCorp",
+            }
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            window = self.make_window(root)
+            try:
+                with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=test_cfg):
+                    window.config = test_cfg
+                    window.db.insert_invoice({
+                        "invoice_number": "INV-OK",
+                        "total_amount": "100.00",
+                        "buyer_name": "TargetCorp",
+                        "seller_name": "Seller A",
+                    })
+                    window.db.insert_invoice({
+                        "invoice_number": "INV-MISMATCH",
+                        "total_amount": "200.00",
+                        "buyer_name": "WrongCorp",
+                        "seller_name": "Seller B",
+                    })
+                    window.db._conn.commit()
+                    window._load_invoices()
+
+                    from scripts.invoice_fetch.gui.hci_v1 import _dashboard_counts
+                    self.assertEqual(_dashboard_counts(window)["buyer_mismatch"], 1)
+
+                    with patch.object(QMessageBox, "information", return_value=QMessageBox.Ok):
+                        window._create_database_backup_from_settings()
+                    backups = list((root / "backups").glob("*.db"))
+                    self.assertEqual(len(backups), 1)
+                    selected = backups[0]
+
+                    with (
+                        patch("scripts.invoice_fetch.gui.app.QFileDialog.getOpenFileName", return_value=(str(selected), "")),
+                        patch.object(QMessageBox, "question", return_value=QMessageBox.Yes),
+                        patch.object(QMessageBox, "critical", return_value=QMessageBox.Ok) as mock_critical,
+                        patch("scripts.invoice_fetch.gui.app.restore_verified_database_backup", side_effect=RuntimeError("Simulated restore failure")),
+                    ):
+                        window._restore_database_backup_from_settings()
+                        mock_critical.assert_called_once()
+
+                    self.assertTrue(window.db.is_open)
+                    self.assertIsNotNone(getattr(window.db, "_buyer_warning_checker", None))
+                    self.assertEqual(_dashboard_counts(window)["buyer_mismatch"], 1)
+
+                    window.column_filters = {"buyer_warning": {"values": {"异常"}}}
+                    window._load_invoices()
+                    self.assertEqual(len(window.invoices_list), 1)
+                    self.assertEqual(window.invoices_list[0]["invoice_number"], "INV-MISMATCH")
+            finally:
+                window.close()
+
     def test_complete_backup_restore_preserves_buyer_warning_filter_and_dashboard_counts(self):
         test_cfg = {
             "reimbursement": {
