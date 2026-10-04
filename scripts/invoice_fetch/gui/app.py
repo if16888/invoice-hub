@@ -667,10 +667,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.db_path = db_path
         if self.splash:
             self.splash.show_message("正在打开本地数据库...", 40)
-        self.db = InvoiceDB(db_path)
-        self.db.set_buyer_warning_checker(lambda inv: bool(self._buyer_warning(inv)))
-        self._data_operation_gate = DataOperationGate()
         self.config = load_config_safe()
+        self._open_database(db_path)
+        self._data_operation_gate = DataOperationGate()
         self._export_dir = resolve_export_directory(self.config)
         self._legacy_exports = (
             PROJECT_ROOT / "exports"
@@ -3798,6 +3797,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if performance_trace is not None:
             performance_trace.finish("layout_schedule", surface="settings")
 
+    def _open_database(self, db_path: str | Path | None = None) -> InvoiceDB:
+        """Open or reopen the invoice database and attach required runtime callbacks."""
+        target_path = Path(db_path) if db_path is not None else Path(self.db_path)
+        db = InvoiceDB(target_path)
+        db.set_buyer_warning_checker(lambda inv: bool(self._buyer_warning(inv)))
+        self.db = db
+        return db
+
     @staticmethod
     def _validate_database_reopen(path: Path) -> None:
         candidate = None
@@ -3872,7 +3879,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         result = self._complete_backup_result_path
         if mode == "restore":
             try:
-                self.db = InvoiceDB(self.db_path)
+                self._open_database()
                 self._load_invoices()
                 self._load_claims()
                 self._refresh_overview_page()
@@ -3972,7 +3979,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 backup_dir=backup_dir,
                 reopen_validator=self._validate_database_reopen,
             )
-            self.db = InvoiceDB(self.db_path)
+            self._open_database()
             restored_db = True
         except Exception as exc:
             _log.warning("database restore failed: %s", type(exc).__name__)
@@ -3990,7 +3997,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 except Exception:
                     _log.warning("database restore rollback retry failed", exc_info=True)
             try:
-                self.db = InvoiceDB(self.db_path)
+                self._open_database()
                 restored_db = True
             except Exception:
                 _log.error("database could not be reopened after restore failure", exc_info=True)
@@ -4004,8 +4011,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._end_data_operation("数据库恢复")
         if not restored_db or safety_backup is None:
             return
-        if self.db is not None:
-            self.db.set_buyer_warning_checker(lambda inv: bool(self._buyer_warning(inv)))
         self._load_invoices()
         self._load_claims()
         self._refresh_overview_page()

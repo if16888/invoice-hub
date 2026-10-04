@@ -328,6 +328,7 @@ def test_complete_backup_gui_reopens_database_and_releases_operation_gate(window
         assert view.center_stack.isEnabled()
         assert view.db.get_invoice(invoice_id)["confirmed_note"] == "Synthetic before backup"
         assert not view._data_operation_busy_reason()
+        assert getattr(view.db, "_buyer_warning_checker", None) is not None
         warning.assert_not_called()
         critical.assert_not_called()
 
