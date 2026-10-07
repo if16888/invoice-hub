@@ -143,6 +143,7 @@ def run_invoice_reparse(
                                 "local import",
                                 info.seller_name,
                                 request.categories,
+                                db=db,
                             )
                             reconciliation = reconcile_reparsed_invoice(
                                 db,
@@ -154,6 +155,9 @@ def run_invoice_reparse(
                                 total_amount=info.total_amount,
                                 seller_name=info.seller_name,
                                 buyer_name=info.buyer_name,
+                                buyer_tax_id=getattr(info, "buyer_tax_id", None),
+                                tax_amount=getattr(info, "tax_amount", None),
+                                tax_rate=getattr(info, "tax_rate", None),
                                 invoice_type=(
                                     info.invoice_type
                                     or snapshot.invoice_type
@@ -163,6 +167,7 @@ def run_invoice_reparse(
                                 has_extra=snapshot.has_extra,
                                 extra_type=extra_type,
                                 missing_extra=extra_required,
+                                evidence_required=extra_required,
                                 parse_success=True,
                                 parse_note=info.parse_note or "重新解析",
                                 item_name=getattr(info, "item_name", ""),

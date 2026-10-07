@@ -124,7 +124,36 @@ def _classify(subject: str, sender: str, seller: str,
               categories: dict, item_name: str | None = None,
               invoice_type: str | None = None,
               raw_text: str | None = None,
-              parse_note: str | None = None) -> tuple[str, str, bool]:
+              parse_note: str | None = None,
+              *, db: InvoiceDB | None = None) -> tuple[str, str, bool]:
+    """Prefer explicit seller memories while retaining evidence requirements."""
+    category, extra_type, extra_required = _classify_rules(
+        subject, sender, seller, categories, item_name, invoice_type, raw_text, parse_note,
+    )
+    lookup = getattr(db, "get_seller_category", None)
+    preferred = lookup(seller) if callable(lookup) else ""
+    if isinstance(preferred, str) and preferred:
+        category = preferred
+        # A different label must never erase proof required by the original rules.
+        if not extra_type:
+            labels = {"hotel": "酒店住宿", "taxi": "出租车", "train": "火车票",
+                      "toll": "过路费", "meal": "餐饮", "telecom": "通信", "transport": "交通"}
+            for key, settings in categories.items():
+                if not isinstance(settings, dict) or settings.get("disabled"):
+                    continue
+                label = settings.get("name") or settings.get("label") or labels.get(key, key)
+                if label == preferred and settings.get("extra_name"):
+                    extra_type = str(settings["extra_name"])
+                    extra_required = True
+                    break
+    return category, extra_type, extra_required
+
+
+def _classify_rules(subject: str, sender: str, seller: str,
+                    categories: dict, item_name: str | None = None,
+                    invoice_type: str | None = None,
+                    raw_text: str | None = None,
+                    parse_note: str | None = None) -> tuple[str, str, bool]:
     """Return (category, extra_type, extra_required)."""
     dining_kws = ["餐饮服务", "餐费", "盒饭", "炒饭", "饭", "饮品", "早餐", "午餐", "晚餐", "小吃"]
     traffic_kws = ["旅客运输服务", "客运服务", "火车票", "铁路客运", "车票"]
@@ -254,9 +283,7 @@ def _rename_by_invoice_code(
     if dest.exists() and dest != src:
         try:
             if _sha256_file(dest) == _sha256_file(src):
-                if is_extra:
-                    src.unlink()
-                else:
+                if not is_extra:
                     src.unlink()
                 _log.info("  检测到相同附件内容，复用已存在文件: %s", mask_filename(dest.name))
                 try:
@@ -616,6 +643,12 @@ def _attach_evidence_to_invoice(
     file_path: Path,
 ) -> bool:
     """Attach evidence to an invoice, deduplicating by path and file content."""
+    if db.is_registered_evidence_path(file_path, RUNTIME_DIR):
+        from .evidence import path_key
+        for source in db.list_evidence_sources():
+            resolved = _resolve_runtime_path(source["attachment_path"])
+            if resolved and path_key(resolved.resolve()) == path_key(file_path.resolve()):
+                return bool(db.link_evidence_to_invoices((invoice["id"],), (source["id"],)))
     code = invoice.get("invoice_code") or invoice.get("invoice_number") or "extra"
     inv_date = invoice.get("invoice_date") or invoice.get("mail_date") or "unknown_date"
     att_dir = RUNTIME_DIR / "attachments"
@@ -659,7 +692,8 @@ def _attach_evidence_to_invoice(
         for existing_path in extra_paths:
             resolved = _resolve_runtime_path(existing_path)
             if resolved and _sha256_file(resolved) == file_hash:
-                if resolved.resolve() != resolved_path.resolve():
+                if (resolved.resolve() != resolved_path.resolve()
+                        and not db.is_registered_evidence_path(resolved_path, RUNTIME_DIR)):
                     try:
                         resolved_path.unlink()
                     except OSError:
@@ -766,7 +800,8 @@ def _attach_email_extras_to_invoice(
                 try:
                     h_new = _sha256_file(res_ep)
                     if h_new in existing_hashes:
-                        if str(res_ep.resolve()) not in kept_paths:
+                        if (str(res_ep.resolve()) not in kept_paths
+                                and not db.is_registered_evidence_path(res_ep, RUNTIME_DIR)):
                             res_ep.unlink()
                         if attached_source_paths is not None and source_path:
                             attached_source_paths.add(source_path)
@@ -1217,7 +1252,7 @@ def _import_local_evidence(
     )
     if matching_invoice:
         attached = _attach_evidence_to_invoice(db, matching_invoice, file_path)
-        if not attached and not preserve_source_path:
+        if not attached and not preserve_source_path and not db.is_registered_evidence_path(file_path, RUNTIME_DIR):
             try:
                 file_path.unlink()
             except OSError:
@@ -1323,7 +1358,11 @@ def _refresh_invoice_from_parse(
     item_name: str = "",
     expense_date: str = "",
     date_source: str = "",
+    buyer_tax_id: str | None = None,
+    tax_amount: str | None = None,
+    tax_rate: str | None = None,
     force_refresh_metadata: bool = False,
+    evidence_required: bool | None = None,
 ) -> bool:
     """Refresh parsed invoice metadata in place, with safe backfill.
 
@@ -1431,11 +1470,13 @@ def _refresh_invoice_from_parse(
             total_amount=total_amount,
             seller_name=seller_name,
             buyer_name=buyer_name,
+            buyer_tax_id=buyer_tax_id, tax_amount=tax_amount, tax_rate=tax_rate,
             invoice_type=invoice_type,
             category=category,
             has_extra=has_extra,
             extra_type=extra_type,
             missing_extra=missing_extra,
+            evidence_required=evidence_required,
             parse_success=True,
             parse_note=parse_note,
             item_name=item_name,
@@ -1545,8 +1586,16 @@ def _refresh_invoice_from_parse(
             total_amount=updated_total_amount,
             seller_name=updated_seller_name,
             buyer_name=updated_buyer_name,
+            buyer_tax_id=existing.get("buyer_tax_id") if existing.get("buyer_tax_id") is not None else buyer_tax_id,
+            tax_amount=existing.get("tax_amount") if existing.get("tax_amount") is not None else tax_amount,
+            tax_rate=existing.get("tax_rate") if existing.get("tax_rate") is not None else tax_rate,
             invoice_type=updated_invoice_type,
             category=updated_category,
+            use_seller_preference=(
+                not existing_category or updated_category != existing_category
+                or (existing.get("parse_success") in (0, False, "0")
+                    and existing_category in ("其他", "未分类"))
+            ),
             has_extra=has_extra,
             extra_type=extra_type,
             missing_extra=missing_extra,
@@ -1685,6 +1734,7 @@ def _insert_local_exception(
         "has_extra": False,
         "extra_type": extra_type,
         "missing_extra": extra_required,
+        "evidence_required": extra_required,
         "mail_uid": None,
         "mail_subject": f"本地导入: {original_name}",
         "mail_date": "",
@@ -1747,7 +1797,8 @@ def _import_local_pdf(
             f"{source_name} {info.invoice_type or ''}", "local import",
             info.seller_name or "", categories,
             item_name=info.item_name, invoice_type=info.invoice_type,
-            raw_text=info.raw_text, parse_note=info.parse_note
+            raw_text=info.raw_text, parse_note=info.parse_note,
+            db=db,
         )
         refreshed = _refresh_invoice_from_parse(
             db=db,
@@ -1761,11 +1812,15 @@ def _import_local_pdf(
             total_amount=info.total_amount or "",
             seller_name=info.seller_name or "",
             buyer_name=info.buyer_name or "",
+            buyer_tax_id=getattr(info, "buyer_tax_id", None),
+            tax_amount=getattr(info, "tax_amount", None),
+            tax_rate=getattr(info, "tax_rate", None),
             invoice_type=info.invoice_type or "本地导入发票",
             category=category,
             has_extra=bool(extra_type),
             extra_type=extra_type,
             missing_extra=extra_required,
+            evidence_required=extra_required,
             parse_note=info.parse_note or "本地导入",
             item_name=info.item_name,
         )
@@ -1809,7 +1864,8 @@ def _import_local_pdf(
                 f"{source_name} {info.invoice_type or ''}", "local import",
                 info.seller_name or existing_receipt.get("seller_name") or "", categories,
                 item_name=info.item_name, invoice_type=info.invoice_type,
-                raw_text=info.raw_text, parse_note=info.parse_note
+                raw_text=info.raw_text, parse_note=info.parse_note,
+                db=db,
             )
             _refresh_invoice_from_parse(
                 db=db,
@@ -1823,11 +1879,15 @@ def _import_local_pdf(
                 total_amount=info.total_amount or existing_receipt.get("total_amount") or "",
                 seller_name=info.seller_name or existing_receipt.get("seller_name") or "",
                 buyer_name=info.buyer_name or existing_receipt.get("buyer_name") or "",
+                buyer_tax_id=getattr(info, "buyer_tax_id", None),
+                tax_amount=getattr(info, "tax_amount", None),
+                tax_rate=getattr(info, "tax_rate", None),
                 invoice_type=info.invoice_type or existing_receipt.get("invoice_type") or "",
                 category=category or existing_receipt.get("category") or "",
                 has_extra=bool(extra_type) or bool(existing_receipt.get("has_extra")),
                 extra_type=extra_type or existing_receipt.get("extra_type") or "",
                 missing_extra=extra_required,
+                evidence_required=extra_required,
                 parse_note=info.parse_note or existing_receipt.get("parse_note") or "",
                 item_name=info.item_name,
             )
@@ -1874,7 +1934,8 @@ def _import_local_pdf(
                         f"{source_name} {info.invoice_type or ''}", "local import",
                         info.seller_name or "", categories,
                         item_name=info.item_name, invoice_type=info.invoice_type,
-                        raw_text=info.raw_text, parse_note=info.parse_note
+                        raw_text=info.raw_text, parse_note=info.parse_note,
+                        db=db,
                     )
                     _refresh_invoice_from_parse(
                         db=db,
@@ -1888,11 +1949,15 @@ def _import_local_pdf(
                         total_amount=info.total_amount or "",
                         seller_name=info.seller_name or "",
                         buyer_name=info.buyer_name or "",
+                        buyer_tax_id=getattr(info, "buyer_tax_id", None),
+                        tax_amount=getattr(info, "tax_amount", None),
+                        tax_rate=getattr(info, "tax_rate", None),
                         invoice_type=info.invoice_type or "本地导入发票",
                         category=category,
                         has_extra=bool(extra_type),
                         extra_type=extra_type,
                         missing_extra=extra_required,
+                        evidence_required=extra_required,
                         parse_note=info.parse_note or "本地导入",
                         item_name=info.item_name,
                     )
@@ -1960,7 +2025,8 @@ def _import_local_pdf(
                 f"{source_name} {info.invoice_type or ''}", "local import",
                 info.seller_name, categories,
                 item_name=info.item_name, invoice_type=info.invoice_type,
-                raw_text=info.raw_text, parse_note=info.parse_note
+                raw_text=info.raw_text, parse_note=info.parse_note,
+                db=db,
             )
             if preserve_source_path:
                 attachment_path = _runtime_relative(file_path)
@@ -1988,11 +2054,15 @@ def _import_local_pdf(
                 "total_amount": info.total_amount,
                 "seller_name": info.seller_name,
                 "buyer_name": info.buyer_name,
+                "buyer_tax_id": getattr(info, "buyer_tax_id", None),
+                "tax_amount": getattr(info, "tax_amount", None),
+                "tax_rate": getattr(info, "tax_rate", None),
                 "invoice_type": "本地导入冲突",
                 "category": category,
                 "has_extra": False,
                 "extra_type": extra_type,
                 "missing_extra": extra_required,
+                "evidence_required": extra_required,
                 "mail_uid": None,
                 "mail_subject": f"本地导入冲突: {source_name}",
                 "mail_date": info.invoice_date,
@@ -2018,7 +2088,8 @@ def _import_local_pdf(
         f"{source_name} {info.invoice_type or ''}", "local import",
         info.seller_name, categories,
         item_name=info.item_name, invoice_type=info.invoice_type,
-        raw_text=info.raw_text, parse_note=info.parse_note
+        raw_text=info.raw_text, parse_note=info.parse_note,
+        db=db,
     )
     if preserve_source_path:
         attachment_path = _runtime_relative(file_path)
@@ -2046,11 +2117,15 @@ def _import_local_pdf(
         "total_amount": info.total_amount,
         "seller_name": info.seller_name,
         "buyer_name": info.buyer_name,
+        "buyer_tax_id": getattr(info, "buyer_tax_id", None),
+        "tax_amount": getattr(info, "tax_amount", None),
+        "tax_rate": getattr(info, "tax_rate", None),
         "invoice_type": info.invoice_type or "本地导入发票",
         "category": category,
         "has_extra": False,
         "extra_type": extra_type,
         "missing_extra": extra_required,
+        "evidence_required": extra_required,
         "mail_uid": None,
         "mail_subject": f"本地导入: {source_name}",
         "mail_date": info.invoice_date,
@@ -2524,6 +2599,7 @@ def _insert_pending_image_record(
          "has_extra": bool(extra_type),
          "extra_type": extra_type,
          "missing_extra": extra_required,
+         "evidence_required": extra_required,
          "mail_uid": msg.uid,
          "mail_subject": msg.subject,
          "mail_date": msg.date,
@@ -2883,7 +2959,8 @@ def _process_email(
                     category, extra_type, extra_req = _classify(
                         msg.subject, msg.sender, info.seller_name, categories,
                         item_name=info.item_name, invoice_type=info.invoice_type,
-                        raw_text=info.raw_text, parse_note=info.parse_note
+                        raw_text=info.raw_text, parse_note=info.parse_note,
+                        db=db,
                     )
                     if existing_attachment_missing:
                         code = info.invoice_code or info.invoice_number
@@ -2930,11 +3007,15 @@ def _process_email(
                         total_amount=info.total_amount,
                         seller_name=info.seller_name,
                         buyer_name=info.buyer_name,
+                        buyer_tax_id=getattr(info, "buyer_tax_id", None),
+                        tax_amount=getattr(info, "tax_amount", None),
+                        tax_rate=getattr(info, "tax_rate", None),
                         invoice_type=info.invoice_type,
                         category=category,
                         has_extra=bool(repaired_extra_paths),
                         extra_type=extra_type,
                         missing_extra=extra_req and not bool(repaired_extra_paths),
+                        evidence_required=extra_req,
                         parse_note=info.parse_note or "链接下载",
                         item_name=info.item_name,
                     ):
@@ -2968,7 +3049,8 @@ def _process_email(
                     cat_ld, extra_type_ld, extra_req_ld = _classify(
                         msg.subject, msg.sender, info.seller_name, categories,
                         item_name=info.item_name, invoice_type=info.invoice_type,
-                        raw_text=info.raw_text, parse_note=info.parse_note
+                        raw_text=info.raw_text, parse_note=info.parse_note,
+                        db=db,
                     )
                     # ── Backfill attachment_path before removing the download ──
                     if os.path.exists(dl.file_path):
@@ -3018,7 +3100,8 @@ def _process_email(
                 cat, extra_type, extra_req = _classify(
                     msg.subject, msg.sender, info.seller_name, categories,
                     item_name=info.item_name, invoice_type=info.invoice_type,
-                    raw_text=info.raw_text, parse_note=info.parse_note
+                    raw_text=info.raw_text, parse_note=info.parse_note,
+                    db=db,
                 )
                 # Rename file: {invoice_code}.pdf under {invoice_date}/
                 code = info.invoice_code or info.invoice_number
@@ -3042,11 +3125,15 @@ def _process_email(
                     "total_amount": info.total_amount,
                     "seller_name": info.seller_name,
                     "buyer_name": info.buyer_name,
+                    "buyer_tax_id": getattr(info, "buyer_tax_id", None),
+                    "tax_amount": getattr(info, "tax_amount", None),
+                    "tax_rate": getattr(info, "tax_rate", None),
                     "invoice_type": info.invoice_type,
                     "category": cat,
                     "has_extra": False,
                     "extra_type": extra_type,
                     "missing_extra": extra_req,
+                    "evidence_required": extra_req,
                     "mail_uid": msg.uid,
                     "mail_subject": msg.subject,
                     "mail_date": msg.date,
@@ -3141,7 +3228,8 @@ def _process_email(
             cat, extra_type, extra_req = _classify(
                 msg.subject, msg.sender, info.seller_name, categories,
                 item_name=info.item_name, invoice_type=info.invoice_type,
-                raw_text=info.raw_text, parse_note=info.parse_note
+                raw_text=info.raw_text, parse_note=info.parse_note,
+                db=db,
             )
             existing_attachment_missing = _needs_original_replacement(existing.get("attachment_path") or "", att.file_path)
             repaired_attachment_path = ""
@@ -3190,11 +3278,15 @@ def _process_email(
                 total_amount=info.total_amount,
                 seller_name=info.seller_name,
                 buyer_name=info.buyer_name,
+                buyer_tax_id=getattr(info, "buyer_tax_id", None),
+                tax_amount=getattr(info, "tax_amount", None),
+                tax_rate=getattr(info, "tax_rate", None),
                 invoice_type=info.invoice_type,
                 category=cat,
                 has_extra=bool(repaired_extra_paths),
                 extra_type=extra_type,
                 missing_extra=extra_req and not bool(repaired_extra_paths),
+                evidence_required=extra_req,
                 parse_note=info.parse_note,
                 item_name=info.item_name,
             ):
@@ -3222,7 +3314,8 @@ def _process_email(
             cat_dup, extra_type_dup, extra_req_dup = _classify(
                 msg.subject, msg.sender, info.seller_name, categories,
                 item_name=info.item_name, invoice_type=info.invoice_type,
-                raw_text=info.raw_text, parse_note=info.parse_note
+                raw_text=info.raw_text, parse_note=info.parse_note,
+                db=db,
             )
             code = info.invoice_code or info.invoice_number
             # ── Backfill attachment_path for duplicate with missing original ──
@@ -3270,7 +3363,8 @@ def _process_email(
         cat, extra_type, extra_req = _classify(
             msg.subject, msg.sender, info.seller_name, categories,
             item_name=info.item_name, invoice_type=info.invoice_type,
-            raw_text=info.raw_text, parse_note=info.parse_note
+            raw_text=info.raw_text, parse_note=info.parse_note,
+            db=db,
         )
 
         invoice_extras = extras_for_invoice(info)
@@ -3299,11 +3393,15 @@ def _process_email(
             "total_amount": info.total_amount,
             "seller_name": info.seller_name,
             "buyer_name": info.buyer_name,
+            "buyer_tax_id": getattr(info, "buyer_tax_id", None),
+            "tax_amount": getattr(info, "tax_amount", None),
+            "tax_rate": getattr(info, "tax_rate", None),
             "invoice_type": info.invoice_type,
             "category": cat,
             "has_extra": has_extra,
             "extra_type": extra_type,
             "missing_extra": extra_req and not has_extra,
+            "evidence_required": extra_req,
             "mail_uid": msg.uid,
             "mail_subject": msg.subject,
             "mail_date": msg.date,
@@ -3485,7 +3583,9 @@ def _process_email(
             amount = merged.get("total_amount", "")
             dedup_key = inv_num or f"{seller}_{amount}"
             cat, extra_type, extra_req = _classify(
-                msg.subject, msg.sender, seller, categories)
+                msg.subject, msg.sender, seller, categories,
+                db=db,
+            )
 
             if inv_num:
                 existing = _find_existing_invoice_for_parse(db, inv_num, amount, seller, include_deleted=True)
@@ -3510,6 +3610,7 @@ def _process_email(
                         has_extra=False,
                         extra_type=extra_type,
                         missing_extra=extra_req,
+                        evidence_required=extra_req,
                         parse_note="从主题/正文提取",
                     ):
                         recorded += 1
@@ -3541,6 +3642,7 @@ def _process_email(
                 "has_extra": False,
                 "extra_type": extra_type,
                 "missing_extra": extra_req,
+                "evidence_required": extra_req,
                 "mail_uid": msg.uid,
                 "mail_subject": msg.subject,
                 "mail_date": msg.date,

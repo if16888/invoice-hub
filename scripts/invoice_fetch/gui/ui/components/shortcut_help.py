@@ -14,6 +14,7 @@ CORE_SHORTCUTS: tuple[tuple[str, str], ...] = (
 
 SECONDARY_SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("↑ / ↓", "切换发票"),
+    ("Ctrl+G", "当前发票加入报销组"),
     ("Ctrl+F", "搜索"),
     ("F11", "预览全屏"),
     ("Ctrl+I", "导入"),

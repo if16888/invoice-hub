@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+if TYPE_CHECKING:
+    from openpyxl import Workbook
 
 from .url_utils import _mask_url
+from .log_privacy import mask_path
 from .amount_utils import parse_amount
+from .tax_id_validation import TAX_ID_TYPES
 
 _log = logging.getLogger(__name__)
 
@@ -37,22 +40,37 @@ _COLUMNS = [
     ("download_url",    "下载链接",   30),
     ("confirmed_note",  "个人备注",    24),
     ("warning",         "校验提示",    24),
+    ("reimbursement_reason", "报销事由", 32),
+    ("buyer_tax_id", "购买方税号", 24),
+    ("buyer_tax_id_type", "税号类型", 24),
+    ("tax_amount", "税额", 12),
+    ("tax_rate", "税率", 18),
 ]
 
-_HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF", size=10)
-_HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-_HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
-_CELL_FONT = Font(name="微软雅黑", size=10)
-_LINK_FONT = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
-_CELL_ALIGN = Alignment(vertical="center", wrap_text=True)
-_THIN_BORDER = Border(
-    left=Side(style="thin", color="D9D9D9"),
-    right=Side(style="thin", color="D9D9D9"),
-    top=Side(style="thin", color="D9D9D9"),
-    bottom=Side(style="thin", color="D9D9D9"),
-)
-_ALT_FILL = PatternFill(start_color="F2F7FB", end_color="F2F7FB", fill_type="solid")
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+@lru_cache(maxsize=1)
+def _excel_styles() -> dict:
+    """Load spreadsheet dependencies only when a workbook is being written."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    return {
+        "header_font": Font(name="微软雅黑", bold=True, color="FFFFFF", size=10),
+        "header_fill": PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid"),
+        "header_align": Alignment(horizontal="center", vertical="center", wrap_text=True),
+        "cell_font": Font(name="微软雅黑", size=10),
+        "link_font": Font(name="微软雅黑", size=10, color="0563C1", underline="single"),
+        "cell_align": Alignment(vertical="center", wrap_text=True),
+        "border": Border(
+            left=Side(style="thin", color="D9D9D9"),
+            right=Side(style="thin", color="D9D9D9"),
+            top=Side(style="thin", color="D9D9D9"),
+            bottom=Side(style="thin", color="D9D9D9"),
+        ),
+        "alt_fill": PatternFill(start_color="F2F7FB", end_color="F2F7FB", fill_type="solid"),
+        "total_font": Font(name="微软雅黑", bold=True, size=10),
+    }
 
 
 def _safe_excel_value(value):
@@ -111,11 +129,15 @@ def _effective_date(row: dict) -> str:
     return _DATE_SORT_SENTINEL
 
 
-def export_excel(rows: list[dict], dest: str | Path) -> Path:
+def export_excel(rows: list[dict], dest: str | Path, *, claim: dict | None = None) -> Path:
     """Write *rows* (from ``InvoiceDB.get_all_invoices()``) to an Excel file.
 
     The caller's list is not mutated; rows are sorted internally by effective date.
     """
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+
+    styles = _excel_styles()
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -134,10 +156,10 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
     # ── Header row ───────────────────────────────────────────────────
     for col_idx, (_, label, width) in enumerate(columns, 1):
         cell = ws.cell(row=1, column=col_idx, value=label)
-        cell.font = _HEADER_FONT
-        cell.fill = _HEADER_FILL
-        cell.alignment = _HEADER_ALIGN
-        cell.border = _THIN_BORDER
+        cell.font = styles["header_font"]
+        cell.fill = styles["header_fill"]
+        cell.alignment = styles["header_align"]
+        cell.border = styles["border"]
         ws.column_dimensions[cell.column_letter].width = width
 
     ws.row_dimensions[1].height = 28
@@ -149,7 +171,11 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
         is_alt = row_idx % 2 == 0
         for col_idx, (key, _, _) in enumerate(columns, 1):
             val = row.get(key, "")
-            if key == "expense_date":
+            if key == "reimbursement_reason":
+                val = row.get("reimbursement_reason", row.get("custom_reason") or "")
+            elif key == "buyer_tax_id_type":
+                val = TAX_ID_TYPES.get(row.get(key, "unknown"), "类型无效")
+            elif key == "expense_date":
                 val = row.get("expense_date") or row.get("invoice_date") or ""
             elif key == "has_extra":
                 val = "有" if val else ""
@@ -163,20 +189,23 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
                     val = ""
             elif key == "download_url":
                 val = _mask_url(str(val or ""))
-            elif key in {"amount", "total_amount"}:
+            elif key in {"amount", "total_amount", "tax_amount"}:
                 val = _excel_amount_value(val)
             cell = ws.cell(row=row_idx, column=col_idx, value=_safe_excel_value(val))
-            cell.font = _CELL_FONT
-            cell.alignment = _CELL_ALIGN
-            cell.border = _THIN_BORDER
+            cell.font = styles["cell_font"]
+            cell.alignment = styles["cell_align"]
+            cell.border = styles["border"]
             if is_alt:
-                cell.fill = _ALT_FILL
-            if key in {"amount", "total_amount"} and val != "":
+                cell.fill = styles["alt_fill"]
+            if key in {"amount", "total_amount", "tax_amount"} and val != "":
                 cell.number_format = "#,##0.00"
             if key == "attachment_path" and val:
                 cell.hyperlink = str(val)
-                cell.font = _LINK_FONT
+                cell.font = styles["link_font"]
 
+    if claim is not None:
+        from .claim_cover import add_claim_cover
+        add_claim_cover(wb, sorted_rows, claim)
     _add_summary_sheet(wb, sorted_rows)
     _add_exception_sheet(wb, sorted_rows)
 
@@ -186,7 +215,7 @@ def export_excel(rows: list[dict], dest: str | Path) -> Path:
         # Make the file-lifecycle boundary explicit for Windows packaging and
         # tests.  The workbook is never reused after export.
         wb.close()
-    _log.info("Excel 已导出: %s (%d 条记录)", dest.name, len(sorted_rows))
+    _log.info("Excel 已导出: %s (%d 条记录)", mask_path(dest), len(sorted_rows))
     return dest
 
 
@@ -202,21 +231,23 @@ def _amount(value) -> Decimal:
 
 
 def _style_header(ws, labels: list[str], widths: list[int]):
+    styles = _excel_styles()
     for idx, label in enumerate(labels, 1):
         cell = ws.cell(row=1, column=idx, value=label)
-        cell.font = _HEADER_FONT
-        cell.fill = _HEADER_FILL
-        cell.alignment = _HEADER_ALIGN
-        cell.border = _THIN_BORDER
+        cell.font = styles["header_font"]
+        cell.fill = styles["header_fill"]
+        cell.alignment = styles["header_align"]
+        cell.border = styles["border"]
         ws.column_dimensions[cell.column_letter].width = widths[idx - 1]
     ws.row_dimensions[1].height = 28
     ws.freeze_panes = "A2"
 
 
 def _style_cell(cell):
-    cell.font = _CELL_FONT
-    cell.alignment = _CELL_ALIGN
-    cell.border = _THIN_BORDER
+    styles = _excel_styles()
+    cell.font = styles["cell_font"]
+    cell.alignment = styles["cell_align"]
+    cell.border = styles["border"]
 
 
 def _add_summary_sheet(wb: Workbook, rows: list[dict]):
@@ -240,7 +271,7 @@ def _add_summary_sheet(wb: Workbook, rows: list[dict]):
     for col_idx, val in enumerate(["总计", len(rows), float(sum((_amount(r.get("total_amount")) for r in rows), Decimal("0")))], 1):
         cell = ws.cell(row=total_row, column=col_idx, value=val)
         _style_cell(cell)
-        cell.font = Font(name="微软雅黑", bold=True, size=10)
+        cell.font = _excel_styles()["total_font"]
     ws.cell(row=total_row, column=3).number_format = "#,##0.00"
 
 
@@ -282,4 +313,4 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
             _style_cell(cell)
             if key == "attachment_path" and val:
                 cell.hyperlink = str(val)
-                cell.font = _LINK_FONT
+                cell.font = _excel_styles()["link_font"]

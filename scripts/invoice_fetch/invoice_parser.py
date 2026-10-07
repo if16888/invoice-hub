@@ -23,6 +23,9 @@ class InvoiceInfo:
     total_amount: str = ""       # tax-inclusive
     seller_name: str = ""
     buyer_name: str = ""
+    buyer_tax_id: str | None = None
+    tax_amount: str | None = None
+    tax_rate: str | None = None
     invoice_type: str = ""
     parse_success: bool = False
     parse_note: str = ""
@@ -133,6 +136,17 @@ class InvoiceParser:
             info.invoice_date = normalize_date(field('IssueTime'))[:10]
             info.seller_name = field('SellerName')
             info.buyer_name = field('BuyerName')
+            buyer_node = root.find('.//BuyerInformation')
+            if buyer_node is not None:
+                for tag in ('BuyerIdNum', 'BuyerTaxID', 'BuyerTaxId'):
+                    tax_node = buyer_node.find(tag)
+                    if tax_node is not None:
+                        info.buyer_tax_id = (tax_node.text or '').strip()
+                        break
+            tax_node = root.find('.//TotalTaxAm')
+            if tax_node is not None:
+                info.tax_amount = (tax_node.text or '').strip()
+
             info.amount = field('TotalAmWithoutTax')
             info.total_amount = field('TotalTax-includedAmount') or field('TotaltaxIncludedAmount')
             info.item_name = field('ItemName')
@@ -183,6 +197,17 @@ class InvoiceParser:
 
             info.raw_text = text[:2000]
             info.item_name = self._extract_item_names(text)
+            buyer_tax = re.search(r'购买方[\s\S]{0,150}?纳税人识别号[:：]\s*([A-Za-z0-9]+)', text)
+            if buyer_tax and '销售方' not in buyer_tax[0]:
+                info.buyer_tax_id = buyer_tax[1]
+            tax = re.search(r'(?:合计税额|税额合计|税\s*额)[:：]\s*[¥￥]?\s*(-?[\d,]+\.\d{2})', text)
+            if tax:
+                info.tax_amount = tax[1].replace(',', '')
+            rates = re.findall(r'税率[:：]\s*(\d+(?:\.\d+)?%|免税|不征税)', text)
+            if rates:
+                unique_rates = list(dict.fromkeys(rates))
+                info.tax_rate = unique_rates[0] if len(unique_rates) == 1 else '多税率'
+
 
             if self._parse_transport_receipt(text, info):
                 return info

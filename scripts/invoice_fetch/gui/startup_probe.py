@@ -22,6 +22,7 @@ from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 from .app import InvoiceReviewApp, StartupSplash
+from .high_dpi import configure_high_dpi_platform
 from .startup_lifecycle import (
     FirstPaintDeferredInvoiceReviewApp,
     reveal_startup_window,
@@ -212,6 +213,7 @@ class StartupProbeSession(QObject):
 def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> None:
     """Launch the production startup path and exit after completed first Paint."""
     launch_started_at = time.monotonic()
+    configure_high_dpi_platform()
     app = QApplication(sys.argv)
 
     # Match normal production startup through first paint: show the splash,

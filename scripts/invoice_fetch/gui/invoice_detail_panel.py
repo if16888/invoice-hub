@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 
 
-    QLineEdit, QTextEdit, QComboBox, QFormLayout, QGridLayout,
+    QLineEdit, QTextEdit, QComboBox, QFormLayout, QGridLayout, QCheckBox,
 
 
 
@@ -362,6 +362,7 @@ class InvoiceDetailCallbacks:
 
 
     on_add_evidence: Callable[[], None] = lambda: None
+    on_manage_evidence: Callable[[], None] = lambda: None
 
 
 
@@ -417,7 +418,8 @@ class InvoiceDetailCallbacks:
 
 
 
-    on_save_fields: Callable[[], None] = lambda: None
+    on_save_fields: Callable[[], bool | None] = lambda: None
+    on_manage_seller_categories: Callable[[], None] = lambda: None
     on_save_note: Callable[[], None] = lambda: None
     on_discard_note: Callable[[], None] = lambda: None
 
@@ -494,6 +496,8 @@ class InvoiceDetailPanel(QWidget):
         self._suspend_dirty_tracking = False
 
         self._invoice_snapshot = None
+        self.remember_seller_category = True
+        self.category_memory_allowed = True
 
 
 
@@ -1403,7 +1407,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-                        full_path: str = "", url: str = ""):
+                        full_path: str = "", url: str = "", category_memory_allowed: bool = True):
 
 
 
@@ -1412,6 +1416,7 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.txt_id.setText(inv_id)
+        self.category_memory_allowed = category_memory_allowed
 
 
 
@@ -3066,6 +3071,10 @@ class InvoiceDetailPanel(QWidget):
         self.btn_edit_fields.setToolTip("在单任务弹窗中编辑当前发票字段")
         self.btn_edit_fields.clicked.connect(self._open_edit_dialog)
         core_title_row.addWidget(self.btn_edit_fields)
+        self.btn_seller_preferences = make_button("分类记忆", variant="secondary", min_width=80)
+        self.btn_seller_preferences.setToolTip("查看或删除商户分类记忆；已有发票分类保持不变")
+        self.btn_seller_preferences.clicked.connect(self._cb.on_manage_seller_categories)
+        core_title_row.addWidget(self.btn_seller_preferences)
 
 
 
@@ -3815,6 +3824,10 @@ class InvoiceDetailPanel(QWidget):
         self.evidence_status_line = StatusLine("证明", "缺失")
         self.evidence_status_line.replace_action(self.btn_add_evidence)
         detail_files_layout.addWidget(self.evidence_status_line)
+        self.btn_manage_evidence = make_button("关联 / 解绑已有材料", variant="secondary", min_width=0)
+        self.btn_manage_evidence.setToolTip("跨邮件、本地或手机来源复用证明材料；解绑保留文件")
+        self.btn_manage_evidence.clicked.connect(self._cb.on_manage_evidence)
+        detail_files_layout.addWidget(self.btn_manage_evidence)
 
 
 
@@ -4815,8 +4828,15 @@ class InvoiceDetailPanel(QWidget):
             return
         values = dialog.values()
         try:
+            self.remember_seller_category = (dialog.chk_remember_category.isEnabled()
+                                            and dialog.chk_remember_category.isChecked())
             self._set_core_field_values(**values)
-            self._cb.on_save_fields()
+            if self._cb.on_save_fields() is False:
+                self._set_core_field_values(
+                    number=before.get("invoice_number", ""), date=before.get("expense_date", ""),
+                    amount=before.get("total_amount", ""), category=before.get("category", ""),
+                    buyer=before.get("buyer_name", ""), seller=before.get("seller_name", ""),
+                )
         except Exception as exc:
             self._set_core_field_values(
                 number=before.get("invoice_number", ""),
@@ -4827,6 +4847,8 @@ class InvoiceDetailPanel(QWidget):
                 seller=before.get("seller_name", ""),
             )
             QMessageBox.warning(self, "保存失败", f"发票字段未保存：{exc}")
+        finally:
+            self.remember_seller_category = True
 
 
 class EditFieldsDialog(QDialog):
@@ -4857,6 +4879,22 @@ class EditFieldsDialog(QDialog):
         form.addRow("消费类型", self.combo_category)
         form.addRow("购买方", self.txt_buyer)
         form.addRow("销售方", self.txt_seller)
+        self.chk_remember_category = QCheckBox("修改分类时记住此销售方，用于以后新发票")
+        self.chk_remember_category.setChecked(True)
+        self.chk_remember_category.setToolTip("取消勾选仅修改本张发票；保存其他字段不会新增分类记忆。")
+
+        def sync_memory_option():
+            self.chk_remember_category.setEnabled(
+                bool(getattr(parent, "category_memory_allowed", True))
+                and bool(self.txt_seller.text().strip())
+                and self.combo_category.currentText().strip() not in ("", "未分类")
+                and self.combo_category.currentText().strip() != str(category or "").strip()
+            )
+
+        self.txt_seller.textChanged.connect(sync_memory_option)
+        self.combo_category.currentTextChanged.connect(sync_memory_option)
+        sync_memory_option()
+        form.addRow("", self.chk_remember_category)
         layout.addLayout(form)
         from .dialog_form import style_dialog_form
         style_dialog_form(self, layout, form, "编辑发票", "核对票面信息后保存，备注在审核页单独填写。")

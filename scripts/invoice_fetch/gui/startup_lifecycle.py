@@ -19,6 +19,7 @@ from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from .app import InvoiceReviewApp, StartupSplash
+from .high_dpi import configure_high_dpi_platform
 
 
 class FirstPaintDeferredInvoiceReviewApp(InvoiceReviewApp):
@@ -317,6 +318,7 @@ def start_first_paint_deferred_gui_app(
     # Kept in the public launcher signature because import time is measured by
     # the release probe path. Normal interactive startup does not emit it.
     _ = app_init_ms
+    configure_high_dpi_platform()
     app = QApplication(sys.argv)
     splash = StartupSplash()
     splash.show()

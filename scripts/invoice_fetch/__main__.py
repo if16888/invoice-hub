@@ -945,6 +945,7 @@ def _reprocess_email_records(
     total_to_delete = 0
     total_skipped_approved = 0
     total_skipped_claimed = 0
+    total_skipped_evidence = 0
 
     for r in records:
         mailbox_key = r["mailbox_key"]
@@ -963,6 +964,9 @@ def _reprocess_email_records(
             elif is_claimed and not include_claimed:
                 total_skipped_claimed += 1
                 skip_reason = "claimed"
+            elif db.evidence_consumers(inv["id"]):
+                total_skipped_evidence += 1
+                skip_reason = "evidence_in_use"
             else:
                 total_to_delete += 1
 
@@ -983,6 +987,7 @@ def _reprocess_email_records(
         print(f"- 将删除旧发票记录：{total_to_delete} 条")
         print(f"- 跳过已通过：{total_skipped_approved} 条")
         print(f"- 跳过已归组：{total_skipped_claimed} 条")
+        print(f"- 保留仍被引用的证明材料：{total_skipped_evidence} 条")
         print("\n候选：")
 
         for idx, item in enumerate(all_targets, start=1):
@@ -1011,6 +1016,8 @@ def _reprocess_email_records(
                 elif tgt["skip_reason"] == "claimed":
                     claim_id = inv.get("claim_id")
                     print(f"    [跳过] 已关联报销组: invoice id={inv_id}{fallback_str} 发票号={inv_num} 金额={amount} 报销组ID={claim_id}")
+                elif tgt["skip_reason"] == "evidence_in_use":
+                    print(f"    [跳过] 证明材料仍被发票引用: material id={inv_id}")
                 else:
                     print(f"    将删除 invoice id={inv_id}{fallback_str} 发票号={inv_num} 金额={amount} 状态={status} extra={extra_count}")
 

@@ -5,6 +5,7 @@ Invoice Hub PySide6 App Window
 
 import json
 import os
+import sqlite3
 import sys
 import logging
 import time
@@ -56,6 +57,7 @@ from .styles import (
     SIDEBAR_COLLAPSED_WIDTH,
     SIDEBAR_EXPANDED_WIDTH,
 )
+from .high_dpi import configure_high_dpi_platform
 from .ui_components import (
     AdaptiveStackedWidget,
     CommandBar,
@@ -1647,6 +1649,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_review_scope_duplicates.clicked.connect(self._show_duplicate_outcomes)
         self.btn_review_scope_duplicates.hide()
         main_layout.addWidget(self.btn_review_scope_duplicates, 0, Qt.AlignLeft)
+        self.btn_soft_duplicate_review = make_button("无票号疑似重复复核", variant="secondary")
+        self.btn_soft_duplicate_review.clicked.connect(self._open_soft_duplicate_review)
+        main_layout.addWidget(self.btn_soft_duplicate_review, 0, Qt.AlignLeft)
         self.review_scope_completion = QWidget()
         completion_layout = QHBoxLayout(self.review_scope_completion)
         completion_layout.setContentsMargins(0, 0, 0, 0)
@@ -1939,6 +1944,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_record_selection = QLabel("已选 0 张")
         self.lbl_record_selection.setObjectName("InvoiceRecordSelection")
         record_header_layout.addWidget(self.lbl_record_selection)
+        self.btn_review_batch_menu = QToolButton(self.record_header)
+        self.btn_review_batch_menu.setText("批量 ▾")
+        self.btn_review_batch_menu.setToolTip("区分已加载记录和全部筛选结果；批量通过会跳过异常记录")
+        self.btn_review_batch_menu.setPopupMode(QToolButton.InstantPopup)
+        self.review_batch_menu = QMenu(self.btn_review_batch_menu)
+        self.action_select_loaded = self.review_batch_menu.addAction("全选已加载记录", lambda: self.table.selectAll())
+        self.action_clear_loaded = self.review_batch_menu.addAction("清空选择", lambda: self.table.clearSelection())
+        self.review_batch_menu.addSeparator()
+        self.action_approve_selected = self.review_batch_menu.addAction("通过所选记录…", self._batch_approve_selected)
+        self.action_approve_filtered = self.review_batch_menu.addAction("通过全部筛选结果…", self._batch_approve_filtered)
+        self.btn_review_batch_menu.setMenu(self.review_batch_menu)
+        record_header_layout.addWidget(self.btn_review_batch_menu)
 
         self.table = QTableWidget()
         self.table.setColumnCount(len(VISIBLE_COLUMN_DEFINITIONS))
@@ -2047,6 +2064,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         left_upper_layout.setSpacing(4)
         left_upper_layout.addWidget(self.record_header)
         left_upper_layout.addWidget(self.left_stack)
+        from .ui.components.batch_review_bar import BatchReviewBar
+        self.batch_review_bar = BatchReviewBar(self.left_upper_widget)
+        self.batch_review_bar.approve_requested.connect(self._batch_approve_selected)
+        self.batch_review_bar.link_requested.connect(self._batch_link_selected)
+        self.batch_review_bar.ignore_requested.connect(self._batch_ignore_selected)
+        self.batch_review_bar.clear_requested.connect(self.table.clearSelection)
+        self.batch_review_bar.evidence_requested.connect(self._manage_selected_evidence)
+        left_upper_layout.addWidget(self.batch_review_bar)
+        self.table.itemSelectionChanged.connect(self._sync_batch_review_controls)
 
         # Initialize the New Preview Panel
         self._init_preview_panel()
@@ -2279,6 +2305,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_open_file=self._open_attachment,
             on_add_attachment=self._add_attachment_manually,
             on_add_evidence=self._add_evidence_manually,
+            on_manage_evidence=self._manage_invoice_evidence,
             on_retry_download=self._retry_download_link,
             on_open_evidence=self._open_extra_docs,
             on_copy_number=self._copy_invoice_number,
@@ -2290,6 +2317,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_refresh_claims=self._load_claims,
             on_export_claim=self._export_claim_package,
             on_save_fields=self._save_invoice_fields,
+            on_manage_seller_categories=self._manage_seller_preferences,
             on_save_note=self._persist_invoice_note,
             on_discard_note=self._discard_invoice_note,
             on_form_dirty=self._mark_invoice_form_dirty,
@@ -2335,6 +2363,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.txt_date = dp.txt_date
         self.txt_amount = dp.txt_amount
         self.combo_category = dp.combo_category
+        self.btn_seller_preferences = dp.btn_seller_preferences
         self.txt_seller = dp.txt_seller
         self.txt_buyer = dp.txt_buyer
         # Files
@@ -2348,6 +2377,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.supporting_doc_items = dp.supporting_doc_items
         # Claim group
         self.claim_setup_section = dp.claim_setup_section
+        self.btn_edit_invoice_reason = make_button("当前发票事由", variant="secondary")
+        self.btn_edit_invoice_reason.clicked.connect(self._edit_invoice_reason)
+        self.claim_setup_section.layout().addWidget(self.btn_edit_invoice_reason)
+        self.btn_edit_financial_fields = make_button("财税字段", variant="secondary")
+        self.btn_edit_financial_fields.clicked.connect(self._edit_financial_fields)
+        self.claim_setup_section.layout().addWidget(self.btn_edit_financial_fields)
         self.combo_claims = dp.combo_claims
         self.btn_refresh_claims = dp.btn_refresh_claims
         self.btn_add_to_claim = dp.btn_add_to_claim
@@ -2722,6 +2757,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._register_shortcut(target_widget, shortcuts, "Enter", lambda: self._set_selected_status(APPROVED))
         self._register_shortcut(target_widget, shortcuts, "Delete", lambda: self._set_selected_status(IGNORED))
         self._register_shortcut(target_widget, shortcuts, "Ctrl+E", lambda: self._set_selected_status(ERROR))
+        self._register_shortcut(target_widget, shortcuts, "Ctrl+G", self._add_current_invoice_to_claim)
         self._register_shortcut(target_widget, shortcuts, "Esc", self._handle_workbench_escape, guarded=False)
         return shortcuts
 
@@ -3199,6 +3235,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _apply_import_workspace_layout(self, width: int | None = None) -> None:
         """Apply responsive stacked or side-by-side layout for import workspace."""
+        if getattr(self, "_shutdown_requested", False):
+            return
         required = (
             "imports_shell_layout",
             "import_source_card",
@@ -5047,6 +5085,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_export_create_group = make_button("新建报销组", variant="secondary")
         self.btn_export_create_group.clicked.connect(self._create_export_claim)
         self.export_group_card.body_layout.addWidget(self.btn_export_create_group)
+        self.btn_edit_claim_reason = make_button("编辑报销信息", variant="secondary")
+        self.btn_edit_claim_reason.clicked.connect(self._edit_claim_reason)
+        self.export_group_card.body_layout.addWidget(self.btn_edit_claim_reason)
+        self.btn_export_filename = make_button("导出文件名模板", variant="secondary")
+        self.btn_export_filename.clicked.connect(self._configure_export_filename)
+        self.export_group_card.body_layout.addWidget(self.btn_export_filename)
         self.export_empty_state = EmptyStateCard(
             "还没有报销组",
             "在审核页将发票加入报销组后，即可检查并导出。",
@@ -6006,6 +6050,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.lbl_record_count.setCursor(Qt.ArrowCursor)
         if selected_count is not None and hasattr(self, "lbl_record_selection"):
             self.lbl_record_selection.setText("未选" if state.selected_count <= 0 else f"已选 {state.selected_count} 张")
+        self._sync_batch_review_controls()
 
     def _on_chk_needs_fix_changed(self, state):
         if state == Qt.Checked or state == 2:
@@ -6244,6 +6289,118 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # disagree until an unrelated selection event refreshed the panel.
         cfg = getattr(self, "config", None) or load_config_safe()
         return buyer_warning(inv, cfg)
+
+    def _manage_seller_preferences(self):
+        from .seller_preferences_dialog import SellerPreferencesDialog
+        operation = "分类记忆管理"
+        if not self._try_begin_data_operation(operation):
+            return
+        try:
+            dialog = SellerPreferencesDialog(self.db.list_seller_category_preferences(), self)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            selected = dialog.selected_sellers()
+            if not selected:
+                return
+            count = self.db.forget_seller_categories(selected)
+            self._refresh_category_options()
+            self.statusBar().showMessage(f"已删除 {count} 条分类记忆，已有发票分类保持不变。", 5000)
+        except Exception as exc:
+            _log.error("Seller category memory update failed: %s", type(exc).__name__)
+            QMessageBox.warning(self, "分类记忆", "未能更新分类记忆，请重试。")
+        finally:
+            self._end_data_operation(operation)
+
+    def _manage_invoice_evidence(self):
+        ids = (self.current_invoice["id"],) if self.current_invoice else ()
+        return self._run_evidence_manager(ids)
+
+    def _manage_selected_evidence(self):
+        return self._run_evidence_manager(self._selected_batch_invoice_ids())
+
+    def _evidence_edit_ready(self) -> bool:
+        if self.center_stack.currentWidget() is not self.review_page:
+            return False
+        if (self.current_invoice and self._invoice_snapshot is not None
+                and self._get_invoice_form_snapshot() != self._invoice_snapshot):
+            self.statusBar().showMessage("当前发票有未保存字段，请先保存或放弃修改后再管理材料。", 6000)
+            return False
+        return self._persist_invoice_note()
+
+    def _refresh_after_evidence_change(self, invoice_ids):
+        invoice_id = self.current_invoice.get("id") if self.current_invoice else None
+        try:
+            self._load_invoices(preserve_invoice_id=invoice_id)
+            if len(invoice_ids) > 1:
+                selected = set(invoice_ids)
+                model = self.table.selectionModel()
+                self.table.blockSignals(True)
+                try:
+                    model.clearSelection()
+                    for row, record in enumerate(self.invoices_list):
+                        if record["id"] in selected:
+                            model.select(self.table.model().index(row, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                finally:
+                    self.table.blockSignals(False)
+                self._sync_batch_review_controls()
+        except Exception as exc:
+            _log.error("Evidence committed; view refresh failed: %s", type(exc).__name__)
+            self.statusBar().showMessage("材料关联已保存，界面刷新失败；重新进入审核页可查看。", 6000)
+            return False
+        return True
+
+    def _run_evidence_manager(self, invoice_ids):
+        from .evidence_dialog import EvidenceDialog
+        from ..evidence import is_evidence_record
+        ids = tuple(dict.fromkeys(int(value) for value in invoice_ids))
+        operation = "证明材料共享"
+        if not ids or not self._try_begin_data_operation(operation):
+            return
+        try:
+            if not self._evidence_edit_ready():
+                return
+            records = [self.db.get_invoice(value) for value in ids]
+            if any(not record or is_evidence_record(record) for record in records):
+                self.statusBar().showMessage("请选择有效发票；证明材料本身不能作为关联目标。", 5000)
+                return
+            sources = self.db.list_evidence_sources(include_deleted=True)
+            associations = {source["id"]: self.db.evidence_consumers(source["id"]) for source in sources}
+            dialog = EvidenceDialog(ids, sources, associations, RUNTIME_DIR, self)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            additions, removals = dialog.association_changes()
+            if not additions and not removals:
+                return
+            added, removed = self.db.apply_evidence_changes(ids, additions, removals, expected_sources=dialog.source_snapshots())
+            if self._refresh_after_evidence_change(ids):
+                self.statusBar().showMessage(f"已新增 {added} 条材料关联，解除 {removed} 条；材料文件保留。", 6000)
+        except (ValueError, sqlite3.Error) as exc:
+            _log.error("Evidence association update failed: %s", type(exc).__name__)
+            QMessageBox.warning(self, "材料关联未保存", str(exc) if isinstance(exc, ValueError) else "数据库暂不可写，请重试。")
+        finally:
+            self._end_data_operation(operation)
+
+    def _link_preview_evidence(self, invoice_id, evidence_id, evidence_name):
+        operation = "证明材料共享"
+        if not self._try_begin_data_operation(operation):
+            return
+        try:
+            if not self._evidence_edit_ready():
+                return
+            reply = QMessageBox.question(
+                self, "确认关联", f"将 {evidence_name} 关联到当前发票？材料仍可供其他发票使用。",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            added, _ = self.db.apply_evidence_changes((invoice_id,), ((invoice_id, evidence_id),), ())
+            if self._refresh_after_evidence_change((invoice_id,)):
+                self.statusBar().showMessage(f"已保存材料关联（新增 {added} 条），材料可继续复用。", 4000)
+        except (ValueError, sqlite3.Error) as exc:
+            _log.error("Preview evidence association failed: %s", type(exc).__name__)
+            QMessageBox.warning(self, "关联失败", str(exc) if isinstance(exc, ValueError) else "数据库暂不可写，请重试。")
+        finally:
+            self._end_data_operation(operation)
 
     def _update_save_button_state(self):
         if not self.current_invoice or self._invoice_snapshot is None:
@@ -6820,7 +6977,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         _log.debug("Failed to inspect selected invoice claim links: %s", exc)
             if can_add:
                 self.btn_add_to_claim.setText("加入")
-                self.btn_add_to_claim.setToolTip(f"将当前选中的未归组发票加入“{group_name}”")
+                self.btn_add_to_claim.setToolTip(f"将当前选中的未归组发票加入“{group_name}”；Ctrl+G 仅加入当前行")
             else:
                 self.btn_add_to_claim.setText("已加入")
                 self.btn_add_to_claim.setToolTip("当前发票已有报销组，不能重复加入")
@@ -6874,7 +7031,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         def calculate_async():
-            if not hasattr(self, "invoices_list") or not self.invoices_list:
+            if getattr(self, "_shutdown_requested", False) or not hasattr(self, "invoices_list") or not self.invoices_list:
                 return
             rows = []
             for idx in selected_indexes:
@@ -6911,7 +7068,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         def calculate_async():
-            if not hasattr(self, "invoices_list") or not self.invoices_list:
+            if getattr(self, "_shutdown_requested", False) or not hasattr(self, "invoices_list") or not self.invoices_list:
                 return
             rows = []
             for idx in selected_indexes:
@@ -7044,7 +7201,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 item_name=str(inv.get("item_name") or ""),
                 full_path=att_path,
                 url=_mask_url(inv.get("download_url") or ""),
+                category_memory_allowed=not is_pending_evidence_invoice(inv) and not inv.get("is_deleted"),
             )
+            category_origin = {"manual": "手动修改", "seller_preference": "来自商户分类记忆", "rule": "自动分类"}
+            origin = category_origin.get(inv.get("category_source"), "")
+            self._detail_panel.lbl_core_category.setToolTip(category + ("\n" + origin if origin else ""))
             self._detail_panel.set_attachment_state(
                 has_file=has_file, has_url=has_url,
                 file_name=Path(att_path).name if att_path else "",
@@ -7828,114 +7989,80 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QMessageBox.critical(self, "错误", f"补齐原件失败: {e}")
 
     def _add_evidence_manually(self):
+        operation = "添加证明材料"
+        if not self.current_invoice or not self._try_begin_data_operation(operation):
+            return
+        try:
+            if not self._evidence_edit_ready() or is_pending_evidence_invoice(self.current_invoice):
+                return
+            self._add_evidence_file()
+        finally:
+            self._end_data_operation(operation)
+
+    def _add_evidence_file(self):
         if not self.current_invoice:
             return
+        from PySide6.QtWidgets import QFileDialog
+        from ..evidence import material_paths
+        from ..attachment_handler import build_managed_attachment_name
+        import shutil
 
         inv_id = self.current_invoice["id"]
-        from PySide6.QtWidgets import QFileDialog, QMessageBox
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择证明材料",
-            "",
-            "证明文件 (*.pdf *.ofd *.png *.jpg *.jpeg *.docx *.xlsx *.zip);;所有文件 (*.*)"
+            self, "选择证明材料", "",
+            "证明文件 (*.pdf *.ofd *.png *.jpg *.jpeg *.docx *.xlsx *.zip);;所有文件 (*.*)",
         )
         if not file_path:
             return
-
+        dest_path = None
+        saved = False
         try:
             src_file = Path(file_path)
-            ext = src_file.suffix.lower()
-
-            date_str = self.current_invoice.get("invoice_date") or self.current_invoice.get("mail_date") or "unknown_date"
-            if "-" in date_str:
-                date_dir_name = date_str[:10]
-            else:
-                date_dir_name = "unknown_date"
-
+            invoice = self.current_invoice
+            date_str = str(invoice.get("invoice_date") or invoice.get("mail_date") or "unknown_date")
+            date_dir_name = date_str[:10] if "-" in date_str else "unknown_date"
             dest_dir = RUNTIME_DIR / "attachments" / date_dir_name
             dest_dir.mkdir(parents=True, exist_ok=True)
-
-            from scripts.invoice_fetch.attachment_handler import build_managed_attachment_name
-            dest_name = build_managed_attachment_name(
-                original_name=src_file.name,
-                invoice_date=self.current_invoice.get("invoice_date"),
-                expense_date=self.current_invoice.get("expense_date"),
-                fallback_date=self.current_invoice.get("mail_date"),
-                category=self.current_invoice.get("category"),
-                total_amount=self.current_invoice.get("total_amount"),
-                invoice_number=self.current_invoice.get("invoice_number"),
-                role="证明材料",
+            name = build_managed_attachment_name(
+                original_name=src_file.name, invoice_date=invoice.get("invoice_date"),
+                expense_date=invoice.get("expense_date"), fallback_date=invoice.get("mail_date"),
+                category=invoice.get("category"), total_amount=invoice.get("total_amount"),
+                invoice_number=invoice.get("invoice_number"), role="证明材料",
             )
-            if not dest_name.lower().endswith(ext):
-                dest_name = os.path.splitext(dest_name)[0] + ext
-
-            dest_path = dest_dir / dest_name
-            if dest_path.exists():
-                stem = dest_path.stem
-                for n in range(1, 100):
-                    cand = dest_dir / f"{stem}_{n}{ext}"
-                    if not cand.exists():
-                        dest_path = cand
-                        break
-
-            import shutil
-            shutil.copy2(src_file, dest_path)
-
-            rel_path = f"attachments/{date_dir_name}/{dest_path.name}"
-
-            # Append rel_path to invoice's extra_paths and save to DB
-            import json
-            raw_extra = self.current_invoice.get("extra_paths")
-            extra_paths = []
-            if raw_extra:
-                if isinstance(raw_extra, list):
-                    extra_paths = [str(p) for p in raw_extra if p]
-                elif isinstance(raw_extra, str):
-                    try:
-                        parsed = json.loads(raw_extra)
-                        if isinstance(parsed, list):
-                            extra_paths = [str(p) for p in parsed if p]
-                        else:
-                            extra_paths = [str(raw_extra)]
-                    except Exception:
-                        extra_paths = [str(raw_extra)]
-                else:
-                    extra_paths = [str(raw_extra)]
-
-            # Deduplicate paths
-            seen_normalized = {str(p).lower().replace("\\", "/") for p in extra_paths}
-            norm_rel_path = rel_path.lower().replace("\\", "/")
-            if norm_rel_path not in seen_normalized:
-                extra_paths.append(rel_path)
-
-            self.db.update_invoice_file_paths(inv_id, extra_paths=extra_paths)
-            self.db.update_invoice_extra_flags(
-                inv_id,
-                has_extra=True,
-                missing_extra=False,
-            )
-
-            extra_paths_str = json.dumps(extra_paths, ensure_ascii=False)
-
-            # Update memory state
-            self.current_invoice["extra_paths"] = extra_paths_str
-            self.current_invoice["has_extra"] = 1
-            self.current_invoice["missing_extra"] = 0
-
-            # Refresh GUI and preview
-            self._on_table_selection_changed()
-            from .helpers import resolve_invoice_documents_with_evidence
-            self.current_preview_docs = resolve_invoice_documents_with_evidence(self.current_invoice, self.db, RUNTIME_DIR)
-            self.current_preview_index = 0
-            self._update_document_preview()
-            self._load_invoices()
-
-            _log.info("用户手动补齐证明材料: invoice_id=%s, filename=%s", inv_id, dest_path.name)
-            self.statusBar().showMessage("手动补齐证明材料成功", 3000)
-
-        except Exception as e:
-            _log.error("手动补齐证明材料失败: %s", e)
-            QMessageBox.critical(self, "错误", f"补齐证明材料失败: {e}")
+            if not name.lower().endswith(src_file.suffix.lower()):
+                name = os.path.splitext(name)[0] + src_file.suffix.lower()
+            destination = dest_dir / name
+            counter = 1
+            while destination.exists():
+                destination = dest_dir / f"{Path(name).stem}_{counter}{src_file.suffix.lower()}"
+                counter += 1
+            # Exclusive creation keeps cleanup scoped to this new copy.
+            with destination.open("xb") as output, src_file.open("rb") as source:
+                dest_path = destination
+                shutil.copyfileobj(source, output)
+            if not dest_path.stat().st_size:
+                raise ValueError("证明文件为空，请选择有内容的文件。")
+            rel_path = dest_path.relative_to(RUNTIME_DIR).as_posix()
+            with self.db._atomic_savepoint():
+                self.db._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                fresh = self.db.get_invoice(inv_id)
+                if not fresh or is_pending_evidence_invoice(fresh):
+                    raise ValueError("当前发票已删除或变为证明材料，请重新选择。")
+                paths = material_paths(fresh.get("extra_paths"))
+                paths.append(rel_path)
+                self.db.update_invoice_file_paths(inv_id, extra_paths=paths)
+            saved = True
+            if self._refresh_after_evidence_change((inv_id,)):
+                self.statusBar().showMessage("证明材料已添加，可通过“关联 / 解绑已有材料”供其他发票复用。", 6000)
+            _log.info("Manual evidence added: invoice_id=%s", inv_id)
+        except Exception as exc:
+            if dest_path is not None and not saved:
+                try:
+                    dest_path.unlink()
+                except OSError:
+                    pass
+            _log.error("Manual evidence add failed: %s", type(exc).__name__)
+            QMessageBox.warning(self, "材料未添加", str(exc) if isinstance(exc, ValueError) else "未能保存材料，请重试。")
 
     def _retry_download_link(self):
         """Start the legacy detail-link retry without touching the GUI thread."""
@@ -8111,9 +8238,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.statusBar().showMessage("已打开总导出 exports 目录", 3000)
 
     def _save_invoice_fields(self):
+        if not self.current_invoice or not self._try_begin_data_operation("保存发票字段"):
+            return False
+        try:
+            return self._save_invoice_fields_with_memory()
+        finally:
+            self._end_data_operation("保存发票字段")
+
+    def _save_invoice_fields_with_memory(self):
         # Save manually edited metadata fields in the form to database.
         if not self.current_invoice:
-            return
+            return False
         inv_id = self.current_invoice["id"]
         number = self.txt_number.text().strip()
         date = self.txt_date.text().strip()
@@ -8122,11 +8257,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         amount = self.txt_amount.text().strip()
         category = self.combo_category.currentText().strip()
         note = self.txt_note.toPlainText().strip()
+        previous_category = str(self.current_invoice.get("category") or "").strip()
+        remember = bool(self._detail_panel.remember_seller_category)
 
         if not amount:
             self.statusBar().showMessage("金额为空，已保存为待补全；标记通过前会再次确认。", 5000)
             self.write_log("⚠️ [手工补录] 当前记录金额为空，已按待补全材料保存。")
 
+        saved = False
         try:
             success = self.db.update_invoice_fields(
                 invoice_id=inv_id,
@@ -8136,7 +8274,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 buyer_name=buyer,
                 total_amount=amount,
                 category=category,
-                note=note
+                note=note,
+                remember_seller_category=remember,
             )
             if not success:
                 if getattr(self.db, "last_error", "") == "unique_conflict":
@@ -8147,24 +8286,29 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     )
                 else:
                     QMessageBox.warning(self, "保存失败", "未能保存发票修改")
-                return
+                return False
 
-            self.statusBar().showMessage("发票修改已保存", 3000)
-            current_row = self.table.currentRow()
+            saved = True
+            message = "发票修改已保存"
+            if (remember and category != previous_category and seller
+                    and not is_pending_evidence_invoice(self.current_invoice)
+                    and self.db.get_seller_category(seller) == category):
+                message += "；已记住此销售方的分类"
+            self.statusBar().showMessage(message, 5000)
             refreshed = self.db.get_invoice(inv_id)
             if refreshed:
                 self.current_invoice = refreshed
                 self._invoice_snapshot = self._get_invoice_form_snapshot()
             self._refresh_category_options(category)
-            self._load_invoices()
-            if current_row >= 0 and current_row < self.table.rowCount():
-                self._ensure_single_row_selection(current_row)
-                self._on_table_selection_changed()
+            self._load_invoices(preserve_invoice_id=inv_id)
             self._detail_panel.set_dirty_state(False)
             self.btn_save_draft.setEnabled(False)
+            return True
         except Exception as e:
-            _log.error("Failed to save invoice edits: %s", e)
-            QMessageBox.critical(self, "错误", f"保存发票失败: {e}")
+            _log.error("Failed to save invoice edits: %s", type(e).__name__)
+            message = "修改已保存，但界面未能刷新，请重新进入审核页。" if saved else "保存发票失败，请重试。"
+            QMessageBox.critical(self, "错误", message)
+            return saved
 
     def _approval_missing_fields(self, inv: dict) -> list[str]:
         missing = []
@@ -8230,6 +8374,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _set_selected_status(self, status):
         """Set review status of all selected invoices, handles auto-advance selection."""
+        if status == APPROVED and len(self.table.selectionModel().selectedRows()) > 1:
+            return self._batch_approve_selected()
+        if status == IGNORED and len(self.table.selectionModel().selectedRows()) > 1:
+            return self._batch_ignore_selected()
         performance_trace = self._performance_probe.begin("review_action", status=status)
         result = {
             "success": 0,
@@ -8363,11 +8511,282 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 performance_trace.finish("failed", selected=len(selected_indexes))
             return result
 
+    def _selected_batch_invoice_ids(self) -> tuple[int, ...]:
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        return tuple(self.invoices_list[row]["id"] for row in rows if 0 <= row < len(self.invoices_list))
+
+    def _sync_batch_review_controls(self) -> None:
+        if not all(hasattr(self, name) for name in ("batch_review_bar", "invoices_list", "review_page")):
+            return
+        from ..batch_review import batch_amount_summary
+        ids = set(self._selected_batch_invoice_ids())
+        rows = [row for row in self.invoices_list if row["id"] in ids]
+        self.batch_review_bar.set_selection(len(rows), batch_amount_summary(rows))
+        continuous = bool(self.review_page.property("hciContinuousReview"))
+        self.btn_review_batch_menu.setEnabled(bool(self.invoices_list) and not continuous)
+        self.action_select_loaded.setText(f"全选已加载 {len(self.invoices_list)} 张")
+        self.action_approve_selected.setText(f"通过所选 {len(rows)} 张…")
+        self.action_approve_selected.setEnabled(bool(rows))
+        total = int(getattr(self, "_record_total_matching", 0) or 0)
+        self.action_approve_filtered.setText(f"通过全部筛选结果 {total} 张…")
+        self.action_approve_filtered.setEnabled(total > 0)
+        self.batch_review_bar.setEnabled(not continuous)
+
+    def _batch_approve_selected(self):
+        return self._run_batch_approval(all_matching=False)
+
+    def _batch_approve_filtered(self):
+        return self._run_batch_approval(all_matching=True)
+
+    def _run_batch_approval(self, *, all_matching: bool):
+        from ..batch_review import prepare_batch_approval, apply_batch_approval, batch_skip_summary
+        result = {"success": 0, "evidence_only": 0, "not_found": 0, "other_failed": 0, "skipped": 0}
+        if self.center_stack.currentWidget() is not self.review_page:
+            return result
+        operation = "批量审核"
+        if not self._try_begin_data_operation(operation):
+            return result
+        approval_completed = False
+        try:
+            if not self._persist_invoice_note():
+                return result
+            if (self.current_invoice and self._invoice_snapshot is not None
+                    and self._get_invoice_form_snapshot() != self._invoice_snapshot):
+                self.statusBar().showMessage("当前发票有未保存字段，请先保存或放弃修改后再批量审核。", 6000)
+                return result
+            if all_matching:
+                query = self._build_review_query(status=self.current_filter_status)
+                ids = self.db.list_review_invoice_ids(query)
+                scope_text = "全部筛选结果（包括未加载记录）"
+            else:
+                ids = self._selected_batch_invoice_ids()
+                scope_text = "所选已加载记录"
+            if not ids:
+                self.statusBar().showMessage("当前范围没有发票可处理。", 4000)
+                return result
+            plan = prepare_batch_approval(self.db, ids, deepcopy(self.config), RUNTIME_DIR)
+            result["skipped"] = len(plan.skipped)
+            result["evidence_only"] = sum("待关联证明材料" in item.reasons for item in plan.skipped)
+            result["not_found"] = sum("记录不存在" in item.reasons for item in plan.skipped)
+            text = (f"范围：{scope_text}\n共 {len(plan.requested_ids)} 张："
+                    f"可通过 {len(plan.eligible_ids)} 张，跳过 {len(plan.skipped)} 张。\n"
+                    "仅将检查通过的待审核记录标记为已通过，保留个人备注。")
+            if plan.skipped:
+                text += "\n\n跳过原因：" + batch_skip_summary(plan.skipped)
+                text += "\n" + "\n".join(f"ID {item.invoice_id}：{'；'.join(item.reasons)}" for item in plan.skipped[:8])
+                if len(plan.skipped) > 8:
+                    text += f"\n另有 {len(plan.skipped) - 8} 张需逐张核对。"
+            if not plan.eligible_ids:
+                result["skipped"] = len(plan.skipped)
+                result["evidence_only"] = sum("待关联证明材料" in item.reasons for item in plan.skipped)
+                QMessageBox.information(self, "没有可批量通过的记录", text)
+                self.statusBar().showMessage(f"本批 {len(plan.skipped)} 张记录需逐张核对，审核状态保持不变。", 6000)
+                return result
+            answer = QMessageBox.question(self, "确认批量通过", text + "\n\n是否继续？",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes or getattr(self, "_shutdown_requested", False):
+                message = "已取消批量审核，审核状态保持不变。"
+                if result["evidence_only"]:
+                    message += f" 已跳过 {result['evidence_only']} 条待关联证明材料。"
+                self.statusBar().showMessage(message, 4000)
+                return result
+            previous_id = self._capture_live_selection_invoice_id()
+            outcome = apply_batch_approval(self.db, plan, deepcopy(self.config), RUNTIME_DIR)
+            approval_completed = True
+            result["success"] = len(outcome.changed_ids)
+            result["skipped"] = len(outcome.skipped)
+            result["evidence_only"] = sum("待关联证明材料" in item.reasons for item in outcome.skipped)
+            result["not_found"] = sum("记录不存在" in item.reasons for item in outcome.skipped)
+            self._last_batch_approval_result = outcome
+            self._load_invoices(preserve_invoice_id=previous_id)
+            self._refresh_overview_page()
+            message = f"批量审核：通过 {result['success']} 张，跳过 {result['skipped']} 张。"
+            if outcome.skipped:
+                message += " " + batch_skip_summary(outcome.skipped)
+            self.statusBar().showMessage(message, 10000)
+            return result
+        except Exception as exc:
+            result["other_failed"] = 1
+            _log.error("Batch review failed: %s", type(exc).__name__)
+            message = ("批量审核已完成，但界面未能刷新。请刷新列表查看结果。" if approval_completed else
+                       "未能完成批量审核，本批审核状态未写入。请检查数据库状态后重试。")
+            QMessageBox.critical(self, "批量审核失败", message)
+            return result
+        finally:
+            self._end_data_operation(operation)
+
+    def _batch_ignore_selected(self):
+        from ..batch_review import prepare_batch_ignore, apply_batch_ignore
+        result = {"success": 0, "evidence_only": 0, "not_found": 0, "other_failed": 0, "skipped": 0}
+        if self.center_stack.currentWidget() is not self.review_page or not self._try_begin_data_operation("批量忽略"):
+            return result
+        completed = False
+        try:
+            plan = prepare_batch_ignore(self.db, self._selected_batch_invoice_ids())
+            result["skipped"] = len(plan.skipped)
+            if not plan.eligible_ids:
+                self.statusBar().showMessage("所选记录已忽略、已删除或不存在，无需重复处理。", 5000)
+                return result
+            text = f"是否忽略所选 {len(plan.eligible_ids)} 张已加载记录？个人备注将保留。"
+            if plan.skipped:
+                text += f"\n另有 {len(plan.skipped)} 张记录会跳过。"
+            answer = QMessageBox.question(self, "确认忽略所选", text,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes or getattr(self, "_shutdown_requested", False):
+                return result
+            previous_id = self._capture_live_selection_invoice_id()
+            outcome = apply_batch_ignore(self.db, plan)
+            completed = True
+            result["success"] = len(outcome.changed_ids)
+            result["skipped"] = len(outcome.skipped)
+            self._load_invoices(preserve_invoice_id=previous_id)
+            self._refresh_overview_page()
+            self.statusBar().showMessage(f"已忽略 {result['success']} 张，跳过 {result['skipped']} 张。", 6000)
+            return result
+        except Exception as exc:
+            result["other_failed"] = 1
+            _log.error("Batch ignore failed: %s", type(exc).__name__)
+            message = ("批量忽略已完成，请刷新列表查看结果。" if completed else "批量忽略失败，本批审核状态未写入。")
+            QMessageBox.critical(self, "批量忽略失败", message)
+            return result
+        finally:
+            self._end_data_operation("批量忽略")
+
+    def _batch_link_selected(self):
+        if not self._try_begin_data_operation("批量归组"):
+            return
+        try:
+            self._link_invoices_to_claim()
+        finally:
+            self._end_data_operation("批量归组")
+
     def _choose_claim_invoices(self):
         self._switch_main_page("review")
         if self.center_stack.currentWidget() is self.review_page:
             self._detail_panel.detail_tabs.setCurrentIndex(1)
             self.statusBar().showMessage("选择发票后，在右侧“报销信息”中加入报销组。", 8000)
+
+    def _open_soft_duplicate_review(self):
+        from .duplicate_review_dialog import DuplicateReviewDialog
+        if not self._reason_edit_allowed():
+            return
+        def open_invoice(invoice_id):
+            from .helpers import resolve_invoice_documents_with_evidence
+            invoice = self.db.get_invoice(invoice_id)
+            documents = resolve_invoice_documents_with_evidence(invoice or {}, self.db, RUNTIME_DIR)
+            if not documents:
+                self.statusBar().showMessage("该记录没有可打开的原件。", 4000)
+                return
+            path = documents[0].get("path")
+            if path:
+                self._open_local_path(Path(path))
+        dialog = DuplicateReviewDialog(self.db, self, open_invoice, self._reason_edit_allowed)
+        dialog.exec()
+        if self.current_invoice:
+            self._load_invoices(preserve_invoice_id=self.current_invoice["id"])
+
+    def _reason_edit_allowed(self) -> bool:
+        busy = self._data_operation_busy_reason()
+        if busy:
+            self.statusBar().showMessage(f"{busy}正在进行，请完成后再修改报销信息。", 4000)
+            return False
+        return True
+
+    def _configure_export_filename(self):
+        from ..claim_cover import claim_filename
+        if not self._reason_edit_allowed():
+            return
+        current = str(self.config.get("reimbursement", {}).get("filename_template") or "reimbursement.xlsx")
+        template, accepted = QInputDialog.getText(
+            self, "导出文件名模板", "支持 {YYYYMM}、{部门}、{姓名}、{事由}；留空恢复默认文件名。",
+            text=current,
+        )
+        if not accepted or not self._reason_edit_allowed():
+            return
+        try:
+            claim_filename(template, {"name": "报销组"})
+            cfg = load_config_safe()
+            cfg.setdefault("reimbursement", {})["filename_template"] = template.strip()
+            save_config(cfg)
+            self.config = cfg
+            if isinstance(getattr(self, "_desktop_settings_cfg", None), dict):
+                self._desktop_settings_cfg.setdefault("reimbursement", {})["filename_template"] = template.strip()
+            self.statusBar().showMessage("导出文件名模板已保存。", 4000)
+        except Exception as exc:
+            QMessageBox.warning(self, "模板未保存", str(exc))
+
+    def _edit_claim_reason(self):
+        from .claim_reason_dialog import ClaimReasonDialog
+        if not self._reason_edit_allowed():
+            return
+        item = self.export_group_list.currentItem()
+        claim_id = item.data(Qt.UserRole) if item else None
+        claim = self.db.get_claim_group(claim_id) if claim_id is not None else None
+        if not claim:
+            self.statusBar().showMessage("请先选择报销组。", 4000)
+            return
+        dialog = ClaimReasonDialog(claim, self)
+        if dialog.exec() != QDialog.Accepted or not self._reason_edit_allowed():
+            return
+        try:
+            if not self.db.update_claim_reason(claim_id, **dialog.values()):
+                raise ValueError("报销组已不存在，请刷新后重试。")
+            self._load_claims(selected_claim_id=claim_id)
+            self.statusBar().showMessage("报销信息已保存；组内继承事由同步更新。", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "保存失败", str(exc))
+
+    def _edit_financial_fields(self):
+        from .financial_fields_dialog import FinancialFieldsDialog
+        if not self._reason_edit_allowed():
+            return
+        current = self.table.currentIndex()
+        if (not current.isValid() or not self.table.selectionModel().isRowSelected(
+                current.row(), current.parent())):
+            self.statusBar().showMessage("请先选择一张发票。", 4000)
+            return
+        invoice_id = self.invoices_list[current.row()]["id"]
+        invoice = self.db.get_invoice(invoice_id)
+        if not invoice:
+            return
+        dialog = FinancialFieldsDialog(invoice, self)
+        if dialog.exec() != QDialog.Accepted or not self._reason_edit_allowed():
+            return
+        try:
+            if not self.db.update_invoice_financial_fields(invoice_id, **dialog.values()):
+                raise ValueError("发票已不存在，请刷新后重试。")
+            self._load_invoices(preserve_invoice_id=invoice_id)
+            self.statusBar().showMessage("财税字段已保存；导出前会检查价税平衡。", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "保存失败", str(exc))
+
+    def _edit_invoice_reason(self):
+        from ..claim_reason import resolve_claim_reason
+        from .claim_reason_dialog import InvoiceReasonDialog
+        if not self._reason_edit_allowed():
+            return
+        current = self.table.currentIndex()
+        if (not current.isValid() or not self.table.selectionModel().isRowSelected(
+                current.row(), current.parent())):
+            self.statusBar().showMessage("请先选择一张发票。", 4000)
+            return
+        invoice_id = self.invoices_list[current.row()]["id"]
+        invoice = self.db.get_invoice(invoice_id)
+        if not invoice:
+            return
+        claim_id = self.db.get_invoice_claim_id(invoice_id)
+        claim = self.db.get_claim_group(claim_id) if claim_id is not None else None
+        inherited = resolve_claim_reason({}, claim)
+        dialog = InvoiceReasonDialog(invoice, inherited, self)
+        if dialog.exec() != QDialog.Accepted or not self._reason_edit_allowed():
+            return
+        try:
+            if not self.db.update_invoice_reason(invoice_id, dialog.value()):
+                raise ValueError("发票已不存在，请刷新后重试。")
+            self._load_invoices(preserve_invoice_id=invoice_id)
+            self.statusBar().showMessage("当前发票事由已保存。", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "保存失败", str(exc))
 
     def _create_export_claim(self):
         from PySide6.QtWidgets import QInputDialog
@@ -8431,9 +8850,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._load_claims()
         self.statusBar().showMessage(f"已删除空报销组：{claim_name}", 3000)
 
-    def _link_invoices_to_claim(self):
+    def _add_current_invoice_to_claim(self):
+        """Keyboard assignment acts on the current row, even with multiple selection."""
+        if self.center_stack.currentWidget() is not self.review_page:
+            return
+        self._link_invoices_to_claim(current_only=True, show_result=False)
+
+    def _link_invoices_to_claim(self, *, current_only=False, show_result=True):
         """Map selected invoices to the dropdown claim group in the SQLite DB."""
-        selected_indexes = self.table.selectionModel().selectedRows()
+        if current_only:
+            current = self.table.currentIndex()
+            current_selected = current.isValid() and self.table.selectionModel().isRowSelected(
+                current.row(), current.parent()
+            )
+            selected_indexes = [current] if current_selected else []
+        else:
+            selected_indexes = self.table.selectionModel().selectedRows()
         if not selected_indexes:
             QMessageBox.warning(self, "选择为空", "请先在左侧表格中选中发票记录！")
             return
@@ -8493,10 +8925,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 4000,
             )
             dialog_title = "关联结果" if linked_count else "未关联"
-            QMessageBox.information(self, dialog_title, msg)
+            if show_result:
+                QMessageBox.information(self, dialog_title, msg)
             self._load_claims()
             self._select_row_hint = self._capture_selection_row_hint()
-            self._load_invoices()
+            if current_only:
+                self._load_invoices(preserve_invoice_id=inv["id"])
+            else:
+                self._load_invoices()
             res = {
                 "linked": linked_count,
                 "assigned": assigned_count,
@@ -9836,6 +10272,7 @@ def start_gui_app(db_path: Path, startup_probe: bool = False, app_init_ms: int =
     import time as _time
     import json
     _t_launch = _time.monotonic()
+    configure_high_dpi_platform()
     app = QApplication(sys.argv)
 
     env_probe = os.environ.get("INVOICE_HUB_STARTUP_PROBE") == "1"

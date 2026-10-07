@@ -16,9 +16,12 @@ if TYPE_CHECKING:
 
 from . import review_status
 from .amount_utils import parse_amount
+from .financial_validation import check_tax_balance
+from .tax_id_validation import check_tax_id
 from .config import load_config_safe
 from .db import is_pending_evidence_invoice
 from .excel_export import export_excel
+from .export_paths import normalize_export_date_prefix as _normalize_export_date_prefix
 from .log_privacy import mask_path
 from .reimbursement import buyer_warning, get_date_warning
 
@@ -140,6 +143,10 @@ def inspect_extra_material(invoice: dict, runtime_dir: Path) -> dict:
     has_extra = _flag_is_true(invoice.get("has_extra"))
     extra_type = str(invoice.get("extra_type") or "").strip()
     unavailable_paths = []
+    for source in invoice.get("linked_evidence", ()):
+        if source.get("is_deleted") or not str(source.get("attachment_path") or "").strip():
+            unavailable_paths.append(source.get("attachment_path") or f"<evidence:{source['id']}>")
+            missing_extra = True
 
     for raw_path in extra_paths:
         source_path = _resolve_export_source_path(raw_path, runtime_dir)
@@ -190,19 +197,6 @@ def summarize_extra_material_issues(invoices: list[dict], runtime_dir: Path) -> 
         if result["unavailable_extra"]:
             summary["unavailable_extra"] += 1
     return summary
-
-
-def _normalize_export_date_prefix(raw_value: str) -> str:
-    text = str(raw_value or "").strip()
-    if not text:
-        return "unknown-date"
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
-        try:
-            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    text = re.sub(r"[^\dA-Za-z-]+", "-", text).strip("-")
-    return text or "unknown-date"
 
 
 def _prefix_export_filename(filename: str, date_prefix: str) -> str:
@@ -388,6 +382,29 @@ def export_claim_package(
 
     # Amount correctness is a release boundary: do not create any export
     # directory until every selected invoice has a finite total.
+    if reimbursement_config is None:
+        reimbursement_config = load_config_safe().get("reimbursement", {})
+    from .claim_cover import claim_filename
+    export_settings = (reimbursement_config or {}).get("reimbursement", reimbursement_config or {})
+    spreadsheet_name = claim_filename(export_settings.get("filename_template"), claim)
+    duplicate_decisions = {row["invoice_id"]: row["decision"]
+                           for row in db.list_duplicate_candidates("duplicate")}
+    pending_duplicate_ids = {row["invoice_id"] for row in db.list_duplicate_candidates()}
+    distinct_duplicate_ids = {row["invoice_id"] for row in db.list_duplicate_candidates("distinct")}
+    if any(invoice["id"] in duplicate_decisions for invoice in invoices):
+        raise ValueError("导出已阻断：报销组包含已确认重复的票据，请先忽略该票据或重置复核结论。")
+    for invoice in invoices:
+        id_check = check_tax_id(invoice.get("buyer_tax_id"), invoice.get("buyer_tax_id_type", "unknown"))
+        if id_check.blocking:
+            raise ValueError("导出已阻断：" + id_check.message)
+        balance = check_tax_balance(invoice)
+        if balance.blocking:
+            raise ValueError("导出已阻断：" + _invoice_export_identity(invoice) + "；" + balance.message)
+        if buyer_warning(invoice, {"reimbursement": {
+            **((reimbursement_config or {}).get("reimbursement", reimbursement_config or {})),
+            "strict_buyer_check": False,
+        }}):
+            raise ValueError("导出已阻断：购买方税号待核对，请修正税号或调整严格税号校验设置。")
     normalized_amounts = {}
     for inv in invoices:
         identity = _invoice_export_identity(inv)
@@ -416,8 +433,6 @@ def export_claim_package(
             f"导出已阻断：报销组内有 {dup_count} 张发票同时关联了其他报销组。为防止重复报销，请先移除重复归组关系后再导出。"
         )
 
-    if reimbursement_config is None:
-        reimbursement_config = load_config_safe().get("reimbursement", {})
 
     # 1. Setup export directory with timestamp to avoid stale files from repeated exports
     sanitized_name = _sanitize_dirname(claim["name"])
@@ -439,6 +454,8 @@ def export_claim_package(
         # We will copy invoices list to avoid mutating items in-memory that other code might use
         export_invoices = []
         manifest_items = []
+        copied_evidence = {}
+        from .evidence import path_key
 
         # 2. Process attachments. Every exported invoice original is required.
         for inv in invoices:
@@ -472,22 +489,37 @@ def export_claim_package(
 
             raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
             copied_extra_paths = []
+            evidence_references = []
+            by_path = {}
+            for source in inv.get("linked_evidence", ()):
+                by_path.setdefault(path_key(source["attachment_path"]), []).append(source)
             for extra_path in raw_extra_paths:
-                copied_extra_path = _copy_into_attachments(
-                    extra_path,
-                    runtime_dir,
-                    attachments_dir,
-                    date_prefix=export_date_prefix,
-                    required=True,
-                    required_kind="补充材料",
-                    required_context=invoice_identity,
-                    require_non_empty=True,
-                )
+                sources = by_path.get(path_key(extra_path), ())
+                source_key = path_key(_resolve_export_source_path(extra_path, runtime_dir).resolve())
+                if source_key in copied_evidence:
+                    # Still recheck the source at each reference so a vanished
+                    # file cannot be hidden by a successful earlier copy.
+                    if inspect_extra_material(inv, runtime_dir)["unavailable_extra"]:
+                        raise _required_copy_error("补充材料", invoice_identity)
+                    copied_extra_path = copied_evidence[source_key]
+                else:
+                    copied_extra_path = _copy_into_attachments(
+                        extra_path, runtime_dir, attachments_dir, date_prefix=export_date_prefix,
+                        required=True, required_kind="补充材料", required_context=invoice_identity,
+                        require_non_empty=True,
+                    )
+                    copied_evidence[source_key] = copied_extra_path
                 if not copied_extra_path:
                     raise ValueError(
                         "导出已阻断：补充材料复制数量不完整。请确认材料文件仍可访问后重试。"
                     )
                 copied_extra_paths.append(copied_extra_path)
+                for source in sources:
+                    evidence_references.append({
+                        "evidence_id": source["id"], "source_path": extra_path,
+                        "copied_path": copied_extra_path, "linked_at": source["linked_at"],
+                        "linked_count": source["linked_count"],
+                    })
             if len(copied_extra_paths) != len(raw_extra_paths):
                 raise ValueError(
                     "导出已阻断：补充材料复制数量不完整。请确认材料文件仍可访问后重试。"
@@ -501,6 +533,16 @@ def export_claim_package(
             # Build manifest item details
             manifest_items.append({
                 "invoice_id": inv.get("id"),
+                "duplicate_review": ("pending" if inv.get("id") in pending_duplicate_ids
+                                     else "distinct" if inv.get("id") in distinct_duplicate_ids else "none"),
+                "reimbursement_reason": inv.get("reimbursement_reason", ""),
+                "custom_reason": inv.get("custom_reason"),
+                "buyer_tax_id": inv.get("buyer_tax_id"),
+                "buyer_tax_id_type": inv.get("buyer_tax_id_type", "unknown"),
+                "buyer_tax_id_validation": check_tax_id(inv.get("buyer_tax_id"), inv.get("buyer_tax_id_type", "unknown")).status,
+                "tax_amount": inv.get("tax_amount"),
+                "tax_rate": inv.get("tax_rate"),
+                "tax_balance_status": check_tax_balance(inv).status,
                 "invoice_number": inv.get("invoice_number"),
                 "invoice_date": inv.get("invoice_date"),
                 "expense_date": inv.get("expense_date") or inv.get("invoice_date"),
@@ -517,6 +559,7 @@ def export_claim_package(
                 "copied_attachment_path": copied_relative_path,
                 "extra_paths": copied_extra_paths,
                 "copied_extra_paths": copied_extra_paths,
+                "evidence_references": evidence_references,
                 "review_status": inv.get("review_status", ""),
                 "warning": warning,
             })
@@ -529,8 +572,8 @@ def export_claim_package(
             )
 
         # 3. Generate reimbursement.xlsx
-        xlsx_dest = export_dir / "reimbursement.xlsx"
-        export_excel(export_invoices, xlsx_dest)
+        xlsx_dest = export_dir / spreadsheet_name
+        export_excel(export_invoices, xlsx_dest, claim=claim)
 
         # 3.5 Generate claim_quality_report.md
         qa_warnings_count = _generate_quality_report(
@@ -545,8 +588,13 @@ def export_claim_package(
 
         # 4. Generate manifest.json
         manifest_data = {
+            "spreadsheet": xlsx_dest.name,
             "claim_id": claim_id,
             "claim_name": claim["name"],
+            "reason_category": claim.get("reason_category", ""),
+            "reason_detail": claim.get("reason_detail", ""),
+            "applicant_name": claim.get("applicant_name", ""),
+            "department": claim.get("department", ""),
             "export_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "export_filter": {
                 "type": export_filter,

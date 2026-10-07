@@ -3745,7 +3745,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
-    def test_gui_mixed_approve_uses_one_summary_confirmation(self):
+    def test_gui_mixed_approve_skips_evidence_and_incomplete_invoice(self):
         try:
             from PySide6.QtCore import QItemSelectionModel
             from PySide6.QtWidgets import QApplication, QMessageBox
@@ -3784,20 +3784,23 @@ class ClaimGroupsTests(unittest.TestCase):
                         )
 
                     with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes) as mock_question, \
-                            patch.object(QMessageBox, "warning") as mock_warning:
+                            patch.object(QMessageBox, "warning") as mock_warning, \
+                            patch.object(QMessageBox, "information") as mock_information:
                         result = window._set_selected_status(review_status.APPROVED)
                         app.processEvents()
 
                     mock_warning.assert_not_called()
-                    mock_question.assert_called_once()
-                    prompt = mock_question.call_args.args[2]
-                    self.assertIn("将跳过 1 条待关联证明材料", prompt)
-                    self.assertIn("处理 1 条正式发票", prompt)
-                    self.assertIn("缺 金额", prompt)
-                    self.assertEqual(result["success"], 1)
+                    mock_question.assert_not_called()
+                    mock_information.assert_called_once()
+                    prompt = mock_information.call_args.args[2]
+                    self.assertIn("待关联证明材料", prompt)
+                    self.assertIn("金额缺失或无效", prompt)
+                    self.assertIn("可通过 0 张，跳过 2 张", prompt)
+                    self.assertEqual(result["success"], 0)
+                    self.assertEqual(result["skipped"], 2)
                     self.assertEqual(result["evidence_only"], 1)
                     self.assertEqual(window.db.get_invoice(evidence_id)["review_status"], review_status.TO_REVIEW)
-                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.APPROVED)
+                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -3818,6 +3821,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as td:
                 db_path = Path(td) / "test_gui_mixed_approve_cancel.db"
+                original = Path(td) / "synthetic-invoice.xml"
+                original.write_text("<invoice>synthetic</invoice>", encoding="utf-8")
                 with InvoiceDB(db_path) as db:
                     db.insert_invoice({
                         "invoice_type": "待关联证明材料",
@@ -3828,8 +3833,11 @@ class ClaimGroupsTests(unittest.TestCase):
                         "invoice_number": "MIXED-CANCEL-001",
                         "invoice_type": "电子发票",
                         "invoice_date": "2026-06-06",
-                        "total_amount": "",
+                        "total_amount": "10.00",
                         "seller_name": "Synthetic Seller",
+                        "buyer_name": "Synthetic Buyer",
+                        "attachment_path": str(original),
+                        "parse_success": 1,
                         "review_status": review_status.TO_REVIEW,
                     })
 

@@ -9,6 +9,8 @@ while preserving a useful invoice-table and preview area.
 
 from __future__ import annotations
 
+from shiboken6 import isValid
+
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtWidgets import QHeaderView, QLayout, QSplitter, QSizePolicy, QWidget
 
@@ -181,6 +183,8 @@ def apply_review_table_width_contract(page: QWidget) -> None:
     table.setColumnWidth(INVOICE_NUMBER_COLUMN, INVOICE_NUMBER_DEFAULT_WIDTH)
 
     def bounded_seller_adjustment() -> None:
+        if not isValid(table) or getattr(window, "_shutdown_requested", False):
+            return
         current = table.columnWidth(SELLER_COLUMN)
         if current < SELLER_MIN_WIDTH:
             table.setColumnWidth(SELLER_COLUMN, SELLER_MIN_WIDTH)
@@ -208,6 +212,8 @@ def _remove_widget_from_layout(layout: QLayout | None, widget: QWidget) -> bool:
 
 
 def _apply_initial_vertical_sizes(splitter: QSplitter, requested_sizes: list[int]) -> None:
+    if not isValid(splitter):
+        return
     total = max(
         splitter.height(),
         sum(requested_sizes) if len(requested_sizes) >= 2 else 0,
@@ -339,7 +345,7 @@ def _install_table_remainder_contract(window) -> None:
 
     def fill_remainder() -> None:
         nonlocal applying
-        if applying:
+        if applying or not isValid(table) or getattr(window, "_shutdown_requested", False):
             return
         applying = True
         try:

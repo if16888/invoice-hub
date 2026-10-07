@@ -950,10 +950,12 @@ class TestEmailReprocess(unittest.TestCase):
         extra_paths = json.loads(inv["extra_paths"])
         self.assertEqual(extra_paths, ["attachments/extra_9001.pdf"])
 
-        # Check evidence is soft-deleted
+        # The reusable material stays active; the relation removes it from the
+        # pending queue without consuming or rewriting its source metadata.
         ev = self.db.get_invoice(9001, include_deleted=True)
-        self.assertEqual(ev["is_deleted"], 1)
-        self.assertIn("已关联到发票 ID 9000", ev["parse_note"])
+        self.assertEqual(ev["is_deleted"], 0)
+        self.assertEqual(ev["parse_note"], "水单文本")
+        self.assertEqual(self.db.evidence_consumers(9001), (9000,))
 
     def test_26_link_evidence_to_invoice_prevent_duplicates(self):
         self.db._conn.execute(
@@ -1187,8 +1189,8 @@ class TestEmailReprocess(unittest.TestCase):
         self.assertEqual(len(unmatched), 0)
         self.assertEqual(len(matched[id(inv_info)]), 1)
 
-    def test_34_link_evidence_cross_mail_rejected(self):
-        # 跨邮件人工关联防护拦截
+    def test_34_link_evidence_cross_mail_allowed(self):
+        # Cross-mail explicit associations are supported in v0.2.0.
         from scripts.invoice_fetch.db import InvoiceDB
         import tempfile
         import shutil
@@ -1251,9 +1253,9 @@ class TestEmailReprocess(unittest.TestCase):
                 "mailbox_key": "mail_a",
             })
 
-            # 3. 关联，由于 UID 不一致，应返回 False
+            # UID is source metadata, not an association constraint.
             result = db.link_evidence_to_invoice(inv_id, ev_id)
-            self.assertFalse(result)
+            self.assertTrue(result)
 
             # 4. 插入一个待关联证明材料，UID=100 (一致), mailbox="mail_b" (不一致)
             ev_id_2 = db.insert_invoice({
@@ -1281,7 +1283,7 @@ class TestEmailReprocess(unittest.TestCase):
                 "mailbox_key": "mail_b",
             })
             result2 = db.link_evidence_to_invoice(inv_id, ev_id_2)
-            self.assertFalse(result2)
+            self.assertTrue(result2)
 
             # 5. 插入一个待关联证明材料，UID=100 (一致), mailbox="mail_a" (一致)
             ev_id_3 = db.insert_invoice({

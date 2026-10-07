@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
+from .tax_id_validation import check_tax_id
+
 
 BUYER_MISSING_WARNING = "购方抬头待核对"
 BUYER_MISMATCH_WARNING = "购方抬头不匹配，可能导致退单"
@@ -36,6 +38,9 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
     """
     reimbursement_cfg = (cfg or {}).get("reimbursement", cfg or {})
     warnings: list[str] = []
+    id_check = check_tax_id(invoice.get("buyer_tax_id"), invoice.get("buyer_tax_id_type", "unknown"))
+    if id_check.blocking:
+        warnings.append(id_check.message)
 
     if reimbursement_cfg.get("strict_buyer_check", False):
         expected = str(reimbursement_cfg.get("buyer_name") or "").strip()
@@ -49,12 +54,11 @@ def buyer_warning(invoice: dict, cfg: dict | None) -> str:
                 f"当前发票：{actual}；默认主体：{expected}"
             )
 
-    # Legacy rows do not yet contain buyer_tax_id. Only evaluate the missing
-    # value when an importer explicitly supplied the field, avoiding a permanent
-    # warning on historical invoices.
+    # NULL means not yet collected (including legacy rows). Explicit empty
+    # means collected but absent; only known values enter strict comparison.
     if reimbursement_cfg.get("strict_buyer_tax_check", False):
         expected_tax = normalize_tax_id(reimbursement_cfg.get("buyer_tax_id"))
-        if expected_tax and "buyer_tax_id" in invoice:
+        if expected_tax and invoice.get("buyer_tax_id") is not None:
             actual_tax = normalize_tax_id(invoice.get("buyer_tax_id"))
             if not actual_tax:
                 warnings.append(BUYER_TAX_MISSING_WARNING)
@@ -80,6 +84,8 @@ def compact_buyer_warning(value: str) -> str:
 
 def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:
     """Return count, total amount, and whether any row has missing/invalid amount."""
+    from .evidence import is_evidence_record
+    rows = [row for row in rows if not is_evidence_record(row)]
     total = Decimal("0")
     has_missing = False
     for row in rows:

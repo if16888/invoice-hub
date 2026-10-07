@@ -6,14 +6,21 @@ import json
 import logging
 import sqlite3
 import re
+import unicodedata
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from . import review_status
 from .log_privacy import mask_invoice_number
 from .review_query import ReviewColumnFilter, ReviewQuery
+from .evidence import (
+    EvidenceStoreMixin, is_evidence_record, material_paths,
+    refresh_material_projection, replace_material_paths, visible_invoice_sql,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -73,11 +80,8 @@ def _configure_journal_mode(conn: sqlite3.Connection) -> str:
 
 
 def is_pending_evidence_invoice(invoice: dict) -> bool:
-    """Return True only for evidence that still needs a main invoice link."""
-    return (
-        str(invoice.get("invoice_type") or "") == "待关联证明材料"
-        or "待关联证明材料" in str(invoice.get("parse_note") or "")
-    )
+    """Compatibility guard: evidence is never an approvable financial invoice."""
+    return is_evidence_record(invoice)
 
 
 _SCHEMA = """
@@ -147,7 +151,7 @@ CREATE TABLE IF NOT EXISTS trusted_senders (
 """
 
 
-class InvoiceDB:
+class InvoiceDB(EvidenceStoreMixin):
     """Thin wrapper around a SQLite database for invoice records."""
 
     def __init__(self, db_path: str | Path):
@@ -162,7 +166,7 @@ class InvoiceDB:
         self._conn.row_factory = sqlite3.Row
         self._buyer_warning_checker = None
         self._conn.create_function(
-            "review_buyer_has_warning", 1, self._eval_buyer_warning, deterministic=False
+            "review_buyer_has_warning", 3, self._eval_buyer_warning, deterministic=False
         )
         self._conn.create_function(
             "review_amount_at_least", 2,
@@ -189,6 +193,7 @@ class InvoiceDB:
         # Run database migrations
         from .migrations import check_and_migrate
         check_and_migrate(self._conn)
+        self._conn.execute("PRAGMA foreign_keys = ON")
 
 
     def close(self):
@@ -205,11 +210,11 @@ class InvoiceDB:
         """Register an in-memory predicate Callable[[dict], bool] to evaluate buyer warnings."""
         self._buyer_warning_checker = checker
 
-    def _eval_buyer_warning(self, buyer_name: object) -> int:
+    def _eval_buyer_warning(self, buyer_name: object, buyer_tax_id: object = None, buyer_tax_id_type: object = "unknown") -> int:
         checker = getattr(self, "_buyer_warning_checker", None)
         if callable(checker):
             try:
-                return 1 if checker({"buyer_name": str(buyer_name or "")}) else 0
+                return 1 if checker({"buyer_name": str(buyer_name or ""), "buyer_tax_id": buyer_tax_id, "buyer_tax_id_type": buyer_tax_id_type}) else 0
             except Exception:
                 return 0
         return 0
@@ -526,23 +531,33 @@ class InvoiceDB:
 
     def insert_invoice(self, rec: dict[str, Any]) -> int | None:
         """Insert an invoice record.  Returns the row id, or None on dup."""
+        rec = dict(rec)
+        rec["record_role"] = "evidence" if is_evidence_record(rec) else "invoice"
+        rec.setdefault("evidence_required", int(bool(rec.get("missing_extra") or rec.get("extra_type"))))
         if "invoice_date" in rec and "expense_date" not in rec:
             rec = dict(rec)
             rec["expense_date"] = rec["invoice_date"]
             if "date_source" not in rec:
                 rec["date_source"] = "invoice_date"
 
+        if rec.get("parse_success") in (True, 1, "1") and not is_pending_evidence_invoice(rec):
+            rec = dict(rec)
+            if rec.get("category_source") != "manual":
+                rec["category"], rec["category_source"] = self.resolve_parsed_category(
+                    rec.get("seller_name", ""), rec.get("category", "其他")
+                )
+
         allowed_cols = {
             "mailbox_key",
             "invoice_number", "invoice_code", "invoice_date",
             "amount", "total_amount", "seller_name", "buyer_name",
-            "invoice_type", "category", "has_extra", "extra_type",
+            "invoice_type", "category", "category_source", "record_role", "evidence_required", "has_extra", "extra_type",
             "missing_extra", "mail_uid", "mail_subject", "mail_date",
             "mail_sender", "parse_success", "parse_note",
             "attachment_path", "extra_paths", "download_url", "item_name",
             "review_status", "processing_status", "currency", "exchange_rate",
             "amount_home", "file_hash", "confirmed_at", "confirmed_note", "is_deleted",
-            "expense_date", "date_source",
+            "expense_date", "date_source", "custom_reason", "buyer_tax_id", "buyer_tax_id_type", "tax_amount", "tax_rate",
         }
 
         # Dynamically build the SQL statement containing only keys that are explicitly provided.
@@ -570,28 +585,25 @@ class InvoiceDB:
         vals = [insert_rec[c] for c in cols]
 
         try:
-            cur = self._conn.execute(
-                f"INSERT INTO invoices ({col_names}) VALUES ({placeholders})",
-                vals,
-            )
-            self._conn.commit()
-            return cur.lastrowid
+            with self._atomic_savepoint():
+                cur = self._conn.execute(
+                    f"INSERT INTO invoices ({col_names}) VALUES ({placeholders})", vals,
+                )
+                invoice_id = cur.lastrowid
+                if material_paths(rec.get("extra_paths")) and rec["record_role"] == "invoice":
+                    replace_material_paths(self._conn, invoice_id, rec["extra_paths"])
+            return invoice_id
         except sqlite3.IntegrityError:
-            self._conn.rollback()
             _log.info("重复发票(DB约束): %s", mask_invoice_number(rec.get("invoice_number", "")))
             return None
 
     # ── Query ────────────────────────────────────────────────────────
 
     def get_all_invoices(self, include_deleted: bool = False) -> list[dict]:
-        if include_deleted:
-            rows = self._conn.execute(
-                "SELECT * FROM invoices ORDER BY expense_date DESC, id DESC"
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM invoices WHERE is_deleted = 0 ORDER BY expense_date DESC, id DESC"
-            ).fetchall()
+        sql = "SELECT i.* FROM invoices i WHERE " + visible_invoice_sql()
+        if not include_deleted:
+            sql += " AND i.is_deleted=0"
+        rows = self._conn.execute(sql + " ORDER BY i.expense_date DESC, i.id DESC").fetchall()
         return [dict(r) for r in rows]
 
     def get_invoice(self, invoice_id: int, include_deleted: bool = False) -> dict | None:
@@ -600,13 +612,14 @@ class InvoiceDB:
         if not include_deleted:
             sql += " AND is_deleted = 0"
         row = self._conn.execute(sql, (invoice_id,)).fetchone()
-        return dict(row) if row else None
+        return self._with_evidence(dict(row)) if row else None
 
     def find_invoice_by_number_and_amount(self, invoice_number: str, total_amount: str = "", include_deleted: bool = False) -> dict | None:
         """Find the most recent invoice with the same invoice number and amount."""
         if not invoice_number:
             return None
         sql = "SELECT * FROM invoices WHERE invoice_number = ? AND total_amount = ?"
+        sql += " AND record_role='invoice' AND COALESCE(invoice_type,'')!='待关联证明材料'"
         if not include_deleted:
             sql += " AND is_deleted = 0"
         sql += " ORDER BY id DESC LIMIT 1"
@@ -618,6 +631,7 @@ class InvoiceDB:
         if not invoice_number:
             return None
         sql = "SELECT * FROM invoices WHERE invoice_number = ?"
+        sql += " AND record_role='invoice' AND COALESCE(invoice_type,'')!='待关联证明材料'"
         if not include_deleted:
             sql += " AND is_deleted = 0"
         sql += " ORDER BY id DESC LIMIT 1"
@@ -631,6 +645,7 @@ class InvoiceDB:
         if not seller_name or not total_amount:
             return None
         sql = "SELECT * FROM invoices WHERE seller_name = ? AND total_amount = ?"
+        sql += " AND record_role='invoice' AND COALESCE(invoice_type,'')!='待关联证明材料'"
         if not include_deleted:
             sql += " AND is_deleted = 0"
         sql += " ORDER BY id DESC LIMIT 1"
@@ -674,11 +689,12 @@ class InvoiceDB:
         assignments = "is_deleted = 0"
         if "updated_at" in columns:
             assignments += ", updated_at = CURRENT_TIMESTAMP"
-        self._conn.execute(
-            f"UPDATE invoices SET {assignments} WHERE id IN ({id_placeholders})",
-            tuple(invoice_ids),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                f"UPDATE invoices SET {assignments} WHERE id IN ({id_placeholders})", tuple(invoice_ids),
+            )
+            for invoice_id in invoice_ids:
+                self._refresh_evidence_consumers(invoice_id)
         return invoice_ids
 
     def find_receipt_by_source(
@@ -727,6 +743,7 @@ class InvoiceDB:
             return None
 
         sql = "SELECT * FROM invoices WHERE invoice_number = ? AND total_amount = ? AND seller_name = ?"
+        sql += " AND record_role='invoice' AND COALESCE(invoice_type,'')!='待关联证明材料'"
         if not include_deleted:
             sql += " AND is_deleted = 0"
         sql += " ORDER BY id DESC LIMIT 1"
@@ -745,8 +762,9 @@ class InvoiceDB:
         row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if not row:
             return False
-        self._conn.execute("UPDATE invoices SET is_deleted = 1 WHERE id = ?", (invoice_id,))
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET is_deleted = 1 WHERE id = ?", (invoice_id,))
+            self._refresh_evidence_consumers(invoice_id)
         return True
 
     def delete_invoice_permanently(self, invoice_id: int) -> bool:
@@ -754,8 +772,12 @@ class InvoiceDB:
         row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if not row:
             return False
-        self._conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if self.evidence_consumers(invoice_id):
+                self._set_last_error("evidence_in_use")
+                return False
+            self._conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
         return True
 
     def restore_invoice(self, invoice_id: int) -> bool:
@@ -763,15 +785,74 @@ class InvoiceDB:
         row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if not row:
             return False
-        self._conn.execute("UPDATE invoices SET is_deleted = 0 WHERE id = ?", (invoice_id,))
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET is_deleted = 0 WHERE id = ?", (invoice_id,))
+            self._refresh_evidence_consumers(invoice_id)
         return True
 
+
+    @staticmethod
+    def _seller_preference_key(seller_name: str) -> str:
+        # Match complete names only; retain internal spaces, punctuation and case.
+        return unicodedata.normalize("NFC", str(seller_name or "").strip())
+
+    def get_seller_category(self, seller_name: str) -> str:
+        key = self._seller_preference_key(seller_name)
+        if not key:
+            return ""
+        row = self._conn.execute(
+            "SELECT preferred_category FROM seller_category_preferences WHERE seller_name=?",
+            (key,),
+        ).fetchone()
+        return str(row[0]) if row else ""
+
+    def list_seller_category_preferences(self) -> list[dict]:
+        return [dict(row) for row in self._conn.execute(
+            "SELECT seller_name, preferred_category, updated_at "
+            "FROM seller_category_preferences ORDER BY seller_name"
+        )]
+
+    def forget_seller_categories(self, seller_names) -> int:
+        keys = tuple(dict.fromkeys(self._seller_preference_key(name) for name in seller_names))
+        with self._atomic_savepoint():
+            cursor = self._conn.executemany(
+                "DELETE FROM seller_category_preferences WHERE seller_name=?",
+                [(key,) for key in keys if key],
+            )
+            return cursor.rowcount
+
+    def _remember_seller_category(self, seller_name: str, category: str) -> None:
+        self._conn.execute(
+            "INSERT INTO seller_category_preferences (seller_name, preferred_category, updated_at) "
+            "VALUES (?, ?, ?) ON CONFLICT(seller_name) DO UPDATE SET "
+            "preferred_category=excluded.preferred_category, updated_at=excluded.updated_at",
+            (self._seller_preference_key(seller_name), category,
+             datetime.now().isoformat(timespec="microseconds")),
+        )
+
+    def resolve_parsed_category(
+        self, seller_name: str, category: str, *, existing: dict | None = None,
+        use_seller_preference: bool = True,
+        preserve_finalized: bool = True,
+    ) -> tuple[str, str]:
+        """Preserve explicit choices; prefer learned labels for automatic classification."""
+        if existing and (existing.get("category_source") == "manual"
+                         or (preserve_finalized and (existing.get("review_status") == review_status.APPROVED
+                                                    or self.count_claim_links(existing["id"]) > 0))):
+            return str(existing.get("category") or ""), str(existing.get("category_source") or "unknown")
+        if use_seller_preference:
+            preferred = self.get_seller_category(seller_name)
+            if preferred:
+                return preferred, "seller_preference"
+        if existing and not use_seller_preference and category == existing.get("category"):
+            return category, str(existing.get("category_source") or "unknown")
+        return category, "rule"
 
     def list_categories(self) -> list[str]:
         """Return distinct non-empty invoice categories already used in the database."""
         rows = self._conn.execute(
-            "SELECT DISTINCT category FROM invoices "
+            "SELECT DISTINCT category FROM (SELECT category FROM invoices "
+            "UNION SELECT preferred_category AS category FROM seller_category_preferences) "
             "WHERE TRIM(COALESCE(category, '')) != '' "
             "ORDER BY category COLLATE NOCASE"
         ).fetchall()
@@ -791,6 +872,7 @@ class InvoiceDB:
         if not inv:
             self._set_last_error("not_found")
             return False
+
         if status == review_status.APPROVED and is_pending_evidence_invoice(inv):
             self._set_last_error("evidence_only")
             return False
@@ -807,6 +889,46 @@ class InvoiceDB:
         self._conn.commit()
         self._set_last_error("")
         return True
+
+    @contextmanager
+    def _atomic_savepoint(self):
+        """Keep nested domain operations from committing their caller's writes."""
+        name = "invoice_hub_" + uuid4().hex
+        self._conn.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+            self._conn.execute(f"RELEASE {name}")
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute(f"ROLLBACK TO {name}")
+                self._conn.execute(f"RELEASE {name}")
+            raise
+
+    @contextmanager
+    def batch_review_transaction(self):
+        """Reserve the SQLite writer before rechecking and approving a batch."""
+        if self._conn.in_transaction:
+            raise RuntimeError("Batch review requires a connection without pending writes")
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            yield
+
+    def apply_review_batch_status(self, invoice_ids: tuple[int, ...], status: str) -> None:
+        """Apply validated batch changes inside a transaction, preserving notes."""
+        if status not in {review_status.APPROVED, review_status.IGNORED}:
+            raise ValueError("Unsupported batch review status")
+        if not self._conn.in_transaction:
+            raise RuntimeError("Batch review changes require a transaction")
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        pending_sql = " AND review_status=?" if status == review_status.APPROVED else ""
+        cursor = self._conn.executemany(
+            "UPDATE invoices SET review_status=?, confirmed_at=? "
+            "WHERE id=? AND is_deleted=0" + pending_sql,
+            [(status, stamp, invoice_id) + ((review_status.TO_REVIEW,) if pending_sql else ())
+             for invoice_id in invoice_ids],
+        )
+        if cursor.rowcount != len(invoice_ids):
+            raise RuntimeError("Review records changed during batch approval")
 
     def update_invoice_note(self, invoice_id: int, note: str) -> bool:
         """Persist a note without rewriting parsed or edited financial fields."""
@@ -832,39 +954,45 @@ class InvoiceDB:
         category: str,
         note: str = "",
         buyer_name: str | None = None,
+        *,
+        remember_seller_category: bool = False,
     ) -> bool:
-        """Update metadata fields of an invoice.
-
-        Returns False if the invoice_id does not exist.
-        """
-        inv = self.get_invoice(invoice_id)
-        if not inv:
-            self._set_last_error("not_found")
-            return False
-        if buyer_name is None:
-            buyer_name = str(inv.get("buyer_name") or "")
-
+        """Save manual fields and optional seller learning as one atomic change."""
         new_expense_date = str(expense_date or "").strip()
-        old_expense_date = str(inv.get("expense_date") or "").strip()
-        old_date_source = str(inv.get("date_source") or "").strip()
-
-        if new_expense_date != old_expense_date:
-            new_date_source = "manual"
-        else:
-            new_date_source = old_date_source
-
+        category = str(category or "").strip()
         try:
-            self._conn.execute(
-                "UPDATE invoices SET invoice_number=?, expense_date=?, date_source=?, seller_name=?, buyer_name=?, "
-                "total_amount=?, category=?, confirmed_note=? WHERE id=?",
-                (invoice_number, new_expense_date, new_date_source, seller_name, buyer_name, total_amount, category, note, invoice_id),
-            )
-            self._conn.commit()
+            with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                inv = self.get_invoice(invoice_id)
+                if not inv:
+                    self._set_last_error("not_found")
+                    return False
+                if buyer_name is None:
+                    buyer_name = str(inv.get("buyer_name") or "")
+                old_expense_date = str(inv.get("expense_date") or "").strip()
+                new_date_source = ("manual" if new_expense_date != old_expense_date
+                                   else str(inv.get("date_source") or ""))
+                category_changed = category != str(inv.get("category") or "").strip()
+                source = str(inv.get("category_source") or "unknown")
+                if (category_changed or self._seller_preference_key(seller_name)
+                        != self._seller_preference_key(inv.get("seller_name"))):
+                    source = "manual"
+                self._conn.execute(
+                    "UPDATE invoices SET invoice_number=?, expense_date=?, date_source=?, seller_name=?, buyer_name=?, "
+                    "total_amount=?, category=?, category_source=?, confirmed_note=? WHERE id=?",
+                    (invoice_number, new_expense_date, new_date_source, seller_name, buyer_name, total_amount,
+                     category, source, note, invoice_id),
+                )
+                if (remember_seller_category and category_changed and self._seller_preference_key(seller_name)
+                        and category not in ("", "未分类") and not is_pending_evidence_invoice(inv)):
+                    self._remember_seller_category(seller_name, category)
             self._set_last_error("")
             return True
-        except sqlite3.IntegrityError:
-            self._conn.rollback()
-            self._set_last_error("unique_conflict")
+        except sqlite3.IntegrityError as exc:
+            self._set_last_error("unique_conflict" if "UNIQUE constraint failed" in str(exc) else "write_failed")
+            return False
+        except sqlite3.Error:
+            self._set_last_error("write_failed")
             return False
 
     def update_invoice_parsed_metadata(
@@ -887,49 +1015,77 @@ class InvoiceDB:
         item_name: str = "",
         expense_date: str = "",
         date_source: str = "",
+        buyer_tax_id: str | None = None,
+        tax_amount: str | None = None,
+        tax_rate: str | None = None,
+        use_seller_preference: bool = True,
+        evidence_required: bool | None = None,
     ) -> bool:
         """Refresh parsed metadata in-place without touching review status."""
-        inv = self.get_invoice(invoice_id)
-        if not inv:
-            self._set_last_error("not_found")
-            return False
-
-        if not expense_date:
-            expense_date = invoice_date
-        if not date_source:
-            date_source = "invoice_date"
-
         try:
-            self._conn.execute(
-                "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, expense_date=?, date_source=?, amount=?, total_amount=?, "
-                "seller_name=?, buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
-                "missing_extra=?, parse_success=?, parse_note=?, item_name=? WHERE id=?",
-                (
-                    invoice_number,
-                    invoice_code,
-                    invoice_date,
-                    expense_date,
-                    date_source,
-                    amount,
-                    total_amount,
-                    seller_name,
-                    buyer_name,
-                    invoice_type,
-                    category,
-                    int(bool(has_extra)),
-                    extra_type,
-                    int(bool(missing_extra)),
-                    int(bool(parse_success)),
-                    parse_note,
-                    item_name,
-                    invoice_id,
-                ),
-            )
-            self._conn.commit()
+            with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                inv = self.get_invoice(invoice_id)
+                if not inv:
+                    self._set_last_error("not_found")
+                    return False
+
+                parsed_is_evidence = is_evidence_record({"invoice_type": invoice_type, "parse_note": parse_note})
+                if is_evidence_record(inv) and not parsed_is_evidence and self.evidence_consumers(invoice_id):
+                    self._set_last_error("evidence_in_use")
+                    return False
+                if (parsed_is_evidence and not is_evidence_record(inv)
+                        and (self.list_invoice_evidence(invoice_id) or self.count_claim_links(invoice_id))):
+                    self._set_last_error("evidence_role_conflict")
+                    return False
+
+                if not expense_date:
+                    expense_date = invoice_date
+                if not date_source:
+                    date_source = "invoice_date"
+
+                category_source = str(inv.get("category_source") or "unknown")
+                if parse_success and not is_pending_evidence_invoice({"invoice_type": invoice_type, "parse_note": parse_note}):
+                    category, category_source = self.resolve_parsed_category(
+                        seller_name, category, existing=inv, use_seller_preference=use_seller_preference,
+                    )
+
+                self._conn.execute(
+                    "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, expense_date=?, date_source=?, amount=?, total_amount=?, "
+                    "seller_name=?, buyer_name=?, invoice_type=?, category=?, category_source=?, has_extra=?, extra_type=?, "
+                    "missing_extra=?, parse_success=?, parse_note=?, item_name=?, "
+                    "buyer_tax_id=COALESCE(?, buyer_tax_id), tax_amount=COALESCE(?, tax_amount), "
+                    "tax_rate=COALESCE(?, tax_rate), record_role=?, evidence_required=? WHERE id=?",
+                    (
+                        invoice_number,
+                        invoice_code,
+                        invoice_date,
+                        expense_date,
+                        date_source,
+                        amount,
+                        total_amount,
+                        seller_name,
+                        buyer_name,
+                        invoice_type,
+                        category,
+                        category_source,
+                        int(bool(has_extra)),
+                        extra_type,
+                        int(bool(missing_extra)),
+                        int(bool(parse_success)),
+                        parse_note,
+                        item_name,
+                        buyer_tax_id, tax_amount, tax_rate,
+                        "evidence" if parsed_is_evidence else "invoice",
+                        int(bool(missing_extra or extra_type) if evidence_required is None else evidence_required),
+                        invoice_id,
+                    ),
+                )
+                if self.list_invoice_evidence(invoice_id):
+                    refresh_material_projection(self._conn, invoice_id)
             self._set_last_error("")
             return True
         except sqlite3.IntegrityError:
-            self._conn.rollback()
             self._set_last_error("unique_conflict")
             return False
 
@@ -957,12 +1113,16 @@ class InvoiceDB:
         if not fields:
             return False
 
-        values.append(invoice_id)
-        self._conn.execute(
-            f"UPDATE invoices SET {', '.join(fields)} WHERE id = ?",
-            values,
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self.get_invoice(invoice_id, include_deleted=True):
+                return False
+            values.append(invoice_id)
+            self._conn.execute(f"UPDATE invoices SET {', '.join(fields)} WHERE id = ?", values)
+            if extra_paths is not None:
+                replace_material_paths(self._conn, invoice_id, extra_paths)
+            if attachment_path is not None:
+                self._refresh_evidence_consumers(invoice_id)
         return True
 
     def update_invoice_extra_flags(
@@ -975,11 +1135,14 @@ class InvoiceDB:
         """Synchronize evidence flags without changing parsed invoice metadata."""
         if not self.get_invoice(invoice_id):
             return False
-        self._conn.execute(
-            "UPDATE invoices SET has_extra = ?, missing_extra = ? WHERE id = ?",
-            (int(bool(has_extra)), int(bool(missing_extra)), invoice_id),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "UPDATE invoices SET has_extra=?, missing_extra=?, "
+                "evidence_required=MAX(evidence_required,?) WHERE id=?",
+                (int(bool(has_extra)), int(bool(missing_extra)), int(bool(missing_extra)), invoice_id),
+            )
+            if self.list_invoice_evidence(invoice_id):
+                refresh_material_projection(self._conn, invoice_id)
         return True
 
     def update_invoice_attachment_path_if_missing(
@@ -1009,11 +1172,7 @@ class InvoiceDB:
             values.append(file_hash)
         values.append(invoice_id)
 
-        self._conn.execute(
-            f"UPDATE invoices SET attachment_path = ?{extra_sql} WHERE id = ?",
-            values,
-        )
-        self._conn.commit()
+        self.update_invoice_file_paths(invoice_id, attachment_path=attachment_path, file_hash=file_hash or None)
         _log.debug("重复发票已有记录缺少原件，已回填附件路径: existing_id=%d", invoice_id)
         return True
 
@@ -1058,6 +1217,13 @@ class InvoiceDB:
                 skipped.append(key)
                 continue
 
+            if key == "category" and inv.get("category_source") == "manual":
+                skipped.append(key)
+                continue
+            if key == "invoice_type" and is_evidence_record(inv) and self.evidence_consumers(invoice_id):
+                skipped.append(key)
+                continue
+
             if new_val is None or str(new_val).strip() == "":
                 skipped.append(key)
                 continue
@@ -1075,11 +1241,25 @@ class InvoiceDB:
                     continue
 
             try:
-                self._conn.execute(
-                    f"UPDATE invoices SET {key} = ? WHERE id = ?",
-                    (str(new_val).strip(), invoice_id),
-                )
-                self._conn.commit()
+                with self._atomic_savepoint():
+                    self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                    if key == "invoice_type":
+                        current = self.get_invoice(invoice_id)
+                        if current and is_evidence_record(current) and self.evidence_consumers(invoice_id):
+                            skipped.append(key)
+                            continue
+                        if (current and new_val == "待关联证明材料"
+                                and (self.list_invoice_evidence(invoice_id) or self.count_claim_links(invoice_id))):
+                            skipped.append(key)
+                            continue
+                    value = json.dumps(material_paths(new_val), ensure_ascii=False) if key == "extra_paths" else str(new_val).strip()
+                    self._conn.execute(f"UPDATE invoices SET {key} = ? WHERE id = ?", (value, invoice_id))
+                    if key == "extra_paths":
+                        replace_material_paths(self._conn, invoice_id, new_val)
+                    elif key == "attachment_path":
+                        self._refresh_evidence_consumers(invoice_id)
+                    elif key == "invoice_type" and new_val != "待关联证明材料":
+                        self._conn.execute("UPDATE invoices SET record_role='invoice' WHERE id=?", (invoice_id,))
                 updated.append(key)
                 _log.info("重复发票缺少%s，已从本次解析结果回填: existing_id=%d", key, invoice_id)
             except Exception:
@@ -1122,7 +1302,7 @@ class InvoiceDB:
             ) cgi ON i.id = cgi.invoice_id
             LEFT JOIN claim_groups cg ON cgi.claim_id = cg.id
         """
-        where_clauses = []
+        where_clauses = [visible_invoice_sql()]
         params = []
         if not include_deleted:
             where_clauses.append("i.is_deleted = 0")
@@ -1173,6 +1353,7 @@ class InvoiceDB:
             WHERE i.id IN ({placeholders})
         """
         params: list[object] = list(normalized_ids)
+        query += " AND " + visible_invoice_sql()
         if not include_deleted:
             query += " AND i.is_deleted = 0"
         if status is not None:
@@ -1183,19 +1364,15 @@ class InvoiceDB:
         return [by_id[invoice_id] for invoice_id in normalized_ids if invoice_id in by_id]
 
     def count_invoices(self, include_deleted: bool = False) -> int:
-        if include_deleted:
-            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices").fetchone()
-        else:
-            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM invoices WHERE is_deleted = 0").fetchone()
-        return int(row["cnt"] if row else 0)
+        return self.count_invoices_for_status(include_deleted=include_deleted)
 
     def count_invoices_for_status(self, status: str | None = None, include_deleted: bool = False) -> int:
         """Count invoices, optionally filtered by review status, without hydrating rows."""
         if status is not None and status not in review_status.ALL_STATUSES:
             raise ValueError(f"Invalid review status: '{status}'. Must be one of {review_status.ALL_STATUSES}")
 
-        query = "SELECT COUNT(*) AS cnt FROM invoices"
-        where_clauses = []
+        query = "SELECT COUNT(*) AS cnt FROM invoices i"
+        where_clauses = [visible_invoice_sql()]
         params = []
         if not include_deleted:
             where_clauses.append("is_deleted = 0")
@@ -1258,7 +1435,7 @@ class InvoiceDB:
             """,
             "buyer_warning": """
                 CASE
-                    WHEN review_buyer_has_warning(COALESCE(i.buyer_name, '')) = 1 THEN '异常'
+                    WHEN review_buyer_has_warning(COALESCE(i.buyer_name, ''), i.buyer_tax_id, i.buyer_tax_id_type) = 1 THEN '异常'
                     ELSE '正常'
                 END
             """,
@@ -1282,7 +1459,7 @@ class InvoiceDB:
     def _build_review_where(self, query: ReviewQuery) -> tuple[str, list[object]]:
         if query.status is not None and query.status not in review_status.ALL_STATUSES:
             raise ValueError(f"Invalid review status: '{query.status}'. Must be one of {review_status.ALL_STATUSES}")
-        clauses: list[str] = []
+        clauses: list[str] = [visible_invoice_sql()]
         params: list[object] = []
         if not query.include_deleted:
             clauses.append("i.is_deleted = 0")
@@ -1374,6 +1551,52 @@ class InvoiceDB:
         row = self._conn.execute(sql, params).fetchone()
         return int(row["cnt"] if row else 0)
 
+    def list_review_invoice_ids(self, query: ReviewQuery) -> tuple[int, ...]:
+        """Capture the entire current filter without loading or selecting table pages."""
+        where_sql, params = self._build_review_where(query)
+        rows = self._conn.execute(
+            "SELECT i.id " + self._review_join_sql() + where_sql
+            + " ORDER BY i.expense_date DESC, i.id DESC", params,
+        ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
+
+    def get_review_batch_invoices(self, invoice_ids: tuple[int, ...]) -> dict[int, dict]:
+        records = {}
+        for offset in range(0, len(invoice_ids), 500):
+            chunk = invoice_ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in self._conn.execute(
+                f"SELECT * FROM invoices WHERE id IN ({placeholders})", chunk,
+            ):
+                records[int(row["id"])] = dict(row)
+        return records
+
+    def review_duplicate_flags(self) -> dict[int, set[str]]:
+        """Read duplicate flags after the caller reconciles current weak fingerprints."""
+        flags: dict[int, set[str]] = {}
+        rows = self._conn.execute(
+            "SELECT id FROM invoices WHERE is_deleted=0 "
+            "AND TRIM(COALESCE(invoice_number,'')) IN ("
+            "SELECT TRIM(invoice_number) FROM invoices WHERE is_deleted=0 "
+            "AND TRIM(COALESCE(invoice_number,''))<>'' "
+            "GROUP BY TRIM(invoice_number) HAVING COUNT(*)>1)",
+        )
+        for row in rows:
+            flags.setdefault(int(row["id"]), set()).add("number_duplicate")
+        rows = self._conn.execute(
+            "SELECT c.invoice_id, c.reference_id, c.decision FROM duplicate_review_candidates c "
+            "JOIN invoices i ON i.id=c.invoice_id JOIN invoices r ON r.id=c.reference_id "
+            "WHERE c.decision IN ('pending','duplicate') AND i.is_deleted=0 AND r.is_deleted=0 "
+            "AND i.soft_fingerprint=c.fingerprint AND r.soft_fingerprint=c.fingerprint",
+        )
+        for row in rows:
+            if row["decision"] == "pending":
+                for invoice_id in (row["invoice_id"], row["reference_id"]):
+                    flags.setdefault(int(invoice_id), set()).add("soft_pending")
+            else:
+                flags.setdefault(int(row["invoice_id"]), set()).add("soft_duplicate")
+        return flags
+
     def list_review_filter_values(self, key: str, *, include_deleted: bool = False) -> list[str]:
         """Return distinct popup values without hydrating invoice rows."""
         expression = self._review_value_expression(key)
@@ -1384,6 +1607,88 @@ class InvoiceDB:
         )
         values = [str(row["value"]) for row in self._conn.execute(sql, params).fetchall()]
         return sorted(values, key=str.casefold)
+
+    def refresh_duplicate_candidates(self) -> None:
+        """Reconcile current weak keys and queue candidates without changing invoices' status."""
+        from .duplicate_review import soft_invoice_fingerprint
+        groups = {}
+        rows = self._conn.execute("SELECT * FROM invoices WHERE is_deleted=0 ORDER BY id").fetchall()
+        with self._atomic_savepoint():
+            for row in rows:
+                invoice = dict(row)
+                fingerprint = soft_invoice_fingerprint(invoice)
+                if fingerprint != invoice.get("soft_fingerprint"):
+                    self._conn.execute("UPDATE invoices SET soft_fingerprint=? WHERE id=?",
+                                       (fingerprint, invoice["id"]))
+                if fingerprint:
+                    groups.setdefault(fingerprint, []).append(invoice["id"])
+            decisions = {
+                (row["invoice_id"], row["reference_id"], row["fingerprint"]): row["decision"]
+                for row in self._conn.execute("SELECT * FROM duplicate_review_candidates")
+            }
+            group_ids = {fingerprint: set(ids) for fingerprint, ids in groups.items()}
+            confirmed = {(invoice_id, fingerprint) for (invoice_id, ref, fingerprint), decision in decisions.items()
+                         if decision == "duplicate" and invoice_id in group_ids.get(fingerprint, ())
+                         and ref in group_ids.get(fingerprint, ())}
+            for fingerprint, ids in groups.items():
+                for invoice_id in ids[1:]:
+                    if (invoice_id, fingerprint) in confirmed:
+                        continue
+                    # Expose one comparison at a time. If a pair is distinct,
+                    # compare against the next peer rather than assuming the
+                    # whole group is distinct. Do not eagerly create N squared rows.
+                    for reference_id in ids:
+                        if reference_id == invoice_id:
+                            break
+                        if decisions.get((invoice_id, reference_id, fingerprint)) == "distinct":
+                            continue
+                        self._conn.execute(
+                            "INSERT OR IGNORE INTO duplicate_review_candidates "
+                            "(invoice_id, reference_id, fingerprint) VALUES (?, ?, ?)",
+                            (invoice_id, reference_id, fingerprint),
+                        )
+                        break
+
+    def list_duplicate_candidates(self, decision: str = "pending") -> list[dict]:
+        if decision not in {"pending", "distinct", "duplicate"}:
+            raise ValueError("无效的疑似重复复核结果")
+        self.refresh_duplicate_candidates()
+        rows = self._conn.execute(
+            "SELECT c.*, i.seller_name, i.expense_date, i.invoice_date, i.total_amount, "
+            "i.currency, i.attachment_path, r.attachment_path AS reference_path "
+            "FROM duplicate_review_candidates c "
+            "JOIN invoices i ON i.id=c.invoice_id JOIN invoices r ON r.id=c.reference_id "
+            "WHERE c.decision=? AND i.is_deleted=0 AND r.is_deleted=0 "
+            "AND i.soft_fingerprint=c.fingerprint AND r.soft_fingerprint=c.fingerprint "
+            "ORDER BY c.id", (decision,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_duplicate_candidate(self, candidate_id: int, decision: str) -> bool:
+        if decision not in {"distinct", "duplicate"}:
+            raise ValueError("请选择确认重复或不同票据")
+        active = {row["id"] for row in self.list_duplicate_candidates()}
+        if candidate_id not in active:
+            return False
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE duplicate_review_candidates SET decision=?, "
+                "resolved_at=datetime('now','localtime') WHERE id=? AND decision='pending'",
+                (decision, candidate_id),
+            )
+        return cursor.rowcount > 0
+
+    def reset_duplicate_candidate(self, candidate_id: int) -> bool:
+        active = {row["id"] for decision in ("distinct", "duplicate")
+                  for row in self.list_duplicate_candidates(decision)}
+        if candidate_id not in active:
+            return False
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE duplicate_review_candidates SET decision='pending', resolved_at=NULL "
+                "WHERE id=? AND decision<>'pending'", (candidate_id,),
+            )
+        return cursor.rowcount > 0
 
     def count_active_duplicates_by_invoice_number(self, invoice_number: str, exclude_id: int) -> int:
         """Count other active (not deleted) invoices with the same invoice_number."""
@@ -1568,14 +1873,79 @@ class InvoiceDB:
 
     # ── Claim Groups (CODE-004) ──────────────────────────────────────
 
-    def create_claim_group(self, name: str, period_start: str = "", period_end: str = "") -> int:
+    def create_claim_group(
+        self, name: str, period_start: str = "", period_end: str = "", *,
+        reason_category: str = "", reason_detail: str = "",
+        applicant_name: str = "", department: str = "",
+    ) -> int:
         """Create a new claim group and return its auto-incremented ID."""
         cursor = self._conn.execute(
-            "INSERT INTO claim_groups (name, period_start, period_end) VALUES (?, ?, ?)",
-            (name, period_start, period_end)
+            "INSERT INTO claim_groups (name, period_start, period_end, reason_category, "
+            "reason_detail, applicant_name, department) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, period_start, period_end, reason_category.strip(), reason_detail.strip(),
+             applicant_name.strip(), department.strip())
         )
         self._conn.commit()
         return cursor.lastrowid
+
+    def update_claim_reason(
+        self, claim_id: int, *, reason_category: str | None = None,
+        reason_detail: str | None = None, applicant_name: str | None = None,
+        department: str | None = None,
+    ) -> bool:
+        """Update supplied group fields; omitted fields and overrides remain intact."""
+        values = {
+            key: value.strip() for key, value in {
+                "reason_category": reason_category, "reason_detail": reason_detail,
+                "applicant_name": applicant_name, "department": department,
+            }.items() if value is not None
+        }
+        if not values:
+            return self.get_claim_group(claim_id) is not None
+        assignments = ", ".join(f"{key}=?" for key in values)
+        with self._conn:
+            cursor = self._conn.execute(
+                f"UPDATE claim_groups SET {assignments} WHERE id=?",
+                (*values.values(), claim_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_invoice_financial_fields(
+        self, invoice_id: int, *, amount: str | None, buyer_tax_id: str | None,
+        tax_amount: str | None, tax_rate: str | None, invoice_code: str,
+        buyer_tax_id_type: str | None = None,
+    ) -> bool:
+        """Save explicit financial data together; NULL retains unknown semantics."""
+        from .financial_validation import normalize_tax_rate
+        from .tax_id_validation import TAX_ID_TYPES
+        if buyer_tax_id_type is not None and buyer_tax_id_type not in TAX_ID_TYPES:
+            raise ValueError("购方税号类型无效")
+        normalized_rate = normalize_tax_rate(tax_rate)
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE invoices SET amount=?, buyer_tax_id=?, tax_amount=?, tax_rate=?, "
+                "invoice_code=?, buyer_tax_id_type=COALESCE(?, buyer_tax_id_type) WHERE id=? AND is_deleted=0",
+                (amount, buyer_tax_id, tax_amount, normalized_rate, invoice_code.strip(), buyer_tax_id_type, invoice_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_invoice_reason(self, invoice_id: int, custom_reason: str | None) -> bool:
+        """Set an explicit override, or NULL to resume inheritance."""
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE invoices SET custom_reason=? WHERE id=? AND is_deleted=0",
+                (None if custom_reason is None else custom_reason.strip(), invoice_id),
+            )
+        return cursor.rowcount > 0
+
+    def get_invoice_reason(self, invoice_id: int) -> str:
+        from .claim_reason import resolve_claim_reason
+        invoice = self.get_invoice(invoice_id)
+        if not invoice:
+            return ""
+        claim_id = self.get_invoice_claim_id(invoice_id)
+        claim = self.get_claim_group(claim_id) if claim_id is not None else None
+        return resolve_claim_reason(invoice, claim)
 
     def get_invoice_claim_id(self, invoice_id: int) -> int | None:
         """Return the claim_id this invoice belongs to, or None."""
@@ -1694,7 +2064,12 @@ class InvoiceDB:
         sql += " ORDER BY cgi.sort_order ASC, i.expense_date DESC, i.id DESC"
 
         rows = self._conn.execute(sql, (claim_id,)).fetchall()
-        return [dict(r) for r in rows]
+        from .claim_reason import resolve_claim_reason
+        claim = self.get_claim_group(claim_id)
+        invoices = [self._with_evidence(dict(r)) for r in rows]
+        for invoice in invoices:
+            invoice["reimbursement_reason"] = resolve_claim_reason(invoice, claim)
+        return invoices
 
     def add_export_run(self, claim_id: int, export_dir: str, export_type: str, item_count: int) -> int:
         """Log a claim export package generation run and return its ID."""
@@ -1852,6 +2227,10 @@ class InvoiceDB:
             elif is_claimed and not include_claimed:
                 skipped_claimed += 1
                 skip_reason = "claimed"
+            elif self.evidence_consumers(inv_id):
+                # Reprocessing a source email must preserve a shared material,
+                # including references held by invoices in the recycle bin.
+                skip_reason = "evidence_in_use"
 
             if skip_reason:
                 skipped.append({
@@ -1864,17 +2243,16 @@ class InvoiceDB:
 
         # 2. 事务级原子删除：先删除 claim_group_items 关联，再物理删除 invoices
         if to_delete_ids:
-            try:
+            with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET id=id WHERE 0")
                 for inv_id in to_delete_ids:
+                    if self.evidence_consumers(inv_id):
+                        raise ValueError("邮件重处理发现材料仍被引用，请刷新后重试。")
                     # 先删除关联关系
                     self._conn.execute("DELETE FROM claim_group_items WHERE invoice_id = ?", (inv_id,))
                     # 后删除发票
                     self._conn.execute("DELETE FROM invoices WHERE id = ?", (inv_id,))
-                self._conn.commit()
                 deleted = len(to_delete_ids)
-            except Exception as e:
-                self._conn.rollback()
-                raise e
 
         return {
             "deleted": deleted,
@@ -1921,6 +2299,9 @@ class InvoiceDB:
               AND is_deleted = 0
               AND attachment_path IS NOT NULL
               AND attachment_path != ''
+              AND NOT EXISTS (SELECT 1 FROM invoice_evidence_relations r
+                              JOIN invoices parent ON parent.id=r.invoice_id
+                              WHERE r.evidence_id=invoices.id AND parent.is_deleted=0)
             ORDER BY id ASC
         """
         rows = self._conn.execute(sql, (mailbox_key, mail_uid)).fetchall()
@@ -1934,113 +2315,10 @@ class InvoiceDB:
                   AND is_deleted = 0
                   AND attachment_path IS NOT NULL
                   AND attachment_path != ''
+                  AND NOT EXISTS (SELECT 1 FROM invoice_evidence_relations r
+                                  JOIN invoices parent ON parent.id=r.invoice_id
+                                  WHERE r.evidence_id=invoices.id AND parent.is_deleted=0)
                 ORDER BY id ASC
             """
             rows = self._conn.execute(sql_fallback, (mail_uid,)).fetchall()
         return [dict(r) for r in rows]
-
-    def link_evidence_to_invoice(self, invoice_id: int, evidence_id: int) -> bool:
-        """Link a pending evidence record to an invoice in a transaction."""
-        # 1. Fetch invoice & evidence
-        invoice = self.get_invoice(invoice_id, include_deleted=False)
-        if not invoice:
-            _log.error("link_evidence_to_invoice: target invoice ID %s not found or deleted", invoice_id)
-            return False
-
-        evidence = self.get_invoice(evidence_id, include_deleted=False)
-        if not evidence:
-            _log.error("link_evidence_to_invoice: evidence record ID %s not found or deleted", evidence_id)
-            return False
-
-        if evidence.get("invoice_type") != "待关联证明材料":
-            _log.error("link_evidence_to_invoice: record ID %s is not '待关联证明材料'", evidence_id)
-            return False
-
-        evidence_path = evidence.get("attachment_path")
-        if not evidence_path:
-            _log.error("link_evidence_to_invoice: evidence record ID %s has no attachment_path", evidence_id)
-            return False
-
-        # Check mail info match
-        inv_mailbox = invoice.get("mailbox_key")
-        inv_uid = invoice.get("mail_uid")
-        ev_mailbox = evidence.get("mailbox_key")
-        ev_uid = evidence.get("mail_uid")
-
-        def norm_mailbox(key) -> str:
-            if not key:
-                return "legacy"
-            k = str(key).strip().lower()
-            if k in ("", "legacy"):
-                return "legacy"
-            return k
-
-        # Check UID equivalence
-        if inv_uid is None or ev_uid is None or int(inv_uid) != int(ev_uid) or norm_mailbox(inv_mailbox) != norm_mailbox(ev_mailbox):
-            _log.warning(
-                "link_evidence_to_invoice: Mail info mismatch! Target invoice (ID %s, mailbox: %s, UID: %s), Evidence (ID %s, mailbox: %s, UID: %s)",
-                invoice_id, inv_mailbox, inv_uid, evidence_id, ev_mailbox, ev_uid
-            )
-            return False
-
-        # 2. Extract and append evidence_path to invoice's extra_paths
-        raw_extra = invoice.get("extra_paths")
-        extra_paths = []
-        if raw_extra:
-            if isinstance(raw_extra, list):
-                extra_paths = [str(p) for p in raw_extra if p]
-            elif isinstance(raw_extra, str):
-                try:
-                    parsed = json.loads(raw_extra)
-                    if isinstance(parsed, list):
-                        extra_paths = [str(p) for p in parsed if p]
-                    else:
-                        extra_paths = [str(raw_extra)]
-                except Exception:
-                    extra_paths = [str(raw_extra)]
-            else:
-                extra_paths = [str(raw_extra)]
-
-        # Deduplicate paths (ignoring case and path separators)
-        seen_normalized = {str(p).lower().replace("\\", "/") for p in extra_paths}
-        norm_ev_path = str(evidence_path).lower().replace("\\", "/")
-        if norm_ev_path not in seen_normalized:
-            extra_paths.append(str(evidence_path))
-
-        # 3. Detect updated_at column availability
-        columns = {
-            str(row["name"])
-            for row in self._conn.execute("PRAGMA table_info(invoices)").fetchall()
-        }
-
-        # 4. Perform atomic updates in a transaction
-        extra_paths_str = json.dumps(extra_paths, ensure_ascii=False)
-        evidence_note = evidence.get("parse_note") or ""
-        append_note = f"已关联到发票 ID {invoice_id}"
-        new_evidence_note = f"{evidence_note}; {append_note}" if evidence_note else append_note
-
-        try:
-            # Update main invoice
-            inv_sql = "UPDATE invoices SET extra_paths = ?, has_extra = 1, missing_extra = 0"
-            inv_params = [extra_paths_str]
-            if "updated_at" in columns:
-                inv_sql += ", updated_at = CURRENT_TIMESTAMP"
-            inv_sql += " WHERE id = ?"
-            inv_params.append(invoice_id)
-            self._conn.execute(inv_sql, tuple(inv_params))
-
-            # Update evidence (soft delete)
-            ev_sql = "UPDATE invoices SET is_deleted = 1, parse_note = ?"
-            ev_params = [new_evidence_note]
-            if "updated_at" in columns:
-                ev_sql += ", updated_at = CURRENT_TIMESTAMP"
-            ev_sql += " WHERE id = ?"
-            ev_params.append(evidence_id)
-            self._conn.execute(ev_sql, tuple(ev_params))
-
-            self._conn.commit()
-            return True
-        except Exception as e:
-            self._conn.rollback()
-            _log.error("Failed to link evidence to invoice (transaction rolled back): %s", e)
-            return False

@@ -12,6 +12,7 @@ import logging
 import sqlite3
 
 from .db import InvoiceDB
+from .evidence import is_evidence_record, refresh_material_projection
 
 _log = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ def reconcile_reparsed_invoice(
     item_name: str = "",
     expense_date: str = "",
     date_source: str = "",
+    evidence_required: bool | None = None,
+    buyer_tax_id: str | None = None,
+    tax_amount: str | None = None,
+    tax_rate: str | None = None,
 ) -> ReparseReconciliationResult:
     """Apply one successful reparse as one SQLite transaction.
 
@@ -109,12 +114,15 @@ def reconcile_reparsed_invoice(
         conn.execute("BEGIN IMMEDIATE")
 
         current = conn.execute(
-            "SELECT id FROM invoices WHERE id = ? AND is_deleted = 0",
+            "SELECT * FROM invoices WHERE id = ? AND is_deleted = 0",
             (current_invoice_id,),
         ).fetchone()
         if current is None:
             conn.rollback()
             return _failure(db, current_invoice_id, "not_found")
+        if is_evidence_record(dict(current)) and db.evidence_consumers(current_invoice_id):
+            conn.rollback()
+            return _failure(db, current_invoice_id, "evidence_in_use")
 
         # Match the exact active-record lookup currently used by the GUI.  Empty
         # invoice numbers intentionally never participate in business dedup.
@@ -122,7 +130,8 @@ def reconcile_reparsed_invoice(
             duplicate = conn.execute(
                 "SELECT id FROM invoices "
                 "WHERE invoice_number = ? AND total_amount = ? AND seller_name = ? "
-                "AND is_deleted = 0 ORDER BY id DESC LIMIT 1",
+                "AND is_deleted = 0 AND record_role='invoice' "
+                "AND COALESCE(invoice_type,'') != '待关联证明材料' ORDER BY id DESC LIMIT 1",
                 (lookup_number, lookup_amount, lookup_seller),
             ).fetchone()
             if duplicate is not None:
@@ -140,6 +149,11 @@ def reconcile_reparsed_invoice(
             )
 
             if duplicate_claim_count == 0:
+                conn.execute(
+                    "INSERT OR IGNORE INTO invoice_evidence_relations (invoice_id,evidence_id,created_at) "
+                    "SELECT ?,evidence_id,created_at FROM invoice_evidence_relations WHERE invoice_id=?",
+                    (current_invoice_id, duplicate_invoice_id),
+                )
                 # Delete first so the existing SQLite uniqueness constraint does
                 # not reject the current record's metadata update.  The delete is
                 # still provisional until the final commit below.
@@ -159,12 +173,30 @@ def reconcile_reparsed_invoice(
             else:
                 target_invoice_id = duplicate_invoice_id
                 action = MERGED_INTO_CLAIMED_DUPLICATE
+                conn.execute(
+                    "INSERT OR IGNORE INTO invoice_evidence_relations (invoice_id,evidence_id,created_at) "
+                    "SELECT ?,evidence_id,created_at FROM invoice_evidence_relations WHERE invoice_id=?",
+                    (target_invoice_id, current_invoice_id),
+                )
 
+        target = db.get_invoice(target_invoice_id)
+        if (is_evidence_record({"invoice_type": invoice_type, "parse_note": parse_note})
+                and not is_evidence_record(target)
+                and (db.list_invoice_evidence(target_invoice_id) or db.count_claim_links(target_invoice_id))):
+            conn.rollback()
+            return _failure(db, current_invoice_id, "evidence_role_conflict")
+        # Explicit reparsing retains the existing refresh policy, except that a
+        # saved manual classification always wins over automatic suggestions.
+        category, category_source = db.resolve_parsed_category(
+            seller_name, category, existing=target, preserve_finalized=False,
+        )
         updated = conn.execute(
             "UPDATE invoices SET invoice_number=?, invoice_code=?, invoice_date=?, "
             "expense_date=?, date_source=?, amount=?, total_amount=?, seller_name=?, "
-            "buyer_name=?, invoice_type=?, category=?, has_extra=?, extra_type=?, "
-            "missing_extra=?, parse_success=?, parse_note=?, item_name=? "
+            "buyer_name=?, invoice_type=?, category=?, category_source=?, has_extra=?, extra_type=?, "
+            "missing_extra=?, parse_success=?, parse_note=?, item_name=?, "
+            "buyer_tax_id=COALESCE(?, buyer_tax_id), tax_amount=COALESCE(?, tax_amount), "
+            "tax_rate=COALESCE(?, tax_rate), record_role=?, evidence_required=? "
             "WHERE id=? AND is_deleted=0",
             (
                 invoice_number,
@@ -178,12 +210,16 @@ def reconcile_reparsed_invoice(
                 buyer_name,
                 invoice_type,
                 category,
+                category_source,
                 int(bool(has_extra)),
                 extra_type,
                 int(bool(missing_extra)),
                 int(bool(parse_success)),
                 parse_note,
                 item_name,
+                buyer_tax_id, tax_amount, tax_rate,
+                "evidence" if is_evidence_record({"invoice_type": invoice_type, "parse_note": parse_note}) else "invoice",
+                int(bool(missing_extra or extra_type) if evidence_required is None else evidence_required),
                 target_invoice_id,
             ),
         )
@@ -213,6 +249,8 @@ def reconcile_reparsed_invoice(
                     duplicate_invoice_id=duplicate_invoice_id,
                 )
 
+        if db.list_invoice_evidence(target_invoice_id):
+            refresh_material_projection(conn, target_invoice_id)
         conn.commit()
         db._set_last_error("")
         return ReparseReconciliationResult(

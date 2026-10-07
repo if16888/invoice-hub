@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 _log = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 14
 
 
 # Index names are part of the latest-schema contract.  SQLite already creates
@@ -20,6 +20,8 @@ LATEST_INDEX_CONTRACT = frozenset(
         "idx_invoices_file_hash",
         "idx_invoices_review_order",
         "idx_claim_items_invoice",
+        "idx_invoices_soft_fingerprint",
+        "idx_evidence_relations_source",
     }
 )
 
@@ -69,8 +71,17 @@ LATEST_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
             "total_amount",
             "seller_name",
             "buyer_name",
+            "custom_reason",
+            "buyer_tax_id",
+            "buyer_tax_id_type",
+            "soft_fingerprint",
+            "tax_amount",
+            "tax_rate",
             "invoice_type",
             "category",
+            "category_source",
+            "record_role",
+            "evidence_required",
             "has_extra",
             "extra_type",
             "missing_extra",
@@ -125,10 +136,20 @@ LATEST_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
     ),
     "trusted_senders": frozenset({"sender", "added_at"}),
     "claim_groups": frozenset(
-        {"id", "name", "period_start", "period_end", "status", "created_at"}
+        {"id", "name", "period_start", "period_end", "status", "created_at",
+         "reason_category", "reason_detail", "applicant_name", "department"}
     ),
     "claim_group_items": frozenset(
         {"id", "claim_id", "invoice_id", "sort_order", "note"}
+    ),
+    "duplicate_review_candidates": frozenset(
+        {"id", "invoice_id", "reference_id", "fingerprint", "decision", "resolved_at"}
+    ),
+    "seller_category_preferences": frozenset(
+        {"seller_name", "preferred_category", "updated_at"}
+    ),
+    "invoice_evidence_relations": frozenset(
+        {"invoice_id", "evidence_id", "created_at"}
     ),
     "export_runs": frozenset(
         {"id", "claim_id", "export_dir", "export_type", "item_count", "created_at"}
@@ -223,6 +244,14 @@ def validate_latest_schema(conn: sqlite3.Connection) -> None:
             "Invoice Hub 数据库架构不完整：缺少索引 "
             + ", ".join(missing_indexes)
         )
+    if conn.execute("PRAGMA foreign_key_check(invoice_evidence_relations)").fetchone() is not None:
+        raise ValueError("证明材料关联引用了不存在的发票或材料，无法安全恢复")
+    if conn.execute("""SELECT 1 FROM invoice_evidence_relations r
+        JOIN invoices p ON p.id=r.invoice_id JOIN invoices e ON e.id=r.evidence_id
+        WHERE p.record_role='evidence' OR p.invoice_type='待关联证明材料'
+        OR (e.record_role!='evidence' AND COALESCE(e.invoice_type,'')!='待关联证明材料') LIMIT 1
+    """).fetchone() is not None:
+        raise ValueError("证明材料关联角色不一致，无法安全恢复")
 
 
 def check_and_migrate(conn: sqlite3.Connection):
@@ -561,3 +590,117 @@ def check_and_migrate(conn: sqlite3.Connection):
                 pass
             _log.exception("CRITICAL: Database migration to V8 failed! Error: %s", e)
             raise e
+
+    # V9: claim reason defaults and nullable per-invoice override.
+    # Empty legacy reasons stay unknown; no invented business classification.
+    if version < 9:
+        cursor.execute("SAVEPOINT claim_reason_v9")
+        try:
+            for table, columns in {
+                "claim_groups": {
+                    "reason_category": "TEXT NOT NULL DEFAULT ''",
+                    "reason_detail": "TEXT NOT NULL DEFAULT ''",
+                    "applicant_name": "TEXT NOT NULL DEFAULT ''",
+                    "department": "TEXT NOT NULL DEFAULT ''",
+                },
+                "invoices": {"custom_reason": "TEXT"},
+            }.items():
+                existing = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+                for name, definition in columns.items():
+                    if name not in existing:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+            cursor.execute("PRAGMA user_version = 9")
+            cursor.execute("RELEASE SAVEPOINT claim_reason_v9")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT claim_reason_v9")
+            cursor.execute("RELEASE SAVEPOINT claim_reason_v9")
+            raise
+
+    # V10: unknown legacy financial values remain NULL.
+    if version < 10:
+        cursor.execute("SAVEPOINT financial_v10")
+        try:
+            existing = {row[1] for row in cursor.execute("PRAGMA table_info(invoices)")}
+            for name in ("buyer_tax_id", "tax_amount", "tax_rate"):
+                if name not in existing:
+                    cursor.execute(f"ALTER TABLE invoices ADD COLUMN {name} TEXT")
+            cursor.execute("PRAGMA user_version = 10")
+            cursor.execute("RELEASE SAVEPOINT financial_v10")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT financial_v10")
+            cursor.execute("RELEASE SAVEPOINT financial_v10")
+            raise
+
+    # V11: do not infer the ID scheme from historical identifier length.
+    if version < 11:
+        cursor.execute("SAVEPOINT tax_id_type_v11")
+        try:
+            existing = {row[1] for row in cursor.execute("PRAGMA table_info(invoices)")}
+            if "buyer_tax_id_type" not in existing:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN buyer_tax_id_type TEXT NOT NULL DEFAULT 'unknown'")
+            cursor.execute("PRAGMA user_version = 11")
+            cursor.execute("RELEASE SAVEPOINT tax_id_type_v11")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT tax_id_type_v11")
+            cursor.execute("RELEASE SAVEPOINT tax_id_type_v11")
+            raise
+
+    # V12: weak duplicate review is independent from invoice review status.
+    if version < 12:
+        cursor.execute("SAVEPOINT duplicate_review_v12")
+        try:
+            existing = {row[1] for row in cursor.execute("PRAGMA table_info(invoices)")}
+            if "soft_fingerprint" not in existing:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN soft_fingerprint TEXT")
+            cursor.execute("CREATE TABLE IF NOT EXISTS duplicate_review_candidates ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER NOT NULL, "
+                           "reference_id INTEGER NOT NULL, fingerprint TEXT NOT NULL, "
+                           "decision TEXT NOT NULL DEFAULT 'pending' "
+                           "CHECK(decision IN ('pending', 'distinct', 'duplicate')), resolved_at TEXT, "
+                           "UNIQUE(invoice_id, reference_id, fingerprint), "
+                           "FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE, "
+                           "FOREIGN KEY(reference_id) REFERENCES invoices(id) ON DELETE CASCADE)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_soft_fingerprint "
+                           "ON invoices(soft_fingerprint)")
+            cursor.execute("PRAGMA user_version = 12")
+            cursor.execute("RELEASE SAVEPOINT duplicate_review_v12")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT duplicate_review_v12")
+            cursor.execute("RELEASE SAVEPOINT duplicate_review_v12")
+            raise
+
+    # V13: remember explicit category corrections without guessing legacy origins.
+    if version < 13:
+        cursor.execute("SAVEPOINT seller_preferences_v13")
+        try:
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS seller_category_preferences ("
+                "seller_name TEXT PRIMARY KEY NOT NULL CHECK(TRIM(seller_name) != ''), "
+                "preferred_category TEXT NOT NULL CHECK(TRIM(preferred_category) != ''), "
+                "updated_at TEXT NOT NULL)"
+            )
+            existing = {row[1] for row in cursor.execute("PRAGMA table_info(invoices)")}
+            if "category_source" not in existing:
+                cursor.execute(
+                    "ALTER TABLE invoices ADD COLUMN category_source "
+                    "TEXT NOT NULL DEFAULT 'unknown' "
+                    "CHECK(category_source IN ('unknown', 'rule', 'seller_preference', 'manual'))"
+                )
+            cursor.execute("PRAGMA user_version = 13")
+            cursor.execute("RELEASE SAVEPOINT seller_preferences_v13")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT seller_preferences_v13")
+            cursor.execute("RELEASE SAVEPOINT seller_preferences_v13")
+            raise
+
+    if version < 14:
+        from .evidence import migrate_shared_evidence
+        cursor.execute("SAVEPOINT shared_evidence_v14")
+        try:
+            migrate_shared_evidence(conn)
+            cursor.execute("PRAGMA user_version = 14")
+            cursor.execute("RELEASE SAVEPOINT shared_evidence_v14")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT shared_evidence_v14")
+            cursor.execute("RELEASE SAVEPOINT shared_evidence_v14")
+            raise

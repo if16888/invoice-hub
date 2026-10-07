@@ -725,6 +725,7 @@ def run_invoice_redownload(
                                     inv.mail_sender,
                                     info.seller_name,
                                     categories,
+                                    db=db,
                                 )
                                 code = info.invoice_code or info.invoice_number
                                 att_path = _services._rename_by_invoice_code(
@@ -747,6 +748,9 @@ def run_invoice_redownload(
                                     total_amount=info.total_amount,
                                     seller_name=info.seller_name,
                                     buyer_name=info.buyer_name,
+                                    buyer_tax_id=getattr(info, "buyer_tax_id", None),
+                                    tax_amount=getattr(info, "tax_amount", None),
+                                    tax_rate=getattr(info, "tax_rate", None),
                                     invoice_type=info.invoice_type or inv.invoice_type or "电子发票",
                                     category=cat,
                                     has_extra=inv.has_extra,
