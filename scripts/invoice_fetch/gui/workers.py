@@ -366,10 +366,19 @@ class LocalImportWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, import_dir: Path, db_path: Path):
+    def __init__(
+        self,
+        import_dir: Path,
+        db_path: Path,
+        *,
+        file_paths=None,
+        allow_external_file_paths: bool = False,
+    ):
         super().__init__()
         self.import_dir = import_dir
         self.db_path = db_path
+        self.file_paths = tuple(Path(path) for path in file_paths) if file_paths is not None else None
+        self.allow_external_file_paths = bool(allow_external_file_paths)
         self.control = ScanControl()
 
     def request_cancel(self):
@@ -381,11 +390,12 @@ class LocalImportWorker(QThread):
         try:
             from ..services import import_local_directory
 
-            stats = import_local_directory(
-                self.import_dir,
-                self.db_path,
-                scan_control=self.control,
-            )
+            import_options = {"scan_control": self.control}
+            if self.file_paths is not None:
+                import_options["file_paths"] = self.file_paths
+            if self.allow_external_file_paths:
+                import_options["allow_external_file_paths"] = True
+            stats = import_local_directory(self.import_dir, self.db_path, **import_options)
             completed_at = time.perf_counter()
             result = dict(stats)
             result["_performance_t0_monotonic"] = completed_at

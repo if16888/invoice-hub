@@ -21,6 +21,8 @@ _LEGACY_KEYS = (
     "shortcut_help_expanded",
     "splitter/main",
     "splitter/left",
+    "review_detail_collapsed",
+    "splitter/review_detail_restore_width",
 )
 _log = logging.getLogger(__name__)
 

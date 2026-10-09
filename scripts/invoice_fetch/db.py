@@ -233,6 +233,39 @@ class InvoiceDB(EvidenceStoreMixin):
     def _set_last_error(self, code: str = "") -> None:
         self.last_error = code or ""
 
+    def invoice_lock_reason(self, invoice_id: int) -> str:
+        """Return why an invoice is immutable, or an empty string when editable."""
+        row = self._conn.execute(
+            "SELECT i.reimbursed_at, EXISTS(SELECT 1 FROM claim_group_items cgi "
+            "JOIN claim_groups c ON c.id=cgi.claim_id WHERE cgi.invoice_id=i.id "
+            "AND c.status IN ('exported','reimbursed')) OR EXISTS("
+            "SELECT 1 FROM invoice_evidence_relations r "
+            "JOIN claim_group_items cgi ON cgi.invoice_id=r.invoice_id "
+            "JOIN claim_groups c ON c.id=cgi.claim_id WHERE r.evidence_id=i.id "
+            "AND c.status IN ('exported','reimbursed')) AS claim_locked "
+            "FROM invoices i WHERE i.id=?",
+            (int(invoice_id),),
+        ).fetchone()
+        if not row:
+            return "not_found"
+        if row["reimbursed_at"]:
+            return "invoice_reimbursed"
+        if row["claim_locked"]:
+            return "invoice_exported_locked"
+        return ""
+
+    def is_claim_editable(self, claim_id: int) -> bool:
+        claim = self.get_claim_group(int(claim_id))
+        return bool(claim and claim.get("status", "draft") == "draft")
+
+    def _require_invoice_editable(self, invoice_id: int) -> bool:
+        reason = self.invoice_lock_reason(invoice_id)
+        if reason:
+            self._set_last_error(reason)
+            return False
+        self._set_last_error("")
+        return True
+
     # ── Emails table (Phase 1: scan & classify) ──────────────────────
 
     def upsert_email(self, uid: int, subject: str,
@@ -674,7 +707,10 @@ class InvoiceDB(EvidenceStoreMixin):
         placeholders = ", ".join("?" for _ in normalized)
         rows = self._conn.execute(
             f"SELECT id, file_hash FROM invoices "
-            f"WHERE is_deleted = 1 AND file_hash IN ({placeholders})",
+            f"WHERE is_deleted = 1 AND reimbursed_at IS NULL "
+            f"AND file_hash IN ({placeholders}) AND NOT EXISTS ("
+            "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+            "WHERE cgi.invoice_id=invoices.id AND c.status IN ('exported','reimbursed'))",
             tuple(sorted(normalized)),
         ).fetchall()
         if not rows:
@@ -759,6 +795,8 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def soft_delete_invoice(self, invoice_id: int) -> bool:
         """Soft delete an invoice by setting is_deleted = 1."""
+        if not self._require_invoice_editable(invoice_id):
+            return False
         row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if not row:
             return False
@@ -769,6 +807,8 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def delete_invoice_permanently(self, invoice_id: int) -> bool:
         """Delete an invoice row entirely."""
+        if not self._require_invoice_editable(invoice_id):
+            return False
         row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if not row:
             return False
@@ -782,6 +822,8 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def restore_invoice(self, invoice_id: int) -> bool:
         """Restore a soft-deleted invoice by setting is_deleted = 0."""
+        if not self._require_invoice_editable(invoice_id):
+            return False
         row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if not row:
             return False
@@ -872,6 +914,8 @@ class InvoiceDB(EvidenceStoreMixin):
         if not inv:
             self._set_last_error("not_found")
             return False
+        if not self._require_invoice_editable(invoice_id):
+            return False
 
         if status == review_status.APPROVED and is_pending_evidence_invoice(inv):
             self._set_last_error("evidence_only")
@@ -919,6 +963,8 @@ class InvoiceDB(EvidenceStoreMixin):
             raise ValueError("Unsupported batch review status")
         if not self._conn.in_transaction:
             raise RuntimeError("Batch review changes require a transaction")
+        if any(self.invoice_lock_reason(invoice_id) for invoice_id in invoice_ids):
+            raise RuntimeError("已导出或已报销的发票不能修改审核状态")
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         pending_sql = " AND review_status=?" if status == review_status.APPROVED else ""
         cursor = self._conn.executemany(
@@ -932,6 +978,8 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def update_invoice_note(self, invoice_id: int, note: str) -> bool:
         """Persist a note without rewriting parsed or edited financial fields."""
+        if not self._require_invoice_editable(invoice_id):
+            return False
         try:
             cursor = self._conn.execute(
                 "UPDATE invoices SET confirmed_note=? WHERE id=?", (note, invoice_id)
@@ -963,6 +1011,8 @@ class InvoiceDB(EvidenceStoreMixin):
         try:
             with self._atomic_savepoint():
                 self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                if not self._require_invoice_editable(invoice_id):
+                    return False
                 inv = self.get_invoice(invoice_id)
                 if not inv:
                     self._set_last_error("not_found")
@@ -1025,6 +1075,8 @@ class InvoiceDB(EvidenceStoreMixin):
         try:
             with self._atomic_savepoint():
                 self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                if not self._require_invoice_editable(invoice_id):
+                    return False
                 inv = self.get_invoice(invoice_id)
                 if not inv:
                     self._set_last_error("not_found")
@@ -1115,6 +1167,8 @@ class InvoiceDB(EvidenceStoreMixin):
 
         with self._atomic_savepoint():
             self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return False
             if not self.get_invoice(invoice_id, include_deleted=True):
                 return False
             values.append(invoice_id)
@@ -1133,6 +1187,8 @@ class InvoiceDB(EvidenceStoreMixin):
         missing_extra: bool,
     ) -> bool:
         """Synchronize evidence flags without changing parsed invoice metadata."""
+        if not self._require_invoice_editable(invoice_id):
+            return False
         if not self.get_invoice(invoice_id):
             return False
         with self._atomic_savepoint():
@@ -1154,6 +1210,8 @@ class InvoiceDB(EvidenceStoreMixin):
         """
         inv = self.get_invoice(invoice_id)
         if not inv:
+            return False
+        if not self._require_invoice_editable(invoice_id):
             return False
 
         existing_path = str(inv.get("attachment_path") or "").strip()
@@ -1216,6 +1274,9 @@ class InvoiceDB(EvidenceStoreMixin):
             if key not in ALLOWED_FIELDS:
                 skipped.append(key)
                 continue
+            if self.invoice_lock_reason(invoice_id):
+                skipped.append(key)
+                continue
 
             if key == "category" and inv.get("category_source") == "manual":
                 skipped.append(key)
@@ -1274,7 +1335,10 @@ class InvoiceDB(EvidenceStoreMixin):
             if not file_hash:
                 continue
             cur = self._conn.execute(
-                "UPDATE invoices SET mail_sender=?, mail_subject=? WHERE file_hash=?",
+                "UPDATE invoices SET mail_sender=?, mail_subject=? WHERE file_hash=? "
+                "AND reimbursed_at IS NULL AND NOT EXISTS ("
+                "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+                "WHERE cgi.invoice_id=invoices.id AND c.status IN ('exported','reimbursed'))",
                 (sender, subject, file_hash),
             )
             updated += cur.rowcount
@@ -1784,9 +1848,19 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def reset_invoices(self):
         """Clear the invoices table (full baseline reset)."""
+        locked = self._conn.execute(
+            "SELECT 1 FROM invoices i WHERE i.reimbursed_at IS NOT NULL OR EXISTS ("
+            "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+            "WHERE cgi.invoice_id=i.id AND c.status IN ('exported','reimbursed')) LIMIT 1"
+        ).fetchone()
+        if locked:
+            self._set_last_error("invoice_exported_locked")
+            return False
         self._conn.execute("DELETE FROM invoices")
         self._conn.commit()
         _log.info("已清空已入库发票记录")
+        self._set_last_error("")
+        return True
 
     def get_failed_downloads(self, mailbox_key: str | None = None) -> list[dict]:
         """Return invoices where attachment_path is empty or NULL,
@@ -1859,14 +1933,21 @@ class InvoiceDB(EvidenceStoreMixin):
         if not uids:
             return
         placeholders = ", ".join("?" for _ in uids)
+        lock_clause = (
+            " AND reimbursed_at IS NULL AND NOT EXISTS ("
+            "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+            "WHERE cgi.invoice_id=invoices.id AND c.status IN ('exported','reimbursed'))"
+        )
         if mailbox_key is None:
             self._conn.execute(
-                f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) AND (attachment_path = '' OR attachment_path IS NULL)",
+                f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) "
+                f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
                 uids
             )
         else:
             self._conn.execute(
-                f"DELETE FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) AND (attachment_path = '' OR attachment_path IS NULL)",
+                f"DELETE FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) "
+                f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
                 [self._normalize_mailbox_key(mailbox_key), *uids],
             )
         self._conn.commit()
@@ -1905,8 +1986,12 @@ class InvoiceDB(EvidenceStoreMixin):
         assignments = ", ".join(f"{key}=?" for key in values)
         with self._conn:
             cursor = self._conn.execute(
-                f"UPDATE claim_groups SET {assignments} WHERE id=?",
+                f"UPDATE claim_groups SET {assignments} WHERE id=? AND status='draft'",
                 (*values.values(), claim_id),
+            )
+        if cursor.rowcount == 0:
+            self._set_last_error(
+                "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
             )
         return cursor.rowcount > 0
 
@@ -1920,6 +2005,8 @@ class InvoiceDB(EvidenceStoreMixin):
         from .tax_id_validation import TAX_ID_TYPES
         if buyer_tax_id_type is not None and buyer_tax_id_type not in TAX_ID_TYPES:
             raise ValueError("购方税号类型无效")
+        if not self._require_invoice_editable(invoice_id):
+            return False
         normalized_rate = normalize_tax_rate(tax_rate)
         with self._conn:
             cursor = self._conn.execute(
@@ -1931,6 +2018,8 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def update_invoice_reason(self, invoice_id: int, custom_reason: str | None) -> bool:
         """Set an explicit override, or NULL to resume inheritance."""
+        if not self._require_invoice_editable(invoice_id):
+            return False
         with self._conn:
             cursor = self._conn.execute(
                 "UPDATE invoices SET custom_reason=? WHERE id=? AND is_deleted=0",
@@ -1957,9 +2046,16 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def add_invoice_to_claim(self, claim_id: int, invoice_id: int, note: str = "") -> bool:
         """Map an invoice to a claim group. Returns False on duplicate or error."""
+        if not self.is_claim_editable(claim_id):
+            self._set_last_error(
+                "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
+            )
+            return False
         invoice = self.get_invoice(invoice_id)
         if not invoice:
             self._set_last_error("not_found")
+            return False
+        if not self._require_invoice_editable(invoice_id):
             return False
         if is_pending_evidence_invoice(invoice):
             self._set_last_error("evidence_only")
@@ -1998,12 +2094,17 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def remove_invoice_from_claim(self, claim_id: int, invoice_id: int) -> bool:
         """Remove a mapped invoice from a claim group."""
-        self._conn.execute(
+        if not self.is_claim_editable(claim_id):
+            self._set_last_error(
+                "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
+            )
+            return False
+        cursor = self._conn.execute(
             "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?",
             (claim_id, invoice_id)
         )
         self._conn.commit()
-        return True
+        return cursor.rowcount > 0
 
     def get_claim_group(self, claim_id: int) -> dict | None:
         """Fetch claim group details by ID."""
@@ -2018,6 +2119,9 @@ class InvoiceDB(EvidenceStoreMixin):
         claim = self.get_claim_group(claim_id)
         if not claim:
             self._set_last_error("not_found")
+            return False
+        if claim.get("status", "draft") != "draft":
+            self._set_last_error("claim_exported_locked")
             return False
         with self._conn:
             self._conn.execute(
@@ -2071,15 +2175,180 @@ class InvoiceDB(EvidenceStoreMixin):
             invoice["reimbursement_reason"] = resolve_claim_reason(invoice, claim)
         return invoices
 
-    def add_export_run(self, claim_id: int, export_dir: str, export_type: str, item_count: int) -> int:
-        """Log a claim export package generation run and return its ID."""
-        cursor = self._conn.execute(
-            "INSERT INTO export_runs (claim_id, export_dir, export_type, item_count) "
-            "VALUES (?, ?, ?, ?)",
-            (claim_id, export_dir, export_type, item_count)
-        )
-        self._conn.commit()
-        return cursor.lastrowid
+    def add_export_run(
+        self,
+        claim_id: int,
+        export_dir: str,
+        export_type: str,
+        item_count: int,
+        invoice_ids: tuple[int, ...] | list[int] = (),
+    ) -> int:
+        """Persist a successful export and freeze its claim membership atomically."""
+        claim = self.get_claim_group(claim_id)
+        if not claim:
+            raise ValueError("报销组不存在")
+        status = str(claim.get("status") or "draft")
+        if status == "reimbursed":
+            raise ValueError("该报销组已标记报销，不能再次导出")
+        if status not in {"draft", "exported"}:
+            raise ValueError("报销组状态无效，无法导出")
+        item_ids = tuple(dict.fromkeys(int(value) for value in invoice_ids))
+        if item_count < 0 or len(item_ids) != item_count:
+            raise ValueError("导出记录的发票数量不一致")
+        if item_ids:
+            placeholders = ",".join("?" for _ in item_ids)
+            rows = self._conn.execute(
+                f"SELECT invoice_id FROM claim_group_items WHERE claim_id=? "
+                f"AND invoice_id IN ({placeholders})",
+                (claim_id, *item_ids),
+            ).fetchall()
+            if {int(row[0]) for row in rows} != set(item_ids):
+                raise ValueError("导出发票已不属于当前报销组，请刷新后重试")
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._atomic_savepoint():
+            reserved = self._conn.execute(
+                "UPDATE claim_groups SET id=id WHERE id=? AND status=?",
+                (claim_id, status),
+            ).rowcount
+            if reserved != 1:
+                raise ValueError("报销组状态已变化，请刷新后重新导出")
+            if item_ids:
+                placeholders = ",".join("?" for _ in item_ids)
+                blocked = self._conn.execute(
+                    f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) AND "
+                    "(reimbursed_at IS NOT NULL OR EXISTS ("
+                    "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+                    "WHERE cgi.invoice_id=invoices.id AND c.id!=? "
+                    "AND c.status IN ('exported','reimbursed'))) LIMIT 1",
+                    (*item_ids, claim_id),
+                ).fetchone()
+                if blocked:
+                    raise ValueError("報銷組包含已導出鎖定或已報銷的發票，無法再次導出")
+            cursor = self._conn.execute(
+                "INSERT INTO export_runs (claim_id, export_dir, export_type, item_count) "
+                "VALUES (?, ?, ?, ?)",
+                (claim_id, export_dir, export_type, item_count),
+            )
+            export_run_id = int(cursor.lastrowid)
+            self._conn.executemany(
+                "INSERT INTO export_run_items (export_run_id, invoice_id) VALUES (?, ?)",
+                [(export_run_id, invoice_id) for invoice_id in item_ids],
+            )
+            if status == "draft":
+                changed = self._conn.execute(
+                    "UPDATE claim_groups SET status='exported', exported_at=? "
+                    "WHERE id=? AND status='draft'",
+                    (stamp, claim_id),
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("报销组状态已变化，请刷新后重新导出")
+                self._conn.execute(
+                    "INSERT INTO claim_status_events "
+                    "(claim_id, from_status, to_status, occurred_at, export_run_id, note) "
+                    "VALUES (?, 'draft', 'exported', ?, ?, 'Export package created')",
+                    (claim_id, stamp, export_run_id),
+                )
+        self._set_last_error("")
+        return export_run_id
+
+    def get_export_run_items(self, export_run_id: int) -> list[int]:
+        rows = self._conn.execute(
+            "SELECT invoice_id FROM export_run_items WHERE export_run_id=? ORDER BY id",
+            (int(export_run_id),),
+        ).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def mark_claim_reimbursed(self, claim_id: int, export_run_id: int | None = None) -> bool:
+        """Mark the exact invoice set from a successful export as reimbursed."""
+        claim = self.get_claim_group(claim_id)
+        if not claim:
+            self._set_last_error("not_found")
+            return False
+        if claim.get("status") != "exported":
+            self._set_last_error("claim_not_exported")
+            return False
+        if export_run_id is None:
+            row = self._conn.execute(
+                "SELECT id FROM export_runs WHERE claim_id=? ORDER BY id DESC LIMIT 1",
+                (claim_id,),
+            ).fetchone()
+            export_run_id = int(row[0]) if row else None
+        if export_run_id is None:
+            self._set_last_error("export_run_missing")
+            return False
+        run = self._conn.execute(
+            "SELECT id FROM export_runs WHERE id=? AND claim_id=?",
+            (int(export_run_id), claim_id),
+        ).fetchone()
+        invoice_ids = self.get_export_run_items(int(export_run_id))
+        if not run or not invoice_ids:
+            self._set_last_error("export_run_items_missing")
+            return False
+        placeholders = ",".join("?" for _ in invoice_ids)
+        current_members = {
+            int(row[0]) for row in self._conn.execute(
+                f"SELECT invoice_id FROM claim_group_items WHERE claim_id=? "
+                f"AND invoice_id IN ({placeholders})",
+                (claim_id, *invoice_ids),
+            ).fetchall()
+        }
+        if current_members != set(invoice_ids):
+            self._set_last_error("export_run_items_mismatch")
+            return False
+        conflict = self._conn.execute(
+            f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) "
+            "AND reimbursed_group_id IS NOT NULL AND reimbursed_group_id != ? LIMIT 1",
+            (*invoice_ids, claim_id),
+        ).fetchone()
+        if conflict:
+            self._set_last_error("invoice_reimbursed_elsewhere")
+            return False
+
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._atomic_savepoint():
+            reserved = self._conn.execute(
+                "UPDATE claim_groups SET id=id WHERE id=? AND status='exported'",
+                (claim_id,),
+            ).rowcount
+            if reserved != 1:
+                self._set_last_error("claim_state_changed")
+                return False
+            conflict = self._conn.execute(
+                f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) "
+                "AND reimbursed_group_id IS NOT NULL AND reimbursed_group_id != ? LIMIT 1",
+                (*invoice_ids, claim_id),
+            ).fetchone()
+            if conflict:
+                self._set_last_error("invoice_reimbursed_elsewhere")
+                return False
+            changed = self._conn.execute(
+                "UPDATE claim_groups SET status='reimbursed', reimbursed_at=? "
+                "WHERE id=? AND status='exported'",
+                (stamp, claim_id),
+            ).rowcount
+            if changed != 1:
+                self._set_last_error("claim_state_changed")
+                return False
+            self._conn.execute(
+                f"UPDATE invoices SET reimbursed_at=COALESCE(reimbursed_at, ?), "
+                f"reimbursed_group_id=? WHERE id IN ({placeholders})",
+                (stamp, claim_id, *invoice_ids),
+            )
+            self._conn.execute(
+                "INSERT INTO claim_status_events "
+                "(claim_id, from_status, to_status, occurred_at, export_run_id, note) "
+                "VALUES (?, 'exported', 'reimbursed', ?, ?, 'Marked reimbursed from exported package')",
+                (claim_id, stamp, int(export_run_id)),
+            )
+        self._set_last_error("")
+        return True
+
+    def get_claim_status_events(self, claim_id: int) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM claim_status_events WHERE claim_id=? ORDER BY id",
+            (int(claim_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_export_runs(self, claim_id: int = None) -> list:
         """Get all logged export runs, optionally filtered by claim_id."""
@@ -2221,7 +2490,11 @@ class InvoiceDB(EvidenceStoreMixin):
             is_claimed = inv.get("claim_id") is not None
 
             skip_reason = None
-            if is_approved and not include_approved:
+            lock_reason = self.invoice_lock_reason(inv_id)
+            if lock_reason in {"invoice_reimbursed", "invoice_exported_locked"}:
+                skipped_claimed += 1
+                skip_reason = "exported_or_reimbursed"
+            elif is_approved and not include_approved:
                 skipped_approved += 1
                 skip_reason = "approved"
             elif is_claimed and not include_claimed:

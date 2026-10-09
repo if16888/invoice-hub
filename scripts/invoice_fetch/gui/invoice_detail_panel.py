@@ -667,19 +667,19 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-            "to_review": ("待审核", "review"),
+            "to_review": ("◷ 待审核", "review"),
 
 
 
-            "approved": ("已通过", "approved"),
+            "approved": ("✓ 已通过", "approved"),
 
 
 
-            "ignored": ("已忽略", "ignored"),
+            "ignored": ("− 已忽略", "ignored"),
 
 
 
-            "error": ("异常", "error"),
+            "error": ("! 异常", "error"),
 
 
 

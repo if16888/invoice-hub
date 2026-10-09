@@ -247,10 +247,14 @@ class EvidenceStoreMixin:
                 target = self.get_invoice(invoice_id)
                 if not target or is_evidence_record(target):
                     raise ValueError("目标发票已删除、不存在或本身是证明材料，请重新选择。")
+                if not self._require_invoice_editable(invoice_id):
+                    raise ValueError("已导出或已报销的发票不能更改证明材料关联。")
             for evidence_id in materials:
                 source = self.get_invoice(evidence_id)
                 if not source or not is_evidence_record(source) or not str(source.get("attachment_path") or "").strip():
                     raise ValueError("证明材料已删除、不存在或没有文件路径，请重新选择。")
+                if not self._require_invoice_editable(evidence_id):
+                    raise ValueError("已用于导出报销组的证明材料不能更改关联。")
                 self._conn.execute("UPDATE invoices SET record_role='evidence' WHERE id=?", (evidence_id,))
             count = 0
             for invoice_id in targets:
@@ -284,6 +288,8 @@ class EvidenceStoreMixin:
                 target = self.get_invoice(invoice_id)
                 if not target or is_evidence_record(target):
                     raise ValueError("目标发票已删除或不存在，请重新选择。")
+                if not self._require_invoice_editable(invoice_id):
+                    raise ValueError("已导出或已报销的发票不能更改证明材料关联。")
             count = 0
             for invoice_id in targets:
                 for evidence_id in materials:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -323,6 +325,124 @@ def _invoice_sort_key(inv: dict) -> tuple:
     return (effective_date, inv_num, inv_id)
 
 
+def _sha256_file(path: Path) -> tuple[str, int]:
+    """Return SHA-256 and byte length for a regular package file."""
+    digest = hashlib.sha256()
+    byte_count = 0
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+            byte_count += len(chunk)
+    return digest.hexdigest(), byte_count
+
+
+def _register_integrity_file(
+    export_dir: Path,
+    registry: dict[str, dict],
+    relative_path: str,
+    *,
+    role: str,
+    invoice_id: int | None = None,
+    evidence_ids: tuple[int, ...] = (),
+) -> dict:
+    """Hash an exported file and return its invoice-level integrity reference."""
+    normalized = PurePosixPath(str(relative_path)).as_posix()
+    file_path = export_dir.joinpath(*PurePosixPath(normalized).parts)
+    sha256, size_bytes = _sha256_file(file_path)
+    entry = registry.get(normalized)
+    if entry is None:
+        entry = {
+            "path": normalized,
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+            "roles": [],
+            "invoice_ids": [],
+            "evidence_ids": [],
+        }
+        registry[normalized] = entry
+    elif entry["sha256"] != sha256 or entry["size_bytes"] != size_bytes:
+        raise ValueError("导出期间文件内容发生变化，请重新生成报销包。")
+    if role not in entry["roles"]:
+        entry["roles"].append(role)
+    if invoice_id is not None and int(invoice_id) not in entry["invoice_ids"]:
+        entry["invoice_ids"].append(int(invoice_id))
+    for evidence_id in evidence_ids:
+        normalized_id = int(evidence_id)
+        if normalized_id not in entry["evidence_ids"]:
+            entry["evidence_ids"].append(normalized_id)
+    return {
+        "role": role,
+        "path": normalized,
+        "sha256": sha256,
+        "size_bytes": size_bytes,
+    }
+
+
+def verify_export_manifest(export_dir: Path) -> dict:
+    """Verify package payload files against manifest.json and reject unlisted files."""
+    root = Path(export_dir).resolve()
+    errors: list[str] = []
+    manifest_path = root / "manifest.json"
+    if manifest_path.is_symlink():
+        return {"valid": False, "checked": 0, "errors": ["manifest.json is unsafe"]}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"valid": False, "checked": 0, "errors": ["manifest.json is missing or invalid"]}
+
+    listed: dict[str, dict] = {}
+    entries = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(entries, list):
+        return {"valid": False, "checked": 0, "errors": ["manifest has no file integrity list"]}
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            errors.append("invalid file entry")
+            continue
+        relative = str(entry.get("path") or "")
+        posix_path = PurePosixPath(relative)
+        if (not relative or "\\" in relative or posix_path.is_absolute()
+                or PureWindowsPath(relative).is_absolute()
+                or PureWindowsPath(relative).drive
+                or ".." in posix_path.parts or relative == "manifest.json"):
+            errors.append("invalid package path")
+            continue
+        normalized = posix_path.as_posix()
+        if normalized in listed:
+            errors.append(f"duplicate file entry: {normalized}")
+            continue
+        listed[normalized] = entry
+        path = root.joinpath(*posix_path.parts)
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(root)
+            if path.is_symlink() or not resolved.is_file():
+                raise OSError("not a regular file")
+            actual_sha256, actual_size = _sha256_file(resolved)
+        except (OSError, RuntimeError, ValueError):
+            errors.append(f"missing or unsafe file: {normalized}")
+            continue
+        if actual_size != entry.get("size_bytes"):
+            errors.append(f"size mismatch: {normalized}")
+        if actual_sha256 != entry.get("sha256"):
+            errors.append(f"sha256 mismatch: {normalized}")
+
+    actual_paths: set[str] = set()
+    try:
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                errors.append("package contains a symbolic link")
+                continue
+            if path.is_file() and path.resolve() != manifest_path.resolve():
+                actual_paths.add(path.relative_to(root).as_posix())
+    except OSError:
+        errors.append("package files could not be enumerated")
+    for unlisted in sorted(actual_paths - set(listed)):
+        errors.append(f"unlisted file: {unlisted}")
+
+    return {"valid": not errors, "checked": len(listed), "errors": errors}
+
+
 def export_claim_package(
     db: InvoiceDB,
     claim_id: int,
@@ -339,6 +459,8 @@ def export_claim_package(
     claim = db.get_claim_group(claim_id)
     if not claim:
         raise ValueError(f"报销组 ID {claim_id} 不存在。")
+    if claim.get("status") == "reimbursed":
+        raise ValueError("该报销组已标记报销，不能再次导出。")
 
     all_invoices = db.get_claim_invoices(claim_id)
     if not all_invoices:
@@ -454,6 +576,7 @@ def export_claim_package(
         # We will copy invoices list to avoid mutating items in-memory that other code might use
         export_invoices = []
         manifest_items = []
+        integrity_files: dict[str, dict] = {}
         copied_evidence = {}
         from .evidence import path_key
 
@@ -486,9 +609,17 @@ def export_claim_package(
             )
             if not copied_relative_path:
                 raise _required_copy_error("发票原件", invoice_identity)
+            invoice_file_integrity = _register_integrity_file(
+                export_dir,
+                integrity_files,
+                copied_relative_path,
+                role="invoice_original",
+                invoice_id=int(inv["id"]),
+            )
 
             raw_extra_paths = _normalize_path_list(inv.get("extra_paths"))
             copied_extra_paths = []
+            extra_file_integrity = []
             evidence_references = []
             by_path = {}
             for source in inv.get("linked_evidence", ()):
@@ -514,6 +645,14 @@ def export_claim_package(
                         "导出已阻断：补充材料复制数量不完整。请确认材料文件仍可访问后重试。"
                     )
                 copied_extra_paths.append(copied_extra_path)
+                extra_file_integrity.append(_register_integrity_file(
+                    export_dir,
+                    integrity_files,
+                    copied_extra_path,
+                    role="supplemental_material",
+                    invoice_id=int(inv["id"]),
+                    evidence_ids=tuple(int(source["id"]) for source in sources),
+                ))
                 for source in sources:
                     evidence_references.append({
                         "evidence_id": source["id"], "source_path": extra_path,
@@ -560,6 +699,7 @@ def export_claim_package(
                 "extra_paths": copied_extra_paths,
                 "copied_extra_paths": copied_extra_paths,
                 "evidence_references": evidence_references,
+                "file_integrity": [invoice_file_integrity, *extra_file_integrity],
                 "review_status": inv.get("review_status", ""),
                 "warning": warning,
             })
@@ -576,6 +716,7 @@ def export_claim_package(
         export_excel(export_invoices, xlsx_dest, claim=claim)
 
         # 3.5 Generate claim_quality_report.md
+        quality_report_path = export_dir / "claim_quality_report.md"
         qa_warnings_count = _generate_quality_report(
             export_dir=export_dir,
             claim_name=claim["name"],
@@ -585,6 +726,22 @@ def export_claim_package(
             db=db,
             runtime_dir=runtime_dir,
         )
+        _register_integrity_file(
+            export_dir,
+            integrity_files,
+            xlsx_dest.relative_to(export_dir).as_posix(),
+            role="reimbursement_spreadsheet",
+        )
+        _register_integrity_file(
+            export_dir,
+            integrity_files,
+            quality_report_path.relative_to(export_dir).as_posix(),
+            role="quality_report",
+        )
+        for entry in integrity_files.values():
+            entry["roles"].sort()
+            entry["invoice_ids"].sort()
+            entry["evidence_ids"].sort()
 
         # 4. Generate manifest.json
         manifest_data = {
@@ -605,6 +762,11 @@ def export_claim_package(
             "skipped_counts": skipped_counts,
             "item_count": len(manifest_items),
             "qa_warnings_count": qa_warnings_count,
+            "integrity": {
+                "algorithm": "sha256",
+                "scope": "all package files except manifest.json",
+            },
+            "files": list(integrity_files.values()),
             "items": manifest_items
         }
         manifest_dest = export_dir / "manifest.json"
@@ -612,7 +774,13 @@ def export_claim_package(
             json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
         # 5. Log the export run in the DB only after every package file succeeded.
-        db.add_export_run(claim_id, str(export_dir), "generic_excel", len(invoices))
+        db.add_export_run(
+            claim_id,
+            str(export_dir),
+            "generic_excel",
+            len(invoices),
+            invoice_ids=tuple(int(invoice["id"]) for invoice in invoices),
+        )
     except Exception:
         if export_dir_created:
             _cleanup_failed_export_dir(export_dir)

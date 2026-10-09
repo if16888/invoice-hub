@@ -10,6 +10,7 @@ from scripts.invoice_fetch.claim_export import (
     export_claim_package,
     inspect_original_attachment,
     summarize_extra_material_issues,
+    verify_export_manifest,
 )
 from scripts.invoice_fetch.db import InvoiceDB
 
@@ -79,6 +80,9 @@ class ClaimExportOriginalIntegrityTests(unittest.TestCase):
                 copied_path = manifest["items"][0]["copied_attachment_path"]
                 self.assertTrue(copied_path)
                 self.assertTrue((export_dir / copied_path).is_file())
+                self.assertEqual(len(manifest["files"]), 3)
+                self.assertTrue(any(entry["path"] == manifest["spreadsheet"] for entry in manifest["files"]))
+                self.assertTrue(verify_export_manifest(export_dir)["valid"])
                 self.assertEqual(len(db.list_export_runs(claim_id)), 1)
 
     def test_empty_original_path_blocks_complete_export(self):
@@ -288,6 +292,16 @@ class ClaimExportOriginalIntegrityTests(unittest.TestCase):
                 self.assertTrue((export_dir / item["copied_attachment_path"]).is_file())
                 self.assertEqual(len(item["copied_extra_paths"]), 1)
                 self.assertTrue((export_dir / item["copied_extra_paths"][0]).is_file())
+                self.assertEqual(manifest["integrity"]["algorithm"], "sha256")
+                self.assertEqual(len(manifest["files"]), 4)
+                self.assertEqual(len(item["file_integrity"]), 2)
+                self.assertTrue(verify_export_manifest(export_dir)["valid"])
+
+                tampered = export_dir / item["copied_extra_paths"][0]
+                tampered.write_bytes(tampered.read_bytes() + b"tampered")
+                verification = verify_export_manifest(export_dir)
+                self.assertFalse(verification["valid"])
+                self.assertTrue(any("sha256 mismatch" in error for error in verification["errors"]))
 
 
 if __name__ == "__main__":

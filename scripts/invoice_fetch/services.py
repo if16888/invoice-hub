@@ -2191,6 +2191,7 @@ def _import_local_directory(
     att_dir: Path,
     file_paths=None,
     scan_control: ScanControl | None = None,
+    allow_external_file_paths: bool = False,
 ) -> dict:
     root = Path(import_dir)
     if not root.exists() or not root.is_dir():
@@ -2206,7 +2207,7 @@ def _import_local_directory(
         files = []
         for item in file_paths:
             candidate = Path(item).resolve()
-            if not candidate.is_relative_to(root):
+            if not allow_external_file_paths and not candidate.is_relative_to(root):
                 raise ValueError(f"导入文件不在指定目录内: {candidate}")
             if candidate.is_file() and candidate.suffix.lower() in supported_exts:
                 files.append(candidate)
@@ -4423,6 +4424,7 @@ def import_local_directory(
     config_path: Path | None = None,
     file_paths: Iterable[str | Path] | None = None,
     scan_control: ScanControl | None = None,
+    allow_external_file_paths: bool = False,
 ) -> dict:
     """Public wrapper to import a local directory of invoices."""
     try:
@@ -4435,14 +4437,19 @@ def import_local_directory(
         parser = InvoiceParser()
         parser.cancel_check = (lambda: scan_control.cancelled) if scan_control is not None else None
         with InvoiceDB(db_path) as db:
+            import_options = {
+                "file_paths": file_paths,
+                "scan_control": scan_control,
+            }
+            if allow_external_file_paths:
+                import_options["allow_external_file_paths"] = True
             stats = _import_local_directory(
                 import_dir=import_dir,
                 db=db,
                 parser=parser,
                 categories=categories,
                 att_dir=att_dir,
-                file_paths=file_paths,
-                scan_control=scan_control,
+                **import_options,
             )
             if scan_control is not None and scan_control.cancelled:
                 stats["cancelled"] = True

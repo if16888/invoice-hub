@@ -4655,7 +4655,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
 
                     # Assert summary card is updated correctly
-                    self.assertEqual(window.lbl_sum_status.text(), "已通过")
+                    self.assertEqual(window.lbl_sum_status.text(), "✓ 已通过")
                     self.assertEqual(window.lbl_sum_amount.text(), "¥500.00")
                     self.assertEqual(window.lbl_sum_date.text(), "2026-05-25")
                     self.assertEqual(window.lbl_sum_number.text(), "发票号码: SEL777")

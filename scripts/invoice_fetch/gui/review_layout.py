@@ -47,12 +47,24 @@ def _target_detail_width(window) -> int:
 
     available = max(0, int(splitter.width()))
     window_width = max(0, int(window.width()))
-    target = _base_detail_width(window, available)
+    restored_width = getattr(window, "_review_detail_restore_width", None)
+    has_restored_width = restored_width is not None
+    if restored_width is not None:
+        try:
+            target = int(restored_width)
+        except (TypeError, ValueError):
+            target = _base_detail_width(window, available)
+    else:
+        target = _base_detail_width(window, available)
 
     # A 1366-wide desktop is already space-constrained. Keep its historical
     # 352 px detail contract even when the rail defaults to icon-only; only use
     # reclaimed sidebar width on larger desktops.
-    if window_width > COMPACT_DESKTOP_MAX_WIDTH and _nav_is_collapsed(window):
+    if (
+        not has_restored_width
+        and window_width > COMPACT_DESKTOP_MAX_WIDTH
+        and _nav_is_collapsed(window)
+    ):
         target += COLLAPSED_DETAIL_BONUS
 
     # Never let the detail pane crowd out the dense review workspace.
@@ -66,6 +78,13 @@ def _reflow_review_detail(window) -> None:
     detail = getattr(window, "_detail_panel", None)
     splitter = getattr(window, "main_splitter", None)
     if detail is None or splitter is None or splitter.count() < 2:
+        return
+
+    if getattr(window, "_review_detail_collapsed", False):
+        detail.setMinimumWidth(0)
+        detail.setMaximumWidth(0)
+        available = max(0, int(splitter.width()) - splitter.handleWidth())
+        splitter.setSizes([available, 0])
         return
 
     target = _target_detail_width(window)
@@ -105,9 +124,27 @@ class _ReviewDetailWidthController(QObject):
             return
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Resize:
-            self.schedule()
-        return False
+        try:
+            if not isValid(self.window):
+                return False
+            event_type = event.type()
+            if event_type == QEvent.MouseButtonDblClick:
+                splitter = getattr(self.window, "main_splitter", None)
+                if (
+                    splitter is not None
+                    and isValid(splitter)
+                    and watched is splitter.handle(1)
+                    and event.button() == Qt.LeftButton
+                ):
+                    self.window._toggle_review_detail_panel()
+                    event.accept()
+                    return True
+            if event_type == QEvent.Resize:
+                self.schedule()
+            return False
+        except RuntimeError:
+            # Qt can dispatch a final child event while tearing down the window.
+            return False
 
 
 def apply_review_detail_width_fix(page: QWidget) -> None:
@@ -137,6 +174,9 @@ def apply_review_detail_width_fix(page: QWidget) -> None:
     controller = _ReviewDetailWidthController(window)
     window.installEventFilter(controller)
     splitter.installEventFilter(controller)
+    detail_handle = splitter.handle(1)
+    if detail_handle is not None:
+        detail_handle.installEventFilter(controller)
     if nav is not None:
         nav.installEventFilter(controller)
     collapse_button = getattr(window, "btn_collapse_nav", None)

@@ -132,8 +132,10 @@ class ClaimReasonTests(unittest.TestCase):
                 assert ws.cell(2, headers.index('报销事由') + 1).value == '\'=HYPERLINK("evil")'
             finally:
                 wb.close()
-            assert db.update_invoice_reason(invoice, None)
-            assert db.update_claim_reason(claim, reason_detail='新说明')
+            assert not db.update_invoice_reason(invoice, None)
+            assert db.get_invoice_reason(invoice) == '=HYPERLINK("evil")'
+            assert not db.update_claim_reason(claim, reason_detail='新说明')
+            assert db.get_claim_group(claim)['reason_detail'] == '项目验收'
             assert db.get_claim_group(claim)['department'] == '研发'
             assert db.get_claim_group(claim)['applicant_name'] == '李某'
             assert manifest['items'][0]['reimbursement_reason'] == '=HYPERLINK("evil")'

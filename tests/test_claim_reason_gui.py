@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -69,7 +70,8 @@ class ClaimReasonGuiTests(unittest.TestCase):
         view, claim, invoice = window
         view._switch_main_page('review')
         view._change_filter('all')
-        view.table.selectRow(0)
+        self.assertTrue(view._select_invoice_by_id(invoice))
+        _QAPP.processEvents()
 
         def override(dialog):
             assert dialog.inherit.isChecked()
@@ -93,6 +95,39 @@ class ClaimReasonGuiTests(unittest.TestCase):
             view.btn_edit_invoice_reason.click()
         assert view.db.get_invoice(invoice)['custom_reason'] is None
         assert view.db.get_invoice_reason(invoice) == '原事由'
+
+    def test_export_page_confirms_reimbursement_and_refreshes_locked_state(self):
+        view, claim, invoice = self.window
+        export_run = view.db.add_export_run(
+            claim, 'exports/test-run', 'generic_excel', 1, invoice_ids=[invoice]
+        )
+        view._refresh_export_page()
+        assert view.export_group_list.currentItem().data(Qt.UserRole) == claim
+        assert view.btn_mark_claim_reimbursed.isEnabled()
+        with patch('scripts.invoice_fetch.gui.app.QMessageBox.question', return_value=QMessageBox.Yes):
+            view._mark_selected_claim_reimbursed()
+        assert view.db.get_claim_group(claim)['status'] == 'reimbursed'
+        assert view.db.get_invoice(invoice)['reimbursed_group_id'] == claim
+        assert not view.btn_mark_claim_reimbursed.isEnabled()
+
+    def test_inline_reason_editor_saves_override_with_enter(self):
+        view, _claim, invoice = self.window
+        view._switch_main_page('review')
+        view._change_filter('all')
+        self.assertTrue(view._select_invoice_by_id(invoice))
+        _QAPP.processEvents()
+
+        editor = view.txt_invoice_reason_inline
+        self.assertTrue(editor.isEnabled())
+        self.assertEqual(editor.text(), '原事由')
+        editor.setFocus()
+        editor.setText('单票交通')
+        QTest.keyClick(editor, Qt.Key_Return)
+        _QAPP.processEvents()
+
+        self.assertEqual(view.db.get_invoice(invoice)['custom_reason'], '单票交通')
+        self.assertEqual(view.db.get_invoice_reason(invoice), '单票交通')
+        self.assertEqual(view.current_invoice['id'], invoice)
 
 
     def test_cancel_and_busy_operation_do_not_write(self):

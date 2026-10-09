@@ -514,6 +514,9 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_idle_notice = WrappedTextLabel("")
         self.lbl_idle_notice.setProperty("class", "SectionHint")
         self.lbl_idle_notice.hide()
+        self.btn_idle_network_diagnosis = make_button("手机连接排查", variant="ghost")
+        self.btn_idle_network_diagnosis.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.btn_idle_network_diagnosis.clicked.connect(self._show_network_diagnosis)
         self.btn_idle_firewall_authorize = make_button("允许手机访问", variant="secondary")
         self.btn_idle_firewall_authorize.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.btn_idle_firewall_authorize.clicked.connect(self._request_firewall_access)
@@ -526,6 +529,7 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_start.clicked.connect(lambda _checked=False: self.controller.start())
         layout.addWidget(title); layout.addWidget(desc); layout.addWidget(self.lbl_idle_notice); layout.addWidget(self.lbl_idle_network)
         layout.addWidget(self.lbl_idle_firewall)
+        layout.addWidget(self.btn_idle_network_diagnosis, 0, Qt.AlignLeft)
         layout.addWidget(self.btn_idle_firewall_authorize, 0, Qt.AlignLeft)
         layout.addWidget(self.btn_idle_dev_firewall_cleanup, 0, Qt.AlignLeft)
         layout.addWidget(self.btn_start, 0, Qt.AlignLeft); layout.addStretch(1)
@@ -613,6 +617,8 @@ class MobileUploadSessionPanel(QFrame):
         firewall_layout.addWidget(self.btn_firewall_authorize, 0, Qt.AlignLeft)
         firewall_layout.addWidget(self.btn_dev_firewall, 0, Qt.AlignLeft)
         self.lbl_stats = self._responsive_label("接收 0 · 新增 0 · 重复 0 · 失败 0")
+        self.btn_active_network_diagnosis = make_button("手机连接排查", variant="ghost")
+        self.btn_active_network_diagnosis.clicked.connect(self._show_network_diagnosis)
         form.addRow("当前网络", self.lbl_network_interface)
         form.addRow("本机访问", self.lbl_local_self_check)
         form.addRow("Windows 防火墙", firewall_details)
@@ -660,6 +666,7 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_change_network = make_button("更换网络", variant="ghost"); self.btn_change_network.clicked.connect(self.combo_upload_host.showPopup)
         self.btn_stop = make_button("停止服务", variant="secondary"); self.btn_stop.setProperty("danger", True); self.btn_stop.clicked.connect(self.controller.stop)
         footer.addWidget(self.lbl_lan_access_hint, 1)
+        footer.addWidget(self.btn_active_network_diagnosis, 0)
         footer.addWidget(self.btn_copy_url, 0)
         footer.addWidget(self.btn_change_network, 0)
         footer.addWidget(self.btn_stop, 0)
@@ -677,6 +684,9 @@ class MobileUploadSessionPanel(QFrame):
         self.btn_retry.clicked.connect(lambda _checked=False: self.controller.start())
         self.btn_network_settings = make_button("网络设置", variant="secondary")
         self.btn_network_settings.clicked.connect(self.show_idle)
+        self.btn_error_network_diagnosis = make_button("手机连接排查", variant="secondary")
+        self.btn_error_network_diagnosis.clicked.connect(self._show_network_diagnosis)
+        actions.addWidget(self.btn_error_network_diagnosis)
         actions.addWidget(self.btn_retry); actions.addWidget(self.btn_network_settings); actions.addStretch(1)
         layout.addWidget(title); layout.addWidget(self.lbl_error); layout.addLayout(actions); layout.addStretch(1)
         return page
@@ -798,6 +808,57 @@ class MobileUploadSessionPanel(QFrame):
 
     def _copy_url(self):
         QApplication.clipboard().setText(self.txt_url.text())
+
+    def _show_network_diagnosis(self):
+        status = {}
+        server = getattr(self.controller, "server", None)
+        if server is not None:
+            try:
+                status = dict(server.status() or {})
+            except Exception:
+                status = {}
+        active = bool(status.get("active", server is not None))
+        self_check = str(status.get("local_self_check") or "pending")
+        phone_reached = bool(status.get("lan_client_access_confirmed"))
+        firewall = getattr(self.controller, "firewall_status", None)
+        firewall_data = firewall.as_dict() if hasattr(firewall, "as_dict") else dict(firewall or {})
+        firewall_state = str(firewall_data.get("state") or "unknown")
+        interface = str(status.get("interface_name") or "未启动或未检测")
+        host = str(status.get("public_host") or "")
+        selected_network = f"{interface} · {host}" if host else interface
+
+        if not active:
+            summary = "手机上传服务尚未启动，电脑端探针也还未运行。"
+        elif self_check == "pass" and phone_reached:
+            summary = "电脑端探针正常，且已收到手机访问；AP 隔离不是当前连接阻塞点。"
+        elif self_check == "pass":
+            summary = "电脑端探针正常，但尚未收到手机访问。电脑无法仅凭本机检查区分 AP 隔离、防火墙或 Wi-Fi 网络隔离。"
+        elif self_check == "fail":
+            summary = "电脑端本机探针未通过；先检查服务状态与 Windows 防火墙，再让手机重新扫码。"
+        else:
+            summary = "电脑端探针状态尚未确认；启动服务后再检查手机访问情况。"
+
+        firewall_summary = {
+            "rule_present": "已允许专用网络访问",
+            "rule_missing": "尚未允许专用网络访问",
+            "rule_disabled": "专用网络防火墙规则已禁用",
+            "non_windows": "当前系统未提供 Windows 防火墙状态",
+        }.get(firewall_state, "防火墙状态尚未确认")
+        details = (
+            f"当前网络：{selected_network}\n"
+            f"电脑本机探针：{ {'pass': '正常', 'fail': '失败'}.get(self_check, '未运行') }\n"
+            f"手机访问电脑：{'已收到访问' if phone_reached else '尚未收到访问'}\n"
+            f"Windows 防火墙：{firewall_summary}\n\n"
+            "排查顺序：\n"
+            "1. 确认手机与电脑连接到可互通的同一 Wi-Fi，避开访客网络；在上传面板的“切换网络”中选择 Wi-Fi 网卡并重新生成二维码。\n"
+            "2. 如果电脑本机探针正常、手机仍无法打开链接，常见原因是路由器开启 AP/客户端隔离，或网络阻止设备互访。\n"
+            "3. 可让电脑连接手机个人热点后重新启动上传；若仍失败，再检查 Windows 网络是否为专用网络及防火墙访问授权。\n"
+            "4. 无法切换网络时，可将票据从微信保存到手机，再用微信文件传输助手传到电脑并拖入 Invoice Hub。"
+        )
+        box = QMessageBox(QMessageBox.Information, "手机连接排查", summary, QMessageBox.Ok, self)
+        box.setTextFormat(Qt.PlainText)
+        box.setDetailedText(details)
+        box.exec()
 
     def _host_changed(self, _index: int = -1):
         host = self.combo_upload_host.currentData()

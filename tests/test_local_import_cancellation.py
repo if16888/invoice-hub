@@ -280,7 +280,15 @@ class LocalImportCancellationTests(unittest.TestCase):
 
                 information.assert_not_called()
                 critical.assert_not_called()
-                self.assertIn("已取消", window.statusBar().currentMessage())
+                status_bar = window.statusBar()
+                current_message = getattr(status_bar, "currentMessage", None)
+                if callable(current_message):
+                    self.assertIn("已取消", current_message())
+                else:
+                    # Some supported PySide builds expose the native QStatusBar
+                    # as a QWidget wrapper without currentMessage(); the same
+                    # cancellation summary is still recorded in the UI log.
+                    self.assertIn("已取消", window.txt_log.toPlainText())
             finally:
                 window.close()
                 self.app.processEvents()

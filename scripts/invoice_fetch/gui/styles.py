@@ -212,8 +212,8 @@ QLabel.StatusBadge {
     background-color: #F3F4F6;
     color: #6B7280;
     border: 1px solid #E5E7EB;
-    border-radius: 4px;
-    padding: 2px 6px;
+    border-radius: 999px;
+    padding: 2px 8px;
     font-size: 12px;
     font-weight: bold;
 }

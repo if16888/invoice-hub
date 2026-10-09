@@ -120,6 +120,10 @@ def reconcile_reparsed_invoice(
         if current is None:
             conn.rollback()
             return _failure(db, current_invoice_id, "not_found")
+        lock_reason = db.invoice_lock_reason(current_invoice_id)
+        if lock_reason in {"invoice_reimbursed", "invoice_exported_locked"}:
+            conn.rollback()
+            return _failure(db, current_invoice_id, lock_reason)
         if is_evidence_record(dict(current)) and db.evidence_consumers(current_invoice_id):
             conn.rollback()
             return _failure(db, current_invoice_id, "evidence_in_use")
@@ -138,6 +142,17 @@ def reconcile_reparsed_invoice(
                 candidate_id = int(duplicate["id"])
                 if candidate_id != current_invoice_id:
                     duplicate_invoice_id = candidate_id
+
+        if duplicate_invoice_id is not None:
+            duplicate_lock = db.invoice_lock_reason(duplicate_invoice_id)
+            if duplicate_lock in {"invoice_reimbursed", "invoice_exported_locked"}:
+                conn.rollback()
+                return _failure(
+                    db,
+                    current_invoice_id,
+                    duplicate_lock,
+                    duplicate_invoice_id=duplicate_invoice_id,
+                )
 
         if duplicate_invoice_id is not None:
             claim_count_row = conn.execute(

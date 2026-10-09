@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 _log = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 14
+LATEST_SCHEMA_VERSION = 15
 
 
 # Index names are part of the latest-schema contract.  SQLite already creates
@@ -22,6 +22,9 @@ LATEST_INDEX_CONTRACT = frozenset(
         "idx_claim_items_invoice",
         "idx_invoices_soft_fingerprint",
         "idx_evidence_relations_source",
+        "idx_invoices_reimbursement_group",
+        "idx_export_run_items_invoice",
+        "idx_claim_status_events_claim",
     }
 )
 
@@ -105,6 +108,8 @@ LATEST_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
             "file_hash",
             "confirmed_at",
             "confirmed_note",
+            "reimbursed_at",
+            "reimbursed_group_id",
         }
     ),
     "emails": frozenset(
@@ -137,7 +142,8 @@ LATEST_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
     "trusted_senders": frozenset({"sender", "added_at"}),
     "claim_groups": frozenset(
         {"id", "name", "period_start", "period_end", "status", "created_at",
-         "reason_category", "reason_detail", "applicant_name", "department"}
+         "reason_category", "reason_detail", "applicant_name", "department",
+         "exported_at", "reimbursed_at"}
     ),
     "claim_group_items": frozenset(
         {"id", "claim_id", "invoice_id", "sort_order", "note"}
@@ -153,6 +159,12 @@ LATEST_SCHEMA_CONTRACT: dict[str, frozenset[str]] = {
     ),
     "export_runs": frozenset(
         {"id", "claim_id", "export_dir", "export_type", "item_count", "created_at"}
+    ),
+    "export_run_items": frozenset(
+        {"id", "export_run_id", "invoice_id"}
+    ),
+    "claim_status_events": frozenset(
+        {"id", "claim_id", "from_status", "to_status", "occurred_at", "export_run_id", "note"}
     ),
     "email_download_failures": frozenset(
         {
@@ -703,4 +715,88 @@ def check_and_migrate(conn: sqlite3.Connection):
         except Exception:
             cursor.execute("ROLLBACK TO SAVEPOINT shared_evidence_v14")
             cursor.execute("RELEASE SAVEPOINT shared_evidence_v14")
+            raise
+
+    if version < 15:
+        cursor.execute("SAVEPOINT reimbursement_state_v15")
+        try:
+            invoice_columns = {
+                str(row[1]) for row in cursor.execute("PRAGMA table_info(invoices)")
+            }
+            if "reimbursed_at" not in invoice_columns:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN reimbursed_at TEXT")
+            if "reimbursed_group_id" not in invoice_columns:
+                cursor.execute("ALTER TABLE invoices ADD COLUMN reimbursed_group_id INTEGER")
+
+            claim_columns = {
+                str(row[1]) for row in cursor.execute("PRAGMA table_info(claim_groups)")
+            }
+            if "exported_at" not in claim_columns:
+                cursor.execute("ALTER TABLE claim_groups ADD COLUMN exported_at TEXT")
+            if "reimbursed_at" not in claim_columns:
+                cursor.execute("ALTER TABLE claim_groups ADD COLUMN reimbursed_at TEXT")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS export_run_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    export_run_id INTEGER NOT NULL,
+                    invoice_id INTEGER NOT NULL,
+                    UNIQUE(export_run_id, invoice_id),
+                    FOREIGN KEY(export_run_id) REFERENCES export_runs(id) ON DELETE CASCADE,
+                    FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE RESTRICT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS claim_status_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    claim_id INTEGER NOT NULL,
+                    from_status TEXT NOT NULL,
+                    to_status TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    export_run_id INTEGER,
+                    note TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(claim_id) REFERENCES claim_groups(id) ON DELETE RESTRICT,
+                    FOREIGN KEY(export_run_id) REFERENCES export_runs(id) ON DELETE SET NULL
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_invoices_reimbursement_group "
+                "ON invoices(reimbursed_group_id, reimbursed_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_export_run_items_invoice "
+                "ON export_run_items(invoice_id, export_run_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_claim_status_events_claim "
+                "ON claim_status_events(claim_id, id)"
+            )
+
+            # Old application versions recorded successful exports without a
+            # claim state. Preserve that history and lock those groups.
+            cursor.execute(
+                "UPDATE claim_groups SET status='exported', "
+                "exported_at=COALESCE(exported_at, (SELECT MIN(created_at) FROM export_runs "
+                "WHERE export_runs.claim_id=claim_groups.id)) "
+                "WHERE status='draft' AND EXISTS "
+                "(SELECT 1 FROM export_runs WHERE export_runs.claim_id=claim_groups.id)"
+            )
+            cursor.execute(
+                "UPDATE claim_groups SET exported_at=COALESCE(exported_at, "
+                "(SELECT MIN(created_at) FROM export_runs WHERE export_runs.claim_id=claim_groups.id), "
+                "datetime('now','localtime')) WHERE status='exported'"
+            )
+            cursor.execute(
+                "INSERT INTO claim_status_events "
+                "(claim_id, from_status, to_status, occurred_at, note) "
+                "SELECT c.id, 'draft', 'exported', c.exported_at, "
+                "'Migrated from a previously recorded successful export' "
+                "FROM claim_groups c WHERE c.status='exported' AND NOT EXISTS "
+                "(SELECT 1 FROM claim_status_events e WHERE e.claim_id=c.id)"
+            )
+            cursor.execute("PRAGMA user_version = 15")
+            cursor.execute("RELEASE SAVEPOINT reimbursement_state_v15")
+        except Exception:
+            cursor.execute("ROLLBACK TO SAVEPOINT reimbursement_state_v15")
+            cursor.execute("RELEASE SAVEPOINT reimbursement_state_v15")
             raise
