@@ -47,6 +47,9 @@ class LocalFileDropFilter(QObject):
     def __init__(self, window):
         super().__init__(window)
         self._window = window
+        self._drop_target_refresh_timer = QTimer(self)
+        self._drop_target_refresh_timer.setSingleShot(True)
+        self._drop_target_refresh_timer.timeout.connect(self._refresh_drop_targets)
         self._enable_window_drop_targets(window)
         app = QApplication.instance()
         if app is not None:
@@ -72,12 +75,12 @@ class LocalFileDropFilter(QObject):
                 except RuntimeError:
                     belongs_to_window = False
                 if belongs_to_window:
-                    child = event.child()
-                    if isinstance(child, QWidget) and not child.isWindow():
-                        QTimer.singleShot(
-                            0,
-                            lambda widget=child: self._enable_drop_targets_if_attached(widget),
-                        )
+                    # ChildAdded may arrive while a QWidget subclass is only
+                    # partially constructed. Do not retain event.child() past
+                    # this callback; coalesce additions and rescan the window
+                    # after Qt finishes the current construction/event batch.
+                    if not self._drop_target_refresh_timer.isActive():
+                        self._drop_target_refresh_timer.start(0)
             return False
         if event.type() not in self._DROP_EVENTS:
             return False
@@ -115,11 +118,11 @@ class LocalFileDropFilter(QObject):
             event.ignore()
         return True
 
-    def _enable_drop_targets_if_attached(self, widget: QWidget) -> None:
+    def _refresh_drop_targets(self) -> None:
+        window = self._window
         try:
-            if widget.window() is self._window:
-                widget.setAcceptDrops(True)
-                self._enable_window_drop_targets(widget)
+            if window is not None and not getattr(window, "_shutdown_requested", False):
+                self._enable_window_drop_targets(window)
         except RuntimeError:
-            # A transient child may be deleted before the queued callback runs.
+            # The window may be deleted while a coalesced refresh is pending.
             return

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QSettings, QUrl, Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
@@ -68,6 +68,29 @@ class V020DragDropLayoutNetworkTests(unittest.TestCase):
             finally:
                 _APP.removeEventFilter(drop_filter)
                 window.close()
+
+    def test_child_additions_coalesce_drop_target_refresh_without_retaining_children(self):
+        window = QMainWindow()
+        drop_filter = LocalFileDropFilter(window)
+        dynamic_widgets = []
+        try:
+            container = QWidget(window)
+            for _ in range(64):
+                child = QWidget(container)
+                nested = QWidget(child)
+                dynamic_widgets.extend((child, nested))
+
+            self.assertTrue(drop_filter._drop_target_refresh_timer.isActive())
+            refreshes = QSignalSpy(drop_filter._drop_target_refresh_timer.timeout)
+            QTest.qWait(1)
+
+            self.assertEqual(refreshes.count(), 1)
+            self.assertTrue(all(widget.acceptDrops() for widget in dynamic_widgets))
+        finally:
+            _APP.removeEventFilter(drop_filter)
+            window.close()
+            window.deleteLater()
+            _APP.sendPostedEvents(None, QEvent.DeferredDelete)
 
     def test_drop_import_respects_the_data_operation_busy_lock(self):
         with tempfile.TemporaryDirectory() as td:
