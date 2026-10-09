@@ -3151,8 +3151,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.table.currentRow(), 1)
                     self.assertEqual(window.current_invoice["id"], inv_id1)
 
-                    # 4. Verify the empty state guide label text contains "扫码上传"
-                    self.assertIn("扫码上传", window.empty_widget.findChildren(QLabel)[1].text())
+                    # The empty state now uses a three-step guide; mobile upload
+                    # remains available as an explicit action in the first step.
+                    self.assertIn("三步开始整理", window.lbl_guide.text())
+                    self.assertEqual(len(window.empty_step_cards), 3)
+                    self.assertEqual(window.empty_btn_mobile_upload.text(), "手机扫码")
 
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -3722,6 +3725,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         "linked": 1,
                         "assigned": 1,
                         "evidence_only": 1,
+                        "locked": 0,
                         "failed": 0,
                     })
                     self.assertEqual(mock_info.call_args.args[1], "关联结果")
@@ -5490,13 +5494,13 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertEqual(btn.property("variant"), "toolbar")
                         self.assertNotRegex(btn.text(), r"[📁📱📧🚀]")
 
-                    empty_buttons = [
-                        window.empty_btn_import,
+                    self.assertEqual(window.empty_btn_import.property("variant"), "primary")
+                    secondary_empty_buttons = [
                         window.empty_btn_mobile_upload,
                         window.empty_btn_settings,
                         window.empty_btn_scan,
                     ]
-                    for btn in empty_buttons:
+                    for btn in secondary_empty_buttons:
                         self.assertEqual(btn.property("variant"), "secondary")
 
                     self.assertEqual(window.filter_buttons["all"].objectName(), "CompactStatCard")
@@ -6919,6 +6923,17 @@ class ClaimGroupsTests(unittest.TestCase):
                         "attachment_path": "attachments/dummy.pdf"
                     })
                     db.add_invoice_to_claim(claim_id, inv_id)
+                    clean_claim_id = db.create_claim_group("GUI QA Clean Group")
+                    clean_inv_id = db.insert_invoice({
+                        "invoice_number": "GUI002",
+                        "total_amount": "100.00",
+                        "expense_date": "2026-06-01",
+                        "seller_name": "Valid Seller",
+                        "category": "交通",
+                        "review_status": review_status.APPROVED,
+                        "attachment_path": "attachments/dummy.pdf",
+                    })
+                    db.add_invoice_to_claim(clean_claim_id, clean_inv_id)
 
                     # Create dummy attachment
                     attachments_dir = runtime_dir / "attachments"
@@ -6965,15 +6980,12 @@ class ClaimGroupsTests(unittest.TestCase):
                                 self.assertNotIn(str(runtime_dir), combined)
                                 self.assertNotIn(str(external_export_root), combined)
 
-                            # Scenario 2: 0 warnings (fix empty seller name)
-                            db.update_invoice_fields(
-                                invoice_id=inv_id,
-                                invoice_number="GUI001",
-                                expense_date="2026-06-01",
-                                seller_name="Valid Seller",
-                                total_amount="100.00",
-                                category="交通",
-                            )
+                            # Successful export locks its claim; use a separate
+                            # clean claim to verify the zero-warning path without
+                            # bypassing the reimbursement state machine.
+                            clean_idx = window.combo_claims.findData(clean_claim_id)
+                            self.assertGreaterEqual(clean_idx, 0)
+                            window.combo_claims.setCurrentIndex(clean_idx)
                             with patch("scripts.invoice_fetch.gui.app.QMessageBox") as mock_box_class:
                                 mock_box_instance = mock_box_class.return_value
                                 mock_box_instance.clickedButton.return_value = Mock()

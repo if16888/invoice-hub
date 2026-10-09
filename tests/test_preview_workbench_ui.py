@@ -360,7 +360,8 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
             set(window.workbench_shortcuts),
             {
                 "Up", "Down", "Return", "Enter", "Delete", "Ctrl+E",
-                "Ctrl+F", "F11", "Ctrl+I", "Ctrl+U", "Ctrl+M", "Ctrl+R", "Esc",
+                "Ctrl+F", "F11", "Ctrl+B", "Ctrl+G", "Ctrl+I", "Ctrl+U",
+                "Ctrl+M", "Ctrl+R", "Esc",
             },
         )
         self.assertFalse({"Space", "J", "K", "Alt+A", "Alt+I", "Alt+E"} & set(window.workbench_shortcuts))

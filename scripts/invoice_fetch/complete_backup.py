@@ -35,7 +35,8 @@ class MissingMaterialsError(ValueError):
         lines = []
         for item in self.issues[:20]:
             number = str(item["invoice_number"] or "").replace("\n", " ").replace("\r", " ")[:64]
-            identifier = f"发票 ID {item['invoice_id']}" + (f"（票号 {number}）" if number else "")
+            entity = "材料" if item.get("record_role") == "evidence" else "发票"
+            identifier = f"{entity} ID {item['invoice_id']}" + (f"（票号 {number}）" if number else "")
             lines.append(f"{identifier}：{item['kind']}缺失")
         if len(self.issues) > 20:
             lines.append(f"另外 {len(self.issues) - 20} 处缺失关联")
@@ -44,19 +45,44 @@ class MissingMaterialsError(ValueError):
 
 def _verify_materials(connection, runtime, cancel_check):
     issues = []
-    for invoice_id, number, original, extras in connection.execute(
-        "SELECT id, invoice_number, attachment_path, extra_paths FROM invoices"
-    ):
+    rows = connection.execute(
+        "SELECT id, invoice_number, attachment_path, extra_paths, record_role FROM invoices"
+    ).fetchall()
+    parent_evidence_paths = {
+        _material_path_key(runtime, path)
+        for _invoice_id, _number, _original, extras, role in rows
+        if role != "evidence"
+        for path in _paths(extras)
+    }
+
+    for invoice_id, number, original, extras, role in rows:
         _check_cancel(cancel_check)
-        references = ([("原件", original)] if original else []) + [("证明材料", p) for p in _paths(extras)]
+        is_evidence = role == "evidence"
+        references = []
+        if original and not (is_evidence and _material_path_key(runtime, original) in parent_evidence_paths):
+            references.append(("证明材料" if is_evidence else "原件", original))
+        if not is_evidence:
+            references.extend(("证明材料", path) for path in _paths(extras))
         for kind, reference in references:
             source = Path(reference)
             if not source.is_absolute():
                 source = runtime / source
             if not source.is_file():
-                issues.append({"invoice_id": invoice_id, "invoice_number": number, "kind": kind})
+                issues.append({
+                    "invoice_id": invoice_id,
+                    "invoice_number": number,
+                    "kind": kind,
+                    "record_role": role,
+                })
     if issues:
         raise MissingMaterialsError(issues)
+
+
+def _material_path_key(runtime, reference):
+    source = Path(reference)
+    if not source.is_absolute():
+        source = runtime / source
+    return str(source.resolve()).casefold()
 
 
 def _check_cancel(cancel_check):

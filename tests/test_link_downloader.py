@@ -411,7 +411,13 @@ class TestLinkDownloader(unittest.TestCase):
             page.wait_for_timeout.side_effect = dispatch
             return None
 
-        with patch.object(dl, '_ensure_browser'), patch.object(dl, '_handle_nuonuo_invoice_page', side_effect=open_popup):
+        from scripts.invoice_fetch import link_downloader as link_downloader_module
+
+        with (
+            patch.object(dl, '_ensure_browser'),
+            patch.object(dl, '_handle_nuonuo_invoice_page', side_effect=open_popup),
+            patch.object(link_downloader_module, '_host_resolves_to_public_addresses', return_value=True),
+        ):
             result = dl._download_url(page.url, 123, 0, '2026-07-22', disable_fallback=True)
         self.assertIsNotNone(result)
         self.assertEqual(result.source_type, 'official_download')

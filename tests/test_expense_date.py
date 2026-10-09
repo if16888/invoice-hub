@@ -127,6 +127,28 @@ class ExpenseDateTests(unittest.TestCase):
                 UNIQUE(claim_id, invoice_id)
             );
             """)
+            # A realistic V5 database already has the V2 claim and export
+            # tables; later migrations add reason and reimbursement fields.
+            cursor.execute("""
+            CREATE TABLE claim_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                period_start TEXT DEFAULT '',
+                period_end TEXT DEFAULT '',
+                status TEXT DEFAULT 'draft',
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+            """)
+            cursor.execute("""
+            CREATE TABLE export_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                claim_id INTEGER,
+                export_dir TEXT NOT NULL,
+                export_type TEXT NOT NULL DEFAULT 'generic_excel',
+                item_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+            """)
             cursor.execute("""
             INSERT INTO invoices (invoice_number, invoice_date, total_amount, seller_name, category)
             VALUES ('MIGRATE001', '2026-05-01', '100.00', 'Legacy Seller', '其他')
@@ -221,7 +243,7 @@ class ExpenseDateTests(unittest.TestCase):
 
             # 2. Verify Excel columns
             wb = load_workbook(export_dir / "reimbursement.xlsx")
-            ws = wb.active
+            ws = wb["发票汇总"]
             headers = [cell.value for cell in ws[1]]
 
             self.assertIn("费用日期", headers)

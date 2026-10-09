@@ -811,7 +811,7 @@ class GenericImapConfigTests(unittest.TestCase):
         import sys
         from scripts.invoice_fetch.config import _resolve_runtime_dir, PROJECT_ROOT
 
-        with patch.dict("os.environ", {}), patch("sys.frozen", False, create=True):
+        with patch.dict("os.environ", {}, clear=True), patch("sys.frozen", False, create=True):
             res = _resolve_runtime_dir()
             self.assertEqual(res, PROJECT_ROOT / "runtime")
 
@@ -830,7 +830,7 @@ class GenericImapConfigTests(unittest.TestCase):
         import sys
         from scripts.invoice_fetch.config import _resolve_runtime_dir
 
-        with patch.dict("os.environ", {"APPDATA": "C:\\Users\\MockUser\\AppData\\Roaming"}), patch("sys.frozen", True, create=True):
+        with patch.dict("os.environ", {"APPDATA": "C:\\Users\\MockUser\\AppData\\Roaming"}, clear=True), patch("sys.frozen", True, create=True):
             res = _resolve_runtime_dir()
             self.assertEqual(res, Path("C:\\Users\\MockUser\\AppData\\Roaming") / "InvoiceHub")
 

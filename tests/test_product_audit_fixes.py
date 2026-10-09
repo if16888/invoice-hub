@@ -390,6 +390,35 @@ def test_missing_backup_materials_list_affected_invoices_without_private_paths(t
     assert not list((runtime / 'backups').glob('*.zip'))
 
 
+def test_missing_unlinked_evidence_is_reported_as_material_without_private_paths(tmp_path):
+    from scripts.invoice_fetch.complete_backup import MissingMaterialsError
+
+    runtime = tmp_path / 'source'
+    (runtime / 'attachments').mkdir(parents=True)
+    path = runtime / 'invoices.db'
+    with InvoiceDB(path) as db:
+        material_id = db.insert_invoice({
+            'invoice_type': '证明材料',
+            'record_role': 'evidence',
+            'review_status': 'ignored',
+            'attachment_path': 'attachments/unlinked-proof.txt',
+        })
+
+    with pytest.raises(MissingMaterialsError) as captured:
+        create_complete_backup(path, runtime)
+
+    error = captured.value
+    assert error.issues == ({
+        'invoice_id': material_id,
+        'invoice_number': None,
+        'kind': '证明材料',
+        'record_role': 'evidence',
+    },)
+    assert f'材料 ID {material_id}' in str(error)
+    assert '发票 ID' not in str(error)
+    assert str(runtime) not in str(error)
+
+
 def test_header_deadline_does_not_cut_off_valid_server_work():
     import threading
     from http.server import BaseHTTPRequestHandler

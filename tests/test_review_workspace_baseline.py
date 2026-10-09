@@ -14,13 +14,22 @@ from scripts.invoice_fetch.gui.review_layout import (
     DETAIL_MAX_WIDTH,
     _reflow_review_detail,
 )
+import scripts.invoice_fetch.gui.workbench_settings as workbench_settings_module
 from scripts.invoice_fetch.gui.review_workspace_baseline import _sync_selection_contract
 
 
 class ReviewWorkspaceBaselineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._settings_runtime = tempfile.TemporaryDirectory()
+        cls._original_settings_runtime = workbench_settings_module.RUNTIME_DIR
+        workbench_settings_module.RUNTIME_DIR = Path(cls._settings_runtime.name)
         cls.app = QApplication.instance() or QApplication([])
+
+    @classmethod
+    def tearDownClass(cls):
+        workbench_settings_module.RUNTIME_DIR = cls._original_settings_runtime
+        cls._settings_runtime.cleanup()
 
     def make_window(self, td):
         window = InvoiceReviewApp(Path(td) / "review-baseline.db")

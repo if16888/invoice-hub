@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGridLayout, QStyle, QLayout, QBoxLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
     QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog,
-    QDialogButtonBox, QGraphicsOpacityEffect,
+    QDialogButtonBox, QGraphicsOpacityEffect, QStatusBar,
 )
 from PySide6.QtCore import (
     QEasingCurve, QItemSelectionModel, QPoint, QPropertyAnimation, QTimer, QUrl, QEvent, Qt,
@@ -664,6 +664,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 app.setFont(f)
 
         super().__init__()
+        # Create the native bar explicitly so PySide keeps the QStatusBar wrapper
+        # (the lazy QMainWindow statusBar() can surface as a plain QWidget in an
+        # isolated/offscreen process, which lacks the message API used below).
+        self.setStatusBar(QStatusBar())
         self.setAcceptDrops(True)
         # Guard main window font as well
         f = self.font()
