@@ -84,7 +84,7 @@ class ReimbursementValidationTests(unittest.TestCase):
             self.assertEqual(manifest["items"][0]["warning"], warning)
 
             wb = load_workbook(export_dir / "reimbursement.xlsx")
-            ws = wb.active
+            ws = wb["发票汇总"]
             headers = [cell.value for cell in ws[1]]
             self.assertIn("校验提示", headers)
             warning_col = headers.index("校验提示") + 1

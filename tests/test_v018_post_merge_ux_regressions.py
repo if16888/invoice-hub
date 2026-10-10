@@ -64,7 +64,7 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
             dialog.close()
             self.qt_app.processEvents()
 
-    def test_intake_format_copy_does_not_claim_xml_support(self):
+    def test_intake_format_copy_matches_each_source_supported_types(self):
         with tempfile.TemporaryDirectory(prefix="invoice-hub-format-copy-") as td:
             window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
                 Path(td) / "startup.db",
@@ -80,6 +80,19 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
                 window._switch_main_page("settings")
                 for _ in range(4):
                     self.qt_app.processEvents()
+                window._desktop_settings_cfg = {
+                    "email_accounts": [
+                        {
+                            "name": "Synthetic mailbox",
+                            "address": "xml-check@example.com",
+                            "provider": "custom",
+                            "imap": {"server": "imap.example.com", "port": 993, "ssl": True},
+                            "search": {"folder": "INBOX", "months_back": 3},
+                        }
+                    ]
+                }
+                window._settings_mailbox_current_key = "xml-check@example.com"
+                window._refresh_settings_mailbox_page()
                 visible_copy = [
                     window.import_local_types.lbl_value.text(),
                     window.lbl_detail_attachment_types.text(),
@@ -92,13 +105,22 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
                 )
 
                 self.assertEqual(len(visible_copy), 4)
-                self.assertIn("PDF / OFD / PNG / JPG / HEIC / ZIP", visible_copy[0])
+                self.assertEqual(
+                    visible_copy[0],
+                    "PDF / OFD / XML / PNG / JPG / HEIC / ZIP",
+                )
+                self.assertEqual(
+                    visible_copy[1],
+                    "PDF / OFD / XML / 图片 / ZIP",
+                )
                 self.assertEqual(
                     visible_copy[2],
                     "网络：局域网 · 自动检测\n支持：PDF / OFD / PNG / JPG / JPEG / HEIC\n上传后：自动进入审核队列",
                 )
-                for text in visible_copy:
-                    self.assertNotIn("XML", text.upper())
+                self.assertIn("XML", visible_copy[0])
+                self.assertIn("XML", visible_copy[1])
+                self.assertNotIn("XML", visible_copy[2])
+                self.assertIn("XML", visible_copy[3])
             finally:
                 dialog.close()
                 panel.close()

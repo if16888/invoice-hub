@@ -4495,7 +4495,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_detail_credential_status.setStyleSheet("color: #059669; font-weight: 600;" if cred_ok else "color: #DC2626; font-weight: 600;")
             self.lbl_detail_scan_folder.setText(str(search_cfg.get("folder") or "INBOX"))
             self.lbl_detail_scan_range.setText(f"最近 {months} 个月")
-            self.lbl_detail_attachment_types.setText("PDF / OFD / 图片 / ZIP")
+            self.lbl_detail_attachment_types.setText("PDF / OFD / XML / 图片 / ZIP")
             self.lbl_detail_header_name.setText(name)
             self.lbl_detail_header_email.setText(mask_email(addr))
             self.lbl_detail_header_name.setToolTip(name)
@@ -5099,7 +5099,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.import_rules_detail = ReadOnlyDetailPanel("当前规则", "当前生效的扫描范围和去重策略。")
         self.lbl_import_rule_time_range = self.import_rules_detail.add_row("时间范围", "最近 3 个月增量抓取")
-        self.lbl_import_rule_attachment_types = self.import_rules_detail.add_row("附件类型", "PDF / OFD / 常用图片 / ZIP")
+        self.lbl_import_rule_attachment_types = self.import_rules_detail.add_row("附件类型", "PDF / OFD / XML / 常用图片 / ZIP")
         self.lbl_import_rule_subject_filter = self.import_rules_detail.add_row("主题过滤", "发票 / 行程单 / 电子发票 / 账单")
         self.lbl_import_rule_duplicate = self.import_rules_detail.add_row("重复处理", "按发票代码与号码自动去重")
         self.lbl_import_rule_failure = self.import_rules_detail.add_row("失败处理", "失败记录汇总到最近结果，可直接查看失败明细")
@@ -5654,7 +5654,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_detail_scan_folder = MiddleElidedTextLabel("—", self.mailbox_detail_surface)
         self.lbl_detail_scan_range = WrappedTextLabel("—", self.mailbox_detail_surface)
         self.lbl_detail_attachment_types = ElidedTextLabel(
-            "PDF / OFD / 图片 / ZIP", self.mailbox_detail_surface
+            "PDF / OFD / XML / 图片 / ZIP", self.mailbox_detail_surface
         )
         self.lbl_detail_scan_rule = self.lbl_detail_scan_range  # compatibility alias
         for label in (
