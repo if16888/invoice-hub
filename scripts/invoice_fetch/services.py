@@ -2421,6 +2421,12 @@ def _import_local_directory(
                 else:
                     res = evidence_result
                 record_item_result(res)
+        except ScanCancelled:
+            # A cancellation surfacing from a source operation must not look
+            # like a failed file: keep completed results and stop cleanly.
+            _log.info("本地导入已取消: %s", mask_path(src))
+            stats["cancelled"] = True
+            break
         except Exception as exc:
             _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
             stats["failed"] += 1
