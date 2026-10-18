@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPoint, QRect
-from PySide6.QtWidgets import QApplication, QBoxLayout, QFormLayout
+from PySide6.QtWidgets import QApplication, QBoxLayout, QFormLayout, QLabel
 
 from scripts.invoice_fetch.gui.mobile_upload_session import (
     MobileUploadSessionController,
@@ -413,6 +413,51 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             self.assertEqual(panel.btn_dev_firewall.text(), "允许本次访问")
             self.assertFalse(panel.btn_dev_firewall_cleanup.isHidden())
             self.assertEqual(panel.lbl_firewall_state.text(), "本次访问尚未允许")
+
+    def test_mobile_upload_surfaces_lan_and_plaintext_exposure(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, panel = self.make_panel(td)
+            idle_texts = [label.text() for label in panel.idle_page.findChildren(QLabel)]
+            self.assertTrue(
+                any("明文" in text for text in idle_texts),
+                idle_texts,
+            )
+            self.activate(controller, panel)
+            self.assertIn("明文", panel.lbl_lan_access_hint.text())
+            self.assertIn("停止服务", panel.lbl_lan_access_hint.text())
+
+    def test_lingering_dev_rule_after_session_end_is_surfaced_with_cleanup(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, panel = self.make_panel(td)
+            # No active session: the last upload service already stopped.
+            panel._set_firewall_status(
+                FirewallStatus(FirewallState.SUPPORTED, development_mode=True)
+            )
+            panel._set_dev_firewall_status(
+                FirewallStatus(
+                    FirewallState.RULE_PRESENT,
+                    development_mode=True,
+                    rule_name="Invoice Hub Mobile Upload Dev Session",
+                    local_port="40000",
+                )
+            )
+            self.assertFalse(panel.btn_idle_dev_firewall_cleanup.isHidden())
+            self.assertIn("开发测试授权仍在", panel.lbl_idle_firewall.text())
+            self.assertIn("TCP 40000", panel.lbl_idle_firewall.text())
+
+    def test_shutdown_warns_when_a_dev_rule_still_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _panel = self.make_panel(td)
+            controller._dev_firewall_rule_present = True
+            controller._dev_firewall_port = 40000
+            with patch(
+                "scripts.invoice_fetch.gui.mobile_upload_session._log"
+            ) as log:
+                stopped = controller.shutdown()
+
+            self.assertTrue(stopped)
+            self.assertTrue(log.warning.called)
+            self.assertIn("开发测试防火墙规则仍在", log.warning.call_args.args[0])
 
     def test_current_dev_rule_is_not_equated_with_packaged_rule(self):
         with tempfile.TemporaryDirectory() as td:

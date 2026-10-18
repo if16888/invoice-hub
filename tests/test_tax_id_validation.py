@@ -112,7 +112,7 @@ class TaxIdValidationTests(unittest.TestCase):
             self.assertTrue(db.update_invoice_financial_fields(invoice, amount=None, tax_amount=None,
                 tax_rate=None, invoice_code='', buyer_tax_id=VALID_USCC, buyer_tax_id_type='uscc'))
             package = export_claim_package(db, claim, self.root, self.root, reimbursement_config={}, export_root=exports)
-            item = json.loads((package / 'manifest.json').read_text())['items'][0]
+            item = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))['items'][0]
             self.assertEqual(item['buyer_tax_id_type'], 'uscc')
             self.assertEqual(item['buyer_tax_id_validation'], 'checksum_valid')
 

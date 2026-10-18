@@ -147,7 +147,12 @@ class EvidenceSharingGuiTests(unittest.TestCase):
         with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
             dialog.preview.click()
         opened.assert_called_once()
-        self.assertEqual(opened.call_args.args[0].toLocalFile(), str(self.runtime / self.view.db.get_invoice(self.source)["attachment_path"]))
+        # toLocalFile() returns forward slashes on Qt 6 for Windows; compare as
+        # paths so the assertion checks the target file, not separator style.
+        self.assertEqual(
+            Path(opened.call_args.args[0].toLocalFile()),
+            self.runtime / self.view.db.get_invoice(self.source)["attachment_path"],
+        )
         self.assertEqual(dialog.association_changes(), (((self.parent, self.source),), ()))
         self.assertEqual(self.view.db.evidence_consumers(self.source), ())
 

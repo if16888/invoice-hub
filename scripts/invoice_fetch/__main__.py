@@ -39,6 +39,7 @@ from .rule_classifier import classify as rule_classify
 from . import APP_VERSION, review_status
 from . import services as application_services
 from .services import (
+    PendingEmailResult,
     _classify,
     _handle_pending_email,
     _import_local_directory,
@@ -1093,87 +1094,96 @@ def _reprocess_email_records(
     restored_deleted_count = 0
     duplicates_count = 0
 
-    for m_key in mailbox_keys:
-        selected_uids = {r["uid"] for r in records if r["mailbox_key"] == m_key}
+    try:
+        for m_key in mailbox_keys:
+            selected_uids = {r["uid"] for r in records if r["mailbox_key"] == m_key}
 
-        acc = account_by_key.get(m_key)
-        if not acc:
-            _log.warning("未在配置中找到 mailbox_key=%s 的邮箱配置，无法重新下载该邮箱下的邮件", m_key)
-            pending_downloads = db.get_invoice_emails_to_download(mailbox_key=m_key)
-            failed_uids = [row["uid"] for row in pending_downloads if row["uid"] in selected_uids]
-            failed_count += len(failed_uids)
-            reprocessed_count += (len(selected_uids) - len(failed_uids))
-            continue
+            acc = account_by_key.get(m_key)
+            if not acc:
+                _log.warning("未在配置中找到 mailbox_key=%s 的邮箱配置，无法重新下载该邮箱下的邮件", m_key)
+                pending_downloads = db.get_invoice_emails_to_download(mailbox_key=m_key)
+                failed_uids = [row["uid"] for row in pending_downloads if row["uid"] in selected_uids]
+                failed_count += len(failed_uids)
+                reprocessed_count += (len(selected_uids) - len(failed_uids))
+                continue
 
-        pending = []
-        try:
-            pending = db.get_invoice_emails_to_download(mailbox_key=m_key)
-            pending = [row for row in pending if row["uid"] in selected_uids]
+            pending = []
+            try:
+                pending = db.get_invoice_emails_to_download(mailbox_key=m_key)
+                pending = [row for row in pending if row["uid"] in selected_uids]
 
-            not_pending_uids = selected_uids - {row["uid"] for row in pending}
-            reprocessed_count += len(not_pending_uids)
+                not_pending_uids = selected_uids - {row["uid"] for row in pending}
+                reprocessed_count += len(not_pending_uids)
 
-            if pending:
-                if not acc.get("auth_code"):
-                    _log.warning("获取邮箱 %s 的授权码为空，无法下载该邮箱下的 %d 封邮件", mask_email(acc["address"]), len(pending))
-                    failed_count += len(pending)
-                    continue
+                if pending:
+                    if not acc.get("auth_code"):
+                        _log.warning("获取邮箱 %s 的授权码为空，无法下载该邮箱下的 %d 封邮件", mask_email(acc["address"]), len(pending))
+                        failed_count += len(pending)
+                        continue
 
-                provider = acc.get("provider", "")
-                server = acc.get("imap", {}).get("server", "")
-                if is_outlook_like_account(provider, acc["address"], server):
-                    _log.warning("跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：%s", mask_email(acc["address"]))
-                    failed_count += len(pending)
-                    continue
+                    provider = acc.get("provider", "")
+                    server = acc.get("imap", {}).get("server", "")
+                    if is_outlook_like_account(provider, acc["address"], server):
+                        _log.warning("跳过 Outlook/Microsoft 邮箱：当前版本需要 OAuth2，暂不支持扫描。邮箱：%s", mask_email(acc["address"]))
+                        failed_count += len(pending)
+                        continue
 
 
-                _log.info("正在连接邮箱 %s...", mask_email(acc["address"]))
-                with MailFetcher(
-                    address=acc["address"],
-                    auth_code=acc["auth_code"],
-                    server=acc.get("imap", {}).get("server", "imap.qq.com"),
-                    port=acc.get("imap", {}).get("port", 993),
-                ) as fetcher:
-                    folder = acc.get("search", {}).get("folder", "INBOX")
-                    for row in pending:
-                        before_active_count = db.count_invoices()
-                        before_total_count = db.count_invoices(include_deleted=True)
+                    _log.info("正在连接邮箱 %s...", mask_email(acc["address"]))
+                    with MailFetcher(
+                        address=acc["address"],
+                        auth_code=acc["auth_code"],
+                        server=acc.get("imap", {}).get("server", "imap.qq.com"),
+                        port=acc.get("imap", {}).get("port", 993),
+                    ) as fetcher:
+                        folder = acc.get("search", {}).get("folder", "INBOX")
+                        for row in pending:
+                            before_active_count = db.count_invoices()
+                            before_total_count = db.count_invoices(include_deleted=True)
 
-                        recorded = _handle_pending_email(
-                            row=row,
-                            fetcher=fetcher,
-                            folder=folder,
-                            att_handler=att_handler,
-                            parser=parser,
-                            link_dl=link_dl,
-                            db=db,
-                            categories=cfg.get("categories", {}),
-                            config=cfg,
-                        )
+                            recorded = _handle_pending_email(
+                                row=row,
+                                fetcher=fetcher,
+                                folder=folder,
+                                att_handler=att_handler,
+                                parser=parser,
+                                link_dl=link_dl,
+                                db=db,
+                                categories=cfg.get("categories", {}),
+                                config=cfg,
+                            )
 
-                        after_active_count = db.count_invoices()
-                        after_total_count = db.count_invoices(include_deleted=True)
+                            after_active_count = db.count_invoices()
+                            after_total_count = db.count_invoices(include_deleted=True)
 
-                        if recorded:
-                            reprocessed_count += 1
-                            new_delta = max(0, after_total_count - before_total_count)
-                            restored_delta = max(0, (after_active_count - before_active_count) - new_delta)
-                            new_records_count += new_delta
-                            restored_deleted_count += restored_delta
-                            if new_delta == 0 and restored_delta == 0:
-                                duplicates_count += 1
-                        else:
-                            failed_count += 1
-            else:
-                pass
-        except Exception as exc:
-            _log.error("连接邮箱 %s 失败或下载过程中出错: %s", mask_email(acc["address"]), exc)
-            failed_count += len(pending)
-
-    link_dl.close()
-
-    # ── Restore filename conflict log severity ──
-    application_services._rename_source_mode = prev_rename_mode
+                            if recorded:
+                                reprocessed_count += 1
+                                if isinstance(recorded, PendingEmailResult):
+                                    # Per-email identities are exact; database-wide
+                                    # count deltas drift when another writer commits
+                                    # at the same moment.
+                                    new_records_count += len(recorded.new_invoice_ids)
+                                    restored_deleted_count += len(recorded.restored_invoice_ids)
+                                    if not recorded.new_invoice_ids and not recorded.restored_invoice_ids:
+                                        duplicates_count += 1
+                                else:
+                                    new_delta = max(0, after_total_count - before_total_count)
+                                    restored_delta = max(0, (after_active_count - before_active_count) - new_delta)
+                                    new_records_count += new_delta
+                                    restored_deleted_count += restored_delta
+                                    if new_delta == 0 and restored_delta == 0:
+                                        duplicates_count += 1
+                            else:
+                                failed_count += 1
+                else:
+                    pass
+            except Exception as exc:
+                _log.error("连接邮箱 %s 失败或下载过程中出错: %s", mask_email(acc["address"]), exc)
+                failed_count += len(pending)
+    finally:
+        link_dl.close()
+        # ── Restore filename conflict log severity ──
+        application_services._rename_source_mode = prev_rename_mode
 
     print("\n邮箱重处理完成：")
     print(f"- 选中邮件：{len(records)} 封")

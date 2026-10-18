@@ -3,6 +3,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -57,10 +58,13 @@ class SellerCategoryPreferenceTests(unittest.TestCase):
     def make_v12(self):
         invoice_id = self.seed(category='Legacy category')
         self.db.close()
-        with sqlite3.connect(self.path) as conn:
+        # closing(): a leaked handle keeps the db locked on Windows and the
+        # TemporaryDirectory cleanup fails with WinError 32.
+        with closing(sqlite3.connect(self.path)) as conn:
             conn.execute('DROP TABLE seller_category_preferences')
             conn.execute('ALTER TABLE invoices DROP COLUMN category_source')
             conn.execute('PRAGMA user_version=12')
+            conn.commit()
         return invoice_id
 
     def test_v12_upgrade_preserves_legacy_category_without_inferred_learning(self):
@@ -74,7 +78,7 @@ class SellerCategoryPreferenceTests(unittest.TestCase):
 
     def test_failed_v13_migration_rolls_back_table_and_version(self):
         self.make_v12()
-        with sqlite3.connect(self.path) as conn:
+        with closing(sqlite3.connect(self.path)) as conn:
             def authorize(action, *args):
                 return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ALTER_TABLE else sqlite3.SQLITE_OK
             conn.set_authorizer(authorize)

@@ -405,6 +405,15 @@ def check_and_migrate(conn: sqlite3.Connection):
     cursor.execute("PRAGMA user_version")
     version = cursor.fetchone()[0]
 
+    # A database written by a newer application must not be touched: an older
+    # build does not know the newer schema contract and could corrupt rows it
+    # fails to understand.
+    if version > LATEST_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"数据库版本 V{version} 高于当前应用支持的 V{LATEST_SCHEMA_VERSION}；"
+            "请升级 Invoice Hub 后再打开此数据库。"
+        )
+
     _log.debug("Current database user_version: %d", version)
 
     # 2. Migration to V1: Add invoice review and multi-currency fields

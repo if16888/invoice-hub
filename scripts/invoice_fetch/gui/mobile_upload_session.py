@@ -450,10 +450,21 @@ class MobileUploadSessionController(QObject):
                 self._stop_requested = False
                 self._release_operation_gate()
                 self.stopped.emit()
+                self._remind_lingering_dev_firewall_rule()
                 return True
             self.stop(refresh_firewall=False)
             thread = self._start_thread
+            self._remind_lingering_dev_firewall_rule()
             return not (thread is not None and thread.isRunning()) and self.server is None and not self.timer.isActive()
+
+    def _remind_lingering_dev_firewall_rule(self) -> None:
+        """A dev-session rule outlives the service on purpose; say so at exit."""
+        if not self._dev_firewall_rule_present:
+            return
+        _log.warning(
+            "[手机上传] 开发测试防火墙规则仍在（TCP %s）；下次打开手机上传页可一键清理",
+            self._dev_firewall_port if self._dev_firewall_port is not None else "?",
+        )
 
     @staticmethod
     def qr_png(url: str) -> bytes:
@@ -502,7 +513,11 @@ class MobileUploadSessionPanel(QFrame):
         page = QWidget(self)
         layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(8)
         title = QLabel("手机扫码上传"); title.setProperty("class", "SectionTitle")
-        desc = QLabel("从手机上传发票原件、行程单或证明材料。\n手机和电脑需要连接同一局域网。")
+        desc = QLabel(
+            "从手机上传发票原件、行程单或证明材料。\n"
+            "手机和电脑需要连接同一局域网。\n"
+            "服务仅在本机局域网开启，原件经明文 HTTP 传输；请仅在受信任网络使用，用完请停止服务。"
+        )
         desc.setWordWrap(True); desc.setProperty("class", "SectionHint")
         self.lbl_idle_network = QLabel(
             "网络：局域网 · 自动检测\n支持：PDF / OFD / PNG / JPG / JPEG / HEIC\n上传后：自动进入审核队列"
@@ -593,7 +608,8 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_lan_client_access = self._responsive_label("尚未确认")
         self.lbl_last_access = self._responsive_label("—")
         self.lbl_lan_access_hint = WrappedTextLabel(
-            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。"
+            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。\n"
+            "安全提示：上传地址对局域网可见且为明文传输，请仅在受信任网络使用，用完请点击“停止服务”。"
         )
         self.lbl_lan_access_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.lbl_lan_access_hint.setWordWrap(True)
@@ -919,13 +935,16 @@ class MobileUploadSessionPanel(QFrame):
             if current_rule:
                 summary = "本次访问已允许"
                 hint = f"仅当前 Python、Private 网络和当前端口（TCP {local_port}）生效。停止服务不会自动修改防火墙。"
-            else:
+            elif current_port:
                 summary = "本次访问尚未允许"
                 hint = f"检测到上次开发测试端口（TCP {local_port}）。点击“允许本次访问”将自动更新为当前端口。"
+            else:
+                summary = "开发测试授权仍在"
+                hint = f"上次开发测试授权（TCP {local_port}）仍然存在，未随服务停止自动移除。点击“清理开发测试授权”可移除。"
             if hasattr(self, "lbl_firewall_state"):
                 self.lbl_firewall_state.setText(summary)
                 self.lbl_firewall_hint.setText(hint)
-            self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}")
+            self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}（TCP {local_port}）" if local_port else f"Windows 防火墙：{summary}")
         elif development_mode and state == "rule_disabled":
             if hasattr(self, "lbl_firewall_state"):
                 self.lbl_firewall_state.setText("本次访问尚未允许")

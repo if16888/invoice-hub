@@ -220,6 +220,23 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn("QDesktopServices.openUrl", source)
         self.assertIn("QApplication.clipboard().setText(GITHUB_ISSUES_URL)", source)
 
+    def test_privacy_scan_skips_the_repo_script_in_frozen_builds(self):
+        import sys as _sys
+        from scripts.invoice_fetch import diagnostics
+
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            script_dir = base / "scripts"
+            script_dir.mkdir()
+            (script_dir / "check_repo_privacy.py").write_text("print('scan')\n", encoding="utf-8")
+            with patch.object(diagnostics.config_mod, "PROJECT_ROOT", base), \
+                    patch.object(_sys, "frozen", True, create=True), \
+                    patch("subprocess.run") as run:
+                result = diagnostics._privacy_scan_result()
+
+        run.assert_not_called()
+        self.assertIn("allowlist", result)
+
     def test_bug_report_template_has_privacy_checkbox(self):
         template = Path(".github/ISSUE_TEMPLATE/bug_report.yml")
         self.assertTrue(template.exists())

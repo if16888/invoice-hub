@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from email.message import EmailMessage
 
+from scripts.invoice_fetch import link_downloader
 from scripts.invoice_fetch.link_downloader import (
     extract_links_with_metadata_from_html,
     _dedup_and_prioritize_with_metadata,
@@ -745,6 +746,83 @@ class TestLinkDownloader(unittest.TestCase):
                 self.assertEqual(len(calls), 2)
         finally:
             link_downloader._host_resolves_to_public_addresses.cache_clear()
+
+class ChromiumSandboxTests(unittest.TestCase):
+    """The Chromium sandbox stays on unless a run explicitly opts out."""
+
+    def test_default_launch_args_keep_the_sandbox(self):
+        args = link_downloader.playwright_launch_args(no_sandbox=False)
+        self.assertNotIn("--no-sandbox", args)
+        self.assertIn("--disable-blink-features=AutomationControlled", args)
+
+    def test_opt_in_launch_args_disable_the_sandbox(self):
+        args = link_downloader.playwright_launch_args(no_sandbox=True)
+        self.assertIn("--no-sandbox", args)
+
+    def test_resolve_no_sandbox_defaults_to_false(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", None)
+            self.assertFalse(link_downloader.resolve_no_sandbox({"playwright": {"channel": "auto"}}))
+            self.assertFalse(link_downloader.resolve_no_sandbox(None))
+
+    def test_resolve_no_sandbox_honors_config_and_env_override(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", None)
+            self.assertTrue(
+                link_downloader.resolve_no_sandbox({"playwright": {"no_sandbox": True}})
+            )
+        with patch.dict(os.environ, {"INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX": "1"}):
+            self.assertTrue(
+                link_downloader.resolve_no_sandbox({"playwright": {"no_sandbox": False}})
+            )
+        with patch.dict(os.environ, {"INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX": "0"}):
+            self.assertFalse(
+                link_downloader.resolve_no_sandbox({"playwright": {"no_sandbox": True}})
+            )
+
+    def test_ensure_browser_passes_resolved_args_to_every_launch(self):
+        class FakeBrowser:
+            def close(self):
+                pass
+
+        class FakeChromium:
+            def __init__(self):
+                self.args = []
+
+            def launch(self, channel=None, headless=False, args=None, timeout=None):
+                self.args.append(list(args or []))
+                if channel == "msedge":
+                    return FakeBrowser()
+                raise RuntimeError("unavailable")
+
+        class FakePlaywright:
+            def __init__(self, chromium):
+                self.chromium = chromium
+
+            def stop(self):
+                pass
+
+        class FakeSyncPlaywright:
+            def __init__(self, chromium):
+                self._chromium = chromium
+
+            def start(self):
+                return FakePlaywright(self._chromium)
+
+        chromium = FakeChromium()
+        with patch.dict(os.environ, {"INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX": "1"}), patch(
+            "scripts.invoice_fetch.config.load_config_safe",
+            return_value={"playwright": {"channel": "auto"}},
+        ), patch("playwright.sync_api.sync_playwright", return_value=FakeSyncPlaywright(chromium)):
+            with tempfile.TemporaryDirectory() as td:
+                downloader = link_downloader.LinkDownloader(td)
+                downloader._ensure_browser()
+                downloader.close()
+
+        self.assertTrue(chromium.args)
+        for args in chromium.args:
+            self.assertIn("--no-sandbox", args)
+
 
 if __name__ == "__main__":
     unittest.main()

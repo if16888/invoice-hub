@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
+from .filename_safety import sanitize_windows_basename
 from .log_privacy import mask_filename, mask_sender_header, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
@@ -324,13 +325,11 @@ def _safe_download_destination(
     root = Path(save_dir).resolve()
     raw_name = str(suggested_filename or fallback_filename or "").replace("\\", "/")
     basename = raw_name.rsplit("/", 1)[-1]
-    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", basename).strip(" .")
-    if not safe_name or safe_name in {".", ".."}:
-        safe_name = re.sub(
-            r'[<>:"/\\|?*\x00-\x1f]',
-            "_",
-            str(fallback_filename or "invoice_download"),
-        ).strip(" .")
+    safe_name = sanitize_windows_basename(basename, fallback="")
+    if not safe_name:
+        safe_name = sanitize_windows_basename(
+            str(fallback_filename or ""), fallback="invoice_download",
+        )
 
     candidate = (root / safe_name).resolve()
     try:
@@ -719,6 +718,40 @@ def _verify_and_clean_file(path: str | Path) -> bool:
         return False
 
 
+def playwright_launch_args(*, no_sandbox: bool) -> list[str]:
+    """Return Chromium launch arguments for the headless downloader.
+
+    The Chromium sandbox stays enabled by default: it is the last process
+    boundary around rendering third-party invoice HTML. ``--no-sandbox`` is
+    only added when explicitly requested via ``playwright.no_sandbox``, the
+    ``INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX`` environment override, or when the
+    sandbox cannot run at all (root on POSIX).
+    """
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-infobars",
+    ]
+    if no_sandbox:
+        args.insert(1, "--no-sandbox")
+    return args
+
+
+def resolve_no_sandbox(cfg: dict | None = None) -> bool:
+    """Resolve whether Chromium may start without its sandbox."""
+    override = str(os.environ.get("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", "")).strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    playwright_cfg = (cfg or {}).get("playwright")
+    if isinstance(playwright_cfg, dict) and playwright_cfg.get("no_sandbox") is True:
+        return True
+    # Chromium cannot use its sandbox as root; the flag is required there.
+    if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0:
+        return True
+    return False
+
+
 class LinkDownloader:
     """Download invoice PDFs from URLs using a headless browser."""
 
@@ -843,11 +876,10 @@ class LinkDownloader:
         if deadline is not None:
             self._remaining_timeout_ms(deadline)
 
-        launch_args = [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-infobars",
-        ]
+        no_sandbox = resolve_no_sandbox(cfg)
+        launch_args = playwright_launch_args(no_sandbox=no_sandbox)
+        if no_sandbox:
+            _log.info("Chromium sandbox is disabled for this run (playwright.no_sandbox)")
 
         def _launch_browser(channel_name: str | None, label: str) -> None:
             kwargs = {

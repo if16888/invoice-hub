@@ -24,6 +24,7 @@ from .config import load_config_safe
 from .db import is_pending_evidence_invoice
 from .excel_export import export_excel
 from .export_paths import normalize_export_date_prefix as _normalize_export_date_prefix
+from .filename_safety import escape_windows_reserved_stem
 from .log_privacy import mask_path
 from .reimbursement import buyer_warning, get_date_warning
 
@@ -41,6 +42,8 @@ def _sanitize_dirname(name: str) -> str:
     cleaned = cleaned.strip()
     if not cleaned:
         cleaned = "unnamed_claim"
+    # A reserved device name (CON, NUL, ...) is not a legal directory either.
+    cleaned = escape_windows_reserved_stem(cleaned)
     # Truncate to maximum 50 characters to prevent path length issues
     return cleaned[:50]
 

@@ -27,6 +27,7 @@ from urllib.parse import urlparse
 from .gui.performance_probe import performance_stage
 
 from .config import RUNTIME_DIR
+from .filename_safety import escape_windows_reserved_stem
 from .log_privacy import sanitize_log_message
 
 
@@ -1404,7 +1405,7 @@ def _token_from_path(path: str, prefix: str) -> str:
 def _safe_upload_name(name: str, max_len: int = 100) -> str:
     base = Path(name.replace("\\", "/")).name or "upload"
     safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in base)
-    safe = safe.strip("._") or "upload"
+    safe = escape_windows_reserved_stem(safe.strip("._") or "upload") or "upload"
     if len(safe) > max_len:
         stem = Path(safe).stem[: max_len - len(Path(safe).suffix)]
         safe = f"{stem}{Path(safe).suffix}"

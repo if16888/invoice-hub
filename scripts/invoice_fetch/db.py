@@ -163,37 +163,46 @@ class InvoiceDB(EvidenceStoreMixin):
             str(self._path),
             timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
         )
-        self._conn.row_factory = sqlite3.Row
-        self._buyer_warning_checker = None
-        self._conn.create_function(
-            "review_buyer_has_warning", 3, self._eval_buyer_warning, deterministic=False
-        )
-        self._conn.create_function(
-            "review_amount_at_least", 2,
-            lambda value, boundary: _review_amount_compare(value, boundary, 1),
-            deterministic=True,
-        )
-        self._conn.create_function(
-            "review_amount_at_most", 2,
-            lambda value, boundary: _review_amount_compare(value, boundary, -1),
-            deterministic=True,
-        )
-        self._conn.create_function(
-            "review_text_contains", 2, _review_text_contains, deterministic=True,
-        )
-        self._conn.create_function(
-            "review_amount_is_valid", 1, _review_amount_is_valid, deterministic=True,
-        )
-        self._conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
-        _configure_journal_mode(self._conn)
-        self.last_error = ""
-        self._conn.executescript(_SCHEMA)
-        _log.debug("数据库已打开: %s", self._path.name)
+        try:
+            self._conn.row_factory = sqlite3.Row
+            self._buyer_warning_checker = None
+            self._conn.create_function(
+                "review_buyer_has_warning", 3, self._eval_buyer_warning, deterministic=False
+            )
+            self._conn.create_function(
+                "review_amount_at_least", 2,
+                lambda value, boundary: _review_amount_compare(value, boundary, 1),
+                deterministic=True,
+            )
+            self._conn.create_function(
+                "review_amount_at_most", 2,
+                lambda value, boundary: _review_amount_compare(value, boundary, -1),
+                deterministic=True,
+            )
+            self._conn.create_function(
+                "review_text_contains", 2, _review_text_contains, deterministic=True,
+            )
+            self._conn.create_function(
+                "review_amount_is_valid", 1, _review_amount_is_valid, deterministic=True,
+            )
+            self._conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+            _configure_journal_mode(self._conn)
+            self.last_error = ""
+            self._conn.executescript(_SCHEMA)
+            _log.debug("数据库已打开: %s", self._path.name)
 
-        # Run database migrations
-        from .migrations import check_and_migrate
-        check_and_migrate(self._conn)
-        self._conn.execute("PRAGMA foreign_keys = ON")
+            # Run database migrations
+            from .migrations import check_and_migrate
+            check_and_migrate(self._conn)
+            self._conn.execute("PRAGMA foreign_keys = ON")
+        except BaseException:
+            # A half-initialized connection must not keep the database file
+            # open (and locked) after construction fails.
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
+            raise
 
 
     def close(self):
