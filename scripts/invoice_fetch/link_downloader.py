@@ -172,9 +172,18 @@ _DNS_RESOLVE_TIMEOUT_SECONDS = 2.0
 _DNS_RESOLVE_MAX_INFLIGHT = 4
 _DNS_RESOLVE_SLOTS = threading.BoundedSemaphore(_DNS_RESOLVE_MAX_INFLIGHT)
 
+# DNS safety decisions are cached for a short window only.  A cache without
+# expiry would keep a DNS-rebinding window open for the whole process
+# lifetime, so each entry silently expires after this many seconds.
+_DNS_CACHE_TTL_SECONDS = 60.0
+
+
+def _dns_cache_bucket() -> int:
+    return int(time.monotonic() // _DNS_CACHE_TTL_SECONDS)
+
 
 @lru_cache(maxsize=256)
-def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
+def _host_resolves_to_public_addresses_cached(host: str, port: int, bucket: int) -> bool:
     """Fail closed unless every resolved address is public, with bounded DNS wait."""
     try:
         literal_ip = ipaddress.ip_address(host)
@@ -229,6 +238,19 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
         if not ip.is_global:
             return False
     return True
+
+
+def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
+    """Return the DNS safety decision for the current short TTL window."""
+    return _host_resolves_to_public_addresses_cached(host, port, _dns_cache_bucket())
+
+
+def _clear_dns_safety_cache() -> None:
+    """Drop cached DNS safety decisions (test and maintenance hook)."""
+    _host_resolves_to_public_addresses_cached.cache_clear()
+
+
+_host_resolves_to_public_addresses.cache_clear = _clear_dns_safety_cache  # type: ignore[attr-defined]
 
 
 def _is_safe_browser_request_url(url: str) -> bool:
@@ -316,6 +338,25 @@ def _safe_download_destination(
     except ValueError:
         candidate = (root / Path(fallback_filename or "invoice_download").name).resolve()
     return candidate
+
+
+def _unique_download_destination(path: Path) -> Path:
+    """Return a destination path that does not exist yet.
+
+    Downloads must never reuse (or overwrite) a file that is already on
+    disk: a same-named leftover from another invoice would otherwise be
+    recorded as this download's result and point the invoice at the wrong
+    document.
+    """
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    for number in range(1, 100):
+        candidate = path.with_name(f"{stem}_{number}{suffix}")
+        if not candidate.exists():
+            return candidate
+    return path.with_name(f"{stem}_{uuid.uuid4().hex[:8]}{suffix}")
 
 
 def _extract_links_with_metadata_from_html_and_stats(html: str) -> tuple[list[dict], dict]:
@@ -606,9 +647,14 @@ def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFi
 
 
 def _save_download_to_path(download, dest: Path) -> bool:
-    """Persist a completed Playwright download without implying a fake save timeout."""
+    """Persist a completed Playwright download without implying a fake save timeout.
+
+    Callers must pass a destination that is free (see
+    ``_unique_download_destination``); an existing file is never treated as
+    this download's result and is never overwritten.
+    """
     if dest.exists():
-        return True
+        return False
     staging = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.part")
     try:
         # Playwright streams to disk. Check its completed temporary file
@@ -1227,6 +1273,7 @@ class LinkDownloader:
                                 download.suggested_filename,
                                 f"invoice_{mail_uid}_{idx}.pdf",
                             )
+                            dest = _unique_download_destination(dest)
                             if _save_download_to_path(download, dest):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
@@ -1399,10 +1446,10 @@ class LinkDownloader:
                     download.suggested_filename,
                     f"invoice_{mail_uid}_{idx}.pdf",
                 )
-                if dest.exists():
-                    downloaded_path = str(dest)
-                    download_done.set()
-                    return
+                # Never reuse an existing file as this download's result: a
+                # same-named leftover would point the invoice at the wrong
+                # document.
+                dest = _unique_download_destination(dest)
                 if _save_download_to_path(download, dest):
                     downloaded_path = str(dest)
                 download_done.set()
