@@ -513,7 +513,11 @@ class MobileUploadSessionPanel(QFrame):
         page = QWidget(self)
         layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(8)
         title = QLabel("手机扫码上传"); title.setProperty("class", "SectionTitle")
-        desc = QLabel("从手机上传发票原件、行程单或证明材料。\n手机和电脑需要连接同一局域网。")
+        desc = QLabel(
+            "从手机上传发票原件、行程单或证明材料。\n"
+            "手机和电脑需要连接同一局域网。\n"
+            "服务仅在本机局域网开启，原件经明文 HTTP 传输；请仅在受信任网络使用，用完请停止服务。"
+        )
         desc.setWordWrap(True); desc.setProperty("class", "SectionHint")
         self.lbl_idle_network = QLabel(
             "网络：局域网 · 自动检测\n支持：PDF / OFD / PNG / JPG / JPEG / HEIC\n上传后：自动进入审核队列"
@@ -604,7 +608,8 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_lan_client_access = self._responsive_label("尚未确认")
         self.lbl_last_access = self._responsive_label("—")
         self.lbl_lan_access_hint = WrappedTextLabel(
-            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。"
+            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。\n"
+            "安全提示：上传地址对局域网可见且为明文传输，请仅在受信任网络使用，用完请点击“停止服务”。"
         )
         self.lbl_lan_access_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.lbl_lan_access_hint.setWordWrap(True)
