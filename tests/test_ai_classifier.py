@@ -124,6 +124,60 @@ class AIClassifierAuthTests(unittest.TestCase):
         self.assertEqual(post.call_count, 2)
         self.assertNotIn("synthetic-secret-key", "\n".join(captured.output))
 
+    def test_malformed_200_response_degrades_batch_to_unclassified(self):
+        classifier = self._classifier()
+        emails = [{"uid": 1, "subject": "invoice", "sender": "one@example.com"}]
+
+        malformed = Mock()
+        malformed.json.return_value = {"unexpected": "shape"}
+        with patch.object(classifier, "_post_with_retry", return_value=malformed):
+            result = classifier._call_api(emails)
+
+        self.assertEqual(len(result), 1)
+        self.assertIsNone(result[0]["is_invoice"])
+        self.assertIn("结构异常", result[0]["reason"])
+
+        broken_json = Mock()
+        broken_json.json.side_effect = ValueError("not json")
+        with patch.object(classifier, "_post_with_retry", return_value=broken_json):
+            result = classifier._call_api(emails)
+
+        self.assertIsNone(result[0]["is_invoice"])
+
+    def test_parse_response_filters_invented_uids_and_malformed_items(self):
+        classifier = self._classifier()
+
+        parsed = classifier._parse_response(
+            '[{"uid": 99, "is_invoice": true}, "junk", '
+            '{"uid": "1", "is_invoice": true}, {"uid": 1, "is_invoice": false}, '
+            '{"uid": true, "is_invoice": true}]',
+            [{"uid": 1}, {"uid": 2}],
+        )
+
+        by_uid = {item["uid"]: item for item in parsed}
+        self.assertEqual(set(by_uid), {1, 2})
+        self.assertTrue(by_uid[1]["is_invoice"])
+        self.assertIsNone(by_uid[2]["is_invoice"])
+
+    def test_classify_batch_keeps_remaining_batches_after_unexpected_error(self):
+        clear_all_session_paused()
+        classifier = self._classifier(batch_size=1)
+        emails = [{"uid": 1}, {"uid": 2}]
+        calls = {"count": 0}
+
+        def flaky(chunk):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise KeyError("choices")
+            return [{"uid": chunk[0]["uid"], "is_invoice": True, "reason": "ok"}]
+
+        with patch.object(classifier, "_call_api", side_effect=flaky):
+            results = classifier.classify_batch(emails)
+
+        self.assertEqual([item["uid"] for item in results], [1, 2])
+        self.assertIsNone(results[0]["is_invoice"])
+        self.assertTrue(results[1]["is_invoice"])
+
     def test_session_paused_state_persists_across_instances(self):
         # Ensure starts clean
         clear_all_session_paused()

@@ -151,6 +151,17 @@ class AIClassifier:
                     "AI 鉴权失败，已暂停本轮 AI 分类",
                 ))
                 break
+            except Exception as exc:
+                # Untrusted AI output must degrade conservatively; one bad
+                # batch must never abort classification of the remaining ones.
+                _log.warning(
+                    "AI 分类批次失败，%d 封保持待分类: %s",
+                    len(chunk),
+                    type(exc).__name__,
+                )
+                results.extend(self._mark_batch_unclassified(
+                    chunk, "AI 分类批次失败，将在下次运行时重试"
+                ))
         return results
 
     def _call_api(self, chunk: list[dict]) -> list[dict]:
@@ -261,7 +272,14 @@ class AIClassifier:
             )
             return self._mark_batch_unclassified(chunk, "AI 分类 API 失败，将在下次运行时重试")
 
-        content = resp.json()["choices"][0]["message"]["content"]
+        content = self._chat_completion_content(resp)
+        if content is None:
+            _log.warning(
+                "AI 响应结构异常: provider=%s, model=%s", self.provider, self.model
+            )
+            return self._mark_batch_unclassified(
+                chunk, "AI 响应结构异常，将在下次运行时重试"
+            )
         return self._parse_response(content, chunk)
 
     def _call_gemini(self, chunk: list[dict]) -> list[dict]:
@@ -290,7 +308,14 @@ class AIClassifier:
             )
             return self._mark_batch_unclassified(chunk, "AI 分类 API 失败，将在下次运行时重试")
 
-        content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        content = self._gemini_content(resp)
+        if content is None:
+            _log.warning(
+                "Gemini 响应结构异常: provider=%s, model=%s", self.provider, self.model
+            )
+            return self._mark_batch_unclassified(
+                chunk, "AI 响应结构异常，将在下次运行时重试"
+            )
         return self._parse_response(content, chunk)
 
     def _post_with_retry(self, url: str, **kwargs) -> requests.Response:
@@ -352,6 +377,24 @@ class AIClassifier:
             for item in chunk
         ]
 
+    @staticmethod
+    def _chat_completion_content(resp) -> str | None:
+        """Extract chat content defensively; malformed 200 bodies return None."""
+        try:
+            content = resp.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return None
+        return content if isinstance(content, str) else None
+
+    @staticmethod
+    def _gemini_content(resp) -> str | None:
+        """Extract Gemini content defensively; malformed 200 bodies return None."""
+        try:
+            content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return None
+        return content if isinstance(content, str) else None
+
     def _parse_response(self, content: str, chunk: list[dict]) -> list[dict]:
         """Parse AI response JSON. On failure, mark batch as unclassified for retry."""
         try:
@@ -362,18 +405,34 @@ class AIClassifier:
             data = json.loads(text)
             if not isinstance(data, list):
                 data = [data]
-            parsed = [
-                {
-                    "uid": item["uid"],
-                    "is_invoice": item["is_invoice"] if isinstance(item["is_invoice"], bool) else None,
-                    "reason": item.get("reason", ""),
-                }
-                for item in data
-                if "uid" in item and "is_invoice" in item
-            ]
+            chunk_uids = {int(e["uid"]) for e in chunk}
+            parsed: list[dict] = []
+            seen_uids: set[int] = set()
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                raw_uid = item.get("uid")
+                if isinstance(raw_uid, bool):
+                    continue
+                try:
+                    uid = int(raw_uid)
+                except (TypeError, ValueError):
+                    continue
+                if uid not in chunk_uids or uid in seen_uids:
+                    # Ignore invented or duplicate uids instead of trusting them.
+                    continue
+                seen_uids.add(uid)
+                parsed.append(
+                    {
+                        "uid": uid,
+                        "is_invoice": item.get("is_invoice")
+                        if isinstance(item.get("is_invoice"), bool)
+                        else None,
+                        "reason": str(item.get("reason") or ""),
+                    }
+                )
             # If AI returned fewer results than the batch, mark the missing ones
-            parsed_uids = {r["uid"] for r in parsed}
-            missing = [e for e in chunk if e["uid"] not in parsed_uids]
+            missing = [e for e in chunk if int(e["uid"]) not in seen_uids]
             if missing:
                 _log.warning("AI 响应缺少 %d 封邮件的结果，保持待分类", len(missing))
                 parsed.extend(self._mark_batch_unclassified(missing, "AI 响应缺少该邮件的分类结果"))
