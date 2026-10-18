@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from scripts.invoice_fetch.claim_export import export_claim_package
@@ -51,9 +52,10 @@ class TaxIdValidationTests(unittest.TestCase):
         with InvoiceDB(path) as db:
             invoice = db.insert_invoice({'invoice_number': 'LEGACY', 'buyer_tax_id': BAD_USCC,
                                          'total_amount': '10'})
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             conn.execute('ALTER TABLE invoices DROP COLUMN buyer_tax_id_type')
             conn.execute('PRAGMA user_version=10')
+            conn.commit()
         return invoice
 
     def test_v10_migration_preserves_value_without_guessing_type(self):
@@ -70,7 +72,7 @@ class TaxIdValidationTests(unittest.TestCase):
     def test_migration_rolls_back_ddl_if_version_write_fails(self):
         path = self.root / 'rollback.db'
         self.make_v10(path)
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             def authorize(action, arg1, arg2, database, trigger):
                 if action == sqlite3.SQLITE_PRAGMA and arg1 == 'user_version' and arg2 == '11':
                     return sqlite3.SQLITE_DENY
