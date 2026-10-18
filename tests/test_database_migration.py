@@ -837,6 +837,63 @@ class DatabaseMigrationTests(unittest.TestCase):
             del ws, wb
             gc.collect()
 
+    def test_newer_schema_version_is_refused_without_touching_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "from-the-future.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION + 1}")
+                conn.commit()
+            finally:
+                conn.close()
+
+            with self.assertRaises(RuntimeError) as caught:
+                InvoiceDB(db_path)
+            self.assertIn(str(LATEST_SCHEMA_VERSION + 1), str(caught.exception))
+
+            conn = sqlite3.connect(db_path)
+            try:
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(version, LATEST_SCHEMA_VERSION + 1)
+
+    def test_failed_init_closes_the_connection(self):
+        class _RecordingConnection:
+            def __init__(self):
+                self.closed = False
+                self.row_factory = None
+
+            def create_function(self, *args, **kwargs):
+                return None
+
+            def execute(self, *args, **kwargs):
+                return None
+
+            def executescript(self, *args, **kwargs):
+                return None
+
+            def close(self):
+                self.closed = True
+
+        connection = _RecordingConnection()
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "init-failure.db"
+            with patch(
+                "scripts.invoice_fetch.db.sqlite3.connect",
+                return_value=connection,
+            ), patch(
+                "scripts.invoice_fetch.db._configure_journal_mode",
+                return_value="delete",
+            ), patch(
+                "scripts.invoice_fetch.migrations.check_and_migrate",
+                side_effect=RuntimeError("migration refused"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    InvoiceDB(db_path)
+
+        self.assertTrue(connection.closed)
+
 
 if __name__ == "__main__":
     unittest.main()
