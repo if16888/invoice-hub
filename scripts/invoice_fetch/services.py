@@ -666,18 +666,22 @@ def _attach_evidence_to_invoice(
                 )
                 return False
 
-    renamed_rel = _rename_by_invoice_code(
-        str(file_path),
-        invoice_code=code,
-        invoice_date=inv_date,
-        att_dir=att_dir,
-        is_extra=True,
-        category=invoice.get("category") or "",
-        total_amount=invoice.get("total_amount") or "",
-        invoice_number=invoice.get("invoice_number") or "",
-        expense_date=invoice.get("expense_date"),
-        fallback_date=invoice.get("mail_date") or invoice.get("created_at"),
-    )
+    try:
+        renamed_rel = _rename_by_invoice_code(
+            str(file_path),
+            invoice_code=code,
+            invoice_date=inv_date,
+            att_dir=att_dir,
+            is_extra=True,
+            category=invoice.get("category") or "",
+            total_amount=invoice.get("total_amount") or "",
+            invoice_number=invoice.get("invoice_number") or "",
+            expense_date=invoice.get("expense_date"),
+            fallback_date=invoice.get("mail_date") or invoice.get("created_at"),
+        )
+    except OSError as exc:
+        _log.warning("  证明材料文件被占用，跳过本次关联: %s", type(exc).__name__)
+        return False
     if not renamed_rel:
         return False
 
@@ -780,14 +784,22 @@ def _attach_email_extras_to_invoice(
             except Exception:
                 pass
 
-        ep = _rename_by_invoice_code(
-            e.file_path, code, inv_date, att_base, is_extra=True,
-            category=category, total_amount=total_amount,
-            invoice_number=invoice_number,
-            original_name=getattr(e, "original_name", None),
-            expense_date=expense_date,
-            fallback_date=fallback_date,
-        )
+        try:
+            ep = _rename_by_invoice_code(
+                e.file_path, code, inv_date, att_base, is_extra=True,
+                category=category, total_amount=total_amount,
+                invoice_number=invoice_number,
+                original_name=getattr(e, "original_name", None),
+                expense_date=expense_date,
+                fallback_date=fallback_date,
+            )
+        except OSError as exc:
+            if source_path:
+                kept_paths.add(source_path)
+            _log.warning(
+                "  证明材料文件被占用，跳过本次关联: %s", type(exc).__name__
+            )
+            continue
         if ep:
             if ep in current_extras:
                 kept_paths.add(str((att_base.parent / ep).resolve()))
@@ -2805,6 +2817,26 @@ def _process_email(
             except Exception:
                 pass
 
+    def _rename_attachment(file_path, *args, **kwargs) -> str:
+        """Settle one attachment without letting a locked file abort the email.
+
+        Windows can hold a fresh download or extracted attachment open (AV
+        scanner, indexer, preview handler).  On a rename/move failure the
+        original file is kept for a later retry instead of breaking the whole
+        email; the caller degrades as if no attachment had been settled.
+        """
+        try:
+            return _rename_by_invoice_code(file_path, *args, **kwargs)
+        except OSError as exc:
+            try:
+                kept_paths.add(str(Path(file_path).resolve()))
+            except (OSError, TypeError, ValueError):
+                pass
+            _log.warning(
+                "  附件文件被占用，保留原文件稍后重试: %s", type(exc).__name__
+            )
+            return ""
+
     for att in attachments:
         if not att.extraction_warning:
             continue
@@ -2981,7 +3013,7 @@ def _process_email(
                     )
                     if existing_attachment_missing:
                         code = info.invoice_code or info.invoice_number
-                        repaired_attachment_path = _rename_by_invoice_code(
+                        repaired_attachment_path = _rename_attachment(
                             dl.file_path, code, info.invoice_date or msg.date,
                             att_handler._base,
                             category=category, total_amount=info.total_amount,
@@ -3071,7 +3103,7 @@ def _process_email(
                     )
                     # ── Backfill attachment_path before removing the download ──
                     if os.path.exists(dl.file_path):
-                        backfill_path = _rename_by_invoice_code(
+                        backfill_path = _rename_attachment(
                             dl.file_path, code, info.invoice_date or msg.date,
                             att_handler._base,
                             category=cat_ld, total_amount=info.total_amount,
@@ -3122,7 +3154,7 @@ def _process_email(
                 )
                 # Rename file: {invoice_code}.pdf under {invoice_date}/
                 code = info.invoice_code or info.invoice_number
-                att_path = _rename_by_invoice_code(
+                att_path = _rename_attachment(
                     dl.file_path, code, info.invoice_date or msg.date,
                     att_handler._base,
                     category=cat, total_amount=info.total_amount,
@@ -3251,7 +3283,7 @@ def _process_email(
             repaired_attachment_path = ""
             if existing_attachment_missing:
                 code = info.invoice_code or info.invoice_number
-                repaired_attachment_path = _rename_by_invoice_code(
+                repaired_attachment_path = _rename_attachment(
                     att.file_path, code, info.invoice_date or msg.date,
                     att_handler._base,
                     category=cat, total_amount=info.total_amount,
@@ -3336,7 +3368,7 @@ def _process_email(
             code = info.invoice_code or info.invoice_number
             # ── Backfill attachment_path for duplicate with missing original ──
             if att.file_path and os.path.exists(att.file_path):
-                dup_att_path = _rename_by_invoice_code(
+                dup_att_path = _rename_attachment(
                     att.file_path, code, info.invoice_date or msg.date,
                     att_handler._base,
                     category=cat_dup, total_amount=info.total_amount,
@@ -3389,7 +3421,7 @@ def _process_email(
         # Rename files by invoice code under invoice_date/
         code = info.invoice_code or info.invoice_number
         inv_date = info.invoice_date or msg.date
-        att_path = _rename_by_invoice_code(
+        att_path = _rename_attachment(
             att.file_path, code, inv_date, att_handler._base,
             category=cat, total_amount=info.total_amount,
             invoice_number=info.invoice_number,

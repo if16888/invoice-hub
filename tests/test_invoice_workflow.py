@@ -1682,6 +1682,81 @@ class InvoiceWorkflowTests(unittest.TestCase):
             # attachment cleanup: the unkept temp file is gone.
             self.assertFalse(leftover.exists())
 
+    def test_locked_attachment_file_does_not_abort_email_processing(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            att_dir = runtime / "attachments"
+            att_dir.mkdir(parents=True)
+
+            locked_source = att_dir / "locked.pdf"
+            locked_source.write_bytes(b"%PDF-1.4 locked")
+            free_source = att_dir / "free.pdf"
+            free_source.write_bytes(b"%PDF-1.4 free")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "invoice"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="LOCK-1",
+                invoice_date="2026-05-18",
+                total_amount="88.00",
+                seller_name="Synthetic Seller",
+                parse_success=True,
+                parse_note="parsed",
+            ))
+
+            def fake_rename(file_path, *_args, **_kwargs):
+                if Path(file_path).name == "locked.pdf":
+                    raise PermissionError("simulated Windows file lock")
+                dest = att_dir / "2026-05-18" / "free.pdf"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                import shutil as _shutil
+
+                _shutil.move(str(file_path), str(dest))
+                return dest.relative_to(runtime).as_posix()
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(
+                cli, "RUNTIME_DIR", runtime
+            ), patch.object(cli, "_rename_by_invoice_code", side_effect=fake_rename):
+                recorded = cli._process_email(
+                    cli.MailMessage(uid=471, raw_msg=msg),
+                    StaticAttachmentHandler(
+                        att_dir,
+                        [
+                            Attachment(
+                                file_path=str(locked_source),
+                                original_name="locked.pdf",
+                                content_type="application/pdf",
+                                size=locked_source.stat().st_size,
+                                is_invoice=True,
+                            ),
+                            Attachment(
+                                file_path=str(free_source),
+                                original_name="free.pdf",
+                                content_type="application/pdf",
+                                size=free_source.stat().st_size,
+                                is_invoice=True,
+                            ),
+                        ],
+                    ),
+                    parser,
+                    NoopLinkDownloader(),
+                    db,
+                    {},
+                    mailbox_key="legacy",
+                )
+                rows = db.get_all_invoices()
+
+            # The locked file is reported, kept for a later retry, and the
+            # remaining attachment still settles: the email is not aborted.
+            self.assertEqual(recorded, 2)
+            self.assertTrue(locked_source.exists())
+            self.assertEqual(len(rows), 1)
+            self.assertIn("free.pdf", rows[0]["attachment_path"])
+
     def test_is_duplicate_requires_invoice_number_identity(self):
         with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:
             db.insert_invoice({
