@@ -68,14 +68,16 @@ class _FakeIMAP:
 
     def uid(self, command, uid, query):
         self.calls.append(("uid", command, uid, query))
-        if command == "FETCH" and query == "(RFC822)" and uid == "7":
+        if command == "FETCH" and query == "(RFC822)":
+            numeric = int(uid)
+            day = "18" if numeric == 1 else "19"
             raw = (
-                b"Subject: Invoice 7\r\n"
-                b"From: Billing <billing@example.com>\r\n"
-                b"Date: Mon, 18 May 2026 10:00:00 +0800\r\n"
-                b"Message-ID: <msg-7@example.com>\r\n\r\nBody"
+                f"Subject: UID Body {numeric}\r\n".encode("utf-8")
+                + b"From: Billing <billing@example.com>\r\n"
+                + f"Date: {'Mon' if numeric == 1 else 'Tue'}, {day} May 2026 10:00:00 +0800\r\n".encode("utf-8")
+                + f"Message-ID: <msg-{numeric}@example.com>\r\n\r\nBody".encode("utf-8")
             )
-            return "OK", [(b"7 (RFC822 {123})", raw)]
+            return "OK", [(f"{numeric} (RFC822 {{123}})".encode("utf-8"), raw)]
         raise AssertionError(f"unexpected uid call: {(command, uid, query)}")
 
     def logout(self):
@@ -98,9 +100,14 @@ class MailFetcherImapSemanticsTests(unittest.TestCase):
                 ("select", "INBOX", True),
                 ("search", None, ("SINCE", "01-May-2026")),
                 ("fetch", b"1", "(UID INTERNALDATE)"),
-                ("fetch", b"1", "(RFC822)"),
+                ("uid", "FETCH", "1", "(RFC822)"),
             ],
         )
+        # The body must come from the UID fetch, never a sequence-number fetch
+        # that a mailbox change could remap to another message.
+        self.assertEqual(messages[0].uid, 1)
+        self.assertEqual(messages[0].raw_msg["Subject"], "UID Body 1")
+        self.assertNotIn(("fetch", b"1", "(RFC822)"), fake.calls)
 
     def test_scan_headers_keeps_lightweight_header_fetch_and_known_uid_skip(self):
         fetcher = MailFetcher("user@example.com", "secret")

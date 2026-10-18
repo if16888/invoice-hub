@@ -676,5 +676,75 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertEqual(dest.read_bytes(), b"synthetic download")
         self.assertEqual(list(dest.parent.glob("*.part")), [])
 
+    def test_save_download_never_reuses_an_existing_file(self):
+        class MockDownload:
+            def __init__(self):
+                self.called = False
+
+            def save_as(self, path):
+                self.called = True
+                Path(path).write_bytes(b"new download")
+
+        existing = Path(self.tmp_dir) / "same-name.pdf"
+        existing.write_bytes(b"another invoice original")
+
+        download = MockDownload()
+        ok = _save_download_to_path(download, existing)
+
+        self.assertFalse(ok)
+        self.assertFalse(download.called)
+        self.assertEqual(existing.read_bytes(), b"another invoice original")
+
+    def test_unique_download_destination_avoids_existing_names(self):
+        from scripts.invoice_fetch.link_downloader import _unique_download_destination
+
+        base = Path(self.tmp_dir) / "invoice.pdf"
+        base.write_bytes(b"existing")
+        first = _unique_download_destination(base)
+        self.assertEqual(first.name, "invoice_1.pdf")
+        first.write_bytes(b"existing")
+        second = _unique_download_destination(base)
+        self.assertEqual(second.name, "invoice_2.pdf")
+        self.assertFalse(second.exists())
+
+    def test_dns_safety_decisions_expire_with_the_ttl_window(self):
+        import socket
+        from scripts.invoice_fetch import link_downloader
+
+        calls: list[str] = []
+
+        def public_getaddrinfo(host, port, **_kwargs):
+            calls.append(str(host))
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+        link_downloader._host_resolves_to_public_addresses.cache_clear()
+        try:
+            with patch.object(
+                link_downloader, "_dns_cache_bucket", return_value=1
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=public_getaddrinfo
+            ):
+                self.assertTrue(
+                    link_downloader._host_resolves_to_public_addresses("ttl.example", 443)
+                )
+                self.assertTrue(
+                    link_downloader._host_resolves_to_public_addresses("ttl.example", 443)
+                )
+                self.assertEqual(len(calls), 1)
+
+            # A new TTL window must re-resolve instead of reusing the stale
+            # decision for the whole process lifetime.
+            with patch.object(
+                link_downloader, "_dns_cache_bucket", return_value=2
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=public_getaddrinfo
+            ):
+                self.assertTrue(
+                    link_downloader._host_resolves_to_public_addresses("ttl.example", 443)
+                )
+                self.assertEqual(len(calls), 2)
+        finally:
+            link_downloader._host_resolves_to_public_addresses.cache_clear()
+
 if __name__ == "__main__":
     unittest.main()

@@ -213,6 +213,43 @@ def create_verified_database_backup(
     return dest
 
 
+def _preserve_damaged_database(
+    source: Path,
+    backup_dir: str | Path | None,
+    now: datetime | None,
+) -> Path:
+    """Preserve a damaged live database before a restore replaces it.
+
+    The copy is intentionally unverified: integrity/schema validation has
+    already failed and the exact bytes are what matter for diagnosis and
+    manual recovery.  WAL sidecars are copied alongside so the preserved
+    snapshot keeps its journal content.
+    """
+    dest_dir = Path(backup_dir) if backup_dir is not None else DEFAULT_BACKUP_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    suffix = source.suffix or ".db"
+    dest = _unique_path(
+        dest_dir / f"{source.stem}-{timestamp}-damaged-before-restore{suffix}"
+    )
+    try:
+        shutil.copy2(source, dest)
+        for sidecar_suffix in ("-wal", "-shm"):
+            sidecar = source.with_name(source.name + sidecar_suffix)
+            if sidecar.is_file():
+                shutil.copy2(sidecar, dest.with_name(dest.name + sidecar_suffix))
+    except OSError as exc:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise DatabaseRestoreError("损坏的数据库无法留档，恢复已取消") from exc
+    _log.warning(
+        "live database failed pre-restore validation; preserved unverified copy"
+    )
+    return dest
+
+
 def _move_existing_sidecars(destination: Path) -> dict[Path, Path]:
     moved: dict[Path, Path] = {}
     try:
@@ -289,17 +326,25 @@ def restore_verified_database_backup(
     validated there, then atomically swapped into place.  Existing ``-wal`` and
     ``-shm`` files are moved to transaction-owned paths before the swap; any
     failure before or after replacement restores the original DB and sidecars.
+
+    The selected backup must always validate.  A damaged live database - the
+    very situation a restore exists for - is preserved as an unverified copy
+    instead of blocking the rescue.
     """
     selected = Path(backup_path)
     destination = Path(db_path)
     validate_sqlite_database(selected)
-    validate_sqlite_database(destination)
-    safety_backup = create_verified_database_backup(
-        destination,
-        backup_dir=backup_dir,
-        reason="restore-safety",
-        now=now,
-    )
+    try:
+        validate_sqlite_database(destination)
+    except ValueError:
+        safety_backup = _preserve_damaged_database(destination, backup_dir, now)
+    else:
+        safety_backup = create_verified_database_backup(
+            destination,
+            backup_dir=backup_dir,
+            reason="restore-safety",
+            now=now,
+        )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = _private_path(destination, "restore-staging")

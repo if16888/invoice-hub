@@ -136,6 +136,55 @@ class EvidenceSharingTests(unittest.TestCase):
         self.assertEqual(self.db.evidence_consumers(source), ())
         self.assertTrue((self.runtime / self.db.get_invoice(source)["attachment_path"]).exists())
 
+    def test_permanent_delete_purges_claim_links_and_relations(self):
+        parent = self.invoice()
+        source = self.evidence()
+        claim = self.db.create_claim_group("Draft claim")
+        self.assertTrue(self.db.add_invoice_to_claim(claim, parent))
+        self.relate((parent,), source)
+
+        self.assertTrue(self.db.delete_invoice_permanently(parent))
+
+        self.assertEqual(
+            self.db._conn.execute(
+                "SELECT COUNT(*) FROM claim_group_items WHERE invoice_id = ?",
+                (parent,),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.db._conn.execute(
+                "SELECT COUNT(*) FROM invoice_evidence_relations "
+                "WHERE invoice_id = ? OR evidence_id = ?",
+                (parent, parent),
+            ).fetchone()[0],
+            0,
+        )
+        # The material record itself survives; only the dangling link is gone.
+        self.assertIsNotNone(self.db.get_invoice(source))
+        # The draft claim is now empty and can be cleaned up normally.
+        self.assertTrue(self.db.delete_claim_group_if_empty(claim))
+
+    def test_reset_invoices_purges_link_rows(self):
+        parent = self.invoice()
+        source = self.evidence()
+        claim = self.db.create_claim_group("Draft claim")
+        self.assertTrue(self.db.add_invoice_to_claim(claim, parent))
+        self.relate((parent,), source)
+
+        self.assertTrue(self.db.reset_invoices())
+
+        self.assertEqual(
+            self.db._conn.execute("SELECT COUNT(*) FROM claim_group_items").fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.db._conn.execute(
+                "SELECT COUNT(*) FROM invoice_evidence_relations"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_pending_queue_and_paging_counts_share_same_scope(self):
         parent = self.invoice()
         source = self.evidence(mailbox_key="a", mail_uid=123)
@@ -384,7 +433,7 @@ class EvidenceSharingTests(unittest.TestCase):
         source = self.evidence()
         self.relate(parents, source)
         package = self.export(self.claim(parents))
-        manifest = json.loads((package / "manifest.json").read_text())
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
         references = [item["evidence_references"][0] for item in manifest["items"]]
         self.assertEqual(len(references), 4)
         self.assertEqual({ref["evidence_id"] for ref in references}, {source})
@@ -409,7 +458,7 @@ class EvidenceSharingTests(unittest.TestCase):
         source = self.evidence(attachment_path="attachments/same-file.pdf")
         self.relate((parent,), source)
         package = self.export(self.claim((parent,)))
-        item = json.loads((package / "manifest.json").read_text())["items"][0]
+        item = json.loads((package / "manifest.json").read_text(encoding="utf-8"))["items"][0]
         self.assertEqual({row["evidence_id"] for row in item["evidence_references"]}, {legacy, source})
         self.assertEqual(len(item["extra_paths"]), 1)
         self.assertEqual(len(list((package / "attachments").iterdir())), 2)

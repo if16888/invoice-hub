@@ -9,6 +9,7 @@ immutable invoice snapshot and a database path.
 
 from __future__ import annotations
 
+import logging
 import os
 import hashlib
 import shutil
@@ -32,6 +33,8 @@ except ImportError:
 from .db import InvoiceDB
 from .log_privacy import mask_email, sanitize_log_message
 from .scan_lifecycle import ScanCancelled, ScanControl
+
+_log = logging.getLogger("invoice_fetch.redownload")
 
 RUNTIME_DIR = _config.RUNTIME_DIR
 
@@ -494,6 +497,14 @@ def run_invoice_link_retry(
                     if not candidate.exists():
                         destination_path = candidate
                         break
+                else:
+                    # Every numbered candidate is taken.  Fall back to a
+                    # random suffix instead of silently overwriting an
+                    # existing original file (unrecoverable data loss).
+                    destination_path = (
+                        destination_dir
+                        / f"{stem}_{os.urandom(4).hex()}{extension}"
+                    )
             shutil.move(str(source_path), str(destination_path))
         final_path = destination_path
 

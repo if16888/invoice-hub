@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from scripts.invoice_fetch.db import InvoiceDB
@@ -51,10 +52,11 @@ class FinancialValidationTests(unittest.TestCase):
         path = self.root / 'legacy.db'
         with InvoiceDB(path) as db:
             invoice = db.insert_invoice({'invoice_number': 'LEGACY', 'amount': '100', 'total_amount': '113'})
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             for key in ('buyer_tax_id', 'tax_amount', 'tax_rate'):
                 conn.execute(f'ALTER TABLE invoices DROP COLUMN {key}')
             conn.execute('PRAGMA user_version=9')
+            conn.commit()
         for _ in range(2):
             with InvoiceDB(path) as db:
                 row = db.get_invoice(invoice)
@@ -157,11 +159,12 @@ class FinancialValidationTests(unittest.TestCase):
         path = self.root / 'failure.db'
         with InvoiceDB(path):
             pass
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             for key in ('buyer_tax_id', 'tax_amount', 'tax_rate'):
                 conn.execute(f'ALTER TABLE invoices DROP COLUMN {key}')
             conn.execute('PRAGMA user_version=9')
-        with sqlite3.connect(path) as conn:
+            conn.commit()
+        with closing(sqlite3.connect(path)) as conn:
             count = 0
             def authorize(action, arg1, arg2, database, trigger):
                 nonlocal count

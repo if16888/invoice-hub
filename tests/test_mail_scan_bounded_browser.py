@@ -20,9 +20,11 @@ class BoundedBrowserScanTests(unittest.TestCase):
     def tearDown(self):
         link_downloader._host_resolves_to_public_addresses.cache_clear()
 
-    def _downloader(self, root: Path, control: ScanControl | None = None) -> LinkDownloader:
+    def _downloader(self, control: ScanControl | None = None) -> LinkDownloader:
+        temp = tempfile.TemporaryDirectory(prefix="invoice-hub-bounded-browser-")
+        self.addCleanup(temp.cleanup)
         with patch("scripts.invoice_fetch.config.load_config_safe", return_value={}):
-            return LinkDownloader(root, scan_control=control)
+            return LinkDownloader(Path(temp.name), scan_control=control)
 
     def test_browser_operation_timeout_is_capped_by_configured_hard_limit(self):
         config = {
@@ -65,7 +67,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
         self.assertEqual(legacy._email_budget_seconds, 21.0)
 
     def test_default_capacity_preserves_five_candidate_links_until_budget_stops_work(self):
-        downloader = self._downloader(Path("bounded-browser-five-link-capacity"))
+        downloader = self._downloader()
         self.assertEqual(downloader._max_links_per_email, 5)
         msg = EmailMessage()
         msg["Subject"] = "invoice bundle"
@@ -173,13 +175,13 @@ class BoundedBrowserScanTests(unittest.TestCase):
     def test_link_downloader_honors_scan_control_before_browser_work(self):
         control = ScanControl()
         control.cancel()
-        downloader = self._downloader(Path("bounded-browser-test"), control)
+        downloader = self._downloader(control)
         with self.assertRaises(ScanCancelled):
             downloader.download_from_email(None, 1, "2026-09-12")
 
     def test_cancel_during_browser_start_is_not_swallowed_as_start_failure(self):
         control = ScanControl()
-        downloader = self._downloader(Path("bounded-browser-start-cancel"), control)
+        downloader = self._downloader(control)
 
         def cancel_during_start(*_args, **_kwargs):
             control.cancel()
@@ -191,7 +193,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
 
     def test_cancel_after_low_priority_attempt_stops_before_next_link(self):
         control = ScanControl()
-        downloader = self._downloader(Path("bounded-browser-low-priority"), control)
+        downloader = self._downloader(control)
         msg = EmailMessage()
         msg["Subject"] = "invoice"
 
@@ -242,7 +244,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
         self.assertNotIn('"timeout": self._timeout,', source)
 
     def test_email_deadline_is_forwarded_to_each_url_attempt(self):
-        downloader = self._downloader(Path("bounded-browser-email-deadline"))
+        downloader = self._downloader()
         downloader._email_budget_seconds = 2.0
         msg = EmailMessage()
         msg["Subject"] = "invoice"
@@ -272,7 +274,7 @@ class BoundedBrowserScanTests(unittest.TestCase):
 
     def test_download_event_wait_observes_cancellation_promptly(self):
         control = ScanControl()
-        downloader = self._downloader(Path("bounded-browser-event-cancel"), control)
+        downloader = self._downloader(control)
         event = threading.Event()
 
         def cancel_soon():

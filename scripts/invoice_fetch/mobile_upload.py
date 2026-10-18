@@ -37,6 +37,10 @@ MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 MAX_UPLOAD_FILES = 100
 
+# How long stop() waits for an in-flight upload/import before giving up.  The
+# wait is bounded so desktop shutdown cannot hang behind a slow import.
+UPLOAD_STOP_WAIT_SECONDS = 10.0
+
 
 class HeaderDeadlineHandlerMixin:
     """An absolute header deadline also stops peers that dribble bytes."""
@@ -287,6 +291,7 @@ class MobileUploadServer:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._upload_lock = threading.Lock()
+        self._manifest_lock = threading.Lock()
         self._files: list[dict] = []
         self._stats = {
             "accepted": 0,
@@ -373,7 +378,7 @@ class MobileUploadServer:
                 self._lan_client_access_confirmed = False
                 self._local_self_check = "pending"
                 self._local_self_check_error = ""
-            self._write_manifest()
+                self._write_manifest()
 
             self._thread = threading.Thread(
                 target=self._httpd.serve_forever,
@@ -445,8 +450,31 @@ class MobileUploadServer:
                 if thread.is_alive():
                     thread.join(timeout=2)
         self._thread = None
+        self._wait_for_active_upload()
         if httpd is not None:
             _log.info("[手机上传] server stop batch_id=<redacted>")
+
+    def _wait_for_active_upload(self, timeout: float | None = None) -> bool:
+        """Wait for an in-flight upload/import so shutdown cannot corrupt it.
+
+        Handler threads are daemons; without this wait, shutting the desktop
+        down mid-import could leave half-copied files behind.  The wait is
+        bounded and only reports failure, never raises.
+        """
+        with self._lock:
+            active = bool(self._active_upload_batch_id)
+        if not active:
+            return True
+        wait_seconds = UPLOAD_STOP_WAIT_SECONDS if timeout is None else float(timeout)
+        acquired = self._upload_lock.acquire(timeout=max(0.0, wait_seconds))
+        if not acquired:
+            _log.warning(
+                "[手机上传] server stop while upload still active batch_id=<redacted> waited_s=%s",
+                round(wait_seconds, 2),
+            )
+            return False
+        self._upload_lock.release()
+        return True
 
     def is_token_valid(self, token: str) -> bool:
         if not self.session or not self._httpd or not isinstance(token, str):
@@ -622,28 +650,34 @@ class MobileUploadServer:
             raise ValueError("host is required")
         old_host = self.host
         self.host = host
-        if not self.session:
+        session = self.session
+        if not session:
             raise RuntimeError("mobile upload server has not been started")
 
-        base_url = f"http://{host}:{self.session.port}"
-        self.session = replace(
-            self.session,
+        base_url = f"http://{host}:{session.port}"
+        updated = replace(
+            session,
             host=host,
             base_url=base_url,
-            upload_url=f"{base_url}/u/{self.session.token}",
-            api_url=f"{base_url}/api/upload/{self.session.token}",
+            upload_url=f"{base_url}/u/{session.token}",
+            api_url=f"{base_url}/api/upload/{session.token}",
         )
-        self.refresh_local_host_addresses()
-        self._write_manifest()
-        self._local_self_check = "pending"
-        self._local_self_check_error = ""
+        addresses = _collect_local_host_addresses(
+            (*self._configured_local_host_addresses, host)
+        )
+        with self._lock:
+            self.session = updated
+            self._local_host_addresses = addresses
+            self._local_self_check = "pending"
+            self._local_self_check_error = ""
+            self._write_manifest()
         _log.info(
             "[手机上传] network changed old_public_host=%s new_public_host=%s bind_host=%s",
             _redact_host(old_host),
             _redact_host(host),
             self.bind_host,
         )
-        return self.session
+        return updated
 
     def save_uploads(self, files: Iterable[UploadedFile]) -> dict:
         items = tuple(files)
@@ -933,6 +967,13 @@ class MobileUploadServer:
         return hashes
 
     def _write_manifest(self) -> None:
+        """Persist the manifest.  Callers must hold ``self._lock``.
+
+        The file is replaced atomically (temp file + ``os.replace``) and
+        serialized through ``self._manifest_lock`` so concurrent writers can
+        never interleave a truncated JSON document; readers used for upload
+        deduplication must always see a complete manifest.
+        """
         if not self.session:
             return
         payload = {
@@ -940,10 +981,32 @@ class MobileUploadServer:
             "batch_id": self.session.batch_id,
             "token_expires_at": self.session.expires_at.isoformat(timespec="seconds"),
             "session_dir": _runtime_relative(self.session.session_dir, self.runtime_dir),
-            "stats": dict(self._stats),
+            "stats": deepcopy(self._stats),
             "files": list(self._files),
         }
-        self.session.manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        target = self.session.manifest_path
+        document = json.dumps(payload, ensure_ascii=False, indent=2)
+        with self._manifest_lock:
+            temp_path = target.parent / f"{target.name}.tmp"
+            temp_path.write_text(document, encoding="utf-8")
+            # Windows can briefly refuse to replace a file that another
+            # thread is reading (the dedup scan reads existing manifests).
+            # Retry with a short backoff instead of failing the upload.
+            for attempt in range(5):
+                try:
+                    os.replace(temp_path, target)
+                    return
+                except PermissionError:
+                    if attempt == 4:
+                        break
+                    time.sleep(0.05 * (attempt + 1))
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            _log.warning(
+                "[手机上传] manifest replace failed path=%s", target.name
+            )
 
     def _make_handler(self):
         owner = self

@@ -2210,6 +2210,82 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertEqual(rows[0]["review_status"], "to_review")
         self.assertIn("unsupported_ofd", rows[0]["parse_note"])
 
+    def test_fresh_attachment_import_reports_recorded_outcome(self):
+        from email.message import EmailMessage
+        from scripts.invoice_fetch import services as cli_main
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+
+        msg = EmailMessage()
+        msg["Subject"] = "电子发票 PDF"
+        msg["From"] = "billing@example.com"
+        msg["Date"] = "2026-06-14"
+        msg.set_content("invoice")
+        msg.uid = 7501
+        msg.date = "2026-06-14"
+        msg.subject = msg["Subject"]
+        msg.sender = msg["From"]
+        msg.raw_msg = msg
+
+        class FakeAttachmentHandler:
+            def __init__(self, base):
+                self._base = base
+
+            def extract(self, *args, **kwargs):
+                pdf_path = self._base / "2026-06-14" / "invoice.pdf"
+                pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                pdf_path.write_bytes(b"%PDF-1.4 synthetic" + b"x" * 600)
+                return [
+                    Attachment(
+                        file_path=str(pdf_path),
+                        original_name="invoice.pdf",
+                        content_type="application/pdf",
+                        size=pdf_path.stat().st_size,
+                        is_invoice=True,
+                    )
+                ]
+
+        class FakeParser:
+            def parse_pdf(self, path):
+                return InvoiceInfo(
+                    invoice_number="FRESH001",
+                    invoice_code="",
+                    invoice_date="2026-06-14",
+                    amount="100.00",
+                    total_amount="100.00",
+                    seller_name="测试服务有限公司",
+                    invoice_type="电子发票",
+                    parse_success=True,
+                    parse_note="parsed",
+                )
+
+        class FakeLinkDownloader:
+            last_download_diagnostics = {}
+            last_process_outcome = ""
+
+            def download_from_email(self, *args, **kwargs):
+                return []
+
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            att_dir = runtime / "attachments"
+            link_dl = FakeLinkDownloader()
+            with InvoiceDB(Path(td) / "fresh.db") as db, patch.object(cli_main, "RUNTIME_DIR", runtime):
+                recorded = cli_main._process_email(
+                    msg,
+                    FakeAttachmentHandler(att_dir),
+                    FakeParser(),
+                    link_dl,
+                    db,
+                    {},
+                    mailbox_key="legacy",
+                )
+
+        self.assertEqual(recorded, 1)
+        # A brand-new insert is "recorded"; only an existing record whose
+        # missing original was repaired may report "file_restored".
+        self.assertEqual(link_dl.last_process_outcome, "recorded")
+
     def test_redownload_bucket_summary_distinguishes_duplicate_from_file_restore(self):
         from scripts.invoice_fetch.gui.app import _format_redownload_bucket_summary
 

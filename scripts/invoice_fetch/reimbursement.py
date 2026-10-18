@@ -94,9 +94,16 @@ def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:
             has_missing = True
             continue
         try:
-            total += Decimal(raw)
+            value = Decimal(raw)
         except (InvalidOperation, ValueError):
             has_missing = True
+            continue
+        # Decimal("NaN")/sNaN/Infinity parse without raising; one bad value
+        # must not turn the displayed total into "¥NaN" or "¥Infinity".
+        if not value.is_finite():
+            has_missing = True
+            continue
+        total += value
     return len(rows), total, has_missing
 
 

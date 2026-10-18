@@ -349,6 +349,26 @@ class DatabaseBackupTests(unittest.TestCase):
             self.assertEqual(self.read_value(selected), "restored")
             self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
 
+    def test_restore_rescues_a_damaged_live_database_and_preserves_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(db_path, "current")
+            self.make_database(selected, "restored")
+            damaged_bytes = b"this is not a sqlite database"
+            db_path.write_bytes(damaged_bytes)
+
+            safety = restore_verified_database_backup(selected, db_path, backup_dir=root / "backups")
+
+            # The rescue succeeded and the damaged original was preserved
+            # byte-for-byte for diagnosis.
+            self.assertEqual(self.read_value(db_path), "restored")
+            self.assertEqual(Path(safety).read_bytes(), damaged_bytes)
+            self.assertIn("damaged-before-restore", Path(safety).name)
+            self.assertEqual(self.read_value(selected), "restored")
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
     def test_restore_sidecar_protection_failure_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
