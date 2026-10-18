@@ -266,6 +266,137 @@ def validate_latest_schema(conn: sqlite3.Connection) -> None:
         raise ValueError("证明材料关联角色不一致，无法安全恢复")
 
 
+def _rebuild_table_for_mailbox_namespace(
+    conn: sqlite3.Connection,
+    table: str,
+    create_sql: str,
+    copy_mailbox_sql: str,
+    copy_legacy_sql: str,
+) -> None:
+    """Rebuild one pre-V4 table into the mailbox-key schema.
+
+    The rebuild targets ``<table>_new`` and is restart-safe: when an earlier
+    interrupted attempt already dropped the old table, the pending replacement
+    is renamed into place instead of failing on the missing source table.
+    """
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table})")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "mailbox_key" in columns and "id" in columns:
+        # Already migrated (fresh databases are created this way); drop a
+        # stale replacement left behind by an interrupted run.
+        cursor.execute(f"DROP TABLE IF EXISTS {table}_new")
+        return
+
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (f"{table}_new",),
+    )
+    pending_rebuild = cursor.fetchone() is not None
+    if not columns:
+        if pending_rebuild:
+            # A previous attempt dropped the old table but never renamed the
+            # replacement; the rebuilt table already holds the copied rows.
+            cursor.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+            _log.info("Completed interrupted rebuild of table [%s]", table)
+        else:
+            cursor.execute(create_sql.replace(f"{table}_new", table, 1))
+            _log.info("Created table [%s] with mailbox namespace", table)
+        return
+
+    cursor.execute(f"DROP TABLE IF EXISTS {table}_new")
+    cursor.execute(create_sql)
+    cursor.execute(copy_mailbox_sql if "mailbox_key" in columns else copy_legacy_sql)
+    cursor.execute(f"DROP TABLE {table}")
+    cursor.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+    _log.info("Rebuilt table [%s] with mailbox namespace", table)
+
+
+def _rebuild_emails_tables_for_v4(conn: sqlite3.Connection) -> None:
+    """Rebuild ``emails`` and ``processed_emails`` for the V4 migration."""
+    _rebuild_table_for_mailbox_namespace(
+        conn,
+        "emails",
+        create_sql="""
+            CREATE TABLE IF NOT EXISTS emails_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mailbox_key TEXT NOT NULL DEFAULT 'legacy',
+                uid INTEGER NOT NULL,
+                subject TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL DEFAULT '',
+                mail_date TEXT NOT NULL DEFAULT '',
+                is_invoice INTEGER NOT NULL DEFAULT -1,
+                classify_by TEXT NOT NULL DEFAULT '',
+                classify_reason TEXT NOT NULL DEFAULT '',
+                downloaded INTEGER NOT NULL DEFAULT 0,
+                scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
+                processed_at TEXT,
+                UNIQUE(mailbox_key, uid)
+            )
+        """,
+        copy_mailbox_sql="""
+            INSERT OR IGNORE INTO emails_new (
+                mailbox_key, uid, subject, sender, mail_date,
+                is_invoice, classify_by, classify_reason,
+                downloaded, scanned_at, processed_at
+            )
+            SELECT
+                COALESCE(mailbox_key, 'legacy'),
+                uid, subject, sender, mail_date,
+                is_invoice, classify_by, classify_reason,
+                downloaded, scanned_at, processed_at
+            FROM emails
+        """,
+        copy_legacy_sql="""
+            INSERT OR IGNORE INTO emails_new (
+                mailbox_key, uid, subject, sender, mail_date,
+                is_invoice, classify_by, classify_reason,
+                downloaded, scanned_at, processed_at
+            )
+            SELECT
+                'legacy',
+                uid, subject, sender, mail_date,
+                is_invoice, classify_by, classify_reason,
+                downloaded, scanned_at, processed_at
+            FROM emails
+        """,
+    )
+    _rebuild_table_for_mailbox_namespace(
+        conn,
+        "processed_emails",
+        create_sql="""
+            CREATE TABLE IF NOT EXISTS processed_emails_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mailbox_key TEXT NOT NULL DEFAULT 'legacy',
+                uid INTEGER NOT NULL,
+                subject TEXT,
+                sender TEXT,
+                mail_date TEXT,
+                processed_at TEXT DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(mailbox_key, uid)
+            )
+        """,
+        copy_mailbox_sql="""
+            INSERT OR IGNORE INTO processed_emails_new (
+                mailbox_key, uid, subject, sender, mail_date, processed_at
+            )
+            SELECT
+                COALESCE(mailbox_key, 'legacy'),
+                uid, subject, sender, mail_date, processed_at
+            FROM processed_emails
+        """,
+        copy_legacy_sql="""
+            INSERT OR IGNORE INTO processed_emails_new (
+                mailbox_key, uid, subject, sender, mail_date, processed_at
+            )
+            SELECT
+                'legacy',
+                uid, subject, sender, mail_date, processed_at
+            FROM processed_emails
+        """,
+    )
+
+
 def check_and_migrate(conn: sqlite3.Connection):
     """Run database migrations in a safe, idempotent way using PRAGMA user_version."""
     cursor = conn.cursor()
@@ -387,97 +518,15 @@ def check_and_migrate(conn: sqlite3.Connection):
     # 5. Migration to V4: mailbox namespace support for multiple IMAP accounts
     if version < 4:
         _log.info("Migrating database schema: V3 -> V4")
+        # The table rebuilds, the new column and the version bump are one
+        # atomic unit.  SQLite's legacy autocommit handling can otherwise
+        # persist the DROP separately from the RENAME, so a re-run after an
+        # interrupted migration failed with "no such table"; the explicit
+        # transaction also makes the rebuild crash-safe (all-or-nothing).
         try:
-            cursor.execute("PRAGMA table_info(emails)")
-            email_cols = {row[1] for row in cursor.fetchall()}
-            if "mailbox_key" not in email_cols or "id" not in email_cols:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS emails_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        mailbox_key TEXT NOT NULL DEFAULT 'legacy',
-                        uid INTEGER NOT NULL,
-                        subject TEXT NOT NULL DEFAULT '',
-                        sender TEXT NOT NULL DEFAULT '',
-                        mail_date TEXT NOT NULL DEFAULT '',
-                        is_invoice INTEGER NOT NULL DEFAULT -1,
-                        classify_by TEXT NOT NULL DEFAULT '',
-                        classify_reason TEXT NOT NULL DEFAULT '',
-                        downloaded INTEGER NOT NULL DEFAULT 0,
-                        scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
-                        processed_at TEXT,
-                        UNIQUE(mailbox_key, uid)
-                    )
-                """)
-                if "mailbox_key" in email_cols:
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO emails_new (
-                            mailbox_key, uid, subject, sender, mail_date,
-                            is_invoice, classify_by, classify_reason,
-                            downloaded, scanned_at, processed_at
-                        )
-                        SELECT
-                            COALESCE(mailbox_key, 'legacy'),
-                            uid, subject, sender, mail_date,
-                            is_invoice, classify_by, classify_reason,
-                            downloaded, scanned_at, processed_at
-                        FROM emails
-                    """)
-                else:
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO emails_new (
-                            mailbox_key, uid, subject, sender, mail_date,
-                            is_invoice, classify_by, classify_reason,
-                            downloaded, scanned_at, processed_at
-                        )
-                        SELECT
-                            'legacy',
-                            uid, subject, sender, mail_date,
-                            is_invoice, classify_by, classify_reason,
-                            downloaded, scanned_at, processed_at
-                        FROM emails
-                    """)
-                cursor.execute("DROP TABLE emails")
-                cursor.execute("ALTER TABLE emails_new RENAME TO emails")
-                _log.info("Rebuilt emails table with mailbox_key namespace")
-
-            cursor.execute("PRAGMA table_info(processed_emails)")
-            processed_cols = {row[1] for row in cursor.fetchall()}
-            if "mailbox_key" not in processed_cols or "id" not in processed_cols:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS processed_emails_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        mailbox_key TEXT NOT NULL DEFAULT 'legacy',
-                        uid INTEGER NOT NULL,
-                        subject TEXT,
-                        sender TEXT,
-                        mail_date TEXT,
-                        processed_at TEXT DEFAULT (datetime('now', 'localtime')),
-                        UNIQUE(mailbox_key, uid)
-                    )
-                """)
-                if "mailbox_key" in processed_cols:
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO processed_emails_new (
-                            mailbox_key, uid, subject, sender, mail_date, processed_at
-                        )
-                        SELECT
-                            COALESCE(mailbox_key, 'legacy'),
-                            uid, subject, sender, mail_date, processed_at
-                        FROM processed_emails
-                    """)
-                else:
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO processed_emails_new (
-                            mailbox_key, uid, subject, sender, mail_date, processed_at
-                        )
-                        SELECT
-                            'legacy',
-                            uid, subject, sender, mail_date, processed_at
-                        FROM processed_emails
-                    """)
-                cursor.execute("DROP TABLE processed_emails")
-                cursor.execute("ALTER TABLE processed_emails_new RENAME TO processed_emails")
-                _log.info("Rebuilt processed_emails table with mailbox_key namespace")
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            _rebuild_emails_tables_for_v4(conn)
 
             cursor.execute("PRAGMA table_info(invoices)")
             invoice_cols = {row[1] for row in cursor.fetchall()}

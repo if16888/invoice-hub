@@ -21,6 +21,81 @@ from scripts.invoice_fetch.migrations import (
 )
 
 
+# Cumulative schema of a database that reached user_version 3 (before the V4
+# mailbox namespace rebuild).  Used to exercise the V4 rebuild paths.
+_PRE_V4_SCHEMA = """
+CREATE TABLE invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_number TEXT,
+    invoice_date TEXT,
+    total_amount TEXT,
+    seller_name TEXT,
+    category TEXT DEFAULT '其他',
+    review_status TEXT NOT NULL DEFAULT 'to_review',
+    processing_status TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT '',
+    exchange_rate TEXT NOT NULL DEFAULT '',
+    amount_home TEXT NOT NULL DEFAULT '',
+    file_hash TEXT NOT NULL DEFAULT '',
+    confirmed_at TEXT NOT NULL DEFAULT '',
+    confirmed_note TEXT NOT NULL DEFAULT '',
+    is_deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    sender TEXT NOT NULL DEFAULT '',
+    mail_date TEXT NOT NULL DEFAULT '',
+    is_invoice INTEGER NOT NULL DEFAULT -1,
+    classify_by TEXT NOT NULL DEFAULT '',
+    classify_reason TEXT NOT NULL DEFAULT '',
+    downloaded INTEGER NOT NULL DEFAULT 0,
+    scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
+    processed_at TEXT
+);
+CREATE TABLE processed_emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    subject TEXT,
+    sender TEXT,
+    mail_date TEXT,
+    processed_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE trusted_senders (
+    sender TEXT PRIMARY KEY,
+    added_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE claim_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    period_start TEXT DEFAULT '',
+    period_end TEXT DEFAULT '',
+    status TEXT DEFAULT 'draft',
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE claim_group_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    note TEXT DEFAULT '',
+    UNIQUE(claim_id, invoice_id)
+);
+CREATE TABLE export_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER,
+    export_dir TEXT NOT NULL,
+    export_type TEXT NOT NULL DEFAULT 'generic_excel',
+    item_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+INSERT INTO emails (uid, subject) VALUES (7, 'interrupted-a'), (8, 'interrupted-b');
+INSERT INTO processed_emails (uid, subject) VALUES (7, 'interrupted-a');
+PRAGMA user_version = 3;
+"""
+
+
 class DatabaseMigrationTests(unittest.TestCase):
     def test_non_wal_mode_warns_and_remains_usable(self):
         conn = Mock()
@@ -180,6 +255,125 @@ class DatabaseMigrationTests(unittest.TestCase):
                 check_and_migrate(conn)
             except Exception as e:
                 self.fail(f"Re-running migration failed: {e}")
+            finally:
+                conn.close()
+
+    def test_v4_rebuild_recovers_after_interrupted_migration(self):
+        """A crash between DROP and RENAME must not leave an unrecoverable database."""
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "interrupted_v4.db"
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.executescript(_PRE_V4_SCHEMA)
+                conn.commit()
+                # Simulate an interrupted V4 rebuild: the source table was
+                # dropped and the replacement exists, but the rename and the
+                # user_version bump never happened.  Before the fix a re-run
+                # failed with "no such table: emails".
+                conn.executescript(
+                    """
+                    CREATE TABLE emails_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mailbox_key TEXT NOT NULL DEFAULT 'legacy',
+                        uid INTEGER NOT NULL,
+                        subject TEXT NOT NULL DEFAULT '',
+                        sender TEXT NOT NULL DEFAULT '',
+                        mail_date TEXT NOT NULL DEFAULT '',
+                        is_invoice INTEGER NOT NULL DEFAULT -1,
+                        classify_by TEXT NOT NULL DEFAULT '',
+                        classify_reason TEXT NOT NULL DEFAULT '',
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
+                        processed_at TEXT,
+                        UNIQUE(mailbox_key, uid)
+                    );
+                    INSERT INTO emails_new (mailbox_key, uid, subject)
+                    SELECT 'legacy', uid, subject FROM emails;
+                    DROP TABLE emails;
+                    """
+                )
+                conn.commit()
+
+                check_and_migrate(conn)
+
+                self.assertEqual(
+                    conn.execute("PRAGMA user_version").fetchone()[0],
+                    LATEST_SCHEMA_VERSION,
+                )
+                rows = conn.execute(
+                    "SELECT uid, subject, mailbox_key FROM emails ORDER BY uid"
+                ).fetchall()
+                self.assertEqual(
+                    [(row[0], row[1], row[2]) for row in rows],
+                    [(7, "interrupted-a", "legacy"), (8, "interrupted-b", "legacy")],
+                )
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                self.assertNotIn("emails_new", tables)
+                self.assertNotIn("processed_emails_new", tables)
+            finally:
+                conn.close()
+
+    def test_v4_rebuild_failure_rolls_back_and_rerun_succeeds(self):
+        """A failed V4 rebuild must roll back instead of persisting half state."""
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "failed_v4.db"
+            from scripts.invoice_fetch import migrations
+
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.executescript(_PRE_V4_SCHEMA)
+                conn.commit()
+
+                real_rebuild = migrations._rebuild_table_for_mailbox_namespace
+                calls = {"count": 0}
+
+                def fail_on_second_table(*args, **kwargs):
+                    calls["count"] += 1
+                    if calls["count"] == 2:
+                        raise sqlite3.OperationalError("database is locked")
+                    return real_rebuild(*args, **kwargs)
+
+                with patch.object(
+                    migrations,
+                    "_rebuild_table_for_mailbox_namespace",
+                    fail_on_second_table,
+                ):
+                    with self.assertRaises(sqlite3.OperationalError):
+                        check_and_migrate(conn)
+
+                # Nothing from the failed attempt may survive the rollback.
+                self.assertLess(
+                    conn.execute("PRAGMA user_version").fetchone()[0], 4
+                )
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0], 2
+                )
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                self.assertNotIn("emails_new", tables)
+                self.assertNotIn("processed_emails_new", tables)
+            finally:
+                conn.close()
+
+            conn = sqlite3.connect(str(db_path))
+            try:
+                check_and_migrate(conn)
+                self.assertEqual(
+                    conn.execute("PRAGMA user_version").fetchone()[0],
+                    LATEST_SCHEMA_VERSION,
+                )
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0], 2
+                )
             finally:
                 conn.close()
 
