@@ -431,9 +431,12 @@ class MailFetcher:
                         continue
                 consec_old = 0
 
-                # Full fetch
-                st, body = self._conn.fetch(mid, "(RFC822)")
-                if st != "OK":
+                # Full fetch by UID.  Sequence numbers describe one session
+                # snapshot; if the mailbox changes between the header probe
+                # and this call, a sequence fetch could return a different
+                # message and bind its body to this UID.
+                st, body = self._conn.uid("FETCH", str(uid), "(RFC822)")
+                if st != "OK" or not body or body[0] is None:
                     errors += 1
                     continue
                 raw = body[0][1]
