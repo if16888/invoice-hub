@@ -9,6 +9,7 @@ import unittest
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -316,6 +317,99 @@ class MobileUploadTests(unittest.TestCase):
                 item for item in manifest["files"] if item["status"] == "accepted"
             ]
             self.assertEqual(len(accepted), 4)
+
+    def test_session_total_quota_rejects_excess_uploads(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=False,
+                max_session_bytes=10,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            first = server.save_uploads([
+                UploadedFile("first.pdf", b"123456", "application/pdf"),
+            ])
+            second = server.save_uploads([
+                UploadedFile("second.pdf", b"abcdef", "application/pdf"),
+            ])
+
+            self.assertEqual(first["accepted"], 1)
+            self.assertEqual(second["accepted"], 0)
+            self.assertEqual(second["upload_failed"], 1)
+            manifest = json.loads(
+                session.manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "session_total_too_large",
+                [item["reason"] for item in manifest["files"]],
+            )
+
+    def test_start_prunes_expired_upload_session_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            expired = upload_root / "2020-01-01" / "mobile_20200101_000000_old"
+            expired.mkdir(parents=True)
+            (expired / "manifest.json").write_text("{}", encoding="utf-8")
+            recent = upload_root / f"{datetime.now():%Y-%m-%d}" / "mobile_today"
+            recent.mkdir(parents=True)
+            (recent / "manifest.json").write_text("{}", encoding="utf-8")
+
+            server = MobileUploadServer(
+                runtime_dir=runtime, host="127.0.0.1", port=0
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            self.assertFalse(expired.exists())
+            self.assertTrue(recent.exists())
+            self.assertTrue(session.manifest_path.exists())
+
+    def test_expired_session_hashes_no_longer_block_reupload(self):
+        payload = b"retry-me"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            expired = (
+                runtime / "inbox" / "mobile_upload"
+                / "2020-01-01" / "mobile_old"
+            )
+            (expired / "original").mkdir(parents=True)
+            (expired / "original" / "invoice.pdf").write_bytes(payload)
+            (expired / "manifest.json").write_text(
+                json.dumps({
+                    "source": "mobile_qr",
+                    "files": [{
+                        "status": "accepted",
+                        "sha256": digest,
+                        "stored_path": "original/invoice.pdf",
+                        "original_filename": "invoice.pdf",
+                    }],
+                }),
+                encoding="utf-8",
+            )
+
+            server = MobileUploadServer(
+                runtime_dir=runtime,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=False,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            result = server.save_uploads([
+                UploadedFile("invoice.pdf", payload, "application/pdf"),
+            ])
+
+            # The expired manifest is gone, so a failed-import file can be
+            # uploaded again instead of being stuck as a duplicate forever.
+            self.assertEqual(result["accepted"], 1)
+            self.assertEqual(result["duplicate"], 0)
 
     def test_mobile_upload_server_stop_is_bounded_and_idempotent(self):
         with tempfile.TemporaryDirectory() as td:

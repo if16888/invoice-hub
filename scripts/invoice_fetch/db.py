@@ -11,14 +11,14 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
 from . import review_status
 from .log_privacy import mask_invoice_number
 from .review_query import ReviewColumnFilter, ReviewQuery
 from .evidence import (
-    EvidenceStoreMixin, is_evidence_record, material_paths,
+    EvidenceStoreMixin, is_evidence_record, material_paths, path_key,
     refresh_material_projection, replace_material_paths, visible_invoice_sql,
 )
 
@@ -1201,6 +1201,47 @@ class InvoiceDB(EvidenceStoreMixin):
                 self._refresh_evidence_consumers(invoice_id)
         return True
 
+    def append_invoice_extra_paths(
+        self,
+        invoice_id: int,
+        new_paths: Iterable[str],
+    ) -> list[str]:
+        """Atomically merge *new_paths* into the stored extra_paths list.
+
+        The read-merge-write happens inside one transaction so concurrent
+        import workers (GUI import, mobile upload, CLI) cannot overwrite each
+        other's material associations with a stale snapshot.  Returns the
+        merged, de-duplicated list, or ``[]`` when the invoice is missing or
+        locked.
+        """
+        candidates = [
+            str(value).strip()
+            for value in new_paths
+            if str(value or "").strip()
+        ]
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return []
+            current = self.get_invoice(invoice_id, include_deleted=True)
+            if not current:
+                return []
+            merged = material_paths(current.get("extra_paths"))
+            seen = {path_key(path) for path in merged}
+            for candidate in candidates:
+                key = path_key(candidate)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(candidate)
+            if len(merged) != len(material_paths(current.get("extra_paths"))):
+                self._conn.execute(
+                    "UPDATE invoices SET extra_paths = ? WHERE id = ?",
+                    (json.dumps(merged, ensure_ascii=False), invoice_id),
+                )
+                replace_material_paths(self._conn, invoice_id, merged)
+        return merged
+
     def update_invoice_extra_flags(
         self,
         invoice_id: int,
@@ -1898,22 +1939,28 @@ class InvoiceDB(EvidenceStoreMixin):
         results: list[dict] = []
         seen: set[tuple[str, int]] = set()
 
-        if mailbox_filter is None:
-            invoice_rows = self._conn.execute(
-                "SELECT DISTINCT mailbox_key, mail_uid FROM invoices WHERE attachment_path = '' OR attachment_path IS NULL"
-            ).fetchall()
-            email_rows = self._conn.execute(
-                "SELECT mailbox_key, uid FROM emails WHERE is_invoice = 1 AND downloaded = 1"
-            ).fetchall()
-        else:
-            invoice_rows = self._conn.execute(
-                "SELECT DISTINCT mailbox_key, mail_uid FROM invoices WHERE (attachment_path = '' OR attachment_path IS NULL) AND mailbox_key = ?",
-                (mailbox_filter,),
-            ).fetchall()
-            email_rows = self._conn.execute(
-                "SELECT mailbox_key, uid FROM emails WHERE is_invoice = 1 AND downloaded = 1 AND mailbox_key = ?",
-                (mailbox_filter,),
-            ).fetchall()
+        # One query per source; the email side uses NOT EXISTS so a mailbox
+        # with thousands of downloaded emails no longer costs one SELECT per
+        # row (N+1).
+        invoice_sql = (
+            "SELECT DISTINCT mailbox_key, mail_uid FROM invoices "
+            "WHERE (attachment_path = '' OR attachment_path IS NULL)"
+        )
+        email_sql = (
+            "SELECT e.mailbox_key, e.uid FROM emails e "
+            "WHERE e.is_invoice = 1 AND e.downloaded = 1 "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM invoices i "
+            "WHERE i.mail_uid = e.uid "
+            "AND i.mailbox_key = COALESCE(NULLIF(e.mailbox_key, ''), 'legacy'))"
+        )
+        params: list[object] = []
+        if mailbox_filter is not None:
+            invoice_sql += " AND mailbox_key = ?"
+            email_sql += " AND e.mailbox_key = ?"
+            params.append(mailbox_filter)
+        invoice_rows = self._conn.execute(invoice_sql, params).fetchall()
+        email_rows = self._conn.execute(email_sql, params).fetchall()
 
         for row in invoice_rows:
             uid = row["mail_uid"]
@@ -1927,15 +1974,10 @@ class InvoiceDB(EvidenceStoreMixin):
         for row in email_rows:
             uid = row["uid"]
             mailbox = str(row["mailbox_key"] or mailbox_filter or "legacy")
-            inv = self._conn.execute(
-                "SELECT 1 FROM invoices WHERE mail_uid = ? AND mailbox_key = ?",
-                (uid, mailbox),
-            ).fetchone()
-            if not inv:
-                key = (mailbox, int(uid))
-                if key not in seen:
-                    results.append({"mailbox_key": mailbox, "mail_uid": int(uid)})
-                    seen.add(key)
+            key = (mailbox, int(uid))
+            if key not in seen:
+                results.append({"mailbox_key": mailbox, "mail_uid": int(uid)})
+                seen.add(key)
 
         return results
 

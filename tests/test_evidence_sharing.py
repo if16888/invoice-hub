@@ -340,6 +340,26 @@ class EvidenceSharingTests(unittest.TestCase):
         self.assertTrue(referenced.exists())
         self.assertEqual(self.db.evidence_consumers(sources[0]), (parents[0],))
 
+    def test_extra_paths_append_merges_concurrent_writers(self):
+        with InvoiceDB(self.path) as writer_b:
+            invoice_id = self.invoice()
+            self.assertEqual(material_paths(self.db.get_invoice(invoice_id)["extra_paths"]), [])
+
+            # Writer B commits a material first.
+            self.assertEqual(
+                writer_b.append_invoice_extra_paths(invoice_id, ["attachments/a.pdf"]),
+                ["attachments/a.pdf"],
+            )
+            # Writer A appends from its stale snapshot without losing B's.
+            merged = self.db.append_invoice_extra_paths(
+                invoice_id, ["attachments/b.pdf", "attachments/a.pdf"]
+            )
+            self.assertEqual(merged, ["attachments/a.pdf", "attachments/b.pdf"])
+            self.assertEqual(
+                material_paths(self.db.get_invoice(invoice_id)["extra_paths"]),
+                ["attachments/a.pdf", "attachments/b.pdf"],
+            )
+
     def reparse(self, parent, **fields):
         return reconcile_reparsed_invoice(self.db, parent, invoice_number="REPARSED", invoice_code="", invoice_date="2026-10-02",
             amount="100.00", total_amount="100.00", seller_name="Synthetic Seller", buyer_name="Synthetic Buyer",
