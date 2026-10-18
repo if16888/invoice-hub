@@ -16,6 +16,17 @@ class _RaisingFileDB(_FakeDB):
 
 
 class RedownloadConsistencyContractTests(unittest.TestCase):
+    def test_compensation_failure_logs_instead_of_raising_name_error(self):
+        db = _FakeDB()
+
+        def raising_update(**_kwargs):
+            raise RuntimeError("synthetic compensation failure")
+
+        db.update_invoice_parsed_metadata = raising_update
+        with self.assertLogs("invoice_fetch.redownload", level="ERROR") as logs:
+            redownload._restore_invoice_state(db, db.original)
+        self.assertIn("compensation failed", " ".join(logs.output))
+
     def test_detail_retry_db_exception_removes_new_managed_file(self):
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "runtime"
@@ -82,6 +93,54 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
             self.assertEqual(
                 sorted(p.name for p in dest_dir.iterdir() if p.is_file()),
                 ["managed.pdf", "managed_1.pdf"],
+            )
+
+    def test_detail_retry_never_overwrites_when_all_collision_names_are_taken(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            dest_dir = runtime / "attachments" / "2026-09-05"
+            dest_dir.mkdir(parents=True)
+            reserved = [dest_dir / "managed.pdf"]
+            for name in reserved:
+                name.write_bytes(b"original-managed")
+            for number in range(1, 100):
+                candidate = dest_dir / f"managed_{number}.pdf"
+                candidate.write_bytes(b"original-numbered")
+                reserved.append(candidate)
+
+            db = _FakeDB(file_ok=True)
+            downloader_ns = SimpleNamespace(
+                LinkDownloader=lambda download_dir: _FakeDownloader(download_dir)
+            )
+
+            with patch.object(redownload, "InvoiceDB", return_value=db), \
+                 patch.object(redownload, "_link_downloader", downloader_ns), \
+                 patch.object(
+                     redownload._attachment_handler,
+                     "build_managed_attachment_name",
+                     return_value="managed.pdf",
+                 ):
+                result = redownload.run_invoice_link_retry(
+                    _snapshot(),
+                    runtime / "invoices.db",
+                    runtime_dir=runtime,
+                )
+
+            self.assertTrue(result["success"])
+            # Every pre-existing original is untouched byte for byte.
+            self.assertEqual(
+                (dest_dir / "managed.pdf").read_bytes(), b"original-managed"
+            )
+            for candidate in reserved[1:]:
+                self.assertEqual(candidate.read_bytes(), b"original-numbered")
+            names = {p.name for p in dest_dir.iterdir() if p.is_file()}
+            created = names - {candidate.name for candidate in reserved}
+            self.assertEqual(len(created), 1)
+            created_name = created.pop()
+            self.assertTrue(created_name.startswith("managed_"))
+            self.assertTrue(created_name.endswith(".pdf"))
+            self.assertEqual(
+                (dest_dir / created_name).read_bytes(), b"synthetic"
             )
 
     def test_failed_email_download_with_metadata_update_is_counted_as_failure(self):
