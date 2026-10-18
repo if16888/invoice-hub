@@ -2789,6 +2789,17 @@ def _process_email(
         except (AttributeError, TypeError):
             pass
 
+    def _cleanup_unused_attachments() -> None:
+        """Remove temp attachments that no recorded invoice kept."""
+        for attachment in attachments:
+            try:
+                path = Path(attachment.file_path).resolve()
+                if path.exists() and str(path) not in kept_paths:
+                    path.unlink()
+                    _log.debug("  🗑️ 清理未使用的临时附件: %s", mask_filename(path.name))
+            except Exception:
+                pass
+
     for att in attachments:
         if not att.extraction_warning:
             continue
@@ -3618,12 +3629,14 @@ def _process_email(
                         if not was_deleted:
                             _log_existing_invoice_duplicate(existing, "subject_body_invoice_number")
                     set_process_outcome("metadata_refreshed" if recorded else "duplicate")
+                    _cleanup_unused_attachments()
                     return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
             if inv_num and db.is_duplicate(inv_num, amount, seller):
                 _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
                 recorded += 1
                 set_process_outcome("duplicate")
+                _cleanup_unused_attachments()
                 return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
             rec = {
@@ -3660,14 +3673,7 @@ def _process_email(
                 _log.info("  📝 从主题/正文提取: %s — 待手动下载", redact_text(dedup_key, "dedup_key"))
 
     # Clean up any leftover attachment files that were not successfully kept
-    for a in attachments:
-        try:
-            p = Path(a.file_path).resolve()
-            if p.exists() and str(p) not in kept_paths:
-                p.unlink()
-                _log.debug("  🗑️ 清理未使用的临时附件: %s", mask_filename(p.name))
-        except Exception:
-            pass
+    _cleanup_unused_attachments()
 
     if recorded == 0:
         if link_pdf_skipped_as_duplicate:

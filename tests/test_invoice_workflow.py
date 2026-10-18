@@ -1628,6 +1628,60 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 {"A001", "B002"},
             )
 
+    def test_subject_fallback_early_return_still_cleans_unkept_attachments(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments_dir = runtime / "attachments" / "2026-05-18"
+            attachments_dir.mkdir(parents=True)
+            leftover = attachments_dir / "unused-note.txt"
+            leftover.write_bytes(b"synthetic non-invoice attachment")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.insert_invoice({
+                    "invoice_number": "SEQ-0001",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "66.00",
+                    "seller_name": "Synthetic Seller",
+                })
+
+                with (
+                    patch.object(cli, "parse_subject", return_value={
+                        "invoice_number": "SEQ-0001",
+                        "total_amount": "66.00",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-05-18",
+                        "invoice_type": "synthetic invoice",
+                    }),
+                    patch.object(cli, "extract_html_from_message", return_value=""),
+                    patch.object(cli, "parse_html_body", return_value={}),
+                ):
+                    recorded = cli._process_email(
+                        cli.MailMessage(uid=464, raw_msg=msg),
+                        StaticAttachmentHandler(
+                            runtime / "attachments",
+                            [Attachment(
+                                file_path=str(leftover),
+                                original_name="unused-note.txt",
+                                content_type="text/plain",
+                                size=leftover.stat().st_size,
+                            )],
+                        ),
+                        StaticParser(InvoiceInfo(parse_success=False)),
+                        NoopLinkDownloader(),
+                        db,
+                        {},
+                    )
+
+            self.assertEqual(recorded, 1)
+            # The subject/body duplicate early-return must not skip the
+            # attachment cleanup: the unkept temp file is gone.
+            self.assertFalse(leftover.exists())
+
     def test_is_duplicate_requires_invoice_number_identity(self):
         with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:
             db.insert_invoice({
