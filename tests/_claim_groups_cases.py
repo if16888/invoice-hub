@@ -3922,30 +3922,42 @@ class ClaimGroupsTests(unittest.TestCase):
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                window = InvoiceReviewApp(db_path, splash=None)
-                try:
-                    window._deferred_init()
-                    app.processEvents()
-                    selection = window.table.selectionModel()
-                    for row in range(window.table.rowCount()):
-                        selection.select(
-                            window.table.model().index(row, 0),
-                            QItemSelectionModel.Select | QItemSelectionModel.Rows,
-                        )
+                from scripts.invoice_fetch.config import load_config_safe
 
-                    with patch.object(QMessageBox, "question", return_value=QMessageBox.No):
-                        result = window._set_selected_status(review_status.APPROVED)
+                # CI-equivalent defaults. A developer machine may carry a real
+                # config.json whose strict buyer check skips the synthetic
+                # invoice and opens a blocking modal in this headless test.
+                default_config = load_config_safe(Path(td) / "no-user-config.json")
+                with patch(
+                    "scripts.invoice_fetch.gui.app.load_config_safe",
+                    return_value=default_config,
+                ):
+                    window = InvoiceReviewApp(db_path, splash=None)
+                    try:
+                        window._deferred_init()
+                        app.processEvents()
+                        selection = window.table.selectionModel()
+                        for row in range(window.table.rowCount()):
+                            selection.select(
+                                window.table.model().index(row, 0),
+                                QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                            )
 
-                    self.assertEqual(result["success"], 0)
-                    self.assertEqual(result["evidence_only"], 1)
-                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
-                    self.assertIn("跳过 1 条待关联证明材料", window.statusBar().currentMessage())
-                finally:
-                    if hasattr(window, "db") and window.db is not None:
-                        window.db.close()
-                    window.close()
-                    window.deleteLater()
-                    app.processEvents()
+                        with patch.object(QMessageBox, "question", return_value=QMessageBox.No), \
+                                patch.object(QMessageBox, "information") as information:
+                            result = window._set_selected_status(review_status.APPROVED)
+
+                        information.assert_not_called()
+                        self.assertEqual(result["success"], 0)
+                        self.assertEqual(result["evidence_only"], 1)
+                        self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
+                        self.assertIn("跳过 1 条待关联证明材料", window.statusBar().currentMessage())
+                    finally:
+                        if hasattr(window, "db") and window.db is not None:
+                            window.db.close()
+                        window.close()
+                        window.deleteLater()
+                        app.processEvents()
         except Exception as e:
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")
