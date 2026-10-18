@@ -3930,7 +3930,6 @@ def _scan_mailboxes_with_db(
 
     if not scan_only:
         for account in account_contexts:
-            scan_control.raise_if_cancelled()
             mailbox_key = account.get("mailbox_key", "legacy")
             email_addr = account.get("address", "")
             folder = account.get("search", {}).get("folder", "INBOX")
@@ -3944,6 +3943,9 @@ def _scan_mailboxes_with_db(
             pending_for_account: list[dict] = []
             handled_pending_uids: set[int] = set()
             try:
+                # Kept inside the try: a cancellation here must funnel through
+                # the ScanCancelled handler below so the browser is reaped.
+                scan_control.raise_if_cancelled()
                 pending_for_account = db.get_invoice_emails_to_download(
                     mailbox_key=mailbox_key,
                     bypass_cooldown=retry_failed,
@@ -4075,6 +4077,13 @@ def _scan_mailboxes_with_db(
                         handled_pending_uids.add(int(row["uid"]))
                         scan_control.raise_if_cancelled()
             except ScanCancelled as exc:
+                # Cancellation unwinds the whole scan: reap the browser child
+                # processes before the stack is torn down, or the Playwright
+                # driver and Chromium leak for the rest of the GUI session.
+                try:
+                    link_dl.close()
+                except Exception:
+                    pass
                 stage(email_addr, ScanStage.CANCELLED, reason="用户取消扫描", exc=exc)
                 raise
             except Exception as exc:

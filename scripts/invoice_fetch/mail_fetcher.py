@@ -14,6 +14,7 @@ import imaplib
 import logging
 import re
 import socket
+import ssl
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -151,6 +152,7 @@ class _TimedIMAP4SSL(imaplib.IMAP4_SSL):
         command_timeout,
         socket_callback=None,
         stage_callback=None,
+        ssl_context=None,
         **kwargs,
     ):
         self._connect_timeout = float(connect_timeout)
@@ -158,7 +160,14 @@ class _TimedIMAP4SSL(imaplib.IMAP4_SSL):
         self._command_timeout = float(command_timeout)
         self._socket_callback = socket_callback
         self._stage_callback = stage_callback
-        super().__init__(*args, **kwargs)
+        if ssl_context is None:
+            # Verify the server certificate chain and hostname. imaplib's
+            # fallback (ssl._create_stdlib_context) runs with CERT_NONE, which
+            # would send credentials and invoice contents over a channel any
+            # on-path attacker can read — always build a verifying context
+            # unless the caller explicitly provides one.
+            ssl_context = ssl.create_default_context()
+        super().__init__(*args, ssl_context=ssl_context, **kwargs)
 
     def _create_socket(self, _timeout):
         if self._stage_callback:
@@ -383,6 +392,7 @@ class MailFetcher:
         early_stop_min_scan = 200
         early_stop_consec = 100
 
+        i = 0  # Pre-initialize: when all_ids is empty, the summary log below won't raise NameError
         for i, mid in enumerate(all_ids):
             self._check_cancelled()
             if limit and len(messages) >= limit:

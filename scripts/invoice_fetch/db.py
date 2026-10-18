@@ -273,15 +273,15 @@ class InvoiceDB(EvidenceStoreMixin):
         """Insert a scanned email header. Returns True if new."""
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
         try:
-            cursor = self._conn.execute(
-                "INSERT OR IGNORE INTO emails (mailbox_key, uid, subject, sender, mail_date) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (mailbox_key, uid, subject, sender, mail_date),
-            )
-            self._conn.commit()
-            return cursor.rowcount > 0
+            with self._atomic_savepoint():
+                cursor = self._conn.execute(
+                    "INSERT OR IGNORE INTO emails (mailbox_key, uid, subject, sender, mail_date) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (mailbox_key, uid, subject, sender, mail_date),
+                )
+                rowcount = cursor.rowcount
+            return rowcount > 0
         except sqlite3.IntegrityError:
-            self._conn.rollback()
             return False
 
     def bulk_upsert_emails(self, rows: list[dict], mailbox_key: str = "legacy") -> int:
@@ -292,13 +292,13 @@ class InvoiceDB(EvidenceStoreMixin):
             for r in rows
         ]
         before = self._conn.total_changes
-        self._conn.executemany(
-            "INSERT OR IGNORE INTO emails "
-            "(mailbox_key, uid, subject, sender, mail_date) "
-            "VALUES (?, ?, ?, ?, ?)",
-            values,
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO emails "
+                "(mailbox_key, uid, subject, sender, mail_date) "
+                "VALUES (?, ?, ?, ?, ?)",
+                values,
+            )
         return self._conn.total_changes - before
 
     def get_all_email_uids(self, mailbox_key: str | None = None) -> set[int]:
@@ -331,12 +331,12 @@ class InvoiceDB(EvidenceStoreMixin):
                        by: str, reason: str = "", mailbox_key: str = "legacy"):
         """Set classification result for a single email."""
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
-        self._conn.execute(
-            "UPDATE emails SET is_invoice = ?, classify_by = ?, "
-            "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
-            (1 if is_invoice else 0, by, reason, mailbox_key, uid),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "UPDATE emails SET is_invoice = ?, classify_by = ?, "
+                "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
+                (1 if is_invoice else 0, by, reason, mailbox_key, uid),
+            )
 
     def bulk_classify(self, results: list[dict], mailbox_key: str = "legacy"):
         """Batch update classification results.
@@ -354,12 +354,12 @@ class InvoiceDB(EvidenceStoreMixin):
             )
             for r in results
         ]
-        self._conn.executemany(
-            "UPDATE emails SET is_invoice = ?, classify_by = ?, "
-            "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
-            values,
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.executemany(
+                "UPDATE emails SET is_invoice = ?, classify_by = ?, "
+                "classify_reason = ? WHERE mailbox_key = ? AND uid = ?",
+                values,
+            )
 
     def get_invoice_emails_to_download(
         self,
@@ -420,46 +420,46 @@ class InvoiceDB(EvidenceStoreMixin):
             next_retry_at = (
                 datetime.now() + timedelta(hours=hours)
             ).strftime("%Y-%m-%d %H:%M:%S")
-        self._conn.execute(
-            """
-            INSERT INTO email_download_failures (
-                mailbox_key, uid, reason_code, fail_count, next_retry_at,
-                last_error_at, last_error_summary
-            ) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), ?)
-            ON CONFLICT(mailbox_key, uid) DO UPDATE SET
-                reason_code = excluded.reason_code,
-                fail_count = excluded.fail_count,
-                next_retry_at = excluded.next_retry_at,
-                last_error_at = excluded.last_error_at,
-                last_error_summary = excluded.last_error_summary
-            """,
-            (
-                mailbox_key,
-                uid,
-                reason_code,
-                fail_count,
-                next_retry_at,
-                str(error_summary or "")[:500],
-            ),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                """
+                INSERT INTO email_download_failures (
+                    mailbox_key, uid, reason_code, fail_count, next_retry_at,
+                    last_error_at, last_error_summary
+                ) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), ?)
+                ON CONFLICT(mailbox_key, uid) DO UPDATE SET
+                    reason_code = excluded.reason_code,
+                    fail_count = excluded.fail_count,
+                    next_retry_at = excluded.next_retry_at,
+                    last_error_at = excluded.last_error_at,
+                    last_error_summary = excluded.last_error_summary
+                """,
+                (
+                    mailbox_key,
+                    uid,
+                    reason_code,
+                    fail_count,
+                    next_retry_at,
+                    str(error_summary or "")[:500],
+                ),
+            )
 
     def clear_email_download_failure(self, mailbox_key: str, uid: int) -> None:
-        self._conn.execute(
-            "DELETE FROM email_download_failures WHERE mailbox_key = ? AND uid = ?",
-            (self._normalize_mailbox_key(mailbox_key), uid),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "DELETE FROM email_download_failures WHERE mailbox_key = ? AND uid = ?",
+                (self._normalize_mailbox_key(mailbox_key), uid),
+            )
 
     def mark_downloaded(self, uid: int, mailbox_key: str = "legacy"):
         """Mark an email as downloaded/processed."""
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
-        self._conn.execute(
-            "UPDATE emails SET downloaded = 1, "
-            "processed_at = datetime('now','localtime') WHERE mailbox_key = ? AND uid = ?",
-            (mailbox_key, uid),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "UPDATE emails SET downloaded = 1, "
+                "processed_at = datetime('now','localtime') WHERE mailbox_key = ? AND uid = ?",
+                (mailbox_key, uid),
+            )
 
     @staticmethod
     def _extract_email(sender: str) -> str:
@@ -486,11 +486,11 @@ class InvoiceDB(EvidenceStoreMixin):
         pure_email = self._extract_email(sender)
         if not pure_email:
             return
-        self._conn.execute(
-            "INSERT OR IGNORE INTO trusted_senders (sender) VALUES (?)",
-            (pure_email,)
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO trusted_senders (sender) VALUES (?)",
+                (pure_email,)
+            )
 
     def get_email_stats(self) -> dict:
         """Return classification/download statistics."""
@@ -529,12 +529,12 @@ class InvoiceDB(EvidenceStoreMixin):
     def mark_email_processed(self, uid: int, subject: str = "",
                              sender: str = "", mail_date: str = "", mailbox_key: str = "legacy"):
         mailbox_key = self._normalize_mailbox_key(mailbox_key)
-        self._conn.execute(
-            "INSERT OR IGNORE INTO processed_emails (mailbox_key, uid, subject, sender, mail_date) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (mailbox_key, uid, subject, sender, mail_date),
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO processed_emails (mailbox_key, uid, subject, sender, mail_date) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (mailbox_key, uid, subject, sender, mail_date),
+            )
 
     # ── Invoice dedup ────────────────────────────────────────────────
 
@@ -926,11 +926,11 @@ class InvoiceDB(EvidenceStoreMixin):
         else:
             confirmed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        self._conn.execute(
-            "UPDATE invoices SET review_status = ?, confirmed_note = ?, confirmed_at = ? WHERE id = ?",
-            (status, note, confirmed_at, invoice_id)
-        )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute(
+                "UPDATE invoices SET review_status = ?, confirmed_note = ?, confirmed_at = ? WHERE id = ?",
+                (status, note, confirmed_at, invoice_id)
+            )
         self._set_last_error("")
         return True
 
@@ -981,14 +981,14 @@ class InvoiceDB(EvidenceStoreMixin):
         if not self._require_invoice_editable(invoice_id):
             return False
         try:
-            cursor = self._conn.execute(
-                "UPDATE invoices SET confirmed_note=? WHERE id=?", (note, invoice_id)
-            )
-            self._conn.commit()
-            self._set_last_error("" if cursor.rowcount else "not_found")
-            return cursor.rowcount == 1
+            with self._atomic_savepoint():
+                cursor = self._conn.execute(
+                    "UPDATE invoices SET confirmed_note=? WHERE id=?", (note, invoice_id)
+                )
+                rowcount = cursor.rowcount
+            self._set_last_error("" if rowcount else "not_found")
+            return rowcount == 1
         except sqlite3.Error:
-            self._conn.rollback()
             self._set_last_error("write_failed")
             return False
 
@@ -1323,26 +1323,30 @@ class InvoiceDB(EvidenceStoreMixin):
                         self._conn.execute("UPDATE invoices SET record_role='invoice' WHERE id=?", (invoice_id,))
                 updated.append(key)
                 _log.info("重复发票缺少%s，已从本次解析结果回填: existing_id=%d", key, invoice_id)
-            except Exception:
+            except Exception as exc:
                 skipped.append(key)
+                # A real DB failure must not look like a benign "already set" skip.
+                _log.warning(
+                    "回填字段 %s 写入失败 (existing_id=%d): %s", key, invoice_id, exc,
+                )
 
         return {"updated_fields": updated, "skipped_fields": skipped}
 
     def update_invoice_source_by_hashes(self, hash_to_subject: dict[str, str], sender: str) -> int:
         """Update source metadata for imported files matched by SHA256."""
         updated = 0
-        for file_hash, subject in hash_to_subject.items():
-            if not file_hash:
-                continue
-            cur = self._conn.execute(
-                "UPDATE invoices SET mail_sender=?, mail_subject=? WHERE file_hash=? "
-                "AND reimbursed_at IS NULL AND NOT EXISTS ("
-                "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
-                "WHERE cgi.invoice_id=invoices.id AND c.status IN ('exported','reimbursed'))",
-                (sender, subject, file_hash),
-            )
-            updated += cur.rowcount
-        self._conn.commit()
+        with self._atomic_savepoint():
+            for file_hash, subject in hash_to_subject.items():
+                if not file_hash:
+                    continue
+                cur = self._conn.execute(
+                    "UPDATE invoices SET mail_sender=?, mail_subject=? WHERE file_hash=? "
+                    "AND reimbursed_at IS NULL AND NOT EXISTS ("
+                    "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+                    "WHERE cgi.invoice_id=invoices.id AND c.status IN ('exported','reimbursed'))",
+                    (sender, subject, file_hash),
+                )
+                updated += cur.rowcount
         return updated
 
     def list_invoices(self, status: str | None = None, limit: int | None = None, include_deleted: bool = False, offset: int = 0) -> list[dict]:
@@ -1822,14 +1826,14 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def reset_emails(self):
         """Clear the emails table (full re-scan)."""
-        self._conn.execute("DELETE FROM emails")
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("DELETE FROM emails")
         _log.info("已清空邮件扫描记录")
 
     def reset_processed(self):
         """Clear the processed-emails table (re-scan mode)."""
-        self._conn.execute("DELETE FROM processed_emails")
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("DELETE FROM processed_emails")
         _log.info("已清空已处理邮件记录")
 
     def remove_mailbox_scan_state(self, mailbox_key: str) -> None:
@@ -1840,9 +1844,9 @@ class InvoiceDB(EvidenceStoreMixin):
         if not mailbox_key:
             return
         m_key = self._normalize_mailbox_key(mailbox_key)
-        self._conn.execute("DELETE FROM emails WHERE mailbox_key = ?", (m_key,))
-        self._conn.execute("DELETE FROM processed_emails WHERE mailbox_key = ?", (m_key,))
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("DELETE FROM emails WHERE mailbox_key = ?", (m_key,))
+            self._conn.execute("DELETE FROM processed_emails WHERE mailbox_key = ?", (m_key,))
         _log.info("已清空邮箱 %s 的邮件扫描与处理同步状态", m_key)
 
 
@@ -1856,8 +1860,8 @@ class InvoiceDB(EvidenceStoreMixin):
         if locked:
             self._set_last_error("invoice_exported_locked")
             return False
-        self._conn.execute("DELETE FROM invoices")
-        self._conn.commit()
+        with self._atomic_savepoint():
+            self._conn.execute("DELETE FROM invoices")
         _log.info("已清空已入库发票记录")
         self._set_last_error("")
         return True
@@ -1916,17 +1920,17 @@ class InvoiceDB(EvidenceStoreMixin):
         if not uids:
             return
         placeholders = ", ".join("?" for _ in uids)
-        if mailbox_key is None:
-            self._conn.execute(
-                f"UPDATE emails SET downloaded = 0 WHERE uid IN ({placeholders})",
-                uids
-            )
-        else:
-            self._conn.execute(
-                f"UPDATE emails SET downloaded = 0 WHERE mailbox_key = ? AND uid IN ({placeholders})",
-                [self._normalize_mailbox_key(mailbox_key), *uids],
-            )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            if mailbox_key is None:
+                self._conn.execute(
+                    f"UPDATE emails SET downloaded = 0 WHERE uid IN ({placeholders})",
+                    uids
+                )
+            else:
+                self._conn.execute(
+                    f"UPDATE emails SET downloaded = 0 WHERE mailbox_key = ? AND uid IN ({placeholders})",
+                    [self._normalize_mailbox_key(mailbox_key), *uids],
+                )
 
     def delete_invoices_by_uid(self, uids: list[int], mailbox_key: str | None = None):
         """Delete invoice records for a list of email UIDs where attachment_path is empty."""
@@ -1938,19 +1942,19 @@ class InvoiceDB(EvidenceStoreMixin):
             "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
             "WHERE cgi.invoice_id=invoices.id AND c.status IN ('exported','reimbursed'))"
         )
-        if mailbox_key is None:
-            self._conn.execute(
-                f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) "
-                f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
-                uids
-            )
-        else:
-            self._conn.execute(
-                f"DELETE FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) "
-                f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
-                [self._normalize_mailbox_key(mailbox_key), *uids],
-            )
-        self._conn.commit()
+        with self._atomic_savepoint():
+            if mailbox_key is None:
+                self._conn.execute(
+                    f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) "
+                    f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
+                    uids
+                )
+            else:
+                self._conn.execute(
+                    f"DELETE FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) "
+                    f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
+                    [self._normalize_mailbox_key(mailbox_key), *uids],
+                )
 
     # ── Claim Groups (CODE-004) ──────────────────────────────────────
 
@@ -1960,14 +1964,15 @@ class InvoiceDB(EvidenceStoreMixin):
         applicant_name: str = "", department: str = "",
     ) -> int:
         """Create a new claim group and return its auto-incremented ID."""
-        cursor = self._conn.execute(
-            "INSERT INTO claim_groups (name, period_start, period_end, reason_category, "
-            "reason_detail, applicant_name, department) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, period_start, period_end, reason_category.strip(), reason_detail.strip(),
-             applicant_name.strip(), department.strip())
-        )
-        self._conn.commit()
-        return cursor.lastrowid
+        with self._atomic_savepoint():
+            cursor = self._conn.execute(
+                "INSERT INTO claim_groups (name, period_start, period_end, reason_category, "
+                "reason_detail, applicant_name, department) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (name, period_start, period_end, reason_category.strip(), reason_detail.strip(),
+                 applicant_name.strip(), department.strip())
+            )
+            lastrowid = cursor.lastrowid
+        return lastrowid
 
     def update_claim_reason(
         self, claim_id: int, *, reason_category: str | None = None,
@@ -2075,19 +2080,19 @@ class InvoiceDB(EvidenceStoreMixin):
             return False
 
         try:
-            cursor = self._conn.execute(
-                "INSERT OR IGNORE INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
-                (claim_id, invoice_id, note)
-            )
-            self._conn.commit()
-            if cursor.rowcount == 0:
+            with self._atomic_savepoint():
+                cursor = self._conn.execute(
+                    "INSERT OR IGNORE INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
+                    (claim_id, invoice_id, note)
+                )
+                rowcount = cursor.rowcount
+            if rowcount == 0:
                 self._set_last_error("integrity_error")
                 _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
                 return False
             self._set_last_error("")
             return True
         except sqlite3.IntegrityError:
-            self._conn.rollback()
             self._set_last_error("integrity_error")
             _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
             return False
@@ -2099,12 +2104,13 @@ class InvoiceDB(EvidenceStoreMixin):
                 "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
             )
             return False
-        cursor = self._conn.execute(
-            "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?",
-            (claim_id, invoice_id)
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+        with self._atomic_savepoint():
+            cursor = self._conn.execute(
+                "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?",
+                (claim_id, invoice_id)
+            )
+            rowcount = cursor.rowcount
+        return rowcount > 0
 
     def get_claim_group(self, claim_id: int) -> dict | None:
         """Fetch claim group details by ID."""
@@ -2541,25 +2547,26 @@ class InvoiceDB(EvidenceStoreMixin):
         reclassify: bool = False,
     ):
         """Reset an email's downloaded and processing state, and optionally its classification."""
-        if reclassify:
+        mailbox_key = self._normalize_mailbox_key(mailbox_key)
+        with self._atomic_savepoint():
+            if reclassify:
+                self._conn.execute(
+                    "UPDATE emails SET downloaded = 0, processed_at = NULL, "
+                    "is_invoice = -1, classify_by = '', classify_reason = '' "
+                    "WHERE mailbox_key = ? AND uid = ?",
+                    (mailbox_key, uid)
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE emails SET downloaded = 0, processed_at = NULL "
+                    "WHERE mailbox_key = ? AND uid = ?",
+                    (mailbox_key, uid)
+                )
+            # 还要从 processed_emails 表里清除该邮件，防止被当作“已扫描”忽略
             self._conn.execute(
-                "UPDATE emails SET downloaded = 0, processed_at = NULL, "
-                "is_invoice = -1, classify_by = '', classify_reason = '' "
-                "WHERE mailbox_key = ? AND uid = ?",
+                "DELETE FROM processed_emails WHERE mailbox_key = ? AND uid = ?",
                 (mailbox_key, uid)
             )
-        else:
-            self._conn.execute(
-                "UPDATE emails SET downloaded = 0, processed_at = NULL "
-                "WHERE mailbox_key = ? AND uid = ?",
-                (mailbox_key, uid)
-            )
-        # 还要从 processed_emails 表里清除该邮件，防止被当作“已扫描”忽略
-        self._conn.execute(
-            "DELETE FROM processed_emails WHERE mailbox_key = ? AND uid = ?",
-            (mailbox_key, uid)
-        )
-        self._conn.commit()
 
     def list_pending_evidence_for_mail(self, mailbox_key: str, mail_uid: int) -> list[dict]:
         """Query all active (undeleted) pending evidence records for a specific email."""

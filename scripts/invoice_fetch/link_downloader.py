@@ -254,6 +254,45 @@ def _route_browser_request(route) -> None:
     route.abort("blockedbyclient")
 
 
+class _UnsafeRequestGuard:
+    """Per-request guard that fail-closes the context on unsafe hops.
+
+    ``ctx.route`` treats a redirect chain as one interception unit: the route
+    handler runs once for the original request and never again for redirect
+    hops. A mail-embedded link can therefore 302 into an intranet address and
+    no route callback fires for that hop. The ``request`` event, in contrast,
+    fires for every hop (redirects included) and for popup targets, so this
+    guard is the last line of defense: flag the block and tear the whole
+    context down to stop every subsequent request.
+    """
+
+    def __init__(self, context):
+        self._context = context
+        self.blocked = False
+
+    def __call__(self, request) -> None:
+        url = str(getattr(request, "url", "") or "")
+        if _is_safe_browser_request_url(url):
+            return
+        # Route interception (and its per-request abort) covers every request
+        # the browser issues — except redirect hops: Playwright treats a
+        # request and its redirects as a single interception unit, so no route
+        # callback ever runs for a hop. Mail links can 302 into intranet
+        # addresses, so a redirect hop into a non-public target is exactly the
+        # blind spot this guard fails closed for. Requests the route layer
+        # already aborts (plain unsafe resources) must not tear the context
+        # down, so they are left to it instead.
+        if getattr(request, "redirected_from", None) is None:
+            return
+        fingerprint = hashlib.sha256(url.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        _log.warning("Blocked unsafe browser redirect hop: <%s>", fingerprint)
+        self.blocked = True
+        try:
+            self._context.close()
+        except Exception:
+            pass
+
+
 def _safe_download_destination(
     save_dir: str | Path,
     suggested_filename: str,
@@ -835,6 +874,16 @@ class LinkDownloader:
     def __exit__(self, *exc):
         self.close()
 
+    def __del__(self):
+        # Last-resort cleanup: an escape path (e.g. a cancellation unwinding
+        # the caller's stack) can bypass close(). Reap the browser child
+        # processes when this object is collected instead of leaking them
+        # for the rest of the GUI session.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def download_from_email(self, msg, mail_uid: int, date_str: str = "") -> list[DownloadedFile]:
         self._check_cancelled()
         subject = ""
@@ -1315,12 +1364,24 @@ class LinkDownloader:
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            ctx = self._browser.new_context(accept_downloads=True, user_agent=desktop_ua)
+            ctx = self._browser.new_context(
+                accept_downloads=True,
+                user_agent=desktop_ua,
+                # Service-worker-initiated requests bypass route interception;
+                # block SW so the request guards below see the whole picture.
+                service_workers="block",
+            )
             page = ctx.new_page()
             bounded_timeout = self._remaining_timeout_ms(deadline)
             ctx.set_default_timeout(bounded_timeout)
             ctx.set_default_navigation_timeout(bounded_timeout)
             ctx.route("**/*", _route_browser_request)
+            # Route interception above never sees redirect hops (Playwright
+            # treats a redirect chain as a single interception unit); mail
+            # links may 302 into intranet addresses. Watch every request and
+            # fail closed when any of them is unsafe.
+            request_guard = _UnsafeRequestGuard(ctx)
+            ctx.on("request", request_guard)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             downloaded_path: str | None = None
@@ -1402,6 +1463,12 @@ class LinkDownloader:
             except Exception:
                 self._check_cancelled()
             self._check_cancelled()
+            if request_guard.blocked:
+                # A redirect hop (or any other request) targeted a non-public
+                # address and the context has been torn down — do not continue
+                # with clicks, extraction or fallbacks on a compromised page.
+                self.failed_url_fingerprints.add(self._url_fingerprint(url))
+                return None
             final_url = str(getattr(page, "url", "") or "")
             if final_url and not _is_safe_browser_request_url(final_url):
                 _log.warning(
