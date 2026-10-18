@@ -593,5 +593,23 @@ def save_config(cfg: dict, path: str | Path | None = None) -> None:
         else:
             path = PROJECT_ROOT / "config.json"
     path = Path(path)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(clean_cfg, fh, ensure_ascii=False, indent=2)
+    # Write-then-rename: a crash or full disk must never leave a truncated
+    # config.json. The previous file stays valid until the replacement lands.
+    import os
+    import tempfile
+    payload = json.dumps(clean_cfg, ensure_ascii=False, indent=2)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise

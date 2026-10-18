@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.invoice_fetch.config import (
     get_all_email_accounts,
@@ -359,6 +360,34 @@ class GenericImapConfigTests(unittest.TestCase):
 
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertNotIn("enabled", saved["ai"])
+
+    def test_save_config_replaces_the_file_without_temp_leftovers(self):
+        from scripts.invoice_fetch.config import save_config
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text('{"old": true}', encoding="utf-8")
+
+            save_config({"email": {"address": "test@qq.com"}}, path=path)
+
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["email"]["address"], "test@qq.com")
+            self.assertEqual([p.name for p in Path(td).iterdir()], ["config.json"])
+
+    def test_save_config_failure_keeps_the_previous_file_intact(self):
+        from scripts.invoice_fetch.config import save_config
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text('{"keep": true}', encoding="utf-8")
+
+            with patch("os.fsync", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    save_config({"email": {"address": "test@qq.com"}}, path=path)
+
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8")),
+                {"keep": True},
+            )
+            self.assertEqual([p.name for p in Path(td).iterdir()], ["config.json"])
 
     def test_ai_provider_none_does_not_affect_validation(self):
         result = validate_config_gui({
