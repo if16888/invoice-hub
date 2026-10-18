@@ -11,14 +11,14 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
 from . import review_status
 from .log_privacy import mask_invoice_number
 from .review_query import ReviewColumnFilter, ReviewQuery
 from .evidence import (
-    EvidenceStoreMixin, is_evidence_record, material_paths,
+    EvidenceStoreMixin, is_evidence_record, material_paths, path_key,
     refresh_material_projection, replace_material_paths, visible_invoice_sql,
 )
 
@@ -1200,6 +1200,47 @@ class InvoiceDB(EvidenceStoreMixin):
             if attachment_path is not None:
                 self._refresh_evidence_consumers(invoice_id)
         return True
+
+    def append_invoice_extra_paths(
+        self,
+        invoice_id: int,
+        new_paths: Iterable[str],
+    ) -> list[str]:
+        """Atomically merge *new_paths* into the stored extra_paths list.
+
+        The read-merge-write happens inside one transaction so concurrent
+        import workers (GUI import, mobile upload, CLI) cannot overwrite each
+        other's material associations with a stale snapshot.  Returns the
+        merged, de-duplicated list, or ``[]`` when the invoice is missing or
+        locked.
+        """
+        candidates = [
+            str(value).strip()
+            for value in new_paths
+            if str(value or "").strip()
+        ]
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return []
+            current = self.get_invoice(invoice_id, include_deleted=True)
+            if not current:
+                return []
+            merged = material_paths(current.get("extra_paths"))
+            seen = {path_key(path) for path in merged}
+            for candidate in candidates:
+                key = path_key(candidate)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(candidate)
+            if len(merged) != len(material_paths(current.get("extra_paths"))):
+                self._conn.execute(
+                    "UPDATE invoices SET extra_paths = ? WHERE id = ?",
+                    (json.dumps(merged, ensure_ascii=False), invoice_id),
+                )
+                replace_material_paths(self._conn, invoice_id, merged)
+        return merged
 
     def update_invoice_extra_flags(
         self,

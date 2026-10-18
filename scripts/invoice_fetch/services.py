@@ -700,8 +700,7 @@ def _attach_evidence_to_invoice(
                         pass
                 return False
 
-    extra_paths.append(stored_path)
-    db.update_invoice_file_paths(invoice["id"], extra_paths=extra_paths)
+    db.append_invoice_extra_paths(invoice["id"], [stored_path])
     db.update_invoice_extra_flags(
         invoice["id"],
         has_extra=True,
@@ -754,6 +753,7 @@ def _attach_email_extras_to_invoice(
                 existing_semantic_fingerprints.add(semantic)
 
     updated = False
+    new_extras: list[str] = []
     for e in extra_files:
         e_path = Path(e.file_path)
         source_path = ""
@@ -812,14 +812,19 @@ def _attach_email_extras_to_invoice(
 
             kept_paths.add(str((att_base.parent / ep).resolve()))
             current_extras.append(ep)
+            new_extras.append(ep)
             if incoming_semantic:
                 existing_semantic_fingerprints.add(incoming_semantic)
             updated = True
             if attached_source_paths is not None and source_path:
                 attached_source_paths.add(source_path)
 
-    if updated:
-        db.update_invoice_file_paths(invoice_id, extra_paths=current_extras)
+    if updated and new_extras:
+        # Merge against the stored list inside one DB transaction so a
+        # concurrent import cannot lose another writer's association.
+        merged_extras = db.append_invoice_extra_paths(invoice_id, new_extras)
+        if merged_extras:
+            current_extras = merged_extras
         _log.info("  已为发票 %s 关联/追加额外的证明材料: %s", invoice_id, current_extras)
 
     if current_extras:
