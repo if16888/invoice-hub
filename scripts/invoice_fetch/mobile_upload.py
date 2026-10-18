@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
 import threading
 import time
@@ -36,6 +37,12 @@ ALLOWED_UPLOAD_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 MAX_UPLOAD_FILES = 100
+
+# One QR session can accept more than a single request, but not without a
+# bound; older session directories expire so failed uploads can be retried
+# instead of being stuck as duplicates forever.
+SESSION_TOTAL_BYTES = 512 * 1024 * 1024
+SESSION_RETENTION_DAYS = 30
 
 # How long stop() waits for an in-flight upload/import before giving up.  The
 # wait is bounded so desktop shutdown cannot hang behind a slow import.
@@ -247,6 +254,59 @@ def public_upload_result(result: dict) -> dict:
     }
 
 
+def _prune_expired_upload_sessions(
+    upload_root: Path,
+    *,
+    retention_days: int,
+    keep: Path | None = None,
+) -> int:
+    """Delete date directories older than the retention window.
+
+    Only the supported ``YYYY-MM-DD`` layout is touched; anything else is
+    left alone.  Pruning expires old upload manifests so a failed import can
+    be retried later instead of matching a stale accepted hash forever.
+    Returns the number of removed date directories.
+    """
+    if retention_days <= 0 or not upload_root.is_dir():
+        return 0
+    cutoff = (datetime.now() - timedelta(days=retention_days)).date()
+    keep_resolved: Path | None = None
+    if keep is not None:
+        try:
+            keep_resolved = keep.resolve()
+        except OSError:
+            keep_resolved = None
+    removed = 0
+    try:
+        children = list(upload_root.iterdir())
+    except OSError:
+        return 0
+    for child in children:
+        try:
+            if not child.is_dir():
+                continue
+            day = datetime.strptime(child.name, "%Y-%m-%d").date()
+        except (OSError, ValueError):
+            continue
+        if day >= cutoff:
+            continue
+        if keep_resolved is not None:
+            try:
+                keep_resolved.relative_to(child.resolve())
+                continue  # never prune the tree holding the active session
+            except (OSError, ValueError):
+                pass
+        try:
+            shutil.rmtree(child)
+        except OSError:
+            _log.warning(
+                "[手机上传] expired session dir cleanup failed name=%s", child.name
+            )
+            continue
+        removed += 1
+    return removed
+
+
 class MobileUploadServer:
     """Small HTTP server used by the desktop app for one LAN upload session."""
 
@@ -261,6 +321,7 @@ class MobileUploadServer:
         ttl_seconds: int = 600,
         max_file_bytes: int = MAX_FILE_BYTES,
         max_total_bytes: int = MAX_TOTAL_BYTES,
+        max_session_bytes: int = SESSION_TOTAL_BYTES,
         import_on_upload: bool = False,
         interface_name: str = "",
         network_priority: int = 50,
@@ -277,6 +338,8 @@ class MobileUploadServer:
         self.ttl_seconds = ttl_seconds
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+        self.max_session_bytes = max(0, int(max_session_bytes))
+        self._session_accepted_bytes = 0
         self.read_timeout_seconds = max(0.1, float(read_timeout_seconds))
         self.max_connections = max(1, int(max_connections))
         self._request_bytes_lock = threading.Lock()
@@ -350,6 +413,20 @@ class MobileUploadServer:
 
         try:
             original_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                pruned = _prune_expired_upload_sessions(
+                    self.runtime_dir / "inbox" / "mobile_upload",
+                    retention_days=SESSION_RETENTION_DAYS,
+                    keep=session_dir,
+                )
+                if pruned:
+                    _log.info(
+                        "[手机上传] pruned %d expired upload session dir(s)", pruned
+                    )
+            except Exception:
+                _log.debug("mobile upload session pruning failed", exc_info=True)
+            with self._lock:
+                self._session_accepted_bytes = 0
             handler = self._make_handler()
             self._httpd = BoundedUploadHTTPServer(
                 (self.bind_host, self.port), handler,
@@ -751,6 +828,11 @@ class MobileUploadServer:
                     failed_now += 1
                     self._files.append(record)
                     continue
+                if self._session_accepted_bytes + len(content) > self.max_session_bytes:
+                    record["reason"] = "session_total_too_large"
+                    failed_now += 1
+                    self._files.append(record)
+                    continue
 
                 digest = hashlib.sha256(content).hexdigest()
                 record["sha256"] = digest
@@ -767,6 +849,7 @@ class MobileUploadServer:
                 record["stored_path"] = _runtime_relative(dest, self.runtime_dir)
                 record["status"] = "accepted"
                 accepted_now += 1
+                self._session_accepted_bytes += len(content)
                 known_hashes.add(digest)
                 accepted_paths.append(dest)
                 self._files.append(record)
