@@ -8,10 +8,29 @@ from openpyxl import load_workbook
 
 from scripts.invoice_fetch.claim_export import export_claim_package
 from scripts.invoice_fetch.db import InvoiceDB
-from scripts.invoice_fetch.reimbursement import buyer_warning, compact_buyer_warning
+from scripts.invoice_fetch.reimbursement import (
+    amount_total,
+    buyer_warning,
+    compact_buyer_warning,
+)
 
 
 class ReimbursementValidationTests(unittest.TestCase):
+    def test_amount_total_rejects_non_finite_values(self):
+        from decimal import Decimal
+
+        count, total, has_missing = amount_total([
+            {"total_amount": "100.00"},
+            {"total_amount": "NaN"},
+            {"total_amount": "Infinity"},
+            {"total_amount": "sNaN"},
+            {"total_amount": "50.00"},
+        ])
+
+        self.assertEqual(count, 5)
+        self.assertEqual(total, Decimal("150.00"))
+        self.assertTrue(has_missing)
+
     def test_buyer_warning_matches_missing_and_mismatch(self):
         cfg = {
             "reimbursement": {

@@ -768,6 +768,75 @@ class DatabaseMigrationTests(unittest.TestCase):
             del ws, wb
             gc.collect()
 
+    def test_excel_export_escapes_tab_and_cr_prefixed_values(self):
+        from scripts.invoice_fetch.excel_export import export_excel
+        import openpyxl
+
+        with tempfile.TemporaryDirectory() as td:
+            rows = [{
+                "invoice_number": "NUM124",
+                "invoice_date": "2026-05-24",
+                "total_amount": "100.00",
+                "seller_name": "\t=cmd|'/c calc'!A1",
+                "mail_subject": "\r=1+1",
+            }]
+            dest = Path(td) / "summary_formula_prefixes.xlsx"
+            export_excel(rows, dest)
+
+            wb = openpyxl.load_workbook(dest, data_only=False)
+            ws = wb.worksheets[0]
+
+            self.assertEqual(ws.cell(row=2, column=7).value, "'\t=cmd|'/c calc'!A1")
+            # openpyxl normalizes \r line breaks when writing, but the
+            # formula-escaping quote prefix must survive either way.
+            subject_value = ws.cell(row=2, column=14).value
+            self.assertTrue(subject_value.startswith("'"))
+            self.assertIn("=1+1", subject_value)
+            wb.close()
+            del ws, wb
+            gc.collect()
+
+    def test_excel_export_only_links_safe_attachment_paths(self):
+        from scripts.invoice_fetch.excel_export import export_excel
+        import openpyxl
+
+        with tempfile.TemporaryDirectory() as td:
+            safe_row = {
+                "invoice_number": "NUM125",
+                "invoice_date": "2026-05-24",
+                "total_amount": "100.00",
+                "attachment_path": "attachments/2026-05-24/original.pdf",
+            }
+            hostile_row = {
+                "invoice_number": "NUM126",
+                "invoice_date": "2026-05-25",
+                "total_amount": "100.00",
+                "attachment_path": "javascript:alert(1)",
+            }
+            dest = Path(td) / "summary_hyperlinks.xlsx"
+            export_excel([safe_row, hostile_row], dest)
+
+            wb = openpyxl.load_workbook(dest, data_only=False)
+            ws = wb["发票汇总"]
+            headers = [
+                ws.cell(row=1, column=col).value
+                for col in range(1, ws.max_column + 1)
+            ]
+            link_col = headers.index("文件路径") + 1
+            rows_by_number = {
+                ws.cell(row=row_idx, column=1).value: ws.cell(row=row_idx, column=link_col)
+                for row_idx in range(2, ws.max_row + 1)
+            }
+
+            self.assertEqual(
+                rows_by_number["NUM125"].hyperlink.target,
+                "attachments/2026-05-24/original.pdf",
+            )
+            self.assertIsNone(rows_by_number["NUM126"].hyperlink)
+            wb.close()
+            del ws, wb
+            gc.collect()
+
 
 if __name__ == "__main__":
     unittest.main()

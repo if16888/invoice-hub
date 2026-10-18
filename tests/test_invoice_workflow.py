@@ -919,6 +919,56 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
         self.assertEqual(info.invoice_type, "铁路电子客票")
 
+    def test_plain_invoice_mentioning_railway_is_not_rewritten_as_ticket(self):
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "发票号码:12345678901234567890",
+            "开票日期:2026年05月06日",
+            "销售方名称:上海铁路物资供应有限公司",
+            "购买方名称:远景智能零碳（江苏）科技有限公司",
+            "项目:钢轨配件 ¥300.00",
+            "价税合计（小写）¥500.00",
+            "备注:铁路项目物资采购",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "railway_supplies.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+
+        self.assertTrue(info.parse_success)
+        self.assertNotEqual(info.invoice_type, "铁路电子客票")
+        self.assertNotEqual(info.seller_name, "中国国家铁路集团有限公司")
+        # Must keep the real total, not the first ￥ line item.
+        self.assertEqual(info.total_amount, "500.00")
+
+    def test_date_like_and_phone_numbers_are_not_used_as_invoice_identity(self):
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "开票日期:2026年05月15日",
+            "销售方名称:常州顺达服务有限公司",
+            "购买方名称:远景智能零碳（江苏）科技有限公司",
+            "联系电话:13812345678",
+            "单据编号 11803786",
+            "校验码 20260515",
+            "价税合计（小写）¥88.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "plain_invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+
+        self.assertTrue(info.parse_success)
+        # The real 8-digit number wins; a bare YYYYMMDD must not.
+        self.assertEqual(info.invoice_number, "11803786")
+        # The contact phone must not become the invoice code.
+        self.assertNotEqual(info.invoice_code, "13812345678")
+
     def test_transport_receipt_parser_extracts_english_and_chinese_fields(self):
         samples = [
             "\n".join([

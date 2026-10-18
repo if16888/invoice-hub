@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
@@ -47,7 +48,10 @@ _COLUMNS = [
     ("tax_rate", "税率", 18),
 ]
 
-_FORMULA_PREFIXES = ("=", "+", "-", "@")
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+_HYPERLINK_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
+_SAFE_HYPERLINK_SCHEMES = frozenset({"http", "https", "file"})
 
 
 @lru_cache(maxsize=1)
@@ -78,6 +82,25 @@ def _safe_excel_value(value):
     if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
         return "'" + value
     return value
+
+
+def _safe_hyperlink_target(value) -> str | None:
+    """Return a hyperlink target for Excel, or None to keep plain text.
+
+    Local paths (drive letters, UNC, relative) and explicit http(s)/file
+    URLs stay clickable; other schemes (``javascript:``, ``mailto:``,
+    ``cmd:``, ...) must never become Excel hyperlinks.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = _HYPERLINK_SCHEME_RE.match(text)
+    if match:
+        scheme = match.group(1).lower()
+        # Single letters are Windows drive letters ("D:\..."), not schemes.
+        if len(scheme) > 1 and scheme not in _SAFE_HYPERLINK_SCHEMES:
+            return None
+    return text
 
 
 def _excel_amount_value(value):
@@ -200,8 +223,10 @@ def export_excel(rows: list[dict], dest: str | Path, *, claim: dict | None = Non
             if key in {"amount", "total_amount", "tax_amount"} and val != "":
                 cell.number_format = "#,##0.00"
             if key == "attachment_path" and val:
-                cell.hyperlink = str(val)
-                cell.font = styles["link_font"]
+                hyperlink = _safe_hyperlink_target(val)
+                if hyperlink is not None:
+                    cell.hyperlink = hyperlink
+                    cell.font = styles["link_font"]
 
     if claim is not None:
         from .claim_cover import add_claim_cover
@@ -312,5 +337,7 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
             cell = ws.cell(row=row_idx, column=col_idx, value=_safe_excel_value(val))
             _style_cell(cell)
             if key == "attachment_path" and val:
-                cell.hyperlink = str(val)
-                cell.font = _excel_styles()["link_font"]
+                hyperlink = _safe_hyperlink_target(val)
+                if hyperlink is not None:
+                    cell.hyperlink = hyperlink
+                    cell.font = _excel_styles()["link_font"]

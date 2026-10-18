@@ -81,6 +81,19 @@ def parse_railway_invoice_date(text: str) -> str | None:
     return None
 
 
+def _looks_like_date_number(value: str) -> bool:
+    """True when an 8-digit number reads as a date (YYYYMMDD), not an invoice number."""
+    if len(value) != 8 or not value.isdigit():
+        return False
+    year, month, day = int(value[:4]), int(value[4:6]), int(value[6:8])
+    return 1990 <= year <= 2099 and 1 <= month <= 12 and 1 <= day <= 31
+
+
+def _looks_like_mobile_phone(value: str) -> bool:
+    """True for mainland mobile numbers (11 digits starting with 1[3-9])."""
+    return bool(re.fullmatch(r"1[3-9]\d{9}", str(value or "")))
+
+
 
 # ── PDF parsing ──────────────────────────────────────────────────────
 
@@ -240,7 +253,11 @@ class InvoiceParser:
                 if nums_20:
                     info.invoice_number = nums_20[0]
                 elif nums_8:
-                    info.invoice_number = nums_8[0]
+                    # Skip YYYYMMDD-looking values: an issue date must not
+                    # become the invoice number that drives dedup identity.
+                    date_like = [n for n in nums_8 if not _looks_like_date_number(n)]
+                    if date_like:
+                        info.invoice_number = date_like[0]
 
             # ── Invoice code (10-12 digits) ──
             info.invoice_code = self._field(text, [
@@ -250,9 +267,12 @@ class InvoiceParser:
             if not info.invoice_code:
                 nums_long = re.findall(r"(?<!\d)(\d{10,12})(?!\d)", text)
                 for n in nums_long:
-                    if n != info.invoice_number:
-                        info.invoice_code = n
-                        break
+                    if n == info.invoice_number or _looks_like_mobile_phone(n):
+                        # An 11-digit mobile number is contact info, not an
+                        # invoice code used for dedup identity.
+                        continue
+                    info.invoice_code = n
+                    break
 
             # ── Try extracting from filename (e.g. 031002500111_11803786.pdf) ──
             fname = os.path.basename(path)
@@ -385,11 +405,26 @@ class InvoiceParser:
 
 
             # ── Dedicated Railway Ticket Parsing Override ──
+            # "铁路"/"电子客票" alone appear on unrelated documents (air
+            # e-tickets, freight invoices, hotel receipts).  This branch
+            # rewrites the seller, type and amount, so require an explicit
+            # rail-ticket marker, the 12306 service name, or both weak
+            # signals together.
+            has_railway_marker = any(
+                marker in text
+                for marker in (
+                    "电子发票（铁路电子客票）",
+                    "铁路电子客票",
+                    "中国国家铁路集团有限公司",
+                    "12306",
+                    "铁一发路",
+                )
+            )
+            weak_railway_signals = int("铁路" in text) + int("电子客票" in text)
             is_railway = (
-                "电子发票（铁路电子客票）" in text
-                or "铁路电子客票" in text
+                has_railway_marker
+                or weak_railway_signals >= 2
                 or info.seller_name == "中国国家铁路集团有限公司"
-                or "铁路" in text or "电子客票" in text or "12306" in text or "铁一发路" in text
             )
             if is_railway:
                 m_amt = re.search(r"[￥¥]\s*([\d,]+\.\d{2})", text)
