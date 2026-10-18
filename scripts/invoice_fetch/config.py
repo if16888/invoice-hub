@@ -67,7 +67,7 @@ _DEFAULTS = {
     "ai_profiles": [],
     "reimbursement": {"buyer_name": "", "buyer_tax_id": "", "strict_buyer_check": True},
     "export": {"output_dir": ""},
-    "playwright": {"channel": "auto"},
+    "playwright": {"channel": "auto", "no_sandbox": False},
     "categories": {},
 }
 

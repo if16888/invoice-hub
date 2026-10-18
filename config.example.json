@@ -80,7 +80,8 @@
     "strict_buyer_tax_check": false
   },
   "playwright": {
-    "channel": "auto"
+    "channel": "auto",
+    "no_sandbox": false
   },
   "link_download": {
     "timeout_ms": 10000,
