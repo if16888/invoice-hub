@@ -80,7 +80,7 @@ class ClaimCoverTests(unittest.TestCase):
                 self.assertTrue(db.add_invoice_to_claim(claim, invoice))
                 package = export_claim_package(db, claim, root, root, export_root=root / 'exports',
                     reimbursement_config={'filename_template': '{部门}_{姓名}_{事由}.xlsx'})
-                manifest = json.loads((package / 'manifest.json').read_text())
+                manifest = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))
                 self.assertEqual(manifest['spreadsheet'], '研发_李某_项目验收.xlsx')
                 wb = load_workbook(BytesIO((package / manifest['spreadsheet']).read_bytes()), data_only=True)
                 try:
