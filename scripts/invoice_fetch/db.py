@@ -1898,22 +1898,28 @@ class InvoiceDB(EvidenceStoreMixin):
         results: list[dict] = []
         seen: set[tuple[str, int]] = set()
 
-        if mailbox_filter is None:
-            invoice_rows = self._conn.execute(
-                "SELECT DISTINCT mailbox_key, mail_uid FROM invoices WHERE attachment_path = '' OR attachment_path IS NULL"
-            ).fetchall()
-            email_rows = self._conn.execute(
-                "SELECT mailbox_key, uid FROM emails WHERE is_invoice = 1 AND downloaded = 1"
-            ).fetchall()
-        else:
-            invoice_rows = self._conn.execute(
-                "SELECT DISTINCT mailbox_key, mail_uid FROM invoices WHERE (attachment_path = '' OR attachment_path IS NULL) AND mailbox_key = ?",
-                (mailbox_filter,),
-            ).fetchall()
-            email_rows = self._conn.execute(
-                "SELECT mailbox_key, uid FROM emails WHERE is_invoice = 1 AND downloaded = 1 AND mailbox_key = ?",
-                (mailbox_filter,),
-            ).fetchall()
+        # One query per source; the email side uses NOT EXISTS so a mailbox
+        # with thousands of downloaded emails no longer costs one SELECT per
+        # row (N+1).
+        invoice_sql = (
+            "SELECT DISTINCT mailbox_key, mail_uid FROM invoices "
+            "WHERE (attachment_path = '' OR attachment_path IS NULL)"
+        )
+        email_sql = (
+            "SELECT e.mailbox_key, e.uid FROM emails e "
+            "WHERE e.is_invoice = 1 AND e.downloaded = 1 "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM invoices i "
+            "WHERE i.mail_uid = e.uid "
+            "AND i.mailbox_key = COALESCE(NULLIF(e.mailbox_key, ''), 'legacy'))"
+        )
+        params: list[object] = []
+        if mailbox_filter is not None:
+            invoice_sql += " AND mailbox_key = ?"
+            email_sql += " AND e.mailbox_key = ?"
+            params.append(mailbox_filter)
+        invoice_rows = self._conn.execute(invoice_sql, params).fetchall()
+        email_rows = self._conn.execute(email_sql, params).fetchall()
 
         for row in invoice_rows:
             uid = row["mail_uid"]
@@ -1927,15 +1933,10 @@ class InvoiceDB(EvidenceStoreMixin):
         for row in email_rows:
             uid = row["uid"]
             mailbox = str(row["mailbox_key"] or mailbox_filter or "legacy")
-            inv = self._conn.execute(
-                "SELECT 1 FROM invoices WHERE mail_uid = ? AND mailbox_key = ?",
-                (uid, mailbox),
-            ).fetchone()
-            if not inv:
-                key = (mailbox, int(uid))
-                if key not in seen:
-                    results.append({"mailbox_key": mailbox, "mail_uid": int(uid)})
-                    seen.add(key)
+            key = (mailbox, int(uid))
+            if key not in seen:
+                results.append({"mailbox_key": mailbox, "mail_uid": int(uid)})
+                seen.add(key)
 
         return results
 

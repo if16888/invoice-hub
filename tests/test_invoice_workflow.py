@@ -1694,6 +1694,54 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertFalse(db.is_duplicate("B002", "100.00", "中国移动"))
             self.assertFalse(db.is_duplicate("", "100.00", "中国移动"))
 
+    def test_get_failed_downloads_avoids_one_query_per_email(self):
+        with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:
+            db.bulk_upsert_emails(
+                [
+                    {"uid": uid, "subject": f"s{uid}", "sender": "x", "date": "2026-05-18"}
+                    for uid in range(1, 26)
+                ]
+            )
+            for uid in range(1, 26):
+                db._conn.execute(
+                    "UPDATE emails SET is_invoice = 1, downloaded = 1 WHERE uid = ?",
+                    (uid,),
+                )
+            db._conn.commit()
+            db.insert_invoice({
+                "invoice_number": "DONE-1",
+                "mail_uid": 1,
+                "mailbox_key": "legacy",
+                "attachment_path": "attachments/a.pdf",
+            })
+            db.insert_invoice({
+                "invoice_number": "FAIL-2",
+                "mail_uid": 2,
+                "mailbox_key": "legacy",
+                "attachment_path": "",
+            })
+
+            statements: list[str] = []
+            db._conn.set_trace_callback(statements.append)
+            try:
+                failed = db.get_failed_downloads()
+            finally:
+                db._conn.set_trace_callback(None)
+
+            failed_keys = {(item["mailbox_key"], item["mail_uid"]) for item in failed}
+            self.assertIn(("legacy", 2), failed_keys)
+            self.assertIn(("legacy", 3), failed_keys)
+            self.assertNotIn(("legacy", 1), failed_keys)
+            self.assertEqual(
+                sum(1 for item in failed if item["mail_uid"] == 2),
+                1,
+                "an invoice and an email describing the same UID must merge",
+            )
+            select_count = sum(
+                1 for sql in statements if sql.lstrip().upper().startswith("SELECT")
+            )
+            self.assertLessEqual(select_count, 2, statements)
+
     def test_rescanning_soft_deleted_attachment_restores_invoice(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
