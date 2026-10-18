@@ -3148,7 +3148,6 @@ def _process_email(
                 }
                 row_id = db.insert_invoice(rec)
                 if row_id:
-                    file_restored_recorded = True
                     _track_inserted(row_id)
                     invoice_extras = extras_for_invoice(info)
                     if invoice_extras:
@@ -3416,7 +3415,6 @@ def _process_email(
         }
         row_id = db.insert_invoice(rec)
         if row_id:
-            file_restored_recorded = True
             _track_inserted(row_id)
             if invoice_extras:
                 _attach_email_extras_to_invoice(
