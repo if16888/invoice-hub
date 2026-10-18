@@ -793,6 +793,27 @@ class InvoiceDB(EvidenceStoreMixin):
         ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    def _purge_invoice_dependents(self, invoice_ids) -> None:
+        """Delete link rows that would dangle once these invoices are removed.
+
+        Callers must have already excluded invoices locked by exported or
+        reimbursed claims; what remains are draft-claim links and evidence
+        relations that would otherwise survive as orphan rows.
+        """
+        ids = [int(value) for value in invoice_ids]
+        if not ids:
+            return
+        placeholders = ", ".join("?" for _ in ids)
+        self._conn.execute(
+            f"DELETE FROM claim_group_items WHERE invoice_id IN ({placeholders})",
+            ids,
+        )
+        self._conn.execute(
+            f"DELETE FROM invoice_evidence_relations "
+            f"WHERE invoice_id IN ({placeholders}) OR evidence_id IN ({placeholders})",
+            [*ids, *ids],
+        )
+
     def soft_delete_invoice(self, invoice_id: int) -> bool:
         """Soft delete an invoice by setting is_deleted = 1."""
         if not self._require_invoice_editable(invoice_id):
@@ -817,6 +838,7 @@ class InvoiceDB(EvidenceStoreMixin):
             if self.evidence_consumers(invoice_id):
                 self._set_last_error("evidence_in_use")
                 return False
+            self._purge_invoice_dependents([invoice_id])
             self._conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
         return True
 
@@ -1861,6 +1883,8 @@ class InvoiceDB(EvidenceStoreMixin):
             self._set_last_error("invoice_exported_locked")
             return False
         with self._atomic_savepoint():
+            all_ids = [int(row[0]) for row in self._conn.execute("SELECT id FROM invoices")]
+            self._purge_invoice_dependents(all_ids)
             self._conn.execute("DELETE FROM invoices")
         _log.info("已清空已入库发票记录")
         self._set_last_error("")
@@ -1944,16 +1968,24 @@ class InvoiceDB(EvidenceStoreMixin):
         )
         with self._atomic_savepoint():
             if mailbox_key is None:
-                self._conn.execute(
-                    f"DELETE FROM invoices WHERE mail_uid IN ({placeholders}) "
+                id_rows = self._conn.execute(
+                    f"SELECT id FROM invoices WHERE mail_uid IN ({placeholders}) "
                     f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
                     uids
-                )
+                ).fetchall()
             else:
-                self._conn.execute(
-                    f"DELETE FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) "
+                id_rows = self._conn.execute(
+                    f"SELECT id FROM invoices WHERE mailbox_key = ? AND mail_uid IN ({placeholders}) "
                     f"AND (attachment_path = '' OR attachment_path IS NULL){lock_clause}",
                     [self._normalize_mailbox_key(mailbox_key), *uids],
+                ).fetchall()
+            pending_ids = [int(row[0]) for row in id_rows]
+            if pending_ids:
+                self._purge_invoice_dependents(pending_ids)
+                id_placeholders = ", ".join("?" for _ in pending_ids)
+                self._conn.execute(
+                    f"DELETE FROM invoices WHERE id IN ({id_placeholders})",
+                    pending_ids,
                 )
 
     # ── Claim Groups (CODE-004) ──────────────────────────────────────
@@ -2527,9 +2559,8 @@ class InvoiceDB(EvidenceStoreMixin):
                 for inv_id in to_delete_ids:
                     if self.evidence_consumers(inv_id):
                         raise ValueError("邮件重处理发现材料仍被引用，请刷新后重试。")
-                    # 先删除关联关系
-                    self._conn.execute("DELETE FROM claim_group_items WHERE invoice_id = ?", (inv_id,))
-                    # 后删除发票
+                    # 先删除关联关系（claim 关联与证明材料关系），再物理删除发票
+                    self._purge_invoice_dependents([inv_id])
                     self._conn.execute("DELETE FROM invoices WHERE id = ?", (inv_id,))
                 deleted = len(to_delete_ids)
 
