@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
+from .filename_safety import sanitize_windows_basename
 from .log_privacy import mask_filename, mask_sender_header, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
@@ -324,13 +325,11 @@ def _safe_download_destination(
     root = Path(save_dir).resolve()
     raw_name = str(suggested_filename or fallback_filename or "").replace("\\", "/")
     basename = raw_name.rsplit("/", 1)[-1]
-    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", basename).strip(" .")
-    if not safe_name or safe_name in {".", ".."}:
-        safe_name = re.sub(
-            r'[<>:"/\\|?*\x00-\x1f]',
-            "_",
-            str(fallback_filename or "invoice_download"),
-        ).strip(" .")
+    safe_name = sanitize_windows_basename(basename, fallback="")
+    if not safe_name:
+        safe_name = sanitize_windows_basename(
+            str(fallback_filename or ""), fallback="invoice_download",
+        )
 
     candidate = (root / safe_name).resolve()
     try:

@@ -12,6 +12,11 @@ from email.header import decode_header
 from email.message import Message
 from pathlib import Path
 
+from .filename_safety import (
+    WINDOWS_ILLEGAL_CHARS_RE,
+    escape_windows_reserved_stem,
+    sanitize_windows_basename,
+)
 from .log_privacy import mask_filename
 
 _log = logging.getLogger(__name__)
@@ -80,13 +85,6 @@ def _decode_filename(part: Message) -> str:
     return "".join(decoded).strip()
 
 
-def _safe_name(name: str, max_len: int = 80) -> str:
-    """Sanitize a filename for Windows."""
-    name = re.sub(r'[\\/:*?"<>|]', "_", name)
-    name = re.sub(r"[_\s]+", "_", name).strip("_")
-    return name[:max_len] if len(name) > max_len else name
-
-
 def _normalize_export_date_prefix(raw_value: str) -> str:
     from datetime import datetime
     text = str(raw_value or "").strip()
@@ -100,7 +98,7 @@ def _normalize_export_date_prefix(raw_value: str) -> str:
     return "unknown-date"
 
 
-_WINDOWS_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+_WINDOWS_ILLEGAL = WINDOWS_ILLEGAL_CHARS_RE
 _MAX_FILENAME_LEN = 180  # leave room for _1, _2 suffix and extension
 
 
@@ -113,7 +111,7 @@ def _safe_field(text: str, fallback: str, max_len: int = 20) -> str:
     cleaned = re.sub(r"[_\s]+", "_", cleaned).strip("_")
     if not cleaned:
         return fallback
-    return cleaned[:max_len]
+    return escape_windows_reserved_stem(cleaned[:max_len])
 
 
 def _format_amount_field(amount) -> str:
@@ -171,7 +169,7 @@ def build_managed_attachment_name(
         amt_part = _format_amount_field(total_amount)
         num_part = _safe_field(invoice_number, "待补全", 24)
         role_part = _safe_field(role, "原件", 6) if role else "原件"
-        stem = f"{cat_part}_{amt_part}_{num_part}_{role_part}"
+        stem = escape_windows_reserved_stem(f"{cat_part}_{amt_part}_{num_part}_{role_part}")
     else:
         # Legacy mode: use original filename stem
         raw_stem = name_path.stem
@@ -179,6 +177,7 @@ def build_managed_attachment_name(
         stem = re.sub(r"[_\s]+", "_", stem).strip("_")
         if not stem:
             stem = "file"
+        stem = escape_windows_reserved_stem(stem)
 
     # 4. Compose filename with optional date prefix
     if prefix_date:
@@ -195,7 +194,9 @@ def build_managed_attachment_name(
         keep = _MAX_FILENAME_LEN - len(ext)
         filename = filename[:keep] + ext
 
-    return filename
+    # 6. Final Windows pass: strip control characters/trailing dots and escape
+    #    reserved device names even if a field slipped through above.
+    return sanitize_windows_basename(filename, fallback="attachment")
 
 
 

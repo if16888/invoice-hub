@@ -23,6 +23,7 @@ from .config import (
     load_config_safe,
 )
 from .credentials import get_auth_code, has_auth_code
+from .filename_safety import escape_windows_reserved_stem
 from .mail_fetcher import MailFetcher, MailMessage
 from .attachment_handler import AttachmentHandler, build_managed_attachment_name
 from .invoice_parser import (
@@ -338,7 +339,8 @@ def _rename_by_invoice_code(
 
 def _safe_local_import_name(path: Path, max_len: int = 80) -> str:
     name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in path.name)
-    return name[:max_len] if len(name) > max_len else name
+    name = name[:max_len] if len(name) > max_len else name
+    return escape_windows_reserved_stem(name) or "file"
 
 
 def _copy_local_file_to_staging(src: Path, staging_dir: Path) -> Path:
