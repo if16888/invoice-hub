@@ -250,6 +250,27 @@ class WindowsFirewallContractTests(unittest.TestCase):
         self.assertEqual(status.reason, "stale development executable")
         self.assertEqual(status.local_port, "40000")
 
+    def test_dev_status_reports_lingering_rule_without_active_port(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            status = self.dev_status_for(
+                executable,
+                [_dev_rule(str(executable), "40000")],
+                current_port=None,
+            )
+        self.assertEqual(status.state, FirewallState.RULE_PRESENT)
+        self.assertTrue(status.development_mode)
+        self.assertEqual(status.local_port, "40000")
+        self.assertEqual(
+            status.reason, "development rule present without an active session"
+        )
+
+    def test_dev_status_without_active_port_and_no_rule_is_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            executable = Path(td) / "python.exe"
+            status = self.dev_status_for(executable, [], current_port=None)
+        self.assertEqual(status.state, FirewallState.RULE_MISSING)
+
     def test_dev_request_replaces_stale_rule_with_single_elevation_powershell(self):
         with tempfile.TemporaryDirectory() as td:
             executable = Path(td) / "python.exe"
@@ -483,6 +504,24 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
         with patch.object(firewall, "is_windows", return_value=False):
             self.assertEqual(firewall._hidden_subprocess_kwargs(), {})
 
+    def test_declined_uac_prompt_reports_cancellation(self):
+        class FakeShell32:
+            def ShellExecuteExW(self, info_pointer):
+                return 0
+
+        class FakeKernel32:
+            pass
+
+        with patch.object(firewall, "is_windows", return_value=True), patch.object(
+            firewall,
+            "_load_elevated_process_apis",
+            return_value=(FakeShell32(), FakeKernel32()),
+        ), patch.object(ctypes, "get_last_error", return_value=1223):
+            success, reason = firewall._run_elevated_process("netsh.exe", ["advfirewall"])
+
+        self.assertFalse(success)
+        self.assertIn("declined the UAC prompt", reason)
+
     @unittest.skipUnless(os.name == "nt", "requires native Windows process APIs")
     def test_windows_firewall_query_uses_hidden_argv_subprocess(self):
         startupinfo = SimpleNamespace(dwFlags=0, wShowWindow=99)
@@ -540,9 +579,9 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
 
         windll = SimpleNamespace(shell32=FakeShell32(), kernel32=FakeKernel32())
         with patch.object(firewall, "is_windows", return_value=True), patch.object(
-            firewall.ctypes,
-            "windll",
-            windll,
+            firewall,
+            "_load_elevated_process_apis",
+            return_value=(windll.shell32, windll.kernel32),
         ):
             success, reason = firewall._run_elevated_netsh_args(
                 ["advfirewall", "firewall", "add", "rule", "name=Invoice Hub"]
@@ -640,9 +679,9 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
 
         windll = SimpleNamespace(shell32=FakeShell32(), kernel32=FakeKernel32())
         with patch.object(firewall, "is_windows", return_value=True), patch.object(
-            firewall.ctypes,
-            "windll",
-            windll,
+            firewall,
+            "_load_elevated_process_apis",
+            return_value=(windll.shell32, windll.kernel32),
         ):
             script = "Write-Host 'test'"
             success, reason = firewall._run_elevated_powershell_script(script)

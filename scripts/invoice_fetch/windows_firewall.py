@@ -476,12 +476,32 @@ class _ShellExecuteInfo(ctypes.Structure):
     ]
 
 
+def _load_elevated_process_apis():
+    """Load the Win32 entry points with accurate GetLastError reporting.
+
+    ``ctypes.windll`` loads DLLs with ``use_last_error=False``, so a declined
+    UAC prompt reported a stale error code. Tests inject fakes through this
+    factory instead of the ctypes module global.
+    """
+    from ctypes import wintypes
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return shell32, kernel32
+
+
 def _run_elevated_process(file_path: str, args: list[str]) -> tuple[bool, str]:
     if not is_windows():
         return False, "non-Windows platform"
     try:
-        shell32 = ctypes.windll.shell32
-        kernel32 = ctypes.windll.kernel32
+        shell32, kernel32 = _load_elevated_process_apis()
         arguments = subprocess.list2cmdline(args)
         info = _ShellExecuteInfo()
         info.cbSize = ctypes.sizeof(info)
@@ -492,6 +512,8 @@ def _run_elevated_process(file_path: str, args: list[str]) -> tuple[bool, str]:
         info.nShow = _SW_HIDE
         if not shell32.ShellExecuteExW(ctypes.byref(info)):
             error_code = ctypes.get_last_error()
+            if error_code == 1223:  # ERROR_CANCELLED: user declined the UAC prompt
+                return False, "user declined the UAC prompt"
             return False, f"UAC rejected or ShellExecuteExW failed ({error_code})"
         wait_result = kernel32.WaitForSingleObject(
             info.hProcess,
@@ -502,7 +524,7 @@ def _run_elevated_process(file_path: str, args: list[str]) -> tuple[bool, str]:
             return False, "firewall command timed out"
         if wait_result != _WAIT_OBJECT_0:
             kernel32.CloseHandle(info.hProcess)
-            return False, "firewall command wait failed"
+            return False, f"firewall command wait failed ({ctypes.get_last_error()})"
         exit_code = ctypes.c_ulong()
         if not kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(exit_code)):
             kernel32.CloseHandle(info.hProcess)
@@ -584,10 +606,13 @@ def get_mobile_upload_dev_firewall_status(
 ) -> FirewallStatus:
     """Read development-rule state without mutating Windows Firewall.
 
-    Passive app construction has no active upload port, so it must not shell
-    out to Windows Firewall. Once a real source-run upload session exists,
-    read-only rule inspection is allowed so stale/current-port state can be
-    shown truthfully. Explicit allow/cleanup remains the only mutation path.
+    Callers must not invoke this during passive app construction (it shells
+    out to PowerShell); explicit refresh points — start, stop, and the
+    explicit allow/cleanup actions — are the intended call sites. When an
+    upload session is active, *current_port* distinguishes "this session is
+    allowed" from "a stale port is allowed". Without an active session the
+    lingering rule is still reported, so the UI can offer cleanup after the
+    session ended.
     """
     if not is_windows():
         return _development_status(FirewallState.NON_WINDOWS)
@@ -598,12 +623,6 @@ def get_mobile_upload_dev_firewall_status(
             reason="current process is not a supported development executable",
         )
     requested_port = _validated_mobile_port(current_port)
-    if requested_port is None:
-        return _development_status(
-            FirewallState.SUPPORTED,
-            executable,
-            reason="development firewall state is checked only for an active upload port",
-        )
     try:
         rules = _query_firewall_rules(DEV_FIREWALL_RULE_NAME)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
@@ -649,6 +668,14 @@ def get_mobile_upload_dev_firewall_status(
             continue
         if _is_valid_development_rule(rule, executable):
             local_port = _as_text(rule.get("LocalPort"))
+            if requested_port is None:
+                return _status_from_rule(
+                    rule,
+                    executable,
+                    development_mode=True,
+                    reason="development rule present without an active session",
+                    rule_name=DEV_FIREWALL_RULE_NAME,
+                )
             stale = local_port != str(requested_port)
             return _status_from_rule(
                 rule,

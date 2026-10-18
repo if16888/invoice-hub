@@ -450,10 +450,21 @@ class MobileUploadSessionController(QObject):
                 self._stop_requested = False
                 self._release_operation_gate()
                 self.stopped.emit()
+                self._remind_lingering_dev_firewall_rule()
                 return True
             self.stop(refresh_firewall=False)
             thread = self._start_thread
+            self._remind_lingering_dev_firewall_rule()
             return not (thread is not None and thread.isRunning()) and self.server is None and not self.timer.isActive()
+
+    def _remind_lingering_dev_firewall_rule(self) -> None:
+        """A dev-session rule outlives the service on purpose; say so at exit."""
+        if not self._dev_firewall_rule_present:
+            return
+        _log.warning(
+            "[手机上传] 开发测试防火墙规则仍在（TCP %s）；下次打开手机上传页可一键清理",
+            self._dev_firewall_port if self._dev_firewall_port is not None else "?",
+        )
 
     @staticmethod
     def qr_png(url: str) -> bytes:
@@ -919,13 +930,16 @@ class MobileUploadSessionPanel(QFrame):
             if current_rule:
                 summary = "本次访问已允许"
                 hint = f"仅当前 Python、Private 网络和当前端口（TCP {local_port}）生效。停止服务不会自动修改防火墙。"
-            else:
+            elif current_port:
                 summary = "本次访问尚未允许"
                 hint = f"检测到上次开发测试端口（TCP {local_port}）。点击“允许本次访问”将自动更新为当前端口。"
+            else:
+                summary = "开发测试授权仍在"
+                hint = f"上次开发测试授权（TCP {local_port}）仍然存在，未随服务停止自动移除。点击“清理开发测试授权”可移除。"
             if hasattr(self, "lbl_firewall_state"):
                 self.lbl_firewall_state.setText(summary)
                 self.lbl_firewall_hint.setText(hint)
-            self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}")
+            self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}（TCP {local_port}）" if local_port else f"Windows 防火墙：{summary}")
         elif development_mode and state == "rule_disabled":
             if hasattr(self, "lbl_firewall_state"):
                 self.lbl_firewall_state.setText("本次访问尚未允许")
