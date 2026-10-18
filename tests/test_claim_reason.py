@@ -1,5 +1,6 @@
 """Claim defaults, overrides, migration atomicity and export snapshots."""
 import json
+from contextlib import closing
 from io import BytesIO
 import tempfile
 import unittest
@@ -23,11 +24,14 @@ def make_v8(path):
         invoice = add_invoice(db)
         claim = db.create_claim_group('Legacy')
         assert db.add_invoice_to_claim(claim, invoice)
-    with sqlite3.connect(path) as conn:
+    # close explicitly: a leaked handle keeps the db locked on Windows and the
+    # TemporaryDirectory cleanup fails with WinError 32.
+    with closing(sqlite3.connect(path)) as conn:
         conn.execute('ALTER TABLE invoices DROP COLUMN custom_reason')
         for column in ('reason_category', 'reason_detail', 'applicant_name', 'department'):
             conn.execute(f'ALTER TABLE claim_groups DROP COLUMN {column}')
         conn.execute('PRAGMA user_version=8')
+        conn.commit()
     return invoice, claim
 
 class ClaimReasonTests(unittest.TestCase):
@@ -120,7 +124,7 @@ class ClaimReasonTests(unittest.TestCase):
             assert db.add_invoice_to_claim(claim, invoice)
             assert db.update_invoice_reason(invoice, '=HYPERLINK("evil")')
             package = export_claim_package(db, claim, tmp_path, runtime, reimbursement_config={}, export_root=tmp_path / "exports")
-            manifest = json.loads((package / 'manifest.json').read_text())
+            manifest = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))
             assert manifest['reason_detail'] == '项目验收'
             assert manifest['applicant_name'] == '李某'
             assert manifest['department'] == '研发'

@@ -107,7 +107,7 @@ class FinancialValidationTests(unittest.TestCase):
                 export_claim_package(db, claim, self.root, self.root, reimbursement_config=cfg, export_root=exports)
             self.assertFalse(exports.exists())
             package = export_claim_package(db, claim, self.root, self.root, reimbursement_config={}, export_root=exports)
-            manifest = json.loads((package / 'manifest.json').read_text())
+            manifest = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['items'][0]['tax_amount'], '13')
             self.assertEqual(manifest['items'][0]['tax_balance_status'], 'valid')
 

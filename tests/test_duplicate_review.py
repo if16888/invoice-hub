@@ -94,7 +94,7 @@ class DuplicateReviewTests(unittest.TestCase):
             candidate = db.list_duplicate_candidates()[0]
             kwargs = dict(reimbursement_config={}, export_root=self.root / 'exports')
             package = export_claim_package(db, claim, self.root, self.root, **kwargs)
-            items = json.loads((package / 'manifest.json').read_text())['items']
+            items = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))['items']
             self.assertIn('pending', {item['duplicate_review'] for item in items})
             self.assertTrue(db.resolve_duplicate_candidate(candidate['id'], 'duplicate'))
             self.assertEqual(db.get_invoice(second)['review_status'], 'approved')
@@ -103,7 +103,7 @@ class DuplicateReviewTests(unittest.TestCase):
             self.assertTrue(db.reset_duplicate_candidate(candidate['id']))
             self.assertTrue(db.resolve_duplicate_candidate(candidate['id'], 'distinct'))
             package = export_claim_package(db, claim, self.root, self.root, **kwargs)
-            items = json.loads((package / 'manifest.json').read_text())['items']
+            items = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))['items']
             self.assertIn('distinct', {item['duplicate_review'] for item in items})
 
     def test_backup_restores_review_decision(self):
@@ -139,17 +139,19 @@ class DuplicateReviewTests(unittest.TestCase):
 
     def test_v11_upgrade_and_failed_queue_migration_preserve_receipts(self):
         import sqlite3
+        from contextlib import closing
         from scripts.invoice_fetch.migrations import check_and_migrate, validate_latest_schema
         path = self.root / 'legacy.db'
         with InvoiceDB(path) as db:
             self.receipt(db)
             self.receipt(db)
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             conn.execute('DROP INDEX idx_invoices_soft_fingerprint')
             conn.execute('DROP TABLE duplicate_review_candidates')
             conn.execute('ALTER TABLE invoices DROP COLUMN soft_fingerprint')
             conn.execute('PRAGMA user_version=11')
-        with sqlite3.connect(path) as conn:
+            conn.commit()
+        with closing(sqlite3.connect(path)) as conn:
             def authorize(action, arg1, arg2, database, trigger):
                 if action == sqlite3.SQLITE_CREATE_TABLE and arg1 == 'duplicate_review_candidates':
                     return sqlite3.SQLITE_DENY
