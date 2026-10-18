@@ -24,6 +24,20 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
         cls._settings_runtime = tempfile.TemporaryDirectory()
         cls._original_settings_runtime = workbench_settings_module.RUNTIME_DIR
         workbench_settings_module.RUNTIME_DIR = Path(cls._settings_runtime.name)
+        # Pre-mark the legacy migration in the isolated store: otherwise the
+        # developer machine's registry QSettings (pre-INI layout) leaks a saved
+        # splitter width into this test, which suppresses the collapsed-rail
+        # width bonus and breaks the geometry contract.
+        from PySide6.QtCore import QSettings
+        settings = QSettings(
+            str(
+                Path(cls._settings_runtime.name)
+                / workbench_settings_module.WORKBENCH_SETTINGS_FILENAME
+            ),
+            QSettings.IniFormat,
+        )
+        settings.setValue("migration/legacy_qsettings_v1", True)
+        settings.sync()
         cls.app = QApplication.instance() or QApplication([])
 
     @classmethod
