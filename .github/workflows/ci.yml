@@ -231,7 +231,7 @@ jobs:
         run: python -m pytest -q tests/hci_acceptance/test_mutation_selftest.py tests/hci_acceptance/test_report_verdict.py tests/test_product_audit_fixes.py
 
       - name: Run real-browser SSRF regression (system Edge)
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         shell: pwsh
         env:
           INVOICE_HUB_RUN_BROWSER_SMOKE: "1"
