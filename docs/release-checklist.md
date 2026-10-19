@@ -8,12 +8,25 @@
 
 ```powershell
 python -m unittest discover -v -s tests -p "test_*.py"
+python scripts/dev/run_isolated_unittest.py --shard-count 3 --shard-index 0
 python -m scripts.invoice_fetch --help
 python scripts/check_repo_privacy.py
 python scripts/check_public_export.py .
 python -m compileall -q scripts/invoice_fetch
 git diff --check
 ```
+
+## 安全回归（发布前必须）
+
+- **真实浏览器 SSRF 回归**：在 Windows 上运行
+  `INVOICE_HUB_RUN_BROWSER_SMOKE=1 python -m pytest tests/test_browser_ssrf_redirect.py -q`，
+  确认内网重定向目标零请求到达且代理拒绝记录存在；该用例默认跳过，不得以"跳过"代替通过。
+- **原生 GUI 几何权威验收**：`Native GUI geometry preflight` 在 CI runner（1024×768）上会分类为
+  `ENVIRONMENT UNSUITABLE` 并保持非门禁；发布前必须在 **≥1366×768 的真实 Windows 显示环境**
+  运行 `python scripts/dev/check_native_gui_geometry.py` 与
+  `python -m unittest -v tests.test_workbench_native_geometry`，以合格结果作为权威验收证据。
+- **Exact-master CI attestation**：master 推送后必须确认 `Exact-master CI attestation` 为通过
+  （重试预算 8×15s，覆盖"合并紧跟 PR 绿灯"的 Actions API 竞态）。
 
 如需验证单独生成的公开仓库导出目录，先生成干净 public export，再运行：
 

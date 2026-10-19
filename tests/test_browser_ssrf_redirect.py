@@ -48,6 +48,8 @@ class BrowserRedirectSsrfTests(unittest.TestCase):
     def test_private_redirect_target_receives_no_request(self):
         channel = _available_channel()
         if channel is None:
+            if os.environ.get("INVOICE_HUB_REQUIRE_BROWSER_SSRF") == "1":
+                self.fail("browser SSRF regression requires a Chromium channel (msedge/chrome)")
             self.skipTest("no Chromium channel (msedge/chrome) available")
 
         hits: list[tuple[str, str]] = []
