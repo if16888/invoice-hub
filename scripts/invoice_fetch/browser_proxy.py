@@ -21,9 +21,18 @@ import select
 import socket
 import socketserver
 import threading
+import time
 from urllib.parse import urlsplit
 
 _log = logging.getLogger("invoice_fetch")
+
+
+class _MalformedRequest(Exception):
+    """The client sent a request this proxy cannot forward safely."""
+
+
+class _BodyTooLarge(Exception):
+    """The request body exceeds the proxy's forwarding budget."""
 
 _HEADER_LIMIT_BYTES = 64 * 1024
 _BODY_LIMIT_BYTES = 8 * 1024 * 1024
@@ -55,6 +64,7 @@ class SafeBrowserProxy:
         host: str = "127.0.0.1",
         header_timeout: float = 15.0,
         connect_timeout: float = 10.0,
+        idle_timeout: float = 120.0,
         max_connections: int = 64,
     ):
         if not callable(resolver):
@@ -62,10 +72,13 @@ class SafeBrowserProxy:
         self.resolver = resolver
         self.header_timeout = float(header_timeout)
         self.connect_timeout = float(connect_timeout)
+        self.idle_timeout = max(0.05, float(idle_timeout))
         self._host = host
         self._slots = threading.BoundedSemaphore(max(1, int(max_connections)))
         self._server: socketserver.ThreadingTCPServer | None = None
         self._thread: threading.Thread | None = None
+        self._tunnels_lock = threading.Lock()
+        self._active_sockets: set[socket.socket] = set()
         self.blocked_count = 0
         self.blocked_fingerprints: list[str] = []
 
@@ -110,6 +123,7 @@ class SafeBrowserProxy:
         server, thread = self._server, self._thread
         self._server = None
         self._thread = None
+        self._close_active_tunnels()
         if server is not None:
             try:
                 server.shutdown()
@@ -117,6 +131,25 @@ class SafeBrowserProxy:
                 server.server_close()
         if thread is not None:
             thread.join(timeout=2.0)
+
+    def _register_tunnel(self, *sockets_to_track: socket.socket) -> None:
+        with self._tunnels_lock:
+            self._active_sockets.update(sockets_to_track)
+
+    def _unregister_tunnel(self, *sockets_to_track: socket.socket) -> None:
+        with self._tunnels_lock:
+            self._active_sockets.difference_update(sockets_to_track)
+
+    def _close_active_tunnels(self) -> None:
+        """Wake and terminate every tunnel so stop() leaves no lingering links."""
+        with self._tunnels_lock:
+            active = list(self._active_sockets)
+            self._active_sockets.clear()
+        for sock in active:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def __enter__(self) -> "SafeBrowserProxy":
         self.start()
@@ -230,7 +263,11 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             return
         try:
             self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            self._pump(self.request, upstream)
+            proxy._register_tunnel(self.request, upstream)
+            try:
+                self._pump(self.request, upstream, proxy.idle_timeout)
+            finally:
+                proxy._unregister_tunnel(self.request, upstream)
         finally:
             try:
                 upstream.close()
@@ -257,39 +294,57 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             self._reject(403)
             return
 
-        content_length = 0
-        for raw_line in header.split(b"\r\n")[1:]:
+        header_lines = header.split(b"\r\n")
+        content_length: int | None = None
+        transfer_chunked = False
+        for raw_line in header_lines[1:]:
             name, _, value = raw_line.partition(b":")
-            if name.strip().lower() == b"content-length":
+            key = name.strip().lower()
+            if key == b"content-length":
                 try:
                     content_length = int(value.strip())
                 except ValueError:
                     content_length = 0
-                break
-        if content_length > _BODY_LIMIT_BYTES:
+            elif key == b"transfer-encoding" and b"chunked" in value.lower():
+                transfer_chunked = True
+        if content_length is not None and content_length > _BODY_LIMIT_BYTES:
             self._reject(413)
             return
-        body = body_prefix
-        while len(body) < content_length:
-            chunk = self.request.recv(min(65536, content_length - len(body)))
-            if not chunk:
-                break
-            body += chunk
+        if transfer_chunked:
+            try:
+                body = self._read_chunked_body(self.request, body_prefix)
+            except _BodyTooLarge:
+                self._reject(413)
+                return
+            except _MalformedRequest:
+                self._reject(400)
+                return
+            content_length = len(body)
+        else:
+            body = body_prefix
+            wanted = content_length or 0
+            while len(body) < wanted:
+                chunk = self.request.recv(min(65536, wanted - len(body)))
+                if not chunk:
+                    break
+                body += chunk
 
         path = parsed.path or "/"
         if parsed.query:
             path += "?" + parsed.query
         forwarded = [f"{method} {path} HTTP/1.1"]
-        for raw_line in header.split(b"\r\n")[1:]:
+        for raw_line in header_lines[1:]:
             if not raw_line:
                 continue
             name = raw_line.split(b":", 1)[0].strip().lower()
-            if name in {b"host", b"connection", b"proxy-connection"}:
+            if name in {b"host", b"connection", b"proxy-connection", b"transfer-encoding", b"content-length"}:
                 continue
             forwarded.append(raw_line.decode("iso-8859-1", errors="replace"))
         forwarded.append(f"Host: {host}" + (f":{port}" if port != 80 else ""))
+        if content_length is not None:
+            forwarded.append(f"Content-Length: {content_length}")
         forwarded.append("Connection: close")
-        payload = "\r\n".join(forwarded).encode("iso-8859-1") + b"\r\n\r\n" + body[:content_length]
+        payload = "\r\n".join(forwarded).encode("iso-8859-1") + b"\r\n\r\n" + body[: content_length or 0]
 
         try:
             upstream = socket.create_connection((address, port), timeout=proxy.connect_timeout)
@@ -298,7 +353,7 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             return
         try:
             upstream.sendall(payload)
-            upstream.settimeout(proxy.connect_timeout)
+            upstream.settimeout(proxy.idle_timeout)
             while True:
                 chunk = upstream.recv(65536)
                 if not chunk:
@@ -312,18 +367,62 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             except OSError:
                 pass
 
+    def _read_chunked_body(self, client, prefix: bytes) -> bytes:
+        """De-chunk a request body so the forwarded request carries a length."""
+        pending = bytearray(prefix)
+        body = bytearray()
+
+        def read_line() -> bytes:
+            nonlocal pending
+            while b"\r\n" not in pending:
+                chunk = client.recv(4096)
+                if not chunk:
+                    raise _MalformedRequest
+                pending += chunk
+                if len(pending) > _HEADER_LIMIT_BYTES:
+                    raise _MalformedRequest
+            line, _, rest = bytes(pending).partition(b"\r\n")
+            pending = bytearray(rest)
+            return line
+
+        while True:
+            size_text = read_line().split(b";", 1)[0].strip()
+            try:
+                size = int(size_text, 16)
+            except ValueError as exc:
+                raise _MalformedRequest from exc
+            if size == 0:
+                # Trailer headers are consumed until the terminating blank line.
+                while True:
+                    trailer = read_line()
+                    if trailer == b"":
+                        return bytes(body)
+            while len(pending) < size + 2:
+                chunk = client.recv(4096)
+                if not chunk:
+                    raise _MalformedRequest
+                pending += chunk
+            body += pending[:size]
+            del pending[: size + 2]
+            if len(body) > _BODY_LIMIT_BYTES:
+                raise _BodyTooLarge
+
     @staticmethod
-    def _pump(left, right) -> None:
+    def _pump(left, right, idle_timeout: float = _IDLE_TUNNEL_SECONDS) -> None:
         peers = [left, right]
+        last_activity = time.monotonic()
         try:
             while True:
-                readable, _, _ = select.select(peers, [], [], _IDLE_TUNNEL_SECONDS)
+                readable, _, _ = select.select(peers, [], [], min(5.0, idle_timeout))
                 if not readable:
+                    if time.monotonic() - last_activity >= idle_timeout:
+                        return
                     continue
                 for source in readable:
                     data = source.recv(65536)
                     if not data:
                         return
+                    last_activity = time.monotonic()
                     (right if source is left else left).sendall(data)
         except OSError:
             return
