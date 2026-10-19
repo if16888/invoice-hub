@@ -5833,7 +5833,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_common_export_choose = self.settings_common_widget.btn_export_choose
         self.btn_common_export_open = self.settings_common_widget.btn_export_open
         self.btn_common_mailbox_manage = self.settings_common_widget.btn_mailbox_manage
-        common_scroll.setWidget(self.settings_common_widget)
+        # Keep the settings column readable on wide monitors: same 1120 px
+        # contract as the advanced tab host, centered inside the scroll area.
+        self.settings_common_widget.setMaximumWidth(SettingsPageLayout.maximum_width)
+        common_host = QWidget(common_scroll)
+        common_host_layout = QHBoxLayout(common_host)
+        common_host_layout.setContentsMargins(0, 0, 0, 0)
+        common_host_layout.addStretch(1)
+        common_host_layout.addWidget(self.settings_common_widget, 8)
+        common_host_layout.addStretch(1)
+        common_scroll.setWidget(common_host)
         self.settings_common_page = common_scroll
         self.settings_mode_stack.addWidget(common_scroll)
 
