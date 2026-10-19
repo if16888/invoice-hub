@@ -1126,6 +1126,9 @@ class PreviewMixin:
 
         evidence_id = doc["evidence_id"]
         evidence_name = doc["basename"]
+        if callable(getattr(self, "_link_preview_evidence", None)):
+            self._link_preview_evidence(invoice_id, evidence_id, evidence_name)
+            return
         invoice_num = self.current_invoice.get("invoice_number") or "（无发票号）"
         current_file_path = doc["path"]
 

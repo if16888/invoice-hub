@@ -53,6 +53,7 @@ class SettingsResponsiveFeedbackTests(unittest.TestCase):
             window.show()
             self.settle()
             window._switch_main_page("settings")
+            window._set_settings_mode("advanced")
             self.settle()
             try:
                 yield window, cfg

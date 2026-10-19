@@ -90,6 +90,9 @@ all `*_contract.py` or `*_baseline.py` files: those names may represent valid
 domain concepts. Existing files with those names remain explicitly recorded as
 historical debt; any broader future ban requires a separate semantic policy.
 
+The current frozen `*_fixes.py` / `*_baseline.py` inventory and its regression
+guard are recorded in [GUI legacy patch policy](architecture/gui-legacy-patch-policy.md).
+
 Tests must derive from current user-observable behavior and current product
 contracts:
 

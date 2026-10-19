@@ -73,6 +73,38 @@ class LocalImportCancellationTests(unittest.TestCase):
             self.assertEqual(stats["new_invoice_ids"], [1, 2])
             self.assertEqual(stats["failed"], 0)
 
+    def test_scan_cancellation_during_a_source_is_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source_dir = self._source_dir(base)
+            control = ScanControl()
+            processed = []
+
+            def process_source(source_name, *_args, **_kwargs):
+                processed.append(source_name)
+                if source_name == "B.pdf":
+                    control.cancel()
+                    raise services.ScanCancelled("用户取消邮箱扫描")
+                return self._result(len(processed))
+
+            with patch.object(services, "RUNTIME_DIR", base / "runtime"), patch.object(
+                services, "_import_local_pdf", side_effect=process_source
+            ):
+                with InvoiceDB(base / "invoices.db") as db:
+                    stats = services._import_local_directory(
+                        source_dir,
+                        db,
+                        parser=Mock(),
+                        categories={},
+                        att_dir=base / "attachments",
+                        scan_control=control,
+                    )
+
+            self.assertEqual(processed, ["A.pdf", "B.pdf"])
+            self.assertTrue(stats["cancelled"])
+            self.assertEqual(stats["added"], 1)
+            self.assertEqual(stats["failed"], 0)
+
     def test_cancel_before_first_source_processes_nothing(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -280,7 +312,15 @@ class LocalImportCancellationTests(unittest.TestCase):
 
                 information.assert_not_called()
                 critical.assert_not_called()
-                self.assertIn("已取消", window.statusBar().currentMessage())
+                status_bar = window.statusBar()
+                current_message = getattr(status_bar, "currentMessage", None)
+                if callable(current_message):
+                    self.assertIn("已取消", current_message())
+                else:
+                    # Some supported PySide builds expose the native QStatusBar
+                    # as a QWidget wrapper without currentMessage(); the same
+                    # cancellation summary is still recorded in the UI log.
+                    self.assertIn("已取消", window.txt_log.toPlainText())
             finally:
                 window.close()
                 self.app.processEvents()

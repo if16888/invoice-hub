@@ -373,6 +373,26 @@ def apply_settings_responsive_metrics(window, width: int | None = None) -> None:
         if footer_layout is not None:
             footer_layout.setDirection(QBoxLayout.TopToBottom if narrow_actions else QBoxLayout.LeftToRight)
 
+    QTimer.singleShot(0, lambda target=window: _fit_mailbox_status_wrapping(target))
+
+
+def _fit_mailbox_status_wrapping(window) -> None:
+    """Give wrapped connection/scan feedback its measured height after resize."""
+    for name in ("lbl_settings_mailbox_test_status", "lbl_settings_mailbox_scan_result"):
+        label = getattr(window, name, None)
+        if label is None:
+            continue
+        try:
+            if not label.wordWrap() or label.width() <= 0:
+                continue
+            label.setMinimumHeight(0)
+            required = label.heightForWidth(label.width())
+            if required > 0:
+                label.setMinimumHeight(required)
+                label.updateGeometry()
+        except RuntimeError:
+            return
+
 
 def _replace_mailbox_header(window, surface: QFrame, surface_layout: QVBoxLayout) -> None:
     if surface.property("mailboxHeaderPolished"):

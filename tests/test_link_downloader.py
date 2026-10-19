@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from email.message import EmailMessage
 
+from scripts.invoice_fetch import link_downloader
 from scripts.invoice_fetch.link_downloader import (
     extract_links_with_metadata_from_html,
     _dedup_and_prioritize_with_metadata,
@@ -411,7 +412,13 @@ class TestLinkDownloader(unittest.TestCase):
             page.wait_for_timeout.side_effect = dispatch
             return None
 
-        with patch.object(dl, '_ensure_browser'), patch.object(dl, '_handle_nuonuo_invoice_page', side_effect=open_popup):
+        from scripts.invoice_fetch import link_downloader as link_downloader_module
+
+        with (
+            patch.object(dl, '_ensure_browser'),
+            patch.object(dl, '_handle_nuonuo_invoice_page', side_effect=open_popup),
+            patch.object(link_downloader_module, '_host_resolves_to_public_addresses', return_value=True),
+        ):
             result = dl._download_url(page.url, 123, 0, '2026-07-22', disable_fallback=True)
         self.assertIsNotNone(result)
         self.assertEqual(result.source_type, 'official_download')
@@ -669,6 +676,332 @@ class TestLinkDownloader(unittest.TestCase):
         self.assertEqual(mock_download.thread_id, current_thread_id)
         self.assertEqual(dest.read_bytes(), b"synthetic download")
         self.assertEqual(list(dest.parent.glob("*.part")), [])
+
+    def test_save_download_never_reuses_an_existing_file(self):
+        class MockDownload:
+            def __init__(self):
+                self.called = False
+
+            def save_as(self, path):
+                self.called = True
+                Path(path).write_bytes(b"new download")
+
+        existing = Path(self.tmp_dir) / "same-name.pdf"
+        existing.write_bytes(b"another invoice original")
+
+        download = MockDownload()
+        ok = _save_download_to_path(download, existing)
+
+        self.assertFalse(ok)
+        self.assertFalse(download.called)
+        self.assertEqual(existing.read_bytes(), b"another invoice original")
+
+    def test_unique_download_destination_avoids_existing_names(self):
+        from scripts.invoice_fetch.link_downloader import _unique_download_destination
+
+        base = Path(self.tmp_dir) / "invoice.pdf"
+        base.write_bytes(b"existing")
+        first = _unique_download_destination(base)
+        self.assertEqual(first.name, "invoice_1.pdf")
+        first.write_bytes(b"existing")
+        second = _unique_download_destination(base)
+        self.assertEqual(second.name, "invoice_2.pdf")
+        self.assertFalse(second.exists())
+
+    def test_dns_safety_decisions_expire_with_the_ttl_window(self):
+        import socket
+        from scripts.invoice_fetch import link_downloader
+
+        calls: list[str] = []
+
+        def public_getaddrinfo(host, port, **_kwargs):
+            calls.append(str(host))
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+        link_downloader._host_resolves_to_public_addresses.cache_clear()
+        try:
+            with patch.object(
+                link_downloader, "_dns_cache_bucket", return_value=1
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=public_getaddrinfo
+            ):
+                self.assertTrue(
+                    link_downloader._host_resolves_to_public_addresses("ttl.example", 443)
+                )
+                self.assertTrue(
+                    link_downloader._host_resolves_to_public_addresses("ttl.example", 443)
+                )
+                self.assertEqual(len(calls), 1)
+
+            # A new TTL window must re-resolve instead of reusing the stale
+            # decision for the whole process lifetime.
+            with patch.object(
+                link_downloader, "_dns_cache_bucket", return_value=2
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=public_getaddrinfo
+            ):
+                self.assertTrue(
+                    link_downloader._host_resolves_to_public_addresses("ttl.example", 443)
+                )
+                self.assertEqual(len(calls), 2)
+        finally:
+            link_downloader._host_resolves_to_public_addresses.cache_clear()
+
+    def test_resolve_public_address_vets_every_resolved_record(self):
+        import socket
+        from scripts.invoice_fetch import link_downloader
+
+        def records_for(addresses):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))
+                for address in addresses
+            ]
+
+        link_downloader._clear_dns_safety_cache()
+        try:
+            # Literal addresses never hit the resolver.
+            self.assertIsNone(link_downloader._resolve_public_address("127.0.0.1", 443))
+            self.assertEqual(
+                link_downloader._resolve_public_address("93.184.216.34", 443),
+                "93.184.216.34",
+            )
+
+            with patch.object(
+                link_downloader.socket,
+                "getaddrinfo",
+                side_effect=lambda host, port, **_k: records_for(["93.184.216.34"]),
+            ):
+                self.assertEqual(
+                    link_downloader._resolve_public_address("public.example", 443),
+                    "93.184.216.34",
+                )
+            link_downloader._clear_dns_safety_cache()
+
+            # A single non-public record fails the whole host closed.
+            with patch.object(
+                link_downloader.socket,
+                "getaddrinfo",
+                side_effect=lambda host, port, **_k: records_for(["93.184.216.34", "10.0.0.5"]),
+            ):
+                self.assertIsNone(
+                    link_downloader._resolve_public_address("mixed.example", 443)
+                )
+            link_downloader._clear_dns_safety_cache()
+
+            with patch.object(
+                link_downloader.socket,
+                "getaddrinfo",
+                side_effect=lambda host, port, **_k: records_for(["192.168.1.10"]),
+            ):
+                self.assertIsNone(
+                    link_downloader._resolve_public_address("internal.example", 443)
+                )
+        finally:
+            link_downloader._clear_dns_safety_cache()
+
+    def test_resolve_public_address_is_cached_per_ttl_bucket(self):
+        import socket
+        from scripts.invoice_fetch import link_downloader
+
+        calls: list[str] = []
+
+        def public_getaddrinfo(host, port, **_kwargs):
+            calls.append(str(host))
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+        link_downloader._clear_dns_safety_cache()
+        try:
+            with patch.object(
+                link_downloader, "_dns_cache_bucket", return_value=1
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=public_getaddrinfo
+            ):
+                first = link_downloader._resolve_public_address("ttl.example", 443)
+                second = link_downloader._resolve_public_address("ttl.example", 443)
+                self.assertEqual(first, "93.184.216.34")
+                self.assertEqual(second, "93.184.216.34")
+                self.assertEqual(len(calls), 1)
+
+            with patch.object(
+                link_downloader, "_dns_cache_bucket", return_value=2
+            ), patch.object(
+                link_downloader.socket, "getaddrinfo", side_effect=public_getaddrinfo
+            ):
+                link_downloader._resolve_public_address("ttl.example", 443)
+                self.assertEqual(len(calls), 2)
+        finally:
+            link_downloader._clear_dns_safety_cache()
+
+class DownloaderCleanupTests(unittest.TestCase):
+    """Cleanup steps must not block each other or escape into callers."""
+
+    def test_browser_close_failure_still_stops_playwright(self):
+        class BadBrowser:
+            def close(self):
+                raise RuntimeError("browser close boom")
+
+        class RecordingPlaywright:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        with tempfile.TemporaryDirectory() as td:
+            downloader = link_downloader.LinkDownloader(td)
+            playwright = RecordingPlaywright()
+            downloader._browser = BadBrowser()
+            downloader._pw = playwright
+            downloader.close()  # must not raise
+
+        self.assertTrue(playwright.stopped)
+        self.assertIsNone(downloader._browser)
+        self.assertIsNone(downloader._pw)
+
+    def test_playwright_stop_failure_still_clears_state(self):
+        class RecordingBrowser:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class BadPlaywright:
+            def stop(self):
+                raise RuntimeError("playwright stop boom")
+
+        with tempfile.TemporaryDirectory() as td:
+            downloader = link_downloader.LinkDownloader(td)
+            browser = RecordingBrowser()
+            downloader._browser = browser
+            downloader._pw = BadPlaywright()
+            downloader.close()  # must not raise
+
+        self.assertTrue(browser.closed)
+        self.assertIsNone(downloader._browser)
+        self.assertIsNone(downloader._pw)
+
+
+class ChromiumSandboxTests(unittest.TestCase):
+    """The Chromium sandbox stays on unless a run explicitly opts out."""
+
+    def test_default_launch_args_keep_the_sandbox(self):
+        args = link_downloader.playwright_launch_args(no_sandbox=False)
+        self.assertNotIn("--no-sandbox", args)
+        self.assertIn("--disable-blink-features=AutomationControlled", args)
+
+    def test_opt_in_launch_args_disable_the_sandbox(self):
+        args = link_downloader.playwright_launch_args(no_sandbox=True)
+        self.assertIn("--no-sandbox", args)
+
+    def test_resolve_no_sandbox_defaults_to_false(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", None)
+            self.assertFalse(link_downloader.resolve_no_sandbox({"playwright": {"channel": "auto"}}))
+            self.assertFalse(link_downloader.resolve_no_sandbox(None))
+
+    def test_resolve_no_sandbox_honors_config_and_env_override(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", None)
+            self.assertTrue(
+                link_downloader.resolve_no_sandbox({"playwright": {"no_sandbox": True}})
+            )
+        with patch.dict(os.environ, {"INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX": "1"}):
+            self.assertTrue(
+                link_downloader.resolve_no_sandbox({"playwright": {"no_sandbox": False}})
+            )
+        with patch.dict(os.environ, {"INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX": "0"}):
+            self.assertFalse(
+                link_downloader.resolve_no_sandbox({"playwright": {"no_sandbox": True}})
+            )
+
+    @staticmethod
+    def _fake_playwright(chromium):
+        class FakeBrowser:
+            def close(self):
+                pass
+
+        class FakePlaywright:
+            def __init__(self, chromium):
+                self.chromium = chromium
+
+            def stop(self):
+                pass
+
+        class FakeSyncPlaywright:
+            def __init__(self, chromium):
+                self._chromium = chromium
+
+            def start(self):
+                return FakePlaywright(self._chromium)
+
+        return FakeSyncPlaywright(chromium)
+
+    def _run_ensure_browser(self, chromium, env_overrides=None):
+        env = dict(env_overrides or {})
+        with patch.dict(os.environ, env, clear=False), patch(
+            "scripts.invoice_fetch.config.load_config_safe",
+            return_value={"playwright": {"channel": "auto"}},
+        ), patch("playwright.sync_api.sync_playwright", return_value=self._fake_playwright(chromium)):
+            os.environ.pop("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", None)
+            if env_overrides:
+                os.environ.update(env_overrides)
+            with tempfile.TemporaryDirectory() as td:
+                downloader = link_downloader.LinkDownloader(td)
+                downloader._ensure_browser()
+                downloader.close()
+
+    @staticmethod
+    def _recording_chromium():
+        class FakeBrowser:
+            def close(self):
+                pass
+
+        class FakeChromium:
+            def __init__(self):
+                self.calls = []
+
+            def launch(
+                self,
+                channel=None,
+                headless=False,
+                args=None,
+                timeout=None,
+                chromium_sandbox=None,
+                proxy=None,
+            ):
+                self.calls.append({
+                    "channel": channel or "chromium",
+                    "args": list(args or []),
+                    "chromium_sandbox": chromium_sandbox,
+                    "proxy": dict(proxy or {}),
+                })
+                if channel == "msedge":
+                    return FakeBrowser()
+                raise RuntimeError("unavailable")
+
+        return FakeChromium()
+
+    def test_ensure_browser_requests_the_sandbox_by_default(self):
+        chromium = self._recording_chromium()
+        self._run_ensure_browser(chromium)
+
+        self.assertTrue(chromium.calls)
+        for call in chromium.calls:
+            self.assertIs(call["chromium_sandbox"], True, call)
+            self.assertNotIn("--no-sandbox", call["args"], call)
+            proxy_server = call["proxy"].get("server", "")
+            self.assertTrue(proxy_server.startswith("http://127.0.0.1:"), call)
+
+    def test_ensure_browser_respects_the_opt_out(self):
+        chromium = self._recording_chromium()
+        self._run_ensure_browser(chromium, {"INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX": "1"})
+
+        self.assertTrue(chromium.calls)
+        for call in chromium.calls:
+            self.assertIs(call["chromium_sandbox"], False, call)
+            self.assertIn("--no-sandbox", call["args"], call)
+
 
 if __name__ == "__main__":
     unittest.main()

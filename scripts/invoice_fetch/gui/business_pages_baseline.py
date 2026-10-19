@@ -10,8 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QSizePolicy, QWidget
 from shiboken6 import isValid
 
-from ..claim_export import _normalize_export_date_prefix
-from ..export_paths import resolve_export_directory
+from ..export_paths import normalize_export_date_prefix, resolve_export_directory
 from ..review_status import APPROVED
 from .semantic_checklist import install_semantic_checklist_contract
 from .ui_components import ChecklistRow
@@ -143,7 +142,7 @@ def _export_naming_state(invoices: list[dict]) -> tuple[str, str]:
             or invoice.get("mail_date")
             or ""
         )
-        if _normalize_export_date_prefix(raw_date) == "unknown-date":
+        if normalize_export_date_prefix(raw_date) == "unknown-date":
             fallback_count += 1
 
     if fallback_count:

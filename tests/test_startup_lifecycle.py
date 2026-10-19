@@ -14,6 +14,10 @@ from scripts.invoice_fetch.gui.hci_v1 import HciTaskCard, ResponsiveTaskCardRow
 
 
 class StartupLifecycleOrderingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
     def test_public_launcher_uses_first_paint_lifecycle_for_normal_desktop(self):
         source = Path("scripts/invoice_fetch/gui/__init__.py").read_text(encoding="utf-8")
         self.assertIn("start_first_paint_deferred_gui_app", source)

@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
 import threading
 import time
@@ -26,6 +27,7 @@ from urllib.parse import urlparse
 from .gui.performance_probe import performance_stage
 
 from .config import RUNTIME_DIR
+from .filename_safety import escape_windows_reserved_stem
 from .log_privacy import sanitize_log_message
 
 
@@ -36,6 +38,16 @@ ALLOWED_UPLOAD_EXTS = {".pdf", ".ofd", ".png", ".jpg", ".jpeg", ".heic"}
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 MAX_UPLOAD_FILES = 100
+
+# One QR session can accept more than a single request, but not without a
+# bound; older session directories expire so failed uploads can be retried
+# instead of being stuck as duplicates forever.
+SESSION_TOTAL_BYTES = 512 * 1024 * 1024
+SESSION_RETENTION_DAYS = 30
+
+# How long stop() waits for an in-flight upload/import before giving up.  The
+# wait is bounded so desktop shutdown cannot hang behind a slow import.
+UPLOAD_STOP_WAIT_SECONDS = 10.0
 
 
 class HeaderDeadlineHandlerMixin:
@@ -243,6 +255,59 @@ def public_upload_result(result: dict) -> dict:
     }
 
 
+def _prune_expired_upload_sessions(
+    upload_root: Path,
+    *,
+    retention_days: int,
+    keep: Path | None = None,
+) -> int:
+    """Delete date directories older than the retention window.
+
+    Only the supported ``YYYY-MM-DD`` layout is touched; anything else is
+    left alone.  Pruning expires old upload manifests so a failed import can
+    be retried later instead of matching a stale accepted hash forever.
+    Returns the number of removed date directories.
+    """
+    if retention_days <= 0 or not upload_root.is_dir():
+        return 0
+    cutoff = (datetime.now() - timedelta(days=retention_days)).date()
+    keep_resolved: Path | None = None
+    if keep is not None:
+        try:
+            keep_resolved = keep.resolve()
+        except OSError:
+            keep_resolved = None
+    removed = 0
+    try:
+        children = list(upload_root.iterdir())
+    except OSError:
+        return 0
+    for child in children:
+        try:
+            if not child.is_dir():
+                continue
+            day = datetime.strptime(child.name, "%Y-%m-%d").date()
+        except (OSError, ValueError):
+            continue
+        if day >= cutoff:
+            continue
+        if keep_resolved is not None:
+            try:
+                keep_resolved.relative_to(child.resolve())
+                continue  # never prune the tree holding the active session
+            except (OSError, ValueError):
+                pass
+        try:
+            shutil.rmtree(child)
+        except OSError:
+            _log.warning(
+                "[手机上传] expired session dir cleanup failed name=%s", child.name
+            )
+            continue
+        removed += 1
+    return removed
+
+
 class MobileUploadServer:
     """Small HTTP server used by the desktop app for one LAN upload session."""
 
@@ -257,6 +322,7 @@ class MobileUploadServer:
         ttl_seconds: int = 600,
         max_file_bytes: int = MAX_FILE_BYTES,
         max_total_bytes: int = MAX_TOTAL_BYTES,
+        max_session_bytes: int = SESSION_TOTAL_BYTES,
         import_on_upload: bool = False,
         interface_name: str = "",
         network_priority: int = 50,
@@ -273,6 +339,8 @@ class MobileUploadServer:
         self.ttl_seconds = ttl_seconds
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+        self.max_session_bytes = max(0, int(max_session_bytes))
+        self._session_accepted_bytes = 0
         self.read_timeout_seconds = max(0.1, float(read_timeout_seconds))
         self.max_connections = max(1, int(max_connections))
         self._request_bytes_lock = threading.Lock()
@@ -287,6 +355,7 @@ class MobileUploadServer:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._upload_lock = threading.Lock()
+        self._manifest_lock = threading.Lock()
         self._files: list[dict] = []
         self._stats = {
             "accepted": 0,
@@ -345,6 +414,20 @@ class MobileUploadServer:
 
         try:
             original_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                pruned = _prune_expired_upload_sessions(
+                    self.runtime_dir / "inbox" / "mobile_upload",
+                    retention_days=SESSION_RETENTION_DAYS,
+                    keep=session_dir,
+                )
+                if pruned:
+                    _log.info(
+                        "[手机上传] pruned %d expired upload session dir(s)", pruned
+                    )
+            except Exception:
+                _log.debug("mobile upload session pruning failed", exc_info=True)
+            with self._lock:
+                self._session_accepted_bytes = 0
             handler = self._make_handler()
             self._httpd = BoundedUploadHTTPServer(
                 (self.bind_host, self.port), handler,
@@ -373,7 +456,7 @@ class MobileUploadServer:
                 self._lan_client_access_confirmed = False
                 self._local_self_check = "pending"
                 self._local_self_check_error = ""
-            self._write_manifest()
+                self._write_manifest()
 
             self._thread = threading.Thread(
                 target=self._httpd.serve_forever,
@@ -445,8 +528,31 @@ class MobileUploadServer:
                 if thread.is_alive():
                     thread.join(timeout=2)
         self._thread = None
+        self._wait_for_active_upload()
         if httpd is not None:
             _log.info("[手机上传] server stop batch_id=<redacted>")
+
+    def _wait_for_active_upload(self, timeout: float | None = None) -> bool:
+        """Wait for an in-flight upload/import so shutdown cannot corrupt it.
+
+        Handler threads are daemons; without this wait, shutting the desktop
+        down mid-import could leave half-copied files behind.  The wait is
+        bounded and only reports failure, never raises.
+        """
+        with self._lock:
+            active = bool(self._active_upload_batch_id)
+        if not active:
+            return True
+        wait_seconds = UPLOAD_STOP_WAIT_SECONDS if timeout is None else float(timeout)
+        acquired = self._upload_lock.acquire(timeout=max(0.0, wait_seconds))
+        if not acquired:
+            _log.warning(
+                "[手机上传] server stop while upload still active batch_id=<redacted> waited_s=%s",
+                round(wait_seconds, 2),
+            )
+            return False
+        self._upload_lock.release()
+        return True
 
     def is_token_valid(self, token: str) -> bool:
         if not self.session or not self._httpd or not isinstance(token, str):
@@ -622,28 +728,34 @@ class MobileUploadServer:
             raise ValueError("host is required")
         old_host = self.host
         self.host = host
-        if not self.session:
+        session = self.session
+        if not session:
             raise RuntimeError("mobile upload server has not been started")
 
-        base_url = f"http://{host}:{self.session.port}"
-        self.session = replace(
-            self.session,
+        base_url = f"http://{host}:{session.port}"
+        updated = replace(
+            session,
             host=host,
             base_url=base_url,
-            upload_url=f"{base_url}/u/{self.session.token}",
-            api_url=f"{base_url}/api/upload/{self.session.token}",
+            upload_url=f"{base_url}/u/{session.token}",
+            api_url=f"{base_url}/api/upload/{session.token}",
         )
-        self.refresh_local_host_addresses()
-        self._write_manifest()
-        self._local_self_check = "pending"
-        self._local_self_check_error = ""
+        addresses = _collect_local_host_addresses(
+            (*self._configured_local_host_addresses, host)
+        )
+        with self._lock:
+            self.session = updated
+            self._local_host_addresses = addresses
+            self._local_self_check = "pending"
+            self._local_self_check_error = ""
+            self._write_manifest()
         _log.info(
             "[手机上传] network changed old_public_host=%s new_public_host=%s bind_host=%s",
             _redact_host(old_host),
             _redact_host(host),
             self.bind_host,
         )
-        return self.session
+        return updated
 
     def save_uploads(self, files: Iterable[UploadedFile]) -> dict:
         items = tuple(files)
@@ -717,6 +829,11 @@ class MobileUploadServer:
                     failed_now += 1
                     self._files.append(record)
                     continue
+                if self._session_accepted_bytes + len(content) > self.max_session_bytes:
+                    record["reason"] = "session_total_too_large"
+                    failed_now += 1
+                    self._files.append(record)
+                    continue
 
                 digest = hashlib.sha256(content).hexdigest()
                 record["sha256"] = digest
@@ -733,6 +850,7 @@ class MobileUploadServer:
                 record["stored_path"] = _runtime_relative(dest, self.runtime_dir)
                 record["status"] = "accepted"
                 accepted_now += 1
+                self._session_accepted_bytes += len(content)
                 known_hashes.add(digest)
                 accepted_paths.append(dest)
                 self._files.append(record)
@@ -933,6 +1051,13 @@ class MobileUploadServer:
         return hashes
 
     def _write_manifest(self) -> None:
+        """Persist the manifest.  Callers must hold ``self._lock``.
+
+        The file is replaced atomically (temp file + ``os.replace``) and
+        serialized through ``self._manifest_lock`` so concurrent writers can
+        never interleave a truncated JSON document; readers used for upload
+        deduplication must always see a complete manifest.
+        """
         if not self.session:
             return
         payload = {
@@ -940,10 +1065,32 @@ class MobileUploadServer:
             "batch_id": self.session.batch_id,
             "token_expires_at": self.session.expires_at.isoformat(timespec="seconds"),
             "session_dir": _runtime_relative(self.session.session_dir, self.runtime_dir),
-            "stats": dict(self._stats),
+            "stats": deepcopy(self._stats),
             "files": list(self._files),
         }
-        self.session.manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        target = self.session.manifest_path
+        document = json.dumps(payload, ensure_ascii=False, indent=2)
+        with self._manifest_lock:
+            temp_path = target.parent / f"{target.name}.tmp"
+            temp_path.write_text(document, encoding="utf-8")
+            # Windows can briefly refuse to replace a file that another
+            # thread is reading (the dedup scan reads existing manifests).
+            # Retry with a short backoff instead of failing the upload.
+            for attempt in range(5):
+                try:
+                    os.replace(temp_path, target)
+                    return
+                except PermissionError:
+                    if attempt == 4:
+                        break
+                    time.sleep(0.05 * (attempt + 1))
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            _log.warning(
+                "[手机上传] manifest replace failed path=%s", target.name
+            )
 
     def _make_handler(self):
         owner = self
@@ -1258,7 +1405,7 @@ def _token_from_path(path: str, prefix: str) -> str:
 def _safe_upload_name(name: str, max_len: int = 100) -> str:
     base = Path(name.replace("\\", "/")).name or "upload"
     safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in base)
-    safe = safe.strip("._") or "upload"
+    safe = escape_windows_reserved_stem(safe.strip("._") or "upload") or "upload"
     if len(safe) > max_len:
         stem = Path(safe).stem[: max_len - len(Path(safe).suffix)]
         safe = f"{stem}{Path(safe).suffix}"

@@ -3,15 +3,18 @@ import hashlib
 import logging
 import os
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch import mobile_upload
 from scripts.invoice_fetch.mobile_upload import (
     ALLOWED_UPLOAD_EXTS,
     MobileUploadServer,
@@ -276,6 +279,206 @@ class MobileUploadTests(unittest.TestCase):
             self.assertIn("http://10.0.0.23:", updated.upload_url)
             self.assertEqual(server.status()["upload_url"], updated.upload_url)
 
+    def test_concurrent_manifest_writes_never_corrupt_the_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="192.168.1.9",
+                port=0,
+                import_on_upload=False,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            hosts = ["192.168.1.10", "192.168.1.9"]
+
+            def upload(index: int):
+                server.save_uploads([
+                    UploadedFile(
+                        f"parallel-{index}.pdf",
+                        b"parallel-%d" % index,
+                        "application/pdf",
+                    ),
+                ])
+
+            def switch(index: int):
+                server.set_public_host(hosts[index % len(hosts)])
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = [pool.submit(upload, index) for index in range(4)]
+                futures += [pool.submit(switch, index) for index in range(4)]
+                for future in futures:
+                    future.result(timeout=15)
+
+            manifest = json.loads(
+                session.manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["stats"]["accepted"], 4)
+            accepted = [
+                item for item in manifest["files"] if item["status"] == "accepted"
+            ]
+            self.assertEqual(len(accepted), 4)
+
+    def test_session_total_quota_rejects_excess_uploads(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=False,
+                max_session_bytes=10,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            first = server.save_uploads([
+                UploadedFile("first.pdf", b"123456", "application/pdf"),
+            ])
+            second = server.save_uploads([
+                UploadedFile("second.pdf", b"abcdef", "application/pdf"),
+            ])
+
+            self.assertEqual(first["accepted"], 1)
+            self.assertEqual(second["accepted"], 0)
+            self.assertEqual(second["upload_failed"], 1)
+            manifest = json.loads(
+                session.manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "session_total_too_large",
+                [item["reason"] for item in manifest["files"]],
+            )
+
+    def test_start_prunes_expired_upload_session_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            expired = upload_root / "2020-01-01" / "mobile_20200101_000000_old"
+            expired.mkdir(parents=True)
+            (expired / "manifest.json").write_text("{}", encoding="utf-8")
+            recent = upload_root / f"{datetime.now():%Y-%m-%d}" / "mobile_today"
+            recent.mkdir(parents=True)
+            (recent / "manifest.json").write_text("{}", encoding="utf-8")
+
+            server = MobileUploadServer(
+                runtime_dir=runtime, host="127.0.0.1", port=0
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+
+            self.assertFalse(expired.exists())
+            self.assertTrue(recent.exists())
+            self.assertTrue(session.manifest_path.exists())
+
+    def test_failed_upload_session_keeps_its_files_within_retention(self):
+        from datetime import timedelta
+
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            recent_day = (
+                datetime.now() - timedelta(days=mobile_upload.SESSION_RETENTION_DAYS - 1)
+            ).strftime("%Y-%m-%d")
+            failed = upload_root / recent_day / "mobile_failed_import"
+            (failed / "original").mkdir(parents=True)
+            (failed / "original" / "invoice.pdf").write_bytes(b"recover-me")
+            (failed / "manifest.json").write_text("{}", encoding="utf-8")
+
+            removed = mobile_upload._prune_expired_upload_sessions(
+                upload_root,
+                retention_days=mobile_upload.SESSION_RETENTION_DAYS,
+            )
+
+            self.assertEqual(removed, 0)
+            self.assertTrue((failed / "original" / "invoice.pdf").exists())
+
+    def test_pruning_never_touches_archived_originals_or_foreign_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            archived = runtime / "attachments" / "2026-01-01" / "invoice.pdf"
+            archived.parent.mkdir(parents=True)
+            archived.write_bytes(b"archived-original")
+            superseded = upload_root / "2019-05-05" / "mobile_old"
+            (superseded / "original").mkdir(parents=True)
+            (superseded / "original" / "invoice.pdf").write_bytes(b"archived-original")
+            foreign = upload_root / "manual-backup"
+            foreign.mkdir(parents=True)
+            stray = upload_root / "keep.txt"
+            stray.write_text("keep", encoding="utf-8")
+
+            removed = mobile_upload._prune_expired_upload_sessions(
+                upload_root,
+                retention_days=mobile_upload.SESSION_RETENTION_DAYS,
+            )
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(superseded.exists())
+            # Retention only governs the upload staging area: the archived
+            # original under runtime/attachments is never deleted here.
+            self.assertTrue(archived.exists())
+            self.assertTrue(foreign.exists())
+            self.assertTrue(stray.exists())
+
+    def test_prune_keeps_the_active_session_tree_even_when_expired(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            active_day = upload_root / "2019-01-01"
+            active_session = active_day / "mobile_active"
+            (active_session / "original").mkdir(parents=True)
+
+            removed = mobile_upload._prune_expired_upload_sessions(
+                upload_root,
+                retention_days=mobile_upload.SESSION_RETENTION_DAYS,
+                keep=active_session,
+            )
+
+            self.assertEqual(removed, 0)
+            self.assertTrue((active_session / "original").exists())
+
+    def test_expired_session_hashes_no_longer_block_reupload(self):
+        payload = b"retry-me"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            expired = (
+                runtime / "inbox" / "mobile_upload"
+                / "2020-01-01" / "mobile_old"
+            )
+            (expired / "original").mkdir(parents=True)
+            (expired / "original" / "invoice.pdf").write_bytes(payload)
+            (expired / "manifest.json").write_text(
+                json.dumps({
+                    "source": "mobile_qr",
+                    "files": [{
+                        "status": "accepted",
+                        "sha256": digest,
+                        "stored_path": "original/invoice.pdf",
+                        "original_filename": "invoice.pdf",
+                    }],
+                }),
+                encoding="utf-8",
+            )
+
+            server = MobileUploadServer(
+                runtime_dir=runtime,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=False,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            result = server.save_uploads([
+                UploadedFile("invoice.pdf", payload, "application/pdf"),
+            ])
+
+            # The expired manifest is gone, so a failed-import file can be
+            # uploaded again instead of being stuck as a duplicate forever.
+            self.assertEqual(result["accepted"], 1)
+            self.assertEqual(result["duplicate"], 0)
+
     def test_mobile_upload_server_stop_is_bounded_and_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
             server = MobileUploadServer(
@@ -296,6 +499,96 @@ class MobileUploadTests(unittest.TestCase):
             self.assertLess(elapsed_ms, 2000)
 
             server.stop()
+
+    def test_stop_waits_for_in_flight_upload_import(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+            )
+            server.start()
+
+            import_started = threading.Event()
+            release_import = threading.Event()
+            upload_error: list[BaseException] = []
+
+            def slow_import(_paths):
+                import_started.set()
+                release_import.wait(2.0)
+                return 0
+
+            def upload():
+                try:
+                    server.save_uploads([
+                        UploadedFile("slow.pdf", b"%PDF-1.4 slow", "application/pdf"),
+                    ])
+                except BaseException as exc:  # pragma: no cover - defensive
+                    upload_error.append(exc)
+
+            with patch.object(server, "_import_accepted_files", side_effect=slow_import), patch.object(
+                server, "import_on_upload", True
+            ), patch.object(server, "db_path", Path(td) / "runtime" / "invoices.db"):
+                worker = threading.Thread(target=upload, daemon=True)
+                worker.start()
+                self.assertTrue(import_started.wait(2.0))
+                releaser = threading.Thread(
+                    target=lambda: (time.sleep(0.3), release_import.set()), daemon=True
+                )
+                releaser.start()
+                stop_started = time.perf_counter()
+                server.stop()
+                stop_elapsed = time.perf_counter() - stop_started
+                worker.join(timeout=3.0)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(upload_error, [])
+            # stop() must have blocked until the import finished instead of
+            # returning while the daemon handler thread was still writing.
+            self.assertGreaterEqual(stop_elapsed, 0.2)
+            self.assertEqual(server.status()["received"], 1)
+            manifest = json.loads(server.session.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["stats"]["accepted"], 1)
+
+    def test_stop_gives_up_after_bounded_wait_for_stuck_upload(self):
+        from scripts.invoice_fetch import mobile_upload
+
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime",
+                host="127.0.0.1",
+                port=0,
+            )
+            server.start()
+
+            import_started = threading.Event()
+            release_import = threading.Event()
+
+            def stuck_import(_paths):
+                import_started.set()
+                release_import.wait(5.0)
+                return 0
+
+            def upload():
+                server.save_uploads([
+                    UploadedFile("stuck.pdf", b"%PDF-1.4 stuck", "application/pdf"),
+                ])
+
+            with patch.object(mobile_upload, "UPLOAD_STOP_WAIT_SECONDS", 0.2), patch.object(
+                server, "_import_accepted_files", side_effect=stuck_import
+            ), patch.object(server, "import_on_upload", True), patch.object(
+                server, "db_path", Path(td) / "runtime" / "invoices.db"
+            ):
+                worker = threading.Thread(target=upload, daemon=True)
+                worker.start()
+                self.assertTrue(import_started.wait(2.0))
+                started = time.perf_counter()
+                server.stop()
+                elapsed = time.perf_counter() - started
+                release_import.set()
+                worker.join(timeout=3.0)
+
+            self.assertLess(elapsed, 2.0)
 
     def test_save_uploads_writes_manifest_dedupes_and_imports_supported_files(self):
         with tempfile.TemporaryDirectory() as td:

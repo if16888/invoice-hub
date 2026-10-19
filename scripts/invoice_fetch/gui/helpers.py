@@ -136,7 +136,7 @@ def resolve_invoice_documents(invoice: dict, runtime_dir: Path = None) -> list[d
 
 
 def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path = None) -> list[dict]:
-    """Extract all document paths from an invoice, including pending evidence records from the same mail."""
+    """Resolve explicit shared materials plus nearby, unassociated mail candidates."""
     if runtime_dir is None:
         from ..config import RUNTIME_DIR as runtime_dir
 
@@ -145,6 +145,10 @@ def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path
 
     docs = []
     seen_paths = set()
+    from ..evidence import path_key
+    linked = {}
+    if callable(getattr(db, "list_invoice_evidence", None)) and invoice.get("id"):
+        linked = {path_key(row["attachment_path"]): row for row in db.list_invoice_evidence(invoice["id"])}
 
     for doc in primary_and_supporting:
         p = doc.get("path")
@@ -160,8 +164,18 @@ def resolve_invoice_documents_with_evidence(invoice: dict, db, runtime_dir: Path
             "path": p,
             "basename": doc["basename"],
             "invoice_id": invoice.get("id"),
-            "evidence_id": None,
+            "evidence_id": linked.get(path_key(str(doc["path"])), {}).get("id"),
         })
+        if doc["type"] == "supporting":
+            # Stored paths may be relative while preview paths are resolved.
+            for source in linked.values():
+                if resolve_stored_path(source["attachment_path"], runtime_dir) == p:
+                    docs[-1]["evidence_id"] = source["id"]
+                    docs[-1]["is_deleted"] = bool(source["is_deleted"])
+                    docs[-1]["linked_count"] = source["linked_count"]
+                    if source["is_deleted"]:
+                        docs[-1]["title"] = "已删除的证明材料"
+                    break
 
     # 3. Fetch pending evidence records for this mailbox_key + mail_uid.
     # Keep records even when the file is currently missing so the review UI can

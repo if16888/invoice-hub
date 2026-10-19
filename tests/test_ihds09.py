@@ -502,6 +502,7 @@ class IHDS09Tests(unittest.TestCase):
         td = tempfile.TemporaryDirectory()
         window = self.make_window(td.name)
         window._switch_main_page("settings")
+        window._set_settings_mode("advanced")
         window.settings_tabs.setCurrentIndex(0)
         window.show()
         self.app.processEvents()
@@ -582,6 +583,7 @@ class IHDS09Tests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 window._switch_main_page("settings")
+                window._set_settings_mode("advanced")
                 window.settings_tabs.setCurrentIndex(1)
                 self.app.processEvents()
                 with patch.object(window, "_ai_profiles_for_settings", return_value=[]):

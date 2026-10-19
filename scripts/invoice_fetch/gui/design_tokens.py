@@ -61,7 +61,7 @@ DESIGN_V1_TYPE = {
     "surface_title": 15,
     "subpage_title": 14,
     "section_title": 13,
-    "body": 12,
+    "body": 13,
     "secondary": 12,
     "caption": 11,
     "metric": 16,

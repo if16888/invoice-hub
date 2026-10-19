@@ -5,13 +5,29 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import os
+import re
 import shutil
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from uuid import UUID, uuid4
+
+
+def normalize_export_date_prefix(raw_value: str) -> str:
+    """Normalize package naming dates without loading spreadsheet dependencies."""
+    text = str(raw_value or "").strip()
+    if not text:
+        return "unknown-date"
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    text = re.sub(r"[^\dA-Za-z-]+", "-", text).strip("-")
+    return text or "unknown-date"
 
 
 def get_documents_directory() -> Path:

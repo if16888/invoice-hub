@@ -101,6 +101,19 @@ def _claim_quality_report_gui_prompt(self):
                     }
                 )
                 db.add_invoice_to_claim(claim_id, invoice_id)
+                clean_claim_id = db.create_claim_group("GUI QA Clean Group")
+                clean_invoice_id = db.insert_invoice(
+                    {
+                        "invoice_number": "GUI002",
+                        "total_amount": "100.00",
+                        "expense_date": "2026-06-01",
+                        "seller_name": "Valid Seller",
+                        "category": "交通",
+                        "review_status": _cases.review_status.APPROVED,
+                        "attachment_path": "attachments/dummy.pdf",
+                    }
+                )
+                db.add_invoice_to_claim(clean_claim_id, clean_invoice_id)
 
                 attachments_dir = runtime_dir / "attachments"
                 attachments_dir.mkdir(parents=True, exist_ok=True)
@@ -147,14 +160,12 @@ def _claim_quality_report_gui_prompt(self):
                             self.assertNotIn(str(td), combined)
                             self.assertNotIn(str(external_export_root), combined)
 
-                        db.update_invoice_fields(
-                            invoice_id=invoice_id,
-                            invoice_number="GUI001",
-                            expense_date="2026-06-01",
-                            seller_name="Valid Seller",
-                            total_amount="100.00",
-                            category="交通",
-                        )
+                        # A successful export locks that claim. Use a separate
+                        # clean claim to verify the zero-warning path without
+                        # bypassing the reimbursement state machine.
+                        clean_idx = window.combo_claims.findData(clean_claim_id)
+                        self.assertGreaterEqual(clean_idx, 0)
+                        window.combo_claims.setCurrentIndex(clean_idx)
 
                         with patch("scripts.invoice_fetch.gui.app.QMessageBox") as box_class:
                             box = box_class.return_value

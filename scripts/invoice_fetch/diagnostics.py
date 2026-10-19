@@ -177,7 +177,10 @@ def _environment_text() -> str:
 
 def _privacy_scan_result() -> str:
     script = config_mod.PROJECT_ROOT / "scripts" / "check_repo_privacy.py"
-    if script.exists():
+    # A frozen build has no Python interpreter on this machine: sys.executable
+    # is the app itself, so the repo-scan subprocess can never start. Fall
+    # through to the packaged allowlist summary instead of failing.
+    if script.exists() and not getattr(sys, "frozen", False):
         try:
             result = subprocess.run(
                 [sys.executable, str(script)],

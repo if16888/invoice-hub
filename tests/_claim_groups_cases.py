@@ -2210,6 +2210,82 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertEqual(rows[0]["review_status"], "to_review")
         self.assertIn("unsupported_ofd", rows[0]["parse_note"])
 
+    def test_fresh_attachment_import_reports_recorded_outcome(self):
+        from email.message import EmailMessage
+        from scripts.invoice_fetch import services as cli_main
+        from scripts.invoice_fetch.attachment_handler import Attachment
+        from scripts.invoice_fetch.invoice_parser import InvoiceInfo
+
+        msg = EmailMessage()
+        msg["Subject"] = "电子发票 PDF"
+        msg["From"] = "billing@example.com"
+        msg["Date"] = "2026-06-14"
+        msg.set_content("invoice")
+        msg.uid = 7501
+        msg.date = "2026-06-14"
+        msg.subject = msg["Subject"]
+        msg.sender = msg["From"]
+        msg.raw_msg = msg
+
+        class FakeAttachmentHandler:
+            def __init__(self, base):
+                self._base = base
+
+            def extract(self, *args, **kwargs):
+                pdf_path = self._base / "2026-06-14" / "invoice.pdf"
+                pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                pdf_path.write_bytes(b"%PDF-1.4 synthetic" + b"x" * 600)
+                return [
+                    Attachment(
+                        file_path=str(pdf_path),
+                        original_name="invoice.pdf",
+                        content_type="application/pdf",
+                        size=pdf_path.stat().st_size,
+                        is_invoice=True,
+                    )
+                ]
+
+        class FakeParser:
+            def parse_pdf(self, path):
+                return InvoiceInfo(
+                    invoice_number="FRESH001",
+                    invoice_code="",
+                    invoice_date="2026-06-14",
+                    amount="100.00",
+                    total_amount="100.00",
+                    seller_name="测试服务有限公司",
+                    invoice_type="电子发票",
+                    parse_success=True,
+                    parse_note="parsed",
+                )
+
+        class FakeLinkDownloader:
+            last_download_diagnostics = {}
+            last_process_outcome = ""
+
+            def download_from_email(self, *args, **kwargs):
+                return []
+
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            att_dir = runtime / "attachments"
+            link_dl = FakeLinkDownloader()
+            with InvoiceDB(Path(td) / "fresh.db") as db, patch.object(cli_main, "RUNTIME_DIR", runtime):
+                recorded = cli_main._process_email(
+                    msg,
+                    FakeAttachmentHandler(att_dir),
+                    FakeParser(),
+                    link_dl,
+                    db,
+                    {},
+                    mailbox_key="legacy",
+                )
+
+        self.assertEqual(recorded, 1)
+        # A brand-new insert is "recorded"; only an existing record whose
+        # missing original was repaired may report "file_restored".
+        self.assertEqual(link_dl.last_process_outcome, "recorded")
+
     def test_redownload_bucket_summary_distinguishes_duplicate_from_file_restore(self):
         from scripts.invoice_fetch.gui.app import _format_redownload_bucket_summary
 
@@ -3151,8 +3227,11 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.table.currentRow(), 1)
                     self.assertEqual(window.current_invoice["id"], inv_id1)
 
-                    # 4. Verify the empty state guide label text contains "扫码上传"
-                    self.assertIn("扫码上传", window.empty_widget.findChildren(QLabel)[1].text())
+                    # The empty state now uses a three-step guide; mobile upload
+                    # remains available as an explicit action in the first step.
+                    self.assertIn("三步开始整理", window.lbl_guide.text())
+                    self.assertEqual(len(window.empty_step_cards), 3)
+                    self.assertEqual(window.empty_btn_mobile_upload.text(), "手机扫码")
 
                 finally:
                     if hasattr(window, "db") and window.db is not None:
@@ -3722,6 +3801,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         "linked": 1,
                         "assigned": 1,
                         "evidence_only": 1,
+                        "locked": 0,
                         "failed": 0,
                     })
                     self.assertEqual(mock_info.call_args.args[1], "关联结果")
@@ -3745,7 +3825,7 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
-    def test_gui_mixed_approve_uses_one_summary_confirmation(self):
+    def test_gui_mixed_approve_skips_evidence_and_incomplete_invoice(self):
         try:
             from PySide6.QtCore import QItemSelectionModel
             from PySide6.QtWidgets import QApplication, QMessageBox
@@ -3784,20 +3864,23 @@ class ClaimGroupsTests(unittest.TestCase):
                         )
 
                     with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes) as mock_question, \
-                            patch.object(QMessageBox, "warning") as mock_warning:
+                            patch.object(QMessageBox, "warning") as mock_warning, \
+                            patch.object(QMessageBox, "information") as mock_information:
                         result = window._set_selected_status(review_status.APPROVED)
                         app.processEvents()
 
                     mock_warning.assert_not_called()
-                    mock_question.assert_called_once()
-                    prompt = mock_question.call_args.args[2]
-                    self.assertIn("将跳过 1 条待关联证明材料", prompt)
-                    self.assertIn("处理 1 条正式发票", prompt)
-                    self.assertIn("缺 金额", prompt)
-                    self.assertEqual(result["success"], 1)
+                    mock_question.assert_not_called()
+                    mock_information.assert_called_once()
+                    prompt = mock_information.call_args.args[2]
+                    self.assertIn("待关联证明材料", prompt)
+                    self.assertIn("金额缺失或无效", prompt)
+                    self.assertIn("可通过 0 张，跳过 2 张", prompt)
+                    self.assertEqual(result["success"], 0)
+                    self.assertEqual(result["skipped"], 2)
                     self.assertEqual(result["evidence_only"], 1)
                     self.assertEqual(window.db.get_invoice(evidence_id)["review_status"], review_status.TO_REVIEW)
-                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.APPROVED)
+                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -3818,6 +3901,8 @@ class ClaimGroupsTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as td:
                 db_path = Path(td) / "test_gui_mixed_approve_cancel.db"
+                original = Path(td) / "synthetic-invoice.xml"
+                original.write_text("<invoice>synthetic</invoice>", encoding="utf-8")
                 with InvoiceDB(db_path) as db:
                     db.insert_invoice({
                         "invoice_type": "待关联证明材料",
@@ -3828,36 +3913,51 @@ class ClaimGroupsTests(unittest.TestCase):
                         "invoice_number": "MIXED-CANCEL-001",
                         "invoice_type": "电子发票",
                         "invoice_date": "2026-06-06",
-                        "total_amount": "",
+                        "total_amount": "10.00",
                         "seller_name": "Synthetic Seller",
+                        "buyer_name": "Synthetic Buyer",
+                        "attachment_path": str(original),
+                        "parse_success": 1,
                         "review_status": review_status.TO_REVIEW,
                     })
 
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                window = InvoiceReviewApp(db_path, splash=None)
-                try:
-                    window._deferred_init()
-                    app.processEvents()
-                    selection = window.table.selectionModel()
-                    for row in range(window.table.rowCount()):
-                        selection.select(
-                            window.table.model().index(row, 0),
-                            QItemSelectionModel.Select | QItemSelectionModel.Rows,
-                        )
+                from scripts.invoice_fetch.config import load_config_safe
 
-                    with patch.object(QMessageBox, "question", return_value=QMessageBox.No):
-                        result = window._set_selected_status(review_status.APPROVED)
+                # CI-equivalent defaults. A developer machine may carry a real
+                # config.json whose strict buyer check skips the synthetic
+                # invoice and opens a blocking modal in this headless test.
+                default_config = load_config_safe(Path(td) / "no-user-config.json")
+                with patch(
+                    "scripts.invoice_fetch.gui.app.load_config_safe",
+                    return_value=default_config,
+                ):
+                    window = InvoiceReviewApp(db_path, splash=None)
+                    try:
+                        window._deferred_init()
+                        app.processEvents()
+                        selection = window.table.selectionModel()
+                        for row in range(window.table.rowCount()):
+                            selection.select(
+                                window.table.model().index(row, 0),
+                                QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                            )
 
-                    self.assertEqual(result["success"], 0)
-                    self.assertEqual(result["evidence_only"], 1)
-                    self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
-                    self.assertIn("跳过 1 条待关联证明材料", window.statusBar().currentMessage())
-                finally:
-                    if hasattr(window, "db") and window.db is not None:
-                        window.db.close()
-                    window.close()
-                    window.deleteLater()
-                    app.processEvents()
+                        with patch.object(QMessageBox, "question", return_value=QMessageBox.No), \
+                                patch.object(QMessageBox, "information") as information:
+                            result = window._set_selected_status(review_status.APPROVED)
+
+                        information.assert_not_called()
+                        self.assertEqual(result["success"], 0)
+                        self.assertEqual(result["evidence_only"], 1)
+                        self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], review_status.TO_REVIEW)
+                        self.assertIn("跳过 1 条待关联证明材料", window.statusBar().currentMessage())
+                    finally:
+                        if hasattr(window, "db") and window.db is not None:
+                            window.db.close()
+                        window.close()
+                        window.deleteLater()
+                        app.processEvents()
         except Exception as e:
             if isinstance(e, (ImportError, RuntimeError)):
                 self.skipTest(f"Skipping GUI test: {e}")
@@ -4647,7 +4747,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     app.processEvents()
 
                     # Assert summary card is updated correctly
-                    self.assertEqual(window.lbl_sum_status.text(), "已通过")
+                    self.assertEqual(window.lbl_sum_status.text(), "✓ 已通过")
                     self.assertEqual(window.lbl_sum_amount.text(), "¥500.00")
                     self.assertEqual(window.lbl_sum_date.text(), "2026-05-25")
                     self.assertEqual(window.lbl_sum_number.text(), "发票号码: SEL777")
@@ -5482,13 +5582,13 @@ class ClaimGroupsTests(unittest.TestCase):
                         self.assertEqual(btn.property("variant"), "toolbar")
                         self.assertNotRegex(btn.text(), r"[📁📱📧🚀]")
 
-                    empty_buttons = [
-                        window.empty_btn_import,
+                    self.assertEqual(window.empty_btn_import.property("variant"), "primary")
+                    secondary_empty_buttons = [
                         window.empty_btn_mobile_upload,
                         window.empty_btn_settings,
                         window.empty_btn_scan,
                     ]
-                    for btn in empty_buttons:
+                    for btn in secondary_empty_buttons:
                         self.assertEqual(btn.property("variant"), "secondary")
 
                     self.assertEqual(window.filter_buttons["all"].objectName(), "CompactStatCard")
@@ -6911,6 +7011,17 @@ class ClaimGroupsTests(unittest.TestCase):
                         "attachment_path": "attachments/dummy.pdf"
                     })
                     db.add_invoice_to_claim(claim_id, inv_id)
+                    clean_claim_id = db.create_claim_group("GUI QA Clean Group")
+                    clean_inv_id = db.insert_invoice({
+                        "invoice_number": "GUI002",
+                        "total_amount": "100.00",
+                        "expense_date": "2026-06-01",
+                        "seller_name": "Valid Seller",
+                        "category": "交通",
+                        "review_status": review_status.APPROVED,
+                        "attachment_path": "attachments/dummy.pdf",
+                    })
+                    db.add_invoice_to_claim(clean_claim_id, clean_inv_id)
 
                     # Create dummy attachment
                     attachments_dir = runtime_dir / "attachments"
@@ -6957,15 +7068,12 @@ class ClaimGroupsTests(unittest.TestCase):
                                 self.assertNotIn(str(runtime_dir), combined)
                                 self.assertNotIn(str(external_export_root), combined)
 
-                            # Scenario 2: 0 warnings (fix empty seller name)
-                            db.update_invoice_fields(
-                                invoice_id=inv_id,
-                                invoice_number="GUI001",
-                                expense_date="2026-06-01",
-                                seller_name="Valid Seller",
-                                total_amount="100.00",
-                                category="交通",
-                            )
+                            # Successful export locks its claim; use a separate
+                            # clean claim to verify the zero-warning path without
+                            # bypassing the reimbursement state machine.
+                            clean_idx = window.combo_claims.findData(clean_claim_id)
+                            self.assertGreaterEqual(clean_idx, 0)
+                            window.combo_claims.setCurrentIndex(clean_idx)
                             with patch("scripts.invoice_fetch.gui.app.QMessageBox") as mock_box_class:
                                 mock_box_instance = mock_box_class.return_value
                                 mock_box_instance.clickedButton.return_value = Mock()

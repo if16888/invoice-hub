@@ -919,6 +919,56 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
         self.assertEqual(info.invoice_type, "铁路电子客票")
 
+    def test_plain_invoice_mentioning_railway_is_not_rewritten_as_ticket(self):
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "发票号码:12345678901234567890",
+            "开票日期:2026年05月06日",
+            "销售方名称:上海铁路物资供应有限公司",
+            "购买方名称:远景智能零碳（江苏）科技有限公司",
+            "项目:钢轨配件 ¥300.00",
+            "价税合计（小写）¥500.00",
+            "备注:铁路项目物资采购",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "railway_supplies.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+
+        self.assertTrue(info.parse_success)
+        self.assertNotEqual(info.invoice_type, "铁路电子客票")
+        self.assertNotEqual(info.seller_name, "中国国家铁路集团有限公司")
+        # Must keep the real total, not the first ￥ line item.
+        self.assertEqual(info.total_amount, "500.00")
+
+    def test_date_like_and_phone_numbers_are_not_used_as_invoice_identity(self):
+        text = "\n".join([
+            "电子发票（普通发票）",
+            "开票日期:2026年05月15日",
+            "销售方名称:常州顺达服务有限公司",
+            "购买方名称:远景智能零碳（江苏）科技有限公司",
+            "联系电话:13812345678",
+            "单据编号 11803786",
+            "校验码 20260515",
+            "价税合计（小写）¥88.00",
+        ])
+        parser = InvoiceParser()
+        fake_plumber = _FakePdfPlumber(text)
+
+        with tempfile.TemporaryDirectory() as td, patch.object(parser, "_plumber", return_value=fake_plumber):
+            pdf_path = Path(td) / "plain_invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 synthetic")
+            info = parser.parse_pdf(str(pdf_path))
+
+        self.assertTrue(info.parse_success)
+        # The real 8-digit number wins; a bare YYYYMMDD must not.
+        self.assertEqual(info.invoice_number, "11803786")
+        # The contact phone must not become the invoice code.
+        self.assertNotEqual(info.invoice_code, "13812345678")
+
     def test_transport_receipt_parser_extracts_english_and_chinese_fields(self):
         samples = [
             "\n".join([
@@ -1286,7 +1336,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def launch(self, channel=None, headless=False, args=None, timeout=None):
+            def launch(self, channel=None, headless=False, args=None, timeout=None,
+                       chromium_sandbox=None, proxy=None):
                 self.calls.append((channel or "chromium", timeout))
                 if channel == "msedge":
                     return FakeBrowser()
@@ -1578,6 +1629,135 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 {"A001", "B002"},
             )
 
+    def test_subject_fallback_early_return_still_cleans_unkept_attachments(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            attachments_dir = runtime / "attachments" / "2026-05-18"
+            attachments_dir.mkdir(parents=True)
+            leftover = attachments_dir / "unused-note.txt"
+            leftover.write_bytes(b"synthetic non-invoice attachment")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "synthetic invoice subject"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(cli, "RUNTIME_DIR", runtime):
+                db.insert_invoice({
+                    "invoice_number": "SEQ-0001",
+                    "invoice_date": "2026-05-18",
+                    "total_amount": "66.00",
+                    "seller_name": "Synthetic Seller",
+                })
+
+                with (
+                    patch.object(cli, "parse_subject", return_value={
+                        "invoice_number": "SEQ-0001",
+                        "total_amount": "66.00",
+                        "seller_name": "Synthetic Seller",
+                        "invoice_date": "2026-05-18",
+                        "invoice_type": "synthetic invoice",
+                    }),
+                    patch.object(cli, "extract_html_from_message", return_value=""),
+                    patch.object(cli, "parse_html_body", return_value={}),
+                ):
+                    recorded = cli._process_email(
+                        cli.MailMessage(uid=464, raw_msg=msg),
+                        StaticAttachmentHandler(
+                            runtime / "attachments",
+                            [Attachment(
+                                file_path=str(leftover),
+                                original_name="unused-note.txt",
+                                content_type="text/plain",
+                                size=leftover.stat().st_size,
+                            )],
+                        ),
+                        StaticParser(InvoiceInfo(parse_success=False)),
+                        NoopLinkDownloader(),
+                        db,
+                        {},
+                    )
+
+            self.assertEqual(recorded, 1)
+            # The subject/body duplicate early-return must not skip the
+            # attachment cleanup: the unkept temp file is gone.
+            self.assertFalse(leftover.exists())
+
+    def test_locked_attachment_file_does_not_abort_email_processing(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            runtime = base / "runtime"
+            att_dir = runtime / "attachments"
+            att_dir.mkdir(parents=True)
+
+            locked_source = att_dir / "locked.pdf"
+            locked_source.write_bytes(b"%PDF-1.4 locked")
+            free_source = att_dir / "free.pdf"
+            free_source.write_bytes(b"%PDF-1.4 free")
+
+            msg = email.message.EmailMessage()
+            msg["Subject"] = "invoice"
+            msg["From"] = "billing@example.com"
+            msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
+
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="LOCK-1",
+                invoice_date="2026-05-18",
+                total_amount="88.00",
+                seller_name="Synthetic Seller",
+                parse_success=True,
+                parse_note="parsed",
+            ))
+
+            def fake_rename(file_path, *_args, **_kwargs):
+                if Path(file_path).name == "locked.pdf":
+                    raise PermissionError("simulated Windows file lock")
+                dest = att_dir / "2026-05-18" / "free.pdf"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                import shutil as _shutil
+
+                _shutil.move(str(file_path), str(dest))
+                return dest.relative_to(runtime).as_posix()
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(
+                cli, "RUNTIME_DIR", runtime
+            ), patch.object(cli, "_rename_by_invoice_code", side_effect=fake_rename):
+                recorded = cli._process_email(
+                    cli.MailMessage(uid=471, raw_msg=msg),
+                    StaticAttachmentHandler(
+                        att_dir,
+                        [
+                            Attachment(
+                                file_path=str(locked_source),
+                                original_name="locked.pdf",
+                                content_type="application/pdf",
+                                size=locked_source.stat().st_size,
+                                is_invoice=True,
+                            ),
+                            Attachment(
+                                file_path=str(free_source),
+                                original_name="free.pdf",
+                                content_type="application/pdf",
+                                size=free_source.stat().st_size,
+                                is_invoice=True,
+                            ),
+                        ],
+                    ),
+                    parser,
+                    NoopLinkDownloader(),
+                    db,
+                    {},
+                    mailbox_key="legacy",
+                )
+                rows = db.get_all_invoices()
+
+            # The locked file is reported, kept for a later retry, and the
+            # remaining attachment still settles: the email is not aborted.
+            self.assertEqual(recorded, 2)
+            self.assertTrue(locked_source.exists())
+            self.assertEqual(len(rows), 1)
+            self.assertIn("free.pdf", rows[0]["attachment_path"])
+
     def test_is_duplicate_requires_invoice_number_identity(self):
         with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:
             db.insert_invoice({
@@ -1589,6 +1769,54 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertTrue(db.is_duplicate("A001", "100.00", "中国移动"))
             self.assertFalse(db.is_duplicate("B002", "100.00", "中国移动"))
             self.assertFalse(db.is_duplicate("", "100.00", "中国移动"))
+
+    def test_get_failed_downloads_avoids_one_query_per_email(self):
+        with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:
+            db.bulk_upsert_emails(
+                [
+                    {"uid": uid, "subject": f"s{uid}", "sender": "x", "date": "2026-05-18"}
+                    for uid in range(1, 26)
+                ]
+            )
+            for uid in range(1, 26):
+                db._conn.execute(
+                    "UPDATE emails SET is_invoice = 1, downloaded = 1 WHERE uid = ?",
+                    (uid,),
+                )
+            db._conn.commit()
+            db.insert_invoice({
+                "invoice_number": "DONE-1",
+                "mail_uid": 1,
+                "mailbox_key": "legacy",
+                "attachment_path": "attachments/a.pdf",
+            })
+            db.insert_invoice({
+                "invoice_number": "FAIL-2",
+                "mail_uid": 2,
+                "mailbox_key": "legacy",
+                "attachment_path": "",
+            })
+
+            statements: list[str] = []
+            db._conn.set_trace_callback(statements.append)
+            try:
+                failed = db.get_failed_downloads()
+            finally:
+                db._conn.set_trace_callback(None)
+
+            failed_keys = {(item["mailbox_key"], item["mail_uid"]) for item in failed}
+            self.assertIn(("legacy", 2), failed_keys)
+            self.assertIn(("legacy", 3), failed_keys)
+            self.assertNotIn(("legacy", 1), failed_keys)
+            self.assertEqual(
+                sum(1 for item in failed if item["mail_uid"] == 2),
+                1,
+                "an invoice and an email describing the same UID must merge",
+            )
+            select_count = sum(
+                1 for sql in statements if sql.lstrip().upper().startswith("SELECT")
+            )
+            self.assertLessEqual(select_count, 2, statements)
 
     def test_rescanning_soft_deleted_attachment_restores_invoice(self):
         with tempfile.TemporaryDirectory() as td:

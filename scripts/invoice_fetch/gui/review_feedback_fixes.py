@@ -203,6 +203,13 @@ def _rebuild_claim_section(window) -> None:
         detail.lbl_export_summary,
         detail.btn_new_claim_toggle,
     }
+    inline_reason = getattr(window, "txt_invoice_reason_inline", None)
+    edit_reason = getattr(window, "btn_edit_invoice_reason", None)
+    edit_financial = getattr(window, "btn_edit_financial_fields", None)
+    preserve.update(
+        widget for widget in (inline_reason, edit_reason, edit_financial)
+        if isinstance(widget, QWidget)
+    )
     layout = section.layout()
     _clear_layout(layout, preserve)
     layout.setContentsMargins(12, 12, 12, 12)
@@ -223,6 +230,20 @@ def _rebuild_claim_section(window) -> None:
     detail.btn_claim_assignment.setMaximumWidth(88)
     assignment_row.addWidget(detail.btn_claim_assignment, 0)
     layout.addLayout(assignment_row)
+
+    if isinstance(inline_reason, QWidget):
+        inline_reason.setParent(section)
+        layout.addWidget(inline_reason)
+
+    reason_actions = [widget for widget in (edit_reason, edit_financial) if isinstance(widget, QWidget)]
+    if reason_actions:
+        reason_action_row = QHBoxLayout()
+        reason_action_row.setContentsMargins(0, 0, 0, 0)
+        reason_action_row.setSpacing(8)
+        for widget in reason_actions:
+            widget.setParent(section)
+            reason_action_row.addWidget(widget)
+        layout.addLayout(reason_action_row)
 
     detail.lbl_claim_total.setParent(section)
     detail.lbl_claim_total.setWordWrap(False)

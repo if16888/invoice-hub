@@ -21,6 +21,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
+from .browser_proxy import SafeBrowserProxy
+from .filename_safety import sanitize_windows_basename
 from .log_privacy import mask_filename, mask_sender_header, mask_url_for_log, redact_text
 
 _log = logging.getLogger(__name__)
@@ -172,9 +174,18 @@ _DNS_RESOLVE_TIMEOUT_SECONDS = 2.0
 _DNS_RESOLVE_MAX_INFLIGHT = 4
 _DNS_RESOLVE_SLOTS = threading.BoundedSemaphore(_DNS_RESOLVE_MAX_INFLIGHT)
 
+# DNS safety decisions are cached for a short window only.  A cache without
+# expiry would keep a DNS-rebinding window open for the whole process
+# lifetime, so each entry silently expires after this many seconds.
+_DNS_CACHE_TTL_SECONDS = 60.0
+
+
+def _dns_cache_bucket() -> int:
+    return int(time.monotonic() // _DNS_CACHE_TTL_SECONDS)
+
 
 @lru_cache(maxsize=256)
-def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
+def _host_resolves_to_public_addresses_cached(host: str, port: int, bucket: int) -> bool:
     """Fail closed unless every resolved address is public, with bounded DNS wait."""
     try:
         literal_ip = ipaddress.ip_address(host)
@@ -231,6 +242,94 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
     return True
 
 
+def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
+    """Return the DNS safety decision for the current short TTL window."""
+    return _host_resolves_to_public_addresses_cached(host, port, _dns_cache_bucket())
+
+
+@lru_cache(maxsize=256)
+def _resolve_public_address_cached(host: str, port: int, bucket: int) -> str | None:
+    """Resolve once per short TTL window; every address must be public.
+
+    The returned address is the exact one the safety proxy connects to, so a
+    rebinding response between check and connection cannot redirect the
+    socket. Caching keeps a burst of parallel browser connections to one host
+    from exhausting the bounded resolver slots.
+    """
+    host = str(host or "").strip().rstrip(".").lower()
+    if not host:
+        return None
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        return str(literal) if literal.is_global else None
+
+    fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    resolver_slots = _DNS_RESOLVE_SLOTS
+    if not resolver_slots.acquire(timeout=_DNS_RESOLVE_TIMEOUT_SECONDS):
+        _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)
+        return None
+
+    done = threading.Event()
+    result: dict[str, object] = {}
+
+    def resolve() -> None:
+        try:
+            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            result["records"] = None
+        finally:
+            done.set()
+            resolver_slots.release()
+
+    resolver = threading.Thread(
+        target=resolve,
+        name="InvoiceHubProxyDnsCheck",
+        daemon=True,
+    )
+    try:
+        resolver.start()
+    except Exception:
+        resolver_slots.release()
+        return None
+    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
+        _log.warning("DNS safety check timed out: <%s>", fingerprint)
+        return None
+
+    records = result.get("records")
+    if not records:
+        return None
+    addresses: list[str] = []
+    for record in records:
+        if not record[4]:
+            continue
+        try:
+            ip = ipaddress.ip_address(record[4][0])
+        except ValueError:
+            return None
+        if not ip.is_global:
+            return None
+        addresses.append(str(ip))
+    return addresses[0] if addresses else None
+
+
+def _resolve_public_address(host: str, port: int) -> str | None:
+    """Return a vetted address the browser safety proxy may connect to."""
+    return _resolve_public_address_cached(host, port, _dns_cache_bucket())
+
+
+def _clear_dns_safety_cache() -> None:
+    """Drop cached DNS safety decisions (test and maintenance hook)."""
+    _host_resolves_to_public_addresses_cached.cache_clear()
+    _resolve_public_address_cached.cache_clear()
+
+
+_host_resolves_to_public_addresses.cache_clear = _clear_dns_safety_cache  # type: ignore[attr-defined]
+_resolve_public_address.cache_clear = _clear_dns_safety_cache  # type: ignore[attr-defined]
+
+
 def _is_safe_browser_request_url(url: str) -> bool:
     """Allow browser-internal resources and public HTTP(S) destinations."""
     parsed = urlparse(str(url or ""))
@@ -254,6 +353,45 @@ def _route_browser_request(route) -> None:
     route.abort("blockedbyclient")
 
 
+class _UnsafeRequestGuard:
+    """Per-request guard that fail-closes the context on unsafe hops.
+
+    ``ctx.route`` treats a redirect chain as one interception unit: the route
+    handler runs once for the original request and never again for redirect
+    hops. A mail-embedded link can therefore 302 into an intranet address and
+    no route callback fires for that hop. The ``request`` event, in contrast,
+    fires for every hop (redirects included) and for popup targets, so this
+    guard is the last line of defense: flag the block and tear the whole
+    context down to stop every subsequent request.
+    """
+
+    def __init__(self, context):
+        self._context = context
+        self.blocked = False
+
+    def __call__(self, request) -> None:
+        url = str(getattr(request, "url", "") or "")
+        if _is_safe_browser_request_url(url):
+            return
+        # Route interception (and its per-request abort) covers every request
+        # the browser issues — except redirect hops: Playwright treats a
+        # request and its redirects as a single interception unit, so no route
+        # callback ever runs for a hop. Mail links can 302 into intranet
+        # addresses, so a redirect hop into a non-public target is exactly the
+        # blind spot this guard fails closed for. Requests the route layer
+        # already aborts (plain unsafe resources) must not tear the context
+        # down, so they are left to it instead.
+        if getattr(request, "redirected_from", None) is None:
+            return
+        fingerprint = hashlib.sha256(url.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        _log.warning("Blocked unsafe browser redirect hop: <%s>", fingerprint)
+        self.blocked = True
+        try:
+            self._context.close()
+        except Exception:
+            pass
+
+
 def _safe_download_destination(
     save_dir: str | Path,
     suggested_filename: str,
@@ -263,13 +401,11 @@ def _safe_download_destination(
     root = Path(save_dir).resolve()
     raw_name = str(suggested_filename or fallback_filename or "").replace("\\", "/")
     basename = raw_name.rsplit("/", 1)[-1]
-    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", basename).strip(" .")
-    if not safe_name or safe_name in {".", ".."}:
-        safe_name = re.sub(
-            r'[<>:"/\\|?*\x00-\x1f]',
-            "_",
-            str(fallback_filename or "invoice_download"),
-        ).strip(" .")
+    safe_name = sanitize_windows_basename(basename, fallback="")
+    if not safe_name:
+        safe_name = sanitize_windows_basename(
+            str(fallback_filename or ""), fallback="invoice_download",
+        )
 
     candidate = (root / safe_name).resolve()
     try:
@@ -277,6 +413,25 @@ def _safe_download_destination(
     except ValueError:
         candidate = (root / Path(fallback_filename or "invoice_download").name).resolve()
     return candidate
+
+
+def _unique_download_destination(path: Path) -> Path:
+    """Return a destination path that does not exist yet.
+
+    Downloads must never reuse (or overwrite) a file that is already on
+    disk: a same-named leftover from another invoice would otherwise be
+    recorded as this download's result and point the invoice at the wrong
+    document.
+    """
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    for number in range(1, 100):
+        candidate = path.with_name(f"{stem}_{number}{suffix}")
+        if not candidate.exists():
+            return candidate
+    return path.with_name(f"{stem}_{uuid.uuid4().hex[:8]}{suffix}")
 
 
 def _extract_links_with_metadata_from_html_and_stats(html: str) -> tuple[list[dict], dict]:
@@ -567,9 +722,14 @@ def _dedupe_downloaded_files(results: list[DownloadedFile]) -> list[DownloadedFi
 
 
 def _save_download_to_path(download, dest: Path) -> bool:
-    """Persist a completed Playwright download without implying a fake save timeout."""
+    """Persist a completed Playwright download without implying a fake save timeout.
+
+    Callers must pass a destination that is free (see
+    ``_unique_download_destination``); an existing file is never treated as
+    this download's result and is never overwritten.
+    """
     if dest.exists():
-        return True
+        return False
     staging = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.part")
     try:
         # Playwright streams to disk. Check its completed temporary file
@@ -634,6 +794,43 @@ def _verify_and_clean_file(path: str | Path) -> bool:
         return False
 
 
+def playwright_launch_args(*, no_sandbox: bool) -> list[str]:
+    """Return Chromium launch arguments for the headless downloader.
+
+    The Chromium sandbox stays enabled by default; it must be requested in
+    two places because Playwright's ``chromium_sandbox`` option defaults to
+    ``False`` and adds ``--no-sandbox`` on its own: pass
+    ``chromium_sandbox=not no_sandbox`` to ``launch()`` and only add the
+    ``--no-sandbox`` argument here when a run explicitly opts out via
+    ``playwright.no_sandbox``, the ``INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX``
+    environment override, or when the sandbox cannot run at all (root on
+    POSIX).
+    """
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-infobars",
+    ]
+    if no_sandbox:
+        args.insert(1, "--no-sandbox")
+    return args
+
+
+def resolve_no_sandbox(cfg: dict | None = None) -> bool:
+    """Resolve whether Chromium may start without its sandbox."""
+    override = str(os.environ.get("INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX", "")).strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    playwright_cfg = (cfg or {}).get("playwright")
+    if isinstance(playwright_cfg, dict) and playwright_cfg.get("no_sandbox") is True:
+        return True
+    # Chromium cannot use its sandbox as root; the flag is required there.
+    if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0:
+        return True
+    return False
+
+
 class LinkDownloader:
     """Download invoice PDFs from URLs using a headless browser."""
 
@@ -664,6 +861,7 @@ class LinkDownloader:
         )
         self._pw = None
         self._browser = None
+        self._safety_proxy = None
         self._headed = headed
         self._scan_control = scan_control
         # Per-process failed URL fingerprint cache — avoid retrying known failures
@@ -758,16 +956,35 @@ class LinkDownloader:
         if deadline is not None:
             self._remaining_timeout_ms(deadline)
 
-        launch_args = [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-infobars",
-        ]
+        no_sandbox = resolve_no_sandbox(cfg)
+        launch_args = playwright_launch_args(no_sandbox=no_sandbox)
+        if no_sandbox:
+            _log.info("Chromium sandbox is disabled for this run (playwright.no_sandbox)")
+
+        # Network-layer SSRF guard: route interception never sees redirect
+        # hops and the request event only observes a request as it is being
+        # sent. The browser reaches the network exclusively through this local
+        # filtering proxy, which vets and pins every connection target before
+        # the connection is opened (verified end-to-end: a private redirect
+        # target receives no request at all).
+        if self._safety_proxy is None:
+            self._safety_proxy = SafeBrowserProxy(_resolve_public_address)
+        try:
+            proxy_url = self._safety_proxy.start()
+        except OSError as exc:
+            self._stop_safety_proxy()
+            raise RuntimeError(f"浏览器安全代理启动失败: {exc}") from exc
 
         def _launch_browser(channel_name: str | None, label: str) -> None:
             kwargs = {
                 "headless": not self._headed,
-                "args": launch_args,
+                "args": list(launch_args),
+                # Playwright defaults ``chromium_sandbox`` to False and adds
+                # ``--no-sandbox`` itself; passing the flag is the only way to
+                # actually keep the sandbox on (observed via process command
+                # lines: sandboxed launches carry no ``--no-sandbox``).
+                "chromium_sandbox": not no_sandbox,
+                "proxy": {"server": proxy_url},
                 "timeout": self._remaining_timeout_ms(deadline) if deadline is not None else self._timeout,
             }
             if channel_name:
@@ -822,18 +1039,53 @@ class LinkDownloader:
         ) from last_exc
 
     def close(self):
-        if self._browser:
-            self._browser.close()
-            self._browser = None
-        if self._pw:
-            self._pw.stop()
-            self._pw = None
+        # Cleanup must be best-effort and ordered: a failing browser close must
+        # not skip Playwright shutdown, and neither failure should escape into
+        # the caller's finally chain (state restoration still has to run).
+        try:
+            if self._browser:
+                try:
+                    self._browser.close()
+                except Exception as exc:
+                    _log.warning("Playwright browser close failed: %s", type(exc).__name__)
+                finally:
+                    self._browser = None
+        finally:
+            try:
+                if self._pw:
+                    try:
+                        self._pw.stop()
+                    except Exception as exc:
+                        _log.warning("Playwright stop failed: %s", type(exc).__name__)
+                    finally:
+                        self._pw = None
+            finally:
+                self._stop_safety_proxy()
+
+    def _stop_safety_proxy(self) -> None:
+        proxy = self._safety_proxy
+        self._safety_proxy = None
+        if proxy is not None:
+            try:
+                proxy.stop()
+            except Exception as exc:
+                _log.warning("Browser safety proxy stop failed: %s", type(exc).__name__)
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         self.close()
+
+    def __del__(self):
+        # Last-resort cleanup: an escape path (e.g. a cancellation unwinding
+        # the caller's stack) can bypass close(). Reap the browser child
+        # processes when this object is collected instead of leaking them
+        # for the rest of the GUI session.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def download_from_email(self, msg, mail_uid: int, date_str: str = "") -> list[DownloadedFile]:
         self._check_cancelled()
@@ -1178,6 +1430,7 @@ class LinkDownloader:
                                 download.suggested_filename,
                                 f"invoice_{mail_uid}_{idx}.pdf",
                             )
+                            dest = _unique_download_destination(dest)
                             if _save_download_to_path(download, dest):
                                 if _verify_and_clean_file(dest):
                                     _log.info("已点击页面下载按钮并捕获文件")
@@ -1315,12 +1568,24 @@ class LinkDownloader:
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            ctx = self._browser.new_context(accept_downloads=True, user_agent=desktop_ua)
+            ctx = self._browser.new_context(
+                accept_downloads=True,
+                user_agent=desktop_ua,
+                # Service-worker-initiated requests bypass route interception;
+                # block SW so the request guards below see the whole picture.
+                service_workers="block",
+            )
             page = ctx.new_page()
             bounded_timeout = self._remaining_timeout_ms(deadline)
             ctx.set_default_timeout(bounded_timeout)
             ctx.set_default_navigation_timeout(bounded_timeout)
             ctx.route("**/*", _route_browser_request)
+            # Route interception above never sees redirect hops (Playwright
+            # treats a redirect chain as a single interception unit); mail
+            # links may 302 into intranet addresses. Watch every request and
+            # fail closed when any of them is unsafe.
+            request_guard = _UnsafeRequestGuard(ctx)
+            ctx.on("request", request_guard)
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             downloaded_path: str | None = None
@@ -1338,10 +1603,10 @@ class LinkDownloader:
                     download.suggested_filename,
                     f"invoice_{mail_uid}_{idx}.pdf",
                 )
-                if dest.exists():
-                    downloaded_path = str(dest)
-                    download_done.set()
-                    return
+                # Never reuse an existing file as this download's result: a
+                # same-named leftover would point the invoice at the wrong
+                # document.
+                dest = _unique_download_destination(dest)
                 if _save_download_to_path(download, dest):
                     downloaded_path = str(dest)
                 download_done.set()
@@ -1402,6 +1667,12 @@ class LinkDownloader:
             except Exception:
                 self._check_cancelled()
             self._check_cancelled()
+            if request_guard.blocked:
+                # A redirect hop (or any other request) targeted a non-public
+                # address and the context has been torn down — do not continue
+                # with clicks, extraction or fallbacks on a compromised page.
+                self.failed_url_fingerprints.add(self._url_fingerprint(url))
+                return None
             final_url = str(getattr(page, "url", "") or "")
             if final_url and not _is_safe_browser_request_url(final_url):
                 _log.warning(

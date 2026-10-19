@@ -23,6 +23,9 @@ class InvoiceInfo:
     total_amount: str = ""       # tax-inclusive
     seller_name: str = ""
     buyer_name: str = ""
+    buyer_tax_id: str | None = None
+    tax_amount: str | None = None
+    tax_rate: str | None = None
     invoice_type: str = ""
     parse_success: bool = False
     parse_note: str = ""
@@ -76,6 +79,19 @@ def parse_railway_invoice_date(text: str) -> str | None:
     if m:
         return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
     return None
+
+
+def _looks_like_date_number(value: str) -> bool:
+    """True when an 8-digit number reads as a date (YYYYMMDD), not an invoice number."""
+    if len(value) != 8 or not value.isdigit():
+        return False
+    year, month, day = int(value[:4]), int(value[4:6]), int(value[6:8])
+    return 1990 <= year <= 2099 and 1 <= month <= 12 and 1 <= day <= 31
+
+
+def _looks_like_mobile_phone(value: str) -> bool:
+    """True for mainland mobile numbers (11 digits starting with 1[3-9])."""
+    return bool(re.fullmatch(r"1[3-9]\d{9}", str(value or "")))
 
 
 
@@ -133,6 +149,17 @@ class InvoiceParser:
             info.invoice_date = normalize_date(field('IssueTime'))[:10]
             info.seller_name = field('SellerName')
             info.buyer_name = field('BuyerName')
+            buyer_node = root.find('.//BuyerInformation')
+            if buyer_node is not None:
+                for tag in ('BuyerIdNum', 'BuyerTaxID', 'BuyerTaxId'):
+                    tax_node = buyer_node.find(tag)
+                    if tax_node is not None:
+                        info.buyer_tax_id = (tax_node.text or '').strip()
+                        break
+            tax_node = root.find('.//TotalTaxAm')
+            if tax_node is not None:
+                info.tax_amount = (tax_node.text or '').strip()
+
             info.amount = field('TotalAmWithoutTax')
             info.total_amount = field('TotalTax-includedAmount') or field('TotaltaxIncludedAmount')
             info.item_name = field('ItemName')
@@ -183,6 +210,17 @@ class InvoiceParser:
 
             info.raw_text = text[:2000]
             info.item_name = self._extract_item_names(text)
+            buyer_tax = re.search(r'购买方[\s\S]{0,150}?纳税人识别号[:：]\s*([A-Za-z0-9]+)', text)
+            if buyer_tax and '销售方' not in buyer_tax[0]:
+                info.buyer_tax_id = buyer_tax[1]
+            tax = re.search(r'(?:合计税额|税额合计|税\s*额)[:：]\s*[¥￥]?\s*(-?[\d,]+\.\d{2})', text)
+            if tax:
+                info.tax_amount = tax[1].replace(',', '')
+            rates = re.findall(r'税率[:：]\s*(\d+(?:\.\d+)?%|免税|不征税)', text)
+            if rates:
+                unique_rates = list(dict.fromkeys(rates))
+                info.tax_rate = unique_rates[0] if len(unique_rates) == 1 else '多税率'
+
 
             if self._parse_transport_receipt(text, info):
                 return info
@@ -215,7 +253,11 @@ class InvoiceParser:
                 if nums_20:
                     info.invoice_number = nums_20[0]
                 elif nums_8:
-                    info.invoice_number = nums_8[0]
+                    # Skip YYYYMMDD-looking values: an issue date must not
+                    # become the invoice number that drives dedup identity.
+                    date_like = [n for n in nums_8 if not _looks_like_date_number(n)]
+                    if date_like:
+                        info.invoice_number = date_like[0]
 
             # ── Invoice code (10-12 digits) ──
             info.invoice_code = self._field(text, [
@@ -225,9 +267,12 @@ class InvoiceParser:
             if not info.invoice_code:
                 nums_long = re.findall(r"(?<!\d)(\d{10,12})(?!\d)", text)
                 for n in nums_long:
-                    if n != info.invoice_number:
-                        info.invoice_code = n
-                        break
+                    if n == info.invoice_number or _looks_like_mobile_phone(n):
+                        # An 11-digit mobile number is contact info, not an
+                        # invoice code used for dedup identity.
+                        continue
+                    info.invoice_code = n
+                    break
 
             # ── Try extracting from filename (e.g. 031002500111_11803786.pdf) ──
             fname = os.path.basename(path)
@@ -360,11 +405,26 @@ class InvoiceParser:
 
 
             # ── Dedicated Railway Ticket Parsing Override ──
+            # "铁路"/"电子客票" alone appear on unrelated documents (air
+            # e-tickets, freight invoices, hotel receipts).  This branch
+            # rewrites the seller, type and amount, so require an explicit
+            # rail-ticket marker, the 12306 service name, or both weak
+            # signals together.
+            has_railway_marker = any(
+                marker in text
+                for marker in (
+                    "电子发票（铁路电子客票）",
+                    "铁路电子客票",
+                    "中国国家铁路集团有限公司",
+                    "12306",
+                    "铁一发路",
+                )
+            )
+            weak_railway_signals = int("铁路" in text) + int("电子客票" in text)
             is_railway = (
-                "电子发票（铁路电子客票）" in text
-                or "铁路电子客票" in text
+                has_railway_marker
+                or weak_railway_signals >= 2
                 or info.seller_name == "中国国家铁路集团有限公司"
-                or "铁路" in text or "电子客票" in text or "12306" in text or "铁一发路" in text
             )
             if is_railway:
                 m_amt = re.search(r"[￥¥]\s*([\d,]+\.\d{2})", text)

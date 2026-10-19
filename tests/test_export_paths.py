@@ -6,11 +6,24 @@ from unittest.mock import patch
 from scripts.invoice_fetch.export_paths import (
     default_export_directory,
     migrate_legacy_exports,
+    normalize_export_date_prefix,
     resolve_export_directory,
 )
 
 
 class ExportPathsTests(unittest.TestCase):
+
+    def test_date_prefix_rule_preserves_package_naming_fallbacks(self):
+        cases = {
+            "2026-07-03": "2026-07-03", "2026/07/03": "2026-07-03",
+            "2026.07.03": "2026-07-03", "20260703": "2026-07-03",
+            "": "unknown-date", "???": "unknown-date",
+            "unknown-date": "unknown-date", "mail fallback": "mail-fallback",
+            "2026-02-31": "2026-02-31",
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(normalize_export_date_prefix(value), expected)
 
     def test_default_export_path_is_user_documents_not_install_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
