@@ -1170,10 +1170,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.show()
 
         self.write_log(f"📊 [系统启动] First Invoice List Loaded: 成功检索并渲染首批数据 (耗时: {load_time - start_time:.4f}秒)")
-        status_msg = f"本地数据库 invoices.db 加载成功，发票列表加载耗时 {load_time - start_time:.4f} 秒"
+        # Keep the startup timing in the log; the status bar is user-facing and
+        # only surfaces a notice the worker can act on.
         if getattr(self, "_first_load_notice", None):
-            status_msg = f"{status_msg}｜{self._first_load_notice}"
-        self.statusBar().showMessage(status_msg, 4000)
+            self.statusBar().showMessage(str(self._first_load_notice), 6000)
         self._start_export_migration()
 
     def closeEvent(self, event):
@@ -3902,6 +3902,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         return f"最近扫描：扫描 {scanned} 封 · 新增 {new_items} 条 · 重复 {duplicates} 条 · 失败 {failed} 条"
 
+    @staticmethod
+    def _set_button_variant(button, variant: str) -> None:
+        """Switch a standard button between the design-system variants."""
+        button.setProperty("variant", variant)
+        button.style().unpolish(button)
+        button.style().polish(button)
+
     def _refresh_export_page(self) -> None:
         if not hasattr(self, "export_group_list"):
             return
@@ -3977,6 +3984,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.export_invoices_card.setVisible(False)
             self.export_integrity_card.setVisible(False)
             self.export_summary_strip.set_metric("ready", "无报销组")
+            if hasattr(self, "export_group_list"):
+                self.export_group_list.setVisible(False)
+            # A worker's first step is creating a claim, not picking invoices:
+            # hide claim-dependent actions and promote the only valid action.
+            for attr in (
+                "btn_edit_claim_reason",
+                "btn_export_filename",
+                "btn_export_choose_invoices",
+                "btn_mark_claim_reimbursed",
+            ):
+                button = getattr(self, attr, None)
+                if button is not None:
+                    button.setVisible(False)
+            self._set_button_variant(self.btn_export_create_group, "primary")
+            if hasattr(self, "export_empty_state"):
+                self.export_empty_state.lbl_description.setText(
+                    "先新建报销组，再从审核页把发票加入组内，即可检查并导出。"
+                )
             if hasattr(self, "export_check_approved"):
                 for row in (
                     self.export_check_approved,
@@ -3996,9 +4021,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.lbl_export_invoice_meta.setText("当前未选择报销组。")
             self.btn_run_export_page.setEnabled(False)
             return
+        if hasattr(self, "export_group_list"):
+            self.export_group_list.setVisible(True)
         self.export_empty_state.setVisible(False)
         self.export_invoices_card.setVisible(True)
         self.export_integrity_card.setVisible(True)
+        for attr in (
+            "btn_edit_claim_reason",
+            "btn_export_filename",
+            "btn_export_choose_invoices",
+            "btn_mark_claim_reimbursed",
+        ):
+            button = getattr(self, attr, None)
+            if button is not None:
+                button.setVisible(True)
+        self._set_button_variant(self.btn_export_create_group, "secondary")
         target_row = 0
         if current_claim_id is not None:
             for row in range(self.export_group_list.count()):
@@ -6006,13 +6043,38 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim = self.db.get_claim_group(claim_id) or {}
         claim_status = str(claim.get("status") or "draft")
         if hasattr(self, "export_invoice_list"):
+            from ..claim_export import inspect_extra_material, inspect_original_attachment
+
             self.export_invoice_list.clear()
             for inv in invoices:
                 status = self._get_invoice_review_status_chinese(inv)
                 number = str(inv.get("invoice_number") or "无票号").strip()
                 seller = str(inv.get("seller_name") or "未知销售方").strip()
                 amount = self._format_table_amount(inv.get("total_amount") or "")
-                self.export_invoice_list.addItem(f"{status} · {seller} · {amount} · {number}")
+                # Surface the per-invoice blocker next to the row so the worker
+                # can tell which record to fix instead of only seeing a count.
+                # Uses the same inspection helpers as the completeness checklist.
+                row_blockers = []
+                if not inspect_original_attachment(inv, RUNTIME_DIR)["available"]:
+                    row_blockers.append("缺原件")
+                amount_text = str(inv.get("total_amount") or "").strip()
+                if not amount_text:
+                    row_blockers.append("缺金额")
+                else:
+                    try:
+                        amount_value = Decimal(amount_text.replace(",", ""))
+                    except InvalidOperation:
+                        row_blockers.append("金额无效")
+                    else:
+                        if not amount_value.is_finite():
+                            row_blockers.append("金额无效")
+                material = inspect_extra_material(inv, RUNTIME_DIR)
+                if material["missing_extra"]:
+                    row_blockers.append("缺补充材料")
+                elif material["unavailable_extra"]:
+                    row_blockers.append("材料不可用")
+                suffix = f"  ⚠ {'、'.join(row_blockers)}" if row_blockers else ""
+                self.export_invoice_list.addItem(f"{status} · {seller} · {amount} · {number}{suffix}")
             self.lbl_export_invoice_meta.setText(
                 f"当前报销组共 {len(invoices)} 张记录，其中已通过 {stats.get(APPROVED, 0)} 张，待处理 {stats.get(TO_REVIEW, 0)} 张。"
             )
