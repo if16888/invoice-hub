@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
+from .browser_proxy import SafeBrowserProxy
 from .filename_safety import sanitize_windows_basename
 from .log_privacy import mask_filename, mask_sender_header, mask_url_for_log, redact_text
 
@@ -246,12 +247,87 @@ def _host_resolves_to_public_addresses(host: str, port: int) -> bool:
     return _host_resolves_to_public_addresses_cached(host, port, _dns_cache_bucket())
 
 
+@lru_cache(maxsize=256)
+def _resolve_public_address_cached(host: str, port: int, bucket: int) -> str | None:
+    """Resolve once per short TTL window; every address must be public.
+
+    The returned address is the exact one the safety proxy connects to, so a
+    rebinding response between check and connection cannot redirect the
+    socket. Caching keeps a burst of parallel browser connections to one host
+    from exhausting the bounded resolver slots.
+    """
+    host = str(host or "").strip().rstrip(".").lower()
+    if not host:
+        return None
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        return str(literal) if literal.is_global else None
+
+    fingerprint = hashlib.sha256(host.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    resolver_slots = _DNS_RESOLVE_SLOTS
+    if not resolver_slots.acquire(timeout=_DNS_RESOLVE_TIMEOUT_SECONDS):
+        _log.warning("DNS safety resolver capacity exhausted: <%s>", fingerprint)
+        return None
+
+    done = threading.Event()
+    result: dict[str, object] = {}
+
+    def resolve() -> None:
+        try:
+            result["records"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            result["records"] = None
+        finally:
+            done.set()
+            resolver_slots.release()
+
+    resolver = threading.Thread(
+        target=resolve,
+        name="InvoiceHubProxyDnsCheck",
+        daemon=True,
+    )
+    try:
+        resolver.start()
+    except Exception:
+        resolver_slots.release()
+        return None
+    if not done.wait(_DNS_RESOLVE_TIMEOUT_SECONDS):
+        _log.warning("DNS safety check timed out: <%s>", fingerprint)
+        return None
+
+    records = result.get("records")
+    if not records:
+        return None
+    addresses: list[str] = []
+    for record in records:
+        if not record[4]:
+            continue
+        try:
+            ip = ipaddress.ip_address(record[4][0])
+        except ValueError:
+            return None
+        if not ip.is_global:
+            return None
+        addresses.append(str(ip))
+    return addresses[0] if addresses else None
+
+
+def _resolve_public_address(host: str, port: int) -> str | None:
+    """Return a vetted address the browser safety proxy may connect to."""
+    return _resolve_public_address_cached(host, port, _dns_cache_bucket())
+
+
 def _clear_dns_safety_cache() -> None:
     """Drop cached DNS safety decisions (test and maintenance hook)."""
     _host_resolves_to_public_addresses_cached.cache_clear()
+    _resolve_public_address_cached.cache_clear()
 
 
 _host_resolves_to_public_addresses.cache_clear = _clear_dns_safety_cache  # type: ignore[attr-defined]
+_resolve_public_address.cache_clear = _clear_dns_safety_cache  # type: ignore[attr-defined]
 
 
 def _is_safe_browser_request_url(url: str) -> bool:
@@ -721,11 +797,14 @@ def _verify_and_clean_file(path: str | Path) -> bool:
 def playwright_launch_args(*, no_sandbox: bool) -> list[str]:
     """Return Chromium launch arguments for the headless downloader.
 
-    The Chromium sandbox stays enabled by default: it is the last process
-    boundary around rendering third-party invoice HTML. ``--no-sandbox`` is
-    only added when explicitly requested via ``playwright.no_sandbox``, the
-    ``INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX`` environment override, or when the
-    sandbox cannot run at all (root on POSIX).
+    The Chromium sandbox stays enabled by default; it must be requested in
+    two places because Playwright's ``chromium_sandbox`` option defaults to
+    ``False`` and adds ``--no-sandbox`` on its own: pass
+    ``chromium_sandbox=not no_sandbox`` to ``launch()`` and only add the
+    ``--no-sandbox`` argument here when a run explicitly opts out via
+    ``playwright.no_sandbox``, the ``INVOICE_HUB_PLAYWRIGHT_NO_SANDBOX``
+    environment override, or when the sandbox cannot run at all (root on
+    POSIX).
     """
     args = [
         "--disable-blink-features=AutomationControlled",
@@ -782,6 +861,7 @@ class LinkDownloader:
         )
         self._pw = None
         self._browser = None
+        self._safety_proxy = None
         self._headed = headed
         self._scan_control = scan_control
         # Per-process failed URL fingerprint cache — avoid retrying known failures
@@ -881,10 +961,30 @@ class LinkDownloader:
         if no_sandbox:
             _log.info("Chromium sandbox is disabled for this run (playwright.no_sandbox)")
 
+        # Network-layer SSRF guard: route interception never sees redirect
+        # hops and the request event only observes a request as it is being
+        # sent. The browser reaches the network exclusively through this local
+        # filtering proxy, which vets and pins every connection target before
+        # the connection is opened (verified end-to-end: a private redirect
+        # target receives no request at all).
+        if self._safety_proxy is None:
+            self._safety_proxy = SafeBrowserProxy(_resolve_public_address)
+        try:
+            proxy_url = self._safety_proxy.start()
+        except OSError as exc:
+            self._stop_safety_proxy()
+            raise RuntimeError(f"浏览器安全代理启动失败: {exc}") from exc
+
         def _launch_browser(channel_name: str | None, label: str) -> None:
             kwargs = {
                 "headless": not self._headed,
-                "args": launch_args,
+                "args": list(launch_args),
+                # Playwright defaults ``chromium_sandbox`` to False and adds
+                # ``--no-sandbox`` itself; passing the flag is the only way to
+                # actually keep the sandbox on (observed via process command
+                # lines: sandboxed launches carry no ``--no-sandbox``).
+                "chromium_sandbox": not no_sandbox,
+                "proxy": {"server": proxy_url},
                 "timeout": self._remaining_timeout_ms(deadline) if deadline is not None else self._timeout,
             }
             if channel_name:
@@ -939,12 +1039,37 @@ class LinkDownloader:
         ) from last_exc
 
     def close(self):
-        if self._browser:
-            self._browser.close()
-            self._browser = None
-        if self._pw:
-            self._pw.stop()
-            self._pw = None
+        # Cleanup must be best-effort and ordered: a failing browser close must
+        # not skip Playwright shutdown, and neither failure should escape into
+        # the caller's finally chain (state restoration still has to run).
+        try:
+            if self._browser:
+                try:
+                    self._browser.close()
+                except Exception as exc:
+                    _log.warning("Playwright browser close failed: %s", type(exc).__name__)
+                finally:
+                    self._browser = None
+        finally:
+            try:
+                if self._pw:
+                    try:
+                        self._pw.stop()
+                    except Exception as exc:
+                        _log.warning("Playwright stop failed: %s", type(exc).__name__)
+                    finally:
+                        self._pw = None
+            finally:
+                self._stop_safety_proxy()
+
+    def _stop_safety_proxy(self) -> None:
+        proxy = self._safety_proxy
+        self._safety_proxy = None
+        if proxy is not None:
+            try:
+                proxy.stop()
+            except Exception as exc:
+                _log.warning("Browser safety proxy stop failed: %s", type(exc).__name__)
 
     def __enter__(self):
         return self
