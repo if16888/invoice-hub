@@ -10,6 +10,9 @@ on:
   pull_request:
     branches:
       - master
+      # Feature-branch PRs get the same source gates and Windows shards as
+      # master PRs so a review batch cannot merge without remote evidence.
+      - feat/v0.2.0
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
