@@ -7070,7 +7070,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         splitter = getattr(self, "main_splitter", None)
         if splitter is not None:
             if empty_db:
-                splitter.setSizes([max(1, splitter.width()), 0])
+                handles = splitter.handleWidth() * max(0, splitter.count() - 1)
+                usable = max(1, splitter.width() - handles)
+                splitter.setSizes([usable, 0])
             else:
                 splitter.setSizes([650, 450])
 
