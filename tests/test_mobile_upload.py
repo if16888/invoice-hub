@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch import mobile_upload
 from scripts.invoice_fetch.mobile_upload import (
     ALLOWED_UPLOAD_EXTS,
     MobileUploadServer,
@@ -368,6 +369,73 @@ class MobileUploadTests(unittest.TestCase):
             self.assertFalse(expired.exists())
             self.assertTrue(recent.exists())
             self.assertTrue(session.manifest_path.exists())
+
+    def test_failed_upload_session_keeps_its_files_within_retention(self):
+        from datetime import timedelta
+
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            recent_day = (
+                datetime.now() - timedelta(days=mobile_upload.SESSION_RETENTION_DAYS - 1)
+            ).strftime("%Y-%m-%d")
+            failed = upload_root / recent_day / "mobile_failed_import"
+            (failed / "original").mkdir(parents=True)
+            (failed / "original" / "invoice.pdf").write_bytes(b"recover-me")
+            (failed / "manifest.json").write_text("{}", encoding="utf-8")
+
+            removed = mobile_upload._prune_expired_upload_sessions(
+                upload_root,
+                retention_days=mobile_upload.SESSION_RETENTION_DAYS,
+            )
+
+            self.assertEqual(removed, 0)
+            self.assertTrue((failed / "original" / "invoice.pdf").exists())
+
+    def test_pruning_never_touches_archived_originals_or_foreign_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            archived = runtime / "attachments" / "2026-01-01" / "invoice.pdf"
+            archived.parent.mkdir(parents=True)
+            archived.write_bytes(b"archived-original")
+            superseded = upload_root / "2019-05-05" / "mobile_old"
+            (superseded / "original").mkdir(parents=True)
+            (superseded / "original" / "invoice.pdf").write_bytes(b"archived-original")
+            foreign = upload_root / "manual-backup"
+            foreign.mkdir(parents=True)
+            stray = upload_root / "keep.txt"
+            stray.write_text("keep", encoding="utf-8")
+
+            removed = mobile_upload._prune_expired_upload_sessions(
+                upload_root,
+                retention_days=mobile_upload.SESSION_RETENTION_DAYS,
+            )
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(superseded.exists())
+            # Retention only governs the upload staging area: the archived
+            # original under runtime/attachments is never deleted here.
+            self.assertTrue(archived.exists())
+            self.assertTrue(foreign.exists())
+            self.assertTrue(stray.exists())
+
+    def test_prune_keeps_the_active_session_tree_even_when_expired(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            upload_root = runtime / "inbox" / "mobile_upload"
+            active_day = upload_root / "2019-01-01"
+            active_session = active_day / "mobile_active"
+            (active_session / "original").mkdir(parents=True)
+
+            removed = mobile_upload._prune_expired_upload_sessions(
+                upload_root,
+                retention_days=mobile_upload.SESSION_RETENTION_DAYS,
+                keep=active_session,
+            )
+
+            self.assertEqual(removed, 0)
+            self.assertTrue((active_session / "original").exists())
 
     def test_expired_session_hashes_no_longer_block_reupload(self):
         payload = b"retry-me"

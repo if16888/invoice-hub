@@ -25,6 +25,28 @@ class TestEmailReprocess(unittest.TestCase):
             outcome = _reprocess_email_records(self.db, self.cfg, records, dry_run=False)
         self.assertEqual(outcome, {"succeeded": 0, "failed": 1})
 
+    def test_reprocess_restores_rename_mode_when_link_cleanup_raises(self):
+        from scripts.invoice_fetch import services as application_services
+
+        class ExplodingDownloader:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def close(self):
+                raise RuntimeError("close boom")
+
+        original = application_services._rename_source_mode
+        try:
+            with patch(
+                "scripts.invoice_fetch.__main__.LinkDownloader",
+                ExplodingDownloader,
+            ):
+                with self.assertRaises(RuntimeError):
+                    _reprocess_email_records(self.db, self.cfg, [], dry_run=False)
+            self.assertEqual(application_services._rename_source_mode, original)
+        finally:
+            application_services._rename_source_mode = original
+
     def setUp(self):
         self.temp_dir = Path(tempfile.mkdtemp())
         self.db_path = self.temp_dir / "test_reprocess.db"

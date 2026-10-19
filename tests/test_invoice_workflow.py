@@ -1336,7 +1336,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def launch(self, channel=None, headless=False, args=None, timeout=None):
+            def launch(self, channel=None, headless=False, args=None, timeout=None,
+                       chromium_sandbox=None, proxy=None):
                 self.calls.append((channel or "chromium", timeout))
                 if channel == "msedge":
                     return FakeBrowser()

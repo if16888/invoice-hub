@@ -1181,9 +1181,11 @@ def _reprocess_email_records(
                 _log.error("连接邮箱 %s 失败或下载过程中出错: %s", mask_email(acc["address"]), exc)
                 failed_count += len(pending)
     finally:
-        link_dl.close()
-        # ── Restore filename conflict log severity ──
-        application_services._rename_source_mode = prev_rename_mode
+        try:
+            link_dl.close()
+        finally:
+            # ── Restore filename conflict log severity ──
+            application_services._rename_source_mode = prev_rename_mode
 
     print("\n邮箱重处理完成：")
     print(f"- 选中邮件：{len(records)} 封")
