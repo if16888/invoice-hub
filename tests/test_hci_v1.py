@@ -118,6 +118,18 @@ class HciV1DesktopTests(unittest.TestCase):
 
     def test_dashboard_exposes_task_cards_and_single_review_cta(self):
         with tempfile.TemporaryDirectory() as td:
+            # Seed one record so the dashboard renders its full content
+            # (metrics, task cards and the completed-activity card), which is
+            # the state this scroll contract is about.
+            with InvoiceDB(Path(td) / "hci-v1.db") as db:
+                db.insert_invoice({
+                    "invoice_number": "HCI-001",
+                    "invoice_date": "2026-10-18",
+                    "total_amount": "10.00",
+                    "seller_name": "Synthetic Seller",
+                    "buyer_name": "Synthetic Buyer",
+                    "review_status": "to_review",
+                })
             window = self.make_window(td)
             try:
                 self.assertTrue(window.overview_page.property("hciV1DashboardApplied"))

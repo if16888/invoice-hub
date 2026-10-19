@@ -628,6 +628,7 @@ def _enter_hci_continuous_review(window) -> None:
     bar = getattr(window, "hci_review_mode_bar", None)
     if bar is not None:
         bar.setProperty("active", True)
+        bar.show()
         getattr(window, "btn_hci_enter_review").hide()
         getattr(window, "lbl_hci_review_progress").show()
         getattr(window, "btn_hci_exit_review").show()
@@ -677,6 +678,7 @@ def _exit_hci_continuous_review(window) -> None:
         getattr(window, "btn_hci_exit_review").hide()
         getattr(window, "lbl_hci_review_shortcuts").hide()
         _repolish(bar)
+        bar.hide()
 
     preview = getattr(window, "preview_panel", None)
     if preview is not None:
@@ -725,6 +727,9 @@ def apply_review_hci_v1(page: QWidget | None) -> None:
 
     header_index = layout.indexOf(header)
     layout.insertWidget(max(0, header_index + 1), bar)
+    # The continuous-review bar only appears while the mode is active; its
+    # entry point now lives in the batch menu.
+    bar.hide()
 
     window.hci_review_mode_bar = bar
     window.btn_hci_enter_review = btn_enter

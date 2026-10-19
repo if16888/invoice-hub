@@ -46,7 +46,19 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
         cls._settings_runtime.cleanup()
 
     def make_window(self, td):
-        window = InvoiceReviewApp(Path(td) / "review-baseline.db")
+        from scripts.invoice_fetch.db import InvoiceDB as _InvoiceDB
+
+        db_path = Path(td) / "review-baseline.db"
+        with _InvoiceDB(db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "BASELINE-001",
+                "invoice_date": "2026-10-18",
+                "total_amount": "10.00",
+                "seller_name": "Synthetic Seller",
+                "buyer_name": "Synthetic Buyer",
+                "review_status": "to_review",
+            })
+        window = InvoiceReviewApp(db_path)
         window.resize(1366, 768)
         window.show()
         for _ in range(5):

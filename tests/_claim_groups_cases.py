@@ -4773,6 +4773,15 @@ class ClaimGroupsTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as td:
                 db_path = Path(td) / "test_gui_log.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "LOG-001",
+                        "invoice_date": "2026-10-18",
+                        "total_amount": "10.00",
+                        "seller_name": "Synthetic Seller",
+                        "buyer_name": "Synthetic Buyer",
+                        "review_status": "to_review",
+                    })
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
                 window = InvoiceReviewApp(db_path, splash=None)
                 try:
@@ -4914,6 +4923,15 @@ class ClaimGroupsTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as td:
                 db_path = Path(td) / "test_gui_log_repeated_toggle.db"
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "LOG-002",
+                        "invoice_date": "2026-10-18",
+                        "total_amount": "10.00",
+                        "seller_name": "Synthetic Seller",
+                        "buyer_name": "Synthetic Buyer",
+                        "review_status": "to_review",
+                    })
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp, LOG_DRAWER_EXPANDED_HEIGHT
                 window = InvoiceReviewApp(db_path, splash=None)
                 try:

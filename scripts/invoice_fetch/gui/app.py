@@ -2070,6 +2070,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_review_batch_menu.setToolTip("区分已加载记录和全部筛选结果；批量通过会跳过异常记录")
         self.btn_review_batch_menu.setPopupMode(QToolButton.InstantPopup)
         self.review_batch_menu = QMenu(self.btn_review_batch_menu)
+        # One batch entry: continuous review lives here instead of a second
+        # competing primary button on the page.
+        self.action_continuous_review = self.review_batch_menu.addAction(
+            "连续审核（逐张）", self._start_continuous_review
+        )
+        self.review_batch_menu.addSeparator()
         self.action_select_loaded = self.review_batch_menu.addAction("全选已加载记录", lambda: self.table.selectAll())
         self.action_clear_loaded = self.review_batch_menu.addAction("清空选择", lambda: self.table.clearSelection())
         self.review_batch_menu.addSeparator()
@@ -2110,8 +2116,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._refresh_column_filter_headers()
 
         # Final 0.1.4 review workbench default columns:
-        # review status, material status, expense date, amount, seller, invoice number.
-        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 84, 4: 220, 5: 178}
+        # review status, material status, expense date, amount, seller, invoice number, claim.
+        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 84, 4: 220, 5: 178, 6: 120}
         for _column, _width in self._min_column_widths.items():
             self.table.setColumnWidth(_column, _width)
 
@@ -3061,11 +3067,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.overview_state_stack.show_empty(
                 "还没有发票", "先从本地、邮箱或手机导入第一张发票。", action=action
             )
+            if hasattr(self, "overview_activity_card"):
+                self.overview_activity_card.setVisible(False)
             if performance_trace is not None:
                 performance_trace.finish("empty_state", surface="overview")
             return
 
         self.overview_state_stack.show_content()
+        if hasattr(self, "overview_activity_card"):
+            self.overview_activity_card.setVisible(True)
         if performance_trace is not None:
             performance_trace.mark("widget_update")
 
@@ -3559,6 +3569,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_task_stack.updateGeometry()
         if has_main_row:
             self.import_main_row.updateGeometry()
+
+    def _toggle_import_rules(self, checked: bool) -> None:
+        """Progressive disclosure for the scan-rule reference block."""
+        self.import_rules_detail.setVisible(bool(checked))
+        self.btn_import_rules_toggle.setText(
+            "收起扫描规则" if checked else "查看扫描规则"
+        )
 
     def _run_import_primary_action(self) -> None:
         """Keep the import page primary action truthful for the chosen account."""
@@ -5140,6 +5157,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_import_rule_subject_filter = self.import_rules_detail.add_row("主题过滤", "发票 / 行程单 / 电子发票 / 账单")
         self.lbl_import_rule_duplicate = self.import_rules_detail.add_row("重复处理", "按发票代码与号码自动去重")
         self.lbl_import_rule_failure = self.import_rules_detail.add_row("失败处理", "失败记录汇总到最近结果，可直接查看失败明细")
+        # Scan rules are reference material; keep them one click away instead of
+        # permanently occupying the action area.
+        self.btn_import_rules_toggle = make_button("查看扫描规则", variant="ghost")
+        self.btn_import_rules_toggle.setCheckable(True)
+        self.btn_import_rules_toggle.toggled.connect(self._toggle_import_rules)
+        self.import_mail_accounts_card.body_layout.addWidget(
+            self.btn_import_rules_toggle, 0, Qt.AlignLeft
+        )
+        self.import_rules_detail.setVisible(False)
         self.import_mail_accounts_card.body_layout.addWidget(self.import_rules_detail)
 
         mail_action_row = QHBoxLayout()
@@ -5164,6 +5190,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_import_scan_status.setObjectName("importScanStatus")
 
         self.import_mail_more = MoreMenuButton(parent=self)
+        self.import_mail_more.setText("更多")
+        self.import_mail_more.setFixedWidth(56)
+        self.import_mail_more.setToolTip("更多操作")
         self.import_mail_more_menu = QMenu(self.import_mail_more)
         self.import_mail_more_menu.addAction("管理邮箱", lambda: self._switch_main_page("settings", sub_tab=1))
         self.import_mail_more_menu.addAction("失败明细", self._v5_show_failed_details_dialog)
@@ -7001,6 +7030,58 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             elif hasattr(button, "setChecked"):
                 button.setChecked(status == selected)
 
+    def _apply_review_empty_chrome(self, *, empty_db: bool) -> None:
+        """Collapse review-only chrome while the database has no invoices.
+
+        First-run workers should see one guided onboarding surface instead of
+        an empty table header, batch actions, preview and detail pane carrying
+        three competing "no records" messages.
+        """
+        active = getattr(self, "_review_empty_chrome_active", None)
+        if active is not None and bool(active) == bool(empty_db):
+            return
+        self._review_empty_chrome_active = bool(empty_db)
+        for attr in ("record_header", "batch_review_bar"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setVisible(not empty_db)
+        for attr in ("btn_soft_duplicate_review", "btn_hci_enter_review", "lbl_status_middle"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setVisible(not empty_db)
+        preview = getattr(self, "preview_panel", None)
+        if preview is not None:
+            preview.setVisible(not empty_db)
+        detail = getattr(self, "_detail_panel", None)
+        if detail is not None:
+            detail.setVisible(not empty_db)
+        filter_bar = getattr(self, "filter_bar_widget", None)
+        if filter_bar is not None:
+            filter_bar.setVisible(not empty_db)
+        upper = getattr(self, "left_upper_widget", None)
+        if upper is not None:
+            if empty_db:
+                upper.setMinimumHeight(0)
+                upper.setMaximumHeight(16777215)
+                upper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            else:
+                upper.setFixedHeight(276)
+                upper.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        splitter = getattr(self, "main_splitter", None)
+        if splitter is not None:
+            if empty_db:
+                splitter.setSizes([max(1, splitter.width()), 0])
+            else:
+                splitter.setSizes([650, 450])
+
+    def _start_continuous_review(self) -> None:
+        """Single batch entry: delegate to the continuous-review mode when ready."""
+        enter = getattr(self, "_enter_hci_continuous_review", None)
+        if callable(enter):
+            enter()
+        else:
+            self._change_filter(TO_REVIEW)
+
     def _change_filter(self, status):
         # Handle top-bar filter button clicks and update UI checked state.
         self._column_filters_load_all = False
@@ -7189,6 +7270,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     combined_warning = date_warn
 
                 rev_chinese = self._get_invoice_review_status_chinese(inv)
+                claim_name = self._get_invoice_claim_group(inv)
                 row_items = [
                     rev_chinese,
                     display_status,
@@ -7196,6 +7278,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     display_amount,
                     seller or "—",
                     inv_num or "—",
+                    claim_name or "—",
                 ]
 
                 for col, text in enumerate(row_items):
@@ -7243,6 +7326,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     elif col == 5 and inv_num:
                         item.setForeground(QColor("#667085"))
                         item.setToolTip(inv_num)
+                    elif col == 6:
+                        item.setToolTip(
+                            f"报销组: {claim_name}" if claim_name else "尚未加入报销组"
+                        )
 
                     if combined_warning:
                         existing_tip = item.toolTip()
@@ -7277,7 +7364,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.lbl_guide.setVisible(True)
                 self.empty_onboarding_widget.setVisible(True)
                 self.empty_filter_actions.setVisible(False)
+                self._apply_review_empty_chrome(empty_db=True)
             else:
+                self._apply_review_empty_chrome(empty_db=False)
                 if total_in_db is None:
                     self.lbl_empty_title.setText("暂时无法读取发票记录")
                     self.lbl_guide.setText("数据库查询失败，请重试；此状态不表示数据为空。")
@@ -7301,6 +7390,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._set_right_panel_state(False)
         else:
             self.left_stack.setCurrentWidget(self.table)
+            self._apply_review_empty_chrome(empty_db=False)
             if not append:
                 target_row = -1
                 if prev_id is not None:

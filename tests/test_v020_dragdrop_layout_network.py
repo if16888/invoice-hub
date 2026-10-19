@@ -109,9 +109,21 @@ class V020DragDropLayoutNetworkTests(unittest.TestCase):
 
     def test_review_detail_panel_collapses_restores_and_persists_width(self):
         with tempfile.TemporaryDirectory() as td:
+            from scripts.invoice_fetch.db import InvoiceDB as _InvoiceDB
+
+            db_path = Path(td) / "invoices.db"
+            with _InvoiceDB(db_path) as db:
+                db.insert_invoice({
+                    "invoice_number": "LAYOUT-001",
+                    "invoice_date": "2026-10-18",
+                    "total_amount": "10.00",
+                    "seller_name": "Synthetic Seller",
+                    "buyer_name": "Synthetic Buyer",
+                    "review_status": "to_review",
+                })
             settings = QSettings(str(Path(td) / "workbench.ini"), QSettings.IniFormat)
             with patch("scripts.invoice_fetch.gui.app.workbench_settings", return_value=settings):
-                window = InvoiceReviewApp(Path(td) / "invoices.db", splash=None)
+                window = InvoiceReviewApp(db_path, splash=None)
                 window.resize(1440, 900)
                 window.show()
                 window._switch_main_page("review")
