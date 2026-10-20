@@ -32,6 +32,57 @@ def _rect_payload(rect) -> dict[str, int]:
     }
 
 
+def seed_geometry_fixture(db_path: Path) -> None:
+    """Seed the populated workbench state the native tests exercise.
+
+    The empty-database first-run onboarding intentionally collapses the
+    record header, original preview and detail pane.  Probing that state
+    would report a different vertical-splitter range than the native
+    geometry tests, which always run against a populated workbench.
+    """
+    from scripts.invoice_fetch.db import InvoiceDB
+
+    with InvoiceDB(db_path) as db:
+        db.insert_invoice(
+            {
+                "invoice_number": "NATIVE-001",
+                "invoice_date": "2026-10-18",
+                "total_amount": "10.00",
+                "seller_name": "Synthetic Seller",
+                "buyer_name": "Synthetic Buyer",
+                "review_status": "to_review",
+            }
+        )
+
+
+def vertical_splitter_metrics(
+    *, sizes, record_minimum, record_maximum, preview_minimum
+) -> dict[str, int | bool]:
+    """Return the feasible record-pane bounds and remaining drag room.
+
+    A QSplitter can be resized while its current position sits inside
+    [lower, upper]; the initial position may legitimately sit above a
+    fixed maximum, so feasibility is measured from the current sizes
+    exactly like the native test does.
+    """
+    measurements = [int(value) for value in sizes]
+    total = sum(measurements)
+    current = measurements[0] if measurements else 0
+    lower = int(record_minimum)
+    upper = min(int(record_maximum), total - int(preview_minimum))
+    down_room = max(0, current - lower)
+    up_room = max(0, upper - current)
+    return {
+        "current": current,
+        "total": total,
+        "lower": lower,
+        "upper": upper,
+        "down_room": down_room,
+        "up_room": up_room,
+        "adjustable": max(down_room, up_room) > 0,
+    }
+
+
 def _classify(payload: dict) -> int:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
     print(f"NATIVE_GUI_GEOMETRY_CLASSIFICATION={payload['classification']}", flush=True)
@@ -54,7 +105,6 @@ def main() -> int:
     try:
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication, QSplitter
-        from scripts.invoice_fetch.db import InvoiceDB
         from scripts.invoice_fetch.gui.app import InvoiceReviewApp
         from scripts.invoice_fetch.gui.workbench_settings import (
             workbench_settings as make_workbench_settings,
@@ -73,8 +123,7 @@ def main() -> int:
     window = None
     with tempfile.TemporaryDirectory(prefix="invoice-hub-native-geometry-") as td:
         db_path = Path(td) / "invoices.db"
-        with InvoiceDB(db_path):
-            pass
+        seed_geometry_fixture(db_path)
 
         settings_patch = patch(
             "scripts.invoice_fetch.gui.app.workbench_settings",
@@ -111,7 +160,13 @@ def main() -> int:
                     if parent is not None and parent.layout() is not None:
                         parent.layout().activate()
                     candidate.updateGeometry()
-                if isinstance(candidate, QSplitter) and candidate.count() == 2:
+                if (
+                    isinstance(candidate, QSplitter)
+                    and candidate.count() == 2
+                    and candidate.handle(1) is not None
+                    and len(candidate.sizes()) == 2
+                    and all(int(size) > 0 for size in candidate.sizes())
+                ):
                     splitter = candidate
                     break
 
@@ -143,9 +198,15 @@ def main() -> int:
             record_min = int(record.minimumHeight())
             preview_min = int(preview.minimumHeight())
             record_max = int(record.maximumHeight())
-            total = int(sum(sizes))
-            lower = record_min
-            upper = min(record_max, total - preview_min)
+            metrics = vertical_splitter_metrics(
+                sizes=sizes,
+                record_minimum=record_min,
+                record_maximum=record_max,
+                preview_minimum=preview_min,
+            )
+            total = int(metrics["total"])
+            lower = int(metrics["lower"])
+            upper = int(metrics["upper"])
             payload.update(
                 {
                     "splitter_client_size": [int(splitter.width()), int(splitter.height())],
@@ -156,9 +217,12 @@ def main() -> int:
                     "preview_minimum": preview_min,
                     "feasible_lower": lower,
                     "feasible_upper": upper,
+                    "current_record": int(metrics["current"]),
+                    "down_room": int(metrics["down_room"]),
+                    "up_room": int(metrics["up_room"]),
                 }
             )
-            if lower > upper or upper <= lower:
+            if not bool(metrics["adjustable"]):
                 payload.update(
                     {
                         "classification": "ENVIRONMENT UNSUITABLE FOR NATIVE GUI CONTRACT",

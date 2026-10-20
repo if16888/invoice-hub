@@ -289,10 +289,19 @@ jobs:
           python scripts/dev/check_native_gui_geometry.py 2>&1 | Tee-Object -FilePath native-geometry-preflight.txt
           $code = $LASTEXITCODE
           Write-Host "Native geometry preflight exit code: $code"
+          if ($code -eq 0) {
+            "suitable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+          "suitable=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($code -eq 2) {
+            Write-Host "Environment is unsuitable for native geometry contracts; the native test step will be skipped."
+            exit 0
+          }
           exit $code
 
       - name: Run native workbench geometry tests
-        if: steps.native_geometry_classification.outcome == 'success'
+        if: steps.native_geometry_classification.outputs.suitable == 'true'
         shell: pwsh
         run: |
           python -m unittest -v tests.test_workbench_native_geometry 2>&1 | Tee-Object -FilePath native-workbench-geometry-tests.txt
