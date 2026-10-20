@@ -290,6 +290,22 @@ class SafeBrowserProxyTests(unittest.TestCase):
         proxy.stop()
         self.assertEqual(client.recv(64), b"")
 
+    def test_tunnel_registered_after_stop_is_closed_immediately(self):
+        # stop() can race the handler thread between the CONNECT response and
+        # tunnel registration; late registrations must be shut down instead of
+        # leaving a live relay behind.
+        proxy = self._start_proxy(lambda host, port: "127.0.0.1")
+        proxy.stop()
+
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        right.settimeout(2)
+
+        self.assertFalse(proxy._register_tunnel(left))
+        self.assertEqual(proxy._active_sockets, set())
+        self.assertEqual(right.recv(16), b"")
+
     def test_start_and_stop_are_idempotent(self):
         proxy = SafeBrowserProxy(lambda host, port: None)
         first = proxy.start()
