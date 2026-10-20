@@ -45,6 +45,7 @@ VISIBLE_COLUMN_DEFINITIONS = (
     ("total_amount", "金额"),
     ("seller_name", "销售方"),
     ("invoice_number", "发票号"),
+    ("claim_name", "报销组"),
 )
 
 COLUMN_KEYS = tuple(item[0] for item in COLUMN_DEFINITIONS)

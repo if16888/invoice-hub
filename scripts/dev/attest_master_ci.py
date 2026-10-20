@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -182,6 +183,40 @@ def attest_master_tree(
     )
 
 
+def attest_with_retry(
+    repo: str,
+    master_sha: str,
+    token: str,
+    *,
+    attempts: int = 8,
+    retry_seconds: float = 15.0,
+    sleep: Callable[[float], None] = time.sleep,
+    attest: Callable[[str, str, str], dict[str, Any]] = attest_master_tree,
+) -> dict[str, Any]:
+    """Attest with a bounded retry budget.
+
+    Merging right after a green PR can race the Actions API: the workflow run
+    may still report ``in_progress`` for a few seconds after every check run
+    completed. Retry instead of failing for a run that is about to be usable.
+    """
+    attempts = max(1, int(attempts))
+    last_error: AttestationError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return attest(repo, master_sha, token)
+        except AttestationError as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            print(
+                f"MASTER_CI_ATTESTATION=RETRY attempt={attempt}/{attempts} {exc}",
+                flush=True,
+            )
+            sleep(max(0.0, float(retry_seconds)))
+    assert last_error is not None
+    raise last_error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
@@ -192,7 +227,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--repo, --sha, and --token (or matching environment variables) are required")
 
     try:
-        result = attest_master_tree(args.repo, args.sha, args.token)
+        result = attest_with_retry(
+            args.repo,
+            args.sha,
+            args.token,
+            attempts=int(os.environ.get("MASTER_CI_ATTESTATION_ATTEMPTS", "8")),
+            retry_seconds=float(os.environ.get("MASTER_CI_ATTESTATION_RETRY_SECONDS", "15")),
+        )
     except AttestationError as exc:
         print(f"MASTER_CI_ATTESTATION=FAIL {exc}", file=sys.stderr, flush=True)
         return 1

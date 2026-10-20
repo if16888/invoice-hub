@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -32,6 +33,26 @@ _REVIEW_FILTER_KEYS = {
     "seller_name", "category", "source", "claim_name", "review_status",
     "missing_extra", "buyer_warning",
 }
+
+
+def claim_members_digest(rows: Iterable[dict]) -> str:
+    """Return a stable digest of claim-member rows for export consistency.
+
+    Covers every invoice column plus linked evidence, so adding, removing or
+    editing a member between package generation and the export record is
+    detected inside the finalization transaction.
+    """
+    payload = []
+    for row in sorted((dict(item) for item in rows), key=lambda item: int(item.get("id") or 0)):
+        payload.append({str(key): row[key] for key in sorted(row)})
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _review_amount_compare(value: object, boundary: object, direction: int) -> int:
@@ -166,6 +187,16 @@ class InvoiceDB(EvidenceStoreMixin):
         try:
             self._conn.row_factory = sqlite3.Row
             self._buyer_warning_checker = None
+            # Refuse a database written by a newer application before any DDL
+            # or journal-mode change can touch it; check_and_migrate keeps the
+            # same gate as defense in depth.
+            from .migrations import LATEST_SCHEMA_VERSION
+            version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if version > LATEST_SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"数据库版本 V{version} 高于当前应用支持的 V{LATEST_SCHEMA_VERSION}；"
+                    "请升级 Invoice Hub 后再打开此数据库。"
+                )
             self._conn.create_function(
                 "review_buyer_has_warning", 3, self._eval_buyer_warning, deterministic=False
             )
@@ -2093,10 +2124,13 @@ class InvoiceDB(EvidenceStoreMixin):
         from .tax_id_validation import TAX_ID_TYPES
         if buyer_tax_id_type is not None and buyer_tax_id_type not in TAX_ID_TYPES:
             raise ValueError("购方税号类型无效")
-        if not self._require_invoice_editable(invoice_id):
-            return False
         normalized_rate = normalize_tax_rate(tax_rate)
-        with self._conn:
+        with self._atomic_savepoint():
+            # Take the write lock before the lock check so another connection
+            # cannot export/reimburse this invoice between check and update.
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return False
             cursor = self._conn.execute(
                 "UPDATE invoices SET amount=?, buyer_tax_id=?, tax_amount=?, tax_rate=?, "
                 "invoice_code=?, buyer_tax_id_type=COALESCE(?, buyer_tax_id_type) WHERE id=? AND is_deleted=0",
@@ -2106,9 +2140,11 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def update_invoice_reason(self, invoice_id: int, custom_reason: str | None) -> bool:
         """Set an explicit override, or NULL to resume inheritance."""
-        if not self._require_invoice_editable(invoice_id):
-            return False
-        with self._conn:
+        with self._atomic_savepoint():
+            # Same discipline as update_invoice_fields: lock, re-check, write.
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return False
             cursor = self._conn.execute(
                 "UPDATE invoices SET custom_reason=? WHERE id=? AND is_deleted=0",
                 (None if custom_reason is None else custom_reason.strip(), invoice_id),
@@ -2134,51 +2170,56 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def add_invoice_to_claim(self, claim_id: int, invoice_id: int, note: str = "") -> bool:
         """Map an invoice to a claim group. Returns False on duplicate or error."""
-        if not self.is_claim_editable(claim_id):
-            self._set_last_error(
-                "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
-            )
-            return False
-        invoice = self.get_invoice(invoice_id)
-        if not invoice:
-            self._set_last_error("not_found")
-            return False
-        if not self._require_invoice_editable(invoice_id):
-            return False
-        if is_pending_evidence_invoice(invoice):
-            self._set_last_error("evidence_only")
-            return False
-
-        # Cross-claim check: an invoice can belong to at most one claim group
-        existing_other = self._conn.execute(
-            "SELECT claim_id FROM claim_group_items WHERE invoice_id = ? AND claim_id != ?",
-            (invoice_id, claim_id)
-        ).fetchone()
-        if existing_other:
-            self._set_last_error("already_in_other_claim")
-            _log.info(
-                "Cross-claim duplicate: invoice_id %d already in claim_id %d, cannot add to claim_id %d",
-                invoice_id, existing_other[0], claim_id
-            )
-            return False
-
+        rowcount = 0
         try:
             with self._atomic_savepoint():
+                # The cross-claim check must run under the same write lock as
+                # the insert; otherwise two connections can both see "free"
+                # and file the invoice into different claims.
+                self._conn.execute("UPDATE claim_groups SET id=id WHERE 0")
+                if not self.is_claim_editable(claim_id):
+                    self._set_last_error(
+                        "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
+                    )
+                    return False
+                invoice = self.get_invoice(invoice_id)
+                if not invoice:
+                    self._set_last_error("not_found")
+                    return False
+                if not self._require_invoice_editable(invoice_id):
+                    return False
+                if is_pending_evidence_invoice(invoice):
+                    self._set_last_error("evidence_only")
+                    return False
+
+                # Cross-claim check: an invoice can belong to at most one claim group
+                existing_other = self._conn.execute(
+                    "SELECT claim_id FROM claim_group_items WHERE invoice_id = ? AND claim_id != ?",
+                    (invoice_id, claim_id)
+                ).fetchone()
+                if existing_other:
+                    self._set_last_error("already_in_other_claim")
+                    _log.info(
+                        "Cross-claim duplicate: invoice_id %d already in claim_id %d, cannot add to claim_id %d",
+                        invoice_id, existing_other[0], claim_id
+                    )
+                    return False
+
                 cursor = self._conn.execute(
                     "INSERT OR IGNORE INTO claim_group_items (claim_id, invoice_id, note) VALUES (?, ?, ?)",
                     (claim_id, invoice_id, note)
                 )
                 rowcount = cursor.rowcount
-            if rowcount == 0:
-                self._set_last_error("integrity_error")
-                _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
-                return False
-            self._set_last_error("")
-            return True
         except sqlite3.IntegrityError:
             self._set_last_error("integrity_error")
             _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
             return False
+        if rowcount == 0:
+            self._set_last_error("integrity_error")
+            _log.info("Duplicate mapping: invoice_id %d already in claim_id %d", invoice_id, claim_id)
+            return False
+        self._set_last_error("")
+        return True
 
     def remove_invoice_from_claim(self, claim_id: int, invoice_id: int) -> bool:
         """Remove a mapped invoice from a claim group."""
@@ -2271,6 +2312,8 @@ class InvoiceDB(EvidenceStoreMixin):
         export_type: str,
         item_count: int,
         invoice_ids: tuple[int, ...] | list[int] = (),
+        expected_digest: str | None = None,
+        expected_member_ids: tuple[int, ...] | list[int] | None = None,
     ) -> int:
         """Persist a successful export and freeze its claim membership atomically."""
         claim = self.get_claim_group(claim_id)
@@ -2284,15 +2327,13 @@ class InvoiceDB(EvidenceStoreMixin):
         item_ids = tuple(dict.fromkeys(int(value) for value in invoice_ids))
         if item_count < 0 or len(item_ids) != item_count:
             raise ValueError("导出记录的发票数量不一致")
-        if item_ids:
-            placeholders = ",".join("?" for _ in item_ids)
-            rows = self._conn.execute(
-                f"SELECT invoice_id FROM claim_group_items WHERE claim_id=? "
-                f"AND invoice_id IN ({placeholders})",
-                (claim_id, *item_ids),
-            ).fetchall()
-            if {int(row[0]) for row in rows} != set(item_ids):
-                raise ValueError("导出发票已不属于当前报销组，请刷新后重试")
+        expected_members = (
+            set(item_ids)
+            if expected_member_ids is None
+            else {int(value) for value in expected_member_ids}
+        )
+        if not set(item_ids) <= expected_members:
+            raise ValueError("导出记录的发票不属于报销组成员")
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._atomic_savepoint():
             reserved = self._conn.execute(
@@ -2301,6 +2342,23 @@ class InvoiceDB(EvidenceStoreMixin):
             ).rowcount
             if reserved != 1:
                 raise ValueError("报销组状态已变化，请刷新后重新导出")
+            # The exported package must represent the claim exactly as it is
+            # committed: verify the full member set and content digest under
+            # the write lock. The package covers a status-filtered subset, but
+            # the claim is frozen as a whole.
+            current_members = {
+                int(row[0])
+                for row in self._conn.execute(
+                    "SELECT invoice_id FROM claim_group_items WHERE claim_id=?",
+                    (claim_id,),
+                ).fetchall()
+            }
+            if current_members != expected_members:
+                raise ValueError("导出期间报销组成员已变化，请刷新后重新导出")
+            if expected_digest is not None:
+                current_digest = claim_members_digest(self.get_claim_invoices(claim_id))
+                if current_digest != expected_digest:
+                    raise ValueError("导出期间报销组内容已变化，请刷新后重新导出")
             if item_ids:
                 placeholders = ",".join("?" for _ in item_ids)
                 blocked = self._conn.execute(

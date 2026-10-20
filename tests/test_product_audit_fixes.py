@@ -76,11 +76,17 @@ def test_partial_draft_and_first_claim_are_actionable(window):
     dialog.deleteLater()
     view._switch_main_page("export")
     assert view.btn_export_create_group.isVisible()
-    assert view.btn_export_choose_invoices.isVisible()
+    # With no claim yet, creating one is the only valid next action; the
+    # invoice picker becomes available once a claim exists.
+    assert not view.btn_export_choose_invoices.isVisible()
     with patch.object(QInputDialog, "getText", return_value=("合成九月差旅", True)):
         view.btn_export_create_group.click()
     assert view.db.list_claim_groups()[0]["name"] == "合成九月差旅"
     assert view.center_stack.currentWidget() is view.review_page
+    view._switch_main_page("export")
+    view._refresh_export_page()
+    app.processEvents()
+    assert view.btn_export_choose_invoices.isVisible()
 
 
 def test_ai_and_export_do_not_send_free_form_secrets():

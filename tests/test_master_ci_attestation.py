@@ -6,6 +6,7 @@ from scripts.dev.attest_master_ci import (
     REQUIRED_CI_JOBS,
     AttestationError,
     attest_master_tree,
+    attest_with_retry,
 )
 
 
@@ -103,6 +104,51 @@ class TestMasterCIAttestation(unittest.TestCase):
     def test_rejects_non_full_master_sha_before_api_calls(self):
         with self.assertRaisesRegex(AttestationError, "full 40-character"):
             attest_master_tree("if16888/invoice-hub", "abc", "test-token")
+
+
+class AttestationRetryTests(unittest.TestCase):
+    def test_retries_until_the_pr_run_is_reusable(self):
+        calls: list[int] = []
+        sleeps: list[float] = []
+
+        def flaky(repo, sha, token):
+            calls.append(1)
+            if len(calls) < 3:
+                raise AttestationError("PR run still in progress")
+            return {"ok": True}
+
+        result = attest_with_retry(
+            "if16888/invoice-hub",
+            MASTER_SHA,
+            "test-token",
+            attempts=5,
+            retry_seconds=2,
+            sleep=sleeps.append,
+            attest=flaky,
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [2, 2])
+
+    def test_retry_budget_is_bounded(self):
+        sleeps: list[float] = []
+
+        def always_failing(repo, sha, token):
+            raise AttestationError("no matching PR CI")
+
+        with self.assertRaisesRegex(AttestationError, "no matching PR CI"):
+            attest_with_retry(
+                "if16888/invoice-hub",
+                MASTER_SHA,
+                "test-token",
+                attempts=4,
+                retry_seconds=5,
+                sleep=sleeps.append,
+                attest=always_failing,
+            )
+
+        self.assertEqual(sleeps, [5, 5, 5])
 
 
 if __name__ == "__main__":

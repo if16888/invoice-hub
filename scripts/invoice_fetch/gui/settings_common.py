@@ -33,7 +33,11 @@ class CommonSettingsPage(QWidget):
         self.lbl_profile_tax_id = self.profile_panel.add_row("纳税人识别号", "未设置")
         self.btn_profile_edit = make_button("编辑开票信息", variant="secondary")
         self.btn_profile_edit.clicked.connect(self.edit_profile_requested.emit)
-        self.profile_panel.body_layout.addWidget(self.btn_profile_edit)
+        profile_actions = QHBoxLayout()
+        profile_actions.setContentsMargins(0, 0, 0, 0)
+        profile_actions.addWidget(self.btn_profile_edit)
+        profile_actions.addStretch(1)
+        self.profile_panel.body_layout.addLayout(profile_actions)
         layout.addWidget(self.profile_panel)
 
         self.export_panel = ReadOnlyDetailPanel(
@@ -62,7 +66,11 @@ class CommonSettingsPage(QWidget):
         self.lbl_mailbox_status = self.mailbox_panel.add_row("当前状态", "尚未配置")
         self.btn_mailbox_manage = make_button("管理邮箱账户", variant="secondary")
         self.btn_mailbox_manage.clicked.connect(self.manage_mailbox_requested.emit)
-        self.mailbox_panel.body_layout.addWidget(self.btn_mailbox_manage)
+        mailbox_actions = QHBoxLayout()
+        mailbox_actions.setContentsMargins(0, 0, 0, 0)
+        mailbox_actions.addWidget(self.btn_mailbox_manage)
+        mailbox_actions.addStretch(1)
+        self.mailbox_panel.body_layout.addLayout(mailbox_actions)
         layout.addWidget(self.mailbox_panel)
         layout.addStretch(1)
 

@@ -361,8 +361,20 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
 
     def test_launch_review_reflows_after_real_first_paint_without_resize(self):
         with tempfile.TemporaryDirectory(prefix="invoice-hub-startup-review-geometry-") as td:
+            from scripts.invoice_fetch.db import InvoiceDB
+
+            db_path = Path(td) / "startup.db"
+            with InvoiceDB(db_path) as db:
+                db.insert_invoice({
+                    "invoice_number": "STARTUP-001",
+                    "invoice_date": "2026-10-18",
+                    "total_amount": "10.00",
+                    "seller_name": "Synthetic Seller",
+                    "buyer_name": "Synthetic Buyer",
+                    "review_status": "to_review",
+                })
             window = startup_lifecycle.FirstPaintDeferredInvoiceReviewApp(
-                Path(td) / "startup.db",
+                db_path,
                 splash=None,
             )
             try:

@@ -21,7 +21,7 @@ from .amount_utils import parse_amount
 from .financial_validation import check_tax_balance
 from .tax_id_validation import check_tax_id
 from .config import load_config_safe
-from .db import is_pending_evidence_invoice
+from .db import claim_members_digest, is_pending_evidence_invoice
 from .excel_export import export_excel
 from .export_paths import normalize_export_date_prefix as _normalize_export_date_prefix
 from .filename_safety import escape_windows_reserved_stem
@@ -777,12 +777,16 @@ def export_claim_package(
             json.dump(manifest_data, f, ensure_ascii=False, indent=2)
 
         # 5. Log the export run in the DB only after every package file succeeded.
+        # The commit re-verifies both the exported subset and the full claim
+        # membership/content against the snapshot this package was built from.
         db.add_export_run(
             claim_id,
             str(export_dir),
             "generic_excel",
             len(invoices),
             invoice_ids=tuple(int(invoice["id"]) for invoice in invoices),
+            expected_member_ids=tuple(int(invoice["id"]) for invoice in all_invoices),
+            expected_digest=claim_members_digest(all_invoices),
         )
     except Exception:
         if export_dir_created:

@@ -230,6 +230,17 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         run: python -m pytest -q tests/hci_acceptance/test_mutation_selftest.py tests/hci_acceptance/test_report_verdict.py tests/test_product_audit_fixes.py
 
+      - name: Run real-browser SSRF regression (system Edge)
+        if: always() && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          INVOICE_HUB_RUN_BROWSER_SMOKE: "1"
+          # A skipped browser test must not count as release evidence.
+          INVOICE_HUB_REQUIRE_BROWSER_SSRF: "1"
+        run: |
+          python -m pytest -q tests/test_browser_ssrf_redirect.py 2>&1 | Tee-Object -FilePath browser-ssrf-output.txt
+          exit $LASTEXITCODE
+
       - name: Upload HCI acceptance evidence
         if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
@@ -237,6 +248,7 @@ jobs:
           name: hci-acceptance-evidence
           path: |
             hci-acceptance-output.txt
+            browser-ssrf-output.txt
             artifacts/hci_acceptance
           if-no-files-found: warn
           retention-days: 3

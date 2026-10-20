@@ -842,23 +842,42 @@ class DatabaseMigrationTests(unittest.TestCase):
             db_path = Path(td) / "from-the-future.db"
             conn = sqlite3.connect(db_path)
             try:
-                conn.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION + 1}")
+                conn.execute(
+                    f"PRAGMA user_version = {LATEST_SCHEMA_VERSION + 1}"
+                )
+                conn.execute("CREATE TABLE future_only (id INTEGER PRIMARY KEY)")
                 conn.commit()
             finally:
                 conn.close()
+            before = db_path.read_bytes()
 
             with self.assertRaises(RuntimeError) as caught:
                 InvoiceDB(db_path)
             self.assertIn(str(LATEST_SCHEMA_VERSION + 1), str(caught.exception))
 
+            # The rejection must not migrate, create tables or flip the journal
+            # mode: the newer database stays byte-identical.
+            self.assertEqual(db_path.read_bytes(), before)
             conn = sqlite3.connect(db_path)
             try:
                 version = conn.execute("PRAGMA user_version").fetchone()[0]
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
             finally:
                 conn.close()
             self.assertEqual(version, LATEST_SCHEMA_VERSION + 1)
+            self.assertIn("future_only", tables)
+            self.assertNotIn("invoices", tables)
 
     def test_failed_init_closes_the_connection(self):
+        class _RecordingCursor:
+            def fetchone(self):
+                return (LATEST_SCHEMA_VERSION,)
+
         class _RecordingConnection:
             def __init__(self):
                 self.closed = False
@@ -868,7 +887,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 return None
 
             def execute(self, *args, **kwargs):
-                return None
+                return _RecordingCursor()
 
             def executescript(self, *args, **kwargs):
                 return None

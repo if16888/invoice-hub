@@ -260,6 +260,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
             "total_amount",
             "seller_name",
             "invoice_number",
+            "claim_name",
         )
         self.assertEqual(tuple(key for key, _label in VISIBLE_COLUMN_DEFINITIONS), expected)
 

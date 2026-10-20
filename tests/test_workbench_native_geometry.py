@@ -72,9 +72,21 @@ class TestWorkbenchNativeGeometry(unittest.TestCase):
         """Create a minimal InvoiceReviewApp against a temporary database."""
         try:
             from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+            from scripts.invoice_fetch.db import InvoiceDB
         except (ImportError, OSError, RuntimeError) as exc:
             self.skipTest(f"InvoiceReviewApp import failed: {exc}")
         db_path = Path(td) / "workbench_native_geometry.db"
+        # The native geometry contracts describe the full workbench shell, so
+        # seed one record; the first-run onboarding collapses those panes.
+        with InvoiceDB(db_path) as db:
+            db.insert_invoice({
+                "invoice_number": "NATIVE-001",
+                "invoice_date": "2026-10-18",
+                "total_amount": "10.00",
+                "seller_name": "Synthetic Seller",
+                "buyer_name": "Synthetic Buyer",
+                "review_status": "to_review",
+            })
         return InvoiceReviewApp(db_path, splash=None)
 
     @staticmethod
