@@ -132,9 +132,20 @@ class SafeBrowserProxy:
         if thread is not None:
             thread.join(timeout=2.0)
 
-    def _register_tunnel(self, *sockets_to_track: socket.socket) -> None:
+    def _register_tunnel(self, *sockets_to_track: socket.socket) -> bool:
+        """Track tunnel sockets; close them now if the proxy already stopped."""
         with self._tunnels_lock:
-            self._active_sockets.update(sockets_to_track)
+            stopped = self._server is None
+            if not stopped:
+                self._active_sockets.update(sockets_to_track)
+        if stopped:
+            for sock in sockets_to_track:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            return False
+        return True
 
     def _unregister_tunnel(self, *sockets_to_track: socket.socket) -> None:
         with self._tunnels_lock:
@@ -262,8 +273,11 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             self._reject(503)
             return
         try:
+            # Register before acknowledging CONNECT: stop() must see the tunnel
+            # even if it lands immediately after the client received 200.
+            if not proxy._register_tunnel(self.request, upstream):
+                return
             self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            proxy._register_tunnel(self.request, upstream)
             try:
                 self._pump(self.request, upstream, proxy.idle_timeout)
             finally:

@@ -48,9 +48,13 @@ class TestCIWorkflowPolicy(unittest.TestCase):
         self.assertIn("continue-on-error: true", geometry)
         self.assertIn("id: native_geometry_classification", geometry)
         self.assertIn(
-            "if: steps.native_geometry_classification.outcome == 'success'",
+            "if: steps.native_geometry_classification.outputs.suitable == 'true'",
             geometry,
         )
+        # An unsuitable hosted desktop must skip cleanly instead of painting a
+        # failing non-gating job red; a genuine classifier crash still fails.
+        self.assertIn("Environment is unsuitable for native geometry contracts", geometry)
+        self.assertIn("exit $code", geometry)
 
 
 if __name__ == "__main__":
