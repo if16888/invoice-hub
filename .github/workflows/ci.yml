@@ -75,17 +75,17 @@ jobs:
             requirements-desktop.lock.txt
             requirements-build.lock.txt
 
-      - name: Fetch previous stable tag for release metadata
+      - name: Fetch release tags for metadata validation
         if: github.event_name == 'pull_request'
         shell: pwsh
         run: |
-          $stableVersion = (python -c "from scripts.invoice_fetch.version import PREVIOUS_STABLE_VERSION; print(PREVIOUS_STABLE_VERSION)").Trim()
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $tagRef = "refs/tags/v$stableVersion"
-          $refspec = $tagRef + ":" + $tagRef
-          git fetch --force --no-tags --depth=1 origin $refspec
+          # The metadata gate verifies annotated tags for every historical
+          # release note that declares a published stable line, not only the
+          # current PREVIOUS_STABLE_VERSION. actions/checkout does not fetch
+          # tags with the default shallow checkout, so fetch them explicitly.
+          git fetch --force --tags --depth=1 origin
           if ($LASTEXITCODE -ne 0) {
-            throw "Could not fetch previous stable tag $tagRef for release metadata validation."
+            throw "Could not fetch release tags for release metadata validation."
           }
 
       - name: Install Python dependencies
