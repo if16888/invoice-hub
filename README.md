@@ -10,7 +10,7 @@ Invoice Hub 把散落在邮箱、本地文件夹和手机里的发票、收据�
 
 | 源码发布线 | 上一已发布稳定版 | 实时发布状态 |
 | --- | --- | --- |
-| [v0.1.8 release notes](docs/release-notes/v0.1.8.md) | [Invoice Hub v0.1.7](https://github.com/if16888/invoice-hub/releases/tag/v0.1.7) | 以 [GitHub Releases](https://github.com/if16888/invoice-hub/releases) 为唯一权威 |
+| [v0.2.0 release notes](docs/release-notes/v0.2.0.md) | [Invoice Hub v0.1.8](https://github.com/if16888/invoice-hub/releases/tag/v0.1.8) | 以 [GitHub Releases](https://github.com/if16888/invoice-hub/releases) 为唯一权威 |
 
 > 源码只记录当前 release line，不硬编码“是否已经正式发布”这种会随 tag / Release 改变的状态。
 
@@ -167,7 +167,7 @@ python scripts/dev/run_local_ci_preflight.py
 - [标准 IMAP 邮箱配置](docs/generic-imap-mailboxes.md)
 - [隐私与反馈说明](docs/privacy-and-feedback.md)
 - [发布检查清单](docs/release-checklist.md)
-- [v0.1.8 release notes](docs/release-notes/v0.1.8.md)
+- [v0.2.0 release notes](docs/release-notes/v0.2.0.md)
 - [项目路线](docs/roadmap.md)
 
 ## 反馈

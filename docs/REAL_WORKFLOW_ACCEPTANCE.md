@@ -1,6 +1,6 @@
-# Invoice Hub v0.1.8 — real workflow acceptance
+# Invoice Hub v0.2.0 — real workflow acceptance
 
-This document defines the **final release acceptance boundary** for the current v0.1.8 source line.
+This document defines the **final release acceptance boundary** for the current v0.2.0 source line.
 
 The exact release SHA is not hard-coded here. The authoritative candidate is the SHA recorded by the final release audit and must remain identical across exact-SHA CI, Windows pre-tag audit, and manual acceptance evidence.
 
@@ -81,12 +81,12 @@ Use a disposable Windows profile/data directory.
 4. Review a synthetic invoice and edit one field.
 5. Repeatedly switch between PDF records and confirm no Qt PDF/font warnings.
 6. Associate synthetic proof material and save a note; switch records/pages, restart and confirm the note persists. Exercise failed-save retry without losing the editor contents.
-7. Create a reimbursement group and add approved invoices.
-8. Run export preflight and export the synthetic reimbursement package.
+7. Create a reimbursement group with a reason (事由), then add approved invoices.
+8. Run export preflight and export the synthetic reimbursement package; confirm the reason appears on the cover/naming contract and the manifest lists every copied file.
 9. Open the Excel file and a copied attachment.
 10. Create a complete backup, restore into another disposable data directory, and confirm original/proof bytes, notes, review states and group membership. Re-run export preflight. Test a missing-material backup and a rejected/cancelled restore; verify actionable errors and preservation of existing records/files. Confirm credentials and configuration need separate setup.
 11. Close and restart; confirm records, settings, claim group and layout persist.
-12. Upgrade from the previous stable installed release using a disposable profile.
+12. Upgrade from v0.1.8 using a disposable profile.
 13. Uninstall and reinstall; verify the documented user-data retention policy.
 14. Review the main pages at physical Windows 100%, 125% and 150% scaling.
 
