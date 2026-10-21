@@ -22,7 +22,7 @@
 - [真实工作流验收](REAL_WORKFLOW_ACCEPTANCE.md) — clean install、升级、持久化、DPI 与真实使用闭环。
 - [手工 RC 验收](manual-rc-acceptance-checklist.md) — 使用脱敏/可丢弃数据验证导入、审核、材料、导出。
 - [CI 验证说明](ci-validation.md) — local-first、PR exact tree 与 master attestation 的职责边界。
-- [v0.1.8 release notes](release-notes/v0.1.8.md) — 当前源码 release line 的变化与最终发布合同。
+- [v0.2.0 release notes](release-notes/v0.2.0.md) — 当前源码 release line 的变化与最终发布合同。
 
 ## 架构与开发
 

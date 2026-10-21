@@ -42,7 +42,7 @@ It does **not** publish to Microsoft Store and does not create a GitHub Release.
 Invoice Hub user-visible versioning remains SemVer, for example:
 
 ```text
-APP_VERSION = v0.1.8
+APP_VERSION = v0.2.0
 ```
 
 Microsoft Store package identity uses a four-part numeric version. Store rules
@@ -65,7 +65,7 @@ Examples:
 The Store package version is an installation/update identity. It does not
 replace the product-facing Invoice Hub version shown in the application.
 
-Prerelease suffixes such as `0.1.8-rc3` are not accepted by the Store packaging
+Prerelease suffixes such as `0.2.0-rc3` are not accepted by the Store packaging
 script. RC packages remain on the existing GitHub test-distribution path.
 
 ## Desktop execution model

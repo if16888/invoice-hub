@@ -24,8 +24,8 @@ except (ImportError, ValueError):
         _embedded_metadata.get("BUILD_VERSION") or ""
     )
 
-VERSION = "0.1.8"
-PREVIOUS_STABLE_VERSION = "0.1.7"
+VERSION = "0.2.0"
+PREVIOUS_STABLE_VERSION = "0.1.8"
 
 _BUILD_VERSION_PATTERN = re.compile(
     rf"^(?P<base>{re.escape(VERSION)})(?P<suffix>-(?:rc|pre)\d+)?$"

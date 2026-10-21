@@ -207,16 +207,16 @@ class TestVersionSource(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("INVOICE_HUB_BUILD_VERSION", None)
             self.assertEqual(resolve_build_version(), VERSION)
-            self.assertEqual(resolve_build_version("0.1.8-rc3"), "0.1.8-rc3")
-            self.assertEqual(resolve_build_version("0.1.8"), "0.1.8")
+            self.assertEqual(resolve_build_version("0.2.0-rc3"), "0.2.0-rc3")
+            self.assertEqual(resolve_build_version("0.2.0"), "0.2.0")
             self.assertEqual(resolve_build_version("0.1.9-rc1"), VERSION)
             with self.assertRaises(ValueError):
                 resolve_build_version("0.1.9-rc1", strict=True)
 
         for raw, expected in (
-            ("0.1.8-rc3", "v0.1.8-rc3"),
-            ("0.1.8", "v0.1.8"),
-            ("0.1.9-rc1", "v0.1.8"),
+            ("0.2.0-rc3", "v0.2.0-rc3"),
+            ("0.2.0", "v0.2.0"),
+            ("0.1.9-rc1", "v0.2.0"),
         ):
             env = os.environ.copy()
             env["INVOICE_HUB_BUILD_VERSION"] = raw
@@ -238,13 +238,13 @@ class TestVersionSource(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("INVOICE_HUB_BUILD_VERSION", None)
-            with patch.object(version_module, "EMBEDDED_BUILD_VERSION", "0.1.8-rc3"):
-                self.assertEqual(version_module.resolve_build_version(), "0.1.8-rc3")
+            with patch.object(version_module, "EMBEDDED_BUILD_VERSION", "0.2.0-rc3"):
+                self.assertEqual(version_module.resolve_build_version(), "0.2.0-rc3")
 
     def test_file_version_probe_writes_resolved_identity_without_stdio(self):
         from scripts.invoice_fetch import version as version_module
 
-        for app_version in ("v0.1.8-rc3", "v0.1.8"):
+        for app_version in ("v0.2.0-rc3", "v0.2.0"):
             with self.subTest(app_version=app_version), tempfile.TemporaryDirectory() as td:
                 output = Path(td) / "version.json"
                 with patch.object(version_module, "APP_VERSION", app_version), patch.object(
@@ -298,7 +298,7 @@ class TestVersionSource(unittest.TestCase):
                     sys.executable,
                     "scripts/dev/write_embedded_build_version.py",
                     "--version",
-                    "0.1.8-rc3",
+                    "0.2.0-rc3",
                     "--output",
                     str(output),
                 ],
@@ -310,7 +310,7 @@ class TestVersionSource(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             generated = output.read_text(encoding="utf-8")
             compile(generated, str(output), "exec")
-            self.assertIn('BUILD_VERSION = "0.1.8-rc3"', generated)
+            self.assertIn('BUILD_VERSION = "0.2.0-rc3"', generated)
 
     def test_cli_version_uses_source_build_identity(self):
         env = os.environ.copy()
@@ -324,7 +324,7 @@ class TestVersionSource(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.strip(), "v0.1.8")
+        self.assertEqual(result.stdout.strip(), "v0.2.0")
 
     def test_current_source_and_release_tag_contract(self):
         from scripts.invoice_fetch.version import VERSION
@@ -428,11 +428,11 @@ class TestWindowsVersionInfoGenerator(unittest.TestCase):
     def test_build_version_info_text_accepts_rc_suffix_with_numeric_file_version(self):
         from scripts.generate_windows_version_info import build_version_info_text
 
-        text = build_version_info_text("0.1.8-rc3")
-        self.assertIn("filevers=(0, 1, 8, 0)", text)
-        self.assertIn("prodvers=(0, 1, 8, 0)", text)
-        self.assertIn("FileVersion', '0.1.8-rc3", text)
-        self.assertIn("ProductVersion', '0.1.8-rc3", text)
+        text = build_version_info_text("0.2.0-rc3")
+        self.assertIn("filevers=(0, 2, 0, 0)", text)
+        self.assertIn("prodvers=(0, 2, 0, 0)", text)
+        self.assertIn("FileVersion', '0.2.0-rc3", text)
+        self.assertIn("ProductVersion', '0.2.0-rc3", text)
     def test_build_version_info_text_formats_version_tuple_and_metadata(self):
         from scripts.generate_windows_version_info import build_version_info_text
 
