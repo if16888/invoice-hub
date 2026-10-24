@@ -183,6 +183,29 @@ REDOWNLOAD_BUCKETS = (
 TABLE_BADGE_ROLE = int(Qt.UserRole) + 101
 _SELECTION_ID_UNSET = object()
 
+# Actionable, non-blocking-first messages for claim reimbursement refusals.
+# ``db.mark_claim_reimbursed`` must not leave a locked claim with unstamped
+# members, so both refusals tell the user to rebuild the package first.
+_CLAIM_REIMBURSEMENT_FAILURE_MESSAGES = {
+    "claim_members_not_exported": (
+        "该报销组还有发票不在最新一次导出的报销包中（例如待审核发票）。"
+        "请重新导出，并在导出时包含这些发票（选择“导出已通过 + 待审核发票”）；"
+        "确认新报销包完整后再标记已报销。"
+    ),
+    "stale_export_run": (
+        "当前核销引用的导出包不是最新一次导出，无法安全核销。"
+        "请按最新导出的报销包重新导出后再标记已报销。"
+    ),
+}
+_CLAIM_REIMBURSEMENT_DEFAULT_FAILURE_MESSAGE = "状态已变化或导出内容不匹配，请刷新后重试。"
+
+
+def _claim_reimbursement_failure_message(last_error: str | None) -> str:
+    """Map ``InvoiceDB.last_error`` from marking reimbursed to an actionable message."""
+    return _CLAIM_REIMBURSEMENT_FAILURE_MESSAGES.get(
+        str(last_error or ""), _CLAIM_REIMBURSEMENT_DEFAULT_FAILURE_MESSAGE
+    )
+
 
 @dataclass(frozen=True)
 class ReviewViewState:
@@ -6290,7 +6313,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if answer != QMessageBox.Yes:
             return
         if not self.db.mark_claim_reimbursed(int(claim_id), int(latest_run["id"])):
-            QMessageBox.warning(self, "核销未完成", "状态已变化或导出内容不匹配，请刷新后重试。")
+            message = _claim_reimbursement_failure_message(getattr(self.db, "last_error", ""))
+            self.statusBar().showMessage(message, 8000)
+            QMessageBox.warning(self, "核销未完成", message)
             self._refresh_export_page()
             return
         self.statusBar().showMessage("报销组已标记为已报销。", 5000)

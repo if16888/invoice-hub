@@ -19,6 +19,52 @@ def _add_invoice(db: InvoiceDB, invoice_number: str, status: str, path: str = "i
     }))
 
 
+def _runtime_with_files(tmp_path: Path, names: tuple[str, ...]) -> Path:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    for name in names:
+        (runtime / name).write_bytes(b"synthetic invoice")
+    return runtime
+
+
+def _claim_with_invoices(
+    db: InvoiceDB,
+    statuses: tuple[str, ...],
+    paths: tuple[str, ...],
+) -> tuple[int, list[int]]:
+    claim_id = db.create_claim_group("Batch 5 claim")
+    invoice_ids: list[int] = []
+    for index, (status, path) in enumerate(zip(statuses, paths), start=1):
+        invoice_id = _add_invoice(db, f"B5-{index}", status, path)
+        assert db.add_invoice_to_claim(claim_id, invoice_id)
+        invoice_ids.append(invoice_id)
+    return claim_id, invoice_ids
+
+
+def _reimbursement_snapshot(
+    db: InvoiceDB,
+    claim_id: int,
+    invoice_ids: list[int],
+) -> dict:
+    claim = db.get_claim_group(claim_id)
+    return {
+        "claim_status": claim["status"],
+        "claim_reimbursed_at": claim["reimbursed_at"],
+        "invoice_reimbursed_at": {
+            invoice_id: db.get_invoice(invoice_id)["reimbursed_at"]
+            for invoice_id in invoice_ids
+        },
+        "invoice_reimbursed_group": {
+            invoice_id: db.get_invoice(invoice_id)["reimbursed_group_id"]
+            for invoice_id in invoice_ids
+        },
+        "status_events": db.get_claim_status_events(claim_id),
+        "export_runs": [
+            (run["id"], run["item_count"]) for run in db.get_export_runs(claim_id)
+        ],
+    }
+
+
 class ReimbursementStateTests(unittest.TestCase):
     def setUp(self):
         self._tmp_dir = tempfile.TemporaryDirectory()
@@ -165,3 +211,136 @@ class ReimbursementStateTests(unittest.TestCase):
             assert migrated.get_claim_group(claim_id)["exported_at"]
             assert migrated.get_claim_status_events(claim_id)[0]["to_status"] == "exported"
             validate_latest_schema(migrated._conn)
+
+    def _export(
+        self,
+        db: InvoiceDB,
+        claim_id: int,
+        runtime: Path,
+        *,
+        include_to_review: bool,
+    ) -> Path:
+        return export_claim_package(
+            db,
+            claim_id,
+            self.tmp_path,
+            runtime,
+            include_to_review=include_to_review,
+            reimbursement_config={},
+            export_root=self.tmp_path / "exports",
+        )
+
+    def test_marking_reimbursed_refuses_members_missing_from_latest_package(self):
+        """Reproduction: an old package covered all members, the newest does not."""
+        runtime = _runtime_with_files(
+            self.tmp_path, ("approved-a.pdf", "approved-b.pdf", "pending-c.pdf")
+        )
+        with InvoiceDB(runtime / "invoices.db") as db:
+            claim_id, invoice_ids = _claim_with_invoices(
+                db,
+                (review_status.APPROVED, review_status.APPROVED, review_status.TO_REVIEW),
+                ("approved-a.pdf", "approved-b.pdf", "pending-c.pdf"),
+            )
+            # Package #1 includes the pending invoice; package #2 does not.
+            self._export(db, claim_id, runtime, include_to_review=True)
+            self._export(db, claim_id, runtime, include_to_review=False)
+
+            runs = db.get_export_runs(claim_id)
+            assert len(runs) == 2
+            # get_export_runs() returns newest first: #2 excludes the pending one.
+            assert set(db.get_export_run_items(runs[0]["id"])) == set(invoice_ids[:2])
+            assert set(db.get_export_run_items(runs[1]["id"])) == set(invoice_ids)
+
+            before = _reimbursement_snapshot(db, claim_id, invoice_ids)
+            assert not db.mark_claim_reimbursed(claim_id, runs[0]["id"])
+            assert db.last_error == "claim_members_not_exported"
+            assert _reimbursement_snapshot(db, claim_id, invoice_ids) == before
+            assert db.get_claim_group(claim_id)["status"] == "exported"
+            assert all(
+                db.get_invoice(invoice_id)["reimbursed_at"] is None
+                for invoice_id in invoice_ids
+            )
+            assert [
+                event["to_status"] for event in db.get_claim_status_events(claim_id)
+            ] == ["exported"]
+
+    def test_reexporting_with_pending_invoices_then_marking_succeeds(self):
+        runtime = _runtime_with_files(
+            self.tmp_path, ("approved-a.pdf", "approved-b.pdf", "pending-c.pdf")
+        )
+        with InvoiceDB(runtime / "invoices.db") as db:
+            claim_id, invoice_ids = _claim_with_invoices(
+                db,
+                (review_status.APPROVED, review_status.APPROVED, review_status.TO_REVIEW),
+                ("approved-a.pdf", "approved-b.pdf", "pending-c.pdf"),
+            )
+            self._export(db, claim_id, runtime, include_to_review=False)
+            self._export(db, claim_id, runtime, include_to_review=True)
+
+            latest_run = db.get_export_runs(claim_id)[0]
+            assert set(db.get_export_run_items(latest_run["id"])) == set(invoice_ids)
+            # export_run_id=None must keep selecting the newest package itself.
+            assert db.mark_claim_reimbursed(claim_id)
+
+            claim = db.get_claim_group(claim_id)
+            assert claim["status"] == "reimbursed"
+            assert claim["reimbursed_at"]
+            for invoice_id in invoice_ids:
+                invoice = db.get_invoice(invoice_id)
+                assert invoice["reimbursed_at"] == claim["reimbursed_at"]
+                assert invoice["reimbursed_group_id"] == claim_id
+
+    def test_marking_reimbursed_refuses_stale_export_run(self):
+        runtime = _runtime_with_files(self.tmp_path, ("approved-a.pdf", "approved-b.pdf"))
+        with InvoiceDB(runtime / "invoices.db") as db:
+            claim_id, invoice_ids = _claim_with_invoices(
+                db,
+                (review_status.APPROVED, review_status.APPROVED),
+                ("approved-a.pdf", "approved-b.pdf"),
+            )
+            self._export(db, claim_id, runtime, include_to_review=False)
+            self._export(db, claim_id, runtime, include_to_review=False)
+            older_run_id = db.get_export_runs(claim_id)[-1]["id"]
+
+            before = _reimbursement_snapshot(db, claim_id, invoice_ids)
+            assert not db.mark_claim_reimbursed(claim_id, older_run_id)
+            assert db.last_error == "stale_export_run"
+            assert _reimbursement_snapshot(db, claim_id, invoice_ids) == before
+            assert db.get_claim_group(claim_id)["status"] == "exported"
+            assert all(
+                db.get_invoice(invoice_id)["reimbursed_at"] is None
+                for invoice_id in invoice_ids
+            )
+
+            # The newest package is still markable afterwards.
+            latest_run_id = db.get_export_runs(claim_id)[0]["id"]
+            assert db.mark_claim_reimbursed(claim_id, latest_run_id)
+            assert db.get_claim_group(claim_id)["status"] == "reimbursed"
+
+    def test_marking_reimbursed_refuses_member_inserted_after_export(self):
+        """Anomalous data: a member outside the exported package must block."""
+        runtime = _runtime_with_files(self.tmp_path, ("approved-a.pdf", "approved-b.pdf"))
+        with InvoiceDB(runtime / "invoices.db") as db:
+            claim_id, invoice_ids = _claim_with_invoices(
+                db,
+                (review_status.APPROVED, review_status.APPROVED),
+                ("approved-a.pdf", "approved-b.pdf"),
+            )
+            self._export(db, claim_id, runtime, include_to_review=False)
+            late_invoice_id = _add_invoice(
+                db, "LATE-ADD", review_status.TO_REVIEW, "late.pdf"
+            )
+            db._conn.execute(
+                "INSERT INTO claim_group_items (claim_id, invoice_id) VALUES (?, ?)",
+                (claim_id, late_invoice_id),
+            )
+            db._conn.commit()
+            all_ids = invoice_ids + [late_invoice_id]
+
+            before = _reimbursement_snapshot(db, claim_id, all_ids)
+            latest_run_id = db.get_export_runs(claim_id)[0]["id"]
+            assert not db.mark_claim_reimbursed(claim_id, latest_run_id)
+            assert db.last_error == "claim_members_not_exported"
+            assert _reimbursement_snapshot(db, claim_id, all_ids) == before
+            assert db.get_claim_group(claim_id)["status"] == "exported"
+            assert db.get_invoice(late_invoice_id)["reimbursed_at"] is None
