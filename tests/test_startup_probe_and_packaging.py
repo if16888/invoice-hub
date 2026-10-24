@@ -589,10 +589,21 @@ class TestStartupProbeIsolated(unittest.TestCase):
             mock_db.return_value = db_mock
             _qt_app = QApplication.instance() or QApplication([])
             app = InvoiceReviewApp(Path("dummy.db"))
-
-            # Check that background scanner threads or mobile servers are not running
-            self.assertFalse(hasattr(app, "mail_thread") or getattr(app, "mail_thread", None) is not None)
-            self.assertFalse(hasattr(app, "server_thread") or getattr(app, "server_thread", None) is not None)
+            try:
+                # Check that background scanner threads or mobile servers are not running
+                self.assertFalse(hasattr(app, "mail_thread") or getattr(app, "mail_thread", None) is not None)
+                self.assertFalse(hasattr(app, "server_thread") or getattr(app, "server_thread", None) is not None)
+            finally:
+                # This window is only a probe double: its database is a MagicMock.
+                # InvoiceReviewApp schedules QTimer.singleShot(50, self._deferred_init).
+                # Without this cleanup that callback fires during a LATER test's
+                # processEvents(), queries the MagicMock database and blocks on a
+                # modal QMessageBox - the full-suite deadlock this test used to cause.
+                db_mock.is_open = False
+                app._deferred_init_done = True
+                app.close()
+                app.deleteLater()
+                _qt_app.processEvents()
 
     def test_startup_probe_has_no_invalid_qfont_point_size_warning(self):
         """The source/dev desktop startup must never pass -1 to QFont.setPointSize."""
