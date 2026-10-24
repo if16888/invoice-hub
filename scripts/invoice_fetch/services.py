@@ -1638,36 +1638,93 @@ def _restore_existing_invoice_if_deleted(db: InvoiceDB, existing: dict, context:
     return existing
 
 
+def _identity_key(value: object) -> str:
+    """Return a comparison key that ignores case and incidental whitespace."""
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _same_identity_value(left: object, right: object) -> bool:
+    left_key = _identity_key(left)
+    right_key = _identity_key(right)
+    return bool(left_key) and left_key == right_key
+
+
 def _find_existing_invoice_for_parse(
     db: InvoiceDB,
     invoice_number: str,
     total_amount: str,
     seller_name: str,
+    invoice_code: str = "",
     include_deleted: bool = True,
 ) -> dict | None:
-    """Find an existing invoice using the strongest parsed identity available."""
-    invoice_number = (invoice_number or "").strip()
-    total_amount = (total_amount or "").strip()
-    seller_name = (seller_name or "").strip()
-    if invoice_number and seller_name:
+    """Find an existing invoice using the strongest parsed identity available.
+
+    Identity precedence:
+
+    1. ``invoice_code + invoice_number`` when the parsed document exposes a
+       code: legacy 8/12-digit invoice numbers are only unique inside one
+       issuer, so the code is part of the document identity.
+    2. the exact DB unique key ``(invoice_number, total_amount, seller_name)``.
+    3. ``invoice_number + total_amount`` only while the stored seller does not
+       contradict the parsed seller.  A same-number, same-amount record with a
+       different seller is a different invoice (another issuer reusing the
+       number); this returns ``None`` so the caller inserts it as its own row
+       instead of silently folding two invoices together.  The DB unique key
+       permits that row because the seller is part of the key.
+
+    Genuine duplicates (1 and 2) keep the existing soft-delete restore
+    behaviour; the weak fallback (3) never resurrects a deleted record.
+    Records without an invoice number have no stable identity and never match.
+    """
+    invoice_number = str(invoice_number or "").strip()
+    total_amount = str(total_amount or "").strip()
+    seller_name = str(seller_name or "").strip()
+    invoice_code = str(invoice_code or "").strip()
+
+    if not invoice_number:
+        # Seller + amount is only a weak heuristic and cannot establish invoice
+        # identity for either a numbered invoice or an unnumbered receipt.
+        return None
+
+    # 1) Code + number identity.  The public DB lookup API cannot filter by
+    #    invoice_code, so inspect the newest same-number row and accept it only
+    #    when the stored code agrees; otherwise fall through to the keys below.
+    if invoice_code:
+        by_number = db.find_invoice_by_number(
+            invoice_number, include_deleted=include_deleted
+        )
+        if by_number and _same_identity_value(
+            by_number.get("invoice_code"), invoice_code
+        ):
+            return by_number
+
+    # 2) The exact identity the DB unique constraint already enforces.
+    if seller_name:
         exact = db.find_invoice_by_unique_fields(
             invoice_number, total_amount, seller_name, include_deleted=include_deleted
         )
         if exact:
             return exact
-        existing = db.find_invoice_by_number_and_amount(
-            invoice_number, total_amount, include_deleted=include_deleted
-        )
-        if existing and int(existing.get("is_deleted") or 0) == 0:
-            return existing
+
+    # 3) Number + amount, but never across a contradictory seller.
+    candidate = db.find_invoice_by_number_and_amount(
+        invoice_number, total_amount, include_deleted=include_deleted
+    )
+    if not candidate:
         return None
-    if invoice_number:
-        return db.find_invoice_by_number_and_amount(
-            invoice_number, total_amount, include_deleted=include_deleted
-        )
-    # Seller + amount is only a weak heuristic and cannot establish invoice
-    # identity for either a numbered invoice or an unnumbered receipt.
-    return None
+    stored_seller = str(candidate.get("seller_name") or "").strip()
+    if (
+        seller_name
+        and stored_seller
+        and not _same_identity_value(seller_name, stored_seller)
+    ):
+        # Same number+amount from a different seller => a different invoice.
+        return None
+    if int(candidate.get("is_deleted") or 0) != 0:
+        # Keep the previous behaviour: the weak fallback never restores a
+        # deleted record; genuine duplicates are restored through 1 or 2.
+        return None
+    return candidate
 
 
 def _log_existing_invoice_duplicate(existing: dict, reason: str) -> None:
@@ -3078,7 +3135,9 @@ def _process_email(
                         os.remove(dl.file_path)
                     continue
                 existing = _find_existing_invoice_for_parse(
-                    db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=True
+                    db, info.invoice_number, info.total_amount, info.seller_name,
+                    invoice_code=info.invoice_code or "",
+                    include_deleted=True,
                 )
                 if existing:
                     was_deleted = int(existing.get("is_deleted") or 0) == 1
@@ -3170,7 +3229,9 @@ def _process_email(
                         os.remove(dl.file_path)
                     continue
                 duplicate = _find_existing_invoice_for_parse(
-                    db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=False
+                    db, info.invoice_number, info.total_amount, info.seller_name,
+                    invoice_code=info.invoice_code or "",
+                    include_deleted=False,
                 )
                 if duplicate:
                     _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
@@ -3365,7 +3426,9 @@ def _process_email(
             kept_paths.add(str(Path(att.file_path).resolve()))
             continue
         existing = _find_existing_invoice_for_parse(
-            db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=True
+            db, info.invoice_number, info.total_amount, info.seller_name,
+            invoice_code=info.invoice_code or "",
+            include_deleted=True,
         )
         if existing:
             was_deleted = int(existing.get("is_deleted") or 0) == 1
@@ -3451,7 +3514,9 @@ def _process_email(
                 recorded += 1
             continue
         duplicate = _find_existing_invoice_for_parse(
-            db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=False
+            db, info.invoice_number, info.total_amount, info.seller_name,
+            invoice_code=info.invoice_code or "",
+            include_deleted=False,
         )
         if duplicate:
             _log.info("  跳过重复: %s", mask_invoice_number(info.invoice_number))
@@ -3733,7 +3798,11 @@ def _process_email(
             )
 
             if inv_num:
-                existing = _find_existing_invoice_for_parse(db, inv_num, amount, seller, include_deleted=True)
+                existing = _find_existing_invoice_for_parse(
+                    db, inv_num, amount, seller,
+                    invoice_code=merged.get("invoice_code", ""),
+                    include_deleted=True,
+                )
                 if existing:
                     was_deleted = int(existing.get("is_deleted") or 0) == 1
                     existing = _restore_existing_invoice_if_deleted(db, existing, "主题/正文")
@@ -3767,12 +3836,12 @@ def _process_email(
                     _cleanup_unused_attachments()
                     return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
 
-            if inv_num and db.is_duplicate(inv_num, amount, seller):
-                _log.info("  跳过重复(从主题/正文): %s", redact_text(dedup_key, "dedup_key"))
-                recorded += 1
-                set_process_outcome("duplicate")
-                _cleanup_unused_attachments()
-                return ProcessEmailResult(recorded, new_invoice_ids, review_invoice_ids, restored_invoice_ids)
+            # No number+amount duplicate guard here: the smart lookup above
+            # already applied the full identity (code+number, exact unique key,
+            # seller-compatible number+amount) and returned None, so this is a
+            # genuinely new invoice.  db.is_duplicate() must not be used as a
+            # fallback because it ignores the seller and would merge two
+            # different invoices that happen to share invoice number+amount.
 
             rec = {
                 "invoice_number": inv_num,

@@ -1880,7 +1880,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(rows[0]["is_deleted"], 0)
             self.assertTrue(rows[0]["attachment_path"])
 
-    def test_email_rescan_does_not_restore_soft_deleted_different_seller(self):
+    def test_email_rescan_restores_soft_deleted_record_with_same_code_and_number(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             runtime = base / "runtime"
@@ -1938,11 +1938,19 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 all_rows = db.get_all_invoices(include_deleted=True)
                 active_rows = db.get_all_invoices()
 
+            # invoice_code + invoice_number + total_amount all match, so this is
+            # the same document even though the parsed seller string differs:
+            # the soft-deleted record is restored in place instead of inserting
+            # a second row.  The default duplicate refresh is a safe backfill,
+            # so the stored (non-empty) seller name is preserved, not overwritten.
             self.assertEqual(recorded, 1)
-            self.assertEqual(len(all_rows), 2)
+            self.assertEqual(len(all_rows), 1)
             self.assertEqual(len(active_rows), 1)
-            self.assertEqual(active_rows[0]["seller_name"], "Different Synthetic Seller")
-            self.assertNotIn("已恢复已删除的重复发票", "\n".join(logs.output))
+            self.assertEqual(active_rows[0]["id"], row_id)
+            self.assertEqual(active_rows[0]["is_deleted"], 0)
+            self.assertEqual(active_rows[0]["invoice_code"], "CODE001")
+            self.assertEqual(active_rows[0]["seller_name"], "Original Synthetic Seller")
+            self.assertIn("已恢复已删除的重复发票", "\n".join(logs.output))
 
     def test_email_rescan_skips_existing_duplicate_with_diagnostic_log(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2510,7 +2518,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertTrue(row["has_extra"])
             self.assertFalse(row["missing_extra"])
 
-    def test_process_email_updates_existing_invoice_by_number_and_amount(self):
+    def test_process_email_keeps_rows_when_seller_conflicts_without_shared_code(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             src = base / "invoice.pdf"
@@ -2556,11 +2564,20 @@ class InvoiceWorkflowTests(unittest.TestCase):
             rows = db.get_all_invoices()
             db.close()
 
+            # The stored row has no invoice_code, so number+amount cannot prove
+            # it is the same document as the parsed invoice: keep both rows
+            # instead of silently merging two different sellers' invoices.
+            by_seller = {row["seller_name"]: row for row in rows}
             self.assertEqual(recorded, 1)
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["seller_name"], "旧销售方")
-            self.assertEqual(rows[0]["buyer_name"], "购买方")
-            self.assertEqual(rows[0]["invoice_code"], "31001519300050031029")
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(set(by_seller), {"旧销售方", "新销售方"})
+            self.assertEqual(by_seller["旧销售方"]["invoice_number"], "EMAIL001")
+            self.assertEqual(by_seller["旧销售方"]["total_amount"], "88.00")
+            self.assertFalse(by_seller["旧销售方"]["invoice_code"])
+            self.assertEqual(
+                by_seller["新销售方"]["invoice_code"], "31001519300050031029"
+            )
+            self.assertEqual(by_seller["新销售方"]["buyer_name"], "购买方")
 
     def test_standalone_hotel_folio_attachment_is_recorded_as_receipt(self):
         with tempfile.TemporaryDirectory() as td:
