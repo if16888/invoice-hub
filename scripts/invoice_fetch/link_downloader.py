@@ -34,15 +34,25 @@ def _bounded_response_body(response):
 
     Chunked or compressed invoice responses use the browser's streamed
     download path instead; they are not buffered into the Python process.
+
+    The declared ``Content-Length`` is also used as a truncation check: a
+    connection that ends early can still start with a ``%PDF`` header, and
+    accepting it would report a partially written invoice as a completed
+    download.
     """
     headers = response.headers
     length = str(headers.get("content-length", ""))
     if headers.get("transfer-encoding") or not re.fullmatch(r"[0-9]+", length) or headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
         return b""
-    if int(length) > MAX_DOWNLOAD_BYTES:
+    declared = int(length)
+    if declared > MAX_DOWNLOAD_BYTES:
         return b""
     body = response.body()
-    return body if len(body) <= MAX_DOWNLOAD_BYTES else b""
+    if not isinstance(body, (bytes, bytearray)):
+        return b""
+    if len(body) != declared or len(body) > MAX_DOWNLOAD_BYTES:
+        return b""
+    return bytes(body)
 
 
 @dataclass
@@ -338,7 +348,12 @@ def _is_safe_browser_request_url(url: str) -> bool:
         return True
     if not _is_safe_download_url(url):
         return False
-    port = parsed.port or (443 if scheme == "https" else 80)
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        # An out-of-range port cannot be fetched; fail closed instead of
+        # raising out of a route/request guard.
+        return False
     return _host_resolves_to_public_addresses(parsed.hostname or "", port)
 
 
@@ -432,6 +447,81 @@ def _unique_download_destination(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     return path.with_name(f"{stem}_{uuid.uuid4().hex[:8]}{suffix}")
+
+
+def _save_verified_capture(save_dir: str | Path, filename: str, data) -> str | None:
+    """Persist a captured PDF/OFD body to a fresh, content-verified file.
+
+    Captured responses, blobs and embedded payloads are named deterministically
+    from the mail UID and URL index. Writing those names directly would
+    overwrite (and later validation could delete) an attachment produced by an
+    earlier run of the same mail. Every capture therefore gets a unique
+    destination and is validated before it is reported.
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        return None
+    raw = bytes(data)
+    if not (100 < len(raw) <= MAX_DOWNLOAD_BYTES):
+        return None
+    if raw.startswith(b"%PDF"):
+        suffix = ".pdf"
+    elif raw.startswith(b"PK\x03\x04") and (b"ofd.xml" in raw or b"OFD.xml" in raw):
+        suffix = ".ofd"
+    else:
+        return None
+    stem = Path(str(filename or "invoice_capture")).stem or "invoice_capture"
+    dest = _safe_download_destination(
+        save_dir,
+        f"{stem}{suffix}",
+        f"invoice_capture{suffix}",
+    )
+    dest = _unique_download_destination(dest)
+    try:
+        dest.write_bytes(raw)
+    except OSError:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+    if not _verify_and_clean_file(dest):
+        return None
+    return str(dest)
+
+
+def _ensure_verified_extension(path: str | Path) -> str:
+    """Align a verified artifact's suffix with its content.
+
+    Playwright names downloads from the server's suggested filename. A server
+    that labels an OFD as ``.pdf`` (or the reverse) would otherwise be routed
+    to the wrong parser downstream and the valid original could be discarded.
+    """
+    p = Path(path)
+    try:
+        with open(p, "rb") as handle:
+            header = handle.read(5)
+    except OSError:
+        return str(p)
+    if header.startswith(b"%PDF"):
+        suffix = ".pdf"
+    elif header.startswith(b"PK\x03\x04"):
+        try:
+            raw = p.read_bytes()
+        except OSError:
+            return str(p)
+        if not (b"ofd.xml" in raw or b"OFD.xml" in raw):
+            return str(p)
+        suffix = ".ofd"
+    else:
+        return str(p)
+    if p.suffix.lower() == suffix:
+        return str(p)
+    target = _unique_download_destination(p.with_suffix(suffix))
+    try:
+        os.replace(p, target)
+    except OSError:
+        return str(p)
+    return str(target)
 
 
 def _extract_links_with_metadata_from_html_and_stats(html: str) -> tuple[list[dict], dict]:
@@ -952,9 +1042,15 @@ class LinkDownloader:
         channel = cfg.get("playwright", {}).get("channel", "auto")
 
         self._pw = sync_playwright().start()
-        self._check_cancelled()
-        if deadline is not None:
-            self._remaining_timeout_ms(deadline)
+        try:
+            self._check_cancelled()
+            if deadline is not None:
+                self._remaining_timeout_ms(deadline)
+        except BaseException:
+            # Never leak the Playwright driver when a cancellation/timeout
+            # lands between driver start and browser launch.
+            self.close()
+            raise
 
         no_sandbox = resolve_no_sandbox(cfg)
         launch_args = playwright_launch_args(no_sandbox=no_sandbox)
@@ -972,7 +1068,7 @@ class LinkDownloader:
         try:
             proxy_url = self._safety_proxy.start()
         except OSError as exc:
-            self._stop_safety_proxy()
+            self.close()
             raise RuntimeError(f"浏览器安全代理启动失败: {exc}") from exc
 
         def _launch_browser(channel_name: str | None, label: str) -> None:
@@ -984,7 +1080,15 @@ class LinkDownloader:
                 # actually keep the sandbox on (observed via process command
                 # lines: sandboxed launches carry no ``--no-sandbox``).
                 "chromium_sandbox": not no_sandbox,
-                "proxy": {"server": proxy_url},
+                # Chromium implicitly bypasses any configured proxy for
+                # localhost and link-local targets (127.0.0.1/8, [::1],
+                # 169.254/16 — the cloud metadata range, [FE80::]/10). A mail
+                # link that redirects to such a target would therefore reach it
+                # directly, before the request-event guard can tear the context
+                # down. ``<-loopback>`` subtracts that implicit bypass so those
+                # hops also go through the safety proxy, which denies them
+                # before any connection is opened.
+                "proxy": {"server": proxy_url, "bypass": "<-loopback>"},
                 "timeout": self._remaining_timeout_ms(deadline) if deadline is not None else self._timeout,
             }
             if channel_name:
@@ -996,47 +1100,53 @@ class LinkDownloader:
                 not self._headed,
             )
 
-        # 1. If an explicit channel is configured, honor it first.
-        if channel not in {"auto", "chromium"}:
-            try:
-                _launch_browser(channel, f"configured channel '{channel}'")
-                return
-            except Exception as exc:
-                _log.warning(
-                    "Failed to launch configured channel '%s': %s. Falling back to auto.",
-                    channel,
-                    exc,
-                )
+        try:
+            # 1. If an explicit channel is configured, honor it first.
+            if channel not in {"auto", "chromium"}:
+                try:
+                    _launch_browser(channel, f"configured channel '{channel}'")
+                    return
+                except Exception as exc:
+                    _log.warning(
+                        "Failed to launch configured channel '%s': %s. Falling back to auto.",
+                        channel,
+                        exc,
+                    )
 
-        # 2. If the user explicitly asked for Chromium, do not change that contract.
-        if channel == "chromium":
-            try:
-                _launch_browser(None, "default Chromium")
-                return
-            except Exception as exc:
-                raise RuntimeError(
-                    "未找到可用浏览器。请安装 Microsoft Edge / Google Chrome，或在设置中配置浏览器通道。"
-                    f" (错误详情: 默认 Chromium 启动失败 - {exc})"
-                ) from exc
+            # 2. If the user explicitly asked for Chromium, do not change that contract.
+            if channel == "chromium":
+                try:
+                    _launch_browser(None, "default Chromium")
+                    return
+                except Exception as exc:
+                    raise RuntimeError(
+                        "未找到可用浏览器。请安装 Microsoft Edge / Google Chrome，或在设置中配置浏览器通道。"
+                        f" (错误详情: 默认 Chromium 启动失败 - {exc})"
+                    ) from exc
 
-        # 3. Auto mode: prefer the browser most Windows users already have.
-        last_exc: Exception | None = None
-        for channel_name, label in (
-            ("msedge", "system Microsoft Edge"),
-            ("chrome", "system Google Chrome"),
-            (None, "default Chromium"),
-        ):
-            try:
-                _launch_browser(channel_name, label)
-                return
-            except Exception as exc:
-                last_exc = exc
-                _log.warning("%s failed: %s", label, exc)
+            # 3. Auto mode: prefer the browser most Windows users already have.
+            last_exc: Exception | None = None
+            for channel_name, label in (
+                ("msedge", "system Microsoft Edge"),
+                ("chrome", "system Google Chrome"),
+                (None, "default Chromium"),
+            ):
+                try:
+                    _launch_browser(channel_name, label)
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    _log.warning("%s failed: %s", label, exc)
 
-        raise RuntimeError(
-            "未找到可用浏览器。请安装 Microsoft Edge / Google Chrome，或在设置中配置浏览器通道。"
-            f" (错误详情: {last_exc})"
-        ) from last_exc
+            raise RuntimeError(
+                "未找到可用浏览器。请安装 Microsoft Edge / Google Chrome，或在设置中配置浏览器通道。"
+                f" (错误详情: {last_exc})"
+            ) from last_exc
+        except BaseException:
+            # A failed launch must not leave the driver or safety proxy running:
+            # every retry would otherwise start another Playwright driver.
+            self.close()
+            raise
 
     def close(self):
         # Cleanup must be best-effort and ordered: a failing browser close must
@@ -1370,17 +1480,13 @@ class LinkDownloader:
                 if is_target:
                     body = _bounded_response_body(response)
                     if len(body) > 100:
-                        is_pdf = body.startswith(b"%PDF")
-                        is_zip = body.startswith(b"PK\x03\x04")
-                        is_ofd = False
-                        if is_zip and (b"ofd.xml" in body or b"OFD.xml" in body):
-                            is_ofd = True
-                        if is_pdf or is_ofd:
-                            ext = ".pdf" if is_pdf else ".ofd"
-                            fname = f"invoice_{mail_uid}_{idx}_resp{ext}"
-                            dest = save_dir / fname
-                            dest.write_bytes(body)
-                            captured_files.append(str(dest))
+                        saved = _save_verified_capture(
+                            save_dir,
+                            f"invoice_{mail_uid}_{idx}_resp",
+                            body,
+                        )
+                        if saved:
+                            captured_files.append(saved)
             except Exception:
                 pass
 
@@ -1483,17 +1589,14 @@ class LinkDownloader:
                         }""", src)
                         if b64_data:
                             body = base64.b64decode(b64_data)
-                            is_pdf = body.startswith(b"%PDF")
-                            is_zip = body.startswith(b"PK\x03\x04")
-                            is_ofd = False
-                            if is_zip and (b"ofd.xml" in body or b"OFD.xml" in body):
-                                is_ofd = True
-                            if is_pdf or is_ofd:
-                                ext = ".pdf" if is_pdf else ".ofd"
-                                dest = save_dir / f"invoice_{mail_uid}_{idx}_blob{ext}"
-                                dest.write_bytes(body)
+                            saved = _save_verified_capture(
+                                save_dir,
+                                f"invoice_{mail_uid}_{idx}_blob",
+                                body,
+                            )
+                            if saved:
                                 _log.info("已从嵌入 PDF/OFD 资源保存文件")
-                                return str(dest), "embedded_pdf", None
+                                return saved, "embedded_pdf", None
                     except Exception as e:
                         _log.debug("Fetch blob from frame context failed: %s", e)
 
@@ -1511,13 +1614,24 @@ class LinkDownloader:
                     allow_fallback = bool(cfg["link_download"].get("allow_invoice_page_pdf_fallback", True))
 
         if allow_fallback:
+            dest = _safe_download_destination(
+                save_dir,
+                f"invoice_{mail_uid}_{idx}_page_fallback.pdf",
+                "invoice_page_fallback.pdf",
+            )
+            dest = _unique_download_destination(dest)
             try:
-                dest = save_dir / f"invoice_{mail_uid}_{idx}_page_fallback.pdf"
                 page.pdf(path=str(dest))
                 if _verify_and_clean_file(dest):
                     _log.info("发票展示页面已保存为 PDF fallback")
                     return str(dest), "invoice_page_pdf_fallback", "由发票展示页面保存为 PDF，建议核对原件"
             except Exception as e:
+                # A failed print-to-PDF can leave a partial file behind; it is
+                # not a valid invoice and must not pollute the mail directory.
+                try:
+                    dest.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 _log.debug("PDF print fallback failed: %s", e)
 
         return None
@@ -1633,17 +1747,13 @@ class LinkDownloader:
                     if is_target:
                         body = _bounded_response_body(response)
                         if len(body) > 100:
-                            is_pdf = body.startswith(b"%PDF")
-                            is_zip = body.startswith(b"PK\x03\x04")
-                            is_ofd = False
-                            if is_zip and (b"ofd.xml" in body or b"OFD.xml" in body):
-                                is_ofd = True
-                            if is_pdf or is_ofd:
-                                ext = ".pdf" if is_pdf else ".ofd"
-                                fname = f"invoice_{mail_uid}_{idx}_resp{ext}"
-                                dest = save_dir / fname
-                                dest.write_bytes(body)
-                                captured_files.append(str(dest))
+                            saved = _save_verified_capture(
+                                save_dir,
+                                f"invoice_{mail_uid}_{idx}_resp",
+                                body,
+                            )
+                            if saved:
+                                captured_files.append(saved)
                 except Exception:
                     pass
 
@@ -1725,6 +1835,11 @@ class LinkDownloader:
 
             if downloaded_path and os.path.exists(downloaded_path):
                 if _verify_and_clean_file(downloaded_path):
+                    # A server can suggest a suffix that disagrees with the
+                    # verified content (e.g. OFD bytes named *.pdf); routing
+                    # that file to the wrong parser downstream would discard a
+                    # valid original, so align the suffix before reporting it.
+                    downloaded_path = _ensure_verified_extension(downloaded_path)
                     size = os.path.getsize(downloaded_path)
                     return DownloadedFile(
                         url=url,
@@ -1797,9 +1912,11 @@ class LinkDownloader:
             if not m:
                 return None
             payload = base64.b64decode(m.group(1))
-            dest = save_dir / f"invoice_{mail_uid}_{idx}_embedded.pdf"
-            dest.write_bytes(payload)
-            return str(dest)
+            return _save_verified_capture(
+                save_dir,
+                f"invoice_{mail_uid}_{idx}_embedded",
+                payload,
+            )
         except Exception:
             return None
 

@@ -159,13 +159,23 @@ def _resolve_stored_attachment(raw_path: str, runtime_dir: Path) -> Path | None:
 
 
 def _is_file_valid_and_openable(path: Path | None) -> bool:
+    """Return whether *path* is a readable, non-empty regular file.
+
+    This helper gates whether an existing attachment may be trusted after a
+    fallback, so a zero-byte/aborted file must not count as a usable original.
+    Deeper content validation (truncated PDF, wrong file type) stays with the
+    downloader/parser that produced the file.
+    """
     if not path:
         return False
     try:
-        if not path.exists():
+        if not path.is_file():
+            return False
+        if path.stat().st_size <= 0:
             return False
         with path.open("rb") as handle:
-            handle.read(10)
+            if not handle.read(10):
+                return False
         return True
     except Exception:
         return False
@@ -304,6 +314,12 @@ def _restore_invoice_state(db: InvoiceDB, original: Mapping[str, object] | None)
             item_name=str(original.get("item_name") or ""),
             expense_date=str(original.get("expense_date") or ""),
             date_source=str(original.get("date_source") or ""),
+            # The parsed-metadata update uses COALESCE for tax columns, so
+            # passing None would keep the values from the rejected parse.
+            # Compensation has to write the original values explicitly.
+            buyer_tax_id=str(original.get("buyer_tax_id") or ""),
+            tax_amount=str(original.get("tax_amount") or ""),
+            tax_rate=str(original.get("tax_rate") or ""),
         )
         db.update_invoice_file_paths(
             invoice_id,
@@ -469,8 +485,15 @@ def run_invoice_link_retry(
             return result(success=False, failure_detail="未能从链接获取官方 PDF/OFD")
 
         source_path = Path(downloaded.file_path)
-        if not source_path.is_file():
-            return result(success=False, failure_detail="下载文件不存在")
+        if not _is_file_valid_and_openable(source_path):
+            # A zero-byte/aborted artifact must not be reported as a restored
+            # original; clean it up when it is provably from this attempt.
+            _rollback_created_attachment(
+                source_path,
+                attachments_root=attachments_root,
+                preexisting_files=preexisting_files,
+            )
+            return result(success=False, failure_detail="下载文件为空或不可用")
 
         destination_dir = attachments_root / date_dir_name
         destination_dir.mkdir(parents=True, exist_ok=True)
@@ -526,11 +549,20 @@ def run_invoice_link_retry(
         persisted = True
         parse_note = getattr(downloaded, "parse_note", None)
         if parse_note:
-            db.update_invoice_missing_fields(
-                item.invoice_id,
-                {"parse_note": parse_note},
-                only_if_empty=False,
-            )
+            try:
+                db.update_invoice_missing_fields(
+                    item.invoice_id,
+                    {"parse_note": parse_note},
+                    only_if_empty=False,
+                )
+            except Exception as exc:
+                # The attachment and the DB reference are already consistent;
+                # a note update failure must not report the whole retry as
+                # failed (that would invite a retry that leaves an orphan copy).
+                _log.warning(
+                    "Detail retry parse note update failed: error_type=%s",
+                    type(exc).__name__,
+                )
 
         _emit_log(log_callback, f"✅ [重新下载] 发票 ID {item.invoice_id} 原件下载并关联成功")
         _emit_progress(
@@ -723,7 +755,12 @@ def run_invoice_redownload(
                 final_path: Path | None = None
                 try:
                     dl = downloader._download_url(download_url, mail_uid or 0, inv_id, mail_date)
-                    if dl and dl.file_path and os.path.exists(dl.file_path):
+                    if (
+                        dl
+                        and dl.file_path
+                        and os.path.exists(dl.file_path)
+                        and _is_file_valid_and_openable(Path(dl.file_path))
+                    ):
                         suffix = os.path.splitext(dl.file_path)[1].lower()
                         original_invoice = db.get_invoice(inv_id)
                         if suffix == ".pdf":
@@ -889,6 +926,15 @@ def run_invoice_redownload(
                                 fallback_reason = "下载文件写入数据库失败"
                     else:
                         fallback_reason = "下载超时或链接失效"
+                        if dl and dl.file_path and os.path.exists(dl.file_path):
+                            # Zero-byte/aborted artifact: never keep it as an
+                            # original or point the invoice at it.
+                            _rollback_created_attachment(
+                                Path(dl.file_path),
+                                attachments_root=attachments_root,
+                                preexisting_files=preexisting_files,
+                            )
+                            fallback_reason = "下载文件为空或不可用"
                 except Exception as exc:
                     if final_path is not None:
                         _rollback_created_attachment(

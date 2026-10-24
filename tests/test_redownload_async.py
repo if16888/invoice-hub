@@ -471,6 +471,125 @@ class RedownloadServiceTests(unittest.TestCase):
             self.assertEqual(result["buckets"]["download_failed"], 0)
             self.assertEqual(result["failed_count"], 0)
 
+    def test_detail_retry_rejects_zero_byte_download(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            db_path = root / "redownload.db"
+            invoice_id = self._seed_invoice(
+                db_path,
+                invoice_number="EMPTY-DL",
+                download_url="https://example.test/empty.pdf",
+            )
+            with InvoiceDB(db_path) as db:
+                before = dict(db.get_invoice(invoice_id))
+
+            class EmptyDownloader:
+                def __init__(self, download_dir):
+                    self.download_dir = Path(download_dir)
+
+                def _download_url(self, *_args):
+                    self.download_dir.mkdir(parents=True, exist_ok=True)
+                    empty = self.download_dir / "empty.pdf"
+                    empty.write_bytes(b"")
+                    return SimpleNamespace(file_path=str(empty), parse_note="")
+
+                def close(self):
+                    return None
+
+            with patch.object(
+                redownload_module,
+                "_link_downloader",
+                SimpleNamespace(LinkDownloader=EmptyDownloader),
+            ), patch.object(
+                redownload_module._attachment_handler,
+                "build_managed_attachment_name",
+                return_value="managed.pdf",
+            ):
+                result = run_invoice_link_retry(
+                    {
+                        "id": invoice_id,
+                        "download_url": "https://example.test/empty.pdf",
+                        "total_amount": "10.00",
+                    },
+                    db_path,
+                    runtime_dir=runtime,
+                )
+
+            self.assertFalse(result["success"])
+            self.assertFalse(result["cancelled"])
+            self.assertIn("空或不可用", result["failure_detail"])
+            self.assertEqual(
+                [p for p in (runtime / "attachments").rglob("*") if p.is_file()],
+                [],
+            )
+            with InvoiceDB(db_path) as db:
+                after = dict(db.get_invoice(invoice_id))
+            self.assertEqual(after["attachment_path"], before["attachment_path"])
+            self.assertEqual(after["file_hash"], before["file_hash"])
+
+    def test_batch_direct_download_rejects_zero_byte_artifact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            db_path = root / "redownload.db"
+            invoice_id = self._seed_invoice(
+                db_path,
+                invoice_number="EMPTY-OFD",
+                download_url="https://example.test/empty.ofd",
+            )
+            with InvoiceDB(db_path) as db:
+                before = dict(db.get_invoice(invoice_id))
+
+            class EmptyDownloader:
+                last_download_diagnostics = {}
+
+                def __init__(self, download_dir):
+                    self.download_dir = Path(download_dir)
+
+                def _download_url(self, *_args):
+                    self.download_dir.mkdir(parents=True, exist_ok=True)
+                    partial = self.download_dir / "raw.ofd"
+                    partial.write_bytes(b"")
+                    return SimpleNamespace(file_path=str(partial), parse_note="")
+
+                def close(self):
+                    return None
+
+            with patch.object(
+                redownload_module,
+                "_link_downloader",
+                SimpleNamespace(LinkDownloader=EmptyDownloader),
+            ), patch.object(
+                redownload_module._invoice_parser,
+                "IsolatedInvoiceParser",
+                return_value=SimpleNamespace(),
+            ), patch.object(
+                redownload_module._attachment_handler,
+                "AttachmentHandler",
+                return_value=object(),
+            ), patch(
+                "scripts.invoice_fetch.services._rename_by_invoice_code",
+                side_effect=AssertionError("zero-byte artifact must never be renamed"),
+            ):
+                result = run_invoice_redownload(
+                    [{"id": invoice_id, "download_url": "https://example.test/empty.ofd"}],
+                    db_path,
+                    runtime_dir=runtime,
+                    config={},
+                )
+
+            self.assertEqual(result["buckets"]["download_failed"], 1)
+            self.assertEqual(result["buckets"]["metadata_refreshed"], 0)
+            self.assertIn("下载文件为空或不可用", " ".join(result["failure_details"]))
+            self.assertEqual(
+                [p for p in (runtime / "attachments").rglob("*") if p.is_file()],
+                [],
+            )
+            with InvoiceDB(db_path) as db:
+                after = dict(db.get_invoice(invoice_id))
+            self.assertEqual(after["attachment_path"], before["attachment_path"])
+
     def test_request_is_a_value_snapshot_not_a_gui_row(self):
         row = {
             "id": 41,
@@ -639,6 +758,124 @@ class RedownloadServiceTests(unittest.TestCase):
 
             self.assertEqual(len(instances), 1)
             self.assertTrue(instances[0].closed)
+
+
+    def test_duplicate_bucket_treats_zero_byte_attachment_as_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            empty = runtime / "attachments" / "2026-06-01" / "empty.pdf"
+            empty.parent.mkdir(parents=True)
+            empty.write_bytes(b"")
+            db_path = root / "redownload.db"
+            invoice_id = self._seed_invoice(
+                db_path,
+                invoice_number="DUP-EMPTY",
+                attachment_path="attachments/2026-06-01/empty.pdf",
+                mail_uid=303,
+            )
+
+            class FakeDownloader:
+                last_download_diagnostics = {}
+
+                def __init__(self, download_dir):
+                    self.download_dir = download_dir
+
+                def _download_url(self, *_args):
+                    return None
+
+                def close(self):
+                    return None
+
+            class FakeMailFetcher:
+                def __init__(self, **_kwargs):
+                    self.exited = False
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    self.exited = True
+
+            with _patched_services(runtime) as patched_services, patch.object(
+                redownload_module,
+                "_link_downloader",
+                SimpleNamespace(LinkDownloader=FakeDownloader),
+            ), patch.object(
+                redownload_module._mail_fetcher, "MailFetcher", FakeMailFetcher
+            ), patch.object(
+                redownload_module._credentials, "has_auth_code", return_value=True
+            ), patch.object(
+                redownload_module._credentials, "get_auth_code", return_value="temporary"
+            ):
+                patched_services._handle_pending_email = lambda **_kwargs: SimpleNamespace(
+                    status="duplicate"
+                )
+                result = run_invoice_redownload(
+                    [{"id": invoice_id, "mail_uid": 303}],
+                    db_path,
+                    runtime_dir=runtime,
+                    config={"email": {"address": "user@example.com"}},
+                )
+
+            self.assertEqual(result["buckets"]["download_failed"], 1)
+            self.assertEqual(result["buckets"]["duplicate_only"], 0)
+            self.assertEqual(result["failed_count"], 1)
+
+    def test_detail_retry_cancel_after_download_leaves_no_orphan_and_no_db_change(self):
+        from scripts.invoice_fetch.scan_lifecycle import ScanControl
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            db_path = root / "redownload.db"
+            invoice_id = self._seed_invoice(
+                db_path,
+                invoice_number="CANCEL-1",
+                download_url="https://example.test/cancel.pdf",
+            )
+            with InvoiceDB(db_path) as db:
+                before = dict(db.get_invoice(invoice_id))
+
+            control = ScanControl()
+
+            class CancellingDownloader:
+                def __init__(self, download_dir):
+                    self.download_dir = Path(download_dir)
+
+                def _download_url(self, *_args):
+                    self.download_dir.mkdir(parents=True, exist_ok=True)
+                    partial = self.download_dir / "partial.pdf"
+                    partial.write_bytes(b"%PDF-1.4 synthetic partial")
+                    control.cancel()
+                    return SimpleNamespace(file_path=str(partial), parse_note="")
+
+                def close(self):
+                    return None
+
+            with patch.object(
+                redownload_module,
+                "_link_downloader",
+                SimpleNamespace(LinkDownloader=CancellingDownloader),
+            ):
+                result = run_invoice_link_retry(
+                    {"id": invoice_id, "download_url": "https://example.test/cancel.pdf"},
+                    db_path,
+                    runtime_dir=runtime,
+                    scan_control=control,
+                )
+
+            self.assertFalse(result["success"])
+            self.assertTrue(result["cancelled"])
+            self.assertEqual(
+                [p for p in (runtime / "attachments").rglob("*") if p.is_file()],
+                [],
+            )
+            with InvoiceDB(db_path) as db:
+                after = dict(db.get_invoice(invoice_id))
+            self.assertEqual(after["attachment_path"], before["attachment_path"])
+            self.assertEqual(after["invoice_number"], before["invoice_number"])
+            self.assertEqual(after["file_hash"], before["file_hash"])
 
 
 class RedownloadWorkerEventLoopTests(unittest.TestCase):
@@ -898,6 +1135,39 @@ class RedownloadGuiBoundaryTests(unittest.TestCase):
             worker.wait()
             self._qt.processEvents()
             self.assertIsNone(window._redownload_worker)
+
+    def test_start_failure_releases_worker_ownership_and_data_operation_gate(self):
+        from scripts.invoice_fetch import redownload as redownload_module
+
+        window, _first_id, _second_id = self._make_window()
+        window.table.selectRow(0)
+
+        with patch(
+            "scripts.invoice_fetch.gui.app.InvoiceRedownloadWorker",
+            side_effect=RuntimeError("synthetic start failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                window._redownload_selected_invoices()
+
+        # The idempotency guard must not survive an exception on the start path.
+        self.assertIsNone(window._redownload_worker)
+        self.assertEqual(window._data_operation_gate.owner, "")
+
+        release = threading.Event()
+
+        def controlled_operation(*_args, **_kwargs):
+            release.wait()
+            return self._result(requested_count=1)
+
+        with patch.object(
+            redownload_module, "run_invoice_redownload", side_effect=controlled_operation
+        ), patch("PySide6.QtWidgets.QMessageBox.information"):
+            worker = window._redownload_selected_invoices()
+            self.assertIsNotNone(worker)
+            release.set()
+            worker.wait()
+            self._qt.processEvents()
+        self.assertIsNone(window._redownload_worker)
 
     def test_completion_refresh_keeps_the_new_selection(self):
         from scripts.invoice_fetch import redownload as redownload_module
