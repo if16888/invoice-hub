@@ -454,7 +454,10 @@ def prune_database_backups(
 
     The newest files by modification time are kept. This helper is deliberately
     conservative: ``keep`` must be non-negative and only regular files matching
-    ``pattern`` inside ``backup_dir`` are considered.
+    ``pattern`` inside ``backup_dir`` are considered. A file that disappears
+    between listing and deletion is skipped instead of aborting the cleanup,
+    and journal sidecars of a removed backup are removed with it so an orphan
+    ``-wal`` cannot accumulate.
     """
     if keep < 0:
         raise ValueError("keep must be non-negative")
@@ -465,14 +468,27 @@ def prune_database_backups(
     if not dest_dir.is_dir():
         raise ValueError(f"Backup path is not a directory: {dest_dir}")
 
-    backups = sorted(
-        (p for p in dest_dir.glob(pattern) if p.is_file()),
-        key=lambda p: (p.stat().st_mtime, p.name),
-        reverse=True,
-    )
-    to_remove = backups[keep:]
+    backups = []
+    for path in dest_dir.glob(pattern):
+        try:
+            if path.is_file():
+                backups.append((path.stat().st_mtime, path.name, path))
+        except OSError:
+            continue
+    backups.sort(reverse=True)
+    to_remove = [entry[2] for entry in backups[keep:]]
     removed: list[Path] = []
     for path in to_remove:
-        path.unlink()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            _log.warning("旧备份删除失败", exc_info=exc)
+            continue
+        try:
+            _remove_private_sidecars(path)
+        except DatabaseBackupError:
+            _log.warning("旧备份日志文件清理失败", exc_info=True)
         removed.append(path)
     return removed

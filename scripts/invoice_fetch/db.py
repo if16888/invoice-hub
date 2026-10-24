@@ -30,6 +30,9 @@ _log = logging.getLogger(__name__)
 # opening it through InvoiceDB again.  That nested open must not take another
 # pre-migration snapshot, otherwise every round adds a ``backups/`` level.
 _MIGRATION_BACKUP_GUARD = threading.local()
+# A failing migration retries on every start; without a cap each attempt would
+# leave another full copy of the database behind.
+_MIGRATION_BACKUP_KEEP = 2
 
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CONNECT_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_MS / 1_000
@@ -314,6 +317,33 @@ class InvoiceDB(EvidenceStoreMixin):
                     "请先手动备份数据库文件后重试。"
                 ) from raw_error
         _log.info("迁移前已创建数据库备份: %s", Path(str(backup_path)).name)
+        self._prune_migration_backups(backup_dir, reason)
+
+    def _prune_migration_backups(self, backup_dir: Path, reason: str) -> None:
+        """Keep only the newest snapshots of the same pre-migration state.
+
+        A migration that keeps failing produces one full database copy per
+        start.  Older copies of the *same* reason describe an identical state,
+        so they add no recovery value while they can fill the disk.  Backups
+        taken for other reasons are never touched, and cleanup failures must
+        not block the upgrade.
+        """
+        try:
+            from .db_backup import prune_database_backups
+        except Exception:  # noqa: BLE001 - cleanup is best-effort
+            return
+        suffix = self._path.suffix or ".db"
+        try:
+            removed = prune_database_backups(
+                backup_dir,
+                keep=_MIGRATION_BACKUP_KEEP,
+                pattern=f"*{reason}*{suffix}",
+            )
+        except Exception:  # noqa: BLE001 - cleanup is best-effort
+            _log.debug("旧迁移前备份清理失败", exc_info=True)
+            return
+        if removed:
+            _log.info("已清理 %d 份旧的迁移前备份", len(removed))
 
     def close(self):
         if self._conn:
@@ -2485,7 +2515,13 @@ class InvoiceDB(EvidenceStoreMixin):
         return [int(row[0]) for row in rows]
 
     def mark_claim_reimbursed(self, claim_id: int, export_run_id: int | None = None) -> bool:
-        """Mark the exact invoice set from a successful export as reimbursed."""
+        """Mark the exact invoice set from a successful export as reimbursed.
+
+        Refuses (before any write) when the referenced export run is not the
+        newest package for the claim, or when a claim member that is neither in
+        the package nor ``ignored``/``error`` would be left unstamped behind a
+        locked reimbursed claim.
+        """
         claim = self.get_claim_group(claim_id)
         if not claim:
             self._set_last_error("not_found")
@@ -2510,6 +2546,15 @@ class InvoiceDB(EvidenceStoreMixin):
         if not run or not invoice_ids:
             self._set_last_error("export_run_items_missing")
             return False
+        # Only the newest package may be marked reimbursed: marking an older
+        # package would lock the claim while the live package differs from it.
+        latest_run = self._conn.execute(
+            "SELECT id FROM export_runs WHERE claim_id=? ORDER BY id DESC LIMIT 1",
+            (claim_id,),
+        ).fetchone()
+        if not latest_run or int(export_run_id) != int(latest_run[0]):
+            self._set_last_error("stale_export_run")
+            return False
         placeholders = ",".join("?" for _ in invoice_ids)
         current_members = {
             int(row[0]) for row in self._conn.execute(
@@ -2520,6 +2565,21 @@ class InvoiceDB(EvidenceStoreMixin):
         }
         if current_members != set(invoice_ids):
             self._set_last_error("export_run_items_mismatch")
+            return False
+        # Every claim member missing from this package must be intentionally
+        # excluded (ignored/error); otherwise reimbursement would leave it
+        # unstamped and permanently locked without any way to repair it.
+        unexported_member = self._conn.execute(
+            "SELECT i.id FROM claim_group_items cgi "
+            "JOIN invoices i ON i.id = cgi.invoice_id "
+            "WHERE cgi.claim_id = ? "
+            f"AND cgi.invoice_id NOT IN ({placeholders}) "
+            "AND COALESCE(i.review_status, 'to_review') NOT IN ('ignored', 'error') "
+            "LIMIT 1",
+            (claim_id, *invoice_ids),
+        ).fetchone()
+        if unexported_member:
+            self._set_last_error("claim_members_not_exported")
             return False
         conflict = self._conn.execute(
             f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) "

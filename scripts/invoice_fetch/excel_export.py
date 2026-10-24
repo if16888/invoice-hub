@@ -328,6 +328,10 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
             val = row.get(key, "")
             if key == "expense_date":
                 val = row.get("expense_date") or row.get("invoice_date") or ""
+            elif key == "total_amount":
+                # Match the main ledger sheet: amount cells must stay numeric so
+                # SUM()/pivot on the exception sheet works; empty stays empty.
+                val = _excel_amount_value(val)
             elif key == "extra_paths":
                 paths = _parse_paths(val)
                 if paths:
@@ -336,6 +340,8 @@ def _add_exception_sheet(wb: Workbook, rows: list[dict]):
                     val = ""
             cell = ws.cell(row=row_idx, column=col_idx, value=_safe_excel_value(val))
             _style_cell(cell)
+            if key == "total_amount" and val != "":
+                cell.number_format = "#,##0.00"
             if key == "attachment_path" and val:
                 hyperlink = _safe_hyperlink_target(val)
                 if hyperlink is not None:
