@@ -165,6 +165,9 @@ class MobileUploadTests(unittest.TestCase):
             server._files.extend(
                 {
                     "status": "accepted",
+                    # Duplicate detection is now DB-authoritative; an explicit
+                    # import outcome is what marks a digest as already uploaded.
+                    "imported": True,
                     "sha256": hashlib.sha256(payload).hexdigest(),
                 }
                 for payload in duplicate_payloads
@@ -871,6 +874,9 @@ class MobileUploadTests(unittest.TestCase):
             known_payload = b"known exact duplicate"
             server._files.append({
                 "status": "accepted",
+                # Only an actual import outcome proves the digest was imported;
+                # legacy "accepted" records are re-checked against the database.
+                "imported": True,
                 "sha256": hashlib.sha256(known_payload).hexdigest(),
             })
             business_outcomes = [{
@@ -1227,6 +1233,289 @@ class MobileUploadTests(unittest.TestCase):
 
             # The archived file must exist
             self.assertTrue((runtime_dir / inv["attachment_path"]).exists())
+
+    def test_failed_import_upload_stays_retryable_across_sessions(self):
+        """An upload accepted before a failed import must never dead-end."""
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            payload = b"%PDF-1.4 synthetic retry payload"
+            digest = hashlib.sha256(payload).hexdigest()
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            def failing_import(_paths):
+                raise RuntimeError("synthetic import failure")
+
+            with patch.object(
+                server, "_import_accepted_files", side_effect=failing_import
+            ):
+                with self.assertRaises(RuntimeError):
+                    server.save_uploads([
+                        UploadedFile("invoice.pdf", payload, "application/pdf"),
+                    ])
+
+            manifest = json.loads(
+                server.session.manifest_path.read_text(encoding="utf-8")
+            )
+            record = manifest["files"][0]
+            self.assertEqual(record["status"], "pending_import")
+            self.assertIs(record.get("imported"), False)
+            self.assertTrue(
+                any((server.session.session_dir / "original").glob("invoice*.pdf"))
+            )
+            server.stop()
+
+            retried_paths: list[Path] = []
+
+            def retry_import(
+                import_dir, target_db_path, config_path=None, file_paths=None,
+                allow_external_file_paths=False,
+            ):
+                retried_paths.extend(Path(path) for path in file_paths or [])
+                raise RuntimeError("synthetic reconciliation failure")
+
+            fresh = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            with patch(
+                "scripts.invoice_fetch.services.import_local_directory",
+                side_effect=retry_import,
+            ):
+                fresh.start()
+            self.addCleanup(fresh.stop)
+
+            # Starting a new session retries the stored file rather than
+            # trusting the stale "accepted" manifest entry.
+            self.assertEqual(len(retried_paths), 1)
+            self.assertEqual(retried_paths[0].read_bytes(), payload)
+
+            fresh_imports: list[list[Path]] = []
+            imported = {"added": 1, "duplicates": 0, "failed": 0}
+
+            def fake_import(paths):
+                fresh_imports.append(list(paths))
+                return imported
+
+            with patch.object(
+                fresh, "_import_accepted_files", side_effect=fake_import
+            ):
+                result = fresh.save_uploads([
+                    UploadedFile("invoice.pdf", payload, "application/pdf"),
+                ])
+
+            # The same bytes are accepted and imported again, not "duplicate".
+            self.assertEqual(result["accepted"], 1)
+            self.assertEqual(result["upload_duplicate"], 0)
+            self.assertEqual(len(fresh_imports), 1)
+            fresh_manifest = json.loads(
+                fresh.session.manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertTrue(fresh_manifest["files"][0]["imported"])
+            self.assertEqual(
+                fresh_manifest["files"][0]["sha256"], digest
+            )
+
+    def test_imported_upload_is_still_reported_as_duplicate_by_fresh_session(self):
+        """A genuinely imported file must keep being detected as duplicate."""
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            payload = b"%PDF-1.4 synthetic imported payload"
+            digest = hashlib.sha256(payload).hexdigest()
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            server.start()
+            self.addCleanup(server.stop)
+
+            def successful_import(_paths):
+                with InvoiceDB(db_path) as db:
+                    db.insert_invoice({
+                        "invoice_number": "SYN-MOBILE-1",
+                        "total_amount": "9.90",
+                        "seller_name": "Synthetic Seller",
+                        "file_hash": digest,
+                    })
+                return {"added": 1, "duplicates": 0, "failed": 0}
+
+            with patch.object(
+                server, "_import_accepted_files", side_effect=successful_import
+            ):
+                first = server.save_uploads([
+                    UploadedFile("invoice.pdf", payload, "application/pdf"),
+                ])
+
+            self.assertEqual(first["accepted"], 1)
+            manifest = json.loads(
+                server.session.manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertTrue(manifest["files"][0]["imported"])
+            server.stop()
+
+            fresh = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            fresh.start()
+            self.addCleanup(fresh.stop)
+
+            second = fresh.save_uploads([
+                UploadedFile("invoice-copy.pdf", payload, "application/pdf"),
+            ])
+
+            self.assertEqual(second["accepted"], 0)
+            self.assertEqual(second["upload_duplicate"], 1)
+
+    def test_legacy_accepted_manifest_without_import_flag_is_retryable(self):
+        """Legacy manifests (no import marker) must fall back to the DB."""
+        payload = b"%PDF-1.4 synthetic legacy payload"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            session_dir = (
+                runtime_dir / "inbox" / "mobile_upload"
+                / f"{datetime.now():%Y-%m-%d}" / "mobile_legacy_session"
+            )
+            (session_dir / "original").mkdir(parents=True)
+            stored = session_dir / "original" / "legacy.pdf"
+            stored.write_bytes(payload)
+            (session_dir / "manifest.json").write_text(
+                json.dumps({
+                    "source": "mobile_qr",
+                    "files": [{
+                        "status": "accepted",
+                        "sha256": digest,
+                        "stored_path": str(stored.relative_to(runtime_dir)),
+                        "original_filename": "legacy.pdf",
+                    }],
+                }),
+                encoding="utf-8",
+            )
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+
+            def blocked_import(*_args, **_kwargs):
+                raise RuntimeError("synthetic reconciliation failure")
+
+            with patch(
+                "scripts.invoice_fetch.services.import_local_directory",
+                side_effect=blocked_import,
+            ):
+                server.start()
+            self.addCleanup(server.stop)
+
+            imported_paths: list[Path] = []
+            imported = {"added": 1, "duplicates": 0, "failed": 0}
+
+            def fake_import(paths):
+                imported_paths.extend(paths)
+                return imported
+
+            with patch.object(
+                server, "_import_accepted_files", side_effect=fake_import
+            ):
+                result = server.save_uploads([
+                    UploadedFile("legacy.pdf", payload, "application/pdf"),
+                ])
+
+            # No DB row for the digest: the old "accepted" status is not proof
+            # of import, so the file is accepted and imported again.
+            self.assertEqual(result["accepted"], 1)
+            self.assertEqual(result["upload_duplicate"], 0)
+            self.assertEqual(len(imported_paths), 1)
+
+
+    def test_session_start_reimports_accepted_but_unimported_upload(self):
+        """A crashed/failed import is recovered when the next session starts."""
+        payload = b"%PDF-1.4 synthetic orphan payload"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td) / "runtime"
+            db_path = runtime_dir / "invoices.db"
+            session_dir = (
+                runtime_dir / "inbox" / "mobile_upload"
+                / f"{datetime.now():%Y-%m-%d}" / "mobile_orphan_session"
+            )
+            (session_dir / "original").mkdir(parents=True)
+            stored = session_dir / "original" / "orphan.pdf"
+            stored.write_bytes(payload)
+            manifest_path = session_dir / "manifest.json"
+            manifest_path.write_text(
+                json.dumps({
+                    "source": "mobile_qr",
+                    "files": [{
+                        "status": "accepted",
+                        "sha256": digest,
+                        "stored_path": str(stored.relative_to(runtime_dir)),
+                        "original_filename": "orphan.pdf",
+                    }],
+                }),
+                encoding="utf-8",
+            )
+
+            imported_paths: list[Path] = []
+
+            def successful_reconcile(
+                import_dir, target_db_path, config_path=None, file_paths=None,
+                allow_external_file_paths=False,
+            ):
+                imported_paths.extend(Path(path) for path in file_paths or [])
+                return {"added": 1, "duplicates": 0, "failed": 0}
+
+            server = MobileUploadServer(
+                runtime_dir=runtime_dir,
+                db_path=db_path,
+                host="127.0.0.1",
+                port=0,
+                import_on_upload=True,
+            )
+            with patch(
+                "scripts.invoice_fetch.services.import_local_directory",
+                side_effect=successful_reconcile,
+            ):
+                server.start()
+            self.addCleanup(server.stop)
+
+            self.assertEqual(len(imported_paths), 1)
+            self.assertEqual(imported_paths[0].read_bytes(), payload)
+            reconciled = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertTrue(reconciled["files"][0]["imported"])
+            self.assertEqual(reconciled["files"][0]["status"], "accepted")
+
+            # Once recovered, the file is a genuine duplicate on re-upload.
+            result = server.save_uploads([
+                UploadedFile("orphan.pdf", payload, "application/pdf"),
+            ])
+            self.assertEqual(result["accepted"], 0)
+            self.assertEqual(result["upload_duplicate"], 1)
 
 
 if __name__ == "__main__":
