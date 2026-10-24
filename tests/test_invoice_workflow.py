@@ -2383,7 +2383,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 self.assertEqual(rows[0]["parse_success"], 1)
                 self.assertTrue((runtime / rows[0]["attachment_path"]).exists())
 
-    def test_non_receipt_bad_pdf_is_not_recorded_as_downloaded(self):
+    def test_non_receipt_bad_pdf_is_kept_for_manual_review(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             src = base / "random.pdf"
@@ -2413,8 +2413,12 @@ class InvoiceWorkflowTests(unittest.TestCase):
             rows = db.get_all_invoices()
             db.close()
 
-            self.assertEqual(recorded, 0)
-            self.assertEqual(rows, [])
+            # An unparsable PDF is still the user's document: it must land in
+            # review as a manual task instead of being dropped with the file.
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["invoice_type"], "PDF待人工处理")
+            self.assertTrue(src.exists(), "解析失败的 PDF 原件不能被清理删除")
 
     def test_process_email_repairs_missing_paths_on_duplicate_invoice(self):
         with tempfile.TemporaryDirectory() as td:
@@ -3768,8 +3772,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(extra_paths), 1)
             self.assertIn("DIDI111222_证明材料", extra_paths[0])
 
-    def test_unknown_failed_pdf_is_ignored(self):
-        """测试 5：只有普通未知 PDF 邮件，不误判"""
+    def test_unknown_failed_pdf_is_kept_without_being_attached(self):
+        """测试 5：只有普通未知 PDF 邮件，不误判；原件保留为待人工处理"""
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             runtime = base / "runtime"
@@ -3814,10 +3818,16 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
                 rows = db.get_all_invoices()
 
-            self.assertEqual(recorded, 0)
-            self.assertEqual(len(rows), 1)
-            extra_paths = json.loads(rows[0]["extra_paths"])
+            self.assertEqual(recorded, 1)
+            self.assertEqual(len(rows), 2)
+            existing = [r for r in rows if r["invoice_number"] == "DIDI111222"]
+            self.assertEqual(len(existing), 1)
+            extra_paths = json.loads(existing[0]["extra_paths"])
             self.assertEqual(len(extra_paths), 0)
+            self.assertEqual(
+                len([r for r in rows if r["invoice_type"] == "PDF待人工处理"]), 1
+            )
+            self.assertTrue(unknown_file.exists(), "解析失败的未知 PDF 也不能被删除")
 
     def test_failed_invoice_pdf_and_itinerary_extra(self):
         """单个解析失败 invoice_pdf + 一个行程单 extra"""
@@ -3861,10 +3871,13 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 )
                 rows = db.get_all_invoices()
 
-            self.assertEqual(recorded, 1)
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["invoice_type"], "待关联证明材料")
-            self.assertTrue((runtime / rows[0]["attachment_path"]).exists())
+            self.assertEqual(recorded, 2)
+            self.assertEqual(len(rows), 2)
+            by_type = {row["invoice_type"]: row for row in rows}
+            self.assertIn("待关联证明材料", by_type)
+            self.assertIn("PDF待人工处理", by_type)
+            self.assertTrue((runtime / by_type["待关联证明材料"]["attachment_path"]).exists())
+            self.assertTrue(inv_file.exists(), "解析失败的发票原件必须保留")
 
     def test_single_success_invoice_pdf_and_multiple_extras(self):
         """单个解析成功 invoice_pdf + 多个 extra，全部挂到该发票"""

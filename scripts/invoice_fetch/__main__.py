@@ -835,6 +835,101 @@ def scan_email_and_download(
     )
 
 
+class ReprocessPreflightError(RuntimeError):
+    """邮箱重处理前置校验失败：授权码或 IMAP 连接不可用，未执行任何删除/重置。"""
+
+
+def _mask_mailbox_label(mailbox_key: str, address: str = "") -> str:
+    """Mask a mailbox address for user-facing preflight messages."""
+    if address:
+        return mask_email(address)
+    text = str(mailbox_key or "").strip()
+    if "@" in text:
+        return mask_email(text)
+    return text or "<未知邮箱>"
+
+
+def _masked_uid_context(uids) -> str:
+    """Render a masked, bounded uid list for failure warnings."""
+    values = sorted({str(uid) for uid in uids})
+    shown = ", ".join(mask_uid(value) for value in values[:5])
+    if len(values) > 5:
+        shown += f" 等 {len(values)} 封"
+    return shown
+
+
+def _preflight_reprocess_mailboxes(cfg: dict, records: list[dict]) -> dict[str, dict]:
+    """Verify credentials and IMAP login for every mailbox involved in an apply.
+
+    This runs before any destructive delete/reset. It returns a mapping of
+    ``mailbox_key -> account`` (with the resolved ``auth_code``) and raises
+    :class:`ReprocessPreflightError` describing every failing mailbox, so the
+    caller aborts while the database is still untouched.
+    """
+    accounts = get_email_accounts(cfg)
+    account_by_key = {str(acc.get("mailbox_key") or ""): acc for acc in accounts}
+    account_by_key_lower = {key.lower(): acc for key, acc in account_by_key.items()}
+
+    failures: list[str] = []
+    resolved: dict[str, dict] = {}
+    mailbox_keys = sorted({str(r.get("mailbox_key") or "") for r in records})
+
+    # 1) 授权码校验（不触发任何网络或数据库副作用）
+    for mailbox_key in mailbox_keys:
+        acc = account_by_key.get(mailbox_key) or account_by_key_lower.get(mailbox_key.lower())
+        if not acc:
+            failures.append(f"邮箱 {_mask_mailbox_label(mailbox_key)} 未在配置中找到")
+            continue
+
+        address = str(acc.get("address") or "")
+        label = _mask_mailbox_label(mailbox_key, address)
+        auth_code = str(acc["auth_code"]) if "auth_code" in acc else ""
+        if not auth_code:
+            try:
+                auth_code = get_auth_code(address)
+            except (Exception, SystemExit) as exc:
+                if isinstance(exc, SystemExit):
+                    reason = "未找到授权码"
+                else:
+                    reason = sanitize_log_message(str(exc)) or exc.__class__.__name__
+                failures.append(f"邮箱 {label} 获取授权码失败（{reason}）")
+                continue
+        if not str(auth_code).strip():
+            failures.append(f"邮箱 {label} 授权码为空或未配置")
+            continue
+        resolved[mailbox_key] = {**acc, "auth_code": str(auth_code)}
+
+    # 2) 连接性校验：登录成功后立即登出，不读取、不修改任何邮件或数据库记录
+    for mailbox_key, acc in resolved.items():
+        address = str(acc.get("address") or "")
+        label = _mask_mailbox_label(mailbox_key, address)
+        provider = str(acc.get("provider") or "")
+        server = str(acc.get("imap", {}).get("server") or "")
+        if is_outlook_like_account(provider, address, server):
+            failures.append(f"邮箱 {label} 暂不支持（Outlook/Microsoft 邮箱需要 OAuth2）")
+            continue
+        try:
+            with MailFetcher(
+                address=address,
+                auth_code=acc["auth_code"],
+                server=acc.get("imap", {}).get("server", "imap.qq.com"),
+                port=acc.get("imap", {}).get("port", 993),
+            ):
+                pass
+        except (Exception, SystemExit) as exc:
+            reason = sanitize_log_message(str(exc)) or exc.__class__.__name__
+            failures.append(f"邮箱 {label} IMAP 连接/登录失败（{reason}）")
+
+    if failures:
+        message = "邮箱重处理前置校验未通过，已中止（未删除或重置任何记录）：\n" + "\n".join(
+            f"- {failure}" for failure in failures
+        )
+        _log.error("%s", message)
+        raise ReprocessPreflightError(message)
+
+    return resolved
+
+
 def _cmd_email_reprocess(args: argparse.Namespace, db: InvoiceDB):
     """Subcommand handler to reprocess emails."""
     # 1. 验证 limit 必须为正整数
@@ -916,16 +1011,21 @@ def _cmd_email_reprocess(args: argparse.Namespace, db: InvoiceDB):
         sys.exit(0)
 
     cfg = load_config(args.config)
-    _reprocess_email_records(
-        db=db,
-        cfg=cfg,
-        records=records,
-        include_approved=args.include_approved,
-        include_claimed=args.include_claimed,
-        reclassify=args.reclassify,
-        dry_run=dry_run,
-        headed=args.headed,
-    )
+    try:
+        _reprocess_email_records(
+            db=db,
+            cfg=cfg,
+            records=records,
+            include_approved=args.include_approved,
+            include_claimed=args.include_claimed,
+            reclassify=args.reclassify,
+            dry_run=dry_run,
+            headed=args.headed,
+        )
+    except ReprocessPreflightError as exc:
+        # 前置校验失败时不执行任何删除/重置，CLI 以非零码退出。
+        print(f"错误: {exc}")
+        sys.exit(1)
 
 
 def _reprocess_email_records(
@@ -1027,6 +1127,11 @@ def _reprocess_email_records(
 
     # Apply 真正执行模式
     print("正在执行邮箱重处理，请稍候...")
+
+    # 0) 前置校验：先确认所有涉及邮箱的授权码与 IMAP 连接均可用。
+    #    只要有一个邮箱不可用就在删除/重置前中止，避免不可恢复的数据丢失。
+    account_by_key = _preflight_reprocess_mailboxes(cfg, records)
+
     deleted_invoices_total = 0
     skipped_approved_total = 0
     skipped_claimed_total = 0
@@ -1061,23 +1166,7 @@ def _reprocess_email_records(
         for m_key in mailbox_keys:
             _run_classify(db, ai_cfg, no_ai=no_ai_arg, mailbox_key=m_key)
 
-    # 3) 获取邮箱配置并进行下载
-    accounts = get_email_accounts(cfg)
-    account_contexts = []
-    for acc in accounts:
-        addr = acc.get("address", "")
-        auth_code = ""
-        # 优先使用配置里已有的 auth_code（在单元测试的 mock 里可能已经定义了）
-        if "auth_code" in acc:
-            auth_code = acc["auth_code"]
-        else:
-            try:
-                auth_code = get_auth_code(addr)
-            except (Exception, SystemExit) as e:
-                _log.warning("获取邮箱 %s 的授权码失败: %s", mask_email(addr), e)
-        account_contexts.append({**acc, "auth_code": auth_code})
-    account_by_key = {acc["mailbox_key"]: acc for acc in account_contexts}
-
+    # 3) 下载重处理（邮箱账号与授权码已在前置校验中解析并验证）
     att_dir = db._path.parent / "attachments"
     att_dir.mkdir(parents=True, exist_ok=True)
     att_handler = AttachmentHandler(att_dir)
@@ -1100,9 +1189,14 @@ def _reprocess_email_records(
 
             acc = account_by_key.get(m_key)
             if not acc:
-                _log.warning("未在配置中找到 mailbox_key=%s 的邮箱配置，无法重新下载该邮箱下的邮件", m_key)
                 pending_downloads = db.get_invoice_emails_to_download(mailbox_key=m_key)
                 failed_uids = [row["uid"] for row in pending_downloads if row["uid"] in selected_uids]
+                _log.warning(
+                    "未在配置中找到 mailbox_key=%s 的邮箱配置，无法重新下载该邮箱下的 %d 封邮件（uid：%s）",
+                    _mask_mailbox_label(m_key),
+                    len(failed_uids),
+                    _masked_uid_context(failed_uids),
+                )
                 failed_count += len(failed_uids)
                 reprocessed_count += (len(selected_uids) - len(failed_uids))
                 continue
@@ -1117,7 +1211,12 @@ def _reprocess_email_records(
 
                 if pending:
                     if not acc.get("auth_code"):
-                        _log.warning("获取邮箱 %s 的授权码为空，无法下载该邮箱下的 %d 封邮件", mask_email(acc["address"]), len(pending))
+                        _log.warning(
+                            "获取邮箱 %s 的授权码为空，无法下载该邮箱下的 %d 封邮件（uid：%s）",
+                            mask_email(acc["address"]),
+                            len(pending),
+                            _masked_uid_context(row["uid"] for row in pending),
+                        )
                         failed_count += len(pending)
                         continue
 
@@ -1175,10 +1274,23 @@ def _reprocess_email_records(
                                         duplicates_count += 1
                             else:
                                 failed_count += 1
+                                # 前置校验已通过，这里的失败是单封邮件的下载/解析问题，
+                                # 带上 mailbox/uid 便于定位局部失败。
+                                _log.warning(
+                                    "邮件重处理失败: mailbox=%s uid=%s",
+                                    mask_email(acc["address"]),
+                                    mask_uid(row["uid"]),
+                                )
                 else:
                     pass
             except Exception as exc:
-                _log.error("连接邮箱 %s 失败或下载过程中出错: %s", mask_email(acc["address"]), exc)
+                _log.error(
+                    "连接邮箱 %s 失败或下载过程中出错: %s（待处理 %d 封，uid：%s）",
+                    mask_email(acc["address"]),
+                    exc,
+                    len(pending),
+                    _masked_uid_context(row["uid"] for row in pending),
+                )
                 failed_count += len(pending)
     finally:
         try:

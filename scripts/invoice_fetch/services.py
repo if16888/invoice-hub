@@ -2756,6 +2756,79 @@ def _insert_pending_archive_record(
     return rec, True
 
 
+def _insert_parse_failed_pdf_record(
+    msg: MailMessage,
+    db: InvoiceDB,
+    file_path: str,
+    filename_hint: str,
+    parse_note: str,
+    categories: dict,
+    mailbox_key: str = "legacy",
+) -> int | None:
+    """Keep an unparsed PDF in the review queue instead of deleting it.
+
+    Scanned invoices, damaged font maps and parser timeouts all end up with
+    ``parse_success=False``.  Such attachments used to be logged and then
+    removed together with the other temporary attachments, so the user never
+    saw the invoice at all.  This record keeps the original file and surfaces
+    it as an incomplete entry that needs manual confirmation.
+    """
+    src = Path(file_path)
+    file_hash = _sha256_file(src) if src.exists() else ""
+    if file_hash:
+        existing = db.find_invoice_by_file_hash(file_hash, include_deleted=True)
+        if existing:
+            existing = _restore_existing_invoice_if_deleted(db, existing, "PDF解析失败待人工处理")
+            if int(existing.get("is_deleted") or 0) == 0:
+                _log.info("  PDF 解析失败记录已存在: %s", mask_filename(filename_hint or src.name))
+                return None
+
+    cat, extra_type, extra_required = _classify(
+        msg.subject, msg.sender, msg.sender, categories, parse_note=parse_note,
+    )
+    note = (parse_note or "").strip() or "PDF 解析失败，请人工确认票面信息"
+    rec = {
+        "invoice_number": "",
+        "invoice_code": "",
+        "invoice_date": msg.date or "",
+        "expense_date": msg.date or "",
+        "date_source": "mail_date",
+        "amount": "",
+        "total_amount": "",
+        "seller_name": msg.sender or "",
+        "buyer_name": "",
+        "invoice_type": "PDF待人工处理",
+        "category": cat,
+        "has_extra": bool(extra_type),
+        "extra_type": extra_type,
+        "missing_extra": extra_required,
+        "evidence_required": extra_required,
+        "mail_uid": msg.uid,
+        "mail_subject": msg.subject,
+        "mail_date": msg.date,
+        "mail_sender": msg.sender,
+        "parse_success": False,
+        "parse_note": f"parse_failed: {note}",
+        "attachment_path": _runtime_relative(src),
+        "extra_paths": [],
+        "download_url": "",
+        "mailbox_key": mailbox_key,
+        "file_hash": file_hash,
+    }
+    row_id = db.insert_invoice(rec)
+    if row_id:
+        _log.info(
+            "  PDF 解析失败，已保留原件并加入人工审核队列: %s",
+            mask_filename(filename_hint or src.name),
+        )
+    else:
+        _log.warning(
+            "  PDF 解析失败且未能建立待处理记录，请人工检查: %s",
+            mask_filename(filename_hint or src.name),
+        )
+    return row_id
+
+
 def _process_email(
     msg: MailMessage,
     att_handler: AttachmentHandler,
@@ -3272,7 +3345,24 @@ def _process_email(
                     _log.info("  已入库海外凭证/收据: %s", mask_filename(att.original_name))
                 continue
 
-            _log.warning("  PDF 解析失败且不像报销凭证，跳过: %s", redact_text(info.parse_note, "parse_note"))
+            # A PDF we cannot parse is still a real invoice for the user.  Keep
+            # it in review as an incomplete record and never let the temporary
+            # attachment cleanup delete the original.
+            row_id = _insert_parse_failed_pdf_record(
+                msg=msg,
+                db=db,
+                file_path=att.file_path,
+                filename_hint=att.original_name,
+                parse_note=info.parse_note or "",
+                categories=categories,
+                mailbox_key=mailbox_key,
+            )
+            if row_id:
+                recorded += 1
+                _track_inserted(row_id)
+            # The original must survive either way: an attachment we cannot
+            # represent in review is better kept than silently deleted.
+            kept_paths.add(str(Path(att.file_path).resolve()))
             continue
         existing = _find_existing_invoice_for_parse(
             db, info.invoice_number, info.total_amount, info.seller_name, include_deleted=True

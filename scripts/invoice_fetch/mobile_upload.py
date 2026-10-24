@@ -458,6 +458,16 @@ class MobileUploadServer:
                 self._local_self_check_error = ""
                 self._write_manifest()
 
+            # Uploads whose import failed (or whose process exited mid-import)
+            # are retried before the server accepts new uploads, so a stale
+            # "accepted" record cannot dead-end a user's file.
+            try:
+                self._reconcile_pending_imports()
+            except Exception:
+                _log.debug(
+                    "mobile upload pending import reconcile failed", exc_info=True
+                )
+
             self._thread = threading.Thread(
                 target=self._httpd.serve_forever,
                 name="InvoiceHubMobileUpload",
@@ -789,6 +799,7 @@ class MobileUploadServer:
         total_bytes = 0
         known_hashes = self._known_hashes()
         accepted_paths: list[Path] = []
+        accepted_records: list[dict] = []
         duplicate_records_by_hash: dict[str, list[dict]] = {}
         upload_duplicate_outcomes: list[dict] = []
         existing_invoice_ids_by_hash: dict[str, int] = {}
@@ -853,6 +864,7 @@ class MobileUploadServer:
                 self._session_accepted_bytes += len(content)
                 known_hashes.add(digest)
                 accepted_paths.append(dest)
+                accepted_records.append(record)
                 self._files.append(record)
  
             if duplicate_records_by_hash and self.import_on_upload and self.db_path:
@@ -895,7 +907,28 @@ class MobileUploadServer:
                 upload_batch_id,
                 accepted_now + duplicate_now,
             )
-            imported = self._import_accepted_files(accepted_paths)
+            try:
+                imported = self._import_accepted_files(accepted_paths)
+            except Exception as exc:
+                # The files are safely on disk; record that no import outcome
+                # exists so a re-upload (or the next session) retries instead
+                # of answering "duplicate" forever.
+                self._mark_import_outcome(accepted_records, imported=False)
+                _log.warning(
+                    "[手机上传] batch import failed batch_id=%s accepted=%s exception_type=%s",
+                    upload_batch_id,
+                    accepted_now,
+                    type(exc).__name__,
+                )
+                raise
+            import_failed = (
+                int(imported.get("failed", 0) or 0)
+                if isinstance(imported, dict)
+                else 0
+            )
+            self._mark_import_outcome(
+                accepted_records, imported=import_failed == 0
+            )
             if isinstance(imported, dict):
                 new_ids = list(imported.get("new_invoice_ids", ()))
                 for rid in imported.get("restored_invoice_ids", ()):
@@ -1036,8 +1069,61 @@ class MobileUploadServer:
             db.update_invoice_source_by_hashes(hash_to_subject, "mobile_qr")
         return imported
 
+    def _mark_import_outcome(self, records: Iterable[dict], *, imported: bool) -> None:
+        """Persist whether a batch of accepted files actually reached the DB.
+
+        An upload is already on disk when the manifest is first written, so a
+        failed or crashed import must leave an explicit "not imported" marker.
+        Otherwise every later upload of the same bytes is answered as a
+        duplicate until the staging session expires, and the invoice is lost.
+        """
+        digests = {
+            str(record.get("sha256") or "")
+            for record in records
+            if record.get("sha256")
+        }
+        if not digests:
+            return
+        with self._lock:
+            for record in self._files:
+                if (
+                    record.get("sha256") in digests
+                    and record.get("status") in {"accepted", "pending_import"}
+                ):
+                    record["imported"] = bool(imported)
+                    record["status"] = "accepted" if imported else "pending_import"
+                    record["reason"] = (
+                        "" if imported else record.get("reason") or "import_incomplete"
+                    )
+            self._write_manifest()
+
     def _known_hashes(self) -> set[str]:
-        hashes = {item.get("sha256", "") for item in self._files if item.get("sha256") and item.get("status") == "accepted"}
+        """Return digests that may be answered as duplicate uploads.
+
+        Manifests written by this version record whether the file was actually
+        imported.  Records without that marker (manifests from an older build,
+        or a crash between the manifest write and the import) only count when
+        the database really holds the file hash; a failed import must stay
+        retryable instead of dead-ending the file as a duplicate.
+        """
+        confirmed: set[str] = set()
+        unverified: set[str] = set()
+        retryable: set[str] = set()
+
+        def collect(item: dict) -> None:
+            digest = str(item.get("sha256") or "")
+            if not digest:
+                return
+            if item.get("imported") is True:
+                confirmed.add(digest)
+            elif item.get("status") == "pending_import":
+                unverified.add(digest)
+                retryable.add(digest)
+            elif item.get("status") == "accepted":
+                unverified.add(digest)
+
+        for item in self._files:
+            collect(item)
         upload_root = self.runtime_dir / "inbox" / "mobile_upload"
         if upload_root.exists():
             for manifest in upload_root.rglob("manifest.json"):
@@ -1045,10 +1131,206 @@ class MobileUploadServer:
                     data = json.loads(manifest.read_text(encoding="utf-8"))
                 except Exception:
                     continue
+                if not isinstance(data, dict):
+                    continue
                 for item in data.get("files", []):
-                    if item.get("status") == "accepted" and item.get("sha256"):
-                        hashes.add(item["sha256"])
-        return hashes
+                    if isinstance(item, dict):
+                        collect(item)
+        if not unverified:
+            return confirmed
+        if not self.db_path:
+            # Without a database the manifest remains the only duplicate
+            # evidence; keep the pre-existing behaviour for staging-only use.
+            return confirmed | (unverified - retryable)
+        from .db import InvoiceDB
+
+        try:
+            with InvoiceDB(self.db_path) as db:
+                for digest in sorted(unverified):
+                    if db.find_invoice_by_file_hash(digest, include_deleted=True):
+                        confirmed.add(digest)
+        except Exception:
+            # A database hiccup must not turn into a duplicate answer: treat
+            # the hashes as unverified so the file is accepted and retried.
+            _log.debug("mobile upload dedup database check failed", exc_info=True)
+        return confirmed
+
+    def _reconcile_pending_imports(self) -> None:
+        """Retry uploads recorded as accepted but never confirmed imported.
+
+        Called on session start.  Files still present in a previous staging
+        session are imported again; files that disappeared are marked failed so
+        they stop blocking retries.  Never raises: startup must not fail
+        because of a stale manifest.
+        """
+        if not self.db_path or not self.session:
+            return
+        upload_root = self.runtime_dir / "inbox" / "mobile_upload"
+        if not upload_root.exists():
+            return
+        try:
+            manifests = sorted(upload_root.rglob("manifest.json"))
+        except OSError:
+            return
+        reconciled = 0
+        for manifest_path in manifests:
+            if manifest_path == self.session.manifest_path:
+                continue
+            try:
+                reconciled += self._reconcile_manifest_imports(manifest_path)
+            except Exception:
+                _log.debug(
+                    "mobile upload pending import reconcile failed", exc_info=True
+                )
+        if reconciled:
+            _log.info(
+                "[手机上传] reconciled %d pending upload record(s)", reconciled
+            )
+
+    def _reconcile_manifest_imports(self, manifest_path: Path) -> int:
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return 0
+        if not isinstance(data, dict):
+            return 0
+        records = data.get("files") or []
+        if not isinstance(records, list):
+            return 0
+        pending = [
+            item
+            for item in records
+            if isinstance(item, dict)
+            and item.get("sha256")
+            and item.get("imported") is not True
+            and item.get("status") in {"accepted", "pending_import"}
+        ]
+        if not pending:
+            return 0
+
+        from .db import InvoiceDB
+        from .services import import_local_directory
+
+        updated = 0
+        importable: list[tuple[dict, Path]] = []
+        try:
+            with InvoiceDB(self.db_path) as db:
+                for record in pending:
+                    if db.find_invoice_by_file_hash(
+                        str(record["sha256"]), include_deleted=True
+                    ):
+                        record["imported"] = True
+                        record["status"] = "accepted"
+                        record["reason"] = ""
+                        updated += 1
+                        continue
+                    stored = self._resolve_manifest_stored_path(
+                        manifest_path, record
+                    )
+                    if stored is None:
+                        record["imported"] = False
+                        record["status"] = "failed"
+                        record["reason"] = "stored_file_missing"
+                        updated += 1
+                    else:
+                        importable.append((record, stored))
+        except Exception:
+            _log.debug(
+                "mobile upload pending import database check failed", exc_info=True
+            )
+
+        if importable:
+            result = None
+            try:
+                result = import_local_directory(
+                    manifest_path.parent,
+                    self.db_path,
+                    file_paths=[path for _, path in importable],
+                    allow_external_file_paths=True,
+                )
+            except Exception:
+                for record, _stored in importable:
+                    record["imported"] = False
+                    record["status"] = "pending_import"
+                    record["reason"] = (
+                        record.get("reason") or "import_incomplete"
+                    )
+                    updated += 1
+                _log.warning(
+                    "[手机上传] pending upload import retry failed session=%s",
+                    manifest_path.parent.name,
+                )
+            if isinstance(result, dict):
+                imported_ok = int(result.get("failed", 0) or 0) == 0
+                for record, _stored in importable:
+                    record["imported"] = imported_ok
+                    record["status"] = "accepted" if imported_ok else "pending_import"
+                    record["reason"] = "" if imported_ok else "import_incomplete"
+                    updated += 1
+                if imported_ok:
+                    self._tag_mobile_source(importable)
+        if not updated:
+            return 0
+        try:
+            temp_path = manifest_path.with_name(f"{manifest_path.name}.tmp")
+            temp_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            os.replace(temp_path, manifest_path)
+        except OSError:
+            _log.warning(
+                "[手机上传] pending upload manifest update failed session=%s",
+                manifest_path.parent.name,
+            )
+        return updated
+
+    def _resolve_manifest_stored_path(
+        self, manifest_path: Path, record: dict
+    ) -> Path | None:
+        """Resolve a manifest record to its staged file, if still present."""
+        raw = str(record.get("stored_path") or "").strip()
+        candidates: list[Path] = []
+        if raw:
+            stored = Path(raw)
+            if stored.is_absolute():
+                candidates.append(stored)
+            else:
+                candidates.append(self.runtime_dir / stored)
+                candidates.append(manifest_path.parent / stored)
+        name = Path(raw).name if raw else str(record.get("original_filename") or "")
+        if name:
+            candidates.append(manifest_path.parent / "original" / name)
+        try:
+            upload_root = (self.runtime_dir / "inbox" / "mobile_upload").resolve()
+        except OSError:
+            return None
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(upload_root)
+            except (OSError, ValueError):
+                continue
+            if resolved.is_file():
+                return resolved
+        return None
+
+    def _tag_mobile_source(self, file_records: Iterable[tuple[dict, Path]]) -> None:
+        if not self.db_path:
+            return
+        hash_to_subject = {
+            str(record.get("sha256")): f"手机上传: {record.get('original_filename') or '未命名文件'}"
+            for record, _stored in file_records
+            if record.get("sha256")
+        }
+        if not hash_to_subject:
+            return
+        from .db import InvoiceDB
+
+        try:
+            with InvoiceDB(self.db_path) as db:
+                db.update_invoice_source_by_hashes(hash_to_subject, "mobile_qr")
+        except Exception:
+            _log.debug("mobile upload source tagging failed", exc_info=True)
 
     def _write_manifest(self) -> None:
         """Persist the manifest.  Callers must hold ``self._lock``.

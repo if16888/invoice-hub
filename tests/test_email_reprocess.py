@@ -1,5 +1,8 @@
 import unittest
 import json
+import argparse
+import contextlib
+import io
 from unittest.mock import patch, MagicMock
 import shutil
 import tempfile
@@ -9,21 +12,33 @@ from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.__main__ import (
     _reprocess_email_records,
     _cmd_email_reprocess,
+    ReprocessPreflightError,
 )
 
 class TestEmailReprocess(unittest.TestCase):
-    def test_reprocess_returns_connection_failure_count_for_gui(self):
+    @patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode")
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    def test_reprocess_connection_failure_aborts_before_deletion(self, mock_fetcher, _mock_get_auth):
+        # P0-3：连接失败发生在前置校验阶段，必须在删除旧记录之前整体中止。
         self.db._conn.execute(
             "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
-            "VALUES ('a', 901, 'Synthetic', 'fixture', '2026-06-01', 1, 0)"
+            "VALUES ('a', 901, 'Synthetic', 'fixture', '2026-06-01', 1, 1)"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted) "
+            "VALUES ('a', 901, 'INV-901', '10.00', 'to_review', 0)"
         )
         self.db._conn.commit()
         records = self.db.find_emails_for_reprocess(mailbox_key="a", uids=[901], only_downloaded=False)
-        with patch("scripts.invoice_fetch.__main__.MailFetcher") as fetcher, \
-             patch("scripts.invoice_fetch.__main__.LinkDownloader"):
-            fetcher.return_value.__enter__.side_effect = RuntimeError("LOGIN failed")
-            outcome = _reprocess_email_records(self.db, self.cfg, records, dry_run=False)
-        self.assertEqual(outcome, {"succeeded": 0, "failed": 1})
+        mock_fetcher.return_value.__enter__.side_effect = RuntimeError("LOGIN failed")
+        with self.assertRaises(ReprocessPreflightError) as ctx:
+            _reprocess_email_records(self.db, self.cfg, records, dry_run=False)
+        self.assertIn("IMAP 连接/登录失败", str(ctx.exception))
+        self.assertEqual(len(self.db.get_invoices_by_mail_identity('a', 901)), 1)
+        email = self.db._conn.execute(
+            "SELECT downloaded FROM emails WHERE mailbox_key='a' AND uid=901"
+        ).fetchone()
+        self.assertEqual(email["downloaded"], 1)
 
     def test_reprocess_restores_rename_mode_when_link_cleanup_raises(self):
         from scripts.invoice_fetch import services as application_services
@@ -244,9 +259,11 @@ class TestEmailReprocess(unittest.TestCase):
         invs_after = self.db.get_invoices_by_mail_identity('test@example.com', 10)
         self.assertEqual(len(invs_after), 0)
 
+    @patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode")
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
     @patch('scripts.invoice_fetch.__main__._handle_pending_email')
-    def test_7_reclassify_github(self, mock_handle, mock_fetcher):
+    def test_7_reclassify_github(self, mock_handle, mock_fetcher, mock_get_auth):
+        # 前置校验现在要求邮箱授权码可用，测试里需要 mock 掉真实 keyring 读取。
         # 1. 插入 GitHub 误判发票的 email 和 invoice
         self.db._conn.execute(
             "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
@@ -440,7 +457,7 @@ class TestEmailReprocess(unittest.TestCase):
 
     @patch('scripts.invoice_fetch.__main__.MailFetcher')
     def test_16_missing_auth_code_skips_fetcher(self, mock_fetcher):
-        # 配置中没有 auth_code 的账号，但有 pending 邮件
+        # 配置中没有 auth_code 的账号 → 前置校验失败，必须在删除任何旧记录之前中止（P0-3）
         cfg_no_auth = {
             "email": {"address": "test@example.com"},
             "email_accounts": [
@@ -454,10 +471,14 @@ class TestEmailReprocess(unittest.TestCase):
             ]
         }
 
-        # 插入一封 pending 邮件
+        # 插入一封 pending 邮件及其旧发票记录
         self.db._conn.execute(
             "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
-            "VALUES ('test@example.com', 1, 'Test Title', 'sender', '2026-06-01', 1, 0)"
+            "VALUES ('test@example.com', 1, 'Test Title', 'sender', '2026-06-01', 1, 1)"
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted) "
+            "VALUES ('test@example.com', 1, 'INV-1', '20.00', 'to_review', 0)"
         )
         self.db._conn.commit()
 
@@ -466,15 +487,26 @@ class TestEmailReprocess(unittest.TestCase):
 
         # 为了防备测试环境读取真实 keyring，我们 patch get_auth_code
         with patch('scripts.invoice_fetch.__main__.get_auth_code', side_effect=SystemExit(1)):
-            _reprocess_email_records(
-                db=self.db,
-                cfg=cfg_no_auth,
-                records=records,
-                dry_run=False,
-            )
+            with self.assertRaises(ReprocessPreflightError) as ctx:
+                _reprocess_email_records(
+                    db=self.db,
+                    cfg=cfg_no_auth,
+                    records=records,
+                    dry_run=False,
+                )
 
+        self.assertIn("获取授权码失败", str(ctx.exception))
+        self.assertIn("前置校验未通过", str(ctx.exception))
         # 验证 MailFetcher 绝对没有被实例化
         self.assertFalse(mock_fetcher.called)
+        # 旧发票记录与邮件下载状态必须保持不变
+        self.assertEqual(
+            len(self.db.get_invoices_by_mail_identity('test@example.com', 1)), 1
+        )
+        email = self.db._conn.execute(
+            "SELECT downloaded FROM emails WHERE mailbox_key='test@example.com' AND uid=1"
+        ).fetchone()
+        self.assertEqual(email["downloaded"], 1)
 
     def test_17_process_email_keeps_unmatched_extra_files(self):
         from scripts.invoice_fetch.services import _process_email
@@ -1413,6 +1445,112 @@ class TestEmailReprocess(unittest.TestCase):
         # 匹配依然应成功
         self.assertEqual(len(unmatched), 0)
         self.assertEqual(len(matched[id(inv_info)]), 1)
+
+    # ── P0-3: apply 前必须完成授权码 + IMAP 连接前置校验 ──────────────
+
+    def _apply_args(self, **overrides):
+        values = {
+            "apply": True,
+            "mailbox": "a",
+            "uid": [100],
+            "uid_range": None,
+            "since": None,
+            "until": None,
+            "subject_contains": None,
+            "sender_contains": None,
+            "only_downloaded": True,
+            "include_approved": False,
+            "include_claimed": False,
+            "reclassify": False,
+            "dry_run": False,
+            "limit": 50,
+            "headed": False,
+            "force_large_batch": False,
+            "config": None,
+        }
+        values.update(overrides)
+        return argparse.Namespace(**values)
+
+    def _insert_email_and_invoice(self, mailbox_key="a", uid=100, downloaded=1):
+        self.db._conn.execute(
+            "INSERT INTO emails (mailbox_key, uid, subject, sender, mail_date, is_invoice, downloaded) "
+            "VALUES (?, ?, 'Synthetic Invoice', 'fixture', '2026-06-01', 1, ?)",
+            (mailbox_key, uid, downloaded),
+        )
+        self.db._conn.execute(
+            "INSERT INTO invoices (mailbox_key, mail_uid, invoice_number, total_amount, review_status, is_deleted) "
+            "VALUES (?, ?, ?, '100.00', 'to_review', 0)",
+            (mailbox_key, uid, f"INV-{uid}"),
+        )
+        self.db._conn.commit()
+
+    @patch('scripts.invoice_fetch.__main__.MailFetcher')
+    @patch('scripts.invoice_fetch.__main__.load_config')
+    @patch('scripts.invoice_fetch.__main__.get_auth_code', side_effect=SystemExit(1))
+    def test_37_apply_missing_credential_cli_exits_nonzero_and_keeps_rows(
+        self, mock_get_auth, mock_load_config, mock_fetcher
+    ):
+        # (a) apply + 缺少授权码：CLI 非零退出，旧发票记录全部保留
+        self._insert_email_and_invoice()
+        mock_load_config.return_value = {
+            "email_accounts": [
+                {"enabled": True, "address": "a@example.com", "mailbox_key": "a"},
+            ]
+        }
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as cm:
+            _cmd_email_reprocess(self._apply_args(), self.db)
+
+        self.assertEqual(cm.exception.code, 1)
+        output = stdout.getvalue()
+        self.assertIn("前置校验未通过", output)
+        self.assertIn("获取授权码失败", output)
+        self.assertFalse(mock_fetcher.called)
+        self.assertEqual(len(self.db.get_invoices_by_mail_identity('a', 100)), 1)
+        row = self.db._conn.execute(
+            "SELECT downloaded FROM emails WHERE mailbox_key='a' AND uid=100"
+        ).fetchone()
+        self.assertEqual(row["downloaded"], 1)
+
+    @patch('scripts.invoice_fetch.__main__.get_auth_code', return_value="dummycode")
+    def test_38_apply_with_working_preflight_still_deletes(self, mock_get_auth):
+        # (b) 授权码/IMAP 可用：前置校验登录发生在删除之前，随后照常删除旧记录
+        self._insert_email_and_invoice()
+        records = self.db.find_emails_for_reprocess(mailbox_key='a', uids=[100])
+        db = self.db
+        invoice_counts_at_login = []
+
+        class RecordingMailFetcher:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                invoice_counts_at_login.append(
+                    len(db.get_invoices_by_mail_identity('a', 100))
+                )
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with patch('scripts.invoice_fetch.__main__.MailFetcher', RecordingMailFetcher), \
+             patch('scripts.invoice_fetch.__main__._handle_pending_email', return_value=True):
+            outcome = _reprocess_email_records(
+                db=self.db,
+                cfg=self.cfg,
+                records=records,
+                dry_run=False,
+            )
+
+        self.assertTrue(mock_get_auth.called)
+        # 只为实际涉及的邮箱解析授权码（cfg 中的 b 邮箱不参与，不需要校验）
+        mock_get_auth.assert_called_once_with("a@example.com")
+        self.assertGreaterEqual(len(invoice_counts_at_login), 2)
+        # 第一次登录属于前置校验：旧发票仍在；第二次登录用于下载：旧记录已删除
+        self.assertEqual(invoice_counts_at_login[0], 1)
+        self.assertEqual(invoice_counts_at_login[-1], 0)
+        self.assertEqual(len(self.db.get_invoices_by_mail_identity('a', 100)), 0)
+        self.assertIsInstance(outcome, dict)
 
 
 if __name__ == '__main__':
