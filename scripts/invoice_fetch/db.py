@@ -1666,6 +1666,57 @@ class InvoiceDB(EvidenceStoreMixin):
         row = self._conn.execute(query, params).fetchone()
         return int(row["cnt"] if row else 0)
 
+    def review_overview_counts(self, month_prefix: str) -> dict:
+        """Aggregate the workbench summary without hydrating invoice rows.
+
+        The GUI used to load every row through ``get_all_invoices`` and re-derive
+        the data-quality buckets in Python; all of them are pure column
+        predicates, so a large ledger paid a full-table copy on every summary.
+
+        Semantics mirror the GUI data-status helper exactly:
+
+        * 未识别  : number, amount and seller are all empty
+        * 待补全  : any of number/amount/date/seller is empty
+        * 缺原件  : those fields exist but ``attachment_path`` is empty
+        * 缺证明  : fields and original exist but ``missing_extra`` is set
+        * 正常    : everything present
+
+        ``month_amounts`` returns the raw amount strings of the requested month
+        so the caller keeps its Decimal handling (no float rounding in SQL).
+        """
+        normal = (
+            "TRIM(COALESCE(i.invoice_number, '')) <> '' "
+            "AND TRIM(COALESCE(i.total_amount, '')) <> '' "
+            "AND CASE WHEN COALESCE(i.expense_date, '') <> '' "
+            "THEN TRIM(i.expense_date) ELSE TRIM(COALESCE(i.invoice_date, '')) END <> '' "
+            "AND TRIM(COALESCE(i.seller_name, '')) <> '' "
+            "AND TRIM(COALESCE(i.attachment_path, '')) <> '' "
+            "AND COALESCE(i.missing_extra, 0) = 0"
+        )
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS total, "
+            f"COALESCE(SUM(CASE WHEN ({normal}) THEN 0 ELSE 1 END), 0) AS needs_fix, "
+            "COALESCE(SUM(CASE WHEN review_status = ? THEN 1 ELSE 0 END), 0) AS to_review, "
+            "COALESCE(SUM(CASE WHEN review_status = ? THEN 1 ELSE 0 END), 0) AS error "
+            "FROM invoices i "
+            f"WHERE {visible_invoice_sql()} AND i.is_deleted = 0",
+            (review_status.TO_REVIEW, review_status.ERROR),
+        ).fetchone()
+        month_rows = self._conn.execute(
+            "SELECT i.total_amount FROM invoices i "
+            f"WHERE {visible_invoice_sql()} AND i.is_deleted = 0 "
+            "AND SUBSTR(TRIM(CASE WHEN COALESCE(i.expense_date, '') <> '' "
+            "THEN i.expense_date ELSE COALESCE(i.invoice_date, '') END), 1, 7) = ?",
+            (str(month_prefix),),
+        ).fetchall()
+        return {
+            "total": int(row["total"] if row else 0),
+            "needs_fix": int(row["needs_fix"] if row else 0),
+            "to_review": int(row["to_review"] if row else 0),
+            "error": int(row["error"] if row else 0),
+            "month_amounts": [r["total_amount"] for r in month_rows],
+        }
+
     @staticmethod
     def _review_value_expression(key: str) -> str:
         expressions = {
