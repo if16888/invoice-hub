@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,8 @@ from scripts.invoice_fetch import claim_export as claim_export_module
 from scripts.invoice_fetch import review_status
 from scripts.invoice_fetch.claim_export import (
     export_claim_package,
+    inspect_invoice_materials,
+    inspect_materials_for_invoices,
     inspect_original_attachment,
     summarize_extra_material_issues,
     verify_export_manifest,
@@ -302,6 +305,107 @@ class ClaimExportOriginalIntegrityTests(unittest.TestCase):
                 verification = verify_export_manifest(export_dir)
                 self.assertFalse(verification["valid"])
                 self.assertTrue(any("sha256 mismatch" in error for error in verification["errors"]))
+
+
+class MaterialInspectionParallelTests(unittest.TestCase):
+    """The batch preflight must stay exact while reading files in parallel."""
+
+    def _build_batch(self, runtime_dir: Path, count: int = 12):
+        attachments = runtime_dir / "attachments"
+        attachments.mkdir(parents=True, exist_ok=True)
+        invoices = []
+        for index in range(count):
+            if index % 4 == 0:
+                # present and non-empty
+                target = attachments / f"ok-{index}.pdf"
+                target.write_bytes(b"%PDF-1.4 synthetic")
+                invoices.append({"id": index, "attachment_path": f"attachments/{target.name}"})
+            elif index % 4 == 1:
+                # configured but missing
+                invoices.append({"id": index, "attachment_path": f"attachments/gone-{index}.pdf"})
+            elif index % 4 == 2:
+                # present but zero bytes
+                target = attachments / f"empty-{index}.pdf"
+                target.write_bytes(b"")
+                invoices.append({"id": index, "attachment_path": f"attachments/{target.name}"})
+            else:
+                # original fine, supplemental material missing
+                target = attachments / f"with-extra-{index}.pdf"
+                target.write_bytes(b"%PDF-1.4 synthetic")
+                invoices.append(
+                    {
+                        "id": index,
+                        "attachment_path": f"attachments/{target.name}",
+                        "extra_paths": json.dumps([f"attachments/missing-extra-{index}.pdf"]),
+                    }
+                )
+        return invoices
+
+    def test_parallel_summary_matches_per_invoice_inspection(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td)
+            invoices = self._build_batch(runtime_dir, count=12)
+
+            summary = summarize_extra_material_issues(invoices, runtime_dir)
+
+            per_invoice = [inspect_invoice_materials(invoice, runtime_dir) for invoice in invoices]
+            self.assertEqual(summary["missing_attachment"], sum(
+                1 for result in per_invoice if not result["attachment_available"]
+            ))
+            self.assertEqual(summary["missing_extra"], sum(
+                1 for result in per_invoice if result["missing_extra"]
+            ))
+            self.assertEqual(summary["unavailable_extra"], sum(
+                1 for result in per_invoice if result["unavailable_extra"]
+            ))
+            # 3 missing + 3 zero-byte originals; 3 invoices have a missing extra file.
+            self.assertEqual(summary["missing_attachment"], 6)
+            self.assertEqual(summary["unavailable_extra"], 3)
+
+    def test_parallel_results_keep_input_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td)
+            attachments = runtime_dir / "attachments"
+            attachments.mkdir(parents=True)
+            invoices = []
+            for index in range(8):
+                name = f"ordered-{index}.pdf"
+                (attachments / name).write_bytes(b"x" if index % 2 == 0 else b"")
+                invoices.append({"id": index, "attachment_path": f"attachments/{name}"})
+
+            results = inspect_materials_for_invoices(invoices, runtime_dir)
+
+            self.assertEqual(len(results), len(invoices))
+            self.assertEqual(
+                [result["attachment_available"] for result in results],
+                [True, False] * 4,
+            )
+
+    def test_concurrent_batch_inspection_is_thread_safe(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime_dir = Path(td)
+            invoices = self._build_batch(runtime_dir, count=40)
+            expected = summarize_extra_material_issues(invoices, runtime_dir)
+
+            results = []
+            errors = []
+
+            def worker():
+                try:
+                    results.append(summarize_extra_material_issues(invoices, runtime_dir))
+                except Exception as exc:  # pragma: no cover - failure path
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=worker) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=60)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 4)
+            for result in results:
+                self.assertEqual(result, expected)
 
 
 if __name__ == "__main__":
