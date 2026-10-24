@@ -93,5 +93,34 @@ class MigrationBackupGuardTests(unittest.TestCase):
             conn.close()
 
 
+    def test_repeated_failed_migrations_do_not_accumulate_backups(self):
+        """Each retry snapshots the same state, so old copies must be cleaned."""
+        self._create_current_database()
+        db = InvoiceDB(self.db_path)
+        try:
+            db._create_migration_backup(4)
+            other_reason = self.backup_dir / "invoices-20200101-000000-before-manual.db"
+            other_reason.write_bytes(b"synthetic")
+            for _ in range(3):
+                db._create_migration_backup(4)
+        finally:
+            db.close()
+
+        migration_backups = [
+            path
+            for path in self.backup_dir.iterdir()
+            if "before-migration-v4" in path.name and path.suffix == ".db"
+        ]
+        self.assertEqual(
+            len(migration_backups),
+            2,
+            "重复失败的迁移不应无限堆积整库副本",
+        )
+        self.assertTrue(
+            other_reason.exists(),
+            "其它原因的备份不能被迁移清理误删",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

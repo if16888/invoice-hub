@@ -568,6 +568,79 @@ class DatabaseBackupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prune_database_backups(keep=-1)
 
+    def test_prune_database_backups_removes_journal_sidecars(self):
+        with tempfile.TemporaryDirectory() as td:
+            backup_dir = Path(td) / "backups"
+            backup_dir.mkdir()
+            for idx in range(3):
+                path = backup_dir / f"invoices-{idx}.db"
+                path.write_text(str(idx), encoding="utf-8")
+                path.with_name(path.name + "-wal").write_bytes(b"journal")
+                stamp = time.time() + idx
+                import os
+
+                os.utime(path, (stamp, stamp))
+
+            removed = prune_database_backups(backup_dir, keep=2)
+
+            self.assertEqual({p.name for p in removed}, {"invoices-0.db"})
+            self.assertFalse((backup_dir / "invoices-0.db-wal").exists())
+            self.assertTrue(
+                (backup_dir / "invoices-2.db-wal").exists(),
+                "保留备份的日志文件不能被误删",
+            )
+
+    def test_prune_database_backups_skips_a_file_that_vanishes(self):
+        with tempfile.TemporaryDirectory() as td:
+            backup_dir = Path(td) / "backups"
+            backup_dir.mkdir()
+            for idx in range(2):
+                path = backup_dir / f"invoices-{idx}.db"
+                path.write_text(str(idx), encoding="utf-8")
+                stamp = time.time() + idx
+                import os
+
+                os.utime(path, (stamp, stamp))
+
+            real_unlink = Path.unlink
+
+            def flaky_unlink(self_path, *args, **kwargs):
+                if self_path.name == "invoices-0.db":
+                    raise FileNotFoundError(self_path)
+                return real_unlink(self_path, *args, **kwargs)
+
+            with patch.object(Path, "unlink", flaky_unlink):
+                removed = prune_database_backups(backup_dir, keep=1)
+
+            self.assertEqual(removed, [], "已消失的文件不应计为已删除")
+            self.assertTrue((backup_dir / "invoices-0.db").exists())
+
+    def test_prune_database_backups_only_touches_matching_pattern(self):
+        with tempfile.TemporaryDirectory() as td:
+            backup_dir = Path(td) / "backups"
+            backup_dir.mkdir()
+            for idx in range(3):
+                (backup_dir / f"invoices-1-before-migration-v14-{idx}.db").write_text("x", encoding="utf-8")
+                (backup_dir / f"invoices-1-manual-{idx}.db").write_text("x", encoding="utf-8")
+                stamp = time.time() + idx
+                import os
+
+                for path in backup_dir.glob(f"*{idx}.db"):
+                    os.utime(path, (stamp, stamp))
+
+            removed = prune_database_backups(
+                backup_dir,
+                keep=1,
+                pattern="*before-migration-v14*.db",
+            )
+
+            self.assertEqual(len(removed), 2)
+            self.assertEqual(
+                len(list(backup_dir.glob("*manual*.db"))),
+                3,
+                "其它原因的备份不能被迁移清理误删",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
