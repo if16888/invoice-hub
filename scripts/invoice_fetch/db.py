@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 import re
+import threading
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -24,6 +25,11 @@ from .evidence import (
 )
 
 _log = logging.getLogger(__name__)
+
+# ``db_backup.create_verified_database_backup`` migrates its private copy by
+# opening it through InvoiceDB again.  That nested open must not take another
+# pre-migration snapshot, otherwise every round adds a ``backups/`` level.
+_MIGRATION_BACKUP_GUARD = threading.local()
 
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CONNECT_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_MS / 1_000
@@ -178,6 +184,13 @@ class InvoiceDB(EvidenceStoreMixin):
     def __init__(self, db_path: str | Path):
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        # A pre-existing, non-empty file means we are upgrading the user's real
+        # data; a database this constructor just created must not be backed up.
+        existing_database_file = False
+        try:
+            existing_database_file = self._path.stat().st_size > 0
+        except OSError:
+            existing_database_file = False
         # Keep SQLite's default thread ownership.  Worker code must use its own
         # InvoiceDB instance rather than sharing this connection across threads.
         self._conn = sqlite3.connect(
@@ -197,6 +210,10 @@ class InvoiceDB(EvidenceStoreMixin):
                     f"数据库版本 V{version} 高于当前应用支持的 V{LATEST_SCHEMA_VERSION}；"
                     "请升级 Invoice Hub 后再打开此数据库。"
                 )
+            # Migrations rewrite tables and cannot be rolled back, so snapshot
+            # an existing database before check_and_migrate touches it.
+            if existing_database_file and version < LATEST_SCHEMA_VERSION:
+                self._backup_before_migration(version)
             self._conn.create_function(
                 "review_buyer_has_warning", 3, self._eval_buyer_warning, deterministic=False
             )
@@ -235,6 +252,68 @@ class InvoiceDB(EvidenceStoreMixin):
                 self._conn = None
             raise
 
+
+    def _backup_before_migration(self, version: int) -> None:
+        """Snapshot before migration without ever snapshotting a snapshot.
+
+        The verified-backup helper migrates its private copy by opening it
+        through ``InvoiceDB`` again, which re-enters this method and would
+        recurse one ``backups/`` level per round.  A thread-local flag turns
+        that nested open into a no-op.
+        """
+        if getattr(_MIGRATION_BACKUP_GUARD, "active", False):
+            return
+        _MIGRATION_BACKUP_GUARD.active = True
+        try:
+            self._create_migration_backup(version)
+        finally:
+            _MIGRATION_BACKUP_GUARD.active = False
+
+    def _create_migration_backup(self, version: int) -> None:
+        """Snapshot an existing database before an automatic schema upgrade.
+
+        ``check_and_migrate`` rewrites whole tables and has no downgrade path,
+        so an interrupted upgrade must never be the only copy of the user's
+        data.  A verified backup is preferred; when the legacy file cannot be
+        validated we fall back to a plain SQLite online backup rather than
+        migrating unprotected.  Only the exception type is logged, never the
+        backend message, because it can contain a filesystem path.
+        """
+        backup_dir = self._path.parent / "backups"
+        reason = f"before-migration-v{version}"
+        backup_path: Path | None = None
+        try:
+            from .db_backup import create_verified_database_backup
+
+            backup_path = create_verified_database_backup(
+                self._path, backup_dir=backup_dir, reason=reason
+            )
+        except Exception as verified_error:  # noqa: BLE001 - fall back to a raw copy
+            try:
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                suffix = self._path.suffix or ".db"
+                backup_path = backup_dir / f"{self._path.stem}-{stamp}-{reason}-raw{suffix}"
+                source_conn = sqlite3.connect(str(self._path), timeout=5)
+                try:
+                    dest_conn = sqlite3.connect(str(backup_path), timeout=5)
+                    try:
+                        source_conn.backup(dest_conn)
+                    finally:
+                        dest_conn.close()
+                finally:
+                    source_conn.close()
+            except Exception as raw_error:  # noqa: BLE001 - no usable snapshot
+                _log.error(
+                    "迁移前数据库备份失败，已中止升级以保护数据: verified=%s raw=%s",
+                    type(verified_error).__name__,
+                    type(raw_error).__name__,
+                )
+                raise RuntimeError(
+                    "数据库升级前无法创建备份，已中止升级以避免数据丢失；"
+                    "请先手动备份数据库文件后重试。"
+                ) from raw_error
+        _log.info("迁移前已创建数据库备份: %s", Path(str(backup_path)).name)
 
     def close(self):
         if self._conn:
