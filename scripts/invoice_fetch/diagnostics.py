@@ -13,25 +13,38 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from . import APP_VERSION
 from . import config as config_mod
+from .log_privacy import (
+    mask_amount,
+    mask_invoice_number,
+    mask_url_for_log,
+    redact_text as _privacy_redact_text,
+    sanitize_log_message,
+)
 
 _SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|password|auth[_-]?code|authorization|secret|credential)")
-_EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+-])([A-Za-z0-9._%+-]*)(@[\w.-]+\.\w+)\b")
-_PHONE_RE = re.compile(r"\b(1[3-9]\d)(\d{4})(\d{4})\b")
-_LONG_DIGIT_RE = re.compile(r"\b(\d{2})\d{6,}(\d{2})\b")
-_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
-_BEARER_FIELD_RE = re.compile(
-    r"(?i)(\bauthorization\b\s*[:=]\s*)Bearer\s+[^\s,;\"'}]+"
+# Shared redaction rules live in ``log_privacy`` so the log drawer, the
+# clipboard copy and the diagnostic ZIP can never disagree.  The patterns below
+# only cover forms the shared log pipeline does not handle yet.
+_USER_PROFILE_RE = re.compile(
+    r"(?i)(?P<prefix>\b[A-Za-z]:[\\/]Users[\\/]|/Users/|/home/)"
+    r"(?P<name>[^\\/\r\n]+)(?=[\\/])"
 )
-_TWO_TOKEN_SECRET_FIELD_RE = re.compile(
-    r"(?i)(\b(?:token|password|auth[_-]?code|secret|credential)\b\s*[:=]\s*)"
-    r"([^\s,;\"'}]+\s+(?!\b[A-Z0-9_]*(?:api[_-]?key|token|password|auth[_-]?code|authorization|secret|credential)\b\s*[:=])[^\s,;\"'}]+)"
+_URL_RE = re.compile(r"(?i)\bhttps?://[^\s\"'<>]+")
+# The shared log rule only masks bearer tokens of 8+ characters; a diagnostics
+# export must not keep shorter ones either.
+_BEARER_RE = re.compile(r"(?i)(\bbearer\s+)(?!<)([A-Za-z0-9._~+/=-]+)")
+_PREFIXED_SECRET_RE = re.compile(
+    r"(?i)((?<!<)\b[A-Z0-9_]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN"
+    r"|AUTH[_-]?CODE|PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL)[A-Z0-9_]*"
+    r"\s*[:=]\s*)(?!<)([^\s,;\"'}]+)"
 )
-_SECRET_FIELD_RE = re.compile(
-    r"(?i)(\b[A-Z0-9_]*(?:api[_-]?key|token|password|auth[_-]?code|authorization|secret|credential)\b\s*[:=]\s*)([^\s,;\"'}]+)"
+_BARE_EIGHT_DIGIT_RE = re.compile(r"(?<![\d.])\d{8}(?![\d.])")
+_GROUPED_AMOUNT_RE = re.compile(
+    r"(?<![\w.])(?:[¥￥])?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?(?![\w.])"
 )
 
 _ALLOWED_ZIP_ENTRIES = {
@@ -43,38 +56,66 @@ _ALLOWED_ZIP_ENTRIES = {
 }
 
 
-def _mask_email(match: re.Match[str]) -> str:
-    local = match.group(1) + match.group(2)
-    if len(local) <= 1:
-        masked = f"{local[:1]}***"
-    else:
-        masked = f"{local[0]}***{local[-1]}"
-    return f"{masked}{match.group(3)}"
+def _mask_user_profile(match: re.Match[str]) -> str:
+    """Mask the user-name segment of a Windows/macOS/Linux home path."""
+    return match.group("prefix") + _privacy_redact_text(match.group("name"), "user")
 
 
 def _mask_url(match: re.Match[str]) -> str:
+    """Mask everything in a URL after the host, including its path token."""
     text = match.group(0)
+    if "<redacted:" in text:
+        return text
     try:
         parsed = urlsplit(text)
-        if parsed.query:
-            return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "***", parsed.fragment))
     except ValueError:
-        return "<url:redacted>"
-    return text
+        return _privacy_redact_text(text, "url")
+    # The shared helper keeps the host; user-info credentials in the authority
+    # would therefore survive, so such URLs are masked as a whole.
+    if "@" in parsed.netloc:
+        return _privacy_redact_text(text, "url")
+    # The shared log rule already replaced the sensitive part with this
+    # placeholder; do not wrap the harmless scheme+host prefix a second time.
+    if not parsed.path.strip("/") and not parsed.query and not parsed.fragment:
+        return text
+    return mask_url_for_log(text)
+
+
+def _mask_prefixed_secret(match: re.Match[str]) -> str:
+    """Mask environment-style keys such as ``GEMINI_API_KEY=...``."""
+    return match.group(1) + _privacy_redact_text(match.group(2), "secret")
+
+
+def _mask_bearer(match: re.Match[str]) -> str:
+    return match.group(1) + _privacy_redact_text(match.group(2), "token")
+
+
+def _mask_bare_eight_digit(match: re.Match[str]) -> str:
+    """Mask 8-digit paper invoice numbers while keeping YYYYMMDD dates."""
+    value = match.group(0)
+    try:
+        datetime.strptime(value, "%Y%m%d")
+    except ValueError:
+        return mask_invoice_number(value)
+    return value
 
 
 def redact_text(value: object) -> str:
-    """Redact common PII, credentials, long identifiers, and tokenized URLs."""
+    """Redact common PII, credentials, user paths, and tokenized URLs."""
     text = str(value or "")
     if not text:
         return ""
-    text = _BEARER_FIELD_RE.sub(lambda m: f"{m.group(1)}***redacted***", text)
-    text = _TWO_TOKEN_SECRET_FIELD_RE.sub(lambda m: f"{m.group(1)}***redacted***", text)
-    text = _SECRET_FIELD_RE.sub(lambda m: f"{m.group(1)}***redacted***", text)
+    # URLs go first: the path/query (and any bearer token in it) must be gone
+    # before the shared rules rewrite the remainder.
     text = _URL_RE.sub(_mask_url, text)
-    text = _EMAIL_RE.sub(_mask_email, text)
-    text = _PHONE_RE.sub(lambda m: f"{m.group(1)}****{m.group(3)}", text)
-    text = _LONG_DIGIT_RE.sub(lambda m: f"{m.group(1)}****{m.group(2)}", text)
+    text = _USER_PROFILE_RE.sub(_mask_user_profile, text)
+    # Grouped amounts have to be handled before the shared decimal-amount rule,
+    # otherwise ``1,234.56`` is only half masked.
+    text = _GROUPED_AMOUNT_RE.sub(lambda m: mask_amount(m.group(0)), text)
+    text = sanitize_log_message(text)
+    text = _BEARER_RE.sub(_mask_bearer, text)
+    text = _PREFIXED_SECRET_RE.sub(_mask_prefixed_secret, text)
+    text = _BARE_EIGHT_DIGIT_RE.sub(_mask_bare_eight_digit, text)
     return text
 
 
@@ -220,7 +261,11 @@ def export_diagnostics_zip(output_dir: str | Path | None = None) -> Path:
     zip_path = target_dir / f"InvoiceHub-diagnostics-{datetime.now():%Y%m%d-%H%M%S}.zip"
 
     entries = {
-        "app_info.json": json.dumps(collect_app_info(), ensure_ascii=False, indent=2),
+        # Every allowlisted entry runs through the same redaction pipeline, so a
+        # future field that carries a path or a token cannot leak by accident.
+        "app_info.json": redact_text(
+            json.dumps(collect_app_info(), ensure_ascii=False, indent=2)
+        ),
         "latest.log.redacted": _latest_log_text(),
         "config.redacted.json": json.dumps(_read_redacted_config(), ensure_ascii=False, indent=2),
         "environment.txt": _environment_text(),

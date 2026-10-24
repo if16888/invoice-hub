@@ -10,8 +10,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QSizePolicy
 
 from .. import APP_VERSION
 from ..config import RUNTIME_DIR
-from ..diagnostics import collect_app_info
-from ..log_privacy import sanitize_log_message
+from ..diagnostics import collect_app_info, redact_config
+from ..log_privacy import redact_text as _privacy_redact_text, sanitize_log_message
 
 LOG_DRAWER_EXPANDED_HEIGHT = 120
 
@@ -167,8 +167,17 @@ class LogDiagnosticsMixin:
 
     def _copy_diagnostic_info(self):
         """Copy redacted app diagnostics metadata to the clipboard."""
-        payload = json.dumps(self._collect_diagnostic_payload(), ensure_ascii=False, indent=2)
-        QApplication.clipboard().setText(payload)
+        payload = self._collect_diagnostic_payload()
+        filter_state = payload.get("current_filter_state")
+        if isinstance(filter_state, dict) and filter_state.get("search"):
+            # A search term can contain an invoice number, seller name or a
+            # tokenized URL; keep only a digest of it in the shared payload.
+            filter_state["search"] = _privacy_redact_text(
+                str(filter_state["search"]), "search"
+            )
+        payload = redact_config(payload)
+        payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        QApplication.clipboard().setText(payload_text)
         self.write_log("已复制脱敏诊断信息到剪贴板。")
         self.statusBar().showMessage("已复制诊断信息", 3000)
 

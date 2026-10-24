@@ -4158,7 +4158,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _complete_backup_result(self, path):
         if not self._worker_callback_allowed():
             return
-        self._complete_backup_result_path = Path(path)
+        # Restoring into a database that does not exist yet has no old file to
+        # retain, so the service reports no safety-backup path instead of one.
+        self._complete_backup_result_path = Path(path) if path else None
 
     def _complete_backup_error(self, message):
         if not self._worker_callback_allowed():

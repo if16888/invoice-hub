@@ -105,8 +105,11 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertNotIn("Bearer redacted-placeholder", combined)
             self.assertNotIn("2632700000005659506", combined)
             self.assertNotIn("token=redacted-placeholder", combined)
+            self.assertNotIn("redacted-placeholder", combined)
             self.assertNotIn("DEEPSEEK_API_KEY=sk-test-placeholder", combined)
-            self.assertIn("?***", combined)
+            # URLs are masked after the host, so a token in the path or query
+            # is gone instead of only the query string being replaced.
+            self.assertIn("<redacted:", combined)
             self.assertIn("***redacted***", combined)
 
     def test_redact_text_masks_required_patterns(self):
@@ -115,27 +118,49 @@ class DiagnosticsTests(unittest.TestCase):
         redacted = redact_text(
             "email tester@example.com user@example.com phone 13812345678 invoice 2632700000005659506 "
             "url https://example.com/a?token=redacted-placeholder&x=1 auth_code: abc123 GEMINI_API_KEY=xyz "
-            "Authorization: Bearer sk-test-placeholder authorization=Bearer abc.def token=abc def"
+            "Authorization: Bearer sk-test-placeholder authorization=Bearer abc.def token: abc123 "
+            "credential_url https://synthetic-person:synthetic-password@example.com/secret"
         )
 
         self.assertIn("t***r@example.com", redacted)
         self.assertIn("u***r@example.com", redacted)
-        self.assertIn("138****5678", redacted)
-        self.assertIn("26****06", redacted)
-        self.assertIn("https://example.com/a?***", redacted)
-        self.assertIn("auth_code: ***redacted***", redacted)
-        self.assertIn("GEMINI_API_KEY=***redacted***", redacted)
-        self.assertIn("Authorization: ***redacted***", redacted)
-        self.assertIn("authorization=***redacted***", redacted)
-        self.assertIn("token=***redacted***", redacted)
+        self.assertIn("13***78", redacted)
+        self.assertIn("26***06", redacted)
+        self.assertIn("https://example.com/<redacted:", redacted)
+        self.assertIn("auth_code: <secret:redacted>", redacted)
+        self.assertIn("GEMINI_API_KEY=<secret:redacted", redacted)
+        self.assertIn("Bearer <token:", redacted)
         self.assertNotIn("tester@example.com", redacted)
         self.assertNotIn("user@example.com", redacted)
+        self.assertNotIn("13812345678", redacted)
         self.assertNotIn("2632700000005659506", redacted)
         self.assertNotIn("token=redacted-placeholder", redacted)
+        self.assertNotIn("/a?", redacted)
         self.assertNotIn("GEMINI_API_KEY=xyz", redacted)
         self.assertNotIn("sk-test-placeholder", redacted)
         self.assertNotIn("abc.def", redacted)
-        self.assertNotIn("abc def", redacted)
+        self.assertNotIn("abc123", redacted)
+        self.assertNotIn("synthetic-person", redacted)
+        self.assertNotIn("synthetic-password", redacted)
+
+    def test_redact_text_masks_user_profile_paths_and_paper_invoice_numbers(self):
+        from scripts.invoice_fetch.diagnostics import redact_text
+
+        redacted = redact_text(
+            r"path C:\Users\synthetic-alice\AppData\Local\InvoiceHub\runtime "
+            r"spaced C:\Users\Synthetic Alice\Documents\report.pdf "
+            "票号 12345678 金额 169.08 开票日期 20261024 金额 1,234.56"
+        )
+
+        self.assertNotIn("synthetic-alice", redacted)
+        self.assertNotIn("Synthetic Alice", redacted)
+        self.assertIn("file#", redacted)
+        self.assertNotIn("12345678", redacted)
+        self.assertNotIn("169.08", redacted)
+        self.assertNotIn("1,234.56", redacted)
+        self.assertIn("12***78", redacted)
+        # Dates must stay readable; they are not invoice numbers.
+        self.assertIn("20261024", redacted)
 
     def test_redact_config_masks_sensitive_fields_recursively(self):
         from scripts.invoice_fetch.diagnostics import redact_config
@@ -150,7 +175,8 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(redacted["nested"][0]["token"], "***redacted***")
         self.assertEqual(redacted["nested"][1]["authorization"], "***redacted***")
         self.assertEqual(redacted["email"]["address"], "t***r@example.com")
-        self.assertEqual(redacted["download_url"], "https://example.com/a?***")
+        self.assertIn("https://example.com/<redacted:", redacted["download_url"])
+        self.assertNotIn("/a?", redacted["download_url"])
 
     def test_issue_templates_have_privacy_first_feedback_flow(self):
         template = Path(".github/ISSUE_TEMPLATE/bug_report.yml")

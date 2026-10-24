@@ -369,6 +369,114 @@ class DatabaseBackupTests(unittest.TestCase):
             self.assertEqual(self.read_value(selected), "restored")
             self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
 
+    def test_restore_into_missing_database_path_creates_it_from_backup(self):
+        """Disaster recovery: a deleted invoices.db must be restorable."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            selected = root / "selected.db"
+            db_path = root / "runtime" / "invoices.db"
+            self.make_database(selected, "restored")
+            self.assertFalse(db_path.exists())
+
+            safety = restore_verified_database_backup(
+                selected,
+                db_path,
+                backup_dir=root / "backups",
+            )
+
+            # Nothing existed to preserve, so no safety copy is fabricated.
+            self.assertIsNone(safety)
+            self.assertTrue(db_path.is_file())
+            self.assertEqual(self.read_value(db_path), "restored")
+            with InvoiceDB(db_path) as restored:
+                validate_latest_schema(restored._conn)
+            self.assertFalse((root / "backups").exists())
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_into_zero_byte_database_path_skips_preservation(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            selected = root / "selected.db"
+            db_path = root / "invoices.db"
+            self.make_database(selected, "restored")
+            db_path.write_bytes(b"")
+
+            safety = restore_verified_database_backup(
+                selected,
+                db_path,
+                backup_dir=root / "backups",
+            )
+
+            self.assertIsNone(safety)
+            self.assertEqual(self.read_value(db_path), "restored")
+            self.assertEqual(list(root.rglob("*damaged-before-restore*")), [])
+            self.assertFalse((root / "backups").exists())
+
+    def test_restore_into_missing_path_still_validates_selected_backup(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            selected = root / "selected.db"
+            db_path = root / "runtime" / "invoices.db"
+            selected.write_bytes(b"not a sqlite database")
+
+            # The source backup must always validate; the destination state
+            # must not weaken that check.
+            with self.assertRaises(ValueError):
+                restore_verified_database_backup(
+                    selected,
+                    db_path,
+                    backup_dir=root / "backups",
+                )
+
+            self.assertFalse(db_path.exists())
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_into_missing_path_rolls_back_when_reopen_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            selected = root / "selected.db"
+            db_path = root / "invoices.db"
+            self.make_database(selected, "restored")
+
+            def fail_reopen(_path):
+                raise RuntimeError("synthetic reopen failure")
+
+            with self.assertRaises(DatabaseRestoreError):
+                restore_verified_database_backup(
+                    selected,
+                    db_path,
+                    backup_dir=root / "backups",
+                    reopen_validator=fail_reopen,
+                )
+
+            # Rollback restores the original state: still no database file.
+            self.assertFalse(db_path.exists())
+            self.assertEqual(list(root.glob(".*.restore-*.tmp")), [])
+
+    def test_restore_over_corrupt_database_preservation_failure_reports_existing_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "invoices.db"
+            selected = root / "selected.db"
+            self.make_database(selected, "restored")
+            db_path.write_bytes(b"not a sqlite database")
+
+            with patch(
+                "scripts.invoice_fetch.db_backup.shutil.copy2",
+                side_effect=OSError("copy failed"),
+            ):
+                with self.assertRaises(DatabaseRestoreError) as caught:
+                    restore_verified_database_backup(
+                        selected,
+                        db_path,
+                        backup_dir=root / "backups",
+                    )
+
+            # An existing-but-corrupt destination keeps today's fail-closed
+            # behaviour when its unverified copy cannot be written.
+            self.assertIn("损坏的数据库无法留档，恢复已取消", str(caught.exception))
+            self.assertEqual(db_path.read_bytes(), b"not a sqlite database")
+
     def test_restore_sidecar_protection_failure_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
