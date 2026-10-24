@@ -212,5 +212,165 @@ class RedownloadConsistencyContractTests(unittest.TestCase):
             self.assertIn("不支持的文件类型", db.metadata_updates[-1]["parse_note"])
 
 
+    def test_detail_retry_parse_note_failure_keeps_success_result(self):
+        """A best-effort note update must not turn a persisted retry into failure."""
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+
+            class _RaisingMissingFieldsDB(_FakeDB):
+                def update_invoice_missing_fields(self, *args, **kwargs):
+                    raise RuntimeError("synthetic parse note failure")
+
+            class _Downloader:
+                def __init__(self, download_dir):
+                    self.download_dir = Path(download_dir)
+
+                def _download_url(self, *_args):
+                    self.download_dir.mkdir(parents=True, exist_ok=True)
+                    source = self.download_dir / "raw.pdf"
+                    source.write_bytes(b"%PDF-1.4 synthetic")
+                    return SimpleNamespace(
+                        file_path=str(source),
+                        parse_note="synthetic note",
+                    )
+
+                def close(self):
+                    return None
+
+            db = _RaisingMissingFieldsDB(file_ok=True)
+            with patch.object(
+                redownload, "InvoiceDB", return_value=db
+            ), patch.object(
+                redownload,
+                "_link_downloader",
+                SimpleNamespace(LinkDownloader=_Downloader),
+            ), patch.object(
+                redownload._attachment_handler,
+                "build_managed_attachment_name",
+                return_value="managed.pdf",
+            ), self.assertLogs(
+                "invoice_fetch.redownload", level="WARNING"
+            ) as logs:
+                result = redownload.run_invoice_link_retry(
+                    _snapshot(),
+                    runtime / "invoices.db",
+                    runtime_dir=runtime,
+                )
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["completed_count"], 1)
+            self.assertEqual(result["failure_detail"], "")
+            self.assertEqual(len(db.file_updates), 1)
+            managed = runtime / "attachments" / "2026-09-05" / "managed.pdf"
+            self.assertTrue(managed.exists())
+            self.assertGreater(managed.stat().st_size, 0)
+            self.assertIn("parse note update failed", " ".join(logs.output))
+
+    def test_direct_download_failure_detail_redacts_paths_and_url_tokens(self):
+        synthetic_path = r"C:\Users\synthetic-alice\AppData\invoice.pdf"
+        token_url = "http://192.168.50.20:8765/u/synthetic-upload-token-7f3a"
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            db = _FakeDB()
+
+            class _FailingDownloader:
+                def __init__(self, download_dir):
+                    self.download_dir = download_dir
+
+                def _download_url(self, *_args):
+                    raise OSError(
+                        f"permission denied {synthetic_path} {token_url}"
+                    )
+
+                def close(self):
+                    return None
+
+            logs: list[str] = []
+            with patch.object(redownload, "InvoiceDB", return_value=db), \
+                    patch.object(
+                        redownload,
+                        "_link_downloader",
+                        SimpleNamespace(LinkDownloader=_FailingDownloader),
+                    ), patch.object(
+                        redownload._invoice_parser,
+                        "IsolatedInvoiceParser",
+                        return_value=SimpleNamespace(),
+                    ), patch.object(
+                        redownload._attachment_handler,
+                        "AttachmentHandler",
+                        return_value=object(),
+                    ):
+                result = redownload.run_invoice_redownload(
+                    [_snapshot(url="https://example.test/a.pdf")],
+                    runtime / "invoices.db",
+                    runtime_dir=runtime,
+                    config={},
+                    log_callback=logs.append,
+                )
+
+            self.assertEqual(result["buckets"]["download_failed"], 1)
+            combined = repr(result) + " ".join(logs)
+            self.assertNotIn("synthetic-alice", combined)
+            self.assertNotIn("synthetic-upload-token-7f3a", combined)
+            self.assertNotIn(r"C:\Users", combined)
+            self.assertIn("链接下载异常", " ".join(result["failure_details"]))
+
+    def test_imap_fallback_value_error_detail_is_redacted(self):
+        synthetic_path = r"C:\Users\synthetic-alice\Documents\invoice.pdf"
+        token_url = "http://192.168.50.20:8765/u/synthetic-upload-token-7f3a"
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            db = _FakeDB()
+            fetcher_cm = MagicMock()
+            with patch.object(redownload, "InvoiceDB", return_value=db), \
+                    patch.object(
+                        redownload,
+                        "_link_downloader",
+                        SimpleNamespace(
+                            LinkDownloader=lambda **_kwargs: SimpleNamespace(
+                                _download_url=lambda *_a: None,
+                                close=lambda: None,
+                                last_download_diagnostics={},
+                            )
+                        ),
+                    ), patch.object(
+                        redownload._invoice_parser,
+                        "IsolatedInvoiceParser",
+                        return_value=SimpleNamespace(),
+                    ), patch.object(
+                        redownload._attachment_handler,
+                        "AttachmentHandler",
+                        return_value=object(),
+                    ), patch.object(
+                        redownload._config, "get_email_accounts", return_value=[]
+                    ), patch.object(
+                        redownload._credentials, "has_auth_code", return_value=True
+                    ), patch.object(
+                        redownload._credentials,
+                        "get_auth_code",
+                        return_value="synthetic-code",
+                    ), patch.object(
+                        redownload._mail_fetcher, "MailFetcher", return_value=fetcher_cm
+                    ), patch(
+                        "scripts.invoice_fetch.services._handle_pending_email",
+                        side_effect=ValueError(
+                            f"bad payload {synthetic_path} {token_url}"
+                        ),
+                    ):
+                result = redownload.run_invoice_redownload(
+                    [_snapshot(url="", mail_uid=42)],
+                    runtime / "invoices.db",
+                    runtime_dir=runtime,
+                    config={"email": {"address": "synthetic@example.invalid"}},
+                )
+
+            self.assertEqual(result["buckets"]["download_failed"], 1)
+            combined = repr(result)
+            self.assertNotIn("synthetic-alice", combined)
+            self.assertNotIn("synthetic-upload-token-7f3a", combined)
+            self.assertNotIn(r"C:\Users", combined)
+            self.assertIn("重新读取邮件失败", combined)
+
+
 if __name__ == "__main__":
     unittest.main()
