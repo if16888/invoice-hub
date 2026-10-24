@@ -8,11 +8,9 @@ on:
     branches:
       - master
   pull_request:
-    branches:
-      - master
-      # Feature-branch PRs get the same source gates and Windows shards as
-      # master PRs so a review batch cannot merge without remote evidence.
-      - feat/v0.2.0
+    # Every pull request must get remote evidence, not only the ones targeting
+    # master: a stacked review batch keeps its lower PRs target-normal, so
+    # filtering by base branch silently skipped CI for the whole upper stack.
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
