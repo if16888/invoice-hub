@@ -52,6 +52,15 @@ class TestStorePackageVersion(unittest.TestCase):
 
 
 class TestStoreManifest(unittest.TestCase):
+    _RESCAP_NS = (
+        "http://schemas.microsoft.com/appx/manifest/foundation/windows10/"
+        "restrictedcapabilities"
+    )
+    _VIRTUALIZATION_NS = (
+        "http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+    )
+    _FOUNDATION_NS = "http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+
     def test_manifest_uses_partner_center_identity_and_full_trust_desktop_contract(self):
         template = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
         manifest = render_manifest(
@@ -74,6 +83,52 @@ class TestStoreManifest(unittest.TestCase):
         self.assertIn('Name="Windows.Desktop"', manifest)
         self.assertIn("发票 &amp; 报销 &lt;本地优先&gt;", manifest)
         self.assertNotIn("@@", manifest)
+
+    def test_manifest_keeps_user_data_unvirtualized_for_shared_appdata_contract(self):
+        """MSIX must write to the real %APPDATA%\\InvoiceHub, like Inno/portable."""
+        manifest = render_manifest(
+            DEFAULT_TEMPLATE.read_text(encoding="utf-8"),
+            identity_name="12345InvoiceHub.InvoiceHub",
+            publisher="CN=01234567-89AB-CDEF-0123-456789ABCDEF",
+            publisher_display_name="Invoice Hub Developer",
+            display_name="Invoice Hub",
+            description="Invoice Hub",
+            package_version="1.1.8.0",
+        )
+        root = ElementTree.fromstring(manifest)
+
+        capabilities = {
+            element.get("Name")
+            for element in root.findall(
+                f"./{{{self._FOUNDATION_NS}}}Capabilities/{{{self._RESCAP_NS}}}Capability"
+            )
+        }
+        self.assertIn("runFullTrust", capabilities)
+        self.assertIn("unvirtualizedResources", capabilities)
+
+        excluded = root.findall(
+            f"./{{{self._FOUNDATION_NS}}}Properties/"
+            f"{{{self._VIRTUALIZATION_NS}}}FileSystemWriteVirtualization/"
+            f"{{{self._VIRTUALIZATION_NS}}}ExcludedDirectories/"
+            f"{{{self._VIRTUALIZATION_NS}}}ExcludedDirectory"
+        )
+        self.assertEqual(len(excluded), 1)
+        self.assertEqual(
+            excluded[0].text,
+            r"$(KnownFolder:RoamingAppData)\InvoiceHub",
+        )
+
+        device_family = root.find(
+            f"./{{{self._FOUNDATION_NS}}}Dependencies/"
+            f"{{{self._FOUNDATION_NS}}}TargetDeviceFamily"
+        )
+        self.assertIsNotNone(device_family)
+        min_version = device_family.get("MinVersion", "")
+        self.assertGreaterEqual(
+            tuple(int(part) for part in min_version.split(".")),
+            (10, 0, 22000, 0),
+            "granular unvirtualized AppData requires Windows 11 (10.0.22000)",
+        )
 
     def test_manifest_rejects_placeholder_identity(self):
         template = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
@@ -140,6 +195,8 @@ class TestStoreLayoutStaging(unittest.TestCase):
             self.assertTrue(manifest_path.is_file())
             manifest = manifest_path.read_text(encoding="utf-8")
             self.assertIn("invoice-hub-msix-staging-owner:v1", manifest)
+            self.assertIn('Name="unvirtualizedResources"', manifest)
+            self.assertIn("FileSystemWriteVirtualization", manifest)
             ElementTree.fromstring(manifest)
 
             expected_assets = {

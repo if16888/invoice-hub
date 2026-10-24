@@ -7,7 +7,7 @@ from decimal import Decimal, localcontext
 from pathlib import Path
 
 from .amount_utils import parse_amount
-from .claim_export import inspect_extra_material, inspect_original_attachment
+from .claim_export import inspect_materials_for_invoices
 from .db import is_pending_evidence_invoice
 from .financial_validation import check_tax_balance
 from .reimbursement import buyer_warning
@@ -43,7 +43,13 @@ def _snapshot(invoice: dict) -> tuple:
     return tuple(sorted((key, value) for key, value in invoice.items() if key != "soft_fingerprint"))
 
 
-def _approval_reasons(invoice: dict, flags: set[str], config: dict, runtime_dir: Path) -> tuple[str, ...]:
+def _approval_reasons(
+    invoice: dict,
+    flags: set[str],
+    config: dict,
+    runtime_dir: Path,
+    materials: dict | None = None,
+) -> tuple[str, ...]:
     reasons = []
     if invoice.get("is_deleted"):
         return ("记录已删除",)
@@ -70,12 +76,14 @@ def _approval_reasons(invoice: dict, flags: set[str], config: dict, runtime_dir:
     balance = check_tax_balance(invoice)
     if balance.blocking:
         reasons.append(balance.message)
-    if not inspect_original_attachment(invoice, runtime_dir)["available"]:
+    # The caller may inspect a whole batch in parallel; a lone invoice (tests,
+    # single-item calls) is still inspected here.
+    material = materials or inspect_materials_for_invoices((invoice,), runtime_dir)[0]
+    if not material["attachment_available"]:
         reasons.append("原件缺失或不可用")
-    extra = inspect_extra_material(invoice, runtime_dir)
-    if extra["missing_extra"]:
+    if material["missing_extra"]:
         reasons.append("缺证明材料")
-    if extra["unavailable_extra"]:
+    if material["unavailable_extra"]:
         reasons.append("证明材料不可用")
     for flag, message in (
         ("number_duplicate", "票号重复"),
@@ -94,11 +102,27 @@ def prepare_batch_approval(db, invoice_ids, config: dict, runtime_dir: Path) -> 
     db.refresh_duplicate_candidates()
     records = db.get_review_batch_invoices(ids)
     duplicate_flags = db.review_duplicate_flags()
+    # Inspect the whole batch's files in parallel: reading every original one
+    # after another is what made large batch approvals feel frozen.
+    pending_records = [
+        records[invoice_id] for invoice_id in ids if records.get(invoice_id) is not None
+    ]
+    material_results = inspect_materials_for_invoices(pending_records, runtime_dir)
+    materials_by_id = {
+        int(invoice["id"]): result
+        for invoice, result in zip(pending_records, material_results)
+    }
     snapshots, skipped = [], []
     for invoice_id in ids:
         invoice = records.get(invoice_id)
         reasons = (("记录不存在",) if invoice is None else
-                   _approval_reasons(invoice, duplicate_flags.get(invoice_id, set()), config, runtime_dir))
+                   _approval_reasons(
+                       invoice,
+                       duplicate_flags.get(invoice_id, set()),
+                       config,
+                       runtime_dir,
+                       materials=materials_by_id.get(int(invoice.get("id") or invoice_id)),
+                   ))
         if reasons:
             skipped.append(BatchSkip(invoice_id, reasons))
         else:
