@@ -3,7 +3,8 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+  IgnorableNamespaces="uap rescap virtualization">
   <Identity
     Name="@@IDENTITY_NAME@@"
     Publisher="@@PUBLISHER@@"
@@ -15,6 +16,19 @@
     <PublisherDisplayName>@@PUBLISHER_DISPLAY_NAME@@</PublisherDisplayName>
     <Description>@@DESCRIPTION@@</Description>
     <Logo>Assets\StoreLogo.png</Logo>
+    <!-- Keep the user data directory identical to the standalone Inno/portable
+         builds: %APPDATA%\InvoiceHub. Without this opt-out MSIX redirects new
+         AppData writes into a per-package private store that other builds cannot
+         see and that Windows removes when the package is uninstalled.
+         The granular Windows 11 form is used because the generic
+         desktop6:FileSystemWriteVirtualization switch is documented as intended
+         only for Microsoft/partner PC games; the Store package therefore
+         requires Windows 11 (see MinVersion below). -->
+    <virtualization:FileSystemWriteVirtualization>
+      <virtualization:ExcludedDirectories>
+        <virtualization:ExcludedDirectory>$(KnownFolder:RoamingAppData)\InvoiceHub</virtualization:ExcludedDirectory>
+      </virtualization:ExcludedDirectories>
+    </virtualization:FileSystemWriteVirtualization>
   </Properties>
 
   <Resources>
@@ -24,7 +38,7 @@
   <Dependencies>
     <TargetDeviceFamily
       Name="Windows.Desktop"
-      MinVersion="10.0.17763.0"
+      MinVersion="10.0.22000.0"
       MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
@@ -44,5 +58,12 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <!-- Required by virtualization:FileSystemWriteVirtualization above. The
+         Microsoft Store submission must justify this restricted capability:
+         Invoice Hub keeps its SQLite database and invoice materials in the
+         documented %APPDATA%\InvoiceHub directory so the Store, Inno and
+         portable builds share the same user data and uninstall does not
+         delete it. -->
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>

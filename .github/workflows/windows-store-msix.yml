@@ -298,6 +298,15 @@ jobs:
           if ($manifestText -notmatch [regex]::Escape($expectedPublisherDisplayNameElement)) {
             throw "Packed MSIX publisher display name does not match Partner Center input."
           }
+          # The Store build must keep writing to the real %APPDATA%\InvoiceHub
+          # so it shares user data with the Inno/portable builds and keeps it
+          # after uninstall. Fail the packaging lane if MakeAppx dropped the
+          # AppData opt-out contract.
+          foreach ($requiredContractToken in @("unvirtualizedResources", "FileSystemWriteVirtualization", "RoamingAppData")) {
+            if ($manifestText -notmatch [regex]::Escape($requiredContractToken)) {
+              throw "Packed MSIX manifest is missing the user-data contract token: $requiredContractToken"
+            }
+          }
           Get-Item $package | Select-Object Name, Length, LastWriteTime
 
       - name: Create Store artifact checksum
