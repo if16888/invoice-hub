@@ -61,17 +61,28 @@ For most small changes:
 
 1. Start from the relevant module in the table above.
 2. Add or update a focused test in `tests/`.
-3. Run the targeted test, then the full unittest suite when possible.
+3. Run the targeted test, then the full isolated suite when possible.
 4. Run the public export/privacy checks before submitting a PR.
 
 Suggested checks:
 
 ```bash
-python -m unittest discover -v -s tests -p "test_*.py"
+# Full suite: module-isolated runner used by CI (fresh process per module,
+# faulthandler enabled, hard per-module timeout).
+python scripts/dev/run_isolated_unittest.py --module-timeout-seconds 900
 python -m compileall -q scripts tests
 python scripts/check_public_export.py .
 git diff --check
 ```
+
+Do not use `python -m unittest discover -v -s tests -p "test_*.py"` as the
+full-suite gate. All modules would share one interpreter, so a window leaked by
+an earlier test can later raise a modal `QMessageBox`; under the offscreen Qt
+platform nobody can dismiss it and the run deadlocks. `tests/__init__.py`
+installs a test-only guard that records `QMessageBox.critical/warning/
+information/question` and `QMessageBox.exec`/`QDialog.exec` calls instead of
+blocking, but module isolation remains the supported gate — and it also keeps
+unrelated Qt object graphs from contaminating later tests.
 
 ## Architecture guard: stop adding acceptance patches
 
