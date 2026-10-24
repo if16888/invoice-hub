@@ -32,7 +32,7 @@ from .attachment_handler import AttachmentHandler, build_managed_attachment_name
 from .invoice_parser import IsolatedInvoiceParser as InvoiceParser, parse_html_body, parse_subject
 from .link_downloader import LinkDownloader, extract_html_from_message
 from .mail_fetcher import MailFetcher
-from .log_privacy import mask_email, sanitize_log_message, mask_filename, mask_invoice_number, mask_path, mask_uid, redact_text
+from .log_privacy import attach_privacy_filter, mask_email, sanitize_log_message, mask_filename, mask_invoice_number, mask_path, mask_uid, redact_text
 from .scan_lifecycle import ScanCancelled, ScanControl, ScanStage, new_scan_id, redacted_progress
 from .url_utils import _mask_url
 from .rule_classifier import classify as rule_classify
@@ -106,14 +106,17 @@ def _setup_logging(verbose: bool = False):
     root.setLevel(logging.DEBUG)
 
     fmt_console = logging.Formatter("[%(levelname)s] %(message)s")
-    ch = logging.StreamHandler()
+    # The privacy filter belongs on every handler: a logger-level filter only
+    # covers the three modules that remember to install it, while db/config/
+    # third-party records would otherwise reach the log file unredacted.
+    ch = attach_privacy_filter(logging.StreamHandler())
     ch.setLevel(logging.DEBUG if verbose else logging.INFO)
     ch.setFormatter(fmt_console)
     root.addHandler(ch)
 
     fmt_file = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s")
     try:
-        fh = logging.FileHandler(str(log_file), encoding="utf-8")
+        fh = attach_privacy_filter(logging.FileHandler(str(log_file), encoding="utf-8"))
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(fmt_file)
         root.addHandler(fh)
