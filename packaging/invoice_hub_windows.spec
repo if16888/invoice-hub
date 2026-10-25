@@ -31,6 +31,21 @@ import playwright as _pw_mod
 _pw_pkg = Path(_pw_mod.__file__).parent          # .../site-packages/playwright/
 _pw_driver = _pw_pkg / "driver"                  # contains playwright.exe + node
 
+# ── Release payload guard ─────────────────────────────────────────────
+# A missing PDF.js runtime, CMap/font data, GUI asset or license directory
+# produces an installer that installs cleanly and then fails at runtime, so the
+# build stops here instead. The check lives in packaging/release_payload.py so a
+# normal unit test can prove it still works.
+import importlib.util as _ilu
+
+_payload_spec = _ilu.spec_from_file_location(
+    "_ih_release_payload", _here / "release_payload.py"
+)
+_release_payload = _ilu.module_from_spec(_payload_spec)
+_payload_spec.loader.exec_module(_release_payload)
+_release_payload.require_release_payload(_root)
+_release_payload.require_playwright_driver(_pw_driver)
+
 # ── Data files to bundle ──────────────────────────────────────────────
 _datas = [
     # App configuration template

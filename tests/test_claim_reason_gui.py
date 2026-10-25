@@ -142,3 +142,51 @@ class ClaimReasonGuiTests(unittest.TestCase):
             view.btn_edit_claim_reason.click()
             assert not editor.called
         assert view.db.get_invoice_reason(invoice) == '原事由'
+
+    def test_reimbursement_refusal_shows_actionable_reexport_message(self):
+        """Batch 5: a pending member missing from the package must not deadlock the claim."""
+        view, claim, invoice = self.window
+        view.db.add_export_run(
+            claim, 'exports/batch5-run', 'generic_excel', 1, invoice_ids=[invoice]
+        )
+        # Anomalous/legacy data: a direct member insertion bypassing the lock.
+        late_invoice = view.db.insert_invoice({
+            'invoice_number': 'BATCH5-LATE',
+            'total_amount': '9.00',
+            'seller_name': 'Seller',
+            'review_status': 'to_review',
+        })
+        view.db._conn.execute(
+            'INSERT INTO claim_group_items (claim_id, invoice_id) VALUES (?, ?)',
+            (claim, late_invoice),
+        )
+        view.db._conn.commit()
+        view._refresh_export_page()
+
+        with patch('scripts.invoice_fetch.gui.app.QMessageBox.question', return_value=QMessageBox.Yes), \
+             patch('scripts.invoice_fetch.gui.app.QMessageBox.warning') as warning:
+            view._mark_selected_claim_reimbursed()
+
+        assert view.db.last_error == 'claim_members_not_exported'
+        assert view.db.get_claim_group(claim)['status'] == 'exported'
+        assert view.db.get_invoice(invoice)['reimbursed_at'] is None
+        assert view.db.get_invoice(late_invoice)['reimbursed_at'] is None
+        assert warning.call_count == 1
+        message = warning.call_args.args[2]
+        assert '重新导出' in message
+        assert '待审核' in message
+
+    def test_reimbursement_refusal_messages_cover_stale_run_and_fallback(self):
+        from scripts.invoice_fetch.gui.app import _claim_reimbursement_failure_message
+
+        members_message = _claim_reimbursement_failure_message('claim_members_not_exported')
+        assert '重新导出' in members_message
+        assert '待审核' in members_message
+
+        stale_message = _claim_reimbursement_failure_message('stale_export_run')
+        assert '最新' in stale_message
+        assert '重新导出' in stale_message
+
+        assert _claim_reimbursement_failure_message('export_run_items_mismatch') == (
+            '状态已变化或导出内容不匹配，请刷新后重试。'
+        )

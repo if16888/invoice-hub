@@ -1041,9 +1041,17 @@ class TestDetailPanelCompact001(unittest.TestCase):
 
     def tearDown(self):
         import shutil
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
         if self.app is not None:
+            # Flush deferred widget deletions before the next test builds its
+            # own windows.  A QPdfView/QPdfDocument ``deleteLater`` landing
+            # during unrelated widget construction has crashed the native heap
+            # (access violation) on the Windows CI runner.
+            from PySide6.QtCore import QEvent
+
             self.app.processEvents()
+            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+            self.app.processEvents()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _select_row(self, window, row_idx):
         from PySide6.QtCore import QItemSelectionModel
@@ -1169,6 +1177,9 @@ class TestDetailPanelCompact001(unittest.TestCase):
             window._open_local_path.assert_called_once_with(doc2)
         finally:
             window.close()
+            window.deleteLater()
+            if self.app is not None:
+                self.app.processEvents()
 
 
     def test_supporting_doc_label_formatting(self):
