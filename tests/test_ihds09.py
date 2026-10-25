@@ -237,7 +237,12 @@ class IHDS09Tests(unittest.TestCase):
                 duplicate_payloads = [b"known-a", b"known-b", b"known-c"]
                 server._files.extend(
                     {
+                        # ``imported`` is what makes an accepted upload count as
+                        # a duplicate; an accepted record without it is retried
+                        # (see the mobile-upload data-loss fix). These seeds
+                        # simulate files that really did reach the database.
                         "status": "accepted",
+                        "imported": True,
                         "sha256": hashlib.sha256(payload).hexdigest(),
                     }
                     for payload in duplicate_payloads
