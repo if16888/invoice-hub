@@ -5,12 +5,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from scripts.invoice_fetch.db import (
     InvoiceDB,
     SQLITE_BUSY_TIMEOUT_MS,
+    _SCHEMA,
     _configure_journal_mode,
 )
 from scripts.invoice_fetch.migrations import (
@@ -317,6 +319,40 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertNotIn("processed_emails_new", tables)
             finally:
                 conn.close()
+
+    def test_invoice_db_open_recovers_interrupted_v4_tables(self):
+        for interrupted in (("emails",), ("processed_emails",), ("emails", "processed_emails")):
+            with self.subTest(tables=interrupted), tempfile.TemporaryDirectory() as td:
+                db_path = Path(td) / "interrupted-open.db"
+                with closing(sqlite3.connect(db_path)) as conn:
+                    conn.executescript(_PRE_V4_SCHEMA)
+                    for table in interrupted:
+                        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
+                    conn.executescript(_SCHEMA)
+                    for table in interrupted:
+                        conn.execute(
+                            f"INSERT INTO {table} (mailbox_key, uid, subject) "
+                            f"SELECT 'legacy', uid, subject FROM {table}_legacy"
+                        )
+                        conn.execute(f"DROP TABLE {table}_legacy")
+                        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_new")
+                    conn.commit()
+
+                for _ in range(2):
+                    with InvoiceDB(db_path) as db:
+                        self.assertEqual(db.get_all_email_uids("legacy"), {7, 8})
+                        self.assertEqual(db.get_processed_uids("legacy"), {7})
+                        self.assertEqual(
+                            db._conn.execute("PRAGMA user_version").fetchone()[0],
+                            LATEST_SCHEMA_VERSION,
+                        )
+                        self.assertEqual(
+                            db._conn.execute(
+                                "SELECT COUNT(*) FROM sqlite_master "
+                                "WHERE name IN ('emails_new', 'processed_emails_new')"
+                            ).fetchone()[0],
+                            0,
+                        )
 
     def test_v4_rebuild_failure_rolls_back_and_rerun_succeeds(self):
         """A failed V4 rebuild must roll back instead of persisting half state."""
@@ -842,14 +878,20 @@ class DatabaseMigrationTests(unittest.TestCase):
             db_path = Path(td) / "from-the-future.db"
             conn = sqlite3.connect(db_path)
             try:
+                conn.execute("CREATE TABLE future_invoices (id INTEGER PRIMARY KEY, note TEXT)")
+                conn.execute("INSERT INTO future_invoices VALUES (1, 'synthetic future data')")
                 conn.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION + 1}")
                 conn.commit()
             finally:
                 conn.close()
+            original_bytes = db_path.read_bytes()
 
             with self.assertRaises(RuntimeError) as caught:
                 InvoiceDB(db_path)
             self.assertIn(str(LATEST_SCHEMA_VERSION + 1), str(caught.exception))
+            self.assertEqual(db_path.read_bytes(), original_bytes)
+            self.assertFalse(db_path.with_name(db_path.name + "-wal").exists())
+            self.assertFalse(db_path.with_name(db_path.name + "-shm").exists())
 
             conn = sqlite3.connect(db_path)
             try:
@@ -885,6 +927,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             ), patch(
                 "scripts.invoice_fetch.db._configure_journal_mode",
                 return_value="delete",
+            ), patch(
+                "scripts.invoice_fetch.migrations.prepare_database_open",
             ), patch(
                 "scripts.invoice_fetch.migrations.check_and_migrate",
                 side_effect=RuntimeError("migration refused"),

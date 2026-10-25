@@ -397,22 +397,52 @@ def _rebuild_emails_tables_for_v4(conn: sqlite3.Connection) -> None:
     )
 
 
-def check_and_migrate(conn: sqlite3.Connection):
-    """Run database migrations in a safe, idempotent way using PRAGMA user_version."""
-    cursor = conn.cursor()
-
-    # 1. Fetch current schema version
-    cursor.execute("PRAGMA user_version")
-    version = cursor.fetchone()[0]
-
-    # A database written by a newer application must not be touched: an older
-    # build does not know the newer schema contract and could corrupt rows it
-    # fails to understand.
+def _supported_schema_version(conn: sqlite3.Connection) -> int:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version > LATEST_SCHEMA_VERSION:
         raise RuntimeError(
             f"数据库版本 V{version} 高于当前应用支持的 V{LATEST_SCHEMA_VERSION}；"
             "请升级 Invoice Hub 后再打开此数据库。"
         )
+    return version
+
+
+def prepare_database_open(conn: sqlite3.Connection) -> None:
+    """Check compatibility and recover V4 tables before creating base tables.
+
+    An interrupted legacy rebuild may leave the only copy of the mail rows
+    in ``*_new``. Creating an empty base table first would hide that state
+    from the migration and cause the recovery copy to be discarded.
+    """
+    if _supported_schema_version(conn) >= 4:
+        return
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    pending = [
+        table for table in ("emails", "processed_emails")
+        if table not in tables and f"{table}_new" in tables
+    ]
+    if not pending:
+        return
+    conn.execute("SAVEPOINT invoice_hub_open_recovery")
+    try:
+        for table in pending:
+            conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+        conn.execute("RELEASE invoice_hub_open_recovery")
+    except BaseException:
+        conn.execute("ROLLBACK TO invoice_hub_open_recovery")
+        conn.execute("RELEASE invoice_hub_open_recovery")
+        raise
+
+
+def check_and_migrate(conn: sqlite3.Connection):
+    """Run database migrations in a safe, idempotent way using PRAGMA user_version."""
+    cursor = conn.cursor()
+
+    # 1. Fetch current schema version
+    version = _supported_schema_version(conn)
 
     _log.debug("Current database user_version: %d", version)
 

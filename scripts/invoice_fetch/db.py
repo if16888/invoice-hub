@@ -164,6 +164,11 @@ class InvoiceDB(EvidenceStoreMixin):
             timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
         )
         try:
+            from .migrations import check_and_migrate, prepare_database_open
+
+            # Reject newer databases before WAL/schema writes, and recover
+            # interrupted rebuilds before _SCHEMA can mask missing tables.
+            prepare_database_open(self._conn)
             self._conn.row_factory = sqlite3.Row
             self._buyer_warning_checker = None
             self._conn.create_function(
@@ -192,7 +197,6 @@ class InvoiceDB(EvidenceStoreMixin):
             _log.debug("数据库已打开: %s", self._path.name)
 
             # Run database migrations
-            from .migrations import check_and_migrate
             check_and_migrate(self._conn)
             self._conn.execute("PRAGMA foreign_keys = ON")
         except BaseException:

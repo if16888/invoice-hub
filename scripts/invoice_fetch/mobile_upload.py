@@ -539,10 +539,9 @@ class MobileUploadServer:
         down mid-import could leave half-copied files behind.  The wait is
         bounded and only reports failure, never raises.
         """
-        with self._lock:
-            active = bool(self._active_upload_batch_id)
-        if not active:
-            return True
+        # The upload lock spans saving and importing. Acquiring it directly
+        # also covers uploads blocked while holding the state lock (e.g. on
+        # slow disk I/O), without an unbounded preliminary state-lock wait.
         wait_seconds = UPLOAD_STOP_WAIT_SECONDS if timeout is None else float(timeout)
         acquired = self._upload_lock.acquire(timeout=max(0.0, wait_seconds))
         if not acquired:
