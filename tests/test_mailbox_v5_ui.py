@@ -21,21 +21,51 @@ app = QApplication.instance() or QApplication(sys.argv)
 class TestMailboxV5UI(unittest.TestCase):
 
     def tearDown(self):
-        # This module historically left many top-level InvoiceReviewApp and
-        # SettingsDialog instances alive.  Their deferred Qt callbacks can
-        # starve the next module's mobile-upload worker in the full suite.
-        widgets = [
-            widget
-            for widget in list(app.topLevelWidgets())
-            if widget is not None and isValid(widget)
-        ]
-        for widget in widgets:
-            close = getattr(widget, "close", None)
-            if isValid(widget) and callable(close):
-                close()
+        """Close only the windows this test created.
+
+        The previous teardown iterated ``app.topLevelWidgets()`` and closed
+        every top-level widget, including wrappers whose C++ object had already
+        been destroyed; on the Windows CI runner that corrupted the native heap
+        (0xC0000374) inside the teardown itself.  Tracking the instances keeps
+        the cleanup deterministic and avoids touching foreign widgets.
+        """
+        for widget in reversed(self._created_widgets):
+            try:
+                if widget is not None and isValid(widget):
+                    widget.close()
+                    widget.deleteLater()
+            except (RuntimeError, ReferenceError):
+                # A widget destroyed by its parent is fine; do not resurrect it.
+                continue
+        self._created_widgets.clear()
+        app.processEvents()
         app.processEvents()
 
+    def _record_widget(self, widget):
+        self._created_widgets.append(widget)
+        return widget
+
     def setUp(self):
+        self._created_widgets = []
+        module = sys.modules[__name__]
+        original_window_class = module.InvoiceReviewApp
+        original_dialog_class = module.SettingsDialog
+
+        def tracked_window(*args, **kwargs):
+            return self._record_widget(original_window_class(*args, **kwargs))
+
+        def tracked_dialog(*args, **kwargs):
+            return self._record_widget(original_dialog_class(*args, **kwargs))
+
+        module.InvoiceReviewApp = tracked_window
+        module.SettingsDialog = tracked_dialog
+
+        def restore_classes():
+            module.InvoiceReviewApp = original_window_class
+            module.SettingsDialog = original_dialog_class
+
+        self.addCleanup(restore_classes)
+
         self._temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._temp_dir.cleanup)
         self.db_path = Path(self._temp_dir.name) / "test.db"

@@ -311,6 +311,14 @@ def _rollback_restore(
         raise DatabaseRestoreError("恢复失败，原数据库无法自动回滚") from errors[0]
 
 
+def _is_empty_database_placeholder(path: Path) -> bool:
+    """Return True for a zero-byte regular file (a deleted database placeholder)."""
+    try:
+        return path.is_file() and path.stat().st_size == 0
+    except OSError:
+        return False
+
+
 def restore_verified_database_backup(
     backup_path: str | Path,
     db_path: str | Path,
@@ -318,7 +326,7 @@ def restore_verified_database_backup(
     backup_dir: str | Path | None = None,
     now: datetime | None = None,
     reopen_validator: Callable[[Path], None] | None = None,
-) -> Path:
+) -> Path | None:
     """Restore a backup with a sidecar-safe atomic transaction.
 
     The caller must stop all data workers and close the live application DB.
@@ -327,24 +335,36 @@ def restore_verified_database_backup(
     ``-shm`` files are moved to transaction-owned paths before the swap; any
     failure before or after replacement restores the original DB and sidecars.
 
-    The selected backup must always validate.  A damaged live database - the
-    very situation a restore exists for - is preserved as an unverified copy
-    instead of blocking the rescue.
+    The selected backup must always validate.  A missing or zero-byte live
+    database (deleted ``invoices.db`` - the disaster-recovery case) has nothing
+    to archive, so the verified staging copy is deployed directly.  A damaged
+    live database - the very situation a restore exists for - is preserved as
+    an unverified copy instead of blocking the rescue.
+
+    Returns:
+        The pre-restore safety backup path, or ``None`` when the live database
+        file was missing or zero-byte and therefore nothing needed preservation.
     """
     selected = Path(backup_path)
     destination = Path(db_path)
     validate_sqlite_database(selected)
-    try:
-        validate_sqlite_database(destination)
-    except ValueError:
-        safety_backup = _preserve_damaged_database(destination, backup_dir, now)
+    if not _path_exists(destination) or _is_empty_database_placeholder(destination):
+        # Nothing to preserve: the live database is already gone, so a
+        # "damaged copy" of a non-existent/zero-byte file would only block the
+        # rescue.  The staging copy below is still fully validated before use.
+        safety_backup: Path | None = None
     else:
-        safety_backup = create_verified_database_backup(
-            destination,
-            backup_dir=backup_dir,
-            reason="restore-safety",
-            now=now,
-        )
+        try:
+            validate_sqlite_database(destination)
+        except ValueError:
+            safety_backup = _preserve_damaged_database(destination, backup_dir, now)
+        else:
+            safety_backup = create_verified_database_backup(
+                destination,
+                backup_dir=backup_dir,
+                reason="restore-safety",
+                now=now,
+            )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = _private_path(destination, "restore-staging")
@@ -364,8 +384,11 @@ def restore_verified_database_backup(
         moved_sidecars = _move_existing_sidecars(destination)
         rollback_db = _private_path(destination, "restore-original")
         try:
-            os.replace(str(destination), str(rollback_db))
-            original_moved = True
+            # A missing live database has nothing to move aside; deploy the
+            # verified staging copy directly for the disaster-recovery case.
+            if _path_exists(destination):
+                os.replace(str(destination), str(rollback_db))
+                original_moved = True
             os.replace(str(staging), str(destination))
         except OSError as exc:
             raise DatabaseRestoreError("数据库替换失败，恢复已取消") from exc

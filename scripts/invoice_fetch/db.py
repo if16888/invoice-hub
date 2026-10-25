@@ -17,7 +17,7 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 from . import review_status
-from .log_privacy import mask_invoice_number
+from .log_privacy import mask_invoice_number, mask_mailbox_key
 from .review_query import ReviewColumnFilter, ReviewQuery
 from .evidence import (
     EvidenceStoreMixin, is_evidence_record, material_paths, path_key,
@@ -2029,7 +2029,7 @@ class InvoiceDB(EvidenceStoreMixin):
         with self._atomic_savepoint():
             self._conn.execute("DELETE FROM emails WHERE mailbox_key = ?", (m_key,))
             self._conn.execute("DELETE FROM processed_emails WHERE mailbox_key = ?", (m_key,))
-        _log.info("已清空邮箱 %s 的邮件扫描与处理同步状态", m_key)
+        _log.info("已清空邮箱 %s 的邮件扫描与处理同步状态", mask_mailbox_key(m_key))
 
 
     def reset_invoices(self):

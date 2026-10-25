@@ -1,9 +1,11 @@
+import io
 import logging
 import unittest
 from unittest.mock import Mock, patch
 
 from scripts.invoice_fetch.log_privacy import (
     PrivacyLogFilter,
+    attach_privacy_filter,
     mask_email,
     mask_filename,
     mask_invoice_number,
@@ -119,6 +121,112 @@ class LogPrivacyTests(unittest.TestCase):
         sanitized = sanitize_log_message(str(exc))
         self.assertNotIn("user@example.com", sanitized)
         self.assertIn("u***r@example.com", sanitized)
+
+    # ── Batch 3: credentials, tracebacks and handler-level coverage ─────
+
+    def test_bearer_and_secret_tokens_are_masked(self):
+        text = sanitize_log_message(
+            "request failed Authorization: Bearer gho_AbCdEf123456 api_key=sk-live-9876 "
+            "access_token=ya29.abcdefgh"
+        )
+
+        self.assertNotIn("gho_AbCdEf123456", text)
+        self.assertIn("<token:redacted>", text)
+        self.assertNotIn("sk-live-9876", text)
+        self.assertNotIn("ya29.abcdefgh", text)
+        self.assertIn("<secret:redacted>", text)
+
+    def test_jwt_and_long_blob_are_masked(self):
+        jwt = (
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        )
+        blob = "A" * 80
+
+        text = sanitize_log_message(f"header {jwt} payload {blob}")
+
+        self.assertNotIn(jwt, text)
+        self.assertIn("<jwt:redacted>", text)
+        self.assertNotIn(blob, text)
+        self.assertIn("<blob:redacted:", text)
+
+    def test_labelled_eight_digit_invoice_number_is_masked_but_date_survives(self):
+        text = sanitize_log_message("发票号码 12345678 开票日期 20261024")
+
+        self.assertNotIn("12345678", text)
+        self.assertIn("12***78", text)
+        self.assertIn("20261024", text)
+
+    def test_privacy_filter_sanitizes_exception_traceback(self):
+        import sys
+
+        try:
+            raise RuntimeError("failed for user@example.com with token=secret")
+        except RuntimeError:
+            exc_info = sys.exc_info()
+
+        record = logging.LogRecord(
+            name="invoice_fetch.db",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="邮箱扫描状态已清空",
+            args=(),
+            exc_info=exc_info,
+        )
+
+        self.assertTrue(PrivacyLogFilter().filter(record))
+
+        self.assertIsNone(record.exc_info)
+        self.assertIn("u***r@example.com", record.exc_text)
+        self.assertNotIn("user@example.com", record.exc_text)
+        self.assertNotIn("token=secret", record.exc_text)
+
+    def test_handler_level_filter_covers_an_unrelated_logger(self):
+        stream = io.StringIO()
+        handler = attach_privacy_filter(logging.StreamHandler(stream))
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger = logging.getLogger("synthetic_third_party.module")
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        try:
+            logger.warning("download failed for alice@example.com token=abcd1234")
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
+            logger.propagate = True
+
+        output = stream.getvalue()
+        self.assertNotIn("alice@example.com", output)
+        self.assertNotIn("abcd1234", output)
+
+    def test_setup_logging_installs_the_filter_on_every_root_handler(self):
+        import tempfile
+        from pathlib import Path
+
+        from scripts.invoice_fetch import __main__ as cli
+
+        root = logging.getLogger()
+        before = list(root.handlers)
+        added = []
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(cli, "RUNTIME_DIR", Path(td)):
+                cli._setup_logging(verbose=False)
+            added = [handler for handler in root.handlers if handler not in before]
+            try:
+                self.assertTrue(added, "日志初始化必须安装 handler")
+                for handler in added:
+                    self.assertTrue(
+                        any(isinstance(f, PrivacyLogFilter) for f in handler.filters),
+                        f"{type(handler).__name__} 缺少隐私过滤器",
+                    )
+            finally:
+                # Close the file handler before the temporary directory is
+                # removed, otherwise Windows keeps the log file locked.
+                for handler in added:
+                    root.removeHandler(handler)
+                    handler.close()
 
 
 if __name__ == "__main__":
