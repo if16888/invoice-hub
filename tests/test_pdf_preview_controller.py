@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 from PySide6.QtCore import QCoreApplication, QEvent, qInstallMessageHandler
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QStackedWidget, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QStackedWidget, QWidget
 
 from scripts.invoice_fetch.gui.pdf_preview_controller import PdfPreviewController
 from scripts.invoice_fetch.gui import preview_mixin
@@ -169,6 +169,148 @@ class PdfPreviewControllerContracts(unittest.TestCase):
         )
         offenders = [message for message in messages if any(token in message for token in blocked)]
         self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_show_preview_status_cancels_pending_pdf_load(self):
+        _SlowDocument.instances.clear()
+        stack = QStackedWidget()
+        host = _PreviewHost(stack)
+        host.pdf_preview_controller.document_class = _SlowDocument
+        host.pdf_preview_controller.view_class = _FakePdfView
+
+        host.pdf_preview_controller.load(Path("invoice-a.pdf"))
+        pending = _SlowDocument.instances[-1]
+        self.assertIsNone(host.pdf_preview_controller.active_view())
+
+        # The user selects something the PDF surface cannot show.
+        host._show_preview_status("暂不支持内嵌预览，请点击打开外部文件")
+
+        # The old load finishes afterwards and must not activate.
+        pending.set_ready()
+        self.app.processEvents()
+
+        self.assertIsNone(
+            host.pdf_preview_controller.active_view(),
+            "迟到的 PDF 加载不能覆盖更新的选择",
+        )
+        self.assertIsNone(host.pdf_view)
+        self.assertIsNone(host.pdf_document)
+        self.assertEqual(stack.count(), 1, "被取消的视图不能被加入预览栈")
+        self.assertIs(stack.currentWidget(), host.lbl_preview_status)
+
+    def test_show_preview_status_disposes_active_pdf_view(self):
+        stack = QStackedWidget()
+        host = _PreviewHost(stack)
+        controller = host.pdf_preview_controller
+        view = _FakePdfView(stack)
+        document = _FakeDocument(Path("invoice-a.pdf"))
+        controller._generation += 1
+        controller._activate(controller._generation, view, document)
+        self.assertIs(controller.active_view(), view)
+
+        host._show_preview_status("文件不存在")
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
+
+        self.assertIsNone(controller.active_view())
+        self.assertIsNone(host.pdf_view)
+        self.assertEqual(stack.count(), 1)
+        self.assertIs(stack.currentWidget(), host.lbl_preview_status)
+
+
+class _PreviewHost(preview_mixin.PreviewMixin):
+    """Minimal host exposing only the surface ``_show_preview_status`` touches."""
+
+    def __init__(self, stack: QStackedWidget):
+        self.preview_stack = stack
+        self.lbl_preview_status = QLabel("status")
+        stack.addWidget(self.lbl_preview_status)
+        self.overlay_toolbar = MagicMock()
+        self.pdf_preview_controller = PdfPreviewController(stack, None)
+        self.pdf_view = object()
+        self.pdf_document = object()
+        self.zoom_enabled: list[bool] = []
+
+    def _set_zoom_buttons_enabled(self, enabled):
+        self.zoom_enabled.append(enabled)
+
+
+class _FakePdfStatus:
+    Ready = "ready"
+    Error = "error"
+
+
+class _FakeSignal:
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot):
+        self._slots.append(slot)
+
+    def emit(self, value):
+        for slot in list(self._slots):
+            slot(value)
+
+
+class _SlowDocument:
+    """Document double whose ``load`` stays pending until the test says so."""
+
+    Status = _FakePdfStatus
+    instances: list["_SlowDocument"] = []
+
+    def __init__(self, parent=None):
+        self.statusChanged = _FakeSignal()
+        self._status = "loading"
+        self.loaded_path = None
+        self.closed = False
+        self.deleted = False
+        _SlowDocument.instances.append(self)
+
+    def load(self, path):
+        self.loaded_path = path
+
+    def status(self):
+        return self._status
+
+    def set_ready(self):
+        self._status = _FakePdfStatus.Ready
+        self.statusChanged.emit(self._status)
+
+    def close(self):
+        self.closed = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+
+class _FakePdfView(QWidget):
+    class PageMode:
+        MultiPage = 0
+        SinglePage = 1
+
+    class ZoomMode:
+        FitToWidth = 0
+        FitInView = 1
+        Custom = 2
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.document = None
+        self._navigator = MagicMock()
+
+    def setDocument(self, document):
+        self.document = document
+
+    def setPageMode(self, _mode):
+        pass
+
+    def setZoomMode(self, _mode):
+        pass
+
+    def zoomFactor(self):
+        return 1.0
+
+    def pageNavigator(self):
+        return self._navigator
 
 
 class _FakeDocument:

@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from .log_privacy import mask_amount, mask_invoice_number, mask_path, redact_text
 
@@ -42,8 +43,26 @@ class InvoiceInfo:
 
 # ── Shared date normalizer ──────────────────────────────────────────
 
+def _iso_date_or_empty(year: str, month: str, day: str) -> str:
+    """Return an ISO date only when the fields form a real calendar date.
+
+    Impossible dates such as ``2026-13-45`` or ``2026-02-30`` must never be
+    written into the database as a plausible-looking date, so callers get
+    ``""`` and can fall back to another candidate or leave the field empty.
+    """
+    try:
+        return date(int(year), int(month), int(day)).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
 def normalize_date(s: str) -> str:
-    """Normalize date strings like ``2026年05月01日`` → ``2026-05-01``."""
+    """Normalize date strings like ``2026年05月01日`` → ``2026-05-01``.
+
+    Recognized formats are validated against the real calendar: an impossible
+    date (e.g. ``2026-13-45``) returns ``""`` instead of the malformed string.
+    Unrecognized formats are returned unchanged for backward compatibility.
+    """
     if not s:
         return ""
     # Normalize standard CJK radicals and Kangxi radical variants of Month (\u2f26, \u2f49) and Day (\u2f3c, \u2f47, \u2f52)
@@ -52,10 +71,10 @@ def normalize_date(s: str) -> str:
     s = s.replace("\u2f3c", "日").replace("\u2f47", "日").replace("\u2f52", "日")
     m = re.match(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?", s)
     if m:
-        return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
+        return _iso_date_or_empty(m[1], m[2], m[3])
     m = re.match(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
     if m:
-        return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
+        return _iso_date_or_empty(m[1], m[2], m[3])
     return s
 
 
@@ -66,7 +85,7 @@ def parse_railway_travel_date(text: str) -> str | None:
     pattern = r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*\d{1,2}[:：]\d{2}\s*开"
     m = re.search(pattern, text)
     if m:
-        return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
+        return _iso_date_or_empty(m[1], m[2], m[3]) or None
     return None
 
 
@@ -77,7 +96,7 @@ def parse_railway_invoice_date(text: str) -> str | None:
     pattern = r"开票日期[:：]?\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日"
     m = re.search(pattern, text)
     if m:
-        return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
+        return _iso_date_or_empty(m[1], m[2], m[3]) or None
     return None
 
 
@@ -93,6 +112,13 @@ def _looks_like_mobile_phone(value: str) -> bool:
     """True for mainland mobile numbers (11 digits starting with 1[3-9])."""
     return bool(re.fullmatch(r"1[3-9]\d{9}", str(value or "")))
 
+
+def _append_parse_note(info: InvoiceInfo, note: str) -> None:
+    """Append a human-review note without discarding earlier parse notes."""
+    if info.parse_note:
+        info.parse_note += "; " + note
+    else:
+        info.parse_note = note
 
 
 # ── PDF parsing ──────────────────────────────────────────────────────
@@ -236,28 +262,27 @@ class InvoiceParser:
                 r"发\s*票\s*号\s*码\s*[:：]?\s*(\d{8,20})",
                 r"No\s*[:：.]?\s*(\d{8,20})",
             ])
-            # Fallback: look for standalone number near "发票" context
+            # Fallback: look for a standalone 8-digit number in invoice context
             if not info.invoice_number:
                 # Exclude candidate numbers appearing on lines containing bank/account keywords to prevent wrong account extraction
                 nums_8 = []
-                nums_20 = []
                 bank_kws = ["账号", "开户行", "银行", "支行", "分行", "建行", "工行", "农行", "招行", "中行", "交行", "邮储", "信用社", "账户"]
                 for line in text.splitlines():
                     if any(kw in line for kw in bank_kws):
                         continue
                     # 8-digit numbers NOT followed by letters (to exclude taxpayer IDs)
                     nums_8.extend(re.findall(r"(?<!\d)(\d{8})(?!\d|[A-Za-z])", line))
-                    # Also look for longer numbers (20-digit 全电发票 numbers)
-                    nums_20.extend(re.findall(r"(?<!\d)(\d{20})(?!\d)", line))
 
-                if nums_20:
-                    info.invoice_number = nums_20[0]
-                elif nums_8:
-                    # Skip YYYYMMDD-looking values: an issue date must not
-                    # become the invoice number that drives dedup identity.
-                    date_like = [n for n in nums_8 if not _looks_like_date_number(n)]
-                    if date_like:
-                        info.invoice_number = date_like[0]
+                # A bare 20-digit run is far more often the 校验码 of an old
+                # 增值税普通发票 (or another reference code) than an unlabelled
+                # 全电发票 number.  20-digit invoice numbers are therefore only
+                # accepted through the explicit 发票号码 label patterns above,
+                # never from an unlabelled 20-digit run.
+                # Skip YYYYMMDD-looking values: an issue date must not become
+                # the invoice number that drives dedup identity.
+                date_like = [n for n in nums_8 if not _looks_like_date_number(n)]
+                if date_like:
+                    info.invoice_number = date_like[0]
 
             # ── Invoice code (10-12 digits) ──
             info.invoice_code = self._field(text, [
@@ -276,7 +301,13 @@ class InvoiceParser:
 
             # ── Try extracting from filename (e.g. 031002500111_11803786.pdf) ──
             fname = os.path.basename(path)
-            fname_nums = re.findall(r"(\d{8,12})", fname)
+            # A date-like run in the file name (e.g. "发票20260501.pdf") is a
+            # scan/import date, not an invoice number, and must not become the
+            # dedup identity.  Same exclusion as the body-text fallback above.
+            fname_nums = [
+                n for n in re.findall(r"(\d{8,12})", fname)
+                if not _looks_like_date_number(n)
+            ]
             if not info.invoice_number and len(fname_nums) >= 2:
                 info.invoice_code = fname_nums[0]
                 info.invoice_number = fname_nums[1]
@@ -284,26 +315,39 @@ class InvoiceParser:
                 info.invoice_number = fname_nums[0]
 
             # ── Date ──
-            raw_date = self._field(text, [
+            # Collect every labelled candidate and use the first one that is a
+            # real calendar date; an impossible candidate is never written.
+            date_candidates: list[str] = []
+            for date_pattern in (
                 r"开票日期\s*[:：]?\s*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?)",
                 r"开\s*票\s*日\s*期\s*[:：]?\s*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?)",
                 r"开票日期\s*[:：]?\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
-            ])
-            if not raw_date:
+            ):
+                date_candidates.extend(
+                    match[1] for match in re.finditer(date_pattern, text)
+                )
+            if not date_candidates:
                 # Disjoint layout: "2026 05 15" near "开票日期"
                 m = re.search(r"(\d{4})\s+(\d{2})\s+(\d{2})", text)
                 if m:
-                    raw_date = f"{m[1]}年{m[2]}月{m[3]}日"
+                    date_candidates.append(f"{m[1]}年{m[2]}月{m[3]}日")
             # Standalone date fallback (e.g. YYYY年MM月DD日 anywhere in text if still not found)
-            if not raw_date:
+            if not date_candidates:
                 m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?", text)
                 if m:
-                    raw_date = f"{m[1]}年{m[2]}月{m[3]}日"
+                    date_candidates.append(f"{m[1]}年{m[2]}月{m[3]}日")
                 else:
                     m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", text)
                     if m:
-                        raw_date = f"{m[1]}-{m[2]}-{m[3]}"
-            info.invoice_date = normalize_date(raw_date)
+                        date_candidates.append(f"{m[1]}-{m[2]}-{m[3]}")
+            info.invoice_date = ""
+            for raw_date in date_candidates:
+                normalized_date = normalize_date(raw_date)
+                if normalized_date:
+                    info.invoice_date = normalized_date
+                    break
+            if date_candidates and not info.invoice_date:
+                _append_parse_note(info, "开票日期无效，已留空，请人工核对")
 
             # ── Amounts ──
             info.amount = self._field(text, [
@@ -526,7 +570,7 @@ class InvoiceParser:
                           mask_amount(info.total_amount),
                           redact_text(info.seller_name, "seller"))
             else:
-                info.parse_note = "未提取到发票号码"
+                _append_parse_note(info, "未提取到发票号码")
 
         except Exception as exc:
             info.parse_note = f"解析异常: {exc}"
@@ -1007,7 +1051,9 @@ def parse_subject(subject: str) -> dict:
 
     m = re.search(r"(\d{4})[年\-/](\d{1,2})[月\-/](\d{1,2})", subject)
     if m:
-        info["invoice_date"] = normalize_date(f"{m[1]}-{m[2]}-{m[3]}")
+        normalized_date = normalize_date(f"{m[1]}-{m[2]}-{m[3]}")
+        if normalized_date:
+            info["invoice_date"] = normalized_date
 
     if "电子发票" in subject:
         info["invoice_type"] = "电子发票"

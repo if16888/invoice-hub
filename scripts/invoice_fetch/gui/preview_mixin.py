@@ -476,6 +476,25 @@ class PreviewMixin:
             action.setEnabled(exists)
             action.setToolTip("" if exists else missing_reason)
 
+    def _reset_pdf_preview_state(self) -> None:
+        """Release the PDF surface when the preview moves to another surface.
+
+        ``QPdfDocument.load`` is asynchronous.  Switching to an image, to an
+        unsupported format, to a missing original or to a multi-selection must
+        cancel the pending load; otherwise a late ``Ready`` activates the old
+        document over the new selection and the panel shows invoice A's page
+        under invoice B's metadata.
+        """
+        controller = getattr(self, "pdf_preview_controller", None)
+        clear = getattr(controller, "clear", None)
+        if callable(clear):
+            try:
+                clear()
+            except Exception:
+                _log.debug("pdf preview reset failed", exc_info=True)
+        self.pdf_view = None
+        self.pdf_document = None
+
     def _show_preview_status(self, text):
         if text == "\u5f53\u524d\u53d1\u7968\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u539f\u4ef6":
             text = (
@@ -492,6 +511,7 @@ class PreviewMixin:
             text = "\u5f53\u524d\u683c\u5f0f\u6682\u4e0d\u652f\u6301\u5185\u5d4c\u9884\u89c8\n\u8bf7\u70b9\u51fb\u5916\u90e8\u6253\u5f00\u67e5\u770b\u539f\u4ef6"
         elif text == "\u56fe\u7247\u52a0\u8f7d\u5931\u8d25\uff0c\u6682\u4e0d\u652f\u6301\u9884\u89c8":
             text = "\u56fe\u7247\u52a0\u8f7d\u5931\u8d25\n\u8bf7\u70b9\u51fb\u5916\u90e8\u6253\u5f00\uff0c\u6216\u91cd\u65b0\u5bfc\u5165\u8be5\u6750\u6599"
+        self._reset_pdf_preview_state()
         self.lbl_preview_status.setText(text)
         self.preview_stack.setCurrentWidget(self.lbl_preview_status)
         self.overlay_toolbar.hide()
@@ -710,6 +730,7 @@ class PreviewMixin:
                 self.overlay_toolbar.hide()
                 self._set_zoom_buttons_enabled(False)
             else:
+                self._reset_pdf_preview_state()
                 self.current_image_pixmap = pixmap
                 self.image_zoom_mode = "fit_width"
                 self.image_zoom_factor = 1.0
