@@ -3036,30 +3036,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _collect_overview_metrics(self) -> dict | None:
         if not hasattr(self, "db") or self.db is None:
             return None
+        month_prefix = datetime.now().strftime("%Y-%m")
         try:
-            invoices = self.db.get_all_invoices(include_deleted=False)
+            counts = self.db.review_overview_counts(month_prefix)
         except Exception:
             return None
 
-        month_prefix = datetime.now().strftime("%Y-%m")
-        needs_fix = 0
         month_total = Decimal("0")
+        for raw_amount in counts.get("month_amounts", ()):
+            try:
+                amount_value = Decimal(str(raw_amount or "0").replace(",", "").strip() or "0")
+            except (InvalidOperation, ValueError):
+                continue
+            if amount_value.is_finite():
+                month_total += amount_value
         export_ready = 0
-
-        for inv in invoices:
-            quality = self._get_invoice_quality(inv)
-            if quality in {"待补全", "缺原件", "缺证明", "未识别"}:
-                needs_fix += 1
-            date_text = str(inv.get("expense_date") or inv.get("invoice_date") or "").strip()
-            if date_text.startswith(month_prefix):
-                try:
-                    amount_value = Decimal(
-                        str(inv.get("total_amount") or "0").replace(",", "").strip() or "0"
-                    )
-                except (InvalidOperation, ValueError):
-                    amount_value = None
-                if amount_value is not None and amount_value.is_finite():
-                    month_total += amount_value
 
         try:
             from ..claim_export import inspect_materials_for_invoices
@@ -3105,12 +3096,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         return {
             "today_imported": 0,
-            "to_review": self.db.count_invoices_for_status(TO_REVIEW),
-            "error": self.db.count_invoices_for_status(ERROR),
-            "needs_fix": needs_fix,
+            "to_review": int(counts.get("to_review", 0)),
+            "error": int(counts.get("error", 0)),
+            "needs_fix": int(counts.get("needs_fix", 0)),
             "month_total": month_total,
             "export_ready": export_ready,
-            "total": len(invoices),
+            "total": int(counts.get("total", 0)),
         }
 
     def _read_recent_runtime_logs(self, max_lines: int = 80) -> list[str]:
