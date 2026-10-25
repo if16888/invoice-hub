@@ -516,7 +516,7 @@ class WindowsFirewallProcessVisibilityTests(unittest.TestCase):
             firewall,
             "_load_elevated_process_apis",
             return_value=(FakeShell32(), FakeKernel32()),
-        ), patch.object(ctypes, "get_last_error", return_value=1223):
+        ), patch.object(ctypes, "get_last_error", return_value=1223, create=True):
             success, reason = firewall._run_elevated_process("netsh.exe", ["advfirewall"])
 
         self.assertFalse(success)

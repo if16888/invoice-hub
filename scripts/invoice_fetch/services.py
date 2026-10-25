@@ -2960,20 +2960,25 @@ def _process_email(
 
         Windows can hold a fresh download or extracted attachment open (AV
         scanner, indexer, preview handler).  On a rename/move failure the
-        original file is kept for a later retry instead of breaking the whole
-        email; the caller degrades as if no attachment had been settled.
+        original file is recorded at its existing path instead of breaking
+        the whole email or creating a successful record with no original.
         """
         try:
             return _rename_by_invoice_code(file_path, *args, **kwargs)
         except OSError as exc:
-            try:
-                kept_paths.add(str(Path(file_path).resolve()))
-            except (OSError, TypeError, ValueError):
-                pass
+            source = Path(file_path).resolve()
+            if not source.is_file():
+                # No usable source remains: let the caller keep the email
+                # pending instead of acknowledging a missing original.
+                raise
+            kept_paths.add(str(source))
             _log.warning(
-                "  附件文件被占用，保留原文件稍后重试: %s", type(exc).__name__
+                "  附件无法改名，已保留并记录原文件路径: %s", type(exc).__name__
             )
-            return ""
+            try:
+                return source.relative_to(att_handler._base.parent.resolve()).as_posix()
+            except ValueError:
+                return str(source)
 
     for att in attachments:
         if not att.extraction_warning:

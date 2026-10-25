@@ -201,6 +201,8 @@ class InvoiceDB(EvidenceStoreMixin):
             timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
         )
         try:
+            from .migrations import check_and_migrate, prepare_database_open
+
             self._conn.row_factory = sqlite3.Row
             self._buyer_warning_checker = None
             # Refuse a database written by a newer application before any DDL
@@ -217,6 +219,9 @@ class InvoiceDB(EvidenceStoreMixin):
             # an existing database before check_and_migrate touches it.
             if existing_database_file and version < LATEST_SCHEMA_VERSION:
                 self._backup_before_migration(version)
+            # Recover interrupted rebuilds only after snapshotting the original
+            # database, but before _SCHEMA can mask the missing source tables.
+            prepare_database_open(self._conn)
             self._conn.create_function(
                 "review_buyer_has_warning", 3, self._eval_buyer_warning, deterministic=False
             )
@@ -243,7 +248,6 @@ class InvoiceDB(EvidenceStoreMixin):
             _log.debug("数据库已打开: %s", self._path.name)
 
             # Run database migrations
-            from .migrations import check_and_migrate
             check_and_migrate(self._conn)
             self._conn.execute("PRAGMA foreign_keys = ON")
         except BaseException:

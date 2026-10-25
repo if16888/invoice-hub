@@ -553,6 +553,59 @@ class MobileUploadTests(unittest.TestCase):
             manifest = json.loads(server.session.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["stats"]["accepted"], 1)
 
+    def test_upload_stop_wait_is_bounded_during_blocked_file_write(self):
+        with tempfile.TemporaryDirectory() as td:
+            server = MobileUploadServer(
+                runtime_dir=Path(td) / "runtime", host="127.0.0.1", port=0,
+            )
+            session = server.start()
+            self.addCleanup(server.stop)
+            writing = threading.Event()
+            release_write = threading.Event()
+            wait_finished = threading.Event()
+            results = []
+            errors = []
+            real_write = Path.write_bytes
+
+            def slow_write(path, content):
+                if path.parent == session.original_dir:
+                    writing.set()
+                    if not release_write.wait(3.0):
+                        raise TimeoutError("synthetic blocked disk write")
+                return real_write(path, content)
+
+            def upload():
+                try:
+                    server.save_uploads([
+                        UploadedFile("slow-disk.pdf", b"%PDF-1.4 synthetic", "application/pdf")
+                    ])
+                except BaseException as exc:
+                    errors.append(exc)
+
+            def wait_for_upload():
+                try:
+                    results.append(server._wait_for_active_upload(timeout=0.05))
+                finally:
+                    wait_finished.set()
+
+            with patch.object(Path, "write_bytes", slow_write):
+                uploader = threading.Thread(target=upload, daemon=True)
+                waiter = threading.Thread(target=wait_for_upload, daemon=True)
+                uploader.start()
+                try:
+                    self.assertTrue(writing.wait(2.0))
+                    waiter.start()
+                    self.assertTrue(wait_finished.wait(0.75), "stop waited indefinitely for the state lock")
+                    self.assertEqual(results, [False])
+                finally:
+                    release_write.set()
+                    uploader.join(timeout=3.0)
+                    if waiter.ident is not None:
+                        waiter.join(timeout=3.0)
+            self.assertFalse(uploader.is_alive())
+            self.assertFalse(waiter.is_alive())
+            self.assertEqual(errors, [])
+
     def test_stop_gives_up_after_bounded_wait_for_stuck_upload(self):
         from scripts.invoice_fetch import mobile_upload
 
