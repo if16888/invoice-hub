@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -1700,14 +1701,19 @@ class InvoiceWorkflowTests(unittest.TestCase):
             msg["From"] = "billing@example.com"
             msg["Date"] = "Mon, 18 May 2026 10:00:00 +0800"
 
-            parser = StaticParser(InvoiceInfo(
+            locked_info = InvoiceInfo(
                 invoice_number="LOCK-1",
                 invoice_date="2026-05-18",
                 total_amount="88.00",
                 seller_name="Synthetic Seller",
                 parse_success=True,
                 parse_note="parsed",
-            ))
+            )
+            parser = Mock()
+            parser.parse_pdf.side_effect = [
+                locked_info,
+                replace(locked_info, invoice_number="FREE-2"),
+            ]
 
             def fake_rename(file_path, *_args, **_kwargs):
                 if Path(file_path).name == "locked.pdf":
@@ -1751,12 +1757,85 @@ class InvoiceWorkflowTests(unittest.TestCase):
                 )
                 rows = db.get_all_invoices()
 
-            # The locked file is reported, kept for a later retry, and the
-            # remaining attachment still settles: the email is not aborted.
+            # Distinct invoices must both retain usable originals; a second
+            # copy of the same invoice must not hide a missing-path failure.
             self.assertEqual(recorded, 2)
             self.assertTrue(locked_source.exists())
-            self.assertEqual(len(rows), 1)
-            self.assertIn("free.pdf", rows[0]["attachment_path"])
+            self.assertEqual(len(rows), 2)
+            by_number = {row["invoice_number"]: row for row in rows}
+            self.assertEqual(
+                (runtime / by_number["LOCK-1"]["attachment_path"]).resolve(),
+                locked_source.resolve(),
+            )
+            self.assertTrue((runtime / by_number["FREE-2"]["attachment_path"]).is_file())
+
+    def test_locked_only_attachment_records_original_before_acknowledging_email(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            att_dir = runtime / "attachments"
+            att_dir.mkdir(parents=True)
+            source = att_dir / "locked.pdf"
+            source.write_bytes(b"%PDF-1.4 synthetic locked original")
+            attachment = Attachment(
+                str(source), source.name, "application/pdf", source.stat().st_size,
+                is_invoice=True,
+            )
+            parser = StaticParser(InvoiceInfo(
+                invoice_number="LOCK-ONLY", invoice_date="2026-05-18",
+                total_amount="88.00", seller_name="Synthetic Seller", parse_success=True,
+            ))
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(
+                cli, "RUNTIME_DIR", runtime
+            ), patch.object(
+                cli, "_rename_by_invoice_code", side_effect=PermissionError("synthetic file lock")
+            ):
+                db.upsert_email(471, "invoice", "billing@example.com", "2026-05-18")
+                db.classify_email(471, True, "rule")
+                result = cli._handle_pending_email(
+                    {"uid": 471, "mailbox_key": "legacy"}, FakeFetcher(), "INBOX",
+                    StaticAttachmentHandler(att_dir, [attachment]), parser,
+                    NoopLinkDownloader(), db, {},
+                )
+                self.assertTrue(result)
+                row = db.get_all_invoices()[0]
+                self.assertEqual((runtime / row["attachment_path"]).resolve(), source.resolve())
+                self.assertTrue(source.is_file())
+                self.assertEqual(
+                    db._conn.execute("SELECT downloaded FROM emails WHERE uid=471").fetchone()[0],
+                    1,
+                )
+
+    def test_rename_error_without_remaining_original_keeps_email_pending(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = Path(td) / "runtime"
+            att_dir = runtime / "attachments"
+            att_dir.mkdir(parents=True)
+            source = att_dir / "vanished.pdf"
+            source.write_bytes(b"%PDF-1.4 synthetic original")
+
+            def failed_rename(*args, **kwargs):
+                source.unlink()
+                raise PermissionError("synthetic interrupted move")
+
+            with InvoiceDB(runtime / "invoices.db") as db, patch.object(
+                cli, "RUNTIME_DIR", runtime
+            ), patch.object(cli, "_rename_by_invoice_code", side_effect=failed_rename):
+                db.upsert_email(472, "invoice", "billing@example.com", "2026-05-18")
+                db.classify_email(472, True, "rule")
+                with self.assertRaises(PermissionError):
+                    cli._handle_pending_email(
+                        {"uid": 472, "mailbox_key": "legacy"}, FakeFetcher(), "INBOX",
+                        StaticAttachmentHandler(att_dir, [Attachment(
+                            str(source), source.name, "application/pdf", source.stat().st_size,
+                            is_invoice=True,
+                        )]),
+                        StaticParser(InvoiceInfo(
+                            invoice_number="VANISHED", invoice_date="2026-05-18",
+                            total_amount="88.00", seller_name="Synthetic Seller", parse_success=True,
+                        )), NoopLinkDownloader(), db, {},
+                    )
+                self.assertEqual(db.count_invoices(), 0)
+                self.assertEqual(len(db.get_invoice_emails_to_download()), 1)
 
     def test_is_duplicate_requires_invoice_number_identity(self):
         with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "invoices.db") as db:

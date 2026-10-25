@@ -70,6 +70,36 @@ class MigrationBackupGuardTests(unittest.TestCase):
             "新建数据库不应产生迁移前备份",
         )
 
+    def test_interrupted_table_recovery_happens_after_the_backup(self):
+        self._create_current_database()
+        with InvoiceDB(self.db_path) as db:
+            db.upsert_email(77, "Synthetic interrupted mail", "sender@example.test", "2026-10-01")
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("ALTER TABLE emails RENAME TO emails_new")
+            conn.execute("PRAGMA user_version=3")
+            conn.commit()
+        finally:
+            conn.close()
+
+        original_backup = InvoiceDB._backup_before_migration
+        observations = []
+
+        def check_before_recovery(db, version):
+            tables = {row[0] for row in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            self.assertNotIn("emails", tables)
+            self.assertIn("emails_new", tables)
+            observations.append(version)
+            return original_backup(db, version)
+
+        with mock.patch.object(InvoiceDB, "_backup_before_migration", check_before_recovery):
+            with InvoiceDB(self.db_path) as db:
+                self.assertEqual(db.get_all_email_uids("legacy"), {77})
+        self.assertTrue(observations)
+        self.assertTrue(any(self.backup_dir.iterdir()))
+
     def test_falls_back_to_raw_copy_when_verified_backup_fails(self):
         self._create_current_database()
         db = InvoiceDB(self.db_path)
