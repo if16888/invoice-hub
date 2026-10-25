@@ -85,7 +85,9 @@ htmlcov/
 .claude/
 .superpowers/
 docs/superpowers/
+# Local agent instructions must never be published (docs/release-checklist.md).
 CLAUDE.md
+AGENTS.md
 
 # Logs
 logs/

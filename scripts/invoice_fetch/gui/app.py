@@ -146,6 +146,16 @@ from .column_filters import (
 _log = logging.getLogger("invoice_fetch.gui.app")
 _log.addFilter(PrivacyLogFilter())
 
+# Center-stack order; shared by page switching and the deferred-refresh gate.
+_MAIN_PAGE_INDEX = {
+    "overview": 0,
+    "review": 1,
+    "imports": 2,
+    "export": 3,
+    "logs": 4,
+    "settings": 5,
+}
+
 GITHUB_ISSUES_URL = "https://github.com/if16888/invoice-hub/issues/new/choose"
 FEEDBACK_PRIVACY_NOTICE = (
     "请不要上传真实发票、receipt、水单、行程单、邮箱授权码、API Key、SQLite 数据库、"
@@ -739,6 +749,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_dirty = False
         self.imports_dirty = False
         self.settings_dirty = False
+        self.export_dirty = False
+        # Pages that have been opened at least once.  Their first build is
+        # eager; later refreshes are deferred while the page is hidden.
+        self._visited_page_keys: set[str] = set()
         self._limited_first_load_active = False
         self._limited_first_load_total = 0
         self._select_row_hint = -1  # hint for post-delete row selection
@@ -2972,6 +2986,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     # ── V2 Six Page IA Views ───────────────────────────────────
 
+    def _current_page_key(self) -> str:
+        """Return the key of the visible main page (``""`` before the stack exists)."""
+        stack = getattr(self, "center_stack", None)
+        if stack is None:
+            return ""
+        index = stack.currentIndex()
+        for key, page_index in _MAIN_PAGE_INDEX.items():
+            if page_index == index:
+                return key
+        return ""
+
+    def _defer_page_refresh(self, page_key: str) -> bool:
+        """Return True when a hidden page should be refreshed on its next show.
+
+        The workbench and the export page each scan the invoice table and open
+        attachment files.  Recomputing them after every review action while a
+        different page is visible blocks the UI thread for no visible result,
+        so the refresh is remembered instead.  The first build always runs
+        eagerly and a visible page is always refreshed immediately.
+        """
+        if page_key not in self._visited_page_keys:
+            return False
+        return self._current_page_key() != page_key
+
     def _collect_overview_metrics(self) -> dict | None:
         if not hasattr(self, "db") or self.db is None:
             return None
@@ -3042,6 +3080,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return [line for line in lines[-max_lines:] if line.strip()]
 
     def _refresh_overview_page(self) -> None:
+        if self._defer_page_refresh("overview"):
+            self.overview_dirty = True
+            return
+        self.overview_dirty = False
         performance_trace = self._performance_probe.begin("list_refresh", surface="overview")
         metrics = self._collect_overview_metrics()
         if performance_trace is not None:
@@ -3929,6 +3971,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _refresh_export_page(self) -> None:
         if not hasattr(self, "export_group_list"):
             return
+        if self._defer_page_refresh("export"):
+            self.export_dirty = True
+            return
+        self.export_dirty = False
         claims = []
         try:
             claims = self.db.list_claim_groups()
@@ -6264,17 +6310,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if page_trace is not None:
                 page_trace.finish("no_center_stack", page=page_key)
             return
-        page_index_map = {
-            "overview": 0,
-            "review": 1,
-            "imports": 2,
-            "export": 3,
-            "logs": 4,
-            "settings": 5,
-        }
+        page_index_map = _MAIN_PAGE_INDEX
         idx = page_index_map.get(page_key, 1)
         if hasattr(self, "center_stack") and 0 <= idx < self.center_stack.count():
             self.center_stack.setCurrentIndex(idx)
+        self._visited_page_keys.add(page_key)
         if page_trace is not None:
             page_trace.mark("page_state_update")
         self._mount_log_widget("page" if page_key == "logs" else "drawer")
@@ -6316,6 +6356,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 surface="imports",
             )
         elif page_key == "export":
+            self.export_dirty = False
             self._refresh_export_page()
         elif page_key == "settings":
             self.settings_dirty = False
