@@ -3062,10 +3062,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     month_total += amount_value
 
         try:
-            for claim in self.db.list_claim_groups():
-                stats = self._claim_export_preflight_stats(
-                    claim.get("id"),
+            from ..claim_export import inspect_materials_for_invoices
+
+            claims = self.db.list_claim_groups()
+            claim_invoices: dict[int, list[dict]] = {}
+            material_invoices: list[dict] = []
+            for claim in claims:
+                claim_id = int(claim.get("id"))
+                rows = self.db.get_claim_invoices(claim_id)
+                claim_invoices[claim_id] = rows
+                for inv in rows:
+                    if is_pending_evidence_invoice(inv):
+                        continue
+                    if (inv.get("review_status") or TO_REVIEW) == APPROVED:
+                        material_invoices.append(inv)
+            # One inspection pass for the whole page: the per-claim calls used
+            # to wait for their own small batch, which left the pool idle.
+            inspected = inspect_materials_for_invoices(material_invoices, RUNTIME_DIR)
+            materials_by_id = {
+                int(inv.get("id")): result
+                for inv, result in zip(material_invoices, inspected)
+            }
+            for claim in claims:
+                claim_id = int(claim.get("id"))
+                stats = self._claim_export_preflight_stats_for_range(
+                    claim_id,
                     include_to_review=False,
+                    invoices=claim_invoices.get(claim_id, []),
+                    materials_by_id=materials_by_id,
                 )
                 if (
                     int(stats.get(APPROVED, 0) or 0)
@@ -9788,11 +9812,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_id: int,
         *,
         include_to_review: bool,
+        invoices: list[dict] | None = None,
+        materials_by_id: dict[int, dict] | None = None,
     ) -> dict:
-        """Calculate preflight stats for the selected export status range."""
-        from ..claim_export import summarize_extra_material_issues
+        """Calculate preflight stats for the selected export status range.
 
-        invoices = self.db.get_claim_invoices(claim_id)
+        ``invoices``/``materials_by_id`` let a caller that already loaded the
+        claim rows and inspected the files reuse them, so the workbench summary
+        can inspect every claim's materials in a single pass.
+        """
+        from ..claim_export import inspect_invoice_materials, summarize_extra_material_issues
+
+        if invoices is None:
+            invoices = self.db.get_claim_invoices(claim_id)
         material_statuses = {APPROVED}
         if include_to_review:
             material_statuses.add(TO_REVIEW)
@@ -9829,7 +9861,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     else:
                         if not amount_value.is_finite():
                             stats["invalid_amount"] += 1
-        stats.update(summarize_extra_material_issues(material_invoices, RUNTIME_DIR))
+        if materials_by_id is None:
+            stats.update(summarize_extra_material_issues(material_invoices, RUNTIME_DIR))
+        else:
+            missing_attachment = missing_extra = unavailable_extra = 0
+            for inv in material_invoices:
+                result = materials_by_id.get(int(inv.get("id") or 0))
+                if result is None:
+                    # Not part of the caller's snapshot (state changed between
+                    # passes): inspect it directly instead of guessing.
+                    result = inspect_invoice_materials(inv, RUNTIME_DIR)
+                if not result["attachment_available"]:
+                    missing_attachment += 1
+                if result["missing_extra"]:
+                    missing_extra += 1
+                if result["unavailable_extra"]:
+                    unavailable_extra += 1
+            stats["missing_attachment"] = missing_attachment
+            stats["missing_extra"] = missing_extra
+            stats["unavailable_extra"] = unavailable_extra
         return stats
 
     def _format_claim_export_preflight_text(self, stats: dict) -> str:
