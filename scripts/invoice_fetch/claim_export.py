@@ -88,6 +88,26 @@ def _resolve_export_source_path(raw_value: str, runtime_dir: Path) -> Path:
     return source_path
 
 
+def _reference_source_is_available(raw_value: str, runtime_dir: Path) -> bool:
+    """Recheck the single source file one reference points at.
+
+    Reusing a copy made by an earlier reference is only safe while the source
+    still exists, so each reuse re-reads exactly that file (the same TOCTOU
+    guard the copy path uses).  Inspecting the whole invoice here would turn N
+    shared references into O(N^2) file opens on a large claim; the invoice-wide
+    flags (``missing_extra`` and linked evidence) were already validated by the
+    export preflight and do not change while the package is written.
+    """
+    try:
+        source_path = _resolve_export_source_path(raw_value, runtime_dir)
+        if not source_path.is_file():
+            return False
+        with source_path.open("rb") as handle:
+            return bool(handle.read(1))
+    except (OSError, ValueError):
+        return False
+
+
 def _normalized_finite_amount(value, *, invoice_identity: str = "当前发票") -> str:
     text = str(value or "").strip()
     if not text:
@@ -687,8 +707,9 @@ def export_claim_package(
                 source_key = path_key(_resolve_export_source_path(extra_path, runtime_dir).resolve())
                 if source_key in copied_evidence:
                     # Still recheck the source at each reference so a vanished
-                    # file cannot be hidden by a successful earlier copy.
-                    if inspect_extra_material(inv, runtime_dir)["unavailable_extra"]:
+                    # file cannot be hidden by a successful earlier copy, but
+                    # only this reference's own file (see the helper).
+                    if not _reference_source_is_available(extra_path, runtime_dir):
                         raise _required_copy_error("补充材料", invoice_identity)
                     copied_extra_path = copied_evidence[source_key]
                 else:
