@@ -331,7 +331,12 @@ class ExportMaterialPreflightTests(unittest.TestCase):
                     window._sync_export_claim_selection()
 
                     self.assertTrue(window.btn_run_export_page.isEnabled())
+                    self.assertEqual(window.export_check_missing_extra.lbl_value.text(), "无")
+                    window.export_scope.setCurrentIndex(1)
                     self.assertEqual(window.export_check_missing_extra.lbl_value.text(), "1 张")
+                    self.assertFalse(window.btn_run_export_page.isEnabled())
+                    window.export_scope.setCurrentIndex(0)
+                    self.assertTrue(window.btn_run_export_page.isEnabled())
                     self.assertIn("已通过发票可导出", window.lbl_export_action_hint.text())
 
                     window.combo_claims.clear()

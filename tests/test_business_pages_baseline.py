@@ -92,8 +92,8 @@ class BusinessPagesBaselineTests(unittest.TestCase):
                     self.app.processEvents()
 
                 self.assertEqual(window.export_check_approved.property("state"), "success")
-                self.assertEqual(window.export_check_pending.property("state"), "warning")
-                self.assertEqual(window.export_check_pending.lbl_value.text(), "1 张")
+                self.assertEqual(window.export_check_pending.property("state"), "muted")
+                self.assertEqual(window.export_check_pending.lbl_value.text(), "1 张（不导出）")
                 self.assertEqual(window.export_check_naming.property("state"), "success")
                 self.assertEqual(
                     window.export_check_naming.lbl_value.text(),

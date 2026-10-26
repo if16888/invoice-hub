@@ -8,6 +8,7 @@ isolation that prevents object graphs from accumulating across modules.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -311,6 +312,12 @@ def main() -> int:
         total_tests += ran
         total_skipped += skipped
         if returncode != 0:
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                details = [line for line in _output.splitlines()
+                           if line.startswith(("FAIL:", "ERROR:", "AssertionError:", "AttributeError:", "RuntimeError:"))]
+                message = (module + "\n" + "\n".join(details))[:6000]
+                message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                print("::error::" + message, flush=True)
             print(
                 f"ISOLATED TEST FAILURE: {module} exited {returncode} "
                 f"({_exit_hex(returncode)}); no retry is performed.",

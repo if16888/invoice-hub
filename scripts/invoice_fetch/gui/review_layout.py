@@ -388,7 +388,25 @@ def _install_table_remainder_contract(window) -> None:
         if applying or not isValid(table) or getattr(window, "_shutdown_requested", False):
             return
         applying = True
+        window._adjusting_review_columns = True
         try:
+            viewport_width = max(0, table.viewport().width())
+            compact = viewport_width < 720
+            # Keep assignment confirmation before the long identifier when
+            # native font minimums exceed the remaining compact width.
+            claim_visual = header.visualIndex(6)
+            number_visual = header.visualIndex(INVOICE_NUMBER_COLUMN)
+            if compact and claim_visual > number_visual:
+                header.moveSection(claim_visual, number_visual)
+            elif not compact and claim_visual < number_visual:
+                header.moveSection(claim_visual, number_visual)
+            for column in (1, 2):
+                table.setColumnHidden(column, compact)
+            if compact:
+                other_width = sum(table.columnWidth(index) for index in range(table.columnCount())
+                                  if index != SELLER_COLUMN and not table.isColumnHidden(index))
+                table.setColumnWidth(SELLER_COLUMN, max(120, viewport_width - other_width))
+                return
             seller_width = max(
                 SELLER_MIN_WIDTH,
                 min(SELLER_MAX_WIDTH, table.columnWidth(SELLER_COLUMN)),
@@ -444,6 +462,7 @@ def _install_table_remainder_contract(window) -> None:
                             table.columnWidth(SELLER_COLUMN) - shrink_seller,
                         )
         finally:
+            window._adjusting_review_columns = False
             applying = False
 
     # app.eventFilter and _on_header_section_resized resolve this hook at call
