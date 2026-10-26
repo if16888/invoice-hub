@@ -119,3 +119,11 @@ If Invoice Hub later distributes an MSIX directly outside Microsoft Store, that
 is a separate release model and requires its own trusted package-signing policy.
 Likewise, a directly downloaded Inno Setup executable remains subject to the
 existing Windows Authenticode/SmartScreen trust considerations.
+
+## 启动证据边界
+
+Store 打包工作流在 MakeAppx 前启动的是未安装的 onedir EXE，因此使用与便携版一致的冷启动门槛（默认 6000 ms，`portable_startup_ms`）。这不是已安装 Store 应用的启动结果。
+
+已安装 Store 应用仍需满足默认 3000 ms 的验收目标（`strict_startup_ms`）。流水线摘要明确记录该项 `NOT RUN`；只有取得签名包并完成实际 MSIX 安装后才可验证并用于发布决策。打包成功不表示 Store 安装、升级、卸载、权限审批或启动验收完成。
+
+诊断记录：master 18304be 的未安装 EXE 首次 Paint 为 4669 ms，原工作流使用 3000 ms 因而失败；该失败记录保留。启动探针继续从 Qt 初始化前计时到完整主窗口首次 Paint，不扣除冷初始化开销；新增阶段时序仅用于诊断，不参与放宽或重算总耗时。

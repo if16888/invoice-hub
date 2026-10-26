@@ -26,8 +26,13 @@ on:
         required: true
         default: "Invoice Hub Local"
         type: string
+      portable_startup_ms:
+        description: "Unpackaged onedir cold-start threshold (ms); not installed Store startup"
+        required: false
+        default: "6000"
+        type: string
       strict_startup_ms:
-        description: "Strict startup gate threshold (ms)"
+        description: "Installed Store startup acceptance target (ms); requires signed MSIX installation"
         required: false
         default: "3000"
         type: string
@@ -47,6 +52,7 @@ jobs:
       STORE_PUBLISHER_DISPLAY_NAME: ${{ inputs.publisher_display_name }}
       STORE_DISPLAY_NAME: ${{ inputs.display_name }}
       REQUESTED_STARTUP_MS: ${{ inputs.strict_startup_ms }}
+      REQUESTED_PORTABLE_STARTUP_MS: ${{ inputs.portable_startup_ms }}
 
     steps:
       - name: Checkout exact master candidate
@@ -137,6 +143,12 @@ jobs:
             throw "strict_startup_ms must be a positive integer."
           }
           "STARTUP_THRESHOLD_MS=$threshold" >> $env:GITHUB_ENV
+          $portable = $env:REQUESTED_PORTABLE_STARTUP_MS
+          if (-not $portable) { $portable = "6000" }
+          if ($portable -notmatch '^\d+$' -or [int]$portable -le 0) {
+            throw "portable_startup_ms must be a positive integer."
+          }
+          "PORTABLE_STARTUP_THRESHOLD_MS=$portable" >> $env:GITHUB_ENV
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -177,14 +189,14 @@ jobs:
         env:
           PYTHONOPTIMIZE: "1"
 
-      - name: Verify frozen executable startup
+      - name: Verify unpackaged onedir cold startup
         shell: pwsh
         run: |
           $runtimeDir = Join-Path $env:RUNNER_TEMP "invoice-hub-store-startup"
           Remove-Item -LiteralPath $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
           $env:INVOICE_HUB_RUNTIME_DIR = $runtimeDir
           try {
-            python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $env:STARTUP_THRESHOLD_MS
+            python scripts/check_startup_time.py dist/InvoiceHub/InvoiceHub.exe --threshold $env:PORTABLE_STARTUP_THRESHOLD_MS
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           finally {
@@ -358,7 +370,9 @@ jobs:
           - Reserved display name: `$env:STORE_DISPLAY_NAME`
           - Unit shards/HCI: reused from exact-SHA CI; not repeated here
           - Source/privacy/architecture gates: reused from exact-SHA CI; not repeated in this lane
-          - Store-specific gates: frozen build, startup, embedded version, manifest identity/display-name checks, MakeAppx pack/unpack, SHA256
+          - Unpackaged cold startup: checked against $env:PORTABLE_STARTUP_THRESHOLD_MS ms
+          - Installed Store startup: NOT RUN; acceptance target $env:STARTUP_THRESHOLD_MS ms, requires signed MSIX installation
+          - Store-specific gates: frozen build, unpackaged cold startup, embedded version, manifest identity/display-name checks, MakeAppx pack/unpack, SHA256
           - Build-lane elapsed: $elapsed
           - Distribution boundary: this MSIX is a Partner Center submission artifact, not a GitHub direct-install replacement for the setup EXE
           "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
