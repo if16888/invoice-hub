@@ -87,10 +87,13 @@ def require_playwright_driver(driver_dir: str | Path) -> None:
     """Raise when the bundled Playwright driver is missing."""
     path = Path(driver_dir)
     try:
-        entries = {entry.name.lower() for entry in path.iterdir()} if path.is_dir() else set()
+        node_present = any(candidate.is_file() and candidate.stat().st_size > 0
+                           for candidate in (path / "node.exe", path / "node"))
+        cli = path / "package" / "cli.js"
+        cli_present = cli.is_file() and cli.stat().st_size > 0
     except OSError:
-        entries = set()
-    if not entries or not any(name.startswith("playwright") for name in entries):
+        node_present = cli_present = False
+    if not (node_present and cli_present):
         raise FileNotFoundError(
             f"发行包缺少 Playwright driver，已停止打包：{os.fspath(path)}"
         )
