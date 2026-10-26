@@ -15,10 +15,58 @@ _log = logging.getLogger(__name__)
 
 KEYRING_SERVICE = "invoice_mail_auth_code"
 
+# The credential store is a hard dependency of the shipped builds, but the
+# import is deliberately tolerant so a broken/stripped install does not fail at
+# import time.  Every entry point therefore has to report a missing store
+# explicitly instead of raising ``AttributeError: 'NoneType' ...``.
+CREDENTIAL_STORE_UNAVAILABLE_MESSAGE = (
+    "系统凭据管理器不可用（keyring 组件未安装或加载失败）。"
+    "请重新安装应用；若从源码运行，请先执行 pip install -r requirements.txt。"
+)
+
+
+class CredentialStoreUnavailable(RuntimeError):
+    """The OS credential store backend is not available on this install."""
+
+
+class CredentialStoreError(RuntimeError):
+    """The credential store rejected an operation.
+
+    The message is safe to show to the user: backend messages can contain
+    account or key material and are only ever logged as an exception type.
+    """
+
+
+def _credential_store():
+    """Return the keyring module, failing with a clear message when missing."""
+    if keyring is None:
+        _log.error("Credential store unavailable: keyring import failed")
+        raise CredentialStoreUnavailable(CREDENTIAL_STORE_UNAVAILABLE_MESSAGE)
+    return keyring
+
+
+def _is_password_not_found_error(exc: BaseException) -> bool:
+    """Return whether a delete failure only means "nothing stored"."""
+    return (
+        "not found" in str(exc).lower()
+        or "passworddeleteerror" in type(exc).__name__.lower()
+    )
+
 
 def get_auth_code(email: str) -> str:
     """Retrieve the mailbox app password/auth code for *email* from OS keyring."""
-    secret = keyring.get_password(KEYRING_SERVICE, email)
+    store = _credential_store()
+    try:
+        secret = store.get_password(KEYRING_SERVICE, email)
+    except Exception as exc:
+        # Backend messages may contain account material: log the type only.
+        _log.error(
+            "Mailbox credential lookup failed: error_type=%s",
+            type(exc).__name__,
+        )
+        raise CredentialStoreError(
+            "无法从系统凭据管理器读取该邮箱的授权码。请在设置中重新填写授权码后重试。"
+        ) from None
     if not secret:
         _log.error(
             "Missing mailbox auth code. Run:\n"
@@ -87,6 +135,8 @@ def _resolve_ai_api_key(provider: str, profile_id: str = "") -> tuple[str, str]:
     services.append((_ai_keyring_service(provider), "provider"))
 
     for service, source in services:
+        if keyring is None:
+            break
         try:
             secret = keyring.get_password(service, "default")
             if secret:
@@ -123,7 +173,7 @@ def get_ai_api_key_source(provider: str, profile_id: str = "") -> str:
 
 def has_ai_profile_api_key(provider: str, profile_id: str = "") -> bool:
     """Strictly check for a profile-scoped AI key for the exact provider."""
-    if not provider or not profile_id:
+    if not provider or not profile_id or keyring is None:
         return False
     try:
         secret = keyring.get_password(_ai_keyring_service(provider, profile_id), "default")
@@ -134,8 +184,16 @@ def has_ai_profile_api_key(provider: str, profile_id: str = "") -> bool:
 
 def set_ai_api_key(provider: str, api_key: str, profile_id: str = "") -> None:
     """Store the AI API key in OS keyring."""
+    store = _credential_store()
     service = _ai_keyring_service(provider, profile_id)
-    keyring.set_password(service, "default", api_key)
+    try:
+        store.set_password(service, "default", api_key)
+    except Exception as exc:
+        # Never log the backend message: it may echo the key or account data.
+        _log.error("AI credential write failed: error_type=%s", type(exc).__name__)
+        raise CredentialStoreError(
+            "无法将 AI API Key 写入系统凭据管理器。请检查 Windows 凭据管理器是否可用后重试。"
+        ) from None
     _log.info("Stored AI key in keyring (service=%s)", service)
 
 
@@ -147,7 +205,14 @@ def has_ai_api_key(provider: str, profile_id: str = "") -> bool:
 
 
 def delete_ai_api_key(provider: str, profile_id: str = "") -> None:
-    """Delete the AI API key from OS keyring."""
+    """Delete the AI API key from OS keyring.
+
+    Best-effort by contract (the UI refreshes its own state afterwards), but a
+    missing credential store must not raise a bare ``AttributeError``.
+    """
+    if keyring is None:
+        _log.warning("AI credential deletion skipped: credential store unavailable")
+        return
     service = _ai_keyring_service(provider, profile_id)
     try:
         keyring.delete_password(service, "default")
@@ -159,13 +224,20 @@ def delete_ai_api_key(provider: str, profile_id: str = "") -> None:
 
 def set_auth_code(email: str, auth_code: str) -> None:
     """Store the mailbox app password/auth code for *email* in OS keyring."""
-    keyring.set_password(KEYRING_SERVICE, email, auth_code)
+    store = _credential_store()
+    try:
+        store.set_password(KEYRING_SERVICE, email, auth_code)
+    except Exception as exc:
+        _log.error("Mailbox credential write failed: error_type=%s", type(exc).__name__)
+        raise CredentialStoreError(
+            "无法将邮箱授权码写入系统凭据管理器。请检查 Windows 凭据管理器是否可用后重试。"
+        ) from None
     _log.info("Stored mailbox credential in keyring")
 
 
 def has_auth_code(email: str) -> bool:
     """Check if the mailbox app password/auth code for *email* exists in OS keyring."""
-    if not email:
+    if not email or keyring is None:
         return False
     try:
         secret = keyring.get_password(KEYRING_SERVICE, email)
@@ -175,15 +247,31 @@ def has_auth_code(email: str) -> bool:
 
 
 def delete_auth_code(email: str) -> None:
-    """Delete the mailbox app password/auth code for *email* from OS keyring."""
+    """Delete the mailbox app password/auth code for *email* from OS keyring.
+
+    A missing credential store or a rejected deletion raises a sanitized
+    :class:`CredentialStoreError` so the caller can tell the user the truth.
+    "Nothing stored" is not an error (the desired end state already holds).
+    """
     if not email:
         return
+    store = _credential_store()
     try:
-        keyring.delete_password(KEYRING_SERVICE, email)
-        _log.info("Deleted mailbox credential from keyring")
-    except Exception as e:
-        err_msg = str(e)
-        if "not found" in err_msg.lower() or "passworddeleteerror" in type(e).__name__.lower():
-            pass
-        else:
-            _log.warning("Failed to remove mailbox credential: %s", err_msg)
+        store.delete_password(KEYRING_SERVICE, email)
+    except Exception as exc:
+        if _is_password_not_found_error(exc):
+            _log.debug(
+                "Mailbox credential already absent: error_type=%s",
+                type(exc).__name__,
+            )
+            return
+        # Backend messages can contain account material: log the type only.
+        _log.warning(
+            "Mailbox credential deletion failed: error_type=%s",
+            type(exc).__name__,
+        )
+        raise CredentialStoreError(
+            "无法从系统凭据管理器删除该邮箱授权码。"
+            "请稍后重试，或在 Windows 凭据管理器中手动删除。"
+        ) from None
+    _log.info("Deleted mailbox credential from keyring")
