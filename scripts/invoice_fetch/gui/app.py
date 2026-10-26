@@ -2912,10 +2912,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if header is not None and obj is header.viewport():
             if event.type() == QEvent.MouseButtonPress:
                 self._column_filter_header_press_pos = event.position().toPoint()
-        elif hasattr(self, "table") and obj is self.table:
+        elif hasattr(self, "table") and obj in (self.table, self.table.viewport()):
             if event.type() == QEvent.Resize:
                 self._adjust_column_4_width()
+                # Native table frames can resize before their viewport does.
+                # Reconcile once Qt has delivered the viewport/layout events.
+                if not getattr(self, "_review_columns_resize_pending", False):
+                    self._review_columns_resize_pending = True
+                    QTimer.singleShot(0, self._finish_review_columns_resize)
         return super().eventFilter(obj, event)
+
+    def _finish_review_columns_resize(self):
+        self._review_columns_resize_pending = False
+        if not getattr(self, "_shutdown_requested", False):
+            self._adjust_column_4_width()
 
     def _invoke_workbench_action(self, action) -> bool:
         if QApplication.activeModalWidget() is not None:
