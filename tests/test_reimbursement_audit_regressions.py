@@ -93,6 +93,8 @@ class ReimbursementAuditTests(unittest.TestCase):
         self.assertLessEqual(header.sectionViewportPosition(6) + header.sectionSize(6), w.table.viewport().width())
         self.assertFalse(w.table.isColumnHidden(4))
         self.assertFalse(w.table.isColumnHidden(6))
+        self.assertLess(header.visualIndex(6), header.visualIndex(5))
         w.table.setFixedWidth(1000)
         self.settle()
         self.assertTrue(all(not w.table.isColumnHidden(column) for column in (1, 2, 5)))
+        self.assertGreater(header.visualIndex(6), header.visualIndex(5))

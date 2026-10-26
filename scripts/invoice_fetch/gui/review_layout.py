@@ -392,6 +392,14 @@ def _install_table_remainder_contract(window) -> None:
         try:
             viewport_width = max(0, table.viewport().width())
             compact = viewport_width < 720
+            # Keep assignment confirmation before the long identifier when
+            # native font minimums exceed the remaining compact width.
+            claim_visual = header.visualIndex(6)
+            number_visual = header.visualIndex(INVOICE_NUMBER_COLUMN)
+            if compact and claim_visual > number_visual:
+                header.moveSection(claim_visual, number_visual)
+            elif not compact and claim_visual < number_visual:
+                header.moveSection(claim_visual, number_visual)
             for column in (1, 2):
                 table.setColumnHidden(column, compact)
             if compact:
