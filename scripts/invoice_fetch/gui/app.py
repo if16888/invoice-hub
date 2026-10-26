@@ -2821,6 +2821,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._column_filter_header_press_pos = None
 
     def _on_header_section_resized(self, index, old_size, new_size):
+        if getattr(self, "_adjusting_review_columns", False):
+            return
         if getattr(self, "_ignore_min_widths", False):
             return
         min_w = getattr(self, "_min_column_widths", {}).get(index)
@@ -2832,6 +2834,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._adjust_column_4_width()
 
     def _adjust_column_4_width(self):
+        if getattr(self, "_adjusting_review_columns", False):
+            return
+        self._adjusting_review_columns = True
+        try:
+            self._adjust_review_columns_for_viewport()
+        finally:
+            self._adjusting_review_columns = False
+
+    def _adjust_review_columns_for_viewport(self):
         if getattr(self, "_ignore_min_widths", False):
             return
         if not hasattr(self, "table") or self.table is None:
@@ -2839,9 +2850,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         viewport_w = self.table.viewport().width()
         if viewport_w <= 0:
             return
+        # Native fonts, DPI and expanded navigation can leave far less table
+        # space than the outer window width suggests. Preserve the assignment
+        # confirmation columns; secondary fields remain in invoice details.
+        compact = viewport_w < 720
+        for column in (1, 2):
+            self.table.setColumnHidden(column, compact)
         other_w = 0
         for i in range(self.table.columnCount()):
-            if i != 4:
+            if i != 4 and not self.table.isColumnHidden(i):
                 other_w += self.table.columnWidth(i)
         target_w = max(120, viewport_w - other_w)
         header = self.table.horizontalHeader()
