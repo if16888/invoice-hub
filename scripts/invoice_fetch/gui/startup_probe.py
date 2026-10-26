@@ -158,6 +158,9 @@ class StartupProbeSession(QObject):
             main_window_show_ms=show_ms,
             first_paint_ms=first_paint_ms,
         )
+        stages = getattr(self._window, "_startup_launch_stage_ms", None)
+        if isinstance(stages, dict):
+            metrics["LAUNCH_STAGE_MS"] = dict(stages)
         try:
             _write_metrics(metrics)
             _print_metrics(metrics)
@@ -213,21 +216,30 @@ class StartupProbeSession(QObject):
 def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> None:
     """Launch the production startup path and exit after completed first Paint."""
     launch_started_at = time.monotonic()
+    stages = {}
+    def mark(stage):
+        stages[stage] = max(0, int((time.monotonic() - launch_started_at) * 1000))
     configure_high_dpi_platform()
     app = QApplication(sys.argv)
+    mark("qt_application_ready")
 
     # Match normal production startup through first paint: show the splash,
     # build the launch-visible InvoiceReviewApp workbench with startup_probe=False,
     # install the evidence observer, then reveal the real review workbench.
     splash = StartupSplash()
+    mark("splash_constructed")
     splash.show()
+    mark("splash_shown")
     splash.show_message("正在启动 Invoice Hub...", 15)
+    mark("splash_events_processed")
     window = FirstPaintDeferredInvoiceReviewApp(
         db_path,
         splash=splash,
         startup_probe=False,
     )
 
+    mark("window_constructed")
+    window._startup_launch_stage_ms = stages
     session = StartupProbeSession(
         app,
         window,
@@ -238,4 +250,5 @@ def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> N
     window._startup_probe_session = session
     session.start()
     reveal_startup_window(window, splash)
+    mark("window_revealed")
     sys.exit(app.exec())

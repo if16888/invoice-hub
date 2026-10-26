@@ -368,6 +368,15 @@ class TestStoreWorkflowPolicy(unittest.TestCase):
         self.assertTrue((PROJECT_ROOT / "packaging" / "invoice_hub_windows.iss").is_file())
         self.assertTrue((PROJECT_ROOT / ".github" / "workflows" / "windows-release.yml").is_file())
 
+    def test_uninstalled_cold_start_does_not_claim_installed_store_acceptance(self):
+        workflow = (PROJECT_ROOT / ".github/workflows/windows-store-msix.yml").read_text(encoding="utf-8")
+        self.assertIn('default: "6000"', workflow)
+        self.assertIn('default: "3000"', workflow)
+        self.assertIn('InvoiceHub.exe --threshold $env:PORTABLE_STARTUP_THRESHOLD_MS', workflow)
+        self.assertNotIn('InvoiceHub.exe --threshold $env:STARTUP_THRESHOLD_MS', workflow)
+        self.assertIn('Installed Store startup: NOT RUN', workflow)
+        self.assertIn('requires signed MSIX installation', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

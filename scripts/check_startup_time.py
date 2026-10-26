@@ -164,6 +164,12 @@ def run_probe(cmd: list[str]) -> dict[str, object]:
                 metrics["QT_PAINT_EVENT_COMPLETED"] = (
                     data.get("QT_PAINT_EVENT_COMPLETED") is True
                 )
+                stages = data.get("LAUNCH_STAGE_MS")
+                if isinstance(stages, dict):
+                    metrics["LAUNCH_STAGE_MS"] = {
+                        str(key): value for key, value in stages.items()
+                        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                    }
                 print("Parsed metrics successfully from probe JSON file.")
         except Exception as exc:
             print(f"WARNING: failed to parse probe JSON file — {exc}", file=sys.stderr)
@@ -316,6 +322,11 @@ def main() -> None:
     print(f"| 发布门槛判定耗时 (first-paint total) | {gate_ms:<23} |")
     print(f"| 超时判定门槛 (Threshold Limit)        | {threshold:<23} |")
     print("+----------------------------------------------------------------+")
+    if metrics.get("LAUNCH_STAGE_MS"):
+        diagnostic = json.dumps(metrics["LAUNCH_STAGE_MS"], sort_keys=True)
+        print("Launch stages (cumulative ms, diagnostic only): " + diagnostic)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print("::notice::Startup launch stages: " + diagnostic)
     print(f"Probe contract: {metrics['PROBE_CONTRACT']}")
     print(f"Qt paint event completed: {metrics['QT_PAINT_EVENT_COMPLETED']}")
     print("Presentation boundary: Qt Paint event completed; OS compositor/display presentation is not asserted.")
