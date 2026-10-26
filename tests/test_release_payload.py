@@ -98,7 +98,24 @@ class ReleasePayloadTests(unittest.TestCase):
 
             driver.mkdir()
             (driver / "playwright.cmd").write_text("echo", encoding="utf-8")
+            with self.assertRaises(FileNotFoundError):
+                release_payload.require_playwright_driver(driver)
+            (driver / "node.exe").write_bytes(b"node executable")
+            with self.assertRaises(FileNotFoundError):
+                release_payload.require_playwright_driver(driver)
+            (driver / "package").mkdir()
+            (driver / "package" / "cli.js").write_text("driver CLI", encoding="utf-8")
             release_payload.require_playwright_driver(driver)
+            (driver / "node.exe").unlink()
+            (driver / "node").write_bytes(b"node executable")
+            release_payload.require_playwright_driver(driver)
+            (driver / "package" / "cli.js").write_bytes(b"")
+            with self.assertRaises(FileNotFoundError):
+                release_payload.require_playwright_driver(driver)
+
+    def test_installed_playwright_driver_matches_payload_contract(self):
+        import playwright
+        release_payload.require_playwright_driver(Path(playwright.__file__).parent / "driver")
 
     def test_release_spec_uses_the_shared_payload_guard(self):
         spec_text = PACKAGING_SPEC.read_text(encoding="utf-8")
