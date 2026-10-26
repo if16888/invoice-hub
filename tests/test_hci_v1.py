@@ -155,7 +155,7 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertIn("重新检查", window.lbl_overview_next_actions.text())
                 self.assertEqual(
                     window.overview_activity_card.lbl_title.text(),
-                    "今天已完成",
+                    "当前概况",
                 )
                 window.resize(1180, 500)
                 window._switch_main_page("overview")

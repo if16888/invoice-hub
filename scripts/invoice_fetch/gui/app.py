@@ -2104,6 +2104,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         record_header_layout.addWidget(self.lbl_record_selection)
         self.btn_review_batch_menu = QToolButton(self.record_header)
         self.btn_review_batch_menu.setText("批量 ▾")
+        self.btn_review_batch_menu.setMinimumHeight(32)
         self.btn_review_batch_menu.setToolTip("区分已加载记录和全部筛选结果；批量通过会跳过异常记录")
         self.btn_review_batch_menu.setPopupMode(QToolButton.InstantPopup)
         self.review_batch_menu = QMenu(self.btn_review_batch_menu)
@@ -3213,7 +3214,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.lbl_overview_next_actions.setText("当前队列较干净，可以直接检查报销组并准备导出。")
         if hasattr(self, "lbl_overview_export_hint"):
             self.lbl_overview_export_hint.setText(
-                f"缺材料 {metrics['needs_fix']} 张 · 异常 {metrics['error']} 张 · 可导出 {metrics['export_ready']} 组。"
+                f"待补全 {metrics['needs_fix']} 张 · 异常 {metrics['error']} 张 · 可导出 {metrics['export_ready']} 组。"
             )
         if hasattr(self, "overview_timeline"):
             self.overview_timeline.clear()
@@ -3845,7 +3846,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.mail_account_checkboxes = []
 
             if not accounts:
-                lbl_empty = QLabel("暂无已启用邮箱账号。点击“管理”进入系统设置完成配置。")
+                lbl_empty = QLabel("暂无已启用邮箱账号。点击“更多 → 管理邮箱”完成配置。")
                 lbl_empty.setStyleSheet("color: #667085; font-size: 12px;")
                 self.mail_checklist_layout.addWidget(lbl_empty)
             else:
@@ -4007,6 +4008,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         button.style().polish(button)
 
     def _refresh_export_page(self) -> None:
+        self._export_material_snapshot = {}
+        try:
+            self._refresh_export_page_snapshot()
+        finally:
+            self._export_material_snapshot = None
+
+    def _refresh_export_page_snapshot(self) -> None:
         if not hasattr(self, "export_group_list"):
             return
         if self._defer_page_refresh("export"):
@@ -5480,6 +5488,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_invoices_card = SectionCard("组内发票", hint="这里仅展示当前报销组内的发票队列，方便先看缺口再导出。")
         self.export_invoices_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.export_invoice_list = EntityList()
+        self.export_invoice_list.itemDoubleClicked.connect(self._open_export_invoice)
         self.export_invoices_card.body_layout.addWidget(self.export_invoice_list, 1)
         self.lbl_export_invoice_meta = QLabel("当前未选择报销组。")
         self.lbl_export_invoice_meta.setWordWrap(True)
@@ -5495,11 +5504,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Structured ChecklistRow preflight items (replaces long text labels)
         self.export_check_approved = ChecklistRow("已通过发票", "—")
         self.export_check_pending = ChecklistRow("待处理", "—")
-        self.export_check_missing_attach = ChecklistRow("缺原件", "—")
-        self.export_check_missing_amount = ChecklistRow("缺金额", "—")
-        self.export_check_invalid_amount = ChecklistRow("金额无效", "—")
-        self.export_check_missing_extra = ChecklistRow("缺补充材料", "—")
-        self.export_check_unavailable_extra = ChecklistRow("材料不可用", "—")
+        self.export_check_missing_attach = ChecklistRow("缺原件（全组）", "—")
+        self.export_check_missing_amount = ChecklistRow("缺金额（全组）", "—")
+        self.export_check_invalid_amount = ChecklistRow("金额无效（全组）", "—")
+        self.export_check_missing_extra = ChecklistRow("缺补充材料（全组）", "—")
+        self.export_check_unavailable_extra = ChecklistRow("材料不可用（全组）", "—")
         self.export_check_dir = ChecklistRow("导出目录", "未设置")
         self.export_integrity_card.body_layout.addWidget(self.export_check_approved)
         self.export_integrity_card.body_layout.addWidget(self.export_check_pending)
@@ -5520,7 +5529,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_export_action_hint.setWordWrap(True)
         self.lbl_export_action_hint.setStyleSheet("color: #475467; font-size: 12px;")
         self.export_integrity_card.body_layout.addWidget(self.lbl_export_action_hint)
-        self.btn_run_export_page = make_button("导出报销包", variant="primary", min_width=120)
+        self.btn_run_export_page = make_button("导出已通过发票", variant="primary", min_width=120)
         self.btn_run_export_page.clicked.connect(self._export_claim_package)
         self.export_integrity_card.body_layout.addWidget(self.btn_run_export_page)
         self.export_progress_bar = QProgressBar()
@@ -6170,7 +6179,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 # can tell which record to fix instead of only seeing a count.
                 # Uses the same inspection helpers as the completeness checklist.
                 row_blockers = []
-                if not inspect_original_attachment(inv, RUNTIME_DIR)["available"]:
+                snapshot = getattr(self, "_export_material_snapshot", None)
+                cached = snapshot.get(claim_id, ([], {}))[1].get(int(inv["id"])) if snapshot is not None else None
+                if not (cached["attachment_available"] if cached is not None else inspect_original_attachment(inv, RUNTIME_DIR)["available"]):
                     row_blockers.append("缺原件")
                 amount_text = str(inv.get("total_amount") or "").strip()
                 if not amount_text:
@@ -6190,6 +6201,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     row_blockers.append("材料不可用")
                 suffix = f"  ⚠ {'、'.join(row_blockers)}" if row_blockers else ""
                 self.export_invoice_list.addItem(f"{status} · {seller} · {amount} · {number}{suffix}")
+                self.export_invoice_list.item(self.export_invoice_list.count() - 1).setData(Qt.UserRole, inv["id"])
             self.lbl_export_invoice_meta.setText(
                 f"当前报销组共 {len(invoices)} 张记录，其中已通过 {stats.get(APPROVED, 0)} 张，待处理 {stats.get(TO_REVIEW, 0)} 张。"
             )
@@ -7624,7 +7636,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_claim_total.setText(f"{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
         self.lbl_claim_total.setToolTip(group_name)
         if hasattr(self._detail_panel, "lbl_claim_assignment"):
-            self._detail_panel.lbl_claim_assignment.set_value(group_name)
+            self._detail_panel.lbl_claim_assignment.set_value(
+                (self._get_invoice_claim_group(self.current_invoice) or "未关联报销组") if self.current_invoice else "未关联报销组"
+            )
             self._detail_panel.btn_claim_assignment.setText("更换")
 
         if hasattr(self, "btn_add_to_claim"):
@@ -9368,8 +9382,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         finally:
             self._end_data_operation("批量归组")
 
+    def _open_export_invoice(self, item):
+        invoice_id = item.data(Qt.UserRole)
+        if invoice_id is None:
+            return
+        self._switch_main_page("review")
+        self._reset_invoice_filters()
+        self._change_filter("all")
+        self._select_invoice_by_id(invoice_id)
+
     def _choose_claim_invoices(self):
         self._switch_main_page("review")
+        self._reset_invoice_filters()
+        self._change_filter("all")
         if self.center_stack.currentWidget() is self.review_page:
             self._detail_panel.detail_tabs.setCurrentIndex(1)
             self.statusBar().showMessage("选择发票后，在右侧“报销信息”中加入报销组。", 8000)
@@ -9726,7 +9751,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._load_claims()
             self._select_row_hint = self._capture_selection_row_hint()
             if current_only:
-                self._load_invoices(preserve_invoice_id=inv["id"])
+                original_page_size = self.review_paging.page_size
+                self.review_paging.page_size = max(original_page_size, len(self.invoices_list))
+                try:
+                    self._load_invoices(preserve_invoice_id=inv["id"])
+                finally:
+                    self.review_paging.page_size = original_page_size
             else:
                 self._load_invoices()
             res = {
@@ -9793,6 +9823,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         *,
         include_to_review: bool = True,
     ) -> dict:
+        snapshot = getattr(self, "_export_material_snapshot", None)
+        if snapshot is not None:
+            if claim_id not in snapshot:
+                from ..claim_export import inspect_materials_for_invoices
+                rows = self.db.get_claim_invoices(claim_id)
+                results = inspect_materials_for_invoices(rows, RUNTIME_DIR)
+                snapshot[claim_id] = (rows, {int(row["id"]): result for row, result in zip(rows, results)})
+            rows, materials = snapshot[claim_id]
+            return self._claim_export_preflight_stats_for_range(
+                claim_id, include_to_review=include_to_review,
+                invoices=rows, materials_by_id=materials,
+            )
         return self._claim_export_preflight_stats_for_range(
             claim_id,
             include_to_review=include_to_review,

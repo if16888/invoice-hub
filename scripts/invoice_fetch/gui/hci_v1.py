@@ -379,6 +379,8 @@ def _dashboard_task_clicked(window, key: str) -> None:
 def _sync_dashboard_hci(window) -> None:
     if not isValid(window):
         return
+    if window._current_page_key() != "overview":
+        return
     counts = _dashboard_counts(window)
     cards = getattr(window, "hci_dashboard_task_cards", {}) or {}
     if cards:
@@ -414,7 +416,7 @@ def _sync_dashboard_hci(window) -> None:
     if health is not None:
         health.setText(
             f"可导出 {counts['export_ready']} 组 · "
-            f"缺材料 {counts['missing_evidence']} 张 · "
+            f"缺证明 {counts['missing_evidence']} 张 · "
             f"异常 {counts['parse_error']} 张。"
         )
 
@@ -550,7 +552,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
 
     activity = getattr(window, "overview_activity_card", None)
     if activity is not None:
-        activity.set_title("今天已完成")
+        activity.set_title("当前概况")
         activity.set_hint("保留最近的导入、审核和导出活动，方便快速确认刚刚发生了什么。")
 
     _install_dashboard_refresh(window)
@@ -769,7 +771,7 @@ def apply_review_hci_v1(page: QWidget | None) -> None:
         shortcut_g.setContext(Qt.WidgetWithChildrenShortcut)
         shortcut_g.activated.connect(
             lambda d=detail, p=page: (
-                d.btn_add_to_claim.click()
+                window._add_current_invoice_to_claim()
                 if p.property("hciContinuousReview")
                 and hasattr(d, "btn_add_to_claim")
                 and d.btn_add_to_claim.isEnabled()
