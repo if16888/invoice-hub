@@ -45,7 +45,7 @@ class ReimbursementAuditTests(unittest.TestCase):
 
     def test_export_issue_row_opens_matching_invoice(self):
         w = self.window
-        invoice_id = w.invoices_list[0]['id']
+        invoice_id = w.db.get_all_invoices(include_deleted=False)[0]['id']
         w.db.add_invoice_to_claim(self.claim, invoice_id)
         w._switch_main_page('export')
         self.settle()
@@ -64,3 +64,23 @@ class ReimbursementAuditTests(unittest.TestCase):
             w._refresh_export_page()
             self.assertEqual(check.call_count, 20)
         self.assertIsNone(w._export_material_snapshot)
+
+    def test_dashboard_counts_do_not_hydrate_all_invoices(self):
+        from scripts.invoice_fetch.gui.hci_v1 import _dashboard_counts
+        w = self.window
+        with patch.object(w.db, 'get_all_invoices', side_effect=AssertionError('full invoice hydration')):
+            counts = _dashboard_counts(w)
+        self.assertEqual(counts['to_review'], 110)
+
+    def test_hidden_dashboard_does_not_collect_metrics(self):
+        from scripts.invoice_fetch.gui.hci_v1 import _sync_dashboard_hci
+        w = self.window
+        with patch.object(w, '_collect_overview_metrics', side_effect=AssertionError('hidden refresh')):
+            _sync_dashboard_hci(w)
+
+    def test_small_window_keeps_claim_column_in_view(self):
+        w = self.window
+        w.resize(1280, 720)
+        self.settle()
+        header = w.table.horizontalHeader()
+        self.assertLessEqual(header.sectionViewportPosition(6) + header.sectionSize(6), w.table.viewport().width())

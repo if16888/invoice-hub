@@ -264,10 +264,11 @@ class HistoryRecheckWorker(QThread):
             self.failed.emit(str(exc))
 
 
-def _dashboard_counts(window) -> dict[str, int]:
-    metrics = {}
+def _dashboard_counts(window, metrics=None) -> dict[str, int]:
+    supplied_metrics = metrics is not None
+    metrics = metrics or {}
     collector = getattr(window, "_collect_overview_metrics", None)
-    if callable(collector):
+    if callable(collector) and not supplied_metrics:
         metrics = collector() or {}
 
     to_review = int(metrics.get("to_review", 0) or 0)
@@ -277,20 +278,13 @@ def _dashboard_counts(window) -> dict[str, int]:
 
     db = getattr(window, "db", None)
     if db is not None and getattr(db, "is_open", False):
-        try:
-            invoices = list(db.get_all_invoices(include_deleted=False) or [])
-        except Exception:
-            invoices = []
-        for invoice in invoices:
-            if bool(invoice.get("missing_extra")):
-                missing += 1
-            warning = getattr(window, "_buyer_warning", None)
-            if callable(warning):
-                try:
-                    if warning(invoice):
-                        buyer_mismatch += 1
-                except Exception:
-                    pass
+        from ..review_query import ReviewColumnFilter, ReviewQuery
+        missing = db.count_review_invoices(ReviewQuery(column_filters=(
+            ReviewColumnFilter("missing_extra", values=("缺证明",)),
+        )))
+        buyer_mismatch = db.count_review_invoices(ReviewQuery(column_filters=(
+            ReviewColumnFilter("buyer_warning", values=("异常",)),
+        )))
 
     return {
         "to_review": to_review,
@@ -376,12 +370,12 @@ def _dashboard_task_clicked(window, key: str) -> None:
         _switch_to_review(window, TO_REVIEW, continuous=False)
 
 
-def _sync_dashboard_hci(window) -> None:
+def _sync_dashboard_hci(window, metrics=None) -> None:
     if not isValid(window):
         return
     if window._current_page_key() != "overview":
         return
-    counts = _dashboard_counts(window)
+    counts = _dashboard_counts(window, metrics)
     cards = getattr(window, "hci_dashboard_task_cards", {}) or {}
     if cards:
         cards["to_review"].set_value(
@@ -431,7 +425,7 @@ def _install_dashboard_refresh(window) -> None:
     @wraps(original)
     def wrapped(self, *args, **kwargs):
         result = original(*args, **kwargs)
-        QTimer.singleShot(0, lambda: _sync_dashboard_hci(self))
+        QTimer.singleShot(0, lambda snapshot=getattr(self, "_overview_metric_snapshot", None): _sync_dashboard_hci(self, snapshot))
         return result
 
     window._refresh_overview_page = MethodType(wrapped, window)

@@ -2099,6 +2099,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_record_sort = QLabel("按费用日期倒序")
         self.lbl_record_sort.setObjectName("InvoiceRecordSort")
         record_header_layout.addWidget(self.lbl_record_sort)
+        self.btn_return_claim = make_button("返回报销组", variant="secondary")
+        self.btn_return_claim.hide()
+        self.btn_return_claim.clicked.connect(lambda: self._switch_main_page("export"))
+        record_header_layout.addWidget(self.btn_return_claim)
         self.lbl_record_selection = QLabel("已选 0 张")
         self.lbl_record_selection.setObjectName("InvoiceRecordSelection")
         record_header_layout.addWidget(self.lbl_record_selection)
@@ -2155,7 +2159,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Final 0.1.4 review workbench default columns:
         # review status, material status, expense date, amount, seller, invoice number, claim.
-        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 84, 4: 220, 5: 178, 6: 120}
+        self._min_column_widths = {0: 68, 1: 62, 2: 86, 3: 70, 4: 120, 5: 130, 6: 100}
         for _column, _width in self._min_column_widths.items():
             self.table.setColumnWidth(_column, _width)
 
@@ -2839,7 +2843,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         for i in range(self.table.columnCount()):
             if i != 4:
                 other_w += self.table.columnWidth(i)
-        target_w = max(260, viewport_w - other_w)
+        target_w = max(120, viewport_w - other_w)
         header = self.table.horizontalHeader()
         header.blockSignals(True)
         self.table.setColumnWidth(4, target_w)
@@ -3125,6 +3129,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_dirty = False
         performance_trace = self._performance_probe.begin("list_refresh", surface="overview")
         metrics = self._collect_overview_metrics()
+        self._overview_metric_snapshot = metrics
         if performance_trace is not None:
             performance_trace.mark("metrics_query")
         integer_keys = ("today_imported", "to_review", "error", "needs_fix", "export_ready", "total")
@@ -3849,6 +3854,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 lbl_empty = QLabel("暂无已启用邮箱账号。点击“更多 → 管理邮箱”完成配置。")
                 lbl_empty.setStyleSheet("color: #667085; font-size: 12px;")
                 self.mail_checklist_layout.addWidget(lbl_empty)
+                configure_mail = make_button("添加邮箱", variant="primary")
+                configure_mail.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
+                self.mail_checklist_layout.addWidget(configure_mail)
             else:
                 for acc in accounts:
                     row_widget = QWidget()
@@ -5442,7 +5450,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_summary_strip.add_metric("groups", "报销组", "0", state="info")
         self.export_summary_strip.add_metric("approved", "已通过", "0", state="success")
         self.export_summary_strip.add_metric("pending", "待处理", "0", state="warning")
-        self.export_summary_strip.add_metric("missing", "完整性缺口", "0", state="danger")
+        self.export_summary_strip.add_metric("missing", "全组问题项", "0", state="danger")
         self.export_summary_strip.add_metric("ready", "导出状态", "待检查", state="muted")
         layout.addWidget(self.export_summary_strip)
 
@@ -5501,14 +5509,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_integrity_card.setMaximumWidth(400)
         self.export_integrity_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
 
+        self.export_scope = QComboBox()
+        self.export_scope.setAccessibleName("导出发票范围")
+        self.export_scope.addItem("仅已通过发票", False)
+        self.export_scope.addItem("已通过和待审核发票", True)
+        self.export_scope.currentIndexChanged.connect(self._sync_export_claim_selection)
+        self.export_integrity_card.body_layout.addWidget(self.export_scope)
+
         # Structured ChecklistRow preflight items (replaces long text labels)
         self.export_check_approved = ChecklistRow("已通过发票", "—")
         self.export_check_pending = ChecklistRow("待处理", "—")
-        self.export_check_missing_attach = ChecklistRow("缺原件（全组）", "—")
-        self.export_check_missing_amount = ChecklistRow("缺金额（全组）", "—")
-        self.export_check_invalid_amount = ChecklistRow("金额无效（全组）", "—")
-        self.export_check_missing_extra = ChecklistRow("缺补充材料（全组）", "—")
-        self.export_check_unavailable_extra = ChecklistRow("材料不可用（全组）", "—")
+        self.export_check_missing_attach = ChecklistRow("缺原件（所选范围）", "—")
+        self.export_check_missing_amount = ChecklistRow("缺金额（所选范围）", "—")
+        self.export_check_invalid_amount = ChecklistRow("金额无效（所选范围）", "—")
+        self.export_check_missing_extra = ChecklistRow("缺补充材料（所选范围）", "—")
+        self.export_check_unavailable_extra = ChecklistRow("材料不可用（所选范围）", "—")
         self.export_check_dir = ChecklistRow("导出目录", "未设置")
         self.export_integrity_card.body_layout.addWidget(self.export_check_approved)
         self.export_integrity_card.body_layout.addWidget(self.export_check_pending)
@@ -6159,10 +6174,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if idx >= 0 and self.combo_claims.currentIndex() != idx:
                 self.combo_claims.setCurrentIndex(idx)
         stats = self._claim_export_preflight_stats(claim_id)
+        include_pending = bool(self.export_scope.currentData())
         approved_stats = self._claim_export_preflight_stats(
-            claim_id,
-            include_to_review=False,
+            claim_id, include_to_review=include_pending,
         )
+        selected_stats = approved_stats
         invoices = self.db.get_claim_invoices(claim_id)
         claim = self.db.get_claim_group(claim_id) or {}
         claim_status = str(claim.get("status") or "draft")
@@ -6208,19 +6224,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         approved_cnt = int(stats.get(APPROVED, 0) or 0)
         pending_cnt = int(stats.get(TO_REVIEW, 0) or 0)
-        missing_attach = int(stats.get("missing_attachment", 0) or 0)
-        missing_amount = int(stats.get("missing_amount", 0) or 0)
-        invalid_amount = int(stats.get("invalid_amount", 0) or 0)
-        missing_extra = int(stats.get("missing_extra", 0) or 0)
-        unavailable_extra = int(stats.get("unavailable_extra", 0) or 0)
+        missing_attach = int(selected_stats.get("missing_attachment", 0) or 0)
+        missing_amount = int(selected_stats.get("missing_amount", 0) or 0)
+        invalid_amount = int(selected_stats.get("invalid_amount", 0) or 0)
+        missing_extra = int(selected_stats.get("missing_extra", 0) or 0)
+        unavailable_extra = int(selected_stats.get("unavailable_extra", 0) or 0)
 
         # Export directory check
         export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(self.config)
         dir_ok = True
 
         blockers = []
-        if int(approved_stats.get(APPROVED, 0) or 0) <= 0:
-            blockers.append("没有已通过发票")
+        if int(approved_stats.get(APPROVED, 0) or 0) + (int(approved_stats.get(TO_REVIEW, 0) or 0) if include_pending else 0) <= 0:
+            blockers.append("所选范围没有发票")
         approved_missing_attach = int(approved_stats.get("missing_attachment", 0) or 0)
         approved_missing_amount = int(approved_stats.get("missing_amount", 0) or 0)
         approved_invalid_amount = int(approved_stats.get("invalid_amount", 0) or 0)
@@ -6242,7 +6258,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Update ChecklistRows
         if hasattr(self, "export_check_approved"):
             self.export_check_approved.set_value(f"{approved_cnt} 张", ok=approved_cnt > 0)
-            self.export_check_pending.set_value(f"{pending_cnt} 张", ok=pending_cnt == 0)
+            self.export_check_pending.set_value(f"{pending_cnt} 张（{'包含' if include_pending else '不导出'}）", ok=None)
             self.export_check_missing_attach.set_value(
                 "无" if missing_attach == 0 else f"{missing_attach} 张",
                 ok=missing_attach == 0,
@@ -6291,11 +6307,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         "已通过发票可导出；若包含待处理发票，将按所选范围再次检查材料。"
                     )
                 else:
-                    self.lbl_export_action_hint.setText("导出会沿用现有业务逻辑；当前报销组已可直接导出。")
+                    self.lbl_export_action_hint.setText("已通过发票可导出；仅打包当前选择范围内的发票。")
             else:
                 self.lbl_export_action_hint.setText(
                     "阻塞：" + "；".join(blockers) if blockers else "请先设置导出目录。"
                 )
+        self.btn_run_export_page.setText("导出已通过和待审核发票" if include_pending else "导出已通过发票")
         self.btn_run_export_page.setEnabled(is_ready and claim_status != "reimbursed")
         self.btn_mark_claim_reimbursed.setEnabled(claim_status == "exported")
         self.btn_edit_claim_reason.setEnabled(claim_status == "draft")
@@ -9383,13 +9400,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._end_data_operation("批量归组")
 
     def _open_export_invoice(self, item):
+        self.btn_return_claim.show()
         invoice_id = item.data(Qt.UserRole)
         if invoice_id is None:
             return
         self._switch_main_page("review")
         self._reset_invoice_filters()
+        self._review_scope_ids = (int(invoice_id),)
+        self._review_scope_total = 1
         self._change_filter("all")
-        self._select_invoice_by_id(invoice_id)
+        self._select_invoice_by_id(invoice_id, fallback_first=False)
+        self.lbl_review_scope.setText("来自报销组 · 当前发票")
 
     def _choose_claim_invoices(self):
         self._switch_main_page("review")
@@ -9986,14 +10007,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "对于当前处于「待审核」或「异常」状态的关联记录，您希望如何处理？"
         )
         box.setInformativeText(self._format_claim_export_preflight_text(preflight_stats))
-        btn_approved_only = box.addButton("🟢 仅打包已通过发票", QMessageBox.YesRole)
-        btn_include_all = box.addButton("🟡 导出已通过 + 待审核发票", QMessageBox.NoRole)
+        page_scope = self._current_page_key() == "export"
+        selected_pending = bool(self.export_scope.currentData()) if page_scope else False
+        btn_approved_only = None if page_scope and selected_pending else box.addButton("🟢 仅打包已通过发票", QMessageBox.YesRole)
+        btn_include_all = box.addButton("🟡 导出已通过 + 待审核发票", QMessageBox.NoRole) if not page_scope or selected_pending else None
         btn_cancel = box.addButton("取消", QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() == btn_cancel:
+        if box.clickedButton() is None or box.clickedButton() == btn_cancel:
             return
 
-        include_to_review = box.clickedButton() == btn_include_all
+        include_to_review = btn_include_all is not None and box.clickedButton() == btn_include_all
         selected_stats = self._claim_export_preflight_stats(
             claim_id,
             include_to_review=include_to_review,
