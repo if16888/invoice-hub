@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QApplication, QPushButton, QCheckBox, QLabel, QMes
 from shiboken6 import isValid
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog, MailboxConfigRow
 from scripts.invoice_fetch.config import get_email_accounts, _normalize_default_email_account, _select_primary_email_account
 
 app = QApplication.instance() or QApplication(sys.argv)
@@ -49,20 +48,14 @@ class TestMailboxV5UI(unittest.TestCase):
         self._created_widgets = []
         module = sys.modules[__name__]
         original_window_class = module.InvoiceReviewApp
-        original_dialog_class = module.SettingsDialog
 
         def tracked_window(*args, **kwargs):
             return self._record_widget(original_window_class(*args, **kwargs))
 
-        def tracked_dialog(*args, **kwargs):
-            return self._record_widget(original_dialog_class(*args, **kwargs))
-
         module.InvoiceReviewApp = tracked_window
-        module.SettingsDialog = tracked_dialog
 
         def restore_classes():
             module.InvoiceReviewApp = original_window_class
-            module.SettingsDialog = original_dialog_class
 
         self.addCleanup(restore_classes)
 
@@ -130,12 +123,6 @@ class TestMailboxV5UI(unittest.TestCase):
         )
         self._app_load_config_patch.start()
         self.addCleanup(self._app_load_config_patch.stop)
-        self._dialog_load_config_patch = patch(
-            "scripts.invoice_fetch.gui.settings_dialog.load_config_safe",
-            side_effect=isolated_config,
-        )
-        self._dialog_load_config_patch.start()
-        self.addCleanup(self._dialog_load_config_patch.stop)
 
 
     def test_import_center_uses_more_menu_for_low_frequency_actions(self):
@@ -149,31 +136,6 @@ class TestMailboxV5UI(unittest.TestCase):
         self.assertIn("管理邮箱", action_texts)
         self.assertIn("失败明细", action_texts)
         self.assertFalse(hasattr(window, "btn_view_failed_details"))
-
-    def test_v5_ai_config_details_and_privacy_banner(self):
-        """V5 Requirement 5: AI Config page includes active details block and privacy banner."""
-        dialog = SettingsDialog(parent=None)
-        dialog.cfg = deepcopy(self.cfg)
-        dialog._build_saved_account_maps()
-        dialog._load_initial_values()
-
-        self.assertTrue(hasattr(dialog, "lbl_v5_ai_provider"))
-        self.assertTrue(hasattr(dialog, "btn_v5_test_ai"))
-        self.assertTrue(hasattr(dialog, "btn_v5_clear_ai_key"))
-
-    def test_default_account_projection_after_edit_non_default(self):
-        """P0-1 Test: Editing a non-default account preserves default account in cfg['email']."""
-        dialog = SettingsDialog(parent=None)
-        dialog.cfg = deepcopy(self.cfg)
-        dialog._build_saved_account_maps()
-        dialog._load_initial_values()
-
-        dialog._open_mailbox_editor("test_163@163.com")
-        dialog.txt_months.setText("9")
-        dialog.chk_is_default.setChecked(False)
-        dialog._save_mailbox_settings()
-
-        self.assertEqual(dialog.cfg["email"]["address"].lower(), "test_qq@qq.com")
 
     def test_deleting_default_reassigns_default(self):
         """P0-2 Test: Deleting default account reassigns default status to remaining enabled account."""

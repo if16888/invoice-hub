@@ -194,19 +194,18 @@ _MISSING_ATTRIBUTE = object()
 def _synthetic_credential_context(page: str, state: str):
     """Keep capture construction away from the real Windows credential store.
 
-    ``settings_baseline`` binds ``has_auth_code`` at module import time, while
-    ``settings_dialog`` has historically used both direct and function-local
-    imports.  Patching only ``credentials.has_auth_code`` therefore does not
+    ``settings_baseline`` binds ``has_auth_code`` at module import time.
+        Patching only ``credentials.has_auth_code`` therefore does not
     cover every already-bound consumer.  Keep this isolation scoped to the
     synthetic capture and restore each target module exactly as it was found.
     """
     from scripts.invoice_fetch import credentials as credentials_module
-    from scripts.invoice_fetch.gui import settings_baseline, settings_dialog
+    from scripts.invoice_fetch.gui import settings_baseline
 
     def synthetic_has_auth_code(_address: str) -> bool:
         return not (page == "imports" and state in {"empty", "missing-authorization"})
 
-    targets = (credentials_module, settings_baseline, settings_dialog)
+    targets = (credentials_module, settings_baseline)
     originals = [(module, getattr(module, "has_auth_code", _MISSING_ATTRIBUTE)) for module in targets]
     for module, _original in originals:
         setattr(module, "has_auth_code", synthetic_has_auth_code)

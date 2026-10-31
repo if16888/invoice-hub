@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit
 
 from scripts.invoice_fetch.gui.app import DuplicateOutcomesDialog
 from scripts.invoice_fetch.gui import startup_lifecycle
-from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import (
     MobileUploadSessionController,
     MobileUploadSessionPanel,
@@ -61,7 +60,6 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
             self.assertEqual(dialog.details.toPlainText(), detail_text)
             self.assertGreater(dialog.details.verticalScrollBar().maximum(), 0)
         finally:
-            dialog.close()
             self.qt_app.processEvents()
 
     def test_intake_format_copy_matches_each_source_supported_types(self):
@@ -72,7 +70,6 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
             )
             controller = MobileUploadSessionController(Path(td) / "mobile.db")
             panel = MobileUploadSessionPanel(controller)
-            dialog = SettingsDialog(parent=None)
             try:
                 window._switch_main_page("imports")
                 for _ in range(4):
@@ -98,13 +95,8 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
                     window.lbl_detail_attachment_types.text(),
                     panel.lbl_idle_network.text(),
                 ]
-                visible_copy.extend(
-                    label.text()
-                    for label in dialog.findChildren(QLabel)
-                    if "附件提取类型" in label.text()
-                )
 
-                self.assertEqual(len(visible_copy), 4)
+                self.assertEqual(len(visible_copy), 3)
                 self.assertEqual(
                     visible_copy[0],
                     "PDF / OFD / XML / PNG / JPG / HEIC / ZIP",
@@ -120,9 +112,7 @@ class V018PostMergeUxRegressionTests(unittest.TestCase):
                 self.assertIn("XML", visible_copy[0])
                 self.assertIn("XML", visible_copy[1])
                 self.assertNotIn("XML", visible_copy[2])
-                self.assertIn("XML", visible_copy[3])
             finally:
-                dialog.close()
                 panel.close()
                 controller.shutdown(timeout_ms=50)
                 window.close()

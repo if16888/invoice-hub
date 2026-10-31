@@ -61,13 +61,6 @@ class SettingsSemanticStatusContractTests(unittest.TestCase):
         self.assertIn("semantic_status", names)
         self.assertGreater(names.index("semantic_status"), names.index("token_contract"))
 
-    def test_settings_source_contains_no_inline_font_color_markup(self):
-        source = Path("scripts/invoice_fetch/gui/settings_dialog.py").read_text(encoding="utf-8")
-        self.assertNotIn("<font", source.lower())
-        self.assertNotIn("color=#", source.lower())
-        self.assertNotIn("color='#", source.lower())
-        self.assertNotIn('color="#', source.lower())
-
 
 class PreviewToolbarTokenContractTests(unittest.TestCase):
     @classmethod

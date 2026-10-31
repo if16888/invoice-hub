@@ -6463,7 +6463,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             page_trace.mark("page_refresh")
 
         if page_key == "settings" and hasattr(self, "settings_tabs") and self.settings_tabs is not None:
-            # Legacy numeric targets came from the old SettingsDialog. Preserve
+            # Legacy numeric targets came from the old settings dialog. Preserve
             # their intent while exposing only real in-window setting pages.
             legacy_targets = {0: 0, 1: 0, 2: 1, 5: 4, 6: 5}
             if sub_tab > 0:
@@ -10979,7 +10979,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         """Deprecated compatibility proxy for the former modal settings center.
 
         The in-window settings page is the single authoritative surface.  Keep
-        this method for old callbacks only; it must never create SettingsDialog.
+        this method for old callbacks only; the legacy modal settings center no longer exists.
         """
         self._switch_main_page("settings", sub_tab=sub_tab)
 

@@ -298,11 +298,6 @@ class BoundedBrowserScanTests(unittest.TestCase):
             "LinkDownloader(att_dir, headed=headed, scan_control=scan_control)", source
         )
 
-    def test_settings_rule_does_not_claim_a_fixed_three_month_window(self):
-        source = Path("scripts/invoice_fetch/gui/settings_dialog.py").read_text(encoding="utf-8")
-        self.assertNotIn("只扫描最近 3 个月", source)
-        self.assertIn("按各邮箱配置的时间范围进行增量抓取", source)
-
     def test_semantic_evidence_fingerprint_includes_later_pages(self):
         from scripts.invoice_fetch import services
 
