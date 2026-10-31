@@ -176,7 +176,7 @@ class TestWorkbenchNativeGeometry(unittest.TestCase):
                 self._close_window(window)
 
     def test_manual_navigation_collapse_preserves_review_density_and_toolbar(self):
-        from scripts.invoice_fetch.gui.review_workspace_baseline import REVIEW_ROW_HEIGHT
+        from scripts.invoice_fetch.gui.review_layout import REVIEW_ROW_HEIGHT
         from PySide6.QtTest import QTest
 
         with tempfile.TemporaryDirectory() as td:

@@ -15,7 +15,7 @@ from scripts.invoice_fetch.gui.review_layout import (
     _reflow_review_detail,
 )
 import scripts.invoice_fetch.gui.workbench_settings as workbench_settings_module
-from scripts.invoice_fetch.gui.review_workspace_baseline import _sync_selection_contract
+from scripts.invoice_fetch.gui.review_layout import _sync_selection_contract
 
 
 class ReviewWorkspaceBaselineTests(unittest.TestCase):

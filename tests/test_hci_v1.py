@@ -26,7 +26,7 @@ from scripts.invoice_fetch.gui.hci_v1_closure import (
     _render_scan_active,
     _render_scan_terminal,
 )
-from scripts.invoice_fetch.gui.review_baseline_pipeline import (
+from scripts.invoice_fetch.gui.review_layout import (
     REVIEW_BASELINE_STAGES,
     REVIEW_HCI_STAGES,
 )

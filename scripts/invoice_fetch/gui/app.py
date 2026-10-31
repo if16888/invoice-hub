@@ -1386,7 +1386,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.workbench_nav.setMaximumWidth(16777215)
         self.workbench_nav.setMinimumWidth(nav_width)
         self.workbench_nav.setMaximumWidth(nav_width)
-        from .review_workspace_baseline import REVIEW_ROW_HEIGHT
+        from .review_layout import REVIEW_ROW_HEIGHT
         row_h = REVIEW_ROW_HEIGHT
         self.table.verticalHeader().setDefaultSectionSize(row_h)
         self.table.verticalHeader().setMinimumSectionSize(row_h)

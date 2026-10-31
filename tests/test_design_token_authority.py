@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QWidget
 
 from scripts.invoice_fetch.gui import styles
-from scripts.invoice_fetch.gui.design_baseline_styles import (
+from scripts.invoice_fetch.gui.styles import (
     BASELINE_COLORS,
     apply_global_design_baseline,
     build_canonical_application_stylesheet,

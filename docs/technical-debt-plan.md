@@ -31,8 +31,9 @@
 |---|---|---|---|
 | Wave 0 | 死代码：`mobile_upload_dialog.py`、`buyer_warning_readability.py`，测试重定向 | −318 行 | PR #202（CI 绿） |
 | Wave 1 | 小契约：`review_legacy_contract.py`、`settings_legacy_contract.py`、`ui_visibility_contracts.py`；逻辑迁进 `InvoiceDetailPanel` / `app.py`；基线 14→11、3→2 | ~268 行 | PR #203（CI 绿） |
-| Wave 2 | `settings_dialog.py` 3,901 行死代码退休 + 4 个纯死 UI 测试文件删除（约 1,500 行）+ 5 处测试/开发脚本引用迁移；hidden-compat scope 2→1 | ~5,600 行 | 本 PR |
-| Wave 3 | 基线/修复 11 个模块，分 3 个 PR（小→大）：`design_baseline_styles`、`business_pages_baseline`、`review_workspace_baseline`、`review_baseline_pipeline`、`review_feedback_fixes`、`review_toolbar_filter_fixes`、`review_settings_issue_fixes`、`settings_baseline`、`settings_pages_baseline`、`design_v1_review_task_closure`、`hci_v1_closure`（+`hci_v1`） | ~5,135 | 待做（每 PR 收缩基线） |
+| Wave 2 | `settings_dialog.py` 3,901 行死代码退休 + 4 个纯死 UI 测试文件删除（约 1,500 行）+ 5 处测试/开发脚本引用迁移；hidden-compat scope 2→1 | ~5,600 行 | PR #204（CI 绿） |
+| Wave 3a | 归并进 owner：`design_baseline_styles`→`styles.py`（全局 baseline QSS 组装）；`review_workspace_baseline`+`review_baseline_pipeline`→`review_layout.py`（工作台归一化 + 评审阶段流水线）；基线 11→8、治理清单 7→6 | ~559 行 | 本 PR |
+| Wave 3b | 剩余 8 个：`business_pages_baseline`、`review_feedback_fixes`、`review_toolbar_filter_fixes`、`review_settings_issue_fixes`、`settings_baseline`、`settings_pages_baseline`、`design_v1_review_task_closure`、`hci_v1_closure`（+`hci_v1`） | ~4,558 | 待做（每 PR 收缩基线） |
 | Wave 4 | 重复 token 层收敛：`styles.py` 第二套 token → `design_tokens.py` 单一来源；QSS 模板化 | 影响 ~682 处 hex 字面量 | 待做（同时是界面 P1-21 前置） |
 
 Wave 4 完成后，按 `docs/ui-apple-hig-review.md` 分 3 批做界面修复（P0 无障碍/布局 → P1 组件与设计系统 → P2 平台化）。

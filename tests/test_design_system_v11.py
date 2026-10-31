@@ -25,7 +25,7 @@ from scripts.invoice_fetch.gui.design_system_v11 import (
     apply_sidebar_visual_language,
 )
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS, DESIGN_V1_METRICS
-from scripts.invoice_fetch.gui.review_baseline_pipeline import REVIEW_BASELINE_STAGES
+from scripts.invoice_fetch.gui.review_layout import REVIEW_BASELINE_STAGES
 from scripts.invoice_fetch.gui.ui.components import SegmentControl
 from scripts.invoice_fetch.gui.ui_components import CompactStatCard
 
