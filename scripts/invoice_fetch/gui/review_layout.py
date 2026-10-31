@@ -9,11 +9,32 @@ while preserving a useful invoice-table and preview area.
 
 from __future__ import annotations
 
+import weakref
+from collections.abc import Callable
+
 from shiboken6 import isValid
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtWidgets import QHeaderView, QLayout, QSplitter, QSizePolicy, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QHeaderView,
+    QLayout,
+    QSplitter,
+    QSizePolicy,
+    QWidget,
+)
 
+from .company_tax_profile import apply_company_tax_profile
+from .design_system_v11 import apply_design_system_v11
+from .design_v1_review_task_closure import apply_design_v1_review_task_closure
+from .hci_v1 import apply_review_hci_v1
+from .hci_v1_closure import apply_review_hci_closure
+from .invoice_detail_panel import install_invoice_detail_ownership
+from .review_feedback_fixes import apply_review_feedback_fixes, sync_review_feedback_state
+from .review_paging import install_review_paging
+from .review_queue_semantics import apply_review_queue_semantics
+from .review_settings_issue_fixes import apply_review_attachment_action_fix
+from .review_toolbar_filter_fixes import apply_review_toolbar_filter_fixes
 from .workbench_layout import clamp_vertical_split
 
 
@@ -492,6 +513,245 @@ def install_review_vertical_workspace(page: QWidget) -> None:
     _install_table_remainder_contract(window)
 
 
+# ── Review workspace baseline (merged from review_workspace_baseline) ──
+FILTER_CARD_MIN_WIDTH = 108
+FILTER_CARD_MAX_WIDTH = 156
+WORKSPACE_DETAIL_MIN_WIDTH = 352
+WORKSPACE_DETAIL_MAX_WIDTH = 560
+REVIEW_ROW_HEIGHT = 24
+
+
+def _normalize_filter_cards(window) -> None:
+    for status, card in getattr(window, "filter_buttons", {}).items():
+        icon = getattr(card, "_lbl_icon", None)
+        if icon is not None:
+            icon.clear()
+            icon.hide()
+        if hasattr(card, "_icon_text"):
+            card._icon_text = ""
+        card.setProperty("decorativeIconRemoved", True)
+        card.setMinimumWidth(FILTER_CARD_MIN_WIDTH)
+        card.setMaximumWidth(FILTER_CARD_MAX_WIDTH)
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        title = getattr(card, "_lbl_title", None)
+        value = getattr(card, "_lbl_value", None)
+        if title is not None:
+            title.setWordWrap(False)
+        if value is not None:
+            value.setWordWrap(False)
+        accessible = card.text() if hasattr(card, "text") else str(status)
+        card.setAccessibleName(accessible)
+        card.setToolTip(f"筛选：{accessible}")
+
+
+def _normalize_workspace_geometry(window) -> None:
+    detail = getattr(window, "_detail_panel", None)
+    if detail is not None:
+        detail.setMinimumWidth(WORKSPACE_DETAIL_MIN_WIDTH)
+        detail.setMaximumWidth(WORKSPACE_DETAIL_MAX_WIDTH)
+        detail.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+
+    table = getattr(window, "table", None)
+    if table is not None:
+        table.setTextElideMode(Qt.ElideRight)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setMinimumSectionSize(REVIEW_ROW_HEIGHT)
+        table.verticalHeader().setDefaultSectionSize(REVIEW_ROW_HEIGHT)
+
+    search = getattr(window, "txt_search", None)
+    if search is not None:
+        search.setMinimumWidth(260)
+        search.setAccessibleName("搜索发票")
+
+    advanced = getattr(window, "btn_advanced_filter", None)
+    if advanced is not None:
+        advanced.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+
+def _set_empty_copy(window, *, has_records: bool) -> None:
+    title = getattr(window, "lbl_right_empty_title", None)
+    desc = getattr(window, "lbl_right_empty_desc", None)
+    if has_records:
+        title_text = "未选择发票"
+        desc_text = "选择一张发票后，可查看字段、原件、证明材料和报销信息。"
+    else:
+        title_text = "当前没有发票记录"
+        desc_text = "导入发票后，可在这里审核字段、材料和报销信息。"
+    if title is not None:
+        title.setText(title_text)
+    if desc is not None:
+        desc.setText(desc_text)
+
+
+def _sync_selection_contract(window) -> None:
+    state = window._review_view_state()
+    has_selection = state.has_current_invoice and state.selected_count == 1
+    _set_empty_copy(window, has_records=state.visible_count > 0)
+
+    detail = getattr(window, "_detail_panel", None)
+    if detail is not None:
+        if has_selection:
+            detail.set_single_selection_state()
+        elif state.selected_count > 1:
+            detail.set_multi_selection_state(state.selected_count)
+        else:
+            detail.set_no_selection_state()
+
+    if state.visible_count == 0 or (not state.has_current_invoice and state.selected_count <= 0):
+        window._set_right_panel_state(False)
+
+    sync_review_feedback_state(window)
+    if detail is not None:
+        detail.fixed_header_container.setMaximumHeight(360)
+
+
+def _install_selection_refresh(window, page: QWidget) -> None:
+    if page.property("reviewBaselineSelectionContractInstalled"):
+        return
+    page.setProperty("reviewBaselineSelectionContractInstalled", True)
+    table = getattr(window, "table", None)
+    if table is not None:
+        table.itemSelectionChanged.connect(
+            lambda: QTimer.singleShot(0, lambda: _sync_selection_contract(window))
+        )
+
+
+def apply_review_workspace_baseline(page: QWidget) -> None:
+    """Apply the dense Workspace contract after all review controls exist."""
+    if page is None or page.property("reviewWorkspaceBaselineApplied"):
+        return
+    window = page.window()
+    if page is not getattr(window, "review_page", None):
+        return
+    if not hasattr(window, "filter_buttons") or not hasattr(window, "_detail_panel"):
+        return
+
+    page.setProperty("reviewWorkspaceBaselineApplied", True)
+    _normalize_filter_cards(window)
+    _normalize_workspace_geometry(window)
+    apply_review_feedback_fixes(window)
+    _install_selection_refresh(window, page)
+    _sync_selection_contract(window)
+
+
+# ── Review baseline/HCI pipeline (merged from review_baseline_pipeline) ──
+ReviewStage = tuple[str, Callable[[QWidget], None]]
+
+
+REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
+    ("workspace_baseline", apply_review_workspace_baseline),
+    ("toolbar_and_filters", apply_review_toolbar_filter_fixes),
+    ("company_tax_profile", apply_company_tax_profile),
+    ("attachment_action_clarity", apply_review_attachment_action_fix),
+    ("table_width", apply_review_table_width_contract),
+    ("detail_width", apply_review_detail_width_fix),
+    ("workspace_vertical_layout", install_review_vertical_workspace),
+    ("invoice_detail_ownership", install_invoice_detail_ownership),
+    # Paging owns the final count copy and reconnects the search debounce timer.
+    ("list_paging", install_review_paging),
+    # Task ownership runs late so no earlier compatibility stage can restore
+    # cross-workflow buttons or expand the buyer warning again.
+    ("task_ownership", apply_design_v1_review_task_closure),
+    # Keep the established Design System contract: visual language is the final
+    # Review baseline stage.
+    ("visual_language_v11", apply_design_system_v11),
+)
+
+
+REVIEW_HCI_STAGES: tuple[ReviewStage, ...] = (
+    ("hci_v1_task_flow", apply_review_hci_v1),
+    ("hci_v1_closure", apply_review_hci_closure),
+)
+
+
+def _apply_stages(
+    page: QWidget,
+    stages: tuple[ReviewStage, ...],
+    *,
+    active_property: str,
+    failed_property: str,
+) -> tuple[str, ...]:
+    completed: list[str] = []
+    page.setProperty(failed_property, "")
+    for name, stage in stages:
+        page.setProperty(active_property, name)
+        try:
+            stage(page)
+        except Exception:
+            page.setProperty(failed_property, name)
+            raise
+        completed.append(name)
+    page.setProperty(active_property, "")
+    return tuple(completed)
+
+
+def apply_review_baseline_pipeline(page: QWidget | None) -> None:
+    """Apply the established Review visual/geometry baseline once."""
+    if page is None or not isValid(page):
+        return
+    if page.property("reviewBaselinePipelineApplied"):
+        return
+
+    completed = _apply_stages(
+        page,
+        REVIEW_BASELINE_STAGES,
+        active_property="reviewBaselinePipelineActiveStage",
+        failed_property="reviewBaselinePipelineFailedStage",
+    )
+    page.setProperty("reviewBaselinePipelineStages", completed)
+    page.setProperty("reviewBaselinePipelineApplied", True)
+
+
+def apply_review_hci_pipeline(page: QWidget | None) -> None:
+    """Apply HCI interaction stages only after the baseline has settled."""
+    if page is None or not isValid(page):
+        return
+    if page.property("reviewHciPipelineApplied"):
+        return
+    if not page.property("reviewBaselinePipelineApplied"):
+        apply_review_baseline_pipeline(page)
+
+    completed = _apply_stages(
+        page,
+        REVIEW_HCI_STAGES,
+        active_property="reviewHciPipelineActiveStage",
+        failed_property="reviewHciPipelineFailedStage",
+    )
+    # Keep the established HCI stage identity stable. Queue semantics are a
+    # post-HCI behavioral contract, not another migration/closure stage.
+    apply_review_queue_semantics(page)
+    page.setProperty("reviewHciPipelineStages", completed)
+    page.setProperty("reviewHciPipelineApplied", True)
+
+
+def schedule_review_baseline_pipeline(page: QWidget | None) -> None:
+    """Queue one safe callback for baseline followed by post-baseline HCI."""
+    if page is None or not isValid(page):
+        return
+    if (
+        page.property("reviewBaselinePipelineApplied")
+        and page.property("reviewHciPipelineApplied")
+    ) or page.property("reviewBaselinePipelineScheduled"):
+        return
+
+    page.setProperty("reviewBaselinePipelineScheduled", True)
+    page_ref = weakref.ref(page)
+
+    def run_pipeline() -> None:
+        target = page_ref()
+        if target is None or not isValid(target):
+            return
+        try:
+            apply_review_baseline_pipeline(target)
+            apply_review_hci_pipeline(target)
+        finally:
+            if isValid(target):
+                target.setProperty("reviewBaselinePipelineScheduled", False)
+
+    QTimer.singleShot(0, run_pipeline)
+
 __all__ = [
     "DETAIL_MAX_WIDTH",
     "DETAIL_MIN_WIDTH",
@@ -509,4 +769,15 @@ __all__ = [
     "install_review_vertical_workspace",
     "_reflow_review_detail",
     "_target_detail_width",
+    "apply_review_workspace_baseline",
+    "REVIEW_ROW_HEIGHT",
+    "FILTER_CARD_MIN_WIDTH",
+    "FILTER_CARD_MAX_WIDTH",
+    "WORKSPACE_DETAIL_MIN_WIDTH",
+    "WORKSPACE_DETAIL_MAX_WIDTH",
+    "REVIEW_BASELINE_STAGES",
+    "REVIEW_HCI_STAGES",
+    "apply_review_baseline_pipeline",
+    "apply_review_hci_pipeline",
+    "schedule_review_baseline_pipeline",
 ]

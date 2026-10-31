@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
-from scripts.invoice_fetch.gui import review_baseline_pipeline as pipeline
+from scripts.invoice_fetch.gui import review_layout as pipeline
 from scripts.invoice_fetch.gui.page_layouts import WorkspacePageLayout
 
 

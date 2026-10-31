@@ -8,7 +8,6 @@ FROZEN_PATCH_MODULES = {
     "review_feedback_fixes.py",
     "review_settings_issue_fixes.py",
     "review_toolbar_filter_fixes.py",
-    "review_workspace_baseline.py",
     "settings_baseline.py",
     "settings_pages_baseline.py",
 }

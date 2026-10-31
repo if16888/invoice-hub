@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLayout, QSizePolicy, QWidget
 from shiboken6 import isValid
 
 from .business_pages_baseline import apply_dashboard_baseline, apply_task_flow_baseline
-from .design_baseline_styles import apply_global_design_baseline
+from .styles import apply_global_design_baseline
 from .design_system_v11 import apply_design_system_v11
 from .design_tokens import DESIGN_V1_METRICS
 from .hci_v1 import schedule_dashboard_hci_v1, schedule_task_flow_hci_v1
@@ -16,7 +16,7 @@ from .hci_v1_closure import (
     schedule_dashboard_hci_closure,
     schedule_task_flow_hci_closure,
 )
-from .review_baseline_pipeline import schedule_review_baseline_pipeline
+from .review_layout import schedule_review_baseline_pipeline
 from .review_queue_semantics import schedule_task_flow_review_scope_semantics
 from .review_settings_issue_fixes import apply_settings_action_clarity
 from .selection_surfaces import schedule_selection_surface_contracts

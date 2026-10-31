@@ -18,7 +18,7 @@ from scripts.invoice_fetch.gui.buyer_warning_controller import (
 from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
     _refresh_compact_buyer_warning,
 )
-from scripts.invoice_fetch.gui.review_baseline_pipeline import REVIEW_BASELINE_STAGES
+from scripts.invoice_fetch.gui.review_layout import REVIEW_BASELINE_STAGES
 from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
 
 

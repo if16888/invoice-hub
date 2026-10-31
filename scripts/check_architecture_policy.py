@@ -34,14 +34,11 @@ WIDGET_CONSTRUCTORS = frozenset(
 FROZEN_PATCH_MODULES = frozenset(
     {
         "business_pages_baseline.py",
-        "design_baseline_styles.py",
         "design_v1_review_task_closure.py",
         "hci_v1_closure.py",
-        "review_baseline_pipeline.py",
         "review_feedback_fixes.py",
         "review_settings_issue_fixes.py",
         "review_toolbar_filter_fixes.py",
-        "review_workspace_baseline.py",
         "settings_baseline.py",
         "settings_pages_baseline.py",
     }
