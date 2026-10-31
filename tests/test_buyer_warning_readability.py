@@ -9,13 +9,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.buyer_warning_readability import (
-    BUYER_WARNING_HORIZONTAL_PADDING,
-    BUYER_WARNING_VERTICAL_PADDING,
-)
 from scripts.invoice_fetch.gui.buyer_warning_controller import (
     BUYER_WARNING_MAX_HEIGHT,
     BUYER_WARNING_MIN_HEIGHT,
+    BUYER_WARNING_PADDING_X,
+    BUYER_WARNING_PADDING_Y,
 )
 from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
     _refresh_compact_buyer_warning,
@@ -76,8 +74,8 @@ class BuyerWarningReadabilityTests(unittest.TestCase):
                 scroll = detail.buyer_warning_scroll
                 self.assertEqual(label.property("buyerWarningLayout"), "tokenized")
                 self.assertIn(
-                    f"padding: {BUYER_WARNING_VERTICAL_PADDING}px "
-                    f"{BUYER_WARNING_HORIZONTAL_PADDING}px",
+                    f"padding: {BUYER_WARNING_PADDING_Y}px "
+                    f"{BUYER_WARNING_PADDING_X}px",
                     APP_STYLESHEET,
                 )
                 self.assertIn("margin-top: 0px", APP_STYLESHEET)

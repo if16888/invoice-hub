@@ -7,12 +7,8 @@ class GuiModuleBoundaryTests(unittest.TestCase):
             EmailScanWorker,
             InvoiceReviewApp,
             LocalImportWorker,
-            MobileUploadDialog,
         )
         from scripts.invoice_fetch.gui.log_diagnostics_mixin import LogDiagnosticsMixin
-        from scripts.invoice_fetch.gui.mobile_upload_dialog import (
-            MobileUploadDialog as ExtractedMobileUploadDialog,
-        )
         from scripts.invoice_fetch.gui.preview_mixin import PreviewMixin
         from scripts.invoice_fetch.gui.workers import (
             EmailScanWorker as ExtractedEmailScanWorker,
@@ -21,7 +17,6 @@ class GuiModuleBoundaryTests(unittest.TestCase):
 
         self.assertTrue(issubclass(InvoiceReviewApp, PreviewMixin))
         self.assertTrue(issubclass(InvoiceReviewApp, LogDiagnosticsMixin))
-        self.assertIs(MobileUploadDialog, ExtractedMobileUploadDialog)
         self.assertIs(LocalImportWorker, ExtractedLocalImportWorker)
         self.assertIs(EmailScanWorker, ExtractedEmailScanWorker)
 

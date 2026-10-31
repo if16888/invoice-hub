@@ -21,7 +21,6 @@ from shiboken6 import isValid as is_qobject_valid
 from scripts.invoice_fetch.gui.api_key_dialog import ApiKeyDialog
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp, ReviewViewState
 from scripts.invoice_fetch.gui.icon_provider import IconProvider, _ASSETS_ICONS
-from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.mobile_upload_session import MobileUploadSessionController
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary, make_button
 from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel, ReadOnlyDetailPanel
@@ -93,14 +92,13 @@ class IHDS09Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
-                with patch.object(MobileUploadDialog, "exec", side_effect=AssertionError("legacy dialog reached")):
-                    for entry in (window.action_import_mobile, window.action_mobile_upload):
-                        window._switch_main_page("review")
-                        entry.trigger(); self.app.processEvents()
-                        self.assertIs(window.center_stack.currentWidget(), window.imports_page)
-                        self.assertEqual(window._selected_import_source, "mobile")
-                    window._mobile_upload_clicked(); self.app.processEvents()
+                for entry in (window.action_import_mobile, window.action_mobile_upload):
+                    window._switch_main_page("review")
+                    entry.trigger(); self.app.processEvents()
+                    self.assertIs(window.center_stack.currentWidget(), window.imports_page)
                     self.assertEqual(window._selected_import_source, "mobile")
+                window._mobile_upload_clicked(); self.app.processEvents()
+                self.assertEqual(window._selected_import_source, "mobile")
             finally: window.close()
 
 

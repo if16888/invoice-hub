@@ -11,7 +11,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QBoxLayout, QPushButton
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.mobile_upload_dialog import MobileUploadDialog
 from scripts.invoice_fetch.gui.ui_components import is_visual_primary
 from scripts.invoice_fetch.review_status import APPROVED, TO_REVIEW
 
