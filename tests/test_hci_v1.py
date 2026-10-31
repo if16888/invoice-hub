@@ -21,8 +21,6 @@ from scripts.invoice_fetch.gui.hci_v1 import (
     _history_recheck_failed,
     _history_recheck_finished,
     _start_history_recheck,
-)
-from scripts.invoice_fetch.gui.hci_v1_closure import (
     _render_scan_active,
     _render_scan_terminal,
 )

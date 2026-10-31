@@ -834,7 +834,7 @@ def run_mail_04(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
 
     # Trigger failure through real product handler with sanitized error reason
     try:
-        from scripts.invoice_fetch.gui.hci_v1_closure import _render_scan_terminal
+        from scripts.invoice_fetch.gui.hci_v1 import _render_scan_terminal
         _render_scan_terminal(
             window,
             "failed",
@@ -879,7 +879,7 @@ def run_mail_05(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
     window.scan_worker = type("FinishedWorker", (), {"_trigger_btn": None, "isRunning": lambda s: False})()
 
     try:
-        from scripts.invoice_fetch.gui.hci_v1_closure import _render_scan_terminal
+        from scripts.invoice_fetch.gui.hci_v1 import _render_scan_terminal
         _render_scan_terminal(window, "cancelled", elapsed=12.0, result={"cancelled": True})
     except ImportError:
         window._finish_scan_ui(cancelled=True)

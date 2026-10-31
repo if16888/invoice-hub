@@ -26,8 +26,7 @@ from PySide6.QtWidgets import (
 
 from .company_tax_profile import apply_company_tax_profile
 from .design_system_v11 import apply_design_system_v11
-from .hci_v1 import apply_review_hci_v1
-from .hci_v1_closure import apply_review_hci_closure
+from .hci_v1 import apply_review_hci_closure, apply_review_hci_v1
 from .buyer_warning_controller import BuyerWarningController
 from .invoice_detail_panel import install_invoice_detail_ownership
 from .review_feedback_fixes import apply_review_feedback_fixes, sync_review_feedback_state
