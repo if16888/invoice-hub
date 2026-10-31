@@ -33,8 +33,6 @@ WIDGET_CONSTRUCTORS = frozenset(
 # this baseline must shrink in the same PR.
 FROZEN_PATCH_MODULES = frozenset(
     {
-        "business_pages_baseline.py",
-        "design_v1_review_task_closure.py",
         "hci_v1_closure.py",
         "review_feedback_fixes.py",
         "review_settings_issue_fixes.py",

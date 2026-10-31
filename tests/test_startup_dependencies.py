@@ -42,7 +42,7 @@ class StartupDependencyTests(unittest.TestCase):
             "scripts.invoice_fetch.gui.app",
             "scripts.invoice_fetch.gui.startup_lifecycle",
             "scripts.invoice_fetch.gui.startup_probe",
-            "scripts.invoice_fetch.gui.business_pages_baseline",
+            "scripts.invoice_fetch.gui.page_layouts",
             "scripts.invoice_fetch.claim_export",
         ):
             with self.subTest(module=module):
@@ -53,7 +53,7 @@ class StartupDependencyTests(unittest.TestCase):
             from pathlib import Path
             import tempfile
             from scripts.invoice_fetch.claim_export import summarize_extra_material_issues
-            from scripts.invoice_fetch.gui.business_pages_baseline import _export_naming_state
+            from scripts.invoice_fetch.gui.page_layouts import _export_naming_state
             with tempfile.TemporaryDirectory() as td:
                 original = Path(td) / 'synthetic.xml'
                 original.write_text('<invoice/>', encoding='utf-8')

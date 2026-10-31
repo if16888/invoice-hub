@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.business_pages_baseline import _export_naming_state
+from scripts.invoice_fetch.gui.page_layouts import _export_naming_state
 from scripts.invoice_fetch.gui.ui_components import ChecklistRow
 
 

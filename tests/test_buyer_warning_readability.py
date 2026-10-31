@@ -15,7 +15,7 @@ from scripts.invoice_fetch.gui.buyer_warning_controller import (
     BUYER_WARNING_PADDING_X,
     BUYER_WARNING_PADDING_Y,
 )
-from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
+from scripts.invoice_fetch.gui.review_layout import (
     _refresh_compact_buyer_warning,
 )
 from scripts.invoice_fetch.gui.review_layout import REVIEW_BASELINE_STAGES

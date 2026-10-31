@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QHeaderView, QSizePolicy, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_METRICS
-from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
+from scripts.invoice_fetch.gui.review_layout import (
     _refresh_compact_buyer_warning,
 )
 from scripts.invoice_fetch.gui.review_toolbar_filter_fixes import (
