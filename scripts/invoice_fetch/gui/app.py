@@ -4636,8 +4636,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         self._load_settings_mailbox_form(self.settings_mailbox_list.currentRow())
 
+    def _sync_settings_mailbox_visibility(self, accounts: list[dict], row: int) -> None:
+        """Keep the mailbox detail, empty state and list aligned with *row*."""
+        has_selection = 0 <= int(row) < len(accounts)
+        surface = getattr(self, "mailbox_detail_surface", None)
+        empty_state = getattr(self, "settings_mailbox_empty_state", None)
+        account_list = getattr(self, "settings_mailbox_list", None)
+        if surface is not None:
+            surface.setVisible(has_selection)
+        if empty_state is not None:
+            empty_state.setVisible(not has_selection)
+        if account_list is not None:
+            account_list.setVisible(bool(accounts))
+
     def _load_settings_mailbox_form(self, row: int) -> None:
         accounts = self._mailbox_accounts_for_settings()
+        self._sync_settings_mailbox_visibility(accounts, row)
         if row < 0 or row >= len(accounts):
             self._clear_settings_mailbox_form()
             return
@@ -4908,7 +4922,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         multi_profile = self.settings_ai_profile_list.count() > 1
         self.settings_ai_profile_list.setVisible(multi_profile)
 
-        self.lbl_settings_ai_empty.setVisible(False)
         if hasattr(self, "settings_ai_empty_state"):
             self.settings_ai_empty_state.setVisible(self.settings_ai_profile_list.count() == 0)
         if self.settings_ai_profile_list.count() == 0:
@@ -4932,12 +4945,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
             self.lbl_settings_ai_validation_status.setText("尚未校验本地配置")
             self.lbl_settings_ai_failure_status.setText("失败状态：暂无 AI 配置。")
-            if hasattr(self, "settings_ai_summary_strip"):
-                self.settings_ai_summary_strip.set_metric("enabled", "关闭")
-                self.settings_ai_summary_strip.set_metric("provider", "—")
-                self.settings_ai_summary_strip.set_metric("model", "—")
-                self.settings_ai_summary_strip.set_metric("key", "未配置")
-                self.settings_ai_summary_strip.set_metric("paused", "正常")
             return
 
         self.settings_ai_detail_panel.setVisible(True)
@@ -4986,12 +4993,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_enabled.setText("开启" if profile.get("enabled", False) else "关闭")
         self.lbl_settings_ai_session_state.setText("已暂停" if paused else "正常")
         self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
-        if hasattr(self, "settings_ai_summary_strip"):
-            self.settings_ai_summary_strip.set_metric("enabled", "开启" if profile.get("enabled", False) else "关闭")
-            self.settings_ai_summary_strip.set_metric("provider", provider)
-            self.settings_ai_summary_strip.set_metric("model", model)
-            self.settings_ai_summary_strip.set_metric("key", key_source)
-            self.settings_ai_summary_strip.set_metric("paused", "已暂停" if paused else "正常")
 
     def _current_settings_ai_profile(self) -> dict | None:
         profile_id = getattr(self, "_settings_ai_current_profile_id", "")
@@ -5965,16 +5966,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_settings_ai_failure_status = QLabel("失败状态：暂无异常。")
         self.lbl_settings_ai_failure_status.setWordWrap(True)
         self.lbl_settings_ai_failure_status.setStyleSheet("color: #667085; font-size: 12px;")
-        self.lbl_settings_ai_empty = QLabel("尚未配置任何 AI Profile。")
-        self.lbl_settings_ai_empty.setStyleSheet("color: #667085; font-size: 12px;")
         self.settings_ai_empty_state = EmptyStateCard(
             "还没有 AI Profile",
             "配置 Provider 后即可查看 AI 提取与分类状态。",
         )
         self.settings_ai_empty_state.setVisible(False)
-        self.lbl_settings_ai_empty.setVisible(False)
         ai_editor_layout.addWidget(self.lbl_settings_ai_failure_status)
-        ai_editor_layout.addWidget(self.lbl_settings_ai_empty)
         ai_editor_layout.addWidget(self.settings_ai_empty_state)
         ai_layout.addWidget(ai_editor)
         ai_layout.addStretch(1)

@@ -11,7 +11,6 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QSizePolicy, QWidget
 
 from .review_feedback_fixes import apply_review_feedback_fixes, sync_review_feedback_state
-from .review_legacy_contract import install_claim_summary_layout_compatibility
 
 
 FILTER_CARD_MIN_WIDTH = 108
@@ -132,7 +131,6 @@ def apply_review_workspace_baseline(page: QWidget) -> None:
     _normalize_filter_cards(window)
     _normalize_workspace_geometry(window)
     apply_review_feedback_fixes(window)
-    install_claim_summary_layout_compatibility(window)
     _install_selection_refresh(window, page)
     _sync_selection_contract(window)
 

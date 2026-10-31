@@ -39,14 +39,11 @@ FROZEN_PATCH_MODULES = frozenset(
         "hci_v1_closure.py",
         "review_baseline_pipeline.py",
         "review_feedback_fixes.py",
-        "review_legacy_contract.py",
         "review_settings_issue_fixes.py",
         "review_toolbar_filter_fixes.py",
         "review_workspace_baseline.py",
         "settings_baseline.py",
-        "settings_legacy_contract.py",
         "settings_pages_baseline.py",
-        "ui_visibility_contracts.py",
     }
 )
 
@@ -56,7 +53,6 @@ FROZEN_PATCH_MODULES = frozenset(
 FROZEN_HIDDEN_COMPAT_SCOPES = frozenset(
     {
         "preview_mixin.py:PreviewMixin._init_legacy_preview_controls",
-        "review_legacy_contract.py:install_claim_summary_layout_compatibility",
         "settings_dialog.py:SettingsDialog._init_settings_home_page",
     }
 )

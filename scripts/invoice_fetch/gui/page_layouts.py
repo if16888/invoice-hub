@@ -22,12 +22,10 @@ from .review_settings_issue_fixes import apply_settings_action_clarity
 from .selection_surfaces import schedule_selection_surface_contracts
 from .settings_baseline import apply_settings_baseline
 from .settings_feedback import apply_settings_feedback_fixes
-from .settings_legacy_contract import install_ai_refresh_compatibility
 from .settings_pages_baseline import apply_remaining_settings_baseline
 from .settings_refresh_guard import install_settings_refresh_guard
 from .settings_status import install_settings_semantic_status_contract
 from .settings_theme import apply_settings_token_contract
-from .ui_visibility_contracts import install_settings_visibility_contract
 
 BASELINE_PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
 BASELINE_SECTION_GAP = DESIGN_V1_METRICS["section_gap"]
@@ -39,7 +37,6 @@ SettingsStage = tuple[str, Callable[[QWidget], None]]
 
 SETTINGS_BASELINE_STAGES: tuple[SettingsStage, ...] = (
     ("golden_page", apply_settings_baseline),
-    ("ai_compatibility", install_ai_refresh_compatibility),
     ("remaining_pages", apply_remaining_settings_baseline),
     # Existing callbacks queued by remaining_pages resolve _normalize_ai only
     # when they run, so install the lifecycle guard before returning to Qt.
@@ -49,7 +46,6 @@ SETTINGS_BASELINE_STAGES: tuple[SettingsStage, ...] = (
     # final rendering before semantic status labels are normalized.
     ("token_contract", apply_settings_token_contract),
     ("semantic_status", install_settings_semantic_status_contract),
-    ("visibility_contract", install_settings_visibility_contract),
     ("action_clarity", apply_settings_action_clarity),
 )
 

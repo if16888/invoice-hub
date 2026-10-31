@@ -205,7 +205,6 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         self.assertTrue(self.panel.btn_refresh_claims.isHidden())
         self.assertFalse(self.panel.lbl_claim_total.isHidden())
         self.assertGreaterEqual(self.panel.claim_actions_widget.layout().indexOf(self.panel.btn_delete_claim), 0)
-        self.assertEqual(self.panel.claim_summary_row.indexOf(self.panel.btn_delete_claim), -1)
 
     def test_reimbursement_tab_shows_empty_hint_without_claim_groups(self):
         self.panel.show()
@@ -232,7 +231,6 @@ class TestInvoiceDetailPanelUI(unittest.TestCase):
         from PySide6.QtWidgets import QPushButton
         self.assertIsInstance(self.panel.btn_delete_claim, QPushButton)
         self.assertGreaterEqual(self.panel.claim_actions_widget.layout().indexOf(self.panel.btn_delete_claim), 0)
-        self.assertEqual(self.panel.claim_summary_row.indexOf(self.panel.btn_delete_claim), -1)
 
     # ── 9. get_form_values includes all editable fields ─────────────────────
 

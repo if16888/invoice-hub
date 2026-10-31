@@ -414,7 +414,6 @@ class TestInvoiceReviewAppGeometry(unittest.TestCase):
                 self.assertTrue(panel.combo_claims.isHidden())
                 self.assertTrue(panel.lbl_claim_assignment.isVisible())
                 self.assertGreaterEqual(panel.claim_actions_widget.layout().indexOf(panel.btn_delete_claim), 0)
-                self.assertEqual(panel.claim_summary_row.indexOf(panel.btn_delete_claim), -1)
                 self.assertGreater(panel.detail_workbench.height(), 0)
 
             finally:
