@@ -5645,61 +5645,6 @@ class ClaimGroupsTests(unittest.TestCase):
                 self.skipTest(f"Skipping GUI test: {e}")
             raise
 
-    def test_settings_dialog_uses_neutral_steps_selection_cards_and_one_primary_action(self):
-        try:
-            from unittest.mock import patch
-            from PySide6.QtWidgets import QApplication
-            import sys
-            app = QApplication.instance() or QApplication(sys.argv)
-
-            with tempfile.TemporaryDirectory() as td:
-                db_path = Path(td) / "test_settings_visual_hierarchy.db"
-                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                from scripts.invoice_fetch.gui.settings_dialog import SettingsDialog
-
-                window = InvoiceReviewApp(db_path, splash=None)
-                dialog = None
-                try:
-                    with patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=False):
-                        dialog = SettingsDialog(window)
-                    self.assertEqual(dialog.lbl_step_indicator.property("class"), "WizardSteps")
-                    self.assertNotIn("background-color", dialog.lbl_step_indicator.styleSheet())
-                    for card in dialog.cards.values():
-                        self.assertEqual(card.property("class"), "SelectionCard")
-                        self.assertEqual(card.styleSheet(), "")
-                    selected_card_style = dialog.styleSheet() or window.styleSheet()
-                    self.assertIn("QPushButton.SelectionCard:checked", selected_card_style)
-                    self.assertIn(
-                        "QLabel.SelectionCardTitle",
-                        selected_card_style,
-                    )
-                    selected_provider = dialog._get_selected_provider()
-                    self.assertEqual(
-                        [
-                            provider
-                            for provider, label in dialog.card_titles.items()
-                            if label.property("selected")
-                        ],
-                        [selected_provider],
-                    )
-                    self.assertEqual(dialog.btn_prev.property("variant"), "secondary")
-                    self.assertEqual(dialog.btn_cancel_wizard.property("variant"), "secondary")
-                    self.assertEqual(dialog.btn_next.property("variant"), "primary")
-                    self.assertEqual(dialog.btn_save_wizard.property("variant"), "primary")
-                    self.assertEqual(dialog.btn_test.property("variant"), "secondary")
-                    self.assertNotIn("⚡", dialog.btn_test.text())
-                finally:
-                    if dialog is not None:
-                        dialog.close()
-                    if hasattr(window, "db") and window.db is not None:
-                        window.db.close()
-                    window.close()
-                    app.processEvents()
-        except Exception as e:
-            if isinstance(e, (ImportError, RuntimeError)):
-                self.skipTest(f"Skipping GUI test: {e}")
-            raise
-
     def test_gui_filter_counts_and_diagnostic_payload_context(self):
         try:
             from PySide6.QtWidgets import QApplication

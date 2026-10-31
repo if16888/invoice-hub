@@ -19,7 +19,6 @@ from tests import _claim_groups_cases as _cases
 
 _GUI_EXACT = {
     "test_claim_quality_report_gui_prompt",
-    "test_settings_dialog_uses_neutral_steps_selection_cards_and_one_primary_action",
     "test_startup_splash_initialization_is_gui_safe",
 }
 

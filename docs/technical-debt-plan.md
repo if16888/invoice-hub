@@ -8,15 +8,15 @@
 
 | 类别 | 模块 | 行数 |
 |---|---|---|
-| 架构策略冻结的补丁模块（14 个） | `business_pages_baseline.py`、`design_baseline_styles.py`、`design_v1_review_task_closure.py`、`hci_v1_closure.py`、`review_baseline_pipeline.py`、`review_feedback_fixes.py`、`review_legacy_contract.py`、`review_settings_issue_fixes.py`、`review_toolbar_filter_fixes.py`、`review_workspace_baseline.py`、`settings_baseline.py`、`settings_legacy_contract.py`、`settings_pages_baseline.py`、`ui_visibility_contracts.py` | **5,135** |
+| 架构策略冻结的补丁模块（盘点时 14 个，Wave 1 退休 3 个后剩 11 个） | `business_pages_baseline.py`、`design_baseline_styles.py`、`design_v1_review_task_closure.py`、`hci_v1_closure.py`、`review_baseline_pipeline.py`、`review_feedback_fixes.py`、`review_settings_issue_fixes.py`、`review_toolbar_filter_fixes.py`、`review_workspace_baseline.py`、`settings_baseline.py`、`settings_pages_baseline.py` | 4,917（原 5,135） |
 | 兼容基线引擎 | `hci_v1.py` | 1,107 |
 | 设计规范兼容层 | `design_system_v11.py` | 339 |
-| 死代码（产品从不实例化） | `settings_dialog.py` | **3,901** |
+| 死代码（产品从不实例化，Wave 2 已删） | `settings_dialog.py` | 0（原 3,901） |
 | 死代码（零引用，已删） | `mobile_upload_dialog.py` | 204 |
 | 兼容 re-export 壳（已删） | `buyer_warning_readability.py` | 39 |
 | 重复 token 层 | `styles.py`（第二套 `COLOR_TOKENS`/`TYPE_*`，与 `design_tokens.py` 冲突） | 影响全站 QSS |
 
-债务合计 **约 10,725 行，占 GUI 的 32%**。另有 3 个冻结的 hidden-compat scope（`FROZEN_HIDDEN_COMPAT_SCOPES`）。
+债务合计（盘点时）**约 10,725 行，占 GUI 的 32%**，另有 3 个冻结的 hidden-compat scope。Wave 0–2 清理后剩余约 **6.4k 行（约 22%）**：11 个冻结补丁模块 + `hci_v1`/`design_system_v11` 兼容引擎 + `styles.py` 重复 token 层；hidden-compat scope 剩 1 个（`preview_mixin` 的 legacy 预览控件）。
 
 ## 2. 治理规则
 
@@ -30,8 +30,8 @@
 | 批次 | 范围 | 行数 | 状态 |
 |---|---|---|---|
 | Wave 0 | 死代码：`mobile_upload_dialog.py`、`buyer_warning_readability.py`，测试重定向 | −318 行 | PR #202（CI 绿） |
-| Wave 1 | 小契约：`review_legacy_contract.py`、`settings_legacy_contract.py`、`ui_visibility_contracts.py`；逻辑迁进 `InvoiceDetailPanel` / `app.py`；基线 14→11、3→2 | ~268 行 | 本 PR |
-| Wave 2 | `settings_dialog.py` 3,901 行退休 + 9 个测试文件迁到在窗设置页 | ~4,000 行 | 待做（最大单笔） |
+| Wave 1 | 小契约：`review_legacy_contract.py`、`settings_legacy_contract.py`、`ui_visibility_contracts.py`；逻辑迁进 `InvoiceDetailPanel` / `app.py`；基线 14→11、3→2 | ~268 行 | PR #203（CI 绿） |
+| Wave 2 | `settings_dialog.py` 3,901 行死代码退休 + 4 个纯死 UI 测试文件删除（约 1,500 行）+ 5 处测试/开发脚本引用迁移；hidden-compat scope 2→1 | ~5,600 行 | 本 PR |
 | Wave 3 | 基线/修复 11 个模块，分 3 个 PR（小→大）：`design_baseline_styles`、`business_pages_baseline`、`review_workspace_baseline`、`review_baseline_pipeline`、`review_feedback_fixes`、`review_toolbar_filter_fixes`、`review_settings_issue_fixes`、`settings_baseline`、`settings_pages_baseline`、`design_v1_review_task_closure`、`hci_v1_closure`（+`hci_v1`） | ~5,135 | 待做（每 PR 收缩基线） |
 | Wave 4 | 重复 token 层收敛：`styles.py` 第二套 token → `design_tokens.py` 单一来源；QSS 模板化 | 影响 ~682 处 hex 字面量 | 待做（同时是界面 P1-21 前置） |
 
