@@ -15,10 +15,11 @@ from ..review_status import APPROVED
 from .styles import apply_global_design_baseline
 from .design_system_v11 import apply_design_system_v11
 from .design_tokens import DESIGN_V1_METRICS
-from .hci_v1 import schedule_dashboard_hci_v1, schedule_task_flow_hci_v1
-from .hci_v1_closure import (
+from .hci_v1 import (
     schedule_dashboard_hci_closure,
+    schedule_dashboard_hci_v1,
     schedule_task_flow_hci_closure,
+    schedule_task_flow_hci_v1,
 )
 from .review_layout import schedule_review_baseline_pipeline
 from .review_queue_semantics import schedule_task_flow_review_scope_semantics
