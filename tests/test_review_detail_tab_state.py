@@ -18,8 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scripts.invoice_fetch.gui import ui_visibility_contracts
-from scripts.invoice_fetch.gui.invoice_detail_panel import InvoiceDetailPanel
+from scripts.invoice_fetch.gui.invoice_detail_panel import InvoiceDetailPanel, _reveal_widget
 
 
 _QAPP = None
@@ -87,7 +86,7 @@ class ReviewDetailTabStateTests(unittest.TestCase):
         tabs.addTab(reimbursement_page, "报销信息")
         tabs.setCurrentIndex(1)
         try:
-            ui_visibility_contracts._reveal_widget(action, boundary=tabs)
+            _reveal_widget(action, boundary=tabs)
             self.app.processEvents()
 
             self.assertEqual(tabs.currentIndex(), 1)
@@ -108,7 +107,7 @@ class ReviewDetailTabStateTests(unittest.TestCase):
         stack.addWidget(second_page)
         stack.setCurrentWidget(second_page)
         try:
-            ui_visibility_contracts._reveal_widget(action, boundary=stack)
+            _reveal_widget(action, boundary=stack)
             self.app.processEvents()
 
             self.assertIs(stack.currentWidget(), first_page)

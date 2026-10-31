@@ -123,9 +123,8 @@ hidden QWidget / QFrame / layout / compatibility-only production object
 
 In particular, do not keep an obsolete `hasattr(...)`, `inspect(...)`, or
 `findChild(...)` assertion passing by creating a hidden object in production
-UI. Existing examples such as `review_legacy_contract.py`, legacy preview
-controls, and hidden compatibility cards are debt to retire, not approved
-extension patterns.
+UI. Existing examples such as the legacy preview controls and hidden
+compatibility cards are debt to retire, not approved extension patterns.
 
 `scripts/check_architecture_policy.py` requires both checked-in debt snapshots
 to equal the current findings. New debt fails the gate; stale baseline entries

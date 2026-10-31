@@ -437,9 +437,6 @@ def _migrate_ai_page(window) -> None:
     window.lbl_settings_ai_status_badge = badge
     window.btn_settings_ai_empty_add = empty_action
     window.btn_settings_ai_empty_validate = empty_validate
-    summary = getattr(window, "settings_ai_summary_strip", None)
-    if summary is not None:
-        summary.hide()
 
 
 def _normalize_ai(window) -> None:
