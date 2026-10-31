@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QWidget
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.design_v1_review_task_closure import (
+from scripts.invoice_fetch.gui.review_layout import (
     _refresh_compact_buyer_warning,
 )
 
