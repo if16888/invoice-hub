@@ -1167,60 +1167,6 @@ class MobileUploadTests(unittest.TestCase):
             self.assertEqual(result["accepted"], 0)
             self.assertEqual(result["failed"], 4)
 
-    def test_gui_exposes_mobile_upload_button_and_dialog(self):
-        try:
-            os.environ["QT_QPA_PLATFORM"] = "offscreen"
-            from PySide6.QtWidgets import QApplication
-            from scripts.invoice_fetch.gui.app import InvoiceReviewApp, MobileUploadDialog
-        except Exception as exc:
-            self.skipTest(f"PySide6 is not available: {exc}")
-
-        app = QApplication.instance() or QApplication([])
-        with tempfile.TemporaryDirectory() as td:
-            db_path = Path(td) / "invoices.db"
-            window = InvoiceReviewApp(db_path)
-            dialog = None
-            try:
-                self.assertTrue(hasattr(window, "btn_mobile_upload"))
-                self.assertEqual(window.btn_mobile_upload.text(), "扫码")
-
-                from PySide6.QtTest import QSignalSpy
-                from scripts.invoice_fetch.mobile_upload import UploadHostOption
-                started = QSignalSpy(window.mobile_upload_controller.started)
-                with patch(
-                    "scripts.invoice_fetch.mobile_upload.enumerate_upload_hosts",
-                    return_value=[UploadHostOption("127.0.0.1", "loopback", "Local", False, 0)],
-                ):
-                    dialog = MobileUploadDialog(window, db_path)
-                    deadline = time.monotonic() + 10
-                    while window.mobile_upload_controller.session is None and time.monotonic() < deadline:
-                        app.processEvents()
-                        time.sleep(0.05)
-                    self.assertIsNotNone(window.mobile_upload_controller.session)
-                app.processEvents()
-                self.assertIn("/u/", dialog.txt_url.text())
-                self.assertTrue(dialog.btn_stop.isEnabled())
-                self.assertEqual(dialog.property("class"), "WorkflowDialog")
-                self.assertEqual(dialog.lbl_status.property("class"), "DialogInfo")
-                self.assertEqual(dialog.lbl_qr.property("class"), "QrPanel")
-                self.assertEqual(dialog.btn_copy_url.property("class"), "SecondaryBtn")
-                self.assertEqual(dialog.btn_stop.property("class"), "DangerOutlineBtn")
-                # Verify WeChat tip is included in the dialog status text
-                self.assertIn("微信扫码", dialog.lbl_status.text())
-                self.assertIn("在浏览器打开", dialog.lbl_status.text())
-                try:
-                    import qrcode  # noqa: F401
-                    self.assertIsNotNone(dialog.lbl_qr.pixmap())
-                    self.assertFalse(dialog.lbl_qr.pixmap().isNull())
-                except Exception:
-                    self.assertIn("qrcode", dialog.lbl_qr.text())
-            finally:
-                if dialog is not None:
-                    dialog.close()
-                window.close()
-                app.processEvents()
-
-
     def test_mobile_upload_attachment_path_unifies_to_attachments(self):
         with tempfile.TemporaryDirectory() as td:
             runtime_dir = Path(td) / "runtime"

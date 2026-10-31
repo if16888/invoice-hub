@@ -89,7 +89,6 @@ from .ui_components import (
 from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
-from .mobile_upload_dialog import MobileUploadDialog
 from .mobile_upload_session import MobileUploadSessionController, MobileUploadSessionPanel
 from .design_tokens import DESIGN_V1_COLORS
 from .api_key_dialog import ApiKeyDialog
