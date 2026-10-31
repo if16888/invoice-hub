@@ -15,7 +15,7 @@ from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_METRICS
 from scripts.invoice_fetch.gui.review_layout import (
     _refresh_compact_buyer_warning,
 )
-from scripts.invoice_fetch.gui.review_toolbar_filter_fixes import (
+from scripts.invoice_fetch.gui.review_layout import (
     ReimbursementTitleDialog,
     _repair_material_rows,
     _save_reimbursement_title,
@@ -127,7 +127,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
             window = self.make_window(td)
             try:
                 window.config = {"reimbursement": {}}
-                with patch("scripts.invoice_fetch.gui.review_toolbar_filter_fixes.save_config") as save:
+                with patch("scripts.invoice_fetch.gui.review_layout.save_config") as save:
                     _save_reimbursement_title(window, "Example Company", "913200", True)
                 saved = window.config["reimbursement"]
                 self.assertEqual(saved["buyer_name"], "Example Company")

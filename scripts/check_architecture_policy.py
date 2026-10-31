@@ -33,9 +33,7 @@ WIDGET_CONSTRUCTORS = frozenset(
 # this baseline must shrink in the same PR.
 FROZEN_PATCH_MODULES = frozenset(
     {
-        "review_feedback_fixes.py",
         "review_settings_issue_fixes.py",
-        "review_toolbar_filter_fixes.py",
         "settings_baseline.py",
         "settings_pages_baseline.py",
     }

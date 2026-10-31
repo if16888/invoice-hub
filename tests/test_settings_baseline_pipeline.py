@@ -15,7 +15,7 @@ from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN
 from scripts.invoice_fetch.gui.page_layouts import SETTINGS_BASELINE_STAGES
 from scripts.invoice_fetch.gui import (
     page_layouts,
-    review_feedback_fixes,
+    review_layout,
     settings_baseline,
     settings_pages_baseline,
 )
@@ -118,7 +118,7 @@ class SettingsBaselinePipelineTests(unittest.TestCase):
             guarded_callbacks = (
                 settings_pages_baseline._normalize_ai,
                 settings_baseline._refresh_mailbox_visuals,
-                review_feedback_fixes._sync_seller_tooltips,
+                review_layout._sync_seller_tooltips,
             )
             for guarded in guarded_callbacks:
                 self.assertTrue(

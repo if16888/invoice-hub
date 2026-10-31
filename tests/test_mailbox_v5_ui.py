@@ -106,7 +106,7 @@ class TestMailboxV5UI(unittest.TestCase):
         self._app_save_config_patch = patch("scripts.invoice_fetch.gui.app.save_config")
         self._app_save_config_patch.start()
         self.addCleanup(self._app_save_config_patch.stop)
-        self._settings_save_config_patch = patch("scripts.invoice_fetch.gui.review_toolbar_filter_fixes.save_config")
+        self._settings_save_config_patch = patch("scripts.invoice_fetch.gui.review_layout.save_config")
         self._settings_save_config_patch.start()
         self.addCleanup(self._settings_save_config_patch.stop)
 
