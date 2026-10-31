@@ -408,5 +408,101 @@ class MaterialInspectionParallelTests(unittest.TestCase):
                 self.assertEqual(result, expected)
 
 
+class SharedMaterialCacheTests(unittest.TestCase):
+    """Reusing a copied material must recheck one file, not the whole invoice."""
+
+    def _build_claim(self, root: Path, invoice_count: int = 3):
+        runtime_dir = root / "runtime"
+        attachments = runtime_dir / "attachments"
+        attachments.mkdir(parents=True, exist_ok=True)
+        original = attachments / "invoice.pdf"
+        original.write_bytes(b"%PDF-1.4 synthetic invoice")
+        shared = attachments / "shared-slip.pdf"
+        shared.write_bytes(b"%PDF-1.4 synthetic shared slip")
+        db_path = runtime_dir / "invoices.db"
+        with InvoiceDB(db_path) as db:
+            claim_id = db.create_claim_group("Shared materials")
+            for index in range(invoice_count):
+                invoice_id = db.insert_invoice({
+                    "invoice_number": f"SHARED-{index}",
+                    "total_amount": "100.00",
+                    "seller_name": "Synthetic Seller",
+                    "invoice_date": "2026-09-07",
+                    "category": "交通",
+                    "review_status": review_status.APPROVED,
+                    "attachment_path": str(original),
+                    "has_extra": True,
+                    "extra_type": "水单",
+                    "missing_extra": False,
+                    "extra_paths": json.dumps([str(shared)]),
+                })
+                db.add_invoice_to_claim(claim_id, invoice_id)
+        return runtime_dir, db_path, claim_id
+
+    def test_shared_material_is_not_reinspected_per_reference(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            runtime_dir, db_path, claim_id = self._build_claim(root)
+            export_root = root / "exports"
+
+            deliver_calls = []
+            recheck_calls = []
+            original_deliver = claim_export_module.inspect_extra_material
+            original_recheck = claim_export_module._reference_source_is_available
+
+            def counting_deliver(invoice, runtime):
+                deliver_calls.append(invoice.get("id"))
+                return original_deliver(invoice, runtime)
+
+            def counting_recheck(raw_path, runtime):
+                recheck_calls.append(raw_path)
+                return original_recheck(raw_path, runtime)
+
+            with patch.object(
+                claim_export_module, "inspect_extra_material", side_effect=counting_deliver
+            ), patch.object(
+                claim_export_module,
+                "_reference_source_is_available",
+                side_effect=counting_recheck,
+            ):
+                with InvoiceDB(db_path) as db:
+                    export_claim_package(
+                        db,
+                        claim_id,
+                        root / "project",
+                        runtime_dir,
+                        export_root=export_root,
+                    )
+
+            # Preflight inspects each invoice once; the copy loop must not add
+            # another whole-invoice inspection per shared reference.
+            self.assertEqual(len(deliver_calls), 3)
+            # Two of the three references reuse the earlier copy.
+            self.assertEqual(len(recheck_calls), 2)
+
+    def test_a_vanished_shared_source_still_blocks_the_export(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            runtime_dir, db_path, claim_id = self._build_claim(root)
+            export_root = root / "exports"
+
+            with patch.object(
+                claim_export_module,
+                "_reference_source_is_available",
+                return_value=False,
+            ):
+                with InvoiceDB(db_path) as db:
+                    with self.assertRaises(ValueError) as ctx:
+                        export_claim_package(
+                            db,
+                            claim_id,
+                            root / "project",
+                            runtime_dir,
+                            export_root=export_root,
+                        )
+                    self.assertIn("导出已阻断", str(ctx.exception))
+                    self.assertEqual(db.list_export_runs(claim_id), [])
+
+
 if __name__ == "__main__":
     unittest.main()
