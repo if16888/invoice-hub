@@ -66,6 +66,8 @@ from .ui_components import (
     CommandBar,
     ActivityTimeline,
     ChecklistRow,
+    InlineErrorCard,
+    LoadingCard,
     CompactFieldRow,
     CompactStatCard,
     DangerZone,
@@ -2334,6 +2336,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.empty_filter_actions.hide()
 
         self.left_stack.addWidget(self.empty_widget)
+
+        # P1-8: in-page loading and retryable error states (no modal on a
+        # transient DB read failure).
+        self.review_loading_page = LoadingCard("正在加载发票…")
+        self.left_stack.addWidget(self.review_loading_page)
+        self.review_btn_retry = make_button("重试", variant="primary", min_width=72)
+        self.review_btn_retry.clicked.connect(self._load_invoices)
+        self.review_error_card = InlineErrorCard("暂时无法加载发票", retry=self.review_btn_retry)
+        self.left_stack.addWidget(self.review_error_card)
 
         # Upper container to group left_stack and preview controls
         self.left_upper_widget = QFrame()
@@ -7495,6 +7506,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         prev_row = self.table.currentRow() if hasattr(self, "table") else -1
 
         existing_rows = list(self.invoices_list) if append else []
+        if not append:
+            self.left_stack.setCurrentWidget(self.review_loading_page)
         page_size = int(getattr(getattr(self, "review_paging", None), "page_size", 50) or 50)
         offset = len(existing_rows)
         try:
@@ -7519,10 +7532,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._is_first_load = False
         except Exception as e:
             _log.error("Failed to load invoices from DB: %s", e)
-            QMessageBox.critical(self, "错误", f"加载发票失败: {e}")
-            counts = {"all": 0, TO_REVIEW: 0, APPROVED: 0, IGNORED: 0, ERROR: 0}
-            total_matching = 0
-            page_rows = []
+            self.review_error_card.set_error(f"暂时无法加载发票：{e}")
+            self.left_stack.setCurrentWidget(self.review_error_card)
+            if performance_trace is not None:
+                performance_trace.finish("error_state", surface="review")
+                self._performance_list_trace = None
+            return
 
         filter_start = time.perf_counter()
         self._update_filter_counts(counts)
