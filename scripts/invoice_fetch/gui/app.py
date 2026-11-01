@@ -817,6 +817,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.setWindowIcon(QIcon(str(logo_path)))
         self.resize(1150, 850)
         self.setStyleSheet(APP_STYLESHEET)
+        from .dark_mode import apply_app_theme as _apply_app_theme
+        _apply_app_theme(QApplication.instance())
 
 
         if self.splash:
