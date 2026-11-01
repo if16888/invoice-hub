@@ -149,4 +149,5 @@
 | P1 批次 7（P1-26，P2-4 部分）| 已实现：GUI/导出文案去掉彩色 emoji，改用单色线性图标/文字标记（注意/合格/恢复/删除等）；买家警告前缀改「注意」并保留全文 tooltip | 本 PR |
 | P1 批次 8（P1-3/7）| 已实现：审核工作区去掉嵌套圆角卡，列表/预览改 1px 分隔线（main splitter handle 1px）；导出页左列三个同级按钮收进「新建报销组 + ⋯」命令行，已通过 0 张改中性色 | 本 PR |
 | P1 批次 9（P1-8，P2-7）| 已实现：审核列表加载中显示 LoadingCard、加载失败改 InlineErrorCard + 重试（不再弹 QMessageBox.critical）；材料行操作补「管理 / 补充材料」⋯ 菜单别名；空态卡片留待后续批次收敛 | 本 PR |
-| P1 其余（P1-5/17）与 P2 其余（P2-4 AlertBanner 重构/17 深色模式/空态 1+1 收敛）| 待做（结构性/大型项，需独立批次） | — |
+| P2 批次 7（P2-17 深色模式，opt-in）| 已实现：新增 dark_mode 模块，从 canonical 浅色 QSS 派生深色样式与 QPalette；通过 INVOICE_HUB_THEME=dark opt-in，默认浅色不变 | 本 PR |
+| P1 剩余（P1-5/17）与 P2 剩余（P2-4 AlertBanner 重构/空态 1+1 收敛）| 待做（结构性/大型项，需独立批次） | — |
