@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import QStackedWidget
+from PySide6.QtWidgets import QFrame, QStackedWidget
 
 
 def _is_qobject_alive(value) -> bool:
@@ -112,6 +112,9 @@ class PdfPreviewController(QObject):
     def _make_view(self, view_class, document):
         """Create a replacement view without disturbing the active preview."""
         view = view_class(self._stack)
+        if hasattr(view, "setFrameShape"):
+            view.setFrameShape(QFrame.NoFrame)
+        view.setStyleSheet("background: #FFFFFF;")
         view.setDocument(document)
         if hasattr(view_class.PageMode, "MultiPage"):
             view.setPageMode(view_class.PageMode.MultiPage)
