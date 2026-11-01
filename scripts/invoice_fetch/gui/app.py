@@ -6273,6 +6273,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Preserve the original six-tab navigation API for legacy routes and tests.
         self.settings_tabs.setMaximumWidth(1120)
+        # P1-5: remove the visible 常用/高级 mode layer. The settings surface is
+        # one panel whose left nav already exposes seven sections (six tabs +
+        # 开票信息). The legacy mode page stays hidden for old numeric routes.
+        self.settings_mode_stack.setCurrentIndex(1)
+        self.settings_mode_segment.hide()
+        self.settings_mode_hint.hide()
+        self.settings_tabs.setCurrentIndex(0)
         self._refresh_settings_page()
         return page
 
@@ -6684,7 +6691,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._set_settings_mode("advanced")
                 self.settings_tabs.setCurrentIndex(legacy_targets.get(sub_tab, 0))
             else:
-                self._set_settings_mode("common")
+                self._set_settings_mode("advanced")
+                self.settings_tabs.setCurrentIndex(0)
 
         if page_trace is not None:
             page_trace.mark("paint_scheduled")
