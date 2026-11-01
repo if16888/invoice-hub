@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QFrame, QPushButton
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.settings_pages_baseline import StructuredSettingsSurface, _normalize_ai
+from scripts.invoice_fetch.gui.settings_common import StructuredSettingsSurface, _normalize_ai
 from scripts.invoice_fetch.gui.ui_components import ReadOnlyDetailPanel
 
 

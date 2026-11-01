@@ -3,11 +3,7 @@ import unittest
 
 
 GUI_DIR = Path(__file__).resolve().parents[1] / "scripts" / "invoice_fetch" / "gui"
-FROZEN_PATCH_MODULES = {
-    "review_settings_issue_fixes.py",
-    "settings_baseline.py",
-    "settings_pages_baseline.py",
-}
+FROZEN_PATCH_MODULES: set[str] = set()
 
 
 class GuiLegacyPatchGovernanceTests(unittest.TestCase):

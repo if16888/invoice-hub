@@ -19,10 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from scripts.invoice_fetch.gui.invoice_detail_panel import InvoiceDetailPanel
-from scripts.invoice_fetch.gui.review_settings_issue_fixes import (
-    apply_review_attachment_action_fix,
-    apply_settings_action_clarity,
-)
+from scripts.invoice_fetch.gui.review_layout import apply_review_attachment_action_fix
+from scripts.invoice_fetch.gui.settings_common import apply_settings_action_clarity
 from scripts.invoice_fetch.gui.ui_components import SecondaryNavStack
 
 

@@ -46,7 +46,6 @@ from .icon_provider import IconProvider
 from .invoice_detail_panel import install_invoice_detail_ownership
 from .review_paging import install_review_paging
 from .review_queue_semantics import apply_review_queue_semantics
-from .review_settings_issue_fixes import apply_review_attachment_action_fix
 from .ui_components import ElidedTextLabel, fit_button_to_content, make_button
 from .workbench_layout import clamp_vertical_split
 
@@ -1795,6 +1794,135 @@ def apply_review_toolbar_filter_fixes(page: QWidget) -> None:
     _install_buyer_title_entry(window)
 
 # ── Review baseline/HCI pipeline (merged from review_baseline_pipeline) ──
+
+# ── Review attachment/company action closure (merged from review_settings_issue_fixes) ──
+def _remove_from_layout(widget: QWidget) -> None:
+    parent = widget.parentWidget()
+    layout = parent.layout() if parent is not None else None
+    if layout is not None:
+        layout.removeWidget(widget)
+
+
+def _remove_status_bar_version(window) -> None:
+    """Remove the clipped version chip from the review footer."""
+    label = getattr(window, "lbl_version", None)
+    if label is not None:
+        _remove_from_layout(label)
+        label.hide()
+        label.setParent(window)
+        label.setProperty("reviewFooterVersionRemoved", True)
+
+    container = getattr(window, "status_actions_container", None)
+    if container is not None:
+        container.setMinimumWidth(0)
+        container.setStyleSheet("background: transparent; border: none;")
+        container.adjustSize()
+
+
+def _place_secondary_action(status_line, button: QWidget) -> None:
+    """Place a non-primary action in the final material row without floating."""
+    _remove_from_layout(button)
+    button.setParent(status_line)
+    if status_line.layout().indexOf(button) < 0:
+        status_line.layout().addWidget(button)
+    button.show()
+
+
+def _hide_non_primary_action(status_line, button: QWidget) -> None:
+    if status_line._action_widget is button:
+        return
+    _remove_from_layout(button)
+    button.hide()
+    button.setParent(status_line)
+
+
+def _stabilize_original_file_actions(detail, *, has_file: bool) -> None:
+    """Keep original-file controls inside the Materials / Original row."""
+    status_line = detail.original_status_line
+    primary = status_line._action_widget
+
+    detail.btn_open_file.setText("打开")
+    detail.btn_open_file.setToolTip("打开当前发票原件")
+    detail.btn_add_attachment.setText("替换原件" if has_file else "补充原件")
+    detail.btn_add_attachment.setToolTip(
+        "选择本地文件替换当前发票原件" if has_file else "选择本地文件补充发票原件"
+    )
+    detail.btn_add_attachment.setMinimumWidth(84)
+    detail.btn_retry_download.setText("重新下载")
+    detail.btn_retry_download.setToolTip("重新从原始来源下载发票原件")
+    detail.btn_retry_download.setMinimumWidth(80)
+
+    _hide_non_primary_action(status_line, detail.btn_locate_file)
+
+    if primary in (detail.btn_open_file, detail.btn_retry_download):
+        _place_secondary_action(status_line, detail.btn_add_attachment)
+    else:
+        _hide_non_primary_action(status_line, detail.btn_open_file)
+        _hide_non_primary_action(status_line, detail.btn_retry_download)
+
+    if primary is not detail.btn_open_file:
+        _hide_non_primary_action(status_line, detail.btn_open_file)
+    if primary is not detail.btn_retry_download:
+        _hide_non_primary_action(status_line, detail.btn_retry_download)
+
+
+def _remove_review_company_action(detail) -> None:
+    """Keep buyer mismatch information but remove the Settings shortcut button."""
+    button = getattr(detail, "btn_edit_reimbursement_title", None)
+    if button is None:
+        return
+    # The control is removed from the layout and hidden below.  Disconnecting
+    # all slots without knowing the original callable makes PySide emit a
+    # RuntimeWarning when another compatibility pass already detached it.
+    # A hidden, disabled control cannot be activated by the user and remains
+    # owned by the detail panel for safe Qt lifetime management.
+    button.setEnabled(False)
+    _remove_from_layout(button)
+    button.hide()
+    button.setParent(detail)
+    button.setProperty("reviewCompanyActionRemoved", True)
+
+
+def apply_review_attachment_action_fix(page: QWidget | None) -> None:
+    """Fix escaped attachment controls and remove the company Settings shortcut."""
+    if page is None or page.property("reviewAttachmentActionFixApplied"):
+        return
+    window = page.window()
+    if page is not getattr(window, "review_page", None):
+        return
+    detail = getattr(window, "_detail_panel", None)
+    if detail is None or not hasattr(detail, "original_status_line"):
+        return
+
+    page.setProperty("reviewAttachmentActionFixApplied", True)
+    original_set_attachment_state = detail.set_attachment_state
+
+    @wraps(original_set_attachment_state)
+    def set_attachment_state(
+        *,
+        has_file: bool = False,
+        has_url: bool = False,
+        file_name: str = "",
+        file_path: str = "",
+        can_download: bool = False,
+    ):
+        result = original_set_attachment_state(
+            has_file=has_file,
+            has_url=has_url,
+            file_name=file_name,
+            file_path=file_path,
+            can_download=can_download,
+        )
+        _stabilize_original_file_actions(detail, has_file=bool(has_file))
+        return result
+
+    detail.set_attachment_state = set_attachment_state
+    _remove_review_company_action(detail)
+    _remove_status_bar_version(window)
+
+
+
+
 ReviewStage = tuple[str, Callable[[QWidget], None]]
 
 
@@ -1948,4 +2076,5 @@ __all__ = [
     "_repair_material_rows",
     "_save_reimbursement_title",
     "_sync_seller_tooltips",
+    "apply_review_attachment_action_fix",
 ]

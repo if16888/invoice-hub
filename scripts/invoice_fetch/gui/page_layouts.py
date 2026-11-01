@@ -23,11 +23,13 @@ from .hci_v1 import (
 )
 from .review_layout import schedule_review_baseline_pipeline
 from .review_queue_semantics import schedule_task_flow_review_scope_semantics
-from .review_settings_issue_fixes import apply_settings_action_clarity
 from .selection_surfaces import schedule_selection_surface_contracts
-from .settings_baseline import apply_settings_baseline
+from .settings_common import (
+    apply_remaining_settings_baseline,
+    apply_settings_action_clarity,
+    apply_settings_baseline,
+)
 from .settings_feedback import apply_settings_feedback_fixes
-from .settings_pages_baseline import apply_remaining_settings_baseline
 from .settings_refresh_guard import install_settings_refresh_guard
 from .settings_status import install_settings_semantic_status_contract
 from .semantic_checklist import install_semantic_checklist_contract
