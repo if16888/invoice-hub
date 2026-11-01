@@ -5,6 +5,7 @@ from __future__ import annotations
 import weakref
 
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt
+from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListWidget,
@@ -19,7 +20,7 @@ from .design_tokens import DESIGN_V1_COLORS, DESIGN_V1_METRICS
 
 
 class SelectionSurfaceDelegate(QStyledItemDelegate):
-    """Preserve selection painting but remove the native focus rectangle."""
+    """Preserve selection painting and draw an explicit keyboard focus ring."""
 
     @staticmethod
     def normalized_option(option: QStyleOptionViewItem) -> QStyleOptionViewItem:
@@ -28,7 +29,21 @@ class SelectionSurfaceDelegate(QStyledItemDelegate):
         return normalized
 
     def paint(self, painter, option, index) -> None:  # noqa: N802
+        focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
         super().paint(painter, self.normalized_option(option), index)
+        if not focused:
+            return
+        painter.save()
+        pen = QPen(QColor(DESIGN_V1_COLORS["focus_ring"]))
+        pen.setWidth(DESIGN_V1_METRICS["focus_border_width"])
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(
+            option.rect.adjusted(1, 1, -1, -1),
+            DESIGN_V1_METRICS["radius_small"],
+            DESIGN_V1_METRICS["radius_small"],
+        )
+        painter.restore()
 
 
 def _set_dynamic_property(widget: QWidget, name: str, value: bool) -> None:

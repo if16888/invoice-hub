@@ -169,8 +169,13 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertIn("Ctrl + F", window.txt_search.placeholderText())
                 self.assertNotEqual(window.btn_import_local.property("emphasis"), "primary")
                 self.assertFalse(window.btn_mobile_upload.isVisible())
-                self.assertFalse(window.btn_scan_email.isVisible())
-                self.assertFalse(window.btn_toolbar_export.isVisible())
+                # HIG review P0-2: keep the cross-workflow actions visible
+                # but demoted to compact 34px toolbar controls.
+                self.assertTrue(window.btn_scan_email.isVisible())
+                self.assertTrue(window.btn_toolbar_export.isVisible())
+                self.assertTrue(window.btn_import_local.property("reviewCrossWorkflowActionCompact"))
+                self.assertTrue(window.btn_scan_email.property("reviewCrossWorkflowActionCompact"))
+                self.assertTrue(window.btn_toolbar_export.property("reviewCrossWorkflowActionCompact"))
 
                 visible_nav_buttons = [
                     button for button in window.workbench_nav_buttons.values()
