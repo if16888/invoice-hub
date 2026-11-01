@@ -2897,6 +2897,10 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.action_locate_file = self.inline_more_menu.addAction("定位原件文件")
+        self.action_manage_evidence = self.inline_more_menu.addAction("管理 / 补充材料")
+        self.action_manage_evidence.triggered.connect(
+            lambda: getattr(self, "btn_add_evidence", None) and self.btn_add_evidence.click()
+        )
 
 
 
