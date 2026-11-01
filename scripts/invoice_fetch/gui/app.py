@@ -6152,14 +6152,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self.settings_mode_hint.setProperty("class", "SectionHint")
         self.settings_mode_hint.setWordWrap(True)
-        self.settings_mode_bar.addWidget(self.settings_mode_hint, 2)
+        # The explanation belongs to the page header, not a floating sentence
+        # next to the mode switch (review P1-6).
+        self.settings_mode_hint.hide()
         layout.addLayout(self.settings_mode_bar)
 
         self.settings_mode_stack = QStackedWidget(page)
         self.settings_mode_stack.setObjectName("SettingsModeStack")
 
         common_scroll = QScrollArea(self.settings_mode_stack)
-        common_scroll.setObjectName("SettingsCommonScrollArea")
+        common_scroll.setObjectName("SettingsScroll")
         common_scroll.setWidgetResizable(True)
         common_scroll.setFrameShape(QFrame.NoFrame)
         common_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -6178,9 +6180,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_common_export_choose = self.settings_common_widget.btn_export_choose
         self.btn_common_export_open = self.settings_common_widget.btn_export_open
         self.btn_common_mailbox_manage = self.settings_common_widget.btn_mailbox_manage
-        # Keep the settings column readable on wide monitors: same 1120 px
-        # contract as the advanced tab host, centered inside the scroll area.
-        self.settings_common_widget.setMaximumWidth(SettingsPageLayout.maximum_width)
+        # Keep the common-settings column readable on wide monitors: a single
+        # 760px column centered inside the scroll area (review P1-6).
+        self.settings_common_widget.setMaximumWidth(760)
         common_host = QWidget(common_scroll)
         common_host_layout = QHBoxLayout(common_host)
         common_host_layout.setContentsMargins(0, 0, 0, 0)

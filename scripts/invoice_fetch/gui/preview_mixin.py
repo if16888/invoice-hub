@@ -285,7 +285,6 @@ class PreviewMixin:
             self._reposition_overlay_toolbar()
             self.overlay_toolbar.show()
             self.overlay_toolbar.raise_()
-        self._start_hide_overlay_timer(1200)
 
     def _hide_overlay_toolbar(self):
         if not hasattr(self, "overlay_toolbar"):
@@ -296,8 +295,10 @@ class PreviewMixin:
         self.overlay_toolbar.hide()
 
     def _start_hide_overlay_timer(self, delay_ms: int = 1200):
-        if hasattr(self, "overlay_hide_timer"):
-            self.overlay_hide_timer.start(delay_ms)
+        # The preview toolbar is persistent while a document is loaded so users
+        # can always discover zoom/rotate/print; only the empty state hides it.
+        if not getattr(self, "current_preview_docs", None) and hasattr(self, "overlay_toolbar"):
+            self.overlay_toolbar.hide()
 
     def _show_preview_context_menu(self, pos):
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
@@ -635,6 +636,9 @@ class PreviewMixin:
         idx = self.current_preview_index
         if idx < 0 or idx >= len(self.current_preview_docs):
             return
+
+        # The preview toolbar stays visible while a document is loaded (P1-19).
+        self._show_overlay_toolbar()
 
         # Synchronize combo box selection
         if hasattr(self, "combo_supporting_docs") and getattr(self, "supporting_doc_items", None):
