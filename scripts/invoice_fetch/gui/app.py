@@ -1881,7 +1881,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F")
         self.txt_search.setClearButtonEnabled(True)
         self.txt_search.textChanged.connect(self._schedule_invoice_reload)
-        action_layout.addWidget(self.txt_search, 2)
+        self.txt_search.setMinimumWidth(280)
+        self.txt_search.setMaximumWidth(320)
+        action_layout.addWidget(self.txt_search)
 
         self.btn_import_local = make_button("导入", variant="toolbar")
         self.import_menu = QMenu(self)
@@ -1900,6 +1902,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_menu.addAction(self.action_import_mail)
         self.btn_import_local.setMenu(self.import_menu)
         action_layout.addWidget(self.btn_import_local)
+        # P1-1: import lives in the More menu; sync/export stay visible.
+        self.btn_import_local.hide()
 
         self.btn_mobile_upload = make_button("扫码", variant="toolbar")
         self.btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
@@ -1976,6 +1980,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.more_menu.addAction(self.action_refresh)
         self.more_menu.addAction(self.action_soft_duplicate_review)
         self.more_menu.addAction(self.action_mobile_upload)
+        self.more_menu.addAction(self.action_import_local)
         self.more_menu.addAction(self.action_scan_email)
         self.more_menu.addAction(self.action_toolbar_export)
         self.more_menu.addSeparator()

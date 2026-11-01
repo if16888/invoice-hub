@@ -50,8 +50,8 @@ from .ui_components import ElidedTextLabel, fit_button_to_content, make_button
 from .workbench_layout import clamp_vertical_split
 
 
-DETAIL_MIN_WIDTH = 352
-DETAIL_MAX_WIDTH = 520
+DETAIL_MIN_WIDTH = 320
+DETAIL_MAX_WIDTH = 420
 COLLAPSED_NAV_THRESHOLD = 96
 COLLAPSED_DETAIL_BONUS = 48
 MIN_WORKSPACE_WIDTH = 720
@@ -528,8 +528,8 @@ def install_review_vertical_workspace(page: QWidget) -> None:
 # ── Review workspace baseline (merged from review_workspace_baseline) ──
 FILTER_CARD_MIN_WIDTH = 108
 FILTER_CARD_MAX_WIDTH = 156
-WORKSPACE_DETAIL_MIN_WIDTH = 352
-WORKSPACE_DETAIL_MAX_WIDTH = 560
+WORKSPACE_DETAIL_MIN_WIDTH = 320
+WORKSPACE_DETAIL_MAX_WIDTH = 420
 REVIEW_ROW_HEIGHT = 28
 
 
@@ -574,7 +574,7 @@ def _normalize_workspace_geometry(window) -> None:
 
     search = getattr(window, "txt_search", None)
     if search is not None:
-        search.setMinimumWidth(260)
+        search.setMinimumWidth(280)
         search.setAccessibleName("搜索发票")
 
     advanced = getattr(window, "btn_advanced_filter", None)
@@ -671,7 +671,11 @@ def _compact_cross_workflow_actions(window) -> None:
         button.setMinimumWidth(0)
         button.setMaximumWidth(120)
         button.setFocusPolicy(Qt.StrongFocus)
-        button.show()
+        if attr == "btn_import_local":
+            # P1-1: import is discoverable from the More menu, not the bar.
+            button.hide()
+        else:
+            button.show()
 
     more = getattr(window, "btn_more", None)
     if more is not None:
