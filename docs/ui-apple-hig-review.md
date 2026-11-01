@@ -151,5 +151,5 @@
 | P1 批次 9（P1-8，P2-7）| 已实现：审核列表加载中显示 LoadingCard、加载失败改 InlineErrorCard + 重试（不再弹 QMessageBox.critical）；材料行操作补「管理 / 补充材料」⋯ 菜单别名；空态卡片留待后续批次收敛 | 本 PR |
 | P2 批次 7（P2-17 深色模式，opt-in）| 已实现：新增 dark_mode 模块，从 canonical 浅色 QSS 派生深色样式与 QPalette；通过 INVOICE_HUB_THEME=dark opt-in，默认浅色不变 | 本 PR |
 | 最终批次（P1-17，P2-4 增强）| 已实现：inspector 单字段双击内联编辑（保存/取消/Esc 语义）；买家警告新增「查看全部」详情动作 | 本 PR |
-| P1-5（设置 IA 扁平化）需要独立批次：既有 settings 外壳/响应式指标契约耦合较深，已在实现后回归发现破坏，本 PR 回退该项 | 待做（L） | — |
-| P2 剩余（AlertBanner 完整替换/空态 1+1 收敛）| 待做（可选打磨） | — |
+| P1-5（设置 IA 扁平化）| 未完成：本地实现 7 分区单面板时，settings_common 的 lazy refresh 会 deleteLater 重建页面控件，导致 settings_mailbox_list/mailbox_shell 成为已销毁对象并使设置页崩溃；需先重构 refresh 的页面身份契约（按页面对象而非索引），已回退，未推送 | 待做（L） | — |
+| P2-4（买家警告 AlertBanner 化）| 已实现 banner 标题「购买方信息提醒」+ 查看全部动作，保留有界视口；完整 AlertBanner 结构替换仍需与可读性契约一并调整 | 本 PR（部分） |

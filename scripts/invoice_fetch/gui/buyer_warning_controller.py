@@ -127,6 +127,9 @@ class BuyerWarningController:
         detail_button = getattr(detail, "btn_buyer_warning_detail", None) if detail is not None else None
         if detail_button is not None and isValid(detail_button):
             detail_button.setVisible(bool(display_text))
+        title = getattr(detail, "lbl_buyer_warning_title", None) if detail is not None else None
+        if title is not None and isValid(title):
+            title.setVisible(bool(display_text))
 
         buyer_field = getattr(self.window, "txt_buyer", None)
         if buyer_field is None:

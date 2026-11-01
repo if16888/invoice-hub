@@ -2792,6 +2792,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        self.lbl_buyer_warning_title = QLabel("购买方信息提醒")
+        self.lbl_buyer_warning_title.setProperty("role", "caption")
+        self.lbl_buyer_warning_title.hide()
+        summary_layout.addWidget(self.lbl_buyer_warning_title)
         summary_layout.addWidget(self.lbl_buyer_warning)
         self.btn_buyer_warning_detail = make_button("查看全部", variant="secondary", min_width=72)
         self.btn_buyer_warning_detail.setToolTip("查看完整的购买方警告")
