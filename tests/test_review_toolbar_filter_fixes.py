@@ -39,16 +39,13 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
         return window
 
 
-    def test_clicking_header_center_opens_filter_for_any_visible_column(self):
+    def test_header_center_sorts_and_right_edge_funnel_opens_filter(self):
         with tempfile.TemporaryDirectory() as td:
             window = self.make_window(td)
             try:
                 header = window.table.horizontalHeader()
                 for section, key in ((2, "expense_date"), (4, "seller_name"), (5, "invoice_number")):
-                    popup = getattr(window, "_column_filter_popup", None)
-                    if popup is not None:
-                        popup.close()
-                        window._column_filter_popup = None
+                    # Header body click sorts and never opens the filter popup.
                     center_x = (
                         header.sectionViewportPosition(section)
                         + header.sectionSize(section) // 2
@@ -58,6 +55,23 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                         Qt.LeftButton,
                         Qt.NoModifier,
                         QPoint(center_x, header.height() // 2),
+                    )
+                    for _ in range(4):
+                        self.app.processEvents()
+                    self.assertIsNone(getattr(window, "_column_filter_popup", None))
+                    self.assertEqual(header.sortIndicatorSection(), section)
+
+                    # The right-edge funnel zone opens the column filter popup.
+                    edge_x = (
+                        header.sectionViewportPosition(section)
+                        + header.sectionSize(section)
+                        - 6
+                    )
+                    QTest.mouseClick(
+                        header.viewport(),
+                        Qt.LeftButton,
+                        Qt.NoModifier,
+                        QPoint(edge_x, header.height() // 2),
                     )
                     for _ in range(4):
                         self.app.processEvents()

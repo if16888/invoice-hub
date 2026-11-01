@@ -786,8 +786,8 @@ def _install_warning_refresh(window, page: QWidget) -> None:
             # Queue reloads block table signals and then call the selection
             # handler directly. Model changes provide a reliable final refresh
             # after the rebuilt selection and current invoice are synchronized.
-            model.modelReset.connect(lambda ref=window_ref: _schedule_refresh(ref))
-            model.layoutChanged.connect(lambda ref=window_ref: _schedule_refresh(ref))
+            model.modelReset.connect(lambda *_args, ref=window_ref: _schedule_refresh(ref))
+            model.layoutChanged.connect(lambda *_args, ref=window_ref: _schedule_refresh(ref))
             model.rowsInserted.connect(
                 lambda *_args, ref=window_ref: _schedule_refresh(ref)
             )
@@ -1537,7 +1537,7 @@ def _decorate_column_headers(window) -> None:
     header = table.horizontalHeader()
     header.setSectionsClickable(True)
     header.setIconSize(QSize(12, 12))
-    header.setToolTip("点击任意列标题筛选；拖动列边界调整宽度")
+    header.setToolTip("点击列标题排序；点击标题右侧漏斗筛选；拖动列边界调整宽度")
     filter_icon = IconProvider.icon("filter")
     for column in range(table.columnCount()):
         item = table.horizontalHeaderItem(column)
@@ -1555,27 +1555,6 @@ def _sync_reset_visibility(window) -> None:
         or bool(getattr(window, "txt_search", None) and window.txt_search.text().strip())
     )
     reset.setVisible(active)
-
-
-def _open_filter_from_header_click(window, section: int) -> None:
-    """Open the existing popup for a full-cell header click.
-
-    QHeaderView emits sectionClicked only for a click, not for a resize drag, so
-    this keeps column resizing intact without installing a native event filter.
-    """
-    if section < 0:
-        return
-    popup = getattr(window, "_column_filter_popup", None)
-    try:
-        if popup is not None and popup.isVisible():
-            return
-    except RuntimeError:
-        pass
-
-    header = window.table.horizontalHeader()
-    marker_x = header.sectionViewportPosition(section) + header.sectionSize(section) - 8
-    window._column_filter_header_press_pos = QPoint(marker_x, max(0, header.height() // 2))
-    window._show_column_filter_popup(section)
 
 
 def _install_header_filter_decoration(window) -> None:
@@ -1599,11 +1578,6 @@ def _install_header_filter_decoration(window) -> None:
         card.clicked.connect(lambda: QTimer.singleShot(0, lambda: _sync_reset_visibility(window)))
     window.txt_search.textChanged.connect(lambda _text: _sync_reset_visibility(window))
 
-    header = window.table.horizontalHeader()
-    header.sectionClicked.connect(
-        lambda section, target=window: _open_filter_from_header_click(target, section)
-    )
-
     _decorate_column_headers(window)
     _sync_reset_visibility(window)
 
@@ -1621,7 +1595,7 @@ def _apply_table_column_widths(window) -> None:
         window._min_column_widths.update(COLUMN_WIDTHS)
         window._min_column_widths[SELLER_COLUMN] = 180
         window._min_column_widths[INVOICE_NUMBER_COLUMN] = 178
-    table.setToolTip("点击列标题筛选；销售方等长文本可悬停查看完整内容")
+    table.setToolTip("点击列标题排序；标题右侧漏斗筛选；长文本可悬停查看完整内容")
 
 
 def _install_column_width_contract(window) -> None:
