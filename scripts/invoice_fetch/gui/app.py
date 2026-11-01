@@ -2126,7 +2126,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         record_header_layout.addStretch(1)
         self.lbl_record_sort = QLabel("按费用日期倒序")
         self.lbl_record_sort.setObjectName("InvoiceRecordSort")
+        # P2-10: the permanent hint moved into tooltips/empty state.
+        self.lbl_record_sort.hide()
         record_header_layout.addWidget(self.lbl_record_sort)
+        self.lbl_record_section_title.setToolTip(
+            "发票记录：点击列标题排序，标题右侧漏斗筛选，拖动列边界调整宽度"
+        )
         self.btn_return_claim = make_button("返回报销组", variant="secondary")
         self.btn_return_claim.hide()
         self.btn_return_claim.clicked.connect(lambda: self._switch_main_page("export"))
@@ -5424,8 +5429,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         scroll_accounts = QScrollArea()
         scroll_accounts.setWidgetResizable(True)
-        scroll_accounts.setFrameShape(QFrame.StyledPanel)
+        scroll_accounts.setFrameShape(QFrame.NoFrame)
+        scroll_accounts.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_accounts.setMaximumHeight(140)
+        self.import_mail_accounts_scroll = scroll_accounts
         scroll_accounts.setWidget(self.mail_accounts_checklist)
         self.import_mail_accounts_card.body_layout.addWidget(scroll_accounts)
 

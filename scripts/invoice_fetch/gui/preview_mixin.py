@@ -78,6 +78,9 @@ class PreviewMixin:
             parent=getattr(self, "preview_container", None),
         )
         self.overlay_toolbar.installEventFilter(self)
+        if not getattr(self, "_navigation_shortcuts_registered", False):
+            self._register_navigation_shortcuts()
+            self._navigation_shortcuts_registered = True
         self.btn_zoom_out = self.overlay_toolbar.btn_zoom_out
         self.btn_zoom_100 = self.overlay_toolbar.btn_zoom_100
         self.btn_zoom_in = self.overlay_toolbar.btn_zoom_in
@@ -553,6 +556,7 @@ class PreviewMixin:
             self.image_zoom_mode = "custom"
             self.image_zoom_factor *= 1.2
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_out(self):
         QPdfDocument, QPdfView = get_qt_pdf_classes()
@@ -563,6 +567,43 @@ class PreviewMixin:
             self.image_zoom_mode = "custom"
             self.image_zoom_factor *= 0.8
             self._update_image_display()
+        self._refresh_zoom_percent()
+
+    def _refresh_zoom_percent(self):
+        """Keep the zoom label honest: custom factor as %, fit modes as 适宽/适页."""
+        label = getattr(self, "btn_zoom_100", None)
+        if label is None:
+            return
+        pdf = getattr(self, "pdf_view", None)
+        stack = getattr(self, "preview_stack", None)
+        current = stack.currentWidget() if stack is not None else None
+        if pdf is not None and current is pdf:
+            try:
+                mode = pdf.zoomMode()
+            except Exception:
+                mode = None
+            fit_width = getattr(getattr(pdf, "ZoomMode", None), "FitToWidth", None)
+            fit_page = getattr(getattr(pdf, "ZoomMode", None), "FitInView", None)
+            if mode is not None and mode == fit_width:
+                label.setText("适宽")
+                return
+            if mode is not None and mode == fit_page:
+                label.setText("适页")
+                return
+            try:
+                label.setText(f"{round(pdf.zoomFactor() * 100)}%")
+            except Exception:
+                label.setText("100%")
+            return
+        if stack is not None and current is getattr(self, "image_scroll_area", None):
+            if self.image_zoom_mode == "fit_width":
+                label.setText("适宽")
+            elif self.image_zoom_mode == "fit_page":
+                label.setText("适页")
+            else:
+                label.setText(f"{round(self.image_zoom_factor * 100)}%")
+            return
+        label.setText("100%")
 
     def _schedule_image_display_update(self):
         if hasattr(self, "image_resize_timer"):
@@ -1412,6 +1453,17 @@ class PreviewMixin:
         self.shortcut_next_file = QShortcut(Qt.CTRL | Qt.Key_Right, self)
         self.shortcut_next_file.setContext(Qt.WindowShortcut)
         self.shortcut_next_file.activated.connect(self._on_ctrl_right)
+
+        # ── Ctrl++ / Ctrl+- / Ctrl+0: real zoom shortcuts (P2-5) ──
+        self.shortcut_zoom_in = QShortcut(QKeySequence.ZoomIn, self)
+        self.shortcut_zoom_in.setContext(Qt.WindowShortcut)
+        self.shortcut_zoom_in.activated.connect(self._zoom_in)
+        self.shortcut_zoom_out = QShortcut(QKeySequence.ZoomOut, self)
+        self.shortcut_zoom_out.setContext(Qt.WindowShortcut)
+        self.shortcut_zoom_out.activated.connect(self._zoom_out)
+        self.shortcut_zoom_reset = QShortcut(QKeySequence("Ctrl+0"), self)
+        self.shortcut_zoom_reset.setContext(Qt.WindowShortcut)
+        self.shortcut_zoom_reset.activated.connect(self._zoom_100)
 
     def _on_ctrl_left(self):
         if not self._focus_is_editing_widget():
