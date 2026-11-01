@@ -2101,6 +2101,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("WorkbenchMainSplitter")
+        splitter.setHandleWidth(1)
         splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         splitter.setChildrenCollapsible(True)
         self.main_splitter = splitter
@@ -2360,9 +2362,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # Initialize the New Preview Panel
         self._init_preview_panel()
         if hasattr(self, "preview_panel") and self.preview_panel is not None:
-            self.preview_panel.setProperty("class", "WorkbenchCard")
-            self.preview_panel.setMinimumHeight(380)
-            self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.preview_panel.setObjectName("PreviewPanel")
+        self.preview_panel.setProperty("class", "WorkbenchCard")
+        self.preview_panel.setMinimumHeight(380)
+        self.preview_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Build Middle Workspace via pure QVBoxLayout (NO vertical QSplitter)
         self.middle_workspace = QWidget()
@@ -5666,15 +5669,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_group_card = SectionCard("报销组", hint="左侧按组查看发票数、金额和完整性缺口；检查会随选择更新。")
         self.export_group_card.setFixedWidth(300)
         self.export_group_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
-        self.btn_export_create_group = make_button("新建报销组", variant="secondary")
+        self.btn_export_create_group = make_button("新建报销组", variant="primary")
         self.btn_export_create_group.clicked.connect(self._create_export_claim)
-        self.export_group_card.body_layout.addWidget(self.btn_export_create_group)
         self.btn_edit_claim_reason = make_button("编辑报销信息", variant="secondary")
         self.btn_edit_claim_reason.clicked.connect(self._edit_claim_reason)
-        self.export_group_card.body_layout.addWidget(self.btn_edit_claim_reason)
         self.btn_export_filename = make_button("导出文件名模板", variant="secondary")
         self.btn_export_filename.clicked.connect(self._configure_export_filename)
-        self.export_group_card.body_layout.addWidget(self.btn_export_filename)
+        self.export_group_more = MoreMenuButton(parent=self.export_group_card)
+        self.export_group_more.setToolTip("更多报销组操作")
+        self.export_group_more_menu = QMenu(self.export_group_more)
+        self.export_group_more_menu.addAction("编辑报销信息", self._edit_claim_reason)
+        self.export_group_more_menu.addAction("导出文件名模板", self._configure_export_filename)
+        self.export_group_more.setMenu(self.export_group_more_menu)
+        self.export_group_actions = CommandBar()
+        self.export_group_actions.set_actions(
+            primary_action=self.btn_export_create_group,
+            more_menu=self.export_group_more,
+        )
+        self.export_group_card.body_layout.addWidget(self.export_group_actions)
         self.export_empty_state = EmptyStateCard(
             "还没有报销组",
             "在审核页将发票关联到报销组后，即可检查并导出。",
@@ -6467,7 +6479,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         # Update ChecklistRows
         if hasattr(self, "export_check_approved"):
-            self.export_check_approved.set_value(f"{approved_cnt} 张", ok=approved_cnt > 0)
+            self.export_check_approved.set_value(
+            f"{approved_cnt} 张", ok=(approved_cnt > 0) if approved_cnt else None
+        )
             self.export_check_pending.set_value(f"{pending_cnt} 张（{'包含' if include_pending else '不导出'}）", ok=None)
             self.export_check_missing_attach.set_value(
                 "无" if missing_attach == 0 else f"{missing_attach} 张",
