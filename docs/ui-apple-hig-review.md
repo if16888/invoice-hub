@@ -150,4 +150,6 @@
 | P1 批次 8（P1-3/7）| 已实现：审核工作区去掉嵌套圆角卡，列表/预览改 1px 分隔线（main splitter handle 1px）；导出页左列三个同级按钮收进「新建报销组 + ⋯」命令行，已通过 0 张改中性色 | 本 PR |
 | P1 批次 9（P1-8，P2-7）| 已实现：审核列表加载中显示 LoadingCard、加载失败改 InlineErrorCard + 重试（不再弹 QMessageBox.critical）；材料行操作补「管理 / 补充材料」⋯ 菜单别名；空态卡片留待后续批次收敛 | 本 PR |
 | P2 批次 7（P2-17 深色模式，opt-in）| 已实现：新增 dark_mode 模块，从 canonical 浅色 QSS 派生深色样式与 QPalette；通过 INVOICE_HUB_THEME=dark opt-in，默认浅色不变 | 本 PR |
-| P1 剩余（P1-5/17）与 P2 剩余（P2-4 AlertBanner 重构/空态 1+1 收敛）| 待做（结构性/大型项，需独立批次） | — |
+| 最终批次（P1-17，P2-4 增强）| 已实现：inspector 单字段双击内联编辑（保存/取消/Esc 语义）；买家警告新增「查看全部」详情动作 | 本 PR |
+| P1-5（设置 IA 扁平化）需要独立批次：既有 settings 外壳/响应式指标契约耦合较深，已在实现后回归发现破坏，本 PR 回退该项 | 待做（L） | — |
+| P2 剩余（AlertBanner 完整替换/空态 1+1 收敛）| 待做（可选打磨） | — |
