@@ -123,3 +123,14 @@
 3. 对比度用 WCAG 公式复核（正文 ≥4.5:1、大字号/UI ≥3:1）；
 4. 125%/150% DPI 各截一张主界面；
 5. `python -m unittest tests.test_hci_v1 tests.test_settings_center ...` 等壳 UI 基线测试不回归。
+
+---
+
+## 实施进度
+
+| 批次 | 状态 | PR |
+|---|---|---|
+| P0-1 键盘焦点可见性：焦点环（按钮/输入框/列表）、列表与表格 delegate 焦点绘制、Tab 顺序 search → filters → table → detail | 已实现 | 本 PR |
+| P0-2 审核页顶部结构：紧凑 PageHeader 恢复可见、页面留白、疑似重复复核移入「更多」、跨工作流按钮保留为 34px 紧凑操作 | 已实现 | 本 PR |
+| P0-3 概览「当前概况」重影：ActivityTimeline.clear 同步 hide + setParent(None) 再 deleteLater，避免旧行叠画 | 已实现 | 本 PR |
+| P1 / P2 批次 | 待做 | — |

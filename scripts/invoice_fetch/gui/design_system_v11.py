@@ -53,7 +53,7 @@ QPushButton.WorkbenchNavButton:hover {{
 QPushButton.WorkbenchNavButton:focus {{
     background-color: {colors['surface_secondary']};
     color: {colors['accent_hover']};
-    border: none;
+    border: {metrics['focus_border_width']}px solid {colors['focus_ring']};
     outline: 0;
 }}
 QPushButton.WorkbenchNavButton:checked,
@@ -84,7 +84,7 @@ QPushButton[navigationControl="collapse"]:hover {{
 QPushButton[navigationControl="collapse"]:focus {{
     background-color: {colors['selected']};
     color: {colors['accent_hover']};
-    border: none;
+    border: {metrics['focus_border_width']}px solid {colors['focus_ring']};
     outline: 0;
 }}
 """

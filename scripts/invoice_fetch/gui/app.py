@@ -1783,7 +1783,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.main_layout = QVBoxLayout(self.workbench_content)
         main_layout = self.main_layout
         WorkspacePageLayout.apply(self.workbench_content, main_layout)
-        main_layout.setContentsMargins(12, 0, 12, 0)
+        main_layout.setContentsMargins(12, 8, 12, 8)
         main_layout.setSpacing(8)
 
         self.review_header = PageHeader(
@@ -1806,6 +1806,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_soft_duplicate_review = make_button("无票号疑似重复复核", variant="secondary")
         self.btn_soft_duplicate_review.clicked.connect(self._open_soft_duplicate_review)
         main_layout.addWidget(self.btn_soft_duplicate_review, 0, Qt.AlignLeft)
+        # Hidden in the dense review header; the More menu exposes the action.
+        self.btn_soft_duplicate_review.hide()
         self.review_scope_completion = QWidget()
         completion_layout = QHBoxLayout(self.review_scope_completion)
         completion_layout.setContentsMargins(0, 0, 0, 0)
@@ -1919,6 +1921,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.more_menu = QMenu(self)
         self.more_menu.setToolTipsVisible(True)
 
+        self.action_soft_duplicate_review = self._make_menu_action(
+            "无票号疑似重复复核",
+            QStyle.SP_MessageBoxWarning,
+            self._open_soft_duplicate_review,
+            "复核无票号但疑似重复的记录",
+        )
         self.action_refresh = self._make_menu_action(
             "刷新数据", QStyle.SP_BrowserReload, self._manual_refresh, "刷新当前发票列表"
         )
@@ -1950,6 +1958,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "打开 GitHub Issues", QStyle.SP_MessageBoxQuestion, self._open_github_issues, "打开公开 Issue 反馈入口"
         )
         self.more_menu.addAction(self.action_refresh)
+        self.more_menu.addAction(self.action_soft_duplicate_review)
         self.more_menu.addAction(self.action_mobile_upload)
         self.more_menu.addAction(self.action_scan_email)
         self.more_menu.addAction(self.action_toolbar_export)
@@ -2520,7 +2529,30 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         main_layout.addWidget(self.log_drawer)
         self._log_panel_visible = False
 
-    # ── Detail panel wiring ────────────────────────────────────
+        self._install_keyboard_tab_order()
+
+    def _install_keyboard_tab_order(self) -> None:
+        """Walk keyboard focus through search, filters, table and detail actions."""
+        widgets = [getattr(self, "txt_search", None)]
+        segment = getattr(self, "status_segment_control", None)
+        buttons = getattr(segment, "buttons", None) if segment is not None else None
+        if isinstance(buttons, dict):
+            widgets.extend(buttons.values())
+        widgets.append(getattr(self, "table", None))
+        detail = getattr(self, "_detail_panel", None)
+        for attr in ("btn_approve", "btn_ignore", "btn_error", "btn_open_file"):
+            candidate = getattr(detail, attr, None) if detail is not None else None
+            if candidate is not None:
+                widgets.append(candidate)
+                break
+        widgets.append(getattr(self, "btn_more", None))
+        widgets = [widget for widget in widgets if widget is not None]
+        for current, following in zip(widgets, widgets[1:]):
+            self.setTabOrder(current, following)
+        toolbar = getattr(self, "workbench_top_toolbar", None)
+        if toolbar is not None:
+            for button in toolbar.findChildren(QToolButton):
+                button.setFocusPolicy(Qt.TabFocus)
 
     def _setup_detail_panel(self):
         cbs = InvoiceDetailCallbacks(

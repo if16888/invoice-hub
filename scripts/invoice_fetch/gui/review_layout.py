@@ -657,64 +657,8 @@ _CROSS_WORKFLOW_BUTTONS = (
 )
 
 
-class _CommandCompatibility:
-    """Non-widget compatibility surface for legacy callers."""
-
-    def __init__(self, action, legacy_text=None):
-        self._action = action
-        self._legacy_text = legacy_text
-        self._props = {
-            "reviewCrossWorkflowActionRemoved": True,
-            "reviewCompatibilityControl": None,
-        }
-
-    def property(self, name):
-        return self._props.get(name, self._action.property(name))
-
-    def setProperty(self, name, value):
-        self._props[name] = value
-
-    def text(self):
-        return self._legacy_text or self._action.text()
-
-    def setText(self, value):
-        self._legacy_text = value
-
-    def style(self):
-        return _NullStyle()
-
-    def isEnabled(self):
-        return self._action.isEnabled()
-
-    def setEnabled(self, value):
-        self._action.setEnabled(value)
-
-    def clearFocus(self):
-        pass
-
-    def setFocus(self, *_args):
-        pass
-
-    def isVisible(self):
-        return False
-
-    def isHidden(self):
-        return True
-
-    def menu(self):
-        return None
-
-
-class _NullStyle:
-    def unpolish(self, *_args):
-        pass
-
-    def polish(self, *_args):
-        pass
-
-
-def _remove_cross_workflow_actions(window) -> None:
-    """Remove Import/Scan/Export controls from the visible Review command bar."""
+def _compact_cross_workflow_actions(window) -> None:
+    """Keep Import/Scan/Export available but demoted inside the review toolbar."""
     toolbar = getattr(window, "workbench_top_toolbar", None)
     toolbar_layout = toolbar.layout() if toolbar is not None else None
 
@@ -722,27 +666,12 @@ def _remove_cross_workflow_actions(window) -> None:
         button = getattr(window, attr, None)
         if button is None:
             continue
-        _remove_widget_from_layout(toolbar_layout, button)
-        parent = button.parentWidget()
-        if parent is not None:
-            _remove_widget_from_layout(parent.layout(), button)
-        button.setProperty("reviewCrossWorkflowActionRemoved", True)
-        action_name = {
-            "btn_import_local": "action_import_local",
-            "btn_scan_email": "action_scan_email",
-            "btn_toolbar_export": "action_toolbar_export",
-        }[attr]
-        button.deleteLater()
-        legacy_text = {
-            "btn_import_local": "导入",
-            "btn_scan_email": "扫描邮箱",
-            "btn_toolbar_export": "导出",
-        }[attr]
-        setattr(
-            window,
-            attr,
-            _CommandCompatibility(getattr(window, action_name), legacy_text),
-        )
+        button.setProperty("reviewCrossWorkflowActionCompact", True)
+        button.setFixedHeight(34)
+        button.setMinimumWidth(0)
+        button.setMaximumWidth(120)
+        button.setFocusPolicy(Qt.StrongFocus)
+        button.show()
 
     more = getattr(window, "btn_more", None)
     if more is not None:
@@ -765,16 +694,19 @@ def _remove_cross_workflow_actions(window) -> None:
         toolbar.adjustSize()
 
 
-def _hide_redundant_review_header(window) -> None:
-    """Keep Review as a dense workbench without a duplicate page title block."""
+def _compact_review_header(window) -> None:
+    """Keep the page title visible while staying dense for the review workbench."""
     header = getattr(window, "review_header", None)
     if header is None or not isValid(header):
         return
-    parent = header.parentWidget()
-    if parent is not None:
-        _remove_widget_from_layout(parent.layout(), header)
-    header.hide()
-    header.setProperty("reviewDenseHeaderRemoved", True)
+    header.setVisible(True)
+    header.setMinimumHeight(0)
+    header.setMaximumHeight(46)
+    layout = header.layout()
+    if layout is not None:
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+    header.setProperty("reviewCompactHeader", True)
 
 
 def _buyer_warning_summary(full_text: str) -> str:
@@ -893,8 +825,8 @@ def apply_design_v1_review_task_closure(page: QWidget | None) -> None:
         return
 
     page.setProperty("designV1ReviewTaskClosureApplied", True)
-    _hide_redundant_review_header(window)
-    _remove_cross_workflow_actions(window)
+    _compact_review_header(window)
+    _compact_cross_workflow_actions(window)
     _remove_company_action(window)
     _install_warning_refresh(window, page)
 

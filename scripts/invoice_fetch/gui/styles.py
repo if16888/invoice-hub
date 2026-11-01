@@ -1977,6 +1977,40 @@ _LITERAL_METRIC_SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _focus_ring_stylesheet() -> str:
+    """Keyboard focus must stay visible on every interactive surface."""
+    width = DESIGN_V1_METRICS["focus_border_width"]
+    ring = DESIGN_V1_COLORS["focus_ring"]
+    radius = DESIGN_V1_METRICS["radius_small"]
+    return f"""
+/* Keyboard focus ring (WCAG 2.4.7). Kept last so it wins over hover rules. */
+QPushButton:focus, QToolButton:focus, QCheckBox:focus, QRadioButton:focus {{
+    border: {width}px solid {ring};
+    border-radius: {radius}px;
+}}
+QPushButton[variant="primary"]:focus,
+QPushButton[variant="secondary"]:focus,
+QPushButton[variant="toolbar"]:focus,
+QPushButton[variant="ghost"]:focus,
+QPushButton[variant="danger"]:focus,
+QPushButton[variant="link"]:focus,
+QPushButton.PrimaryBtn:focus,
+QPushButton.SecondaryBtn:focus,
+QPushButton.ToolbarActionBtn:focus,
+QPushButton.FilterBtn:focus,
+QPushButton.FilterBtn:checked:focus {{
+    border: {width}px solid {ring};
+}}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus,
+QTextEdit:focus, QPlainTextEdit:focus {{
+    border: {width}px solid {ring};
+}}
+QListView::item:focus, QTableView::item:focus, QListWidget::item:focus {{
+    border: {width}px solid {ring};
+}}
+"""
+
+
 def build_app_stylesheet() -> str:
     """Build core QSS from the shared token values."""
     stylesheet = _BASE_STYLESHEET
@@ -1995,7 +2029,7 @@ def build_app_stylesheet() -> str:
             placeholder,
             str(DESIGN_V1_BUYER_WARNING[key]),
         )
-    return stylesheet
+    return stylesheet + _focus_ring_stylesheet()
 
 
 APP_STYLESHEET = build_app_stylesheet()

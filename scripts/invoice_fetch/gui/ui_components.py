@@ -508,10 +508,14 @@ if _HAS_QT:
             self._layout.setSpacing(0)
 
         def clear(self) -> None:
+            # Reparent synchronously: deleteLater alone lets the old rows keep
+            # painting at their previous geometry under the rebuilt list.
             while self._layout.count():
                 item = self._layout.takeAt(0)
                 widget = item.widget()
                 if widget is not None:
+                    widget.hide()
+                    widget.setParent(None)
                     widget.deleteLater()
 
         def add_entry(self, when: str, title: str, summary: str, state: str = "muted") -> QWidget:
