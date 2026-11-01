@@ -43,12 +43,17 @@ class SettingsCommonAdvancedTests(unittest.TestCase):
                 window._refresh_common_settings_page()
                 self.app.processEvents()
 
-                self.assertEqual(window.settings_mode_stack.currentIndex(), 0)
+                # P1-5: one flat settings panel; the 常用/高级 mode layer is
+                # hidden and the seven-section nav is the only visible surface.
+                self.assertEqual(window.settings_mode_stack.currentIndex(), 1)
+                self.assertTrue(window.settings_mode_segment.isHidden())
+                self.assertFalse(window.settings_common_page.isVisible())
+                self.assertTrue(window.settings_tabs.isVisible())
+                self.assertEqual(window.settings_tabs.tabText(0), "邮箱账户")
                 self.assertEqual(window.lbl_common_profile_name.text(), "Example Ltd.")
                 self.assertEqual(window.lbl_common_profile_tax_id.text(), "91310000MA00000000")
                 self.assertEqual(window.lbl_common_export_path.text(), str(export_dir))
                 self.assertIn("1 个启用账号", window.lbl_common_mailbox_status.text())
-                self.assertFalse(window.settings_tabs.isVisible())
             finally:
                 window.close()
                 self.app.processEvents()

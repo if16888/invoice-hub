@@ -58,6 +58,7 @@ class FinalBatchTests(unittest.TestCase):
                 refresh_buyer_warning(window)
                 detail = window._detail_panel
                 self.assertFalse(detail.lbl_buyer_warning.isHidden())
+                self.assertFalse(detail.lbl_buyer_warning_title.isHidden())
                 self.assertFalse(detail.btn_buyer_warning_detail.isHidden())
                 detail.lbl_buyer_warning.setToolTip("完整购买方警告")
                 detail._show_full_buyer_warning()
