@@ -5177,7 +5177,10 @@ def _compact_core_information(detail) -> None:
 
     for label in detail.detail_core_section.findChildren(QLabel):
         if label.text().strip() == "核验字段":
-            label.setText("基本信息")
+            # P2-7: the tab is already titled 基本信息; a second heading only
+            # costs vertical space in the 320-420px inspector.
+            label.setProperty("class", "DetailSectionTitleHidden")
+            label.hide()
             break
 
 

@@ -1,4 +1,5 @@
 """Explicit review of weak matches; resolving a candidate never deletes an invoice."""
+from .dialog_shell import apply_dialog_shell
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QAbstractItemView,
@@ -12,10 +13,8 @@ class DuplicateReviewDialog(QDialog):
         self.setWindowTitle('无票号疑似重复复核')
         self.resize(780, 440)
         layout = QVBoxLayout(self)
-        hint = QLabel('销售方、费用日期、金额及币种相同，仅表示疑似重复。请查看两张原件后确认。'
-                      '确认重复仅作标记；可回到审核页将该票忽略，或在此重置复核结论。')
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        hint = ('销售方、费用日期、金额及币种相同，仅表示疑似重复。请查看两张原件后确认。'
+                '确认重复仅作标记；可回到审核页将该票忽略，或在此重置复核结论。')
         self.filter = QComboBox()
         for label, decision in [('待复核', 'pending'), ('已确认不同票据', 'distinct'), ('已确认重复', 'duplicate')]:
             self.filter.addItem(label, decision)
@@ -50,7 +49,7 @@ class DuplicateReviewDialog(QDialog):
         close = QDialogButtonBox(QDialogButtonBox.Close)
         close.button(QDialogButtonBox.Close).setText("关闭")
         close.rejected.connect(self.reject)
-        layout.addWidget(close)
+        apply_dialog_shell(self, layout, self.windowTitle(), hint, close)
         self._reload()
 
     def _reload(self):
