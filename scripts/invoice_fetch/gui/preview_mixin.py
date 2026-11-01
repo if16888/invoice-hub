@@ -210,12 +210,36 @@ class PreviewMixin:
         self.preview_stack.setFrameShape(QFrame.StyledPanel)
         self.preview_stack.installEventFilter(self)
 
+        self.preview_empty_page = QWidget()
+        empty_layout = QVBoxLayout(self.preview_empty_page)
+        empty_layout.setContentsMargins(24, 24, 24, 24)
+        empty_layout.setSpacing(12)
+        empty_layout.addStretch(1)
         self.lbl_preview_status = QLabel("请选择一张发票查看原件")
         self.lbl_preview_status.setAlignment(Qt.AlignCenter)
         self.lbl_preview_status.setWordWrap(True)
         self.lbl_preview_status.setProperty("class", "PreviewEmptyState")
         self.lbl_preview_status.setMaximumWidth(520)
-        self.preview_stack.addWidget(self.lbl_preview_status)
+        empty_layout.addWidget(self.lbl_preview_status, 0, Qt.AlignHCenter)
+        self.preview_recovery_row = QWidget(self.preview_empty_page)
+        recovery_layout = QHBoxLayout(self.preview_recovery_row)
+        recovery_layout.setContentsMargins(0, 0, 0, 0)
+        recovery_layout.setSpacing(8)
+        recovery_layout.addStretch(1)
+        self.btn_preview_recover_external = QPushButton("打开外部", self.preview_recovery_row)
+        self.btn_preview_recover_external.setProperty("variant", "secondary")
+        self.btn_preview_recover_external.setToolTip("用系统默认应用打开当前原件")
+        self.btn_preview_recover_external.clicked.connect(self._open_current_preview_ext)
+        self.btn_preview_recover_locate = QPushButton("定位文件", self.preview_recovery_row)
+        self.btn_preview_recover_locate.setProperty("variant", "secondary")
+        self.btn_preview_recover_locate.setToolTip("在资源管理器中定位当前原件")
+        self.btn_preview_recover_locate.clicked.connect(self._locate_current_preview_file)
+        recovery_layout.addWidget(self.btn_preview_recover_external)
+        recovery_layout.addWidget(self.btn_preview_recover_locate)
+        recovery_layout.addStretch(1)
+        empty_layout.addWidget(self.preview_recovery_row)
+        empty_layout.addStretch(1)
+        self.preview_stack.addWidget(self.preview_empty_page)
         self._preview_empty_message = "请选择一张发票查看原件"
 
         self.pdf_document = None
@@ -517,7 +541,17 @@ class PreviewMixin:
             text = "\u56fe\u7247\u52a0\u8f7d\u5931\u8d25\n\u8bf7\u70b9\u51fb\u5916\u90e8\u6253\u5f00\uff0c\u6216\u91cd\u65b0\u5bfc\u5165\u8be5\u6750\u6599"
         self._reset_pdf_preview_state()
         self.lbl_preview_status.setText(text)
-        self.preview_stack.setCurrentWidget(self.lbl_preview_status)
+        page = getattr(self, "preview_empty_page", None)
+        self.preview_stack.setCurrentWidget(
+            page if page is not None else self.lbl_preview_status
+        )
+        has_doc = bool(getattr(self, "current_preview_docs", None))
+        for button in (
+            getattr(self, "btn_preview_recover_external", None),
+            getattr(self, "btn_preview_recover_locate", None),
+        ):
+            if button is not None:
+                button.setEnabled(has_doc)
         self.overlay_toolbar.hide()
         self._set_zoom_buttons_enabled(False)
 
@@ -1026,6 +1060,16 @@ class PreviewMixin:
         file_path = doc["path"]
         if file_path and file_path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path.resolve())))
+
+    def _locate_current_preview_file(self):
+        """Open the containing folder for the current preview document."""
+        docs = getattr(self, "current_preview_docs", None) or []
+        idx = getattr(self, "current_preview_index", -1)
+        if idx < 0 or idx >= len(docs):
+            return
+        path = docs[idx].get("path")
+        if path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve().parent)))
 
     def _on_supporting_docs_combo_changed(self, index):
         """Called when combo box item is selected. Updates tooltip and synchronizes preview window."""

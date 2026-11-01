@@ -6157,8 +6157,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_settings_common_mode.setChecked(True)
         self.btn_settings_common_mode.clicked.connect(lambda: self._set_settings_mode("common"))
         self.btn_settings_advanced_mode.clicked.connect(lambda: self._set_settings_mode("advanced"))
-        self.settings_mode_bar.addWidget(self.btn_settings_common_mode)
-        self.settings_mode_bar.addWidget(self.btn_settings_advanced_mode)
+        self.settings_mode_segment = QWidget(page)
+        self.settings_mode_segment.setObjectName("SettingsModeSegment")
+        segment_layout = QHBoxLayout(self.settings_mode_segment)
+        segment_layout.setContentsMargins(2, 2, 2, 2)
+        segment_layout.setSpacing(2)
+        for button in (self.btn_settings_common_mode, self.btn_settings_advanced_mode):
+            button.setProperty("variant", None)
+            button.setProperty("class", "SegmentItem")
+            button.setFixedHeight(30)
+            button.setMinimumWidth(96)
+            segment_layout.addWidget(button)
+        self.settings_mode_bar.addWidget(self.settings_mode_segment)
         self.settings_mode_bar.addStretch(1)
         self.settings_mode_hint = QLabel(
             "抬头税号、导出目录和邮箱状态可在常用设置中快速查看。",
@@ -6229,11 +6239,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.settings_mode_stack.setCurrentIndex(1 if advanced else 0)
         self.btn_settings_advanced_mode.setChecked(advanced)
         self.btn_settings_common_mode.setChecked(not advanced)
-        for button, selected in (
-            (self.btn_settings_advanced_mode, advanced),
-            (self.btn_settings_common_mode, not advanced),
-        ):
-            button.setProperty("variant", "primary" if selected else "secondary")
+        for button in (self.btn_settings_advanced_mode, self.btn_settings_common_mode):
             button.style().unpolish(button)
             button.style().polish(button)
             button.update()
