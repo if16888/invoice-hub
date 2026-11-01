@@ -3,7 +3,8 @@
 pdfplumber>=0.11.10
 pdfminer.six>=20251230
 cryptography>=50.0.0
-Pillow>=12.3.0
+# 13.0.0 fixes the image-decoder advisories reported against 12.3.0.
+Pillow>=13.0.0
 requests>=2.33.0
 # 2.8.0 fixes HTTPS proxy TLS handling and streaming denial-of-service flaws.
 urllib3>=2.8.0
