@@ -123,6 +123,10 @@ class BuyerWarningController:
         label.setVisible(bool(display_text))
         if row is not None and isValid(row):
             row.setVisible(bool(display_text))
+        detail = getattr(self.window, "_detail_panel", None)
+        detail_button = getattr(detail, "btn_buyer_warning_detail", None) if detail is not None else None
+        if detail_button is not None and isValid(detail_button):
+            detail_button.setVisible(bool(display_text))
 
         buyer_field = getattr(self.window, "txt_buyer", None)
         if buyer_field is None:

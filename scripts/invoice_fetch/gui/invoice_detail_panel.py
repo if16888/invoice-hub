@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
 
 
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QEvent, Signal
 
 
 
@@ -2793,6 +2793,11 @@ class InvoiceDetailPanel(QWidget):
 
 
         summary_layout.addWidget(self.lbl_buyer_warning)
+        self.btn_buyer_warning_detail = make_button("查看全部", variant="secondary", min_width=72)
+        self.btn_buyer_warning_detail.setToolTip("查看完整的购买方警告")
+        self.btn_buyer_warning_detail.hide()
+        self.btn_buyer_warning_detail.clicked.connect(self._show_full_buyer_warning)
+        summary_layout.addWidget(self.btn_buyer_warning_detail)
 
 
 
@@ -3148,6 +3153,32 @@ class InvoiceDetailPanel(QWidget):
         self.btn_seller_preferences.setToolTip("查看或删除商户分类记忆；已有发票分类保持不变")
         self.btn_seller_preferences.clicked.connect(self._cb.on_manage_seller_categories)
         core_title_row.addWidget(self.btn_seller_preferences)
+        detail_core_layout.addLayout(core_title_row)
+
+        # P1-17: one-field inline editing instead of always opening the
+        # six-field modal. Double-click a core value (or call _begin_inline_edit).
+        self.inline_edit_bar = QWidget(self.detail_core_section)
+        inline_bar_layout = QHBoxLayout(self.inline_edit_bar)
+        inline_bar_layout.setContentsMargins(0, 0, 0, 0)
+        inline_bar_layout.setSpacing(6)
+        self.inline_edit_label = QLabel("快速编辑")
+        self.inline_edit_label.setProperty("role", "caption")
+        self.inline_edit_input = QLineEdit(self.inline_edit_bar)
+        self.inline_edit_input.setProperty("class", "DetailFieldInput")
+        self.inline_edit_input.setFixedHeight(28)
+        self.btn_inline_save = make_button("保存", variant="primary", min_width=56)
+        self.btn_inline_cancel = make_button("取消", variant="secondary", min_width=56)
+        inline_bar_layout.addWidget(self.inline_edit_label)
+        inline_bar_layout.addWidget(self.inline_edit_input, 1)
+        inline_bar_layout.addWidget(self.btn_inline_save)
+        inline_bar_layout.addWidget(self.btn_inline_cancel)
+        self.inline_edit_bar.hide()
+        detail_core_layout.addWidget(self.inline_edit_bar)
+        self.inline_edit_input.returnPressed.connect(self._commit_inline_edit)
+        self.btn_inline_save.clicked.connect(self._commit_inline_edit)
+        self.btn_inline_cancel.clicked.connect(self._cancel_inline_edit)
+        self._inline_edit_field = None
+        self._inline_edit_source = None
 
 
 
@@ -3167,7 +3198,6 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        detail_core_layout.addLayout(core_title_row)
         self.btn_save_draft.setVisible(False)
         self.btn_save_draft.setParent(self.detail_core_section)
 
@@ -3422,6 +3452,17 @@ class InvoiceDetailPanel(QWidget):
 
 
         self.invoice_core_grid.addWidget(self.lbl_core_seller, 2, 3)
+        # P1-17: double-click a core value to edit only that field inline.
+        self._inline_edit_labels = {
+            "number": self.lbl_core_number,
+            "date": self.lbl_core_date,
+            "amount": self.lbl_core_amount,
+            "buyer": self.lbl_core_buyer,
+            "seller": self.lbl_core_seller,
+        }
+        for field_name, label in self._inline_edit_labels.items():
+            label.installEventFilter(self)
+            label.setToolTip((label.toolTip() or "") + "（双击快速编辑）")
 
 
 
@@ -4885,6 +4926,79 @@ class InvoiceDetailPanel(QWidget):
 
         self.txt_note.setEnabled(False)
         self._finalize_fixed_header_and_tabs()
+
+    def eventFilter(self, obj, event):
+        field_name = None
+        for name, label in getattr(self, "_inline_edit_labels", {}).items():
+            if obj is label:
+                field_name = name
+                break
+        if field_name is not None:
+            if event.type() == QEvent.MouseButtonDblClick:
+                self._begin_inline_edit(field_name)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _begin_inline_edit(self, field_name: str) -> None:
+        """Open the inline editor for one field, prefilled with its value."""
+        editors = {
+            "number": self.txt_number,
+            "date": self.txt_date,
+            "amount": self.txt_amount,
+            "buyer": self.txt_buyer,
+            "seller": self.txt_seller,
+        }
+        editor = editors.get(field_name)
+        if editor is None:
+            return
+        self._inline_edit_field = field_name
+        self._inline_edit_source = editor.text()
+        self.inline_edit_label.setText(f"编辑{self._inline_edit_caption(field_name)}")
+        self.inline_edit_input.setText(editor.text())
+        self.inline_edit_bar.show()
+        self.inline_edit_input.setFocus()
+        self.inline_edit_input.selectAll()
+
+    def _inline_edit_caption(self, field_name: str) -> str:
+        return {
+            "number": "发票号码",
+            "date": "费用日期",
+            "amount": "金额",
+            "buyer": "购买方",
+            "seller": "销售方",
+        }.get(field_name, field_name)
+
+    def _commit_inline_edit(self) -> None:
+        field_name = getattr(self, "_inline_edit_field", None)
+        if not field_name:
+            return
+        value = self.inline_edit_input.text().strip()
+        values = {
+            "number": self.txt_number.text(),
+            "date": self.txt_date.text(),
+            "amount": self.txt_amount.text(),
+            "buyer": self.txt_buyer.text(),
+            "seller": self.txt_seller.text(),
+        }
+        values[field_name] = value
+        try:
+            self._set_core_field_values(**values)
+            if self._cb is not None and self._cb.on_save_fields() is False:
+                values[field_name] = self._inline_edit_source or ""
+                self._set_core_field_values(**values)
+        finally:
+            self._inline_edit_field = None
+            self.inline_edit_bar.hide()
+
+    def _cancel_inline_edit(self) -> None:
+        self._inline_edit_field = None
+        self.inline_edit_bar.hide()
+
+    def _show_full_buyer_warning(self):
+        detail = (self.lbl_buyer_warning.toolTip() or '').strip()
+        if not detail:
+            return
+        QMessageBox.information(self, "购买方信息提醒", detail)
 
     def _open_edit_dialog(self):
         before = self.get_form_values()
