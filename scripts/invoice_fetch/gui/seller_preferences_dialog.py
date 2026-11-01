@@ -1,6 +1,7 @@
 """Manage local seller category memories without changing existing invoices."""
 
 from PySide6.QtCore import Qt
+from .dialog_shell import apply_dialog_shell
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView, QLabel,
     QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
@@ -46,7 +47,7 @@ class SellerPreferencesDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        apply_dialog_shell(self, layout, self.windowTitle(), buttons=buttons)
 
     def accept(self):
         sellers = self.selected_sellers()
