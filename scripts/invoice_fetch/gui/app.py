@@ -2150,7 +2150,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         record_header_layout.addWidget(self.btn_review_batch_menu)
         self.btn_toggle_review_detail = QToolButton(self.record_header)
         self.btn_toggle_review_detail.setObjectName("ToggleReviewDetailButton")
-        self.btn_toggle_review_detail.setFixedHeight(22)
+        self.btn_toggle_review_detail.setFixedHeight(28)
+        self.btn_toggle_review_detail.setToolTip("隐藏发票详情面板，为列表和票面预览留出空间")
+        self.btn_toggle_review_detail.setAccessibleName("收起详情")
         self.btn_toggle_review_detail.setAutoRaise(True)
         self.btn_toggle_review_detail.clicked.connect(self._toggle_review_detail_panel)
         record_header_layout.addWidget(self.btn_toggle_review_detail)
@@ -4370,13 +4372,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             archive, _ = QFileDialog.getOpenFileName(self, "选择完整备份", str(Path(self.db_path).parent / "backups"), "完整备份 (*.zip)")
             if not archive:
                 return
-            answer = QMessageBox.question(
-                self, "确认完整恢复",
-                "将恢复备份中的发票记录、审核状态、报销组、原件和证明材料。\n"
-                "当前数据库会先保留安全副本，现有原件不会覆盖；邮箱和AI凭据不会恢复。是否继续？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
+            if not self._confirm_restore_backup():
                 return
         if not self._try_begin_data_operation("完整备份操作"):
             return
@@ -4400,6 +4396,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         except Exception:
             self._complete_backup_error("备份任务未能启动，原数据保留。")
             self._complete_backup_finished()
+
+    def _confirm_restore_backup(self) -> bool:
+        """Destructive restore confirmation with verb buttons, default cancel."""
+        box = QMessageBox(self)
+        box.setWindowTitle("恢复完整备份")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(
+            "恢复会覆盖当前数据库中的发票记录、审核状态、报销组和材料关联。\n"
+            "当前数据库会先自动保留安全副本，现有原件不会被覆盖；邮箱和 AI 凭据不会恢复。"
+        )
+        restore_button = box.addButton("恢复备份", QMessageBox.DestructiveRole)
+        cancel_button = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        return box.clickedButton() is restore_button
 
     def _complete_backup_result(self, path):
         if not self._worker_callback_allowed():
@@ -5307,7 +5318,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.overview_summary_strip = SummaryStrip()
         self.overview_value_labels = {}
         for stat_key, title, state in [
-            ("to_review", "待审核", "warning"),
+            ("to_review", "待审核", "muted"),
             ("needs_fix", "缺材料", "warning"),
             ("error", "异常", "danger"),
             ("export_ready", "可导出组", "success"),
@@ -5799,6 +5810,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         data_tab = build_info_page("数据与备份", "创建或恢复数据库备份，并查看本地数据位置。", "lbl_settings_data")
         self.btn_create_complete_backup = make_button("完整备份", variant="primary")
         self.btn_restore_complete_backup = make_button("恢复完整备份", variant="secondary")
+        self.btn_restore_complete_backup.setProperty("tone", "danger")
+        self.btn_restore_complete_backup.setToolTip("恢复备份会覆盖当前数据；操作前会自动保留安全副本")
         self.btn_create_complete_backup.clicked.connect(lambda: self._start_complete_backup("create"))
         self.btn_restore_complete_backup.clicked.connect(lambda: self._start_complete_backup("restore"))
         complete_actions = CommandBar()

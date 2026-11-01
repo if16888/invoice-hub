@@ -2934,6 +2934,8 @@ class InvoiceDetailPanel(QWidget):
 
         self.btn_inline_more = make_button("⋯", variant="ghost")
         self.btn_inline_more.setFixedSize(40, 42)
+        self.btn_inline_more.setToolTip("更多发票操作")
+        self.btn_inline_more.setAccessibleName("更多发票操作")
 
 
 
