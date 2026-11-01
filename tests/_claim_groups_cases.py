@@ -1297,7 +1297,7 @@ class ClaimGroupsTests(unittest.TestCase):
         self.assertIn("QLabel.SummaryAmount {", APP_STYLESHEET)
         self.assertIn("QLabel.SummaryMeta {", APP_STYLESHEET)
         self.assertIn("QLabel.SummarySeller {", APP_STYLESHEET)
-        self.assertIn("font-size: 10px;", APP_STYLESHEET)
+        self.assertIn("font-size: 11px;", APP_STYLESHEET)
         self.assertNotIn("font-size: 9px;", APP_STYLESHEET)
 
     def test_public_candidate_docs_do_not_keep_internal_planning_docs(self):
@@ -5633,7 +5633,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("background-color: #EFF6FF;", toolbar_focus_style)
                     self.assertIn("color: #1D4ED8;", toolbar_focus_style)
                     self.assertIn("border: 2px solid #60A5FA;", toolbar_focus_style)
-                    self.assertIn("font-weight: 700;", toolbar_focus_style)
+                    self.assertIn("font-weight: 600;", toolbar_focus_style)
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()

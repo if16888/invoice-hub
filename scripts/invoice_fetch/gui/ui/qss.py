@@ -13,7 +13,7 @@ def build_qss() -> str:
     /* Global base and semantic typography                                   */
     /* --------------------------------------------------------------------- */
     QWidget {{
-        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+        font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
         font-size: {Theme.TYPE_BODY}px;
         color: {Theme.TEXT_MAIN};
     }}
@@ -396,7 +396,7 @@ def build_qss() -> str:
     }}
     QScrollBar::handle:vertical {{
         background: {Theme.BORDER_STRONG};
-        border-radius: {Theme.SCROLLBAR_WIDTH // 2}px;
+        border-radius: 999px;
         min-height: 24px;
     }}
     QScrollBar::handle:vertical:hover {{
