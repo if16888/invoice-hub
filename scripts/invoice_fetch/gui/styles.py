@@ -1968,11 +1968,21 @@ QFrame#StatusFilterCardGroup {
     border-radius: 10px;
 }
 
-/* ─── InvoiceTableCard ─── */
+/* ─── Flat workspace regions (P1-3): separators, not nested cards ─── */
 QFrame#InvoiceTableCard {
     background-color: #FFFFFF;
-    border: 1px solid #E5EAF2;
-    border-radius: 10px;
+    border: none;
+    border-right: 1px solid #E4E7EC;
+    border-radius: 0;
+}
+QFrame#PreviewPanel {
+    background-color: #FFFFFF;
+    border: none;
+    border-top: 1px solid #E4E7EC;
+    border-radius: 0;
+}
+QSplitter#WorkbenchMainSplitter::handle {
+    background: #E4E7EC;
 }
 
 /* ─── Table bottom stats bar ─── */
