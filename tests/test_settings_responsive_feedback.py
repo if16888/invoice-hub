@@ -15,7 +15,7 @@ from scripts.dev.capture_design_v1 import _synthetic_config, _synthetic_credenti
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.hci_v1 import _history_recheck_finished
 from scripts.invoice_fetch.gui.mailbox_feedback import connection_feedback, forget_connection_result
-from scripts.invoice_fetch.gui.settings_pages_baseline import LONG_VALUE_FIELDS
+from scripts.invoice_fetch.gui.settings_common import LONG_VALUE_FIELDS
 from scripts.invoice_fetch.hci_v1_services import recheck_known_email_history
 
 

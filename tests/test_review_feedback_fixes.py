@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QFrame, QTableWidgetItem
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-from scripts.invoice_fetch.gui.review_feedback_fixes import sync_review_feedback_state
+from scripts.invoice_fetch.gui.review_layout import sync_review_feedback_state
 from scripts.invoice_fetch.gui.ui_components import ElidedTextLabel
 
 

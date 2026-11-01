@@ -83,22 +83,21 @@ def install_settings_refresh_guard(page: QWidget | None) -> None:
     if page is None or not isValid(page):
         return
 
-    from . import review_feedback_fixes
-    from . import settings_baseline
-    from . import settings_pages_baseline
+    from . import review_layout
+    from . import settings_common
 
     _install_function_guard(
-        settings_pages_baseline,
+        settings_common,
         "_normalize_ai",
         "settingsAiNormalizeInFlight",
     )
     _install_function_guard(
-        settings_baseline,
+        settings_common,
         "_refresh_mailbox_visuals",
         "settingsMailboxRefreshInFlight",
     )
     _install_function_guard(
-        review_feedback_fixes,
+        review_layout,
         "_sync_seller_tooltips",
         "reviewSellerTooltipSyncInFlight",
     )

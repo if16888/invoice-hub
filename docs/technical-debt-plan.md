@@ -16,7 +16,7 @@
 | 兼容 re-export 壳（已删） | `buyer_warning_readability.py` | 39 |
 | 重复 token 层 | `styles.py`（第二套 `COLOR_TOKENS`/`TYPE_*`，与 `design_tokens.py` 冲突） | 影响全站 QSS |
 
-债务合计（盘点时）**约 10,725 行，占 GUI 的 32%**，另有 3 个冻结的 hidden-compat scope。Wave 0–2 清理后剩余约 **6.4k 行（约 22%）**：11 个冻结补丁模块 + `hci_v1`/`design_system_v11` 兼容引擎 + `styles.py` 重复 token 层；hidden-compat scope 剩 1 个（`preview_mixin` 的 legacy 预览控件）。
+债务合计（盘点时）**约 10,725 行，占 GUI 的 32%**，另有 3 个冻结的 hidden-compat scope。Wave 0–2 清理后剩约 **6.4k 行（约 22%）**；Wave 3 完成后**冻结补丁模块 14→0、hidden-compat scope 剩 1 个**（`preview_mixin` 的 legacy 预览控件），剩余债务为 `hci_v1`/`design_system_v11` 兼容引擎与 `styles.py` 重复 token 层（Wave 4）。
 
 ## 2. 治理规则
 
@@ -34,8 +34,8 @@
 | Wave 2 | `settings_dialog.py` 3,901 行死代码退休 + 4 个纯死 UI 测试文件删除（约 1,500 行）+ 5 处测试/开发脚本引用迁移；hidden-compat scope 2→1 | ~5,600 行 | PR #204（CI 绿） |
 | Wave 3a | 归并进 owner：`design_baseline_styles`→`styles.py`（全局 baseline QSS 组装）；`review_workspace_baseline`+`review_baseline_pipeline`→`review_layout.py`（工作台归一化 + 评审阶段流水线）；基线 11→8、治理清单 7→6 | ~559 行 | PR #205（CI 绿） |
 | Wave 3b-1 | `business_pages_baseline`→`page_layouts.py`（Dashboard/TaskFlow/导入/导出页基线）；`design_v1_review_task_closure`→`review_layout.py`（评审任务归属收尾）；基线 8→6、治理清单 6→5 | ~594 行 | PR #206 |
-| Wave 3b-2 | `hci_v1_closure`→`hci_v1.py`（HCI 收尾阶段并入引擎；19 个 HCI acceptance 场景保持 PASS）；基线 6→5 | ~964 行 | 本 PR |
-| Wave 3b-3 | 剩余 5 个：`review_feedback_fixes`、`review_toolbar_filter_fixes`、`review_settings_issue_fixes`、`settings_baseline`、`settings_pages_baseline`（+ 之后的 `hci_v1`/`design_system_v11` 兼容引擎与 Wave 4 token 收敛） | ~3,000 | 待做（每 PR 收缩基线） |
+| Wave 3b-2 | `hci_v1_closure`→`hci_v1.py`（HCI 收尾阶段并入引擎；19 个 HCI acceptance 场景保持 PASS）；基线 6→5 | ~964 行 | PR #207 |
+| Wave 3b-3 | 剩余 5 个模块全部归位：`review_feedback_fixes`+`review_toolbar_filter_fixes`→`review_layout.py`；`review_settings_issue_fixes` 拆分为评审侧（→`review_layout`）与设置侧（→`settings_common`）；`settings_baseline`+`settings_pages_baseline`→`settings_common.py`；基线 5→0、治理清单→空 | ~3,100 行 | 本 PR |
 | Wave 4 | 重复 token 层收敛：`styles.py` 第二套 token → `design_tokens.py` 单一来源；QSS 模板化 | 影响 ~682 处 hex 字面量 | 待做（同时是界面 P1-21 前置） |
 
 Wave 4 完成后，按 `docs/ui-apple-hig-review.md` 分 3 批做界面修复（P0 无障碍/布局 → P1 组件与设计系统 → P2 平台化）。

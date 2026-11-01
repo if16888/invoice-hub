@@ -200,12 +200,12 @@ def _synthetic_credential_context(page: str, state: str):
     synthetic capture and restore each target module exactly as it was found.
     """
     from scripts.invoice_fetch import credentials as credentials_module
-    from scripts.invoice_fetch.gui import settings_baseline
+    from scripts.invoice_fetch.gui import settings_common
 
     def synthetic_has_auth_code(_address: str) -> bool:
         return not (page == "imports" and state in {"empty", "missing-authorization"})
 
-    targets = (credentials_module, settings_baseline)
+    targets = (credentials_module, settings_common)
     originals = [(module, getattr(module, "has_auth_code", _MISSING_ATTRIBUTE)) for module in targets]
     for module, _original in originals:
         setattr(module, "has_auth_code", synthetic_has_auth_code)

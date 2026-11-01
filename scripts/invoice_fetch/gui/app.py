@@ -95,8 +95,7 @@ from .api_key_dialog import ApiKeyDialog
 from .dialog_form import style_dialog_form, complete_mailbox_address, MAILBOX_DOMAINS
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
-from .settings_baseline import apply_settings_responsive_metrics
-from .settings_common import CommonSettingsPage
+from .settings_common import CommonSettingsPage, apply_settings_responsive_metrics
 from .company_tax_profile import (
     CompanyTaxProfileDialog,
     refresh_company_tax_profile_status,
