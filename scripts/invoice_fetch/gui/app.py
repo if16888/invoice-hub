@@ -180,6 +180,22 @@ REDOWNLOAD_BUCKETS = (
 
 TABLE_BADGE_ROLE = int(Qt.UserRole) + 101
 _SELECTION_ID_UNSET = object()
+SORT_KEY_ROLE = int(Qt.UserRole) + 102
+SORT_ID_ROLE = int(Qt.UserRole) + 103
+
+
+class _SortableTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem whose ordering follows the column's semantic value."""
+
+    def __lt__(self, other):
+        mine = self.data(SORT_KEY_ROLE)
+        theirs = other.data(SORT_KEY_ROLE) if isinstance(other, QTableWidgetItem) else None
+        if mine is not None and theirs is not None:
+            try:
+                return mine < theirs
+            except TypeError:
+                return str(mine) < str(theirs)
+        return super().__lt__(other)
 
 # Actionable, non-blocking-first messages for claim reimbursement refusals.
 # ``db.mark_claim_reimbursed`` must not leave a locked claim with unstamped
@@ -2155,7 +2171,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.table.verticalHeader().setMaximumSectionSize(32)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().sectionClicked.connect(self._show_column_filter_popup)
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_section_clicked)
         self.table.horizontalHeader().viewport().installEventFilter(self)
         self.table.installEventFilter(self)
         self.table.viewport().installEventFilter(self)
@@ -2806,6 +2822,79 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._column_filters_load_all = False
         self._refresh_column_filter_headers()
         self._load_invoices()
+
+    def _sort_key_for_column(self, column: int, inv: dict, display_text: str):
+        key = VISIBLE_COLUMN_DEFINITIONS[column][0]
+        if key == "total_amount":
+            try:
+                return float(str(inv.get("total_amount") or "").replace(",", ""))
+            except (TypeError, ValueError):
+                return float("-inf")
+        if key in {"expense_date", "date"}:
+            return (display_text or "").replace("/", "-").replace("—", "")
+        if key == "review_status":
+            return {
+                "待审核": 0,
+                "已通过": 1,
+                "已忽略": 2,
+                "异常": 3,
+            }.get(display_text, 9)
+        return display_text or ""
+
+    def _table_row_for_invoice_id(self, invoice_id) -> int:
+        if invoice_id is None or not hasattr(self, "table"):
+            return -1
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.data(SORT_ID_ROLE) == invoice_id:
+                return row
+        return -1
+
+    def _reapply_review_sort(self) -> None:
+        state = getattr(self, "_column_sort_state", None)
+        if state is None or not hasattr(self, "table") or self.table.rowCount() < 2:
+            return
+        header = self.table.horizontalHeader()
+        self.table.sortItems(state[0], state[1])
+        header.setSortIndicator(state[0], state[1])
+        header.setSortIndicatorShown(True)
+
+    def _sort_review_table_by(self, section: int) -> None:
+        if section < 0 or section >= len(VISIBLE_COLUMN_DEFINITIONS):
+            return
+        state = getattr(self, "_column_sort_state", None)
+        order = (
+            Qt.DescendingOrder
+            if state and state[0] == section and state[1] == Qt.AscendingOrder
+            else Qt.AscendingOrder
+        )
+        prev_row = self.table.currentRow()
+        prev_id = (
+            self.invoices_list[prev_row].get("id")
+            if 0 <= prev_row < len(self.invoices_list)
+            else None
+        )
+        self._column_sort_state = (section, order)
+        header = self.table.horizontalHeader()
+        self.table.sortItems(section, order)
+        header.setSortIndicator(section, order)
+        header.setSortIndicatorShown(True)
+        row = self._table_row_for_invoice_id(prev_id)
+        if row >= 0:
+            self.table.blockSignals(True)
+            try:
+                self._apply_single_row_selection(row)
+            finally:
+                self.table.blockSignals(False)
+            self._ensure_single_row_selection(row)
+
+    def _on_header_section_clicked(self, section: int) -> None:
+        """Header body sorts; the right-edge funnel zone opens the filter popup."""
+        if self._should_open_column_filter_popup(section):
+            self._show_column_filter_popup(section)
+        else:
+            self._column_filter_header_press_pos = None
+            self._sort_review_table_by(section)
 
     def _should_open_column_filter_popup(self, section: int) -> bool:
         if not hasattr(self, "table") or section < 0:
@@ -7463,7 +7552,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 ]
 
                 for col, text in enumerate(row_items):
-                    item = QTableWidgetItem(text)
+                    item = _SortableTableWidgetItem(text)
+                    item.setData(SORT_KEY_ROLE, self._sort_key_for_column(col, inv, text))
+                    item.setData(SORT_ID_ROLE, inv.get("id"))
 
                     if col == 3:
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -7525,6 +7616,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.table.blockSignals(False)
             self.table.setUpdatesEnabled(True)
             render_elapsed_ms = int((time.perf_counter() - render_start) * 1000)
+        self._reapply_review_sort()
 
         if performance_trace is not None:
             performance_trace.mark("selection_restore")
@@ -7580,6 +7672,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                             target_row = idx
                             break
 
+                # A sorted table reorders rows, so resolve the selection by id.
+                if target_row != -1 and getattr(self, "_column_sort_state", None) is not None:
+                    target_row = self._table_row_for_invoice_id(
+                        self.invoices_list[target_row].get("id")
+                    )
                 # Clear selection and focus to prevent carryover of multi-selection
                 self.table.clearSelection()
                 self.table.setCurrentItem(None)
