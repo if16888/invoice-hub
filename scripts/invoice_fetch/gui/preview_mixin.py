@@ -363,14 +363,14 @@ class PreviewMixin:
         action_zoom_100 = menu.addAction("100% 原始比例")
         action_zoom_100.triggered.connect(self._zoom_100)
 
-        action_zoom_in = menu.addAction("🔍 放大")
+        action_zoom_in = menu.addAction("放大")
         action_zoom_in.triggered.connect(self._zoom_in)
 
-        action_zoom_out = menu.addAction("🔍 缩小")
+        action_zoom_out = menu.addAction("缩小")
         action_zoom_out.triggered.connect(self._zoom_out)
 
         menu.addSeparator()
-        action_open_ext = menu.addAction("📂 外部打开")
+        action_open_ext = menu.addAction("外部打开")
         action_open_ext.triggered.connect(self._open_current_preview_ext)
 
         menu.exec(self.preview_container.mapToGlobal(pos))

@@ -968,15 +968,15 @@ def _generate_quality_report(
     )
 
     # status indicators
-    status_missing_originals = f"⚠️ 发现 {missing_originals} 张缺失原件" if missing_originals > 0 else "✅ 合格"
-    status_empty_sellers = f"⚠️ 发现 {empty_sellers} 张销售方为空" if empty_sellers > 0 else "✅ 合格"
-    status_empty_amounts = f"⚠️ 发现 {empty_amounts} 张金额为空" if empty_amounts > 0 else "✅ 合格"
-    status_empty_dates = f"⚠️ 发现 {empty_dates} 张日期为空" if empty_dates > 0 else "✅ 合格"
-    status_category_others = f"⚠️ 发现 {category_others} 张消费类型为“其他”" if category_others > 0 else "✅ 合格"
-    status_missing_extras = f"⚠️ 发现 {missing_extras} 张缺少证明材料" if missing_extras > 0 else "✅ 合格"
+    status_missing_originals = f"注意 发现 {missing_originals} 张缺失原件" if missing_originals > 0 else "合格 合格"
+    status_empty_sellers = f"注意 发现 {empty_sellers} 张销售方为空" if empty_sellers > 0 else "合格 合格"
+    status_empty_amounts = f"注意 发现 {empty_amounts} 张金额为空" if empty_amounts > 0 else "合格 合格"
+    status_empty_dates = f"注意 发现 {empty_dates} 张日期为空" if empty_dates > 0 else "合格 合格"
+    status_category_others = f"注意 发现 {category_others} 张消费类型为“其他”" if category_others > 0 else "合格 合格"
+    status_missing_extras = f"注意 发现 {missing_extras} 张缺少证明材料" if missing_extras > 0 else "合格 合格"
     status_filled_confirmed_notes = f"已填写 {filled_confirmed_notes} 项" if filled_confirmed_notes > 0 else "未填写"
-    status_missing_evidence_files = f"⚠️ 发现 {missing_evidence_files} 个证明材料文件不存在" if missing_evidence_files > 0 else "✅ 合格"
-    status_suspected_duplicates = f"⚠️ 发现 {suspected_duplicates} 张疑似重复发票" if suspected_duplicates > 0 else "✅ 合格"
+    status_missing_evidence_files = f"注意 发现 {missing_evidence_files} 个证明材料文件不存在" if missing_evidence_files > 0 else "合格 合格"
+    status_suspected_duplicates = f"注意 发现 {suspected_duplicates} 张疑似重复发票" if suspected_duplicates > 0 else "合格 合格"
 
     export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     escaped_claim_name = _escape_md_inline(claim_name)

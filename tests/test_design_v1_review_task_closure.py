@@ -46,7 +46,7 @@ class DesignV1ReviewTaskClosureTests(unittest.TestCase):
                 detail = window._detail_panel
                 self.assertEqual(
                     detail.lbl_buyer_warning.text(),
-                    "⚠️ 购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
+                    "注意 购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
                 )
                 self.assertEqual(
                     detail.lbl_buyer_warning.toolTip(),

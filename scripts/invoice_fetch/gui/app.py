@@ -831,9 +831,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.gui_init_ms = int((init_time - db_time) * 1000)
 
         # Startup responsiveness logs
-        self.write_log(f"⚡ [系统启动] GUI Import/Load Start: 正在初始化界面主框架...")
-        self.write_log(f"💾 [系统启动] DB Open Complete: 成功打开本地 SQLite 数据库 (耗时: {db_time - start_time:.4f}秒)")
-        self.write_log(f"🎨 [系统启动] GUI Init Complete: UI 工作流外壳与部件构建完成 (耗时: {init_time - db_time:.4f}秒)")
+        self.write_log(f" [系统启动] GUI Import/Load Start: 正在初始化界面主框架...")
+        self.write_log(f" [系统启动] DB Open Complete: 成功打开本地 SQLite 数据库 (耗时: {db_time - start_time:.4f}秒)")
+        self.write_log(f" [系统启动] GUI Init Complete: UI 工作流外壳与部件构建完成 (耗时: {init_time - db_time:.4f}秒)")
 
         # Register deferred load
         QTimer.singleShot(50, self._deferred_init)
@@ -1201,7 +1201,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             err_msg = f"发票列表加载失败: {e}"
             _log.error(err_msg)
             self.statusBar().showMessage(err_msg, 6000)
-            self.write_log(f"⚠️ [加载失败] {err_msg}")
+            self.write_log(f"注意 [加载失败] {err_msg}")
             # Ensure splash screen closes even if load fails so GUI doesn't get blocked
             if self.splash:
                 self.splash.close()
@@ -1221,7 +1221,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._show_after_deferred_init = False
             self.show()
 
-        self.write_log(f"📊 [系统启动] First Invoice List Loaded: 成功检索并渲染首批数据 (耗时: {load_time - start_time:.4f}秒)")
+        self.write_log(f" [系统启动] First Invoice List Loaded: 成功检索并渲染首批数据 (耗时: {load_time - start_time:.4f}秒)")
         # Keep the startup timing in the log; the status bar is user-facing and
         # only surfaces a notice the worker can act on.
         if getattr(self, "_first_load_notice", None):
@@ -3486,7 +3486,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
     def _report_import_review_scope_failure(self, error: Exception) -> None:
         message = "无法确定本次导入的审核范围，未打开审核队列。"
         try:
-            self.write_log(f"❌ [审核范围] {message}: {error}")
+            self.write_log(f" [审核范围] {message}: {error}")
         except Exception:
             pass
         try:
@@ -4162,13 +4162,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 "判定依据：",
             ))
             if duplicate_kind == "exact_file" and flags.get("file_hash_match"):
-                lines.append("✓ 文件内容完全相同")
+                lines.append(" 文件内容完全相同")
                 lines.append("业务字段：未重新解析（文件内容已完全一致）")
             else:
                 for key, label_text in flag_labels.items():
-                    lines.append(("✓ " if flags.get(key) else "△ ") + label_text)
+                    lines.append((" " if flags.get(key) else "△ ") + label_text)
                 if flags.get("file_hash_match"):
-                    lines.append("✓ 文件内容完全相同")
+                    lines.append(" 文件内容完全相同")
                 else:
                     lines.append("△ 文件内容不同，但发票业务身份一致；可能为同一发票的不同下载版本")
             sections.append("\n".join(lines))
@@ -6425,7 +6425,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     row_blockers.append("缺补充材料")
                 elif material["unavailable_extra"]:
                     row_blockers.append("材料不可用")
-                suffix = f"  ⚠ {'、'.join(row_blockers)}" if row_blockers else ""
+                suffix = f"  注意 {'、'.join(row_blockers)}" if row_blockers else ""
                 self.export_invoice_list.addItem(f"{status} · {seller} · {amount} · {number}{suffix}")
                 self.export_invoice_list.item(self.export_invoice_list.count() - 1).setData(Qt.UserRole, inv["id"])
             self.lbl_export_invoice_meta.setText(
@@ -7531,7 +7531,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 f"滚动到底部或在最后一行按 ↓ 自动加载下一批，也可使用搜索/筛选缩小范围。"
             )
             self._first_load_notice = notice
-            self.write_log(f"ℹ️ [首屏提示] {notice}")
+            self.write_log(f" [首屏提示] {notice}")
         else:
             self._limited_first_load_active = False
             self._limited_first_load_total = 0
@@ -8082,10 +8082,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "btn_delete_invoice") and num_selected > 0:
             first_inv = self.invoices_list[selected_indexes[0].row()]
             if first_inv.get("is_deleted") == 1:
-                self.btn_delete_invoice.setText("🔄 恢复发票")
+                self.btn_delete_invoice.setText(" 恢复发票")
                 self.btn_delete_invoice.setProperty("variant", "secondary")
             else:
-                self.btn_delete_invoice.setText("🗑️ 删除发票")
+                self.btn_delete_invoice.setText(" 删除发票")
                 self.btn_delete_invoice.setProperty("variant", "danger")
             self._refresh_widget_style(self.btn_delete_invoice)
 
@@ -8237,7 +8237,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 break
 
         if all_deleted:
-            action_restore = menu.addAction("🔄 恢复发票")
+            action_restore = menu.addAction(" 恢复发票")
             action_restore.triggered.connect(self._restore_selected_invoices)
         else:
             # Multi-select friendly claim linking options
@@ -8247,32 +8247,32 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 action_link = menu.addAction(f"关联报销组: {claim_name}")
                 action_link.triggered.connect(self._link_invoices_to_claim)
 
-                action_unlink = menu.addAction("🔓 从当前报销组取消关联")
+                action_unlink = menu.addAction(" 从当前报销组取消关联")
                 action_unlink.triggered.connect(self._unlink_selected_invoices)
                 menu.addSeparator()
 
             # Batch review status configuration submenu
-            menu_status = menu.addMenu("🎯 批量设置审核状态")
-            action_app = menu_status.addAction("🟢 已通过")
+            menu_status = menu.addMenu(" 批量设置审核状态")
+            action_app = menu_status.addAction(" 已通过")
             action_app.triggered.connect(lambda: self._set_selected_status(APPROVED))
-            action_ign = menu_status.addAction("⚪ 已忽略")
+            action_ign = menu_status.addAction(" 已忽略")
             action_ign.triggered.connect(lambda: self._set_selected_status(IGNORED))
-            action_err = menu_status.addAction("🔴 异常")
+            action_err = menu_status.addAction(" 异常")
             action_err.triggered.connect(lambda: self._set_selected_status(ERROR))
-            action_rev = menu_status.addAction("🟠 待审核")
+            action_rev = menu_status.addAction(" 待审核")
             action_rev.triggered.connect(lambda: self._set_selected_status(TO_REVIEW))
             menu.addSeparator()
 
-            action_reparse = menu.addAction("🔄 重新解析发票")
+            action_reparse = menu.addAction(" 重新解析发票")
             action_reparse.triggered.connect(self._reparse_selected_invoices)
-            action_redownload = menu.addAction("📥 重新下载发票")
+            action_redownload = menu.addAction(" 重新下载发票")
             action_redownload.setEnabled(
                 not getattr(self, "_redownload_worker", None)
                 and not getattr(self, "_shutdown_requested", False)
             )
             action_redownload.triggered.connect(self._redownload_selected_invoices)
             menu.addSeparator()
-            action_delete = menu.addAction("🗑️ 删除发票")
+            action_delete = menu.addAction(" 删除发票")
             action_delete.triggered.connect(self._delete_selected_invoices)
 
         menu.exec(self.table.mapToGlobal(pos))
@@ -8430,7 +8430,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         QMessageBox.information(self, "重新解析结果", msg)
         self.statusBar().clearMessage()
         self.write_log(
-            f"🔄 [重新解析] 完成。成功: {success_count}, 重复处理: {len(duplicate_conflicts)}, "
+            f" [重新解析] 完成。成功: {success_count}, 重复处理: {len(duplicate_conflicts)}, "
             f"缺失文件: {len(missing_files)}, 失败: {len(parse_failed_files)}"
         )
 
@@ -8446,7 +8446,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._end_data_operation("重新解析发票")
         self.statusBar().clearMessage()
         QMessageBox.warning(self, "重新解析失败", message)
-        self.write_log("⚠️ [重新解析] 后台任务失败，未完成本次重新解析")
+        self.write_log("注意 [重新解析] 后台任务失败，未完成本次重新解析")
 
     def _reparse_thread_done(self, request_id: int) -> None:
         worker = getattr(self, "_reparse_worker", None)
@@ -8626,7 +8626,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 8000,
             )
             self.write_log(
-                f"📥 [重新下载] 已取消。完成: {completed}/{requested}, "
+                f" [重新下载] 已取消。完成: {completed}/{requested}, "
                 f"file_restored={int(buckets.get('file_restored', 0) or 0)}"
             )
             return
@@ -8656,7 +8656,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             QMessageBox.information(self, "重新下载结果", msg)
         self.statusBar().clearMessage()
         self.write_log(
-            "📥 [重新下载] 完成。"
+            " [重新下载] 完成。"
             f"file_restored={int(buckets.get('file_restored', 0) or 0)} "
             f"metadata_refreshed={int(buckets.get('metadata_refreshed', 0) or 0)} "
             f"duplicate_only={int(buckets.get('duplicate_only', 0) or 0)} "
@@ -8739,7 +8739,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if inv_id and self.db.soft_delete_invoice(inv_id):
                 success_count += 1
 
-        self.write_log(f"🗑️ [删除发票] 成功删除 {success_count}/{count} 张发票。")
+        self.write_log(f" [删除发票] 成功删除 {success_count}/{count} 张发票。")
         self.statusBar().showMessage(f"成功删除 {success_count} 张发票", 4000)
         self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
@@ -8772,7 +8772,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if inv_id and self.db.restore_invoice(inv_id):
                 success_count += 1
 
-        self.write_log(f"🔄 [恢复发票] 成功恢复 {success_count}/{count} 张发票。")
+        self.write_log(f" [恢复发票] 成功恢复 {success_count}/{count} 张发票。")
         self.statusBar().showMessage(f"成功恢复 {success_count} 张发票", 4000)
         self._select_row_hint = self._capture_selection_row_hint()
         self._load_invoices()
@@ -9193,7 +9193,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         if not amount:
             self.statusBar().showMessage("金额为空，已保存为待补全；标记通过前会再次确认。", 5000)
-            self.write_log("⚠️ [手工补录] 当前记录金额为空，已按待补全材料保存。")
+            self.write_log("注意 [手工补录] 当前记录金额为空，已按待补全材料保存。")
 
         saved = False
         try:
@@ -10227,8 +10227,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         box.setInformativeText(self._format_claim_export_preflight_text(preflight_stats))
         page_scope = self._current_page_key() == "export"
         selected_pending = bool(self.export_scope.currentData()) if page_scope else False
-        btn_approved_only = None if page_scope and selected_pending else box.addButton("🟢 仅打包已通过发票", QMessageBox.YesRole)
-        btn_include_all = box.addButton("🟡 导出已通过 + 待审核发票", QMessageBox.NoRole) if not page_scope or selected_pending else None
+        btn_approved_only = None if page_scope and selected_pending else box.addButton(" 仅打包已通过发票", QMessageBox.YesRole)
+        btn_include_all = box.addButton(" 导出已通过 + 待审核发票", QMessageBox.NoRole) if not page_scope or selected_pending else None
         btn_cancel = box.addButton("取消", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is None or box.clickedButton() == btn_cancel:
@@ -10333,7 +10333,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             f"过滤跳过记录: {skip_text}\n\n"
             f"输出路径: {relative_export_dir}"
         )
-        btn_open = box.addButton("📁 打开导出目录", QMessageBox.AcceptRole)
+        btn_open = box.addButton(" 打开导出目录", QMessageBox.AcceptRole)
         box.addButton("关闭", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() == btn_open:
@@ -10425,7 +10425,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 }
             )
             self.write_log(
-                "⚠️ [邮箱扫描] 未找到符合扫描条件的启用账号："
+                "注意 [邮箱扫描] 未找到符合扫描条件的启用账号："
                 f"legacy_email={'已配置' if legacy_configured else '未配置'}，"
                 f"email_accounts={len(raw_accounts)}，selected_keys={selected_keys or 'all'}。"
             )
@@ -10457,7 +10457,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         active_btn = trigger_btn or getattr(self, "btn_scan_email", None)
         if not self._try_begin_data_operation("邮箱扫描"):
             return
-        self.write_log("📥 [邮箱扫描] 增量拉取任务已启动...")
+        self.write_log(" [邮箱扫描] 增量拉取任务已启动...")
         self.statusBar().showMessage("正在建立邮箱连接并扫描接收邮件...")
         self._scan_started_at = time.monotonic()
         self._scan_stage_display = "准备连接"
@@ -10631,7 +10631,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")
-        self.write_log(f"✅ [邮箱扫描] 完成: {summary}")
+        self.write_log(f"合格 [邮箱扫描] 完成: {summary}")
         self.statusBar().showMessage(f"邮箱扫描完成: {summary}", 6000)
 
         failed_summaries = res.get("failed_summaries", []) if isinstance(res, dict) else []
@@ -10691,7 +10691,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if btn:
             orig_text = btn.property("original_text") or ("开始扫描" if btn is getattr(self, "btn_import_scan_selected", None) else ("默认" if btn is getattr(self, "btn_import_scan_default", None) else "同步"))
             self._clear_action_busy(btn, orig_text)
-        self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
+        self.write_log(f" [邮箱扫描] 失败: {err_msg}")
         self.statusBar().showMessage("邮箱扫描执行出错！", 4000)
         self._performance_completion_call(
             performance_trace,
@@ -10852,10 +10852,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return False
         file_count = len(file_paths) if file_paths is not None else None
         if file_count is None:
-            self.write_log("📁 [本地导入] 已选择本地发票文件夹。")
+            self.write_log(" [本地导入] 已选择本地发票文件夹。")
             self.statusBar().showMessage("正在读取与导入本地发票文件夹…")
         else:
-            self.write_log(f"📁 [本地导入] 已选择 {file_count} 个本地文件。")
+            self.write_log(f" [本地导入] 已选择 {file_count} 个本地文件。")
             self.statusBar().showMessage(f"正在读取与导入 {file_count} 个本地文件…")
         self._set_action_busy(self.btn_import_local, "导入中...")
 
@@ -10970,7 +10970,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             )
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")
-        self.write_log("📱 [扫码上传] 手机上传批次已完成，正在刷新发票列表。")
+        self.write_log(" [扫码上传] 手机上传批次已完成，正在刷新发票列表。")
         pending_ids = (
             self._remaining_review_ids(activity)
             if activity is not None and review_ids
@@ -11127,7 +11127,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")
         self.write_log(
-            f"✅ [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"
+            f"合格 [本地导入] 完成：成功识别 {added} 条，重复 {duplicates} 条，"
             f"冲突待确认 {conflicts} 条，需人工确认材料 {pending_manual} 条，真正失败 {failed} 条。"
         )
         self.statusBar().showMessage(
@@ -11165,7 +11165,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._end_data_operation("本地导入")
         self._clear_action_busy(self.btn_import_local, "导入")
         self._record_import_activity("local", failed=1, status="failed")
-        self.write_log(f"❌ [本地导入] 失败: {err_msg}")
+        self.write_log(f" [本地导入] 失败: {err_msg}")
         self.statusBar().showMessage("本地发票导入失败！", 4000)
         self._refresh_imports_page()
         QMessageBox.critical(self, "错误", f"本地导入执行出错: {err_msg}")
@@ -11197,7 +11197,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._last_scan_summary = summary
 
         self.write_log(
-            "✅ [邮箱扫描] 完成！"
+            "合格 [邮箱扫描] 完成！"
             f"新增 {summary['new']}，恢复 {summary['restored']}，重复 {summary['duplicates']}，"
             f"链接失败 {summary['link_failed']}，待重试 {summary['pending_retry']}。"
         )
@@ -11319,7 +11319,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _scan_email_error_legacy(self, err_msg: str):
         self._clear_action_busy(self.btn_scan_email, "同步")
-        self.write_log(f"❌ [邮箱扫描] 失败: {err_msg}")
+        self.write_log(f" [邮箱扫描] 失败: {err_msg}")
         self.statusBar().showMessage("邮箱扫描处理失败！", 4000)
         QMessageBox.critical(self, "错误", f"邮箱扫描执行出错: {err_msg}")
 
