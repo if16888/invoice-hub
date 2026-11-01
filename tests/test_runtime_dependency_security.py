@@ -44,7 +44,7 @@ class RuntimeDependencySecurityTests(unittest.TestCase):
     def test_installed_runtime_meets_security_floors(self):
         floors = {
             "pdfminer.six": "20251230",
-            "Pillow": "12.3.0",
+            "Pillow": "13.0.0",
             "cryptography": "50.0.0",
             "urllib3": "2.8.0",
         }
@@ -55,7 +55,7 @@ class RuntimeDependencySecurityTests(unittest.TestCase):
     def test_committed_runtime_lock_meets_security_floors(self):
         floors = {
             "pdfminer-six": "20251230",
-            "pillow": "12.3.0",
+            "pillow": "13.0.0",
             "cryptography": "50.0.0",
             "urllib3": "2.8.0",
         }
