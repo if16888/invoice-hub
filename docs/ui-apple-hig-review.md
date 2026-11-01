@@ -133,4 +133,6 @@
 | P0-1 键盘焦点可见性：焦点环（按钮/输入框/列表）、列表与表格 delegate 焦点绘制、Tab 顺序 search → filters → table → detail | 已实现 | 本 PR |
 | P0-2 审核页顶部结构：紧凑 PageHeader 恢复可见、页面留白、疑似重复复核移入「更多」、跨工作流按钮保留为 34px 紧凑操作 | 已实现 | 本 PR |
 | P0-3 概览「当前概况」重影：ActivityTimeline.clear 同步 hide + setParent(None) 再 deleteLater，避免旧行叠画 | 已实现 | 本 PR |
-| P1 / P2 批次 | 待做 | — |
+| P1 批次 1（S，8 项：P1-9/12/13/14/15/16/20/24）| 已实现：AI 状态措辞与 Key 来源、表格 28px 行高/13px/表头 28px、选中态 accent+白字、徽章语义色、disabled 统一、对话框中文按钮与安全默认、异常改二级+警告色 | 本 PR |
+| P1-11 列头排序 + 漏斗筛选分离 | 待做（随下一批） | — |
+| P1 其余 / P2 批次 | 待做 | — |

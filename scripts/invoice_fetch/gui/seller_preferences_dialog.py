@@ -3,7 +3,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView, QLabel,
-    QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
 
@@ -37,7 +37,9 @@ class SellerPreferencesDialog(QDialog):
         self.empty_hint.setVisible(not preferences)
         layout.addWidget(self.empty_hint)
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Cancel).setText("关闭")
         self.forget_button = buttons.addButton("删除选中记忆", QDialogButtonBox.AcceptRole)
+        self.forget_button.setProperty("variant", "danger")
         self.forget_button.setEnabled(False)
         self.table.itemSelectionChanged.connect(
             lambda: self.forget_button.setEnabled(bool(self.selected_sellers()))
@@ -45,6 +47,22 @@ class SellerPreferencesDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def accept(self):
+        sellers = self.selected_sellers()
+        if not sellers:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("删除分类记忆")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(f"确定删除选中的 {len(sellers)} 条商户分类记忆？已有发票不受影响。")
+        delete = box.addButton("删除", QMessageBox.DestructiveRole)
+        cancel = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        if box.clickedButton() is not delete:
+            return
+        super().accept()
 
     def selected_sellers(self) -> tuple[str, ...]:
         return tuple(self._preferences[index.row()]["seller_name"]

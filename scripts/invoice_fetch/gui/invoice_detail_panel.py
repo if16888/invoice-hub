@@ -2857,7 +2857,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.btn_err = make_button("异常", variant="danger", tooltip="快捷键：Ctrl+E")
+        self.btn_err = make_button("异常", variant="secondary", tooltip="快捷键：Ctrl+E")
+        self.btn_err.setProperty("tone", "warning")
         self.btn_err.setFixedHeight(42)
         self.btn_err.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 

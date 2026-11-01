@@ -1214,17 +1214,26 @@ def _normalize_ai(window) -> None:
                  "lbl_settings_ai_key_status", "lbl_settings_ai_session_state"):
         label = getattr(window, attr)
         label.setToolTip(label.text())
-    key_text = window.lbl_settings_ai_key_status.text().strip()
-    window.lbl_settings_ai_key_status.setText("未配置" if "未配置" in key_text or key_text in {"", "—"} else "已安全保存")
-    window.lbl_settings_ai_key_status.setToolTip("API Key 保存于 Windows 凭据管理器")
-    enabled = window.lbl_settings_ai_enabled.text().strip() in {"开启", "已启用"}
+    raw_key_text = window.lbl_settings_ai_key_status.text().strip()
+    configured = any(token in raw_key_text for token in ("凭据管理器", "环境变量"))
+    if "API Key 状态：" not in raw_key_text:
+        source = raw_key_text if configured else "未配置"
+        window.lbl_settings_ai_key_status.setText(f"API Key 状态：{source}")
+    window.lbl_settings_ai_key_status.setToolTip(
+        "API Key 来源：环境变量 / Windows 凭据管理器；配置文件不保存密钥。"
+    )
+    enabled = window.lbl_settings_ai_enabled.text().strip() in {"已启用", "开启"}
+    if enabled and not configured:
+        window.lbl_settings_ai_enabled.setText("未启用")
+        window.lbl_settings_ai_enabled.setToolTip("未配置 API Key，AI 无法启用。")
+        enabled = False
     paused = "暂停" in window.lbl_settings_ai_session_state.text()
     if not enabled:
-        status, tone = "已禁用", "muted"
+        status, tone = "未启用", "muted"
     elif paused:
         status, tone = "已暂停", "warning"
     else:
-        status, tone = "正常", "success"
+        status, tone = "已启用", "success"
     badge = window.lbl_settings_ai_status_badge
     badge.setText(status)
     badge.setProperty("tone", tone)

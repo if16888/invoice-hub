@@ -80,9 +80,9 @@ def build_qss() -> str:
         border-color: {Theme.FOCUS_RING};
     }}
     QPushButton:disabled {{
-        background-color: {Theme.BG_SUBTLE};
-        border-color: {Theme.BORDER};
-        color: {Theme.TEXT_MUTED};
+        background-color: #E4E7EC;
+        border: 1px solid #E5E7EB;
+        color: #667085;
     }}
 
     QPushButton[variant="primary"] {{
@@ -333,19 +333,19 @@ def build_qss() -> str:
         background-color: {Theme.BG_CARD};
         border: none;
         gridline-color: {Theme.BG_CANVAS};
-        selection-background-color: {Theme.BLUE_BG};
-        selection-color: {Theme.BLUE};
+        selection-background-color: {Theme.BLUE};
+        selection-color: #FFFFFF;
     }}
     QTableView::item:selected, QTableWidget::item:selected {{
-        background-color: {Theme.BLUE_BG};
-        color: {Theme.BLUE};
+        background-color: {Theme.BLUE};
+        color: #FFFFFF;
     }}
     QTableView::item:hover, QTableWidget::item:hover {{
-        background-color: {Theme.BG_SUBTLE};
+        background-color: #EEF2F6;
     }}
     QTableView::item:selected:hover, QTableWidget::item:selected:hover {{
-        background-color: {Theme.BLUE_BG};
-        color: {Theme.BLUE};
+        background-color: {Theme.BLUE};
+        color: #FFFFFF;
     }}
     QHeaderView::section {{
         background-color: {Theme.BG_SUBTLE};
