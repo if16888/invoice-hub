@@ -261,9 +261,9 @@ class GuiColumnFilterTests(unittest.TestCase):
             self.assertIsNotNone(material_item)
             self.assertNotIn("????", review_item.toolTip())
             self.assertNotIn("????", material_item.toolTip())
-            self.assertIn("资料状态", review_item.toolTip())
+            self.assertIn("材料状态", review_item.toolTip())
             self.assertIn("审核状态", review_item.toolTip())
-            self.assertIn("资料状态", material_item.toolTip())
+            self.assertIn("材料状态", material_item.toolTip())
             self.assertNotEqual(review_item.text(), "??")
             self.assertNotEqual(material_item.text(), "??")
 
