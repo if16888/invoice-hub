@@ -12,6 +12,7 @@ class BatchReviewBar(QFrame):
     ignore_requested = Signal()
     clear_requested = Signal()
     evidence_requested = Signal()
+    visibility_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,4 +48,7 @@ class BatchReviewBar(QFrame):
     def set_selection(self, count: int, amounts: str) -> None:
         self.summary.setText(f"已选择 {count} 张（已加载记录）｜{amounts}")
         self.approve.setText(f"通过所选 ({count})")
-        self.setVisible(count > 1)
+        visible = count > 1
+        if visible != self.isVisible():
+            self.setVisible(visible)
+            self.visibility_changed.emit()
