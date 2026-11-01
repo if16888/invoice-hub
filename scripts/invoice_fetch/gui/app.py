@@ -59,6 +59,7 @@ from .styles import (
     SIDEBAR_COLLAPSED_WIDTH,
     SIDEBAR_EXPANDED_WIDTH,
 )
+from .motion import motion_duration
 from .high_dpi import configure_high_dpi_platform
 from .ui_components import (
     AdaptiveStackedWidget,
@@ -1548,6 +1549,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             elif len(args) == 1 and hasattr(args[0], "width"):
                 self._apply_workbench_metrics(args[0].width(), args[0].height())
 
+    def _position_batch_review_bar(self) -> None:
+        """Keep the floating batch bar pinned to the card bottom."""
+        bar = getattr(self, "batch_review_bar", None)
+        card = getattr(self, "left_upper_widget", None)
+        if bar is None or card is None:
+            return
+        if not bar.isVisible():
+            return
+        margin = 6
+        width = max(0, card.width() - margin * 2)
+        height = min(bar.sizeHint().height(), max(0, card.height() - margin * 2))
+        bar.setGeometry(margin, card.height() - height - margin, width, height)
+        bar.raise_()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "main_splitter") and hasattr(self, "_detail_panel"):
@@ -2335,7 +2350,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.batch_review_bar.ignore_requested.connect(self._batch_ignore_selected)
         self.batch_review_bar.clear_requested.connect(self.table.clearSelection)
         self.batch_review_bar.evidence_requested.connect(self._manage_selected_evidence)
-        left_upper_layout.addWidget(self.batch_review_bar)
+        # P2-12: float the batch bar over the card bottom so selecting rows no
+        # longer changes the table height (no layout jump).
+        self.batch_review_bar.setParent(self.left_upper_widget)
+        self.batch_review_bar.hide()
+        self.batch_review_bar.visibility_changed.connect(self._position_batch_review_bar)
         self.table.itemSelectionChanged.connect(self._sync_batch_review_controls)
 
         # Initialize the New Preview Panel
@@ -9298,7 +9317,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             button.setGraphicsEffect(effect)
         effect.setOpacity(0.72)
         animation = QPropertyAnimation(effect, b"opacity", self)
-        animation.setDuration(190)
+        animation.setDuration(motion_duration(190))
         animation.setStartValue(0.72)
         animation.setEndValue(1.0)
         animation.setEasingCurve(QEasingCurve.OutCubic)
