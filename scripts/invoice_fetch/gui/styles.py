@@ -8,6 +8,7 @@ from .design_tokens import (
     DESIGN_V1_BUYER_WARNING,
     DESIGN_V1_COLORS,
     DESIGN_V1_METRICS,
+    DESIGN_V1_SPACING,
     DESIGN_V1_TYPE,
     apply_legacy_color_tokens,
     canonical_legacy_color_tokens,
@@ -50,43 +51,45 @@ QMenu::separator {
 }
 """
 
-SIDEBAR_EXPANDED_WIDTH = 180
+# P1-21: every product value below is derived from the single Design v1
+# authority in design_tokens; styles.py only keeps compatible names.
+SIDEBAR_EXPANDED_WIDTH = DESIGN_V1_METRICS["sidebar_width"]
 SIDEBAR_COLLAPSED_WIDTH = 56
-PAGE_MARGIN = 16
+PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
 PAGE_HEADER_HEIGHT = 54
-SECTION_GAP = 12
-CARD_GAP = 12
-CARD_PADDING = 12
-DETAIL_PANEL_WIDTH = 352
+SECTION_GAP = DESIGN_V1_METRICS["section_gap"]
+CARD_GAP = DESIGN_V1_SPACING["md"]
+CARD_PADDING = DESIGN_V1_SPACING["md"]
+DETAIL_PANEL_WIDTH = 352  # legacy alias; review_layout owns the elastic range
 CONTEXT_PANEL_WIDTH = 380
 
-SPACE_2 = 2
-SPACE_4 = 4
-SPACE_8 = 8
-SPACE_12 = 12
-SPACE_16 = 16
-SPACE_20 = 20
-SPACE_24 = 24
-SPACE_32 = 32
+SPACE_2 = 2  # exception: hairline separators only
+SPACE_4 = DESIGN_V1_SPACING["xs"]
+SPACE_8 = DESIGN_V1_SPACING["sm"]
+SPACE_12 = DESIGN_V1_SPACING["md"]
+SPACE_16 = DESIGN_V1_SPACING["lg"]
+SPACE_20 = 20  # exception: pre-grid legacy spacing, do not extend
+SPACE_24 = DESIGN_V1_SPACING["xl"]
+SPACE_32 = DESIGN_V1_SPACING["xxl"]
 
 CONTROL_HEIGHT_SM = 28
-CONTROL_HEIGHT_MD = 34
-ICON_BUTTON_SIZE = 34
+CONTROL_HEIGHT_MD = DESIGN_V1_METRICS["control_height"]
+ICON_BUTTON_SIZE = DESIGN_V1_METRICS["icon_button_size"] + 2
 COMPACT_ROW_HEIGHT = 28
 LIST_ROW_HEIGHT = 56
 
-RADIUS_SM = 6
-RADIUS_MD = 8
-RADIUS_LG = 10
+RADIUS_SM = DESIGN_V1_METRICS["radius_small"]
+RADIUS_MD = DESIGN_V1_METRICS["radius_medium"]
+RADIUS_LG = DESIGN_V1_METRICS["radius_large"]
 CARD_RADIUS = RADIUS_LG
 
-TYPE_PAGE_TITLE = 20
-TYPE_SECTION_TITLE = 13
-TYPE_BODY = 13
-TYPE_SECONDARY = 12
-TYPE_CAPTION = 11
-TYPE_METRIC = 18
-TYPE_BADGE = 12
+TYPE_PAGE_TITLE = DESIGN_V1_TYPE["page_title"]
+TYPE_SECTION_TITLE = DESIGN_V1_TYPE["section_title"]
+TYPE_BODY = DESIGN_V1_TYPE["body"]
+TYPE_SECONDARY = DESIGN_V1_TYPE["secondary"]
+TYPE_CAPTION = DESIGN_V1_TYPE["caption"]
+TYPE_METRIC = DESIGN_V1_TYPE["metric"]
+TYPE_BADGE = DESIGN_V1_TYPE["badge"]
 
 # Compatibility keys are derived from the Design v1 authority in design_tokens;
 # this module must not maintain a second copy of product token values.
