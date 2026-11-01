@@ -83,7 +83,7 @@ DESIGN_V1_METRICS = {
     "preview_min_height": 380,
     "section_header_height": 28,
     "nav_item_height": 40,
-    "table_header_height": 34,
+    "table_header_height": 28,
     "scrollbar_width": 8,
     "focus_border_width": 2,
     "icon_button_size": 32,

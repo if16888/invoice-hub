@@ -5187,7 +5187,7 @@ class ClaimGroupsTests(unittest.TestCase):
                         window.btn_save_draft: "secondary",
                         window.btn_app: "primary",
                         window.btn_ign: "secondary",
-                        window.btn_err: "danger",
+                        window.btn_err: "secondary",
                         window.btn_export: "secondary",
                         window.btn_create_claim: "secondary",
                         window.btn_add_to_claim: "secondary",

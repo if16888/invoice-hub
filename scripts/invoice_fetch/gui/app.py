@@ -1783,7 +1783,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.main_layout = QVBoxLayout(self.workbench_content)
         main_layout = self.main_layout
         WorkspacePageLayout.apply(self.workbench_content, main_layout)
-        main_layout.setContentsMargins(12, 8, 12, 8)
+        main_layout.setContentsMargins(12, 8, 12, 6)
         main_layout.setSpacing(8)
 
         self.review_header = PageHeader(
@@ -4970,7 +4970,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._settings_ai_current_profile_id = ""
             self.lbl_settings_ai_provider.setText("—")
             self.lbl_settings_ai_model.setText("—")
-            self.lbl_settings_ai_enabled.setText("关闭")
+            self.lbl_settings_ai_enabled.setText("未启用")
             self.lbl_settings_ai_session_state.setText("无可用会话")
             self.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
             self.lbl_settings_ai_validation_status.setText("尚未校验本地配置")
@@ -5020,7 +5020,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         paused = is_provider_session_paused(profile.get("provider", ""))
         self.lbl_settings_ai_provider.setText(provider)
         self.lbl_settings_ai_model.setText(model)
-        self.lbl_settings_ai_enabled.setText("开启" if profile.get("enabled", False) else "关闭")
+        self.lbl_settings_ai_enabled.setText("已启用" if profile.get("enabled", False) else "未启用")
         self.lbl_settings_ai_session_state.setText("已暂停" if paused else "正常")
         self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
 
@@ -5061,8 +5061,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not replaced:
             profiles.append(edited)
         if edited.get("enabled"):
-            for entry in profiles:
-                entry["enabled"] = entry.get("profile_id") == profile_id
+            from ..credentials import has_ai_api_key
+
+            provider = str(edited.get("provider") or "").strip()
+            profile_key = str(edited.get("profile_id") or "").strip()
+            if not has_ai_api_key(provider, profile_id=profile_key):
+                edited["enabled"] = False
+                QMessageBox.information(
+                    self,
+                    "AI 保持未启用",
+                    "未检测到该 Provider 的 API Key（环境变量或 Windows 凭据管理器）。"
+                    "请先配置 API Key，再启用 AI。",
+                )
+            else:
+                for entry in profiles:
+                    entry["enabled"] = entry.get("profile_id") == profile_id
         apply_active_ai_profile(cfg, profiles)
         save_config(cfg)
         self._desktop_settings_cfg = deepcopy(cfg)
@@ -5947,7 +5960,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
         self.lbl_settings_ai_provider = self.settings_ai_detail_panel.add_row("Provider", "—")
         self.lbl_settings_ai_model = self.settings_ai_detail_panel.add_row("模型", "—")
-        self.lbl_settings_ai_enabled = self.settings_ai_detail_panel.add_row("启用状态", "关闭")
+        self.lbl_settings_ai_enabled = self.settings_ai_detail_panel.add_row("启用状态", "未启用")
         self.lbl_settings_ai_session_state = self.settings_ai_detail_panel.add_row("会话状态", "无可用会话")
         self.lbl_settings_ai_key_status = self.settings_ai_detail_panel.add_row("Key 来源", "API Key 状态：未配置")
         self.lbl_settings_ai_validation_status = self.settings_ai_detail_panel.add_row("最近校验", "尚未校验本地配置")
@@ -11260,6 +11273,9 @@ def start_gui_app(db_path: Path, startup_probe: bool = False, app_init_ms: int =
     _t_launch = _time.monotonic()
     configure_high_dpi_platform()
     app = QApplication(sys.argv)
+    from .i18n import install_chinese_translations
+
+    install_chinese_translations(app)
 
     env_probe = os.environ.get("INVOICE_HUB_STARTUP_PROBE") == "1"
     is_probe = startup_probe or env_probe

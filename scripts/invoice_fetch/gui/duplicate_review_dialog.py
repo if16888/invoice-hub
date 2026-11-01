@@ -48,6 +48,7 @@ class DuplicateReviewDialog(QDialog):
         self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
         close = QDialogButtonBox(QDialogButtonBox.Close)
+        close.button(QDialogButtonBox.Close).setText("关闭")
         close.rejected.connect(self.reject)
         layout.addWidget(close)
         self._reload()

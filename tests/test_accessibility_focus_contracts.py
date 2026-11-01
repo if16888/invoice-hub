@@ -63,8 +63,11 @@ class AccessibilityFocusContractTests(unittest.TestCase):
     def test_selected_hover_keeps_selection_semantics(self):
         qss = build_qss()
         selected_hover = _rule(qss, "QTableView::item:selected:hover, QTableWidget::item:selected:hover")
-        self.assertIn(DESIGN_V1_COLORS["selected"], selected_hover)
+        # Selection is now the accent fill with white text; hovering a selected
+        # row must keep that selection state instead of falling back to hover gray.
         self.assertIn(DESIGN_V1_COLORS["accent"], selected_hover)
+        self.assertIn("color: #FFFFFF", selected_hover)
+        self.assertNotIn("#EEF2F6", selected_hover)
 
     def test_selected_tab_focus_keeps_bottom_indicator(self):
         qss = build_qss()
