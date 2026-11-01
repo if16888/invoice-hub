@@ -82,7 +82,7 @@ class PreviewToolbar(QFrame):
             "zoom_out", "−", on_zoom_out, icon_only=True, tooltip="缩小 (Ctrl + -)"
         )
         self.btn_zoom_100 = make_btn(
-            "zoom_100", "100%", on_zoom_100, min_w=48, tooltip="原始大小"
+            "zoom_100", "100%", on_zoom_100, min_w=48, tooltip="原始大小 (Ctrl + 0)"
         )
         self.btn_zoom_in = make_btn(
             "zoom_in", "+", on_zoom_in, icon_only=True, tooltip="放大 (Ctrl + +)"

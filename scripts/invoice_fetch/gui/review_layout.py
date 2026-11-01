@@ -1529,7 +1529,8 @@ def _compact_status_filters(window) -> None:
 
     sort_hint = getattr(window, "lbl_record_sort", None)
     if sort_hint is not None:
-        sort_hint.setText("点击列标题可筛选")
+        sort_hint.setText("")
+        sort_hint.setToolTip("点击列标题排序；标题右侧漏斗筛选")
         sort_hint.setToolTip("点击任意列标题筛选；拖动列边界调整宽度")
 
 
