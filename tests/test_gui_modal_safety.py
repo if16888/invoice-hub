@@ -153,9 +153,11 @@ class ModalGuardGuiErrorPathTests(unittest.TestCase):
                 elapsed = time.monotonic() - started
 
                 self.assertLess(elapsed, 10.0)
-                critical_calls = find_modal_dialog_calls("critical")
-                self.assertTrue(critical_calls)
-                self.assertIn("加载发票失败", critical_calls[0].text)
+                # P1-8: a DB read failure is rendered inline with a retry
+                # button instead of blocking on a modal critical dialog.
+                self.assertFalse(find_modal_dialog_calls("critical"))
+                self.assertIn("暂时无法加载发票", window.review_error_card.lbl_text.text())
+                self.assertIs(window.left_stack.currentWidget(), window.review_error_card)
             finally:
                 # Never leave a magic-mock database or pending deferred work
                 # behind for another test to trip over.
