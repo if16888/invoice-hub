@@ -39,9 +39,12 @@ class ReviewFeedbackPolishTests(unittest.TestCase):
                 window._animate_approval_feedback()
                 self.assertIsInstance(window._detail_panel.btn_app.graphicsEffect(), QGraphicsOpacityEffect)
                 animation = window._approval_feedback_animation
-                self.assertEqual(animation.duration(), 190)
+                from scripts.invoice_fetch.gui.motion import motion_duration
+                expected = motion_duration(190)
+                self.assertEqual(animation.duration(), expected)
                 self.app.processEvents()
-                self.assertEqual(animation.state(), QAbstractAnimation.State.Running)
+                if expected:
+                    self.assertEqual(animation.state(), QAbstractAnimation.State.Running)
                 self.app.processEvents()
                 animation.stop()
             finally:
