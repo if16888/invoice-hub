@@ -11302,7 +11302,7 @@ class StartupSplash(QWidget):
             QFrame#SplashContainer {
                 background-color: #1F2937;
                 border: 1px solid #374151;
-                border-radius: 12px;
+                border-radius: 10px;
             }
         """)
         container_layout = QVBoxLayout(self.container)
