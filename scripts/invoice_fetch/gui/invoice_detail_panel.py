@@ -2910,6 +2910,10 @@ class InvoiceDetailPanel(QWidget):
         self.action_manage_evidence.triggered.connect(
             lambda: getattr(self, "btn_add_evidence", None) and self.btn_add_evidence.click()
         )
+        self.action_link_evidence = self.inline_more_menu.addAction("关联 / 解绑已有材料")
+        self.action_link_evidence.triggered.connect(
+            lambda: getattr(self, "btn_manage_evidence", None) and self.btn_manage_evidence.click()
+        )
 
 
 
@@ -3946,6 +3950,10 @@ class InvoiceDetailPanel(QWidget):
         self.btn_manage_evidence.setToolTip("跨邮件、本地或手机来源复用证明材料；解绑保留文件")
         self.btn_manage_evidence.clicked.connect(self._cb.on_manage_evidence)
         detail_files_layout.addWidget(self.btn_manage_evidence)
+        # P2-7: material-row actions move into the inline More menu; the button
+        # stays alive (and clickable by tests/legacy code) but is not shown.
+        self.btn_manage_evidence.hide()
+        self.btn_manage_evidence.setProperty("materialRowConsolidated", True)
 
 
 
