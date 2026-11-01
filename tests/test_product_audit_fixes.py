@@ -324,7 +324,7 @@ def test_complete_backup_gui_reopens_database_and_releases_operation_gate(window
         assert archive.is_file()
         view.db.update_invoice_note(invoice_id, "Synthetic after backup")
         with patch.object(QFileDialog, "getOpenFileName", return_value=(str(archive), "")), \
-                patch.object(QMessageBox, "question", return_value=QMessageBox.Yes):
+                patch.object(view, "_confirm_restore_backup", return_value=True):
             page = view.center_stack.currentWidget()
             view._start_complete_backup("restore")
             view._switch_main_page("overview")

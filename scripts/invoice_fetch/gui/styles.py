@@ -797,6 +797,14 @@ QPushButton[variant="secondary"][tone="warning"] {
     color: #B54708;
     border: 1px solid #FED7AA;
 }
+QPushButton[variant="secondary"][tone="danger"] {
+    color: #B91C1C;
+    border: 1px solid #FCA5A5;
+}
+QPushButton[variant="secondary"][tone="danger"]:hover {
+    background-color: #FEF3F2;
+    color: #B91C1C;
+}
 QPushButton[variant="secondary"][tone="warning"]:hover {
     background-color: #FFFAEB;
     color: #B54708;
