@@ -2017,6 +2017,34 @@ QListView::item:focus, QTableView::item:focus, QListWidget::item:focus {{
 """
 
 
+def _scrollbar_stylesheet() -> str:
+    """One thin, low-contrast scrollbar for every scrollable surface."""
+    return """
+/* Unified scrollbars (P2-2): thin track, quiet handle, no native arrows. */
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: transparent;
+    width: 8px;
+    height: 8px;
+    margin: 0;
+}
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #D0D5DD;
+    border-radius: 999px;
+    min-height: 24px;
+    min-width: 24px;
+}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+    background: #98A2B3;
+}
+QScrollBar::add-line, QScrollBar::sub-line,
+QScrollBar::add-page, QScrollBar::sub-page {
+    width: 0;
+    height: 0;
+    background: transparent;
+}
+"""
+
+
 def build_app_stylesheet() -> str:
     """Build core QSS from the shared token values."""
     stylesheet = _BASE_STYLESHEET
@@ -2035,7 +2063,7 @@ def build_app_stylesheet() -> str:
             placeholder,
             str(DESIGN_V1_BUYER_WARNING[key]),
         )
-    return stylesheet + _focus_ring_stylesheet()
+    return stylesheet + _focus_ring_stylesheet() + _scrollbar_stylesheet()
 
 
 APP_STYLESHEET = build_app_stylesheet()
