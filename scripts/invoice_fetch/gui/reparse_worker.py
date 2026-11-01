@@ -181,12 +181,12 @@ def run_invoice_reparse(
                                         f"发票 ID {inv_id}: 已删除旧重复记录 ID {duplicate_id}"
                                     )
                                     log_callback(
-                                        f"🔁 [重新解析] 发票 ID {inv_id} 命中旧重复记录 ID {duplicate_id}，"
+                                        f"[重新解析] 发票 ID {inv_id} 命中旧重复记录 ID {duplicate_id}，"
                                         "已删除旧记录并修复当前记录"
                                     )
                                 elif reconciliation.action == MERGED_INTO_CLAIMED_DUPLICATE:
                                     log_callback(
-                                        f"🔁 [重新解析] 发票 ID {inv_id} 命中已关联报销组的重复记录 ID {duplicate_id}，"
+                                        f"[重新解析] 发票 ID {inv_id} 命中已关联报销组的重复记录 ID {duplicate_id}，"
                                         "改为更新该主记录"
                                     )
                                     log_callback(

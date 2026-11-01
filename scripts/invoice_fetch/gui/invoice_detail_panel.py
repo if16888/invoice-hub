@@ -1665,7 +1665,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-            self.lbl_closing_desc.setText("⚠️ 关键字段缺失，请在上方表单中补全。")
+            self.lbl_closing_desc.setText("注意 关键字段缺失，请在上方表单中补全。")
 
 
 
@@ -1677,7 +1677,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-            self.lbl_closing_desc.setText("❌ 异常发票 ｜ 需核对")
+            self.lbl_closing_desc.setText(" 异常发票 ｜ 需核对")
 
 
 

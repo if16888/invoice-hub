@@ -116,7 +116,7 @@ class BuyerWarningController:
                 else ""
             )
         display_text = compact_buyer_warning(resolved_text)
-        label.setText(f"⚠️ {display_text}" if display_text else "")
+        label.setText(f"注意 {display_text}" if display_text else "")
         label.setToolTip(display_text)
         label.setAccessibleDescription(display_text)
         label.setProperty("tone", "warning" if display_text else "muted")

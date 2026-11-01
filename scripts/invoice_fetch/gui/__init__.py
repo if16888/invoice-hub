@@ -30,7 +30,7 @@ def start_gui(db_path: Path, startup_probe: bool = False, app_init_ms: int = 0):
     """
     if not PYSIDE6_AVAILABLE:
         print("=" * 60)
-        print(" ❌ 无法启动发票审核桌面端：检测到未安装 PySide6 依赖库。")
+        print(" 错误：无法启动发票审核桌面端：检测到未安装 PySide6 依赖库。")
         print(" 请在您的命令行终端中执行以下命令进行安装：")
         print("    pip install PySide6")
         print("=" * 60)

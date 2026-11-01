@@ -125,7 +125,7 @@ class ReviewToolbarFilterFixesTests(unittest.TestCase):
                 self.assertFalse(detail.buyer_warning_action_row.isHidden())
                 self.assertEqual(
                     detail.lbl_buyer_warning.text(),
-                    "⚠️ 购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
+                    "注意 购买方与默认开票主体不一致：当前发票：Actual Company；默认主体：Expected Company",
                 )
                 self.assertIn("Actual Company", detail.lbl_buyer_warning.toolTip())
                 self.assertIn("Expected Company", detail.lbl_buyer_warning.toolTip())
