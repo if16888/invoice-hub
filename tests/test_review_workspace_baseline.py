@@ -90,9 +90,11 @@ class ReviewWorkspaceBaselineTests(unittest.TestCase):
                 collapsed_sizes = window.main_splitter.sizes()
                 collapsed_detail_width = collapsed_sizes[1]
 
+                # P1-4 caps the detail pane at 420px, so the reclaimed-rail
+                # bonus can only reach the cap, not the old 520px ceiling.
                 self.assertGreaterEqual(
                     collapsed_detail_width,
-                    expanded_detail_width + COLLAPSED_DETAIL_BONUS - 2,
+                    min(DETAIL_MAX_WIDTH, expanded_detail_width + COLLAPSED_DETAIL_BONUS - 2),
                 )
                 usable_width = (
                     window.main_splitter.width()

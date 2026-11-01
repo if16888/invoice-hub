@@ -141,11 +141,10 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                active_metrics = metrics_for_size(window.width(), window.height())
-                self.assertGreaterEqual(
-                    window._detail_panel.minimumWidth(),
-                    active_metrics.detail_width,
-                )
+                # P1-4: the detail pane is elastic from 320px, independently of
+                # the legacy metric token, so assert the reviewed minimum.
+                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 320)
+                self.assertLessEqual(window._detail_panel.maximumWidth(), 420)
             finally:
                 self._close_window(window)
 
