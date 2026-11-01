@@ -2154,7 +2154,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.action_select_loaded = self.review_batch_menu.addAction("全选已加载记录", lambda: self.table.selectAll())
         self.action_clear_loaded = self.review_batch_menu.addAction("清空选择", lambda: self.table.clearSelection())
         self.review_batch_menu.addSeparator()
-        self.action_approve_selected = self.review_batch_menu.addAction("通过所选记录…", self._batch_approve_selected)
+        self.action_approve_selected = self.review_batch_menu.addAction("通过所选…", self._batch_approve_selected)
         self.action_approve_filtered = self.review_batch_menu.addAction("通过全部筛选结果…", self._batch_approve_filtered)
         self.btn_review_batch_menu.setMenu(self.review_batch_menu)
         record_header_layout.addWidget(self.btn_review_batch_menu)
@@ -2292,7 +2292,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         review_layout.addWidget(self.empty_btn_review)
 
         export_layout = make_empty_step(
-            "03", "归组并导出", "将通过的发票加入报销组，检查完整性后生成报销包。"
+            "03", "归组并导出", "将通过的发票关联到报销组，检查完整性后生成报销包。"
         )
         self.empty_btn_export = make_button("报销组与导出", variant="secondary", min_width=90)
         self.empty_btn_export.clicked.connect(lambda: self._switch_main_page("export"))
@@ -2444,15 +2444,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_status_left.setProperty("role", "status")
         self.lbl_status_left.setToolTip("当前发票筛选状态")
         self.lbl_status_left.setMinimumWidth(120)
-        status_layout.addWidget(self.lbl_status_left, 1)
+        self.lbl_status_left.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        status_layout.addWidget(self.lbl_status_left)
+        status_layout.addStretch(1)
 
         self.lbl_status_middle = QLabel("未选择发票")
         self.lbl_status_middle.setFont(QFont("Segoe UI", 9))
         self.lbl_status_middle.setProperty("role", "status")
         self.lbl_status_middle.setToolTip("选中发票及金额合计")
-        self.lbl_status_middle.setAlignment(Qt.AlignCenter)
+        self.lbl_status_middle.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_status_middle.setMinimumWidth(180)
-        status_layout.addWidget(self.lbl_status_middle, 1)
+        status_layout.addWidget(self.lbl_status_middle)
 
         # Right container
         self.status_actions_container = QWidget(status_bar)
@@ -5656,7 +5658,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_group_card.body_layout.addWidget(self.btn_export_filename)
         self.export_empty_state = EmptyStateCard(
             "还没有报销组",
-            "在审核页将发票加入报销组后，即可检查并导出。",
+            "在审核页将发票关联到报销组后，即可检查并导出。",
         )
         self.export_empty_state.setVisible(False)
         self.export_group_card.body_layout.addWidget(self.export_empty_state)
@@ -7597,7 +7599,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         badge = self._badge_spec_for_review_status(review_status)
                         if badge:
                             item.setData(TABLE_BADGE_ROLE, badge)
-                        item.setToolTip(f"资料状态: {display_status}\n审核状态: {rev_chinese}")
+                        item.setToolTip(f"材料状态: {display_status}\n审核状态: {rev_chinese}")
                     elif col == 1:
                         font = item.font()
                         font.setBold(True)
@@ -7605,7 +7607,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         badge = self._badge_spec_for_data_status(display_status)
                         if badge:
                             item.setData(TABLE_BADGE_ROLE, badge)
-                        item.setToolTip(f"资料状态: {display_status}")
+                        item.setToolTip(f"材料状态: {display_status}")
                     elif col == 2:
                         date_source_disp = {
                             "travel_date": "乘车日期",
@@ -8217,7 +8219,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             claim_idx = self.combo_claims.currentIndex()
             if claim_idx >= 0:
                 claim_name = self.combo_claims.currentText()
-                action_link = menu.addAction(f"🔗 关联到当前报销组: {claim_name}")
+                action_link = menu.addAction(f"关联报销组: {claim_name}")
                 action_link.triggered.connect(self._link_invoices_to_claim)
 
                 action_unlink = menu.addAction("🔓 从当前报销组取消关联")
@@ -9609,7 +9611,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._change_filter("all")
         if self.center_stack.currentWidget() is self.review_page:
             self._detail_panel.detail_tabs.setCurrentIndex(1)
-            self.statusBar().showMessage("选择发票后，在右侧“报销信息”中加入报销组。", 8000)
+            self.statusBar().showMessage("选择发票后，在右侧“报销信息”中关联报销组。", 8000)
 
     def _open_soft_duplicate_review(self):
         from .duplicate_review_dialog import DuplicateReviewDialog

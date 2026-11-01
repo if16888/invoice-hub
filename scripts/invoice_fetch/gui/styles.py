@@ -293,7 +293,9 @@ QLabel[class="PageHint"], QLabel[class="PageSubtitle"] {
     font-weight: 400;
 }
 QWidget#SegmentControl {
-    background: transparent;
+    background: #F2F4F7;
+    border: 1px solid #E4E7EC;
+    border-radius: 8px;
 }
 QPushButton[class="SegmentItem"] {
     background: transparent;
@@ -303,13 +305,16 @@ QPushButton[class="SegmentItem"] {
     padding: 0 14px;
     font-size: 13px;
     font-weight: 500;
+    text-align: center;
 }
 QPushButton[class="SegmentItem"]:hover {
-    background: #F8FAFC;
+    background: rgba(255, 255, 255, 0.6);
+    color: #1D2939;
 }
 QPushButton[class="SegmentItem"]:checked {
-    background: #2563EB;
-    color: #FFFFFF;
+    background: #FFFFFF;
+    color: #1D4ED8;
+    border: 1px solid #E4E7EC;
     font-weight: 600;
 }
 QFrame#CommandBar {
@@ -330,6 +335,11 @@ QFrame#SelectableSourceCard {
 QFrame#SelectableSourceCard:hover {
     background-color: #F8FAFC;
     border-color: #B8D9E3;
+}
+QLabel#SourceCardCheck {
+    color: #2563EB;
+    font-size: 13px;
+    font-weight: 600;
 }
 QFrame#SelectableSourceCard[selected="true"] {
     background-color: #EFFBFE;
