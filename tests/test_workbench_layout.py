@@ -160,7 +160,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 self.assertTrue(window.workbench_nav.isVisible())
                 self.assertEqual(window.workbench_nav.objectName(), "WorkbenchNav")
-                self.assertIn(window.workbench_nav.minimumWidth(), (56, 180))
+                self.assertIn(window.workbench_nav.minimumWidth(), (56, 208))  # P1-21: sidebar_width token
 
                 self.assertTrue(window.workbench_top_toolbar.isVisible())
                 self.assertEqual(window.workbench_top_toolbar.objectName(), "WorkbenchTopToolbar")
@@ -365,7 +365,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 QApplication.processEvents()
 
                 # Default: expanded at the desktop token width.
-                self.assertEqual(window.workbench_nav.maximumWidth(), 180)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 208)  # P1-21: sidebar_width token
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertTrue(window.btn_collapse_nav.isVisible())
 
@@ -381,7 +381,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
                 settings.sync()
-                self.assertEqual(window.workbench_nav.maximumWidth(), 180)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 208)  # P1-21: sidebar_width token
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertFalse(settings.value("nav_collapsed_manual", True, type=bool))
             finally:

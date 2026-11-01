@@ -163,7 +163,7 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                         self.app.processEvents()
 
                     panel = window.mobile_upload_panel
-                    expected_nav_width = 56 if nav_collapsed else 180
+                    expected_nav_width = 56 if nav_collapsed else 208
                     self.assertEqual(window.workbench_nav.width(), expected_nav_width)
                     self.assertEqual(window.imports_shell_layout.direction(), QBoxLayout.TopToBottom)
                     self.assertGreaterEqual(panel.width(), 720)

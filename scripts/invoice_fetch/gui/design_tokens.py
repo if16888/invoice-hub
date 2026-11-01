@@ -95,6 +95,17 @@ DESIGN_V1_METRICS = {
     "radius_large": 10,
 }
 
+# P1-22: the only spacing scale used by layout code. Values are multiples of
+# 4px; the 8pt grid is the default rhythm.
+DESIGN_V1_SPACING = {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "xxl": 32,
+}
+
 DESIGN_V1_BUYER_WARNING = {
     "min_height": 44,
     "max_height": 76,
@@ -139,6 +150,7 @@ __all__ = [
     "DESIGN_V1_COLORS",
     "DESIGN_V1_BUYER_WARNING",
     "DESIGN_V1_METRICS",
+    "DESIGN_V1_SPACING",
     "DESIGN_V1_TYPE",
     "LEGACY_COLOR_TOKEN_MAP",
     "apply_legacy_color_tokens",

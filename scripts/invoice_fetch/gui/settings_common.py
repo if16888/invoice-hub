@@ -5,6 +5,8 @@ from __future__ import annotations
 from functools import wraps
 from types import MethodType
 
+from .design_tokens import DESIGN_V1_METRICS
+
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
@@ -130,7 +132,7 @@ class CommonSettingsPage(QWidget):
 # ── Settings page baseline (merged from settings_baseline) ──
 _SETTINGS_MAX_WIDTH = 1120
 _SETTINGS_NAV_WIDTH = 168
-_PAGE_MARGIN = 24
+_PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
 _HEADER_CONTENT_GAP = 20
 _MAILBOX_LIST_WIDTH = 280
 _MAILBOX_ROW_HEIGHT = 68
