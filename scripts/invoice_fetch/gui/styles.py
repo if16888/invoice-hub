@@ -10,6 +10,7 @@ from .design_tokens import (
     DESIGN_V1_METRICS,
     DESIGN_V1_TYPE,
     apply_legacy_color_tokens,
+    canonical_legacy_color_tokens,
 )
 
 from PySide6.QtWidgets import QWidget
@@ -87,20 +88,9 @@ TYPE_CAPTION = 11
 TYPE_METRIC = 18
 TYPE_BADGE = 12
 
-COLOR_TOKENS = {
-    "app_background": "#F7F8FA",
-    "surface_primary": "#FFFFFF",
-    "surface_secondary": "#F8FAFC",
-    "text_primary": "#172033",
-    "text_secondary": "#475467",
-    "text_muted": "#667085",
-    "border_subtle": "#E4E7EC",
-    "accent": "#1599BD",
-    "success": "#059669",
-    "warning": "#B54708",
-    "danger": "#DC2626",
-    "info": "#2563EB",
-}
+# Compatibility keys are derived from the Design v1 authority in design_tokens;
+# this module must not maintain a second copy of product token values.
+COLOR_TOKENS: dict[str, str] = canonical_legacy_color_tokens()
 
 _BASE_STYLESHEET = """
 QMainWindow {
@@ -233,7 +223,7 @@ QLabel.StatusBadge[variant="review"] {
 }
 QLabel.StatusBadge[variant="approved"] {
     background-color: #D1FAE5;
-    color: #059669;
+    color: #16803C;
     border-color: #A7F3D0;
 }
 QLabel.StatusBadge[variant="ignored"] {
@@ -243,7 +233,7 @@ QLabel.StatusBadge[variant="ignored"] {
 }
 QLabel.StatusBadge[variant="error"] {
     background-color: #FEE2E2;
-    color: #DC2626;
+    color: #B42318;
     border-color: #FCA5A5;
 }
 QLabel.SummaryAmount {
@@ -340,7 +330,7 @@ QFrame#SelectableSourceCard:hover {
 }
 QFrame#SelectableSourceCard[selected="true"] {
     background-color: #EFFBFE;
-    border: 1.5px solid #1599BD;
+    border: 1.5px solid #2563EB;
 }
 QLabel[class="SourceCardTitle"] {
     color: #172033;
@@ -1137,7 +1127,7 @@ QWidget.DialogCanvas {
 
 /* Success Button (solid green) */
 QPushButton.SuccessBtn {
-    background-color: #059669;
+    background-color: #16803C;
     color: #FFFFFF;
     border: none;
 }
@@ -1150,7 +1140,7 @@ QPushButton.SuccessBtn:pressed {
 
 /* Danger Button (solid red) */
 QPushButton.DangerBtn {
-    background-color: #DC2626;
+    background-color: #B42318;
     color: #FFFFFF;
     border: none;
 }
@@ -1307,7 +1297,7 @@ QLabel.EmptyStateText {
 }
 QPushButton.SettingsDangerBtn {
     background-color: #FEE2E2;
-    color: #DC2626;
+    color: #B42318;
     border: 1px solid #FCA5A5;
     border-radius: 4px;
 }
@@ -1349,7 +1339,7 @@ QLabel.StatusBadge[variant="muted"] {
 }
 QLabel.StatusBadge[variant="danger"] {
     background-color: #FEE2E2;
-    color: #DC2626;
+    color: #B42318;
     border: 1px solid #FCA5A5;
 }
 QLabel.StatusBadge[variant="placeholder"] {
@@ -1432,7 +1422,7 @@ QPushButton[variant="accent"]:disabled {
 
 QPushButton[variant="danger"] {
     background-color: #FEE2E2;
-    color: #DC2626;
+    color: #B42318;
     border: 1px solid #FCA5A5;
     border-radius: 6px;
     font-weight: 500;
@@ -1672,14 +1662,14 @@ QFrame#CompactStatCard[state="success"] {
 }
 QFrame#CompactStatCard[state="success"][selected="true"] {
     background-color: #F0FDF4;
-    border-color: #059669;
+    border-color: #16803C;
 }
 QFrame#CompactStatCard[state="danger"] {
     border-color: #FCA5A5;
 }
 QFrame#CompactStatCard[state="danger"][selected="true"] {
     background-color: #FEF2F2;
-    border-color: #DC2626;
+    border-color: #B42318;
 }
 QFrame#CompactStatCard[state="muted"] {
     border-color: #E5EAF2;
@@ -1711,10 +1701,10 @@ QFrame#CompactStatCard[state="warning"] QLabel.CompactStatCardIcon {
     color: #D97706;
 }
 QFrame#CompactStatCard[state="success"] QLabel.CompactStatCardIcon {
-    color: #059669;
+    color: #16803C;
 }
 QFrame#CompactStatCard[state="danger"] QLabel.CompactStatCardIcon {
-    color: #DC2626;
+    color: #B42318;
 }
 QFrame#CompactStatCard[state="info"] QLabel.CompactStatCardIcon {
     color: #2563EB;
@@ -1967,23 +1957,33 @@ QLabel#InvoiceTableStatsLabel {
 """ + MENU_STYLE + """
 """
 
+# The legacy QSS uses literal colors/metrics for its static rules. These tables
+# are the single render step that binds them to the Design v1 token values.
+_LITERAL_TOKEN_SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
+    ("#F6F8FB", "app_background"),
+    ("#FFFFFF", "surface_primary"),
+    ("#F8FAFC", "surface_secondary"),
+    ("#172033", "text_primary"),
+    ("#475467", "text_secondary"),
+    ("#667085", "text_muted"),
+    ("#E4E7EC", "border_subtle"),
+    ("#2563EB", "accent"),
+)
+_LITERAL_METRIC_SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
+    ("border-radius: 12px", f"border-radius: {RADIUS_LG}px"),
+    ("border-radius: 10px", f"border-radius: {RADIUS_LG}px"),
+    ("min-height: 34px", f"min-height: {CONTROL_HEIGHT_MD}px"),
+    ("max-height: 34px", f"max-height: {CONTROL_HEIGHT_MD}px"),
+)
+
+
 def build_app_stylesheet() -> str:
     """Build core QSS from the shared token values."""
-    stylesheet = (
-        _BASE_STYLESHEET
-        .replace("#F6F8FB", COLOR_TOKENS["app_background"])
-        .replace("#FFFFFF", COLOR_TOKENS["surface_primary"])
-        .replace("#F8FAFC", COLOR_TOKENS["surface_secondary"])
-        .replace("#172033", COLOR_TOKENS["text_primary"])
-        .replace("#475467", COLOR_TOKENS["text_secondary"])
-        .replace("#667085", COLOR_TOKENS["text_muted"])
-        .replace("#E4E7EC", COLOR_TOKENS["border_subtle"])
-        .replace("#2563EB", COLOR_TOKENS["accent"])
-        .replace("border-radius: 12px", f"border-radius: {RADIUS_LG}px")
-        .replace("border-radius: 10px", f"border-radius: {RADIUS_LG}px")
-        .replace("min-height: 34px", f"min-height: {CONTROL_HEIGHT_MD}px")
-        .replace("max-height: 34px", f"max-height: {CONTROL_HEIGHT_MD}px")
-    )
+    stylesheet = _BASE_STYLESHEET
+    for literal, token in _LITERAL_TOKEN_SUBSTITUTIONS:
+        stylesheet = stylesheet.replace(literal, COLOR_TOKENS[token])
+    for literal, replacement in _LITERAL_METRIC_SUBSTITUTIONS:
+        stylesheet = stylesheet.replace(literal, replacement)
     for placeholder, key in (
         ("__BUYER_WARNING_MIN_HEIGHT__", "min_height"),
         ("__BUYER_WARNING_MAX_HEIGHT__", "max_height"),
@@ -2011,22 +2011,6 @@ except ImportError:
 # Compatibility export retained for existing imports. The mapping itself is the
 # authoritative Design v1 dictionary, not a second independently maintained set.
 BASELINE_COLORS = DESIGN_V1_COLORS
-
-# Canonical stylesheet assembly is the migration boundary for older literals
-# embedded in the legacy QSS. Keep this map deliberately narrow and semantic:
-# brand and status colors are safe to normalize globally, while page-specific
-# geometry remains owned by the page archetype migrations.
-_OBSOLETE_LITERAL_MAP = {
-    "#1599BD": DESIGN_V1_COLORS["accent"],
-    "#1599bd": DESIGN_V1_COLORS["accent"],
-    "#059669": DESIGN_V1_COLORS["success"],
-    "#12b76a": DESIGN_V1_COLORS["success"],
-    "#12B76A": DESIGN_V1_COLORS["success"],
-    "#DC2626": DESIGN_V1_COLORS["danger"],
-    "#dc2626": DESIGN_V1_COLORS["danger"],
-    "#f04438": DESIGN_V1_COLORS["danger"],
-    "#F04438": DESIGN_V1_COLORS["danger"],
-}
 
 BASELINE_QSS = f"""
 QWidget {{
@@ -2208,13 +2192,6 @@ QFrame[class="ChecklistRow"] QLabel[class="ChecklistValue"][state="muted"] {{
 """
 
 
-def _purge_obsolete_literals(stylesheet: str) -> str:
-    """Replace known pre-Baseline brand and status literals."""
-    for literal, canonical in _OBSOLETE_LITERAL_MAP.items():
-        stylesheet = stylesheet.replace(literal, canonical)
-    return stylesheet
-
-
 def build_canonical_application_stylesheet() -> str:
     """Build the full application QSS from the Design v1 token authority."""
     apply_legacy_color_tokens(COLOR_TOKENS)
@@ -2225,8 +2202,6 @@ def build_canonical_application_stylesheet() -> str:
         core_qss += "\n" + build_qss()
     except ImportError:
         pass
-
-    core_qss = _purge_obsolete_literals(core_qss)
 
     # Keep late imports of APP_STYLESHEET aligned with the same authority.
     global APP_STYLESHEET

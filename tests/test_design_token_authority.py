@@ -58,6 +58,24 @@ class DesignTokenAuthorityTests(unittest.TestCase):
         self.assertNotIn("#1599BD", stylesheet)
         self.assertTrue(stylesheet.startswith(styles.APP_STYLESHEET))
 
+    def test_legacy_color_tokens_derive_from_the_single_design_authority(self):
+        self.assertEqual(styles.COLOR_TOKENS, canonical_legacy_color_tokens())
+
+    def test_stylesheet_pipeline_has_no_second_legacy_literal_pass(self):
+        stylesheet = build_canonical_application_stylesheet()
+        for literal in (
+            "#1599BD",
+            "#1599bd",
+            "#059669",
+            "#12b76a",
+            "#12B76A",
+            "#f04438",
+            "#F04438",
+        ):
+            with self.subTest(literal=literal):
+                self.assertNotIn(literal, stylesheet)
+
+
     def test_global_baseline_replaces_stale_window_qss_once(self):
         page = QWidget()
         page.setStyleSheet("QWidget { color: #1599BD; }")
