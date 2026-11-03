@@ -36,7 +36,10 @@ class TestCIWorkflowPolicy(unittest.TestCase):
 
     def test_full_source_unit_and_hci_runs_are_pr_only(self):
         workflow = self.workflow
-        self.assertIn("if: github.event_name == 'pull_request'\n        uses: actions/checkout@v4", workflow)
+        self.assertRegex(
+            workflow,
+            r"if: github\.event_name == 'pull_request'\n\s+uses: actions/checkout@[0-9a-f]{40}",
+        )
         self.assertIn("if: github.event_name == 'pull_request'\n        run: python scripts/check_repo_privacy.py", workflow)
         self.assertIn("if: github.event_name == 'pull_request'\n        shell: pwsh", workflow)
         self.assertIn("--shard-count 3 --shard-index ${{ matrix.shard }}", workflow)
@@ -55,6 +58,23 @@ class TestCIWorkflowPolicy(unittest.TestCase):
         ):
             with self.subTest(lock=lock):
                 self.assertIn(f"-r {lock}", source_gates)
+
+    def test_workflow_actions_are_pinned_to_immutable_commits(self):
+        import re
+
+        pattern = re.compile(r"uses:\s*([^\s@]+)@([^\s#]+)(?:\s*#\s*(\S+))?")
+        for workflow_path in sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml")):
+            source = workflow_path.read_text(encoding="utf-8")
+            for match in pattern.finditer(source):
+                action = match.group(1)
+                if action.startswith("./"):
+                    continue
+                with self.subTest(workflow=workflow_path.name, action=action):
+                    self.assertRegex(match.group(2), r"^[0-9a-f]{40}$")
+                    self.assertIsNotNone(
+                        match.group(3),
+                        f"{action} must keep a version comment next to the SHA",
+                    )
 
     def test_dependabot_covers_python_and_actions(self):
         config = (PROJECT_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")

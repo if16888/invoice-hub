@@ -670,7 +670,7 @@ class TestGithubWorkflowExists(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", src)
         self.assertIn("release:\n    name: Publish GitHub Release", src)
         self.assertIn("permissions:\n      contents: write", src)
-        self.assertIn("actions/download-artifact@v4", src)
+        self.assertRegex(src, r"actions/download-artifact@[0-9a-f]{40}")
 
 
 class TestInnoSetupInstallerPackaging(unittest.TestCase):
@@ -810,7 +810,7 @@ class TestInnoSetupInstallerPackaging(unittest.TestCase):
         self.assertIn("dist/${{ env.ZIP_NAME }}", src)
         self.assertIn("dist/${{ env.SETUP_NAME }}", src)
         self.assertIn("dist/SHA256SUMS.txt", src)
-        self.assertIn("actions/download-artifact@v4", src)
+        self.assertRegex(src, r"actions/download-artifact@[0-9a-f]{40}")
 
     def test_workflow_signs_before_portable_zip_and_installer(self):
         src = self._workflow_path().read_text(encoding="utf-8")
