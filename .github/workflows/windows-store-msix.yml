@@ -56,7 +56,7 @@ jobs:
 
     steps:
       - name: Checkout exact master candidate
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -151,7 +151,7 @@ jobs:
           "PORTABLE_STARTUP_THRESHOLD_MS=$portable" >> $env:GITHUB_ENV
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -340,7 +340,7 @@ jobs:
           }
 
       - name: Upload Store submission package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: store-msix-${{ github.sha }}
           path: |

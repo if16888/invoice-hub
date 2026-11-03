@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -173,7 +173,7 @@ jobs:
           Write-Host "INSTALLED_STARTUP_THRESHOLD_MS=$installed"
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -378,7 +378,7 @@ jobs:
 
       - name: Upload real installer smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-install-smoke-${{ github.sha }}
           path: build/release-install-smoke
@@ -436,7 +436,7 @@ jobs:
           Write-Host "Exact-master identity reconfirmed: $master"
 
       - name: Upload Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: |
@@ -481,7 +481,7 @@ jobs:
       TAG_NAME: ${{ github.ref_name }}
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: InvoiceHub-windows-release
           path: dist
@@ -500,7 +500,7 @@ jobs:
           }
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "Invoice Hub ${{ env.VERSION }}"
           body: |

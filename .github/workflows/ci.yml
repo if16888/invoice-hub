@@ -29,10 +29,10 @@ jobs:
 
     steps:
       - name: Checkout exact master commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -60,11 +60,11 @@ jobs:
 
       - name: Checkout repository
         if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.11
         if: github.event_name == 'pull_request'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -147,11 +147,11 @@ jobs:
 
       - name: Checkout repository
         if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.11
         if: github.event_name == 'pull_request'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -176,7 +176,7 @@ jobs:
 
       - name: Upload unit-test shard output
         if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ci-unit-test-output-${{ matrix.shard }}
           path: ci-test-output-${{ matrix.shard }}.txt
@@ -203,11 +203,11 @@ jobs:
 
       - name: Checkout repository
         if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.11
         if: github.event_name == 'pull_request'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -249,7 +249,7 @@ jobs:
 
       - name: Upload HCI acceptance evidence
         if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hci-acceptance-evidence
           path: |
@@ -271,10 +271,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -317,7 +317,7 @@ jobs:
 
       - name: Upload native geometry evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-geometry-preflight
           path: |
