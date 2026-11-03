@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # The repository keeps pip-compile output in requirements*.lock.txt. Dependabot
+  # treats every .txt requirements file as a manifest, so the grouped PR keeps
+  # the source floors and the platform-specific lock pins moving together.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
