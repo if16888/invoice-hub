@@ -4,11 +4,11 @@
 #
 #    pip-compile --no-emit-index-url --output-file=requirements.lock.txt requirements.txt
 #
-beautifulsoup4==4.12.0
+beautifulsoup4==4.15.0
     # via -r requirements.txt
 certifi==2026.10.23
     # via requests
-cffi==2.0.0
+cffi==2.1.1
     # via cryptography
 charset-normalizer==2.0.12
     # via
@@ -16,7 +16,7 @@ charset-normalizer==2.0.12
     #   requests
 colorama==0.4.6
     # via qrcode
-cryptography==50.0.0
+cryptography==50.0.2
     # via
     #   -r requirements.txt
     #   pdfminer-six
@@ -26,7 +26,7 @@ et-xmlfile==2.0.0
     # via openpyxl
 greenlet==3.5.6
     # via playwright
-idna==3.18
+idna==3.20
     # via requests
 importlib-metadata==10.1.0
     # via keyring
@@ -34,9 +34,9 @@ jaraco-classes==3.4.0
     # via keyring
 keyring==24.0.0
     # via -r requirements.txt
-more-itertools==11.1.0
+more-itertools==11.2.1
     # via jaraco-classes
-openpyxl==3.1.0
+openpyxl==3.1.5
     # via -r requirements.txt
 pdfminer-six==20260107
     # via
@@ -49,13 +49,13 @@ pillow==13.0.0
     #   -r requirements.txt
     #   pdfplumber
     #   qrcode
-playwright==1.63.0
+playwright==1.64.1
     # via -r requirements.txt
-pycparser==3.0
+pycparser==3.12
     # via cffi
 pyee==13.0.1
     # via playwright
-pypdfium2==5.13.0
+pypdfium2==5.14.0
     # via pdfplumber
 pypng==0.20220715.0
     # via qrcode
@@ -67,7 +67,7 @@ requests==2.34.2
     # via -r requirements.txt
 soupsieve==2.9
     # via beautifulsoup4
-typing-extensions==4.15.0
+typing-extensions==4.16.0
     # via
     #   pyee
     #   qrcode
@@ -75,5 +75,5 @@ urllib3==2.8.0
     # via
     #   -r requirements.txt
     #   requests
-zipp==4.1.0
+zipp==4.1.2
     # via importlib-metadata
