@@ -92,6 +92,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install --disable-pip-version-check --no-input --prefer-binary --no-compile -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt
 
+      - name: Audit locked dependencies
+        if: github.event_name == 'pull_request'
+        run: |
+          # Audit the committed pins directly. The lock files are the install
+          # source, so resolving them again would only duplicate the install step.
+          python -m pip install --disable-pip-version-check --no-input --quiet "pip-audit==2.10.1"
+          python -m pip_audit --progress-spinner off --strict --no-deps -r requirements.lock.txt -r requirements-desktop.lock.txt -r requirements-build.lock.txt -r requirements-test.lock.txt
+
       - name: Verify CLI help output
         if: github.event_name == 'pull_request'
         run: python -m scripts.invoice_fetch --help

@@ -42,6 +42,25 @@ class TestCIWorkflowPolicy(unittest.TestCase):
         self.assertIn("--shard-count 3 --shard-index ${{ matrix.shard }}", workflow)
         self.assertIn("if: always() && github.event_name == 'pull_request'", workflow)
 
+    def test_source_gates_audit_locked_dependencies(self):
+        source_gates = self.workflow.split("  source_gates:", 1)[1].split("\n  unit_tests:", 1)[0]
+        self.assertIn("name: Audit locked dependencies", source_gates)
+        self.assertIn('"pip-audit==2.10.1"', source_gates)
+        self.assertIn("python -m pip_audit", source_gates)
+        for lock in (
+            "requirements.lock.txt",
+            "requirements-desktop.lock.txt",
+            "requirements-build.lock.txt",
+            "requirements-test.lock.txt",
+        ):
+            with self.subTest(lock=lock):
+                self.assertIn(f"-r {lock}", source_gates)
+
+    def test_dependabot_covers_python_and_actions(self):
+        config = (PROJECT_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        self.assertIn('package-ecosystem: "pip"', config)
+        self.assertIn('package-ecosystem: "github-actions"', config)
+
     def test_native_geometry_is_pr_only_non_gating_and_preflight_conditioned(self):
         geometry = self.workflow.split("  native_geometry_preflight:", 1)[1]
         self.assertIn("if: github.event_name == 'pull_request'", geometry)
