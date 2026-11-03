@@ -30,7 +30,7 @@ greenlet==3.5.6
     # via playwright
 idna==3.20
     # via requests
-importlib-metadata==9.0.0
+importlib-metadata==10.1.0
     # via keyring
 jaraco-classes==3.4.0
     # via keyring
