@@ -53,7 +53,7 @@ playwright==1.63.0
     # via -r requirements.txt
 pycparser==3.0
     # via cffi
-pyee==13.0.1
+pyee==16.0.0
     # via playwright
 pypdfium2==5.13.0
     # via pdfplumber
