@@ -16,6 +16,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # pyee 14+ requires Python >=3.12; the project baseline is 3.11.
+      - dependency-name: "pyee"
+        versions:
+          - ">=14.0.0"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -25,3 +30,9 @@ updates:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      # Action majors change runtime behaviour and the release workflow contract;
+      # upgrade them deliberately instead of through automated PRs.
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
