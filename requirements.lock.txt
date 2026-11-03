@@ -61,7 +61,7 @@ pypng==0.20220715.0
     # via qrcode
 pywin32-ctypes==0.2.3
     # via keyring
-qrcode[pil]==7.4.2
+qrcode[pil]==8.2
     # via -r requirements.txt
 requests==2.34.2
     # via -r requirements.txt
