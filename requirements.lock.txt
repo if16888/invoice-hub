@@ -32,7 +32,7 @@ importlib-metadata==9.0.0
     # via keyring
 jaraco-classes==3.4.0
     # via keyring
-keyring==24.0.0
+keyring==25.7.0
     # via -r requirements.txt
 more-itertools==11.1.0
     # via jaraco-classes
