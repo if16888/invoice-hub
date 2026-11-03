@@ -12,6 +12,10 @@ pyside6-essentials==6.12.0
     # via
     #   pyside6
     #   pyside6-addons
+pyside6-pdf==6.12.0.140
+    # via pyside6
+pyside6-webengine==6.12.0.140
+    # via pyside6
 shiboken6==6.12.0
     # via
     #   pyside6
