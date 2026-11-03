@@ -4,19 +4,15 @@
 #
 #    pip-compile --output-file=requirements-desktop.lock.txt requirements-desktop.txt
 #
-pyside6==6.12.0
+pyside6==6.11.1
     # via -r requirements-desktop.txt
-pyside6-addons==6.12.0
+pyside6-addons==6.11.1
     # via pyside6
-pyside6-essentials==6.12.0
+pyside6-essentials==6.11.1
     # via
     #   pyside6
     #   pyside6-addons
-pyside6-pdf==6.12.0.140
-    # via pyside6
-pyside6-webengine==6.12.0.140
-    # via pyside6
-shiboken6==6.12.0
+shiboken6==6.11.1
     # via
     #   pyside6
     #   pyside6-addons
