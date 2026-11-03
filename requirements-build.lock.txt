@@ -12,9 +12,9 @@ packaging==26.3
     #   pyinstaller-hooks-contrib
 pefile==2024.8.26
     # via pyinstaller
-pyinstaller==6.20.0
+pyinstaller==6.22.3
     # via -r requirements-build.txt
-pyinstaller-hooks-contrib==2026.7
+pyinstaller-hooks-contrib==2026.9
     # via pyinstaller
 pywin32-ctypes==0.2.3
     # via pyinstaller

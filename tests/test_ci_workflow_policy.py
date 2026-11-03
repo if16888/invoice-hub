@@ -60,6 +60,9 @@ class TestCIWorkflowPolicy(unittest.TestCase):
         config = (PROJECT_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
         self.assertIn('package-ecosystem: "pip"', config)
         self.assertIn('package-ecosystem: "github-actions"', config)
+        self.assertIn('dependency-name: "pyee"', config)
+        self.assertIn('">=14.0.0"', config)
+        self.assertIn("version-update:semver-major", config)
 
     def test_native_geometry_is_pr_only_non_gating_and_preflight_conditioned(self):
         geometry = self.workflow.split("  native_geometry_preflight:", 1)[1]
