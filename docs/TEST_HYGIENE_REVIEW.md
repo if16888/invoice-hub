@@ -16,11 +16,15 @@ The twelve behavioral regressions remain active in focused files:
 - `tests/test_attachment_naming_and_excel.py`
 - `tests/test_review_action_regressions.py`
 
-## Remaining cleanup candidate
+## Preview test split (completed)
 
-`tests/test_preview_pdf_nav_log_001.py` remains active because it contains substantial preview, navigation, privacy-log, and integration coverage. The former `TestMultiPageCompatibility` section has been removed; the file is now 1,338 lines.
+The former 1,338-line `tests/test_preview_pdf_nav_log_001.py` has been split by responsibility:
 
-The module should not be deleted wholesale. The remaining optional cleanup is to split it by responsibility; page-mode behavior is already covered by the PDF preview controller tests.
+- `tests/test_preview_navigation_ui.py` — focus protection, file/page navigation, navigation focus stability, compact detail panel
+- `tests/test_link_downloader_recovery.py` — downloader cache and attempt-limit regressions
+- `tests/test_attachment_backfill.py` — attachment skip, duplicate backfill, seller fallback, claimed-invoice protection
+
+The `TestMultiPageCompatibility` section was removed earlier; page-mode behavior remains covered by the PDF preview controller tests.
 
 ## Active-test rule
 
