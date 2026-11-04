@@ -8248,10 +8248,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self._detail_panel.set_multi_selection_state(num_selected)
             self.current_preview_docs = []
             self.current_preview_index = 0
-            self.lbl_file_info.setText("0 / 0 无文件")
-            self.btn_prev.setEnabled(False)
-            self.btn_next.setEnabled(False)
-            self.btn_open_ext.setEnabled(False)
             self._performance_mark_list("preview_trigger")
             self._show_preview_status(self._preview_empty_message)
             if hasattr(self, "lbl_closing_desc"):

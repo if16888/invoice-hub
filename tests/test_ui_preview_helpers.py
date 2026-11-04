@@ -152,19 +152,13 @@ class TestUIPreviewGUI(unittest.TestCase):
                     window._on_table_selection_changed()
                     app.processEvents()
                     self.assertEqual(window.lbl_preview_status.text(), "请选择一张发票查看原件")
-                    self.assertEqual(window.lbl_file_info.text(), "0 / 0 无文件")
-                    self.assertFalse(window.btn_prev.isEnabled())
-                    self.assertFalse(window.btn_next.isEnabled())
-                    self.assertFalse(window.btn_open_ext.isEnabled())
+                    self.assertFalse(window.current_preview_docs)
 
                     window.table.selectRow(0)
                     window._on_table_selection_changed()
                     app.processEvents()
                     self.assertEqual(window.current_preview_index, 0)
                     self.assertEqual(len(window.current_preview_docs), 2)
-                    self.assertIn("文件 1/2", window.lbl_file_info.text())
-                    self.assertTrue(window.btn_prev.isEnabled())
-                    self.assertTrue(window.btn_next.isEnabled())
                     self.assertIsNone(window.pdf_document)
                     self.assertIsNone(window.pdf_view)
 
@@ -178,10 +172,7 @@ class TestUIPreviewGUI(unittest.TestCase):
                     window._on_table_selection_changed()
                     app.processEvents()
                     self.assertEqual(window.lbl_preview_status.text(), "已选择多张发票，请选择单张查看原件")
-                    self.assertEqual(window.lbl_file_info.text(), "0 / 0 无文件")
-                    self.assertFalse(window.btn_prev.isEnabled())
-                    self.assertFalse(window.btn_next.isEnabled())
-                    self.assertFalse(window.btn_open_ext.isEnabled())
+                    self.assertFalse(window.current_preview_docs)
                     self.assertTrue(window.overlay_toolbar.isHidden())
 
                 finally:

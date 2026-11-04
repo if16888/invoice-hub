@@ -48,13 +48,6 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
             ),
         )
 
-    def test_preview_stub_controls_are_parented_to_overlay_toolbar(self):
-        window, _ = self._make_window()
-        self.assertIs(window.lbl_file_info.parentWidget(), window.overlay_toolbar)
-        self.assertIs(window.btn_prev.parentWidget(), window.overlay_toolbar)
-        self.assertIs(window.btn_next.parentWidget(), window.overlay_toolbar)
-        self.assertIs(window.btn_open_ext.parentWidget(), window.overlay_toolbar)
-
     def test_thumbnail_selection_updates_document_index(self):
         window, root = self._make_window()
         first = root / "first.png"
@@ -187,7 +180,6 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(window.current_invoice["id"], second_id)
         self.assertEqual(window.current_preview_docs[0]["path"].resolve(), second.resolve())
-        self.assertIn("second.png", window.lbl_file_info.toolTip())
 
     def test_first_selected_invoice_populates_preview_surface(self):
         from PySide6.QtGui import QImage
@@ -374,14 +366,9 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
             self.assertFalse(window._invoke_workbench_action(action))
         action.assert_not_called()
 
-    def test_preview_toolbar_has_no_orphan_legacy_controls(self):
+    def test_preview_toolbar_does_not_reintroduce_retired_stub_controls(self):
         window, _ = self._make_window()
-        window.show()
-        self.app.processEvents()
-
-        toolbar_widgets = {window.overlay_toolbar}
-        toolbar_widgets.update(window.preview_actions.values())
-        legacy_names = (
+        for name in (
             "btn_prev",
             "lbl_file_info",
             "btn_next",
@@ -389,20 +376,8 @@ class PreviewWorkbenchUiTests(unittest.TestCase):
             "btn_next_page",
             "btn_open_ext",
             "btn_link_evidence",
-        )
-
-        for name in legacy_names:
-            widget = getattr(window, name, None)
-            if widget is None:
-                continue
-            self.assertTrue(
-                widget is window.overlay_toolbar or window.overlay_toolbar.isAncestorOf(widget),
-                f"{name} should be contained by overlay_toolbar",
-            )
-            if widget not in toolbar_widgets:
-                self.assertFalse(widget.isVisible(), f"{name} leaked as a visible orphan control")
-                geom = widget.geometry()
-                self.assertLessEqual(max(geom.width(), geom.height()), 64, f"{name} kept abnormal geometry {geom}")
+        ):
+            self.assertFalse(hasattr(window, name), f"{name} should not exist")
 
     def test_preview_focus_mode_keeps_review_shortcuts(self):
         window, root = self._make_window()
