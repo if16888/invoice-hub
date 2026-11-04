@@ -54,8 +54,8 @@
 ## P2：首发后排期
 
 - [ ] Windows Defender 可选附件扫描或隔离机制。
-- [ ] 100 / 500 / 2000 条发票的启动、搜索、导出性能基线。
-- [ ] OpenSSF Best Practices baseline。
+- [ ] 100 / 500 / 2000 条发票的启动、搜索、导出性能基线。数据库/搜索/导出已有 Linux 基线（`docs/performance/v0.2.0-scale-baseline.md`）；Windows 启动规模尚未测量。
+- [x] OpenSSF Best Practices baseline（`docs/security/openSSF-best-practices-baseline.md`；尚未申请 badge）。
 - [ ] 更完整的企业模板包、平台适配器和商业策略继续留在私有仓。
 
 ## Public Export Allowlist
