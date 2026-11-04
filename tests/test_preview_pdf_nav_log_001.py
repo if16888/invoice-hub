@@ -38,38 +38,7 @@ def _adjust_row_idx_after_deferred_load(window, row_idx, was_unloaded):
 
 # ── 1. File info formatting tests ────────────────────────────────────
 
-class TestFileInfoFormatting(unittest.TestCase):
-    """Tests for _format_preview_file_info and _get_pdf_page_info."""
-
-    def _make_doc(self, title="主发票", path_suffix=".pdf"):
-        return {"title": title, "path": Path(f"test{path_suffix}")}
-
-
-    def test_pdf_with_current_page_shows_page_fraction(self):
-        """PDF with current page shows 'PDF 1/7' format."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        doc = self._make_doc("主发票", ".pdf")
-        result = app_obj._format_preview_file_info(doc, 0, 2, pdf_page=1, pdf_page_count=7)
-        self.assertIn("文件 1/2", result)
-        self.assertIn("主发票", result)
-        self.assertIn("PDF 1/7", result)
-
-    def test_pdf_without_current_page_shows_total_only(self):
-        """PDF without current page shows 'PDF 共 7 页'."""
-        from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-        app_obj = InvoiceReviewApp.__new__(InvoiceReviewApp)
-        doc = self._make_doc("证明材料", ".pdf")
-        result = app_obj._format_preview_file_info(doc, 1, 2, pdf_page=None, pdf_page_count=7)
-        self.assertIn("文件 2/2", result)
-        self.assertIn("证明材料", result)
-        self.assertIn("PDF 共 7 页", result)
-
-
-# ── 2. MultiPage compatibility tests ─────────────────────────────────
-
-
-# ── 3. Keyboard focus protection tests ───────────────────────────────
+# ── 2. Keyboard focus protection tests ───────────────────────────────
 
 class TestKeyboardFocusProtection(unittest.TestCase):
     """Tests for _focus_is_editing_widget."""
@@ -131,9 +100,7 @@ class TestFileLevelNavigation(unittest.TestCase):
         app_obj.current_preview_index = 0
         # Patch _update_document_preview to avoid QPdfDocument loading
         app_obj._update_document_preview = MagicMock()
-        app_obj._refresh_preview_file_info = MagicMock()
         app_obj._update_pdf_page_buttons = MagicMock()
-        app_obj.lbl_file_info = MagicMock()
 
         app_obj._next_preview_doc()
         self.assertEqual(app_obj.current_preview_index, 1)
@@ -149,9 +116,7 @@ class TestFileLevelNavigation(unittest.TestCase):
                                          {"title": "证明材料", "path": Path("b.png")}]
         app_obj.current_preview_index = 0
         app_obj._update_document_preview = MagicMock()
-        app_obj._refresh_preview_file_info = MagicMock()
         app_obj._update_pdf_page_buttons = MagicMock()
-        app_obj.lbl_file_info = MagicMock()
 
         app_obj._prev_preview_doc()
         self.assertEqual(app_obj.current_preview_index, 1)  # wraps around

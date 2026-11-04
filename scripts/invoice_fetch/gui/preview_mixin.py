@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
-    QTextEdit, QToolButton, QVBoxLayout, QWidget,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from ..config import RUNTIME_DIR
@@ -80,14 +80,6 @@ class PreviewMixin:
         self.btn_download_preview = self.overlay_toolbar.btn_download
         self.btn_print_preview = self.overlay_toolbar.btn_print
         self.btn_preview_focus = self.overlay_toolbar.btn_fullscreen
-        self.lbl_file_info = QLabel("0 / 0 无文件", self.overlay_toolbar)
-        self.btn_prev = QToolButton(self.overlay_toolbar)
-        self.btn_next = QToolButton(self.overlay_toolbar)
-        self.btn_open_ext = QToolButton(self.overlay_toolbar)
-
-        for w in (self.lbl_file_info, self.btn_prev, self.btn_next, self.btn_open_ext):
-            w.setGeometry(0, 0, 0, 0)
-            w.hide()
 
         self.preview_actions = {
             "zoom_out": self.overlay_toolbar.btn_zoom_out,
@@ -656,10 +648,6 @@ class PreviewMixin:
         # self.thumbnail_rail.setVisible(False)
         if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
             self._show_preview_status(getattr(self, "_preview_empty_message", "请选择一张发票查看原件"))
-            self.lbl_file_info.setText("0 / 0 无文件")
-            self.btn_prev.setEnabled(False)
-            self.btn_next.setEnabled(False)
-            self.btn_open_ext.setEnabled(False)
             if hasattr(self, "btn_link_evidence"):
                 self.btn_link_evidence.setVisible(False)
                 self.btn_link_evidence.setEnabled(False)
@@ -694,18 +682,7 @@ class PreviewMixin:
 
         doc = self.current_preview_docs[idx]
         file_path = doc["path"]
-        title = doc.get("title") or doc.get("label") or "附件"
-        basename = doc.get("basename") or file_path.name
 
-        # ── Format file info with PDF page distinction ──
-        pdf_page, pdf_page_count = self._get_pdf_page_info()
-        file_info_text = self._format_preview_file_info(doc, idx, len(self.current_preview_docs), pdf_page, pdf_page_count)
-        self.lbl_file_info.setText(file_info_text)
-        self.lbl_file_info.setToolTip(f"{title}: {basename}\n路径: {file_path.resolve()}")
-
-        self.btn_prev.setEnabled(len(self.current_preview_docs) > 1)
-        self.btn_next.setEnabled(len(self.current_preview_docs) > 1)
-        self.btn_open_ext.setEnabled(True)
         # Disable PDF page buttons initially (will be refreshed after PDF load)
         if hasattr(self, "btn_prev_page"):
             self.btn_prev_page.setEnabled(False)
@@ -804,40 +781,13 @@ class PreviewMixin:
         if hasattr(self, "current_preview_docs") and self.current_preview_docs:
             self.current_preview_index = (self.current_preview_index - 1) % len(self.current_preview_docs)
             self._update_document_preview()
-            self._refresh_preview_file_info()
             self._update_pdf_page_buttons()
 
     def _next_preview_doc(self):
         if hasattr(self, "current_preview_docs") and self.current_preview_docs:
             self.current_preview_index = (self.current_preview_index + 1) % len(self.current_preview_docs)
             self._update_document_preview()
-            self._refresh_preview_file_info()
             self._update_pdf_page_buttons()
-
-    def _format_preview_file_info(self, doc: dict, file_index: int, file_count: int,
-                                   pdf_page: int | None = None, pdf_page_count: int | None = None) -> str:
-        """Build display string distinguishing file-level from PDF page-level navigation.
-
-        Non-PDF:  "文件 1/2｜主发票"
-        PDF:      "文件 1/2｜主发票｜PDF 1/7"  or  "文件 1/2｜主发票｜PDF 共 7 页"
-        """
-        title = doc.get("title", "文件")
-        base = f"文件 {file_index + 1}/{file_count}｜{title}"
-
-        suffix = file_path = doc.get("path")
-        if suffix is not None and hasattr(suffix, "suffix"):
-            suffix = suffix.suffix.lower()
-        elif suffix is not None and hasattr(suffix, "lower"):
-            suffix = suffix.lower()
-        else:
-            suffix = ""
-
-        if suffix != ".pdf" or pdf_page_count is None:
-            return base
-
-        if pdf_page is not None:
-            return f"{base}｜PDF {pdf_page}/{pdf_page_count}"
-        return f"{base}｜PDF 共 {pdf_page_count} 页"
 
     def _get_pdf_page_info(self) -> tuple[int | None, int | None]:
         """Return (current_page 1-based, total_pages) or (None, None) if not a PDF."""
@@ -869,19 +819,6 @@ class PreviewMixin:
             pass
         return current_page, page_count
 
-    def _refresh_preview_file_info(self):
-        """Recompute overlay toolbar file-info label in-place without reloading the preview."""
-        if not hasattr(self, "current_preview_docs") or not self.current_preview_docs:
-            return
-        idx = self.current_preview_index
-        if idx < 0 or idx >= len(self.current_preview_docs):
-            return
-        doc = self.current_preview_docs[idx]
-        pdf_page, pdf_page_count = self._get_pdf_page_info()
-        text = self._format_preview_file_info(doc, idx, len(self.current_preview_docs), pdf_page, pdf_page_count)
-        if hasattr(self, "lbl_file_info"):
-            self.lbl_file_info.setText(text)
-
     def _on_pdf_preview_ready(self):
         """Synchronize legacy toolbar consumers after an atomic PDF swap."""
         controller = self.pdf_preview_controller
@@ -889,7 +826,6 @@ class PreviewMixin:
         self.pdf_document = controller.active_document()
         if self.pdf_view is not None:
             self.pdf_view.installEventFilter(self)
-        self._refresh_preview_file_info()
         self._update_pdf_page_buttons()
         performance_trace = getattr(self, "_performance_preview_trace", None)
         if performance_trace is not None:
@@ -933,7 +869,6 @@ class PreviewMixin:
 
     def _on_pdf_page_changed(self, _page: int):
         """Slot for pageNavigator.currentPageChanged – keep toolbar in sync."""
-        self._refresh_preview_file_info()
         self._update_pdf_page_buttons()
 
     def _prev_pdf_page(self):
@@ -963,7 +898,6 @@ class PreviewMixin:
             if new_page < 0 or new_page >= page_count:
                 return False
             nav.jump(new_page, 0.0, 0.0)
-            self._refresh_preview_file_info()
             self._update_pdf_page_buttons()
             return True
         except Exception:
