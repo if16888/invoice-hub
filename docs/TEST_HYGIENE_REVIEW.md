@@ -16,11 +16,11 @@ The twelve behavioral regressions remain active in focused files:
 - `tests/test_attachment_naming_and_excel.py`
 - `tests/test_review_action_regressions.py`
 
-## Additional cleanup candidate
+## Remaining cleanup candidate
 
-`tests/test_preview_pdf_nav_log_001.py` remains active because it contains substantial preview, navigation, privacy-log, and integration coverage. Its small `TestMultiPageCompatibility` section should be removed during a dedicated split: those tests currently simulate `hasattr()` branches using local mock classes instead of calling the production page-mode selector.
+`tests/test_preview_pdf_nav_log_001.py` remains active because it contains substantial preview, navigation, privacy-log, and integration coverage. The former `TestMultiPageCompatibility` section has been removed; the file is now 1,338 lines.
 
-The whole 1,900-line module should not be deleted merely to remove those three weak tests. The safe next cleanup is to split it by responsibility and replace the simulated page-mode checks with a production helper test.
+The module should not be deleted wholesale. The remaining optional cleanup is to split it by responsibility; page-mode behavior is already covered by the PDF preview controller tests.
 
 ## Active-test rule
 
