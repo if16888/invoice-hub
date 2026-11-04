@@ -82,7 +82,7 @@ _MODULE_WEIGHTS: dict[str, float] = {
     "tests.test_gui_column_filters": 106.0,
     "tests.test_ihds08": 51.0,
     "tests.test_preview_workbench_ui": 46.0,
-    "tests.test_preview_pdf_nav_log_001": 41.0,
+    "tests.test_preview_navigation_ui": 15.0,
     "tests.test_mobile_upload": 35.0,
     "tests.test_import_review_identity": 33.0,
     "tests.test_mailbox_v5_ui": 31.0,
