@@ -19,11 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scripts.invoice_fetch.gui.design_system_v11 import (
-    apply_design_system_v11,
-    apply_review_status_segmented_control,
-    apply_sidebar_visual_language,
-)
+from scripts.invoice_fetch.gui.page_layouts import apply_sidebar_visual_language
+from scripts.invoice_fetch.gui.review_layout import apply_review_status_segmented_control
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_TOKEN_VERSION, DESIGN_V1_COLORS, DESIGN_V1_METRICS
 from scripts.invoice_fetch.gui.review_layout import REVIEW_BASELINE_STAGES
 from scripts.invoice_fetch.gui.ui.components import SegmentControl
@@ -37,6 +34,11 @@ def _app() -> QApplication:
     global _QAPP
     _QAPP = QApplication.instance() or QApplication([])
     return _QAPP
+
+
+def _apply_visual_language(window) -> None:
+    apply_sidebar_visual_language(window)
+    apply_review_status_segmented_control(window)
 
 
 class DesignSystemV11Tests(unittest.TestCase):
@@ -248,12 +250,12 @@ class DesignSystemV11Tests(unittest.TestCase):
     def test_shared_application_is_idempotent(self):
         window, nav, collapse, bar, cards = self._window_fixture()
         try:
-            apply_design_system_v11(window)
+            _apply_visual_language(window)
             first_nav_qss = nav.styleSheet()
             first_bar_qss = bar.styleSheet()
             first_card_qss = cards["all"].styleSheet()
 
-            apply_design_system_v11(window)
+            _apply_visual_language(window)
 
             self.assertEqual(nav.styleSheet(), first_nav_qss)
             self.assertEqual(bar.styleSheet(), first_bar_qss)

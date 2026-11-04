@@ -6,22 +6,24 @@ from functools import wraps
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLayout, QSizePolicy, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLayout, QPushButton, QSizePolicy, QWidget
 from shiboken6 import isValid
 
 from ..export_paths import normalize_export_date_prefix, resolve_export_directory
 from ..review_status import APPROVED
 
 from .styles import apply_global_design_baseline
-from .design_system_v11 import apply_design_system_v11
-from .design_tokens import DESIGN_V1_METRICS
+from .design_tokens import DESIGN_V1_COLORS, DESIGN_V1_METRICS, DESIGN_V1_TYPE
 from .hci_v1 import (
     schedule_dashboard_hci_closure,
     schedule_dashboard_hci_v1,
     schedule_task_flow_hci_closure,
     schedule_task_flow_hci_v1,
 )
-from .review_layout import schedule_review_baseline_pipeline
+from .review_layout import (
+    apply_review_status_segmented_control,
+    schedule_review_baseline_pipeline,
+)
 from .review_queue_semantics import schedule_task_flow_review_scope_semantics
 from .selection_surfaces import schedule_selection_surface_contracts
 from .settings_common import (
@@ -145,7 +147,8 @@ class _PageLayoutContract:
         layout.setAlignment(Qt.AlignTop)
         QTimer.singleShot(0, lambda p=page: apply_global_design_baseline(p))
         schedule_selection_surface_contracts(page)
-        apply_design_system_v11(page)
+        apply_sidebar_visual_language(page)
+        apply_review_status_segmented_control(page)
         return layout
 
     @classmethod
@@ -495,3 +498,130 @@ def apply_task_flow_baseline(page: QWidget) -> None:
         apply_import_baseline(page)
     elif page is getattr(window, "export_page", None):
         apply_export_baseline(page)
+
+
+# ── Sidebar visual language (merged from design_system_v11) ──
+
+_COLLAPSE_HINTS = ("收起侧边栏", "展开侧边栏", "收起导航", "展开导航")
+
+
+def _repolish(widget: QWidget) -> None:
+    if widget is None or not isValid(widget):
+        return
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    widget.update()
+
+
+def _sidebar_stylesheet() -> str:
+    colors = DESIGN_V1_COLORS
+    metrics = DESIGN_V1_METRICS
+    return f"""
+QFrame#WorkbenchNav {{
+    background-color: {colors['navigation']};
+    border-right: 1px solid {colors['navigation_border']};
+}}
+QPushButton.WorkbenchNavButton {{
+    background-color: transparent;
+    color: {colors['text_secondary']};
+    border: none;
+    border-radius: {metrics['radius_medium']}px;
+    padding: 0 12px;
+    text-align: left;
+    font-size: {DESIGN_V1_TYPE['section_title']}px;
+    font-weight: 600;
+}}
+QPushButton.WorkbenchNavButton:hover {{
+    background-color: {colors['surface_secondary']};
+    color: {colors['text']};
+}}
+QPushButton.WorkbenchNavButton:focus {{
+    background-color: {colors['surface_secondary']};
+    color: {colors['accent_hover']};
+    border: {metrics['focus_border_width']}px solid {colors['focus_ring']};
+    outline: 0;
+}}
+QPushButton.WorkbenchNavButton:checked,
+QPushButton.WorkbenchNavButton:checked:focus {{
+    background-color: {colors['navigation_selected']};
+    color: {colors['accent_hover']};
+    border: none;
+    outline: 0;
+    font-weight: 700;
+}}
+QPushButton[navigationControl="collapse"] {{
+    min-height: {metrics['icon_button_size']}px;
+    max-height: {metrics['icon_button_size']}px;
+    background-color: transparent;
+    color: {colors['text_secondary']};
+    border: none;
+    border-radius: {metrics['radius_medium']}px;
+    padding: 0 10px;
+    text-align: left;
+    font-size: {DESIGN_V1_TYPE['secondary']}px;
+    font-weight: 500;
+}}
+QPushButton[navigationControl="collapse"]:hover {{
+    background-color: {colors['surface_secondary']};
+    color: {colors['text']};
+    border: none;
+}}
+QPushButton[navigationControl="collapse"]:focus {{
+    background-color: {colors['selected']};
+    color: {colors['accent_hover']};
+    border: {metrics['focus_border_width']}px solid {colors['focus_ring']};
+    outline: 0;
+}}
+"""
+
+
+def _find_sidebar_collapse_button(window) -> QPushButton | None:
+    for attr in (
+        "btn_nav_collapse",
+        "btn_sidebar_collapse",
+        "btn_toggle_nav",
+        "btn_nav_toggle",
+        "nav_toggle_button",
+    ):
+        candidate = getattr(window, attr, None)
+        if isinstance(candidate, QPushButton) and isValid(candidate):
+            return candidate
+
+    nav = getattr(window, "workbench_nav", None)
+    if nav is None or not isValid(nav):
+        return None
+    for button in nav.findChildren(QPushButton):
+        text = str(button.text() or "")
+        accessible = str(button.accessibleName() or "")
+        tooltip = str(button.toolTip() or "")
+        haystack = " ".join((text, accessible, tooltip))
+        if any(hint in haystack for hint in _COLLAPSE_HINTS):
+            return button
+    return None
+
+
+def apply_sidebar_visual_language(window) -> None:
+    """Render navigation state with fills instead of decorative outlines."""
+    nav = getattr(window, "workbench_nav", None)
+    if not isinstance(nav, QFrame) or not isValid(nav):
+        return
+
+    nav.setProperty("visualLanguage", "design-v1.1")
+    if nav.property("designV11SidebarStyled") is not True:
+        nav.setProperty("designV11SidebarStyled", True)
+        nav.setStyleSheet(_sidebar_stylesheet())
+
+    collapse = _find_sidebar_collapse_button(window)
+    if collapse is not None:
+        collapse.setProperty("navigationControl", "collapse")
+        collapse.setProperty("variant", "ghost")
+        collapse.setFlat(True)
+        collapse.setAutoDefault(False)
+        collapse.setDefault(False)
+        collapse.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        collapse.setAccessibleName(
+            collapse.accessibleName()
+            or ("收起侧边栏" if "收起" in collapse.text() else "展开侧边栏")
+        )
+        _repolish(collapse)
+    _repolish(nav)
