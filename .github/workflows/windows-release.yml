@@ -12,12 +12,12 @@ on:
       portable_startup_ms:
         description: "Portable cold-start gate threshold (ms)"
         required: false
-        default: "6000"
+        default: "5000"
         type: string
       strict_startup_ms:
         description: "Installed startup gate threshold (ms)"
         required: false
-        default: "3000"
+        default: "2000"
         type: string
 
 jobs:

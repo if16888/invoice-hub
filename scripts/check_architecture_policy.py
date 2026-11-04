@@ -39,11 +39,7 @@ FROZEN_PATCH_MODULES = frozenset(
 # Filled from the current production tree. The scanner is deliberately narrow:
 # it requires a compatibility/legacy marker, widget construction, and an
 # explicit hidden-state call in the same function scope.
-FROZEN_HIDDEN_COMPAT_SCOPES = frozenset(
-    {
-        "preview_mixin.py:PreviewMixin._init_legacy_preview_controls",
-    }
-)
+FROZEN_HIDDEN_COMPAT_SCOPES = frozenset()
 
 # Runtime contracts retired after their physical owners were consolidated.
 # Keep this assertion deliberately narrow: other historical uses of the word

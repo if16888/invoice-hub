@@ -51,17 +51,6 @@ def get_qt_pdf_classes():
 
 
 class PreviewMixin:
-    def _make_toolbar_button(self, text: str, handler, *, width: int | None = None, tooltip: str = "") -> QPushButton:
-        button = QPushButton(text)
-        button.clicked.connect(handler)
-        button.setFixedHeight(32)
-        button.setProperty("class", "PreviewToolBtn")
-        if width is not None:
-            button.setFixedWidth(width)
-        if tooltip:
-            button.setToolTip(tooltip)
-        return button
-
     def _init_overlay_toolbar(self):
         from .ui.components.preview_toolbar import PreviewToolbar
         self.overlay_toolbar = PreviewToolbar(
@@ -113,33 +102,6 @@ class PreviewMixin:
             "focus_mode": self.overlay_toolbar.btn_fullscreen,
         }
         return
-
-    def _init_legacy_preview_controls(self):
-        """Keep old preview control attributes available without visible orphan widgets."""
-        self._legacy_preview_controls = QWidget(self.overlay_toolbar)
-        self._legacy_preview_controls.hide()
-
-        self.btn_prev = self._make_toolbar_button("←", self._prev_preview_doc, width=18, tooltip="上一文件")
-        self.lbl_file_info = QLabel("0 / 0 无文件")
-        self.lbl_file_info.setAlignment(Qt.AlignCenter)
-        self.btn_next = self._make_toolbar_button("→", self._next_preview_doc, width=18, tooltip="下一文件")
-        self.btn_prev_page = self._make_toolbar_button("◀ 上一页", self._prev_pdf_page, tooltip="PDF 上一页")
-        self.btn_next_page = self._make_toolbar_button("下一页 ▶", self._next_pdf_page, tooltip="PDF 下一页")
-        self.btn_open_ext = self._make_toolbar_button("外部打开", self._open_current_preview_ext)
-        self.btn_link_evidence = self._make_toolbar_button("关联到当前发票", self._link_current_evidence_to_invoice)
-
-        for widget in (
-            self.btn_prev,
-            self.lbl_file_info,
-            self.btn_next,
-            self.btn_prev_page,
-            self.btn_next_page,
-            self.btn_open_ext,
-            self.btn_link_evidence,
-        ):
-            widget.setParent(self._legacy_preview_controls)
-            widget.setGeometry(0, 0, 0, 0)
-            widget.hide()
 
     def _init_preview_panel(self):
         self.preview_panel = QGroupBox("原件预览")
