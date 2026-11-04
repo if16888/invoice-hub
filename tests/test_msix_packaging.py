@@ -341,7 +341,7 @@ class TestStoreWorkflowPolicy(unittest.TestCase):
         self.assertNotIn(" /nv", lowered)
         self.assertIn("expectedNameAttribute", workflow)
         self.assertIn("expectedVersionAttribute", workflow)
-        self.assertIn("upload-artifact@v4", workflow)
+        self.assertRegex(workflow, r"upload-artifact@[0-9a-f]{40}")
         self.assertNotIn("action-gh-release", workflow)
         self.assertNotIn("Sign installer", workflow)
         self.assertNotIn("SIGNTOOL_PATH", workflow)
