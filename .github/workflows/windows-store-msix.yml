@@ -29,12 +29,12 @@ on:
       portable_startup_ms:
         description: "Unpackaged onedir cold-start threshold (ms); not installed Store startup"
         required: false
-        default: "6000"
+        default: "5000"
         type: string
       strict_startup_ms:
         description: "Installed Store startup acceptance target (ms); requires signed MSIX installation"
         required: false
-        default: "3000"
+        default: "2000"
         type: string
 
 jobs:

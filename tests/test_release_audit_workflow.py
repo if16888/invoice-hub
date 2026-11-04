@@ -52,8 +52,8 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
         self.assertIn("strict_startup_ms must be a positive integer", self.workflow)
 
     def test_portable_and_installed_startup_gates_are_distinct(self) -> None:
-        self.assertIn('default: "6000"', self.workflow)
-        self.assertIn('default: "3000"', self.workflow)
+        self.assertIn('default: "5000"', self.workflow)
+        self.assertIn('default: "2000"', self.workflow)
         self.assertIn("PORTABLE_STARTUP_THRESHOLD_MS=$portable", self.workflow)
         self.assertIn("INSTALLED_STARTUP_THRESHOLD_MS=$installed", self.workflow)
         self.assertIn(

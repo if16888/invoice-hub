@@ -16,7 +16,7 @@
 | 兼容 re-export 壳（已删） | `buyer_warning_readability.py` | 39 |
 | 重复 token 层 | `styles.py`（第二套 `COLOR_TOKENS`/`TYPE_*`，与 `design_tokens.py` 冲突） | 影响全站 QSS |
 
-债务合计（盘点时）**约 10,725 行，占 GUI 的 32%**，另有 3 个冻结的 hidden-compat scope。Wave 0–2 清理后剩约 **6.4k 行（约 22%）**；Wave 3 完成后**冻结补丁模块 14→0、hidden-compat scope 剩 1 个**（`preview_mixin` 的 legacy 预览控件），剩余债务为 `hci_v1`/`design_system_v11` 兼容引擎；界面修复按 `docs/ui-apple-hig-review.md` 分 3 批执行。
+债务合计（盘点时）**约 10,725 行，占 GUI 的 32%**，另有 3 个冻结的 hidden-compat scope。Wave 0–2 清理后剩约 **6.4k 行（约 22%）**；Wave 3 完成后**冻结补丁模块 14→0、hidden-compat scope 剩 0 个**（`preview_mixin` 的 legacy 预览控件已在后续清理），剩余债务为 `hci_v1`/`design_system_v11` 兼容引擎；界面修复按 `docs/ui-apple-hig-review.md` 分 3 批执行。
 
 ## 2. 治理规则
 

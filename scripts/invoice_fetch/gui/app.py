@@ -10340,7 +10340,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         summary_msg = (
             "<b>上一次导出结果：</b><br>"
-            f"• 成功打包发票: <font color='#10B981'><b>{item_count}</b></font> 张<br>"
+            f"• 成功打包发票: <font color='{DESIGN_V1_COLORS['success']}'><b>{item_count}</b></font> 张<br>"
             f"• 过滤跳过记录: {skip_text}"
         )
         self.lbl_export_summary.setText(summary_msg)
