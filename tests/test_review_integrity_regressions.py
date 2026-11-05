@@ -56,6 +56,81 @@ class ReviewIntegrityTests(unittest.TestCase):
                 window.deleteLater()
                 self.settle()
 
+    def test_inline_invalid_values_leave_database_and_editor_intact(self):
+        with self.window() as window:
+            panel = window._detail_panel
+            invoice_id = window.current_invoice["id"]
+            before = window.db.get_invoice(invoice_id)
+            for field, value in (("amount", "abc"), ("amount", "NaN"), ("date", "2026-99-99")):
+                panel._begin_inline_edit(field)
+                panel.inline_edit_input.setText(value)
+                panel._commit_inline_edit()
+                self.assertEqual(window.db.get_invoice(invoice_id), before)
+                self.assertFalse(panel.inline_edit_bar.isHidden())
+                self.assertEqual(panel.inline_edit_input.text(), value)
+            panel._cancel_inline_edit()
+
+    def test_sort_retains_loaded_pages_and_multiple_selected_ids(self):
+        from PySide6.QtCore import QItemSelectionModel
+        with self.window(130) as window:
+            window.table.clearSelection()
+            window._sort_review_table_by(3)
+            window._load_invoices(append=True)
+            window.table.selectRow(75)
+            model = window.table.selectionModel()
+            model.select(window.table.model().index(76, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            expected = set(window._selected_batch_invoice_ids())
+            window._sort_review_table_by(3)
+            self.assertEqual(set(window._selected_batch_invoice_ids()), expected)
+            self.assertGreaterEqual(len(window.invoices_list), 100)
+
+    def test_single_approval_rejects_invalid_stored_amount(self):
+        with self.window() as window:
+            invoice = window.current_invoice
+            window.db.update_invoice_fields(invoice["id"], invoice["invoice_number"],
+                "2026-10-30", "Seller", "NaN", "交通")
+            window._load_invoices(preserve_invoice_id=invoice["id"])
+            result = window._set_selected_status("approved")
+            self.assertEqual(result["success"], 0)
+            self.assertEqual(window.db.get_invoice(invoice["id"])["review_status"], "to_review")
+
+    def test_hidden_batch_bar_keeps_explicit_single_selection_hidden(self):
+        from PySide6.QtWidgets import QWidget
+        from scripts.invoice_fetch.gui.ui.components.batch_review_bar import BatchReviewBar
+        parent = QWidget()
+        bar = BatchReviewBar(parent)
+        bar.setVisible(True)
+        bar.set_selection(1, "10")
+        parent.show()
+        self.settle()
+        self.assertTrue(bar.isHidden())
+        parent.deleteLater()
+        self.settle()
+
+    def test_narrow_preview_moves_hidden_actions_to_menu(self):
+        with self.window() as window:
+            window.preview_container.setFixedWidth(460)
+            window._show_overlay_toolbar()
+            self.settle()
+            window._reposition_overlay_toolbar()
+            self.assertLessEqual(window.overlay_toolbar.width(), 444)
+            self.assertFalse(window.preview_overflow_button.isHidden())
+            self.assertTrue(window.preview_overflow_button.menu().actions())
+
+    def test_download_same_file_and_copy_failure_are_handled(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        with self.window() as window:
+            source = window.db._path.parent / "original.png"
+            source.write_bytes(b"original content")
+            window.current_preview_docs = [{"path": source}]
+            window.current_preview_index = 0
+            with patch.object(QFileDialog, "getSaveFileName", return_value=(str(source), "")):
+                self.assertTrue(window._download_current_preview())
+            self.assertEqual(source.read_bytes(), b"original content")
+            with patch.object(QFileDialog, "getSaveFileName", return_value=(str(source.with_name("copy.png")), "")), patch("shutil.copy2", side_effect=OSError), patch.object(QMessageBox, "warning") as warning:
+                self.assertFalse(window._download_current_preview())
+                warning.assert_called_once()
+
     def test_sorted_selection_updates_the_displayed_invoice_only(self):
         with self.window() as window:
             window._sort_review_table_by(3)
@@ -72,6 +147,7 @@ class ReviewIntegrityTests(unittest.TestCase):
 
     def test_sort_applies_before_pagination_and_append_keeps_order(self):
         with self.window(130) as window:
+            window.table.clearSelection()
             window._sort_review_table_by(3)
             self.assertEqual(len(window.invoices_list), 50)
             self.assertEqual(float(window.invoices_list[0]["total_amount"]), 1)
@@ -79,9 +155,10 @@ class ReviewIntegrityTests(unittest.TestCase):
             amounts = [float(row["total_amount"]) for row in window.invoices_list]
             self.assertEqual(amounts, list(range(1, 101)))
             self.assertEqual(len({row["id"] for row in window.invoices_list}), 100)
+            window.table.clearSelection()
             window._sort_review_table_by(3)
             self.assertEqual(float(window.invoices_list[0]["total_amount"]), 130)
-            self.assertEqual(len(window.invoices_list), 50)
+            self.assertEqual(len(window.invoices_list), 100)
             with self.assertRaises(ValueError):
                 window.db.list_review_invoices(ReviewQuery(sort_key="id; DELETE FROM invoices"))
 
@@ -210,7 +287,9 @@ class ReviewIntegrityTests(unittest.TestCase):
                     self.assertEqual(child.grab().toImage().pixelColor(10, 10).name(), "#161a20")
                     self.assertIn("#98A2B3", child.styleSheet())
                     apply_app_theme(self.app)
+                    child.setStyleSheet(child.styleSheet() + " border: 1px solid #E4E7EC;")
                     self.assertIn("#98A2B3", child.styleSheet())
+                    self.assertNotIn("#6B7687", child.styleSheet())
                     child.setStyleSheet("background-color: #ffffff; color: #667085;")
                     self.settle()
                     self.assertEqual(child.grab().toImage().pixelColor(10, 10).name(), "#161a20")

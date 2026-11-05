@@ -95,7 +95,11 @@ class _DarkStyleFilter(QObject):
         source = widget.styleSheet()
         if not source or source == getattr(widget, "_dark_applied_qss", None):
             return
-        themed = dark_stylesheet(source)
+        previous = getattr(widget, "_dark_applied_qss", "")
+        if previous and source.startswith(previous):
+            themed = previous + dark_stylesheet(source[len(previous):])
+        else:
+            themed = dark_stylesheet(source)
         widget._dark_applied_qss = themed
         if themed != source:
             widget._dark_style_busy = True

@@ -49,6 +49,6 @@ class BatchReviewBar(QFrame):
         self.summary.setText(f"已选择 {count} 张（已加载记录）｜{amounts}")
         self.approve.setText(f"通过所选 ({count})")
         visible = count > 1
-        if visible != self.isVisible():
+        if visible == self.isHidden():
             self.setVisible(visible)
             self.visibility_changed.emit()

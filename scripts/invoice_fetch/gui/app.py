@@ -2908,9 +2908,34 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if state and state[0] == section and state[1] == Qt.AscendingOrder
             else Qt.AscendingOrder
         )
+        selected_ids = self._selected_batch_invoice_ids()
         previous_id = self.current_invoice.get("id") if self.current_invoice else None
         self._column_sort_state = (section, order)
-        self._load_invoices(preserve_invoice_id=previous_id)
+        query = self._build_review_query(status=self.current_filter_status)
+        try:
+            ranks = self.db.review_invoice_positions(query, selected_ids)
+        except sqlite3.Error:
+            self._column_sort_state = state
+            self.statusBar().showMessage("暂时无法排序，请重试。", 5000)
+            return
+        limit = max(50, len(self.invoices_list), ((max(ranks, default=0) // 50) + 1) * 50)
+        self._review_sort_reload_limit = limit
+        try:
+            self._load_invoices(preserve_invoice_id=previous_id)
+        finally:
+            self._review_sort_reload_limit = None
+        if selected_ids:
+            selected = set(selected_ids)
+            self.table.blockSignals(True)
+            try:
+                self.table.clearSelection()
+                model = self.table.selectionModel()
+                for row, invoice in enumerate(self.invoices_list):
+                    if invoice["id"] in selected:
+                        model.select(self.table.model().index(row, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            finally:
+                self.table.blockSignals(False)
+            self._on_table_selection_changed()
         self._reapply_review_sort()
 
     def _on_header_section_clicked(self, section: int) -> None:
@@ -7374,7 +7399,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if active is not None and bool(active) == bool(empty_db):
             return
         self._review_empty_chrome_active = bool(empty_db)
-        for attr in ("record_header", "batch_review_bar"):
+        for attr in ("record_header",):
             widget = getattr(self, attr, None)
             if widget is not None:
                 widget.setVisible(not empty_db)
@@ -7510,6 +7535,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 ERROR: self.db.count_review_invoices(replace(base_query, status=ERROR)),
             }
             page_query = replace(base_query, status=self.current_filter_status, offset=offset)
+            if not append and getattr(self, "_review_sort_reload_limit", None):
+                page_query = replace(page_query, limit=self._review_sort_reload_limit)
             total_matching = counts["all"] if self.current_filter_status is None else counts[self.current_filter_status]
             if getattr(self, "_column_filters_load_all", False) and not append:
                 page_query = replace(page_query, limit=max(1, total_matching))
@@ -9396,6 +9423,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if performance_trace is not None:
                     performance_trace.finish("evidence_only", selected=len(selected_indexes))
                 return result
+            from ..amount_utils import parse_amount
+            for invoice in actionable_invoices:
+                try:
+                    amount = str(invoice.get("total_amount") or "").strip()
+                    expense_date = str(invoice.get("expense_date") or invoice.get("invoice_date") or "").strip()
+                    if amount:
+                        parse_amount(amount)
+                    if expense_date:
+                        date.fromisoformat(expense_date)
+                except ValueError:
+                    QMessageBox.warning(self, "无法通过审核", "金额或费用日期格式无效，请先编辑修正。")
+                    result["other_failed"] += 1
+                    return result
             if not self._confirm_approve_incomplete_invoices(
                 actionable_invoices,
                 skipped_evidence_count=result["evidence_only"],

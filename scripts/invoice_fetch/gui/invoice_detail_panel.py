@@ -5002,6 +5002,15 @@ class InvoiceDetailPanel(QWidget):
         }
         values[field_name] = value
         try:
+            if values["amount"]:
+                values["amount"] = format(parse_amount(values["amount"]), "f")
+            if values["date"]:
+                date_type.fromisoformat(values["date"])
+        except ValueError:
+            QMessageBox.warning(self, "字段校验", "金额必须是有效金额且最多两位小数；费用日期必须是 YYYY-MM-DD。")
+            self.inline_edit_input.setFocus()
+            return
+        try:
             self._set_core_field_values(**values)
             if self._cb is not None and self._cb.on_save_fields() is False:
                 values[field_name] = self._inline_edit_source or ""

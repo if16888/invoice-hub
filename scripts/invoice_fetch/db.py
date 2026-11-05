@@ -1868,6 +1868,16 @@ class InvoiceDB(EvidenceStoreMixin):
             raise ValueError(f"Offset must be a non-negative integer. Got: {query.offset}")
         where_sql, params = self._build_review_where(query)
         sql = "SELECT i.*, cg.name AS claim_name " + self._review_join_sql() + where_sql
+        order_sql, order_params = self._review_order(query)
+        sql += order_sql
+        params.extend(order_params)
+        sql += " LIMIT ? OFFSET ?"
+        params.extend((query.limit, query.offset))
+        return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def _review_order(self, query):
+        sql = ""
+        params = []
         if query.sort_key:
             allowed = {"review_status", "status", "expense_date", "total_amount", "seller_name", "invoice_number", "claim_name"}
             if query.sort_key not in allowed:
@@ -1887,9 +1897,23 @@ class InvoiceDB(EvidenceStoreMixin):
             params.extend(query.invoice_ids)
         else:
             sql += " ORDER BY i.expense_date DESC, i.id DESC"
-        sql += " LIMIT ? OFFSET ?"
-        params.extend((query.limit, query.offset))
-        return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+        return sql, params
+
+    def review_invoice_positions(self, query, invoice_ids):
+        """Locate selections in SQL without hydrating the full sorted scope."""
+        if not invoice_ids:
+            return []
+        where_sql, params = self._build_review_where(query)
+        order_sql, order_params = self._review_order(query)
+        ranked = ("SELECT i.id, ROW_NUMBER() OVER (" + order_sql.strip()
+                  + ") - 1 AS position " + self._review_join_sql() + where_sql)
+        # ORDER BY placeholders occur before WHERE placeholders in this query.
+        rows = self._conn.execute(
+            "SELECT position FROM (" + ranked + ") WHERE id IN ("
+            + ",".join("?" for _ in invoice_ids) + ")",
+            list(order_params) + list(params) + list(invoice_ids),
+        ).fetchall()
+        return [int(row["position"]) for row in rows]
 
     def count_review_invoices(self, query: ReviewQuery) -> int:
         """Count the same review predicate used by list_review_invoices."""
