@@ -38,7 +38,7 @@ class ReviewPagingController:
         self.window._load_invoices()
 
     def has_more(self) -> bool:
-        return self.loaded_count < self.total_count
+        return getattr(self.window, "_review_window_start", 0) + self.loaded_count < self.total_count
 
     def load_next_page(self) -> None:
         if self.loading or not self.has_more():
@@ -66,6 +66,9 @@ class ReviewPagingController:
         if not getattr(self.window, "invoices_list", None):
             return
         row = self.window.table.currentRow()
+        if delta < 0 and row == 0 and getattr(self.window, "_review_window_start", 0):
+            self.window._change_review_page(-1)
+            return
         if row < 0:
             row = 0 if delta >= 0 else len(self.window.invoices_list) - 1
         row = max(0, min(len(self.window.invoices_list) - 1, row + delta))
@@ -93,7 +96,9 @@ def install_review_paging(page: QWidget | None) -> None:
         loaded = len(getattr(window, "invoices_list", []) or [])
         total = int(getattr(window, "_record_total_matching", loaded) or loaded)
         if hasattr(window, "lbl_record_count"):
-            if loaded < total:
+            if getattr(window, "_review_window_start", 0):
+                window._update_record_header_summary()
+            elif loaded < total:
                 window.lbl_record_count.setText(f"已加载 {loaded} / 共 {total} 张")
             else:
                 window.lbl_record_count.setText(f"已加载全部，共 {total} 张")

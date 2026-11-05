@@ -156,13 +156,13 @@ jobs:
         shell: pwsh
         run: |
           $portable = $env:REQUESTED_PORTABLE_STARTUP_MS
-          if (-not $portable) { $portable = "6000" }
+          if (-not $portable) { $portable = "5000" }
           if ($portable -notmatch '^\d+$' -or [int]$portable -le 0) {
             throw "portable_startup_ms must be a positive integer."
           }
 
           $installed = $env:REQUESTED_INSTALLED_STARTUP_MS
-          if (-not $installed) { $installed = "3000" }
+          if (-not $installed) { $installed = "2000" }
           if ($installed -notmatch '^\d+$' -or [int]$installed -le 0) {
             throw "strict_startup_ms must be a positive integer."
           }

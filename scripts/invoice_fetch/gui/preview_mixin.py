@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..config import RUNTIME_DIR
@@ -250,6 +250,29 @@ class PreviewMixin:
             return
         tb = self.overlay_toolbar
         container = self.preview_container
+        if not hasattr(self, "preview_overflow_button"):
+            button = QToolButton(tb)
+            button.setText("更多")
+            button.setPopupMode(QToolButton.InstantPopup)
+            button.setMenu(QMenu(button))
+            tb.layout().addWidget(button)
+            self.preview_overflow_button = button
+        overflow = self.preview_overflow_button
+        overflow.hide()
+        overflow.menu().clear()
+        for button in tb.findChildren(QToolButton):
+            if button is not overflow:
+                button.show()
+        tb.adjustSize()
+        for button in reversed([b for b in tb.findChildren(QToolButton) if b is not overflow]):
+            if tb.sizeHint().width() <= max(0, container.width() - 16):
+                break
+            button.hide()
+            overflow.show()
+            action = overflow.menu().addAction(button.toolTip() or button.text())
+            action.setEnabled(button.isEnabled())
+            action.triggered.connect(lambda checked=False, target=button: target.click())
+            tb.adjustSize()
         tb.adjustSize()
         w = tb.width()
         c_w = container.width()
@@ -431,6 +454,8 @@ class PreviewMixin:
             action = getattr(self, "preview_actions", {}).get(name)
             if action is not None:
                 action.setEnabled(enabled)
+        if isinstance(getattr(self, "overlay_toolbar", None), QWidget):
+            self._reposition_overlay_toolbar()
 
     def _set_preview_action_availability(self, file_path):
         """Apply capability-specific states and explain every disabled action."""
@@ -457,6 +482,8 @@ class PreviewMixin:
             action = self.preview_actions[name]
             action.setEnabled(exists)
             action.setToolTip("" if exists else missing_reason)
+        if isinstance(getattr(self, "overlay_toolbar", None), QWidget):
+            self._reposition_overlay_toolbar()
 
     def _reset_pdf_preview_state(self) -> None:
         """Release the PDF surface when the preview moves to another surface.
@@ -516,6 +543,7 @@ class PreviewMixin:
             self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
         elif self.preview_stack.currentWidget() == self.image_scroll_area:
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_fit_page(self):
         self.image_zoom_mode = "fit_page"
@@ -524,6 +552,7 @@ class PreviewMixin:
             self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
         elif self.preview_stack.currentWidget() == self.image_scroll_area:
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_100(self):
         self.image_zoom_mode = "custom"
@@ -534,6 +563,7 @@ class PreviewMixin:
             self.pdf_view.setZoomFactor(1.0)
         elif self.preview_stack.currentWidget() == self.image_scroll_area:
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_in(self):
         QPdfDocument, QPdfView = get_qt_pdf_classes()
@@ -703,8 +733,8 @@ class PreviewMixin:
                 self._performance_preview_trace = None
             return
 
-        # Keep default state as hidden, show toolbar when mouse enters
-        self.overlay_toolbar.hide()
+        # Loaded documents keep their actions discoverable without a hover.
+        self._show_overlay_toolbar()
         self._set_zoom_buttons_enabled(True)
 
         suffix = file_path.suffix.lower()
@@ -769,6 +799,7 @@ class PreviewMixin:
                 performance_trace.finish("paint_unobserved", surface="preview")
             self._performance_preview_trace = None
 
+        self._refresh_zoom_percent()
         load_elapsed_ms = int((time.perf_counter() - preview_start) * 1000)
         fallback_text = " fallback=1" if used_fallback else ""
         self.write_log(
@@ -827,6 +858,7 @@ class PreviewMixin:
         if self.pdf_view is not None:
             self.pdf_view.installEventFilter(self)
         self._update_pdf_page_buttons()
+        self._refresh_zoom_percent()
         performance_trace = getattr(self, "_performance_preview_trace", None)
         if performance_trace is not None:
             performance_trace.mark("document_ready")
@@ -1256,7 +1288,15 @@ class PreviewMixin:
             return False
         import shutil
 
-        shutil.copy2(source, destination)
+        try:
+            target = Path(destination)
+            if target.exists() and target.samefile(source):
+                self.statusBar().showMessage("目标就是当前原件，无需另存。", 4000)
+                return True
+            shutil.copy2(source, target)
+        except (OSError, shutil.Error):
+            QMessageBox.warning(self, "下载失败", "未能保存原件，请检查目标位置及磁盘空间后重试。")
+            return False
         self.statusBar().showMessage("原件已下载", 3000)
         return True
 

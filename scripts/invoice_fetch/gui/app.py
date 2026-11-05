@@ -1554,18 +1554,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._apply_workbench_metrics(args[0].width(), args[0].height())
 
     def _position_batch_review_bar(self) -> None:
-        """Keep the floating batch bar pinned to the card bottom."""
+        # The footer participates in layout so it cannot cover selectable rows.
         bar = getattr(self, "batch_review_bar", None)
-        card = getattr(self, "left_upper_widget", None)
-        if bar is None or card is None:
-            return
-        if not bar.isVisible():
-            return
-        margin = 6
-        width = max(0, card.width() - margin * 2)
-        height = min(bar.sizeHint().height(), max(0, card.height() - margin * 2))
-        bar.setGeometry(margin, card.height() - height - margin, width, height)
-        bar.raise_()
+        if bar is not None:
+            bar.updateGeometry()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2144,6 +2136,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.lbl_record_count.mousePressEvent = on_record_count_clicked
         record_header_layout.addWidget(self.lbl_record_count)
+        self.btn_review_previous_page = QToolButton(self.record_header)
+        self.btn_review_next_page = QToolButton(self.record_header)
+        for button, text, caption, delta in (
+            (self.btn_review_previous_page, "‹", "上一页", -1),
+            (self.btn_review_next_page, "›", "下一页", 1),
+        ):
+            button.setText(text)
+            button.setToolTip(caption)
+            button.setAccessibleName(caption)
+            button.clicked.connect(lambda checked=False, step=delta: self._change_review_page(step))
+            record_header_layout.addWidget(button)
         record_header_layout.addStretch(1)
         self.lbl_record_sort = QLabel("按费用日期倒序")
         self.lbl_record_sort.setObjectName("InvoiceRecordSort")
@@ -2365,9 +2368,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.batch_review_bar.ignore_requested.connect(self._batch_ignore_selected)
         self.batch_review_bar.clear_requested.connect(self.table.clearSelection)
         self.batch_review_bar.evidence_requested.connect(self._manage_selected_evidence)
-        # P2-12: float the batch bar over the card bottom so selecting rows no
-        # longer changes the table height (no layout jump).
-        self.batch_review_bar.setParent(self.left_upper_widget)
+        # Reserve footer space while batch actions are shown; rows stay reachable.
+        left_upper_layout.addWidget(self.batch_review_bar)
         self.batch_review_bar.hide()
         self.batch_review_bar.visibility_changed.connect(self._position_batch_review_bar)
         self.table.itemSelectionChanged.connect(self._sync_batch_review_controls)
@@ -2901,15 +2903,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _reapply_review_sort(self) -> None:
         state = getattr(self, "_column_sort_state", None)
-        if state is None or not hasattr(self, "table") or self.table.rowCount() < 2:
-            return
-        header = self.table.horizontalHeader()
-        self.table.sortItems(state[0], state[1])
-        header.setSortIndicator(state[0], state[1])
-        header.setSortIndicatorShown(True)
+        if state is not None:
+            header = self.table.horizontalHeader()
+            header.setSortIndicator(state[0], state[1])
+            header.setSortIndicatorShown(True)
 
     def _sort_review_table_by(self, section: int) -> None:
-        if section < 0 or section >= len(VISIBLE_COLUMN_DEFINITIONS):
+        if not 0 <= section < len(VISIBLE_COLUMN_DEFINITIONS):
+            return
+        if not self._persist_invoice_note():
             return
         state = getattr(self, "_column_sort_state", None)
         order = (
@@ -2917,25 +2919,52 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if state and state[0] == section and state[1] == Qt.AscendingOrder
             else Qt.AscendingOrder
         )
-        prev_row = self.table.currentRow()
-        prev_id = (
-            self.invoices_list[prev_row].get("id")
-            if 0 <= prev_row < len(self.invoices_list)
-            else None
-        )
+        selected_ids = self._selected_batch_invoice_ids()
+        current_row = self.table.currentRow()
+        focused_id = (self.invoices_list[current_row]["id"]
+                      if 0 <= current_row < len(self.invoices_list) else None)
+        anchor_id = focused_id if focused_id in selected_ids else next(iter(selected_ids), None)
         self._column_sort_state = (section, order)
-        header = self.table.horizontalHeader()
-        self.table.sortItems(section, order)
-        header.setSortIndicator(section, order)
-        header.setSortIndicatorShown(True)
-        row = self._table_row_for_invoice_id(prev_id)
-        if row >= 0:
+        query = self._build_review_query(status=self.current_filter_status)
+        try:
+            ranks = self.db.review_invoice_positions(query, selected_ids)
+        except sqlite3.Error:
+            self._column_sort_state = state
+            self.statusBar().showMessage("暂时无法排序，请重试。", 5000)
+            return
+        # Sorting never grows the render window to a selection's absolute rank.
+        limit = max(50, min(200, len(self.invoices_list)))
+        spans_pages = bool(ranks and max(ranks) - min(ranks) >= limit)
+        start = (min(ranks) // 50) * 50 if ranks else 0
+        if ranks and not spans_pages:
+            start = max(start, max(ranks) - limit + 1)
+        self._column_filters_load_all = False
+        self._review_window_requested_offset = start
+        self._review_sort_reload_limit = limit
+        try:
+            self._load_invoices(preserve_invoice_id=anchor_id)
+        finally:
+            self._review_sort_reload_limit = None
+            self._review_window_requested_offset = None
+        if selected_ids:
+            selected = set() if spans_pages else set(selected_ids)
             self.table.blockSignals(True)
             try:
-                self._apply_single_row_selection(row)
+                model = self.table.selectionModel()
+                anchor_row = self._table_row_for_invoice_id(anchor_id)
+                if anchor_row >= 0 and not spans_pages:
+                    # The view API updates both currentIndex and the Shift anchor.
+                    self.table.setCurrentIndex(self.table.model().index(anchor_row, 0))
+                self.table.clearSelection()
+                for row, invoice in enumerate(self.invoices_list):
+                    if invoice["id"] in selected:
+                        model.select(self.table.model().index(row, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
             finally:
                 self.table.blockSignals(False)
-            self._ensure_single_row_selection(row)
+            self._on_table_selection_changed()
+        if spans_pages:
+            self.statusBar().showMessage("所选发票排序后分布于多个页面，已清空选择；请在当前页重新选择后操作。", 10000)
+        self._reapply_review_sort()
 
     def _on_header_section_clicked(self, section: int) -> None:
         """Header body sorts; the right-edge funnel zone opens the filter popup."""
@@ -6853,6 +6882,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return text
 
     def _maybe_load_more_invoices(self, value: int):
+        if getattr(self, "_review_window_loading", False):
+            return
         if not hasattr(self, "table") or self.table is None:
             return
         scrollbar = self.table.verticalScrollBar()
@@ -6868,9 +6899,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         shown = len(getattr(self, "invoices_list", []) or [])
         total = int(getattr(self, "_record_total_matching", shown) or shown)
-        if shown >= total:
+        if getattr(self, "_review_window_start", 0) + shown >= total:
             return
         self._load_next_invoice_page()
+
+    def _change_review_page(self, delta):
+        if not self._persist_invoice_note():
+            return
+        start = getattr(self, "_review_window_start", 0)
+        size = int(getattr(getattr(self, "review_paging", None), "page_size", 50) or 50)
+        target = max(0, start - size) if delta < 0 else start + len(self.invoices_list)
+        if target >= getattr(self, "_record_total_matching", 0):
+            return
+        self._column_filters_load_all = False
+        self._review_window_requested_offset = target
+        self._select_row_hint = size - 1 if delta < 0 else 0
+        try:
+            self._load_invoices(preserve_invoice_id=None)
+        finally:
+            self._review_window_requested_offset = None
 
     def _load_next_invoice_page(self):
         if getattr(self, "_is_loading_more_invoices", False):
@@ -6880,7 +6927,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         total = int(getattr(self, "_record_total_matching", shown) or shown)
         if hasattr(self, "lbl_record_count"):
             self.lbl_record_count.setText(f"已加载 {shown} / {total} 张，正在加载更多…")
-        QTimer.singleShot(100, self._append_next_invoice_batch)
+        generation = getattr(self, "_review_load_generation", 0)
+        QTimer.singleShot(100, lambda: self._append_review_page_if_current(generation))
+
+    def _append_review_page_if_current(self, generation):
+        if generation == getattr(self, "_review_load_generation", 0):
+            self._append_next_invoice_batch()
 
     def _append_next_invoice_batch(self):
         try:
@@ -6927,9 +6979,20 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if total_matching is not None:
             self._record_total_matching = max(0, int(total_matching))
         state = self._review_view_state(total_matching=total_matching, selected_count=selected_count)
+        start = getattr(self, "_review_window_start", 0)
+        for attr, enabled in (
+            ("btn_review_previous_page", start > 0),
+            ("btn_review_next_page", start + state.loaded_count < state.query_total),
+        ):
+            button = getattr(self, attr, None)
+            if button is not None:
+                button.setVisible(start > 0 or state.loaded_count < state.query_total)
+                button.setEnabled(enabled)
         if hasattr(self, "lbl_record_count"):
             if state.visible_count == 0 and (state.search_text or state.active_filter != "all"):
                 count_text = "当前筛选 0 张"
+            elif start and state.loaded_count:
+                count_text = f"第 {start + 1}–{start + state.loaded_count} / 共 {state.query_total} 张"
             elif state.loaded_count < state.query_total:
                 count_text = f"已加载 {state.loaded_count} / 共 {state.query_total} 张"
             else:
@@ -7398,7 +7461,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if active is not None and bool(active) == bool(empty_db):
             return
         self._review_empty_chrome_active = bool(empty_db)
-        for attr in ("record_header", "batch_review_bar"):
+        for attr in ("record_header",):
             widget = getattr(self, attr, None)
             if widget is not None:
                 widget.setVisible(not empty_db)
@@ -7476,6 +7539,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 minimum=str(spec.get("min") or ""),
                 maximum=str(spec.get("max") or ""),
             ))
+        sort_state = getattr(self, "_column_sort_state", None)
         return ReviewQuery(
             status=status,
             include_deleted=self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False,
@@ -7484,12 +7548,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             invoice_ids=tuple(getattr(self, "_review_scope_ids", ())),
             limit=limit,
             offset=offset,
+            sort_key=VISIBLE_COLUMN_DEFINITIONS[sort_state[0]][0] if sort_state else "",
+            sort_descending=bool(sort_state and sort_state[1] == Qt.DescendingOrder),
             today=date.today(),
         )
 
     def _load_invoices(self, *, append=False, preserve_invoice_id=_SELECTION_ID_UNSET):
         if not self._persist_invoice_note():
             return
+        was_loading = getattr(self, "_review_window_loading", False)
+        self._review_window_loading = True
+        if not append:
+            self._review_load_generation = getattr(self, "_review_load_generation", 0) + 1
+        try:
+            return self._load_invoices_impl(append=append, preserve_invoice_id=preserve_invoice_id)
+        finally:
+            self._review_window_loading = was_loading
+
+    def _load_invoices_impl(self, *, append=False, preserve_invoice_id=_SELECTION_ID_UNSET):
         if not append:
             self._is_loading_more_invoices = False
         # SQLite owns review filtering, counting, ordering, and page boundaries.
@@ -7530,8 +7606,33 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 IGNORED: self.db.count_review_invoices(replace(base_query, status=IGNORED)),
                 ERROR: self.db.count_review_invoices(replace(base_query, status=ERROR)),
             }
+            signature = replace(base_query, status=self.current_filter_status, limit=50, offset=0)
+            if signature != getattr(self, "_review_window_signature", None):
+                self._review_window_start = 0
+                self._review_window_signature = signature
+            requested_offset = getattr(self, "_review_window_requested_offset", None)
+            if requested_offset is not None:
+                self._review_window_start = requested_offset
+                self._review_window_requested_offset = None
+            if self._column_filters_load_all and not append:
+                self._review_window_start = 0
+            offset += getattr(self, "_review_window_start", 0)
             page_query = replace(base_query, status=self.current_filter_status, offset=offset)
+            if not append and getattr(self, "_review_sort_reload_limit", None):
+                page_query = replace(page_query, limit=self._review_sort_reload_limit)
             total_matching = counts["all"] if self.current_filter_status is None else counts[self.current_filter_status]
+            if not append and getattr(self, "_review_window_start", 0) >= total_matching:
+                self._review_window_start = max(0, ((total_matching - 1) // page_size) * page_size)
+                offset = self._review_window_start
+                page_query = replace(page_query, offset=offset)
+            if (not append and requested_offset is None
+                    and preserve_invoice_id is not _SELECTION_ID_UNSET and prev_id is not None
+                    and not self._column_filters_load_all):
+                positions = self.db.review_invoice_positions(page_query, (prev_id,))
+                if positions and not offset <= positions[0] < offset + page_query.limit:
+                    offset = (positions[0] // page_size) * page_size
+                    self._review_window_start = offset
+                    page_query = replace(page_query, offset=offset)
             if getattr(self, "_column_filters_load_all", False) and not append:
                 page_query = replace(page_query, limit=max(1, total_matching))
             page_rows = self.db.list_review_invoices(page_query) if total_matching > offset else []
@@ -7987,44 +8088,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return f"当前筛选 {shown} 张"
 
     def _set_selection_total_status(self, selected_indexes):
-        if not selected_indexes:
-            prefix = self._format_status_count_prefix()
-            self._update_record_header_summary(selected_count=count)
-            self.lbl_status_left.setText(prefix)
-            self.lbl_status_left.setToolTip(prefix)
-            self._update_record_header_summary(selected_count=0)
-
-            mid_text = "未选择发票"
-            self.lbl_status_middle.setText(mid_text)
-            self.lbl_status_middle.setToolTip(mid_text)
-            return
-
-        def calculate_async():
-            if getattr(self, "_shutdown_requested", False) or not hasattr(self, "invoices_list") or not self.invoices_list:
-                return
-            rows = []
-            for idx in selected_indexes:
-                try:
-                    if 0 <= idx.row() < len(self.invoices_list):
-                        rows.append(self.invoices_list[idx.row()])
-                except Exception:
-                    pass
-            if not rows:
-                return
-            prefix = self._format_status_count_prefix()
-            count, total, has_missing = amount_total(rows)
-            suffix = " (部分金额缺失)" if has_missing else ""
-
-            self.lbl_status_left.setText(prefix)
-            self.lbl_status_left.setToolTip(prefix)
-
-            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
-            self.lbl_status_middle.setText(mid_text)
-            self.lbl_status_middle.setToolTip(mid_text)
-
-        QTimer.singleShot(0, calculate_async)
-
-    def _set_selection_total_status(self, selected_indexes):
+        generation = getattr(self, "_selection_summary_generation", 0) + 1
+        self._selection_summary_generation = generation
         if not selected_indexes:
             prefix = self._format_status_count_prefix()
             self.lbl_status_left.setText(prefix)
@@ -8037,6 +8102,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         def calculate_async():
+            if generation != self._selection_summary_generation:
+                return
             if getattr(self, "_shutdown_requested", False) or not hasattr(self, "invoices_list") or not self.invoices_list:
                 return
             rows = []
@@ -8077,6 +8144,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _on_table_selection_changed(self):
+        if getattr(self._detail_panel, "_inline_edit_field", None):
+            self._detail_panel._cancel_inline_edit()
         # Triggered when users select table rows. Handles single and multi-selection modes.
         if not self._persist_invoice_note():
             current_id = self.current_invoice["id"]
@@ -9415,6 +9484,19 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 if performance_trace is not None:
                     performance_trace.finish("evidence_only", selected=len(selected_indexes))
                 return result
+            from ..amount_utils import parse_amount
+            for invoice in actionable_invoices:
+                try:
+                    amount = str(invoice.get("total_amount") or "").strip()
+                    expense_date = str(invoice.get("expense_date") or invoice.get("invoice_date") or "").strip()
+                    if amount:
+                        parse_amount(amount)
+                    if expense_date:
+                        date.fromisoformat(expense_date)
+                except ValueError:
+                    QMessageBox.warning(self, "无法通过审核", "金额或费用日期格式无效，请先编辑修正。")
+                    result["other_failed"] += 1
+                    return result
             if not self._confirm_approve_incomplete_invoices(
                 actionable_invoices,
                 skipped_evidence_count=result["evidence_only"],

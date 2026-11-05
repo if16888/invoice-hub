@@ -320,6 +320,8 @@ def start_first_paint_deferred_gui_app(
     _ = app_init_ms
     configure_high_dpi_platform()
     app = QApplication(sys.argv)
+    from .i18n import install_chinese_translations
+    install_chinese_translations(app)
     splash = StartupSplash()
     splash.show()
     splash.show_message("正在启动 Invoice Hub...", 15)

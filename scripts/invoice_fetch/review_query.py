@@ -25,6 +25,8 @@ class ReviewQuery:
     limit: int = 50
     offset: int = 0
     today: date | None = None
+    sort_key: str = ""
+    sort_descending: bool = False
 
 
 __all__ = ["ReviewColumnFilter", "ReviewQuery"]

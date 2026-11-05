@@ -944,6 +944,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        self._cancel_inline_edit()
         self.txt_id.clear()
 
 
@@ -1481,6 +1482,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        if self.txt_id.text() != inv_id:
+            self._cancel_inline_edit()
         self.txt_id.setText(inv_id)
         self.category_memory_allowed = category_memory_allowed
 
@@ -4963,7 +4966,13 @@ class InvoiceDetailPanel(QWidget):
         editor = editors.get(field_name)
         if editor is None:
             return
+        if (getattr(self, "_inline_edit_field", None) == field_name
+                and getattr(self, "_inline_edit_invoice_id", None) == self.txt_id.text()):
+            self.inline_edit_bar.show()
+            self.inline_edit_input.setFocus()
+            return
         self._inline_edit_field = field_name
+        self._inline_edit_invoice_id = self.txt_id.text()
         self._inline_edit_source = editor.text()
         self.inline_edit_label.setText(f"编辑{self._inline_edit_caption(field_name)}")
         self.inline_edit_input.setText(editor.text())
@@ -4984,6 +4993,9 @@ class InvoiceDetailPanel(QWidget):
         field_name = getattr(self, "_inline_edit_field", None)
         if not field_name:
             return
+        if self.txt_id.text() != self._inline_edit_invoice_id:
+            self._cancel_inline_edit()
+            return
         value = self.inline_edit_input.text().strip()
         values = {
             "number": self.txt_number.text(),
@@ -4991,16 +5003,35 @@ class InvoiceDetailPanel(QWidget):
             "amount": self.txt_amount.text(),
             "buyer": self.txt_buyer.text(),
             "seller": self.txt_seller.text(),
+            "category": self.combo_category.currentText(),
         }
+        original = dict(values)
         values[field_name] = value
         try:
+            if values["amount"]:
+                values["amount"] = format(parse_amount(values["amount"]), "f")
+            if values["date"]:
+                date_type.fromisoformat(values["date"])
+        except ValueError:
+            QMessageBox.warning(self, "字段校验", "金额必须是有效金额且最多两位小数；费用日期必须是 YYYY-MM-DD。")
+            self.inline_edit_input.setFocus()
+            return
+        invoice_id = self._inline_edit_invoice_id
+        try:
             self._set_core_field_values(**values)
-            if self._cb is not None and self._cb.on_save_fields() is False:
-                values[field_name] = self._inline_edit_source or ""
-                self._set_core_field_values(**values)
-        finally:
-            self._inline_edit_field = None
-            self.inline_edit_bar.hide()
+            saved = self._cb is None or self._cb.on_save_fields() is not False
+        except Exception:
+            saved = False
+            QMessageBox.warning(self, "保存失败", "未能保存发票修改，请重试。")
+        if not saved:
+            if self.txt_id.text() == invoice_id:
+                self._set_core_field_values(**original)
+                self._inline_edit_field = field_name
+                self.inline_edit_bar.show()
+                self.inline_edit_input.setText(value)
+                self.inline_edit_input.setFocus()
+            return
+        self._cancel_inline_edit()
 
     def _cancel_inline_edit(self) -> None:
         self._inline_edit_field = None
