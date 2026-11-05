@@ -4966,6 +4966,11 @@ class InvoiceDetailPanel(QWidget):
         editor = editors.get(field_name)
         if editor is None:
             return
+        if (getattr(self, "_inline_edit_field", None) == field_name
+                and getattr(self, "_inline_edit_invoice_id", None) == self.txt_id.text()):
+            self.inline_edit_bar.show()
+            self.inline_edit_input.setFocus()
+            return
         self._inline_edit_field = field_name
         self._inline_edit_invoice_id = self.txt_id.text()
         self._inline_edit_source = editor.text()
@@ -5000,6 +5005,7 @@ class InvoiceDetailPanel(QWidget):
             "seller": self.txt_seller.text(),
             "category": self.combo_category.currentText(),
         }
+        original = dict(values)
         values[field_name] = value
         try:
             if values["amount"]:
@@ -5010,14 +5016,22 @@ class InvoiceDetailPanel(QWidget):
             QMessageBox.warning(self, "字段校验", "金额必须是有效金额且最多两位小数；费用日期必须是 YYYY-MM-DD。")
             self.inline_edit_input.setFocus()
             return
+        invoice_id = self._inline_edit_invoice_id
         try:
             self._set_core_field_values(**values)
-            if self._cb is not None and self._cb.on_save_fields() is False:
-                values[field_name] = self._inline_edit_source or ""
-                self._set_core_field_values(**values)
-        finally:
-            self._inline_edit_field = None
-            self.inline_edit_bar.hide()
+            saved = self._cb is None or self._cb.on_save_fields() is not False
+        except Exception:
+            saved = False
+            QMessageBox.warning(self, "保存失败", "未能保存发票修改，请重试。")
+        if not saved:
+            if self.txt_id.text() == invoice_id:
+                self._set_core_field_values(**original)
+                self._inline_edit_field = field_name
+                self.inline_edit_bar.show()
+                self.inline_edit_input.setText(value)
+                self.inline_edit_input.setFocus()
+            return
+        self._cancel_inline_edit()
 
     def _cancel_inline_edit(self) -> None:
         self._inline_edit_field = None

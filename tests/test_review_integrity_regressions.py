@@ -82,7 +82,121 @@ class ReviewIntegrityTests(unittest.TestCase):
             expected = set(window._selected_batch_invoice_ids())
             window._sort_review_table_by(3)
             self.assertEqual(set(window._selected_batch_invoice_ids()), expected)
-            self.assertGreaterEqual(len(window.invoices_list), 100)
+            self.assertLessEqual(len(window.invoices_list), 100)
+
+    def test_sort_restores_keyboard_anchor_for_shift_selection(self):
+        from PySide6.QtCore import QItemSelectionModel, Qt
+        from PySide6.QtTest import QTest
+        with self.window(10) as window:
+            window.table.clearSelection()
+            window._sort_review_table_by(3)
+            window.table.selectRow(1)
+            window.table.selectionModel().select(window.table.model().index(2, 0),
+                QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            window._sort_review_table_by(3)
+            self.assertEqual(window.invoices_list[window.table.currentRow()]["id"], 2)
+            window.table.setFocus()
+            QTest.keyClick(window.table, Qt.Key_Down, Qt.ShiftModifier)
+            # QTest retains the synthetic modifier state until explicitly released.
+            QTest.keyRelease(window.table, Qt.Key_Shift)
+            self.settle()
+            self.assertEqual(set(window._selected_batch_invoice_ids()), {1, 2, 3})
+
+    def test_rejected_write_retains_draft_and_allows_correction(self):
+        with self.window() as window:
+            invoice = dict(window.current_invoice)
+            other = next(row for row in window.db.get_all_invoices() if row["id"] != invoice["id"])
+            window.db.update_invoice_fields(other["id"], "CONFLICT", "2026-10-30",
+                invoice["seller_name"], invoice["total_amount"], "交通")
+            panel = window._detail_panel
+            panel._begin_inline_edit("number")
+            panel.inline_edit_input.setText("CONFLICT")
+            panel._commit_inline_edit()
+            self.assertFalse(panel.inline_edit_bar.isHidden())
+            self.assertEqual(panel.inline_edit_input.text(), "CONFLICT")
+            self.assertEqual(window.db.get_invoice(invoice["id"])["invoice_number"], invoice["invoice_number"])
+            panel._begin_inline_edit("number")
+            self.assertEqual(panel.inline_edit_input.text(), "CONFLICT")
+            panel.inline_edit_input.setText("CORRECTED")
+            panel._commit_inline_edit()
+            self.assertTrue(panel.inline_edit_bar.isHidden())
+            self.assertEqual(window.db.get_invoice(invoice["id"])["invoice_number"], "CORRECTED")
+
+    def test_sorted_window_is_bounded_and_can_navigate_both_directions(self):
+        with self.window(130) as window:
+            selected = window.current_invoice["id"]
+            window._sort_review_table_by(3)
+            self.assertLessEqual(len(window.invoices_list), 50)
+            self.assertEqual(window.current_invoice["id"], selected)
+            self.assertEqual(window._review_window_start, 100)
+            self.assertFalse(window.review_paging.has_more())
+            self.assertIn("101", window.lbl_record_count.text())
+            window._change_review_page(-1)
+            self.assertEqual(window._review_window_start, 50)
+            self.assertEqual([int(row["total_amount"]) for row in window.invoices_list], list(range(51, 101)))
+            window._change_review_page(1)
+            self.assertEqual(window._review_window_start, 100)
+            window._change_review_page(-1)
+            window._load_invoices(append=True)
+            self.assertEqual([int(row["total_amount"]) for row in window.invoices_list], list(range(51, 131)))
+            self.assertFalse(window.review_paging.has_more())
+            window._load_all_invoices_clicked()
+            self.assertEqual(window._review_window_start, 0)
+            self.assertEqual(len(window.invoices_list), 130)
+
+    def test_saved_invoice_remains_selected_after_moving_to_another_page(self):
+        with self.window(130) as window:
+            invoice_id = window.current_invoice["id"]
+            window._sort_review_table_by(3)
+            self.assertGreater(window._review_window_start, 0)
+            panel = window._detail_panel
+            panel._begin_inline_edit("amount")
+            panel.inline_edit_input.setText("0.00")
+            panel._commit_inline_edit()
+            self.assertEqual(window._review_window_start, 0)
+            self.assertEqual(window.current_invoice["id"], invoice_id)
+            self.assertEqual(window.db.get_invoice(invoice_id)["total_amount"], "0.00")
+            self.assertLessEqual(len(window.invoices_list), 50)
+
+    def test_sort_at_window_bottom_does_not_advance_selection_later(self):
+        from PySide6.QtTest import QTest
+        with self.window(130) as window:
+            window.table.selectRow(30)
+            selected = window.current_invoice["id"]
+            window._sort_review_table_by(3)
+            QTest.qWait(180)
+            self.settle()
+            self.assertEqual(window.current_invoice["id"], selected)
+            self.assertLessEqual(len(window.invoices_list), 100)
+
+    def test_spread_selection_is_cleared_explicitly_without_unbounded_load(self):
+        from PySide6.QtCore import QItemSelectionModel
+        with self.window(130) as window:
+            window.table.selectRow(0)
+            window.table.selectionModel().select(window.table.model().index(1, 0),
+                QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            # Place the two selected invoices at opposite ends of the new order.
+            ids = window._selected_batch_invoice_ids()
+            for invoice_id, amount in zip(ids, ("0", "999")):
+                row = window.db.get_invoice(invoice_id)
+                window.db.update_invoice_fields(invoice_id, row["invoice_number"],
+                    "2026-10-30", row["seller_name"], amount, "交通")
+            window._sort_review_table_by(3)
+            self.assertLessEqual(len(window.invoices_list), 50)
+            self.assertEqual(window._selected_batch_invoice_ids(), ())
+            self.assertIn("清空选择", window.statusBar().currentMessage())
+            self.settle()
+            self.assertEqual(window.lbl_record_selection.text(), "未选")
+
+    def test_new_filter_resets_window_and_invalidates_pending_append(self):
+        with self.window(130) as window:
+            window._sort_review_table_by(3)
+            old_generation = window._review_load_generation
+            window._set_column_filter("total_amount", {"min": "1", "max": "20"})
+            self.assertEqual(window._review_window_start, 0)
+            before = [row["id"] for row in window.invoices_list]
+            window._append_review_page_if_current(old_generation)
+            self.assertEqual([row["id"] for row in window.invoices_list], before)
 
     def test_single_approval_rejects_invalid_stored_amount(self):
         with self.window() as window:
