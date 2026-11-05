@@ -969,43 +969,49 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def soft_delete_invoice(self, invoice_id: int) -> bool:
         """Soft delete an invoice by setting is_deleted = 1."""
-        if not self._require_invoice_editable(invoice_id):
-            return False
-        row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-        if not row:
-            return False
         with self._atomic_savepoint():
-            self._conn.execute("UPDATE invoices SET is_deleted = 1 WHERE id = ?", (invoice_id,))
-            self._refresh_evidence_consumers(invoice_id)
-        return True
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return False
+            row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if not row:
+                return False
+            with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET is_deleted = 1 WHERE id = ?", (invoice_id,))
+                self._refresh_evidence_consumers(invoice_id)
+            return True
 
     def delete_invoice_permanently(self, invoice_id: int) -> bool:
         """Delete an invoice row entirely."""
-        if not self._require_invoice_editable(invoice_id):
-            return False
-        row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-        if not row:
-            return False
         with self._atomic_savepoint():
             self._conn.execute("UPDATE invoices SET id=id WHERE 0")
-            if self.evidence_consumers(invoice_id):
-                self._set_last_error("evidence_in_use")
+            if not self._require_invoice_editable(invoice_id):
                 return False
-            self._purge_invoice_dependents([invoice_id])
-            self._conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
-        return True
+            row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if not row:
+                return False
+            with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                if self.evidence_consumers(invoice_id):
+                    self._set_last_error("evidence_in_use")
+                    return False
+                self._purge_invoice_dependents([invoice_id])
+                self._conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+            return True
 
     def restore_invoice(self, invoice_id: int) -> bool:
         """Restore a soft-deleted invoice by setting is_deleted = 0."""
-        if not self._require_invoice_editable(invoice_id):
-            return False
-        row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-        if not row:
-            return False
         with self._atomic_savepoint():
-            self._conn.execute("UPDATE invoices SET is_deleted = 0 WHERE id = ?", (invoice_id,))
-            self._refresh_evidence_consumers(invoice_id)
-        return True
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return False
+            row = self._conn.execute("SELECT 1 FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if not row:
+                return False
+            with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET is_deleted = 0 WHERE id = ?", (invoice_id,))
+                self._refresh_evidence_consumers(invoice_id)
+            return True
 
 
     @staticmethod
@@ -2155,21 +2161,23 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def reset_invoices(self):
         """Clear the invoices table (full baseline reset)."""
-        locked = self._conn.execute(
-            "SELECT 1 FROM invoices i WHERE i.reimbursed_at IS NOT NULL OR EXISTS ("
-            "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
-            "WHERE cgi.invoice_id=i.id AND c.status IN ('exported','reimbursed')) LIMIT 1"
-        ).fetchone()
-        if locked:
-            self._set_last_error("invoice_exported_locked")
-            return False
         with self._atomic_savepoint():
-            all_ids = [int(row[0]) for row in self._conn.execute("SELECT id FROM invoices")]
-            self._purge_invoice_dependents(all_ids)
-            self._conn.execute("DELETE FROM invoices")
-        _log.info("已清空已入库发票记录")
-        self._set_last_error("")
-        return True
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            locked = self._conn.execute(
+                "SELECT 1 FROM invoices i WHERE i.reimbursed_at IS NOT NULL OR EXISTS ("
+                "SELECT 1 FROM claim_group_items cgi JOIN claim_groups c ON c.id=cgi.claim_id "
+                "WHERE cgi.invoice_id=i.id AND c.status IN ('exported','reimbursed')) LIMIT 1"
+            ).fetchone()
+            if locked:
+                self._set_last_error("invoice_exported_locked")
+                return False
+            with self._atomic_savepoint():
+                all_ids = [int(row[0]) for row in self._conn.execute("SELECT id FROM invoices")]
+                self._purge_invoice_dependents(all_ids)
+                self._conn.execute("DELETE FROM invoices")
+            _log.info("已清空已入库发票记录")
+            self._set_last_error("")
+            return True
 
     def get_failed_downloads(self, mailbox_key: str | None = None) -> list[dict]:
         """Return invoices where attachment_path is empty or NULL,
@@ -2423,18 +2431,20 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def remove_invoice_from_claim(self, claim_id: int, invoice_id: int) -> bool:
         """Remove a mapped invoice from a claim group."""
-        if not self.is_claim_editable(claim_id):
-            self._set_last_error(
-                "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
-            )
-            return False
         with self._atomic_savepoint():
-            cursor = self._conn.execute(
-                "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?",
-                (claim_id, invoice_id)
-            )
-            rowcount = cursor.rowcount
-        return rowcount > 0
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self.is_claim_editable(claim_id):
+                self._set_last_error(
+                    "not_found" if self.get_claim_group(claim_id) is None else "claim_exported_locked"
+                )
+                return False
+            with self._atomic_savepoint():
+                cursor = self._conn.execute(
+                    "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?",
+                    (claim_id, invoice_id)
+                )
+                rowcount = cursor.rowcount
+            return rowcount > 0
 
     def get_claim_group(self, claim_id: int) -> dict | None:
         """Fetch claim group details by ID."""
@@ -2514,6 +2524,7 @@ class InvoiceDB(EvidenceStoreMixin):
         invoice_ids: tuple[int, ...] | list[int] = (),
         expected_digest: str | None = None,
         expected_member_ids: tuple[int, ...] | list[int] | None = None,
+        expected_claim: dict | None = None,
     ) -> int:
         """Persist a successful export and freeze its claim membership atomically."""
         claim = self.get_claim_group(claim_id)
@@ -2542,6 +2553,11 @@ class InvoiceDB(EvidenceStoreMixin):
             ).rowcount
             if reserved != 1:
                 raise ValueError("报销组状态已变化，请刷新后重新导出")
+            if expected_claim is not None:
+                current_claim = self.get_claim_group(claim_id)
+                fields = ("name", "period_start", "period_end", "reason_category", "reason_detail", "applicant_name", "department")
+                if any(current_claim.get(key) != expected_claim.get(key) for key in fields):
+                    raise ValueError("导出期间报销组信息已变化，请重新导出")
             # The exported package must represent the claim exactly as it is
             # committed: verify the full member set and content digest under
             # the write lock. The package covers a status-filtered subset, but
@@ -2613,82 +2629,66 @@ class InvoiceDB(EvidenceStoreMixin):
         the package nor ``ignored``/``error`` would be left unstamped behind a
         locked reimbursed claim.
         """
-        claim = self.get_claim_group(claim_id)
-        if not claim:
-            self._set_last_error("not_found")
-            return False
-        if claim.get("status") != "exported":
-            self._set_last_error("claim_not_exported")
-            return False
-        if export_run_id is None:
-            row = self._conn.execute(
+        with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            claim = self.get_claim_group(claim_id)
+            if not claim:
+                self._set_last_error("not_found")
+                return False
+            if claim.get("status") != "exported":
+                self._set_last_error("claim_not_exported")
+                return False
+            if export_run_id is None:
+                row = self._conn.execute(
+                    "SELECT id FROM export_runs WHERE claim_id=? ORDER BY id DESC LIMIT 1",
+                    (claim_id,),
+                ).fetchone()
+                export_run_id = int(row[0]) if row else None
+            if export_run_id is None:
+                self._set_last_error("export_run_missing")
+                return False
+            run = self._conn.execute(
+                "SELECT id FROM export_runs WHERE id=? AND claim_id=?",
+                (int(export_run_id), claim_id),
+            ).fetchone()
+            invoice_ids = self.get_export_run_items(int(export_run_id))
+            if not run or not invoice_ids:
+                self._set_last_error("export_run_items_missing")
+                return False
+            # Only the newest package may be marked reimbursed: marking an older
+            # package would lock the claim while the live package differs from it.
+            latest_run = self._conn.execute(
                 "SELECT id FROM export_runs WHERE claim_id=? ORDER BY id DESC LIMIT 1",
                 (claim_id,),
             ).fetchone()
-            export_run_id = int(row[0]) if row else None
-        if export_run_id is None:
-            self._set_last_error("export_run_missing")
-            return False
-        run = self._conn.execute(
-            "SELECT id FROM export_runs WHERE id=? AND claim_id=?",
-            (int(export_run_id), claim_id),
-        ).fetchone()
-        invoice_ids = self.get_export_run_items(int(export_run_id))
-        if not run or not invoice_ids:
-            self._set_last_error("export_run_items_missing")
-            return False
-        # Only the newest package may be marked reimbursed: marking an older
-        # package would lock the claim while the live package differs from it.
-        latest_run = self._conn.execute(
-            "SELECT id FROM export_runs WHERE claim_id=? ORDER BY id DESC LIMIT 1",
-            (claim_id,),
-        ).fetchone()
-        if not latest_run or int(export_run_id) != int(latest_run[0]):
-            self._set_last_error("stale_export_run")
-            return False
-        placeholders = ",".join("?" for _ in invoice_ids)
-        current_members = {
-            int(row[0]) for row in self._conn.execute(
-                f"SELECT invoice_id FROM claim_group_items WHERE claim_id=? "
-                f"AND invoice_id IN ({placeholders})",
+            if not latest_run or int(export_run_id) != int(latest_run[0]):
+                self._set_last_error("stale_export_run")
+                return False
+            placeholders = ",".join("?" for _ in invoice_ids)
+            current_members = {
+                int(row[0]) for row in self._conn.execute(
+                    f"SELECT invoice_id FROM claim_group_items WHERE claim_id=? "
+                    f"AND invoice_id IN ({placeholders})",
+                    (claim_id, *invoice_ids),
+                ).fetchall()
+            }
+            if current_members != set(invoice_ids):
+                self._set_last_error("export_run_items_mismatch")
+                return False
+            # Every claim member missing from this package must be intentionally
+            # excluded (ignored/error); otherwise reimbursement would leave it
+            # unstamped and permanently locked without any way to repair it.
+            unexported_member = self._conn.execute(
+                "SELECT i.id FROM claim_group_items cgi "
+                "JOIN invoices i ON i.id = cgi.invoice_id "
+                "WHERE cgi.claim_id = ? "
+                f"AND cgi.invoice_id NOT IN ({placeholders}) "
+                "AND COALESCE(i.review_status, 'to_review') NOT IN ('ignored', 'error') "
+                "LIMIT 1",
                 (claim_id, *invoice_ids),
-            ).fetchall()
-        }
-        if current_members != set(invoice_ids):
-            self._set_last_error("export_run_items_mismatch")
-            return False
-        # Every claim member missing from this package must be intentionally
-        # excluded (ignored/error); otherwise reimbursement would leave it
-        # unstamped and permanently locked without any way to repair it.
-        unexported_member = self._conn.execute(
-            "SELECT i.id FROM claim_group_items cgi "
-            "JOIN invoices i ON i.id = cgi.invoice_id "
-            "WHERE cgi.claim_id = ? "
-            f"AND cgi.invoice_id NOT IN ({placeholders}) "
-            "AND COALESCE(i.review_status, 'to_review') NOT IN ('ignored', 'error') "
-            "LIMIT 1",
-            (claim_id, *invoice_ids),
-        ).fetchone()
-        if unexported_member:
-            self._set_last_error("claim_members_not_exported")
-            return False
-        conflict = self._conn.execute(
-            f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) "
-            "AND reimbursed_group_id IS NOT NULL AND reimbursed_group_id != ? LIMIT 1",
-            (*invoice_ids, claim_id),
-        ).fetchone()
-        if conflict:
-            self._set_last_error("invoice_reimbursed_elsewhere")
-            return False
-
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._atomic_savepoint():
-            reserved = self._conn.execute(
-                "UPDATE claim_groups SET id=id WHERE id=? AND status='exported'",
-                (claim_id,),
-            ).rowcount
-            if reserved != 1:
-                self._set_last_error("claim_state_changed")
+            ).fetchone()
+            if unexported_member:
+                self._set_last_error("claim_members_not_exported")
                 return False
             conflict = self._conn.execute(
                 f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) "
@@ -2698,27 +2698,45 @@ class InvoiceDB(EvidenceStoreMixin):
             if conflict:
                 self._set_last_error("invoice_reimbursed_elsewhere")
                 return False
-            changed = self._conn.execute(
-                "UPDATE claim_groups SET status='reimbursed', reimbursed_at=? "
-                "WHERE id=? AND status='exported'",
-                (stamp, claim_id),
-            ).rowcount
-            if changed != 1:
-                self._set_last_error("claim_state_changed")
-                return False
-            self._conn.execute(
-                f"UPDATE invoices SET reimbursed_at=COALESCE(reimbursed_at, ?), "
-                f"reimbursed_group_id=? WHERE id IN ({placeholders})",
-                (stamp, claim_id, *invoice_ids),
-            )
-            self._conn.execute(
-                "INSERT INTO claim_status_events "
-                "(claim_id, from_status, to_status, occurred_at, export_run_id, note) "
-                "VALUES (?, 'exported', 'reimbursed', ?, ?, 'Marked reimbursed from exported package')",
-                (claim_id, stamp, int(export_run_id)),
-            )
-        self._set_last_error("")
-        return True
+
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with self._atomic_savepoint():
+                reserved = self._conn.execute(
+                    "UPDATE claim_groups SET id=id WHERE id=? AND status='exported'",
+                    (claim_id,),
+                ).rowcount
+                if reserved != 1:
+                    self._set_last_error("claim_state_changed")
+                    return False
+                conflict = self._conn.execute(
+                    f"SELECT 1 FROM invoices WHERE id IN ({placeholders}) "
+                    "AND reimbursed_group_id IS NOT NULL AND reimbursed_group_id != ? LIMIT 1",
+                    (*invoice_ids, claim_id),
+                ).fetchone()
+                if conflict:
+                    self._set_last_error("invoice_reimbursed_elsewhere")
+                    return False
+                changed = self._conn.execute(
+                    "UPDATE claim_groups SET status='reimbursed', reimbursed_at=? "
+                    "WHERE id=? AND status='exported'",
+                    (stamp, claim_id),
+                ).rowcount
+                if changed != 1:
+                    self._set_last_error("claim_state_changed")
+                    return False
+                self._conn.execute(
+                    f"UPDATE invoices SET reimbursed_at=COALESCE(reimbursed_at, ?), "
+                    f"reimbursed_group_id=? WHERE id IN ({placeholders})",
+                    (stamp, claim_id, *invoice_ids),
+                )
+                self._conn.execute(
+                    "INSERT INTO claim_status_events "
+                    "(claim_id, from_status, to_status, occurred_at, export_run_id, note) "
+                    "VALUES (?, 'exported', 'reimbursed', ?, ?, 'Marked reimbursed from exported package')",
+                    (claim_id, stamp, int(export_run_id)),
+                )
+            self._set_last_error("")
+            return True
 
     def get_claim_status_events(self, claim_id: int) -> list[dict]:
         rows = self._conn.execute(

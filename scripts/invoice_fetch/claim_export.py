@@ -863,6 +863,7 @@ def export_claim_package(
             invoice_ids=tuple(int(invoice["id"]) for invoice in invoices),
             expected_member_ids=tuple(int(invoice["id"]) for invoice in all_invoices),
             expected_digest=claim_members_digest(all_invoices),
+            expected_claim=claim,
         )
     except Exception:
         if export_dir_created:

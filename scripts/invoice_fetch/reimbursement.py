@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 
 from .tax_id_validation import check_tax_id
 
@@ -108,9 +108,9 @@ def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:
 
 
 def format_amount_total(rows: list[dict]) -> str:
-    count, total, has_missing = amount_total(rows)
+    count, _, has_missing = amount_total(rows)
     suffix = "｜部分金额缺失" if has_missing else ""
-    return f"{count} 张｜合计 ¥{total:.2f}{suffix}"
+    return f"{count} 张｜合计 {currency_total(rows)}{suffix}"
 
 
 def _is_railway_or_travel_ticket(invoice: dict) -> bool:
@@ -149,3 +149,22 @@ def get_date_warning(invoice: dict) -> str:
     if expense_date and date_source in ("invoice_date", "legacy", "unknown", ""):
         return "未识别到费用发生日期，已使用开票日期。"
     return ""
+
+
+def currency_total(rows: list[dict]) -> str:
+    """Format totals by currency; callers decide which records belong in scope."""
+    totals = {}
+    with localcontext() as context:
+        context.prec = 256
+        for row in rows:
+            try:
+                value = Decimal(str(row.get("total_amount") or "").strip().replace(",", ""))
+            except (InvalidOperation, ValueError):
+                continue
+            if not value.is_finite():
+                continue
+            currency = str(row.get("currency") or "CNY").strip().upper() or "CNY"
+            currency = "CNY" if currency in {"RMB", "人民币"} else currency
+            totals[currency] = totals.get(currency, Decimal("0")) + value
+    return " / ".join(f"{'¥' if key == 'CNY' else key + ' '}{value:.2f}"
+                      for key, value in sorted(totals.items())) or "¥0.00"

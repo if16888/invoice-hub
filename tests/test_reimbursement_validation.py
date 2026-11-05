@@ -115,3 +115,15 @@ class ReimbursementValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CurrencyTotalsTests(unittest.TestCase):
+    def test_known_currencies_are_not_added_together(self):
+        from scripts.invoice_fetch.reimbursement import currency_total
+        self.assertEqual(currency_total([{"total_amount": "10", "currency": "USD"},
+            {"total_amount": "20", "currency": "RMB"}]), "¥20.00 / USD 10.00")
+
+    def test_empty_and_invalid_totals_keep_safe_zero_display(self):
+        from scripts.invoice_fetch.reimbursement import currency_total
+        self.assertEqual(currency_total([{"total_amount": "NaN"}]), "¥0.00")
+        self.assertEqual(currency_total([]), "¥0.00")
