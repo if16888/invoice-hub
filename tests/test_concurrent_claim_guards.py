@@ -212,6 +212,86 @@ class ConcurrentClaimGuardTests(unittest.TestCase):
         with InvoiceDB(self.path) as db:
             self.assertIsNone(db.get_invoice(invoice)["custom_reason"])
 
+    def test_unlink_waits_for_export_lock_and_rejects_locked_group(self):
+        invoice, accepted = self._run_with_claim_locked_by_other_connection(
+            lambda db, invoice_id: db.remove_invoice_from_claim(self.claim_a, invoice_id))
+        self.assertFalse(accepted)
+        with InvoiceDB(self.path) as db:
+            self.assertEqual(db.count_claim_links(invoice), 1)
+
+    def test_soft_delete_waits_for_export_lock_and_preserves_invoice(self):
+        invoice, accepted = self._run_with_claim_locked_by_other_connection(
+            lambda db, invoice_id: db.soft_delete_invoice(invoice_id))
+        self.assertFalse(accepted)
+        with InvoiceDB(self.path) as db:
+            self.assertEqual(db.get_invoice(invoice)["is_deleted"], 0)
+
+    def test_export_rejects_changed_group_metadata(self):
+        with InvoiceDB(self.path) as db:
+            invoice = self._add_approved(db, "META-SNAPSHOT")
+            db.add_invoice_to_claim(self.claim_a, invoice)
+            claim = db.get_claim_group(self.claim_a)
+            rows, ids, digest = self._snapshot(db, self.claim_a)
+            with InvoiceDB(self.path) as other:
+                other.update_claim_reason(self.claim_a, applicant_name="Changed")
+            with self.assertRaisesRegex(ValueError, "报销组信息已变化"):
+                db.add_export_run(self.claim_a, "unused", "generic_excel", len(ids),
+                    invoice_ids=ids, expected_member_ids=ids,
+                    expected_digest=digest, expected_claim=claim)
+            self.assertEqual(db.get_export_runs(self.claim_a), [])
+            self.assertEqual(db.get_claim_group(self.claim_a)["status"], "draft")
+
+    def test_reimbursement_rechecks_latest_export_under_write_lock(self):
+        from contextlib import contextmanager
+        with InvoiceDB(self.path) as db:
+            approved = self._add_approved(db, "LATEST-RUN")
+            for invoice_id in (approved, self.invoice):
+                db.add_invoice_to_claim(self.claim_a, invoice_id)
+            rows, members, digest = self._snapshot(db, self.claim_a)
+            old_run = db.add_export_run(self.claim_a, "old", "generic_excel", 2,
+                invoice_ids=members, expected_member_ids=members, expected_digest=digest)
+        ready, resume = threading.Event(), threading.Event()
+        result = {}
+
+        class PausingDB(InvoiceDB):
+            pause_enabled = False
+
+            @contextmanager
+            def _atomic_savepoint(self):
+                if self.pause_enabled:
+                    self.pause_enabled = False
+                    ready.set()
+                    if not resume.wait(10):
+                        raise TimeoutError("re-export did not complete")
+                with super()._atomic_savepoint():
+                    yield
+
+        def reimburse():
+            try:
+                with PausingDB(self.path) as db:
+                    db.pause_enabled = True
+                    result["accepted"] = db.mark_claim_reimbursed(self.claim_a, old_run)
+                    result["error"] = db.last_error
+            except Exception as exc:
+                result["exception"] = repr(exc)
+
+        thread = threading.Thread(target=reimburse)
+        thread.start()
+        try:
+            self.assertTrue(ready.wait(5))
+            with InvoiceDB(self.path) as db:
+                db.add_export_run(self.claim_a, "latest", "generic_excel", 1,
+                    invoice_ids=(approved,), expected_member_ids=members,
+                    expected_digest=digest)
+        finally:
+            resume.set()
+            thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result, {"accepted": False, "error": "stale_export_run"})
+        with InvoiceDB(self.path) as db:
+            self.assertEqual(db.get_claim_group(self.claim_a)["status"], "exported")
+            self.assertIsNone(db.get_invoice(self.invoice)["reimbursed_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

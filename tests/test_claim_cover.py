@@ -63,6 +63,9 @@ class ClaimCoverTests(unittest.TestCase):
             try:
                 self.assertEqual(wb['费用报销单']['B8'].value, 'CNY 20.00\nUSD 10.00')
                 self.assertIn('未折算', wb['费用报销单']['B9'].value)
+                self.assertIn('币种', [cell.value for cell in wb['发票汇总'][1]])
+                totals = {row[3]: row[2] for row in wb['分类汇总'].iter_rows(min_row=2, values_only=True) if row[0] == '总计'}
+                self.assertEqual(totals, {'CNY': 20, 'USD': 10})
             finally:
                 wb.close()
 
@@ -90,6 +93,35 @@ class ClaimCoverTests(unittest.TestCase):
                     self.assertEqual(sheet['B6'].value, '项目验收')
                 finally:
                     wb.close()
+
+    def test_metadata_change_during_export_removes_failed_package(self):
+        from unittest.mock import patch
+        from scripts.invoice_fetch.claim_export import export_claim_package
+        from scripts.invoice_fetch.db import InvoiceDB
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / 'original.pdf'
+            original.write_bytes(b'synthetic invoice')
+            with InvoiceDB(root / 'invoice.db') as db:
+                claim = db.create_claim_group('Group', applicant_name='Original')
+                invoice = db.insert_invoice({'invoice_number': 'META-RACE', 'total_amount': '10',
+                                             'review_status': 'approved', 'attachment_path': 'original.pdf'})
+                self.assertTrue(db.add_invoice_to_claim(claim, invoice))
+
+                def change_metadata(*args, **kwargs):
+                    export_excel(*args, **kwargs)
+                    with InvoiceDB(root / 'invoice.db') as other:
+                        self.assertTrue(other.update_claim_reason(claim, applicant_name='Changed'))
+
+                with patch('scripts.invoice_fetch.claim_export.export_excel', side_effect=change_metadata):
+                    with self.assertRaisesRegex(ValueError, '报销组信息已变化'):
+                        export_claim_package(db, claim, root, root, export_root=root / 'exports')
+                self.assertEqual(db.get_export_runs(claim), [])
+                self.assertEqual(db.get_claim_group(claim)['status'], 'draft')
+                self.assertEqual(db.get_claim_group(claim)['applicant_name'], 'Changed')
+                self.assertFalse(list((root / 'exports').rglob('*.xlsx')))
+                self.assertFalse(list((root / 'exports').rglob('manifest.json')))
+                self.assertEqual(original.read_bytes(), b'synthetic invoice')
 
     def test_invalid_template_fails_before_creating_export_folder(self):
         from scripts.invoice_fetch.claim_export import export_claim_package

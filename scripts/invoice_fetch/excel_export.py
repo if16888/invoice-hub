@@ -171,6 +171,8 @@ def export_excel(rows: list[dict], dest: str | Path, *, claim: dict | None = Non
     columns = list(_COLUMNS)
     if any(r.get("review_status") for r in sorted_rows):
         columns.append(("review_status", "审核状态", 12))
+    # Append new metadata without shifting existing spreadsheet/link columns.
+    columns.append(("currency", "币种", 10))
 
     wb = Workbook()
     ws = wb.active
@@ -278,6 +280,26 @@ def _style_cell(cell):
 def _add_summary_sheet(wb: Workbook, rows: list[dict]):
     ws = wb.create_sheet("分类汇总")
     _style_header(ws, ["分类", "张数", "价税合计"], [16, 10, 14])
+
+    currencies = {(str(row.get("currency") or "CNY").strip().upper() or "CNY") for row in rows} - {"CNY", "RMB", "人民币"}
+    if currencies:
+        _style_header(ws, ["分类", "张数", "价税合计", "币种"], [16, 10, 14, 12])
+        grouped = defaultdict(lambda: [0, Decimal("0")])
+        totals = defaultdict(lambda: [0, Decimal("0")])
+        for row in rows:
+            currency = (str(row.get("currency") or "CNY").strip().upper() or "CNY")
+            currency = "CNY" if currency in {"RMB", "人民币"} else currency
+            for key, store in (((row.get("category") or "未分类", currency), grouped), (currency, totals)):
+                store[key][0] += 1
+                store[key][1] += _amount(row.get("total_amount"))
+        values = [[category, count, float(amount), currency] for (category, currency), (count, amount) in sorted(grouped.items())]
+        values += [["总计", count, float(amount), currency] for currency, (count, amount) in sorted(totals.items())]
+        for index, data in enumerate(values, 2):
+            for col, value in enumerate(data, 1):
+                cell = ws.cell(index, col, _safe_excel_value(value))
+                _style_cell(cell)
+            ws.cell(index, 3).number_format = "#,##0.00"
+        return
 
     summary = defaultdict(lambda: {"count": 0, "amount": Decimal("0")})
     for row in rows:

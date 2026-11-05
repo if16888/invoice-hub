@@ -1,16 +1,15 @@
 """Preview and recheck conservative batch approvals without changing manual review."""
 
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, localcontext
 from pathlib import Path
 
 from .amount_utils import parse_amount
 from .claim_export import inspect_materials_for_invoices
 from .db import is_pending_evidence_invoice
 from .financial_validation import check_tax_balance
-from .reimbursement import buyer_warning
+from .reimbursement import buyer_warning, currency_total
 from .review_status import APPROVED, IGNORED, TO_REVIEW
 
 
@@ -181,24 +180,18 @@ def batch_skip_summary(skipped: tuple[BatchSkip, ...]) -> str:
 
 def batch_amount_summary(rows: list[dict]) -> str:
     """Show selected totals per currency, preserving Decimal arithmetic."""
-    totals = defaultdict(lambda: Decimal("0"))
+    valid = []
     unknown = 0
     for row in rows:
         if is_pending_evidence_invoice(row):
             continue
         try:
-            amount = parse_amount(row.get("total_amount"))
+            parse_amount(row.get("total_amount"))
         except ValueError:
             unknown += 1
-            continue
-        currency = str(row.get("currency") or "").strip().upper() or "CNY"
-        if currency in {"人民币", "RMB"}:
-            currency = "CNY"
-        with localcontext() as context:
-            context.prec = 256
-            totals[currency] += amount
-    parts = [f"{'¥' if currency == 'CNY' else currency + ' '}{amount:.2f}"
-             for currency, amount in sorted(totals.items())]
+        else:
+            valid.append(row)
+    parts = [currency_total(valid)] if valid else []
     if unknown:
         parts.append(f"{unknown} 张金额待核对")
     return " / ".join(parts)

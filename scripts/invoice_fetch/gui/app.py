@@ -43,7 +43,7 @@ from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..export_paths import resolve_export_directory
 from ..diagnostics import collect_app_info, export_diagnostics_zip
-from ..reimbursement import amount_total, buyer_warning, format_amount_total, get_date_warning
+from ..reimbursement import amount_total, currency_total, buyer_warning, format_amount_total, get_date_warning
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..redownload import (
     REDOWNLOAD_MODE_BATCH,
@@ -4300,7 +4300,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if int(stats.get("invalid_amount", 0) or 0):
                 subtitle = f"{count} 张发票 · 金额待修复"
             else:
-                subtitle = f"{count} 张发票 · ¥{Decimal(str(total)).quantize(Decimal('0.00'))}"
+                subtitle = f"{count} 张发票 · {currency_total(invoices)}"
             meta = f"完整性缺口 {displayed_missing}"
             claim_status = str(claim.get("status") or "draft")
             badge = {
@@ -8005,10 +8005,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if " - " in group_name:
             group_name = group_name.split(" - ", 1)[0]
 
-        from ..reimbursement import amount_total
+        from ..reimbursement import amount_total, currency_total
         count, total, has_missing = amount_total(invoices)
         suffix = "，部分金额缺失" if has_missing else ""
-        self.lbl_claim_total.setText(f"{count} 条记录 · 合计 ¥{total:.2f}{suffix}")
+        self.lbl_claim_total.setText(f"{count} 条记录 · 合计 {currency_total(invoices)}{suffix}")
         self.lbl_claim_total.setToolTip(group_name)
         if hasattr(self._detail_panel, "lbl_claim_assignment"):
             self._detail_panel.lbl_claim_assignment.set_value(
@@ -8123,7 +8123,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.lbl_status_left.setToolTip(prefix)
             self._update_record_header_summary(selected_count=count)
 
-            mid_text = f"已选中 {count} 张｜合计 ¥{total:.2f}{suffix}"
+            mid_text = f"已选中 {count} 张｜合计 {currency_total(rows)}{suffix}"
             self.lbl_status_middle.setText(mid_text)
             self.lbl_status_middle.setToolTip(mid_text)
 
