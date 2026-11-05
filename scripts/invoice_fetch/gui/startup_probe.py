@@ -221,6 +221,8 @@ def start_first_paint_startup_probe(db_path: Path, *, app_init_ms: int = 0) -> N
         stages[stage] = max(0, int((time.monotonic() - launch_started_at) * 1000))
     configure_high_dpi_platform()
     app = QApplication(sys.argv)
+    from .i18n import install_chinese_translations
+    install_chinese_translations(app)
     mark("qt_application_ready")
 
     # Match normal production startup through first paint: show the splash,

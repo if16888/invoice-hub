@@ -944,6 +944,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        self._cancel_inline_edit()
         self.txt_id.clear()
 
 
@@ -1481,6 +1482,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
+        if self.txt_id.text() != inv_id:
+            self._cancel_inline_edit()
         self.txt_id.setText(inv_id)
         self.category_memory_allowed = category_memory_allowed
 
@@ -4964,6 +4967,7 @@ class InvoiceDetailPanel(QWidget):
         if editor is None:
             return
         self._inline_edit_field = field_name
+        self._inline_edit_invoice_id = self.txt_id.text()
         self._inline_edit_source = editor.text()
         self.inline_edit_label.setText(f"编辑{self._inline_edit_caption(field_name)}")
         self.inline_edit_input.setText(editor.text())
@@ -4984,6 +4988,9 @@ class InvoiceDetailPanel(QWidget):
         field_name = getattr(self, "_inline_edit_field", None)
         if not field_name:
             return
+        if self.txt_id.text() != self._inline_edit_invoice_id:
+            self._cancel_inline_edit()
+            return
         value = self.inline_edit_input.text().strip()
         values = {
             "number": self.txt_number.text(),
@@ -4991,6 +4998,7 @@ class InvoiceDetailPanel(QWidget):
             "amount": self.txt_amount.text(),
             "buyer": self.txt_buyer.text(),
             "seller": self.txt_seller.text(),
+            "category": self.combo_category.currentText(),
         }
         values[field_name] = value
         try:

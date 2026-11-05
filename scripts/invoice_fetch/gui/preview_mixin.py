@@ -516,6 +516,7 @@ class PreviewMixin:
             self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
         elif self.preview_stack.currentWidget() == self.image_scroll_area:
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_fit_page(self):
         self.image_zoom_mode = "fit_page"
@@ -524,6 +525,7 @@ class PreviewMixin:
             self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
         elif self.preview_stack.currentWidget() == self.image_scroll_area:
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_100(self):
         self.image_zoom_mode = "custom"
@@ -534,6 +536,7 @@ class PreviewMixin:
             self.pdf_view.setZoomFactor(1.0)
         elif self.preview_stack.currentWidget() == self.image_scroll_area:
             self._update_image_display()
+        self._refresh_zoom_percent()
 
     def _zoom_in(self):
         QPdfDocument, QPdfView = get_qt_pdf_classes()
@@ -703,8 +706,8 @@ class PreviewMixin:
                 self._performance_preview_trace = None
             return
 
-        # Keep default state as hidden, show toolbar when mouse enters
-        self.overlay_toolbar.hide()
+        # Loaded documents keep their actions discoverable without a hover.
+        self._show_overlay_toolbar()
         self._set_zoom_buttons_enabled(True)
 
         suffix = file_path.suffix.lower()
@@ -769,6 +772,7 @@ class PreviewMixin:
                 performance_trace.finish("paint_unobserved", surface="preview")
             self._performance_preview_trace = None
 
+        self._refresh_zoom_percent()
         load_elapsed_ms = int((time.perf_counter() - preview_start) * 1000)
         fallback_text = " fallback=1" if used_fallback else ""
         self.write_log(
@@ -827,6 +831,7 @@ class PreviewMixin:
         if self.pdf_view is not None:
             self.pdf_view.installEventFilter(self)
         self._update_pdf_page_buttons()
+        self._refresh_zoom_percent()
         performance_trace = getattr(self, "_performance_preview_trace", None)
         if performance_trace is not None:
             performance_trace.mark("document_ready")

@@ -69,6 +69,20 @@ class ReleaseAuditWorkflowTests(unittest.TestCase):
             self.workflow,
         )
 
+    def test_empty_tag_inputs_keep_the_declared_startup_thresholds(self) -> None:
+        import re
+
+        for filename in ("windows-release.yml", "windows-store-msix.yml"):
+            workflow = (REPO_ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
+            defaults = re.findall(r'default: "(\d+)"', workflow)
+            fallbacks = re.findall(r'if \(-not \$\w+\) \{ \$\w+ = "(\d+)" \}', workflow)
+            self.assertIn("5000", defaults)
+            self.assertIn("2000", defaults)
+            self.assertIn("5000", fallbacks)
+            self.assertIn("2000", fallbacks)
+            self.assertNotIn("6000", fallbacks)
+            self.assertNotIn("3000", fallbacks)
+
     def test_tag_publication_remains_tag_only_and_requires_annotated_tag(self) -> None:
         release_job = self.workflow.split("\n  release:\n", 1)[1]
         self.assertIn("if: startsWith(github.ref, 'refs/tags/v')", release_job)

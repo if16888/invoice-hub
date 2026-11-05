@@ -1868,7 +1868,19 @@ class InvoiceDB(EvidenceStoreMixin):
             raise ValueError(f"Offset must be a non-negative integer. Got: {query.offset}")
         where_sql, params = self._build_review_where(query)
         sql = "SELECT i.*, cg.name AS claim_name " + self._review_join_sql() + where_sql
-        if query.invoice_ids:
+        if query.sort_key:
+            allowed = {"review_status", "status", "expense_date", "total_amount", "seller_name", "invoice_number", "claim_name"}
+            if query.sort_key not in allowed:
+                raise ValueError("Unsupported review sort key")
+            expression = self._review_value_expression(query.sort_key)
+            if query.sort_key == "total_amount":
+                expression = f"CAST(REPLACE(NULLIF(({expression}), ''), ',', '') AS REAL)"
+            elif query.sort_key == "review_status":
+                expression = ("CASE i.review_status WHEN 'approved' THEN 1 "
+                              "WHEN 'ignored' THEN 2 WHEN 'error' THEN 3 ELSE 0 END")
+            direction = "DESC" if query.sort_descending else "ASC"
+            sql += f" ORDER BY ({expression}) {direction}, i.id {direction}"
+        elif query.invoice_ids:
             sql += " ORDER BY CASE i.id " + " ".join(
                 f"WHEN ? THEN {index}" for index, _invoice_id in enumerate(query.invoice_ids)
             ) + f" ELSE {len(query.invoice_ids)} END, i.id DESC"

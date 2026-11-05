@@ -34,23 +34,23 @@ class P2Batch6Tests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_batch_bar_floats_without_entering_the_card_layout(self):
+    def test_batch_bar_reserves_space_without_covering_table(self):
+        from PySide6.QtCore import QRect
+
         with tempfile.TemporaryDirectory() as td:
             window = self._window(td)
             try:
-                layout = window.left_upper_widget.layout()
-                self.assertEqual(layout.indexOf(window.batch_review_bar), -1)
+                window._switch_main_page("review")
                 window.batch_review_bar.show()
-                window._position_batch_review_bar()
+                for _ in range(3):
+                    self.app.processEvents()
+                layout = window.left_upper_widget.layout()
+                self.assertGreaterEqual(layout.indexOf(window.batch_review_bar), 0)
                 bar = window.batch_review_bar
-                self.assertEqual(bar.x(), 6)
-                self.assertLessEqual(
-                    bar.geometry().bottom(), window.left_upper_widget.height() - 6
-                )
-                table_height = window.left_stack.height()
-                window.batch_review_bar.hide()
-                window._position_batch_review_bar()
-                self.assertEqual(window.left_stack.height(), table_height)
+                bar_rect = QRect(bar.mapToGlobal(bar.rect().topLeft()), bar.size())
+                table = window.table.viewport()
+                table_rect = QRect(table.mapToGlobal(table.rect().topLeft()), table.size())
+                self.assertFalse(bar_rect.intersects(table_rect))
             finally:
                 window.db.close()
                 window.hide()

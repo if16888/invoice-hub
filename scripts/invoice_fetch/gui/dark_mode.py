@@ -9,12 +9,31 @@ validated on real devices); the light path is unchanged.
 from __future__ import annotations
 
 import os
+import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QPalette
 
 DARK_COLOR_MAP = {
     "#F6F8FB": "#0F1115",
+    "#F1F5F9": "#0F1115",
+    "#EDF2F8": "#131923",
+    "#D7E5FB": "#263D60",
+    "#CBD5E1": "#3A4250",
+    "#E2E8F0": "#2A3038",
+    "#182230": "#E6E8EB",
+    "#101828": "#E6E8EB",
+    "#16803C": "#53CE83",
+    "#15803D": "#72DC9A",
+    "#067647": "#53CE83",
+    "#ABEFC6": "#245C3C",
+    "#B54708": "#FFC078",
+    "#D97706": "#FFD29C",
+    "#FED7AA": "#71501D",
+    "#B42318": "#FF9186",
+    "#DC2626": "#FFA49B",
+    "#B91C1C": "#FF9186",
+    "#FCA5A5": "#743833",
     "#F7F8FA": "#0F1115",
     "#FFFFFF": "#161A20",
     "#F8FAFC": "#1B2027",
@@ -55,10 +74,36 @@ def prefers_dark() -> bool:
 
 def dark_stylesheet(base: str) -> str:
     """Map the canonical light stylesheet literals onto dark surfaces."""
-    stylesheet = base
-    for light, dark in DARK_COLOR_MAP.items():
-        stylesheet = stylesheet.replace(light, dark)
-    return stylesheet
+    # One pass also handles lowercase local QSS without remapping a replacement.
+    return re.sub(r"#[0-9a-fA-F]{6}\b", lambda match: DARK_COLOR_MAP.get(
+        match.group().upper(), match.group()), base)
+
+
+class _DarkStyleFilter(QObject):
+    """Theme local and lazily constructed QSS, including baseline reapplications."""
+
+    def eventFilter(self, widget, event):
+        if event.type() in (QEvent.Polish, QEvent.StyleChange) and prefers_dark():
+            self.apply(widget)
+        return False
+
+    def apply(self, widget):
+        from PySide6.QtWidgets import QWidget
+
+        if not isinstance(widget, QWidget) or getattr(widget, "_dark_style_busy", False):
+            return
+        source = widget.styleSheet()
+        if not source or source == getattr(widget, "_dark_applied_qss", None):
+            return
+        themed = dark_stylesheet(source)
+        widget._dark_applied_qss = themed
+        if themed != source:
+            widget._dark_style_busy = True
+            try:
+                widget.setStyleSheet(themed)
+            finally:
+                widget._dark_style_busy = False
+
 
 
 def dark_palette() -> QPalette:
@@ -82,10 +127,23 @@ def apply_app_theme(app) -> bool:
     """Apply the dark palette when opted in; returns True when dark is active."""
     if app is None or not prefers_dark():
         return False
+    from PySide6.QtWidgets import QWidget
+
+    style_filter = getattr(app, "_invoice_hub_dark_style_filter", None)
+    if style_filter is None:
+        style_filter = _DarkStyleFilter(app)
+        app._invoice_hub_dark_style_filter = style_filter
+        app.installEventFilter(style_filter)
     base = app.styleSheet()
-    if base:
-        app.setStyleSheet(dark_stylesheet(base))
+    if base and base != getattr(app, "_dark_applied_qss", None):
+        themed = dark_stylesheet(base)
+        app._dark_applied_qss = themed
+        app.setStyleSheet(themed)
     app.setPalette(dark_palette())
+    for window in app.topLevelWidgets():
+        style_filter.apply(window)
+        for child in window.findChildren(QWidget):
+            style_filter.apply(child)
     return True
 
 

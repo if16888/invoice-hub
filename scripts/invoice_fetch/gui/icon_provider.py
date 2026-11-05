@@ -48,6 +48,22 @@ class IconProvider:
     def icon(cls, semantic: str) -> QIcon:
         svg_path = _ASSETS_ICONS / f"{semantic}.svg"
         if svg_path.exists():
+            from .dark_mode import prefers_dark
+
+            if prefers_dark():
+                from PySide6.QtCore import QByteArray, Qt
+                from PySide6.QtGui import QPainter, QPixmap
+                from PySide6.QtSvg import QSvgRenderer
+
+                svg = svg_path.read_bytes().replace(b"currentColor", b"#CBD5E1")
+                renderer = QSvgRenderer(QByteArray(svg))
+                pixmap = QPixmap(72, 72)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                renderer.render(painter)
+                painter.end()
+                pixmap.setDevicePixelRatio(4)
+                return QIcon(pixmap)
             return QIcon(str(svg_path))
         app = QApplication.instance()
         style = app.style() if app is not None else None

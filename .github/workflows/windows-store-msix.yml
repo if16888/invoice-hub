@@ -138,13 +138,13 @@ jobs:
         shell: pwsh
         run: |
           $threshold = $env:REQUESTED_STARTUP_MS
-          if (-not $threshold) { $threshold = "3000" }
+          if (-not $threshold) { $threshold = "2000" }
           if ($threshold -notmatch '^\d+$' -or [int]$threshold -le 0) {
             throw "strict_startup_ms must be a positive integer."
           }
           "STARTUP_THRESHOLD_MS=$threshold" >> $env:GITHUB_ENV
           $portable = $env:REQUESTED_PORTABLE_STARTUP_MS
-          if (-not $portable) { $portable = "6000" }
+          if (-not $portable) { $portable = "5000" }
           if ($portable -notmatch '^\d+$' -or [int]$portable -le 0) {
             throw "portable_startup_ms must be a positive integer."
           }

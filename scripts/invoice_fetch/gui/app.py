@@ -1554,18 +1554,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self._apply_workbench_metrics(args[0].width(), args[0].height())
 
     def _position_batch_review_bar(self) -> None:
-        """Keep the floating batch bar pinned to the card bottom."""
+        # The footer participates in layout so it cannot cover selectable rows.
         bar = getattr(self, "batch_review_bar", None)
-        card = getattr(self, "left_upper_widget", None)
-        if bar is None or card is None:
-            return
-        if not bar.isVisible():
-            return
-        margin = 6
-        width = max(0, card.width() - margin * 2)
-        height = min(bar.sizeHint().height(), max(0, card.height() - margin * 2))
-        bar.setGeometry(margin, card.height() - height - margin, width, height)
-        bar.raise_()
+        if bar is not None:
+            bar.updateGeometry()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2365,9 +2357,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.batch_review_bar.ignore_requested.connect(self._batch_ignore_selected)
         self.batch_review_bar.clear_requested.connect(self.table.clearSelection)
         self.batch_review_bar.evidence_requested.connect(self._manage_selected_evidence)
-        # P2-12: float the batch bar over the card bottom so selecting rows no
-        # longer changes the table height (no layout jump).
-        self.batch_review_bar.setParent(self.left_upper_widget)
+        # Reserve footer space while batch actions are shown; rows stay reachable.
+        left_upper_layout.addWidget(self.batch_review_bar)
         self.batch_review_bar.hide()
         self.batch_review_bar.visibility_changed.connect(self._position_batch_review_bar)
         self.table.itemSelectionChanged.connect(self._sync_batch_review_controls)
@@ -2901,15 +2892,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _reapply_review_sort(self) -> None:
         state = getattr(self, "_column_sort_state", None)
-        if state is None or not hasattr(self, "table") or self.table.rowCount() < 2:
-            return
-        header = self.table.horizontalHeader()
-        self.table.sortItems(state[0], state[1])
-        header.setSortIndicator(state[0], state[1])
-        header.setSortIndicatorShown(True)
+        if state is not None:
+            header = self.table.horizontalHeader()
+            header.setSortIndicator(state[0], state[1])
+            header.setSortIndicatorShown(True)
 
     def _sort_review_table_by(self, section: int) -> None:
-        if section < 0 or section >= len(VISIBLE_COLUMN_DEFINITIONS):
+        if not 0 <= section < len(VISIBLE_COLUMN_DEFINITIONS):
+            return
+        if not self._persist_invoice_note():
             return
         state = getattr(self, "_column_sort_state", None)
         order = (
@@ -2917,25 +2908,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             if state and state[0] == section and state[1] == Qt.AscendingOrder
             else Qt.AscendingOrder
         )
-        prev_row = self.table.currentRow()
-        prev_id = (
-            self.invoices_list[prev_row].get("id")
-            if 0 <= prev_row < len(self.invoices_list)
-            else None
-        )
+        previous_id = self.current_invoice.get("id") if self.current_invoice else None
         self._column_sort_state = (section, order)
-        header = self.table.horizontalHeader()
-        self.table.sortItems(section, order)
-        header.setSortIndicator(section, order)
-        header.setSortIndicatorShown(True)
-        row = self._table_row_for_invoice_id(prev_id)
-        if row >= 0:
-            self.table.blockSignals(True)
-            try:
-                self._apply_single_row_selection(row)
-            finally:
-                self.table.blockSignals(False)
-            self._ensure_single_row_selection(row)
+        self._load_invoices(preserve_invoice_id=previous_id)
+        self._reapply_review_sort()
 
     def _on_header_section_clicked(self, section: int) -> None:
         """Header body sorts; the right-edge funnel zone opens the filter popup."""
@@ -7476,6 +7452,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 minimum=str(spec.get("min") or ""),
                 maximum=str(spec.get("max") or ""),
             ))
+        sort_state = getattr(self, "_column_sort_state", None)
         return ReviewQuery(
             status=status,
             include_deleted=self.chk_show_deleted.isChecked() if hasattr(self, "chk_show_deleted") else False,
@@ -7484,6 +7461,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             invoice_ids=tuple(getattr(self, "_review_scope_ids", ())),
             limit=limit,
             offset=offset,
+            sort_key=VISIBLE_COLUMN_DEFINITIONS[sort_state[0]][0] if sort_state else "",
+            sort_descending=bool(sort_state and sort_state[1] == Qt.DescendingOrder),
             today=date.today(),
         )
 
@@ -8077,6 +8056,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         )
 
     def _on_table_selection_changed(self):
+        if getattr(self._detail_panel, "_inline_edit_field", None):
+            self._detail_panel._cancel_inline_edit()
         # Triggered when users select table rows. Handles single and multi-selection modes.
         if not self._persist_invoice_note():
             current_id = self.current_invoice["id"]
