@@ -1,7 +1,8 @@
 """Explicit review of weak matches; resolving a candidate never deletes an invoice."""
 from .dialog_shell import apply_dialog_shell
+from .ui_components import make_button
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton,
+    QComboBox, QDialog, QDialogButtonBox, QGridLayout, QLabel,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QAbstractItemView,
 )
 
@@ -25,23 +26,27 @@ class DuplicateReviewDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().hide()
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(32)
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
-        actions = QHBoxLayout()
+        actions = QGridLayout()
+        actions.setSpacing(8)
         self.resolve_buttons = []
         self.reset_button = None
-        for label, callback in [('查看当前原件', lambda: self._open('invoice_id')),
+        for index, (label, callback) in enumerate([('查看当前原件', lambda: self._open('invoice_id')),
                                 ('查看对照原件', lambda: self._open('reference_id')),
                                 ('确认不同票据', lambda: self._resolve('distinct')),
                                 ('确认重复', lambda: self._resolve('duplicate')),
-                                ('重置复核结论', self._reset)]:
-            button = QPushButton(label)
+                                ('重置复核结论', self._reset)]):
+            button = make_button(label, variant='danger' if label == '确认重复' else 'secondary')
             button.clicked.connect(callback)
             if label in {'确认不同票据', '确认重复'}:
                 self.resolve_buttons.append(button)
             if label == '重置复核结论':
                 self.reset_button = button
-            actions.addWidget(button)
+            actions.addWidget(button, 0 if index < 2 else 1, index if index < 2 else index - 2)
         layout.addLayout(actions)
         self.result_label = QLabel()
         self.result_label.setWordWrap(True)

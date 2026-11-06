@@ -38,28 +38,52 @@ class DesignTokenAuthorityTests(unittest.TestCase):
 
     def test_design_v1_exports_the_approved_product_tokens(self):
         self.assertIs(BASELINE_COLORS, DESIGN_V1_COLORS)
-        self.assertEqual(DESIGN_V1_COLORS["page"], "#F7F8FA")
-        self.assertEqual(DESIGN_V1_COLORS["accent"], "#2563EB")
+        self.assertEqual(DESIGN_V1_COLORS["page"], "#F5F5F7")
+        self.assertEqual(DESIGN_V1_COLORS["accent"], "#0066CC")
         self.assertEqual(DESIGN_V1_COLORS["success"], "#16803C")
         self.assertEqual(DESIGN_V1_COLORS["danger"], "#B42318")
         self.assertEqual(DESIGN_V1_TYPE["page_title"], 20)
         self.assertEqual(DESIGN_V1_TYPE["body"], 13)
-        self.assertEqual(DESIGN_V1_METRICS["control_height"], 34)
+        self.assertEqual(DESIGN_V1_METRICS["control_height"], 32)
 
 
     def test_canonical_stylesheet_rebuilds_legacy_tokens_before_rendering(self):
         styles.COLOR_TOKENS["accent"] = "#1599BD"
         stylesheet = build_canonical_application_stylesheet()
 
-        self.assertEqual(styles.COLOR_TOKENS["accent"], "#2563EB")
+        self.assertEqual(styles.COLOR_TOKENS["accent"], "#0066CC")
         self.assertEqual(styles.COLOR_TOKENS["success"], "#16803C")
         self.assertEqual(styles.COLOR_TOKENS["danger"], "#B42318")
-        self.assertIn("#2563EB", stylesheet)
+        self.assertIn("#0066CC", stylesheet)
         self.assertNotIn("#1599BD", stylesheet)
         self.assertTrue(stylesheet.startswith(styles.APP_STYLESHEET))
 
     def test_legacy_color_tokens_derive_from_the_single_design_authority(self):
         self.assertEqual(styles.COLOR_TOKENS, canonical_legacy_color_tokens())
+
+    def test_text_and_focus_contrast_in_both_themes(self):
+        from scripts.invoice_fetch.gui.dark_mode import DARK_COLOR_MAP
+
+        def luminance(value):
+            channels = [int(value[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+                      for channel in channels]
+            return sum(channel * weight for channel, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+        for dark in (False, True):
+            for foreground, background, minimum in (
+                ("text", "surface", 4.5), ("muted", "surface", 4.5),
+                ("placeholder", "surface", 4.5), ("surface", "accent", 4.5),
+                ("warning_text", "warning_surface", 4.5),
+                ("danger_text", "danger_surface", 4.5),
+                ("focus_ring", "selected", 3.0),
+            ):
+                values = [DESIGN_V1_COLORS[role] for role in (foreground, background)]
+                if dark:
+                    values = [DARK_COLOR_MAP.get(value, value) for value in values]
+                light, dim = sorted(map(luminance, values), reverse=True)
+                with self.subTest(dark=dark, foreground=foreground, background=background):
+                    self.assertGreaterEqual((light + 0.05) / (dim + 0.05), minimum)
 
     def test_stylesheet_pipeline_has_no_second_legacy_literal_pass(self):
         stylesheet = build_canonical_application_stylesheet()

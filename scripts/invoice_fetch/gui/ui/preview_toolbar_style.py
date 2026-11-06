@@ -39,8 +39,8 @@ QToolButton.PreviewToolBtn:pressed {{
     color: {Theme.BLUE_HOVER};
 }}
 QToolButton.PreviewToolBtn[iconOnly="true"] {{
-    min-width: 30px;
-    max-width: 30px;
+    min-width: 28px;
+    max-width: 28px;
     padding: 0;
     font-size: {Theme.TYPE_SURFACE_TITLE}px;
     font-weight: 600;

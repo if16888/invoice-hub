@@ -7,6 +7,7 @@ navigation, accessibility checks and regression tests.
 
 from __future__ import annotations
 
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QWidget
 
 from ...ui_components import CompactStatCard
@@ -74,12 +75,33 @@ class SegmentControl(QWidget):
             )
             card.setProperty("segmentKey", key)
             card.setProperty("visualRole", "status-segment")
+            card.setFocusPolicy(Qt.StrongFocus)
+            card.setAccessibleName(card.text())
+            card.installEventFilter(self)
             card.clicked.connect(lambda value=key: self._activate(value))
             self.buttons[key] = card
             layout.addWidget(card)
 
         if selected in self.buttons:
             self.set_selected(selected)
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if event.type() in (QEvent.ShortcutOverride, QEvent.KeyPress) and event.modifiers() == Qt.NoModifier:
+            key = event.key()
+            if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space, Qt.Key_Left, Qt.Key_Right):
+                # A focused filter owns activation; Enter must not approve an invoice.
+                if event.type() == QEvent.ShortcutOverride:
+                    event.accept()
+                    return True
+                if key in (Qt.Key_Left, Qt.Key_Right):
+                    keys = list(self.buttons)
+                    current = str(watched.property("segmentKey"))
+                    index = (keys.index(current) + (1 if key == Qt.Key_Right else -1)) % len(keys)
+                    self.buttons[keys[index]].setFocus(Qt.TabFocusReason)
+                    self._activate(keys[index])
+                    event.accept()
+                    return True
+        return super().eventFilter(watched, event)
 
     def _activate(self, key: str) -> None:
         if key not in self.buttons:
@@ -102,11 +124,13 @@ class SegmentControl(QWidget):
         card = self.buttons.get(key)
         if card is not None:
             card.set_title(label)
+            card.setAccessibleName(card.text())
 
     def set_value(self, key: str, value: str | int) -> None:
         card = self.buttons.get(key)
         if card is not None:
             card.set_value(str(value))
+            card.setAccessibleName(card.text())
 
     def label(self, key: str) -> str:
         card = self.buttons[key]

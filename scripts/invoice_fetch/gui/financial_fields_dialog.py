@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
 
 from ..financial_validation import check_tax_balance, normalize_tax_rate
 from ..tax_id_validation import TAX_ID_TYPES, check_tax_id
+from .dialog_form import style_dialog_form
+from .dialog_shell import add_dialog_footer
 
 
 class FinancialFieldsDialog(QDialog):
@@ -15,17 +17,18 @@ class FinancialFieldsDialog(QDialog):
         super().__init__(parent)
         self.invoice = invoice
         self.setWindowTitle('当前发票财税字段')
-        self.setMinimumWidth(480)
+        self.resize(560, 420)
+        self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
-        hint = QLabel('以票面为准填写；未采集的数据保持未知。税率使用百分数，如 13%。')
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
         form = QFormLayout()
         self.fields, self.unknown = {}, {}
         for key, label in [('buyer_tax_id', '购买方税号'), ('amount', '税前金额'),
                            ('tax_amount', '税额'), ('tax_rate', '税率')]:
             field = QLineEdit(str(invoice.get(key) or ''))
             unknown = QCheckBox('未采集')
+            unknown.setMinimumWidth(68)
+            unknown.setAccessibleName(label + '未采集')
+            field.setAccessibleName(label)
             unknown.setChecked(invoice.get(key) is None)
             field.setEnabled(not unknown.isChecked())
             unknown.toggled.connect(lambda checked, target=field: target.setEnabled(not checked))
@@ -49,13 +52,14 @@ class FinancialFieldsDialog(QDialog):
         self.invoice_code = QLineEdit(str(invoice.get('invoice_code') or ''))
         form.addRow('发票代码', self.invoice_code)
         layout.addLayout(form)
+        style_dialog_form(self, layout, form, '财税字段', '以票面为准填写；未采集的数据保持未知。税率使用百分数，如 13%。')
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText("保存")
         buttons.button(QDialogButtonBox.Cancel).setText("取消")
         buttons.button(QDialogButtonBox.Save).setDefault(True)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        add_dialog_footer(self, layout, buttons)
 
     def values(self):
         values = {key: None if self.unknown[key].isChecked() else field.text().strip()

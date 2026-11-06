@@ -18,10 +18,24 @@ def _settings_token_qss() -> str:
     metrics = DESIGN_V1_METRICS
     type_scale = DESIGN_V1_TYPE
     return f"""
+QFrame#SecondaryNavStack, QStackedWidget#SettingsPageStack {{
+    background: {colors['page']}; border: none;
+}}
+QListWidget#SecondaryNavList {{
+    background: {colors['navigation']}; border: none;
+    border-right: 1px solid {colors['navigation_border']};
+}}
 QFrame#SettingsSubpageHeader {{ background: transparent; border: none; }}
+QToolButton#SettingsAddMailbox {{
+    background: {colors['accent']}; color: {colors['surface']};
+    border: 2px solid {colors['accent']}; border-radius: {metrics['radius_small']}px;
+    font-size: {type_scale['body']}px; font-weight: 600; padding: 0 10px;
+}}
+QToolButton#SettingsAddMailbox:hover {{ background: {colors['accent_hover']}; }}
+QToolButton#SettingsAddMailbox:focus {{ border-color: {colors['surface']}; }}
 QLabel[class="SettingsSubpageTitle"] {{
     color: {colors['text']};
-    font-size: {type_scale['subpage_title']}px;
+    font-size: {type_scale['surface_title']}px;
     font-weight: 600;
 }}
 QLabel[class="SettingsSubpageHint"] {{
@@ -128,6 +142,8 @@ def apply_settings_token_contract(page: QWidget | None) -> None:
         return
 
     tabs.setStyleSheet(tabs.styleSheet() + "\n" + _settings_token_qss())
+    for index in range(tabs.stack.count()):
+        tabs.stack.widget(index).setProperty('surfaceRole', 'page')
     page.setProperty("settingsTokenContractVersion", DESIGN_TOKEN_VERSION)
     page.setProperty("settingsTokenContractApplied", True)
 

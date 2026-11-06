@@ -22,6 +22,7 @@ from PySide6.QtTest import QTest
 from scripts.invoice_fetch.gui.column_filters import ColumnFilterPopup
 from scripts.invoice_fetch.gui.page_layouts import DashboardPageLayout
 from scripts.invoice_fetch.gui.selection_surfaces import (
+    NAV_GROUP_ROLE,
     SelectionSurfaceDelegate,
     install_selection_surface_contracts,
 )
@@ -38,6 +39,39 @@ def _app() -> QApplication:
 
 
 class SelectionSurfaceContractTests(unittest.TestCase):
+    def test_navigation_group_heading_is_not_covered_by_selected_row_background(self):
+        shell = SecondaryNavStack()
+        shell.addTab(QWidget(), '邮箱账户')
+        shell.addTab(QWidget(), '开票信息')
+        nav = shell.nav_list
+        nav.item(0).setData(NAV_GROUP_ROLE, '常用')
+        nav.setStyleSheet('QListWidget { background: #EFEFF2; } '
+                         'QListWidget::item:selected { background: #EAF2FC; color: #0066CC; }')
+        install_selection_surface_contracts(shell)
+        shell.resize(500, 300)
+        shell.show()
+        self._flush()
+        try:
+            area = nav.visualItemRect(nav.item(0))
+            rendered = nav.viewport().grab().toImage()
+            # Grey heading ink must remain above the blue selected-row text.
+            ink = sum(1 for x in range(area.left() + 10, min(area.right(), area.left() + 50))
+                      for y in range(area.top() + 2, min(area.bottom(), area.top() + 20))
+                      if max(rendered.pixelColor(x, y).getRgb()[:3]) < 190)
+            self.assertGreater(ink, 10)
+        finally:
+            shell.close()
+
+    def test_late_list_refresh_ignores_a_deleted_widget(self):
+        from shiboken6 import delete
+        from scripts.invoice_fetch.gui.selection_surfaces import _schedule_entity_sync
+
+        view = EntityList()
+        install_selection_surface_contracts(view)
+        delete(view)
+        _schedule_entity_sync(view)
+        _app().processEvents()
+
     @classmethod
     def setUpClass(cls):
         cls.app = _app()

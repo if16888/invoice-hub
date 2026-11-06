@@ -10,6 +10,8 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QStyle
 
+from .design_tokens import DESIGN_V1_COLORS
+
 _ASSETS_ICONS = Path(__file__).parent / "assets" / "icons"
 
 _FALLBACK = {
@@ -44,27 +46,48 @@ class IconProvider:
     system's standard pixmap when an SVG is not available.
     """
 
+    _cache: dict[tuple[str, bool], QIcon] = {}
+
     @classmethod
     def icon(cls, semantic: str) -> QIcon:
         svg_path = _ASSETS_ICONS / f"{semantic}.svg"
         if svg_path.exists():
-            from .dark_mode import prefers_dark
+            from .dark_mode import dark_stylesheet, prefers_dark
 
-            if prefers_dark():
-                from PySide6.QtCore import QByteArray, Qt
-                from PySide6.QtGui import QPainter, QPixmap
-                from PySide6.QtSvg import QSvgRenderer
+            if QApplication.instance() is None:
+                return QIcon(str(svg_path))
+            key = (semantic, prefers_dark())
+            if key in cls._cache:
+                return QIcon(cls._cache[key])
+            from PySide6.QtCore import QByteArray, Qt
+            from PySide6.QtGui import QPainter, QPixmap
+            from PySide6.QtSvg import QSvgRenderer
 
-                svg = svg_path.read_bytes().replace(b"currentColor", b"#CBD5E1")
-                renderer = QSvgRenderer(QByteArray(svg))
+            source = svg_path.read_bytes()
+            icon = QIcon()
+            for mode, state, role in (
+                (QIcon.Normal, QIcon.Off, "text_secondary"),
+                (QIcon.Normal, QIcon.On, "accent"),
+                (QIcon.Active, QIcon.Off, "accent"),
+                (QIcon.Active, QIcon.On, "accent"),
+                (QIcon.Selected, QIcon.Off, "accent"),
+                (QIcon.Selected, QIcon.On, "accent"),
+                (QIcon.Disabled, QIcon.Off, "muted"),
+                (QIcon.Disabled, QIcon.On, "muted"),
+            ):
+                color = DESIGN_V1_COLORS[role]
+                if key[1]:
+                    color = dark_stylesheet(color)
+                renderer = QSvgRenderer(QByteArray(source.replace(b"currentColor", color.encode("ascii"))))
                 pixmap = QPixmap(72, 72)
                 pixmap.fill(Qt.transparent)
                 painter = QPainter(pixmap)
                 renderer.render(painter)
                 painter.end()
                 pixmap.setDevicePixelRatio(4)
-                return QIcon(pixmap)
-            return QIcon(str(svg_path))
+                icon.addPixmap(pixmap, mode, state)
+            cls._cache[key] = icon
+            return QIcon(icon)
         app = QApplication.instance()
         style = app.style() if app is not None else None
         sp = _FALLBACK.get(semantic, QStyle.SP_FileIcon)

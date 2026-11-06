@@ -148,10 +148,10 @@ class HciTaskCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumHeight(112)
+        self.setMinimumHeight(96)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
 
         self.lbl_title = QLabel(title, self)
@@ -167,36 +167,37 @@ class HciTaskCard(QFrame):
         layout.addWidget(self.lbl_hint)
 
         colors = DESIGN_V1_COLORS
-        if state == "danger":
-            surface = colors["danger_surface"]
-            border = colors["danger_border"]
+        if key == "to_review":
+            metric = colors["accent"]
+        elif state == "danger":
             metric = colors["danger_text"]
         elif state == "success":
-            surface = colors["success_surface"]
-            border = colors["success_border"]
             metric = colors["success_text"]
         else:
-            surface = colors["warning_surface"]
-            border = colors["warning_border"]
             metric = colors["warning_text"]
 
         self.setStyleSheet(
             f"""
             QFrame#HciTaskCard {{
-                background: {surface};
-                border: 1px solid {border};
+                background: transparent;
+                border: 2px solid transparent;
                 border-radius: 10px;
             }}
             QFrame#HciTaskCard:hover {{
-                border: 1px solid {colors["accent_border"]};
+                background: {colors["surface"]};
+                border: 2px solid {colors["accent_border"]};
+            }}
+            QFrame#HciTaskCard:focus {{
+                border: 2px solid {colors["focus_ring"]};
             }}
             QLabel[class="HciTaskMetric"] {{
                 color: {metric};
-                font-size: 22px;
+                font-size: 24px;
                 font-weight: 700;
                 border: none;
                 background: transparent;
             }}
+            QLabel[class="HciTaskMetric"][empty="true"] {{ color: {colors["muted"]}; }}
             QLabel[class="SectionTitle"], QLabel[class="SectionHint"] {{
                 border: none;
                 background: transparent;
@@ -206,6 +207,9 @@ class HciTaskCard(QFrame):
 
     def set_value(self, value: int | str, hint: str | None = None) -> None:
         self.lbl_value.setText(str(value))
+        self.lbl_value.setProperty("empty", str(value).strip() in {"0", "—", ""})
+        _repolish(self.lbl_value)
+        self.setAccessibleName(f"{self.lbl_title.text()}：{value}")
         if hint is not None:
             self.lbl_hint.setText(hint)
 
@@ -398,7 +402,7 @@ def _sync_dashboard_hci(window, metrics=None) -> None:
     button = getattr(window, "btn_hci_continue_tasks", None)
     if button is not None:
         count = counts["to_review"]
-        button.setText(f"继续处理 {count} 张" if count else "查看审核工作台")
+        button.setText("继续审核" if count else "查看审核工作台")
         button.setEnabled(True)
 
     badge = getattr(window, "lbl_hci_task_total", None)
@@ -406,16 +410,10 @@ def _sync_dashboard_hci(window, metrics=None) -> None:
         actionable = counts["to_review"]
         badge.setText(f"{actionable} 张待处理" if actionable else "当前无待审核")
 
-    sync_hint = getattr(window, "lbl_overview_recent_imports", None)
-    if sync_hint is not None:
-        sync_hint.setText("默认“同步新邮件”只检查上次同步之后的新邮件。")
-
     health = getattr(window, "lbl_overview_health", None)
     if health is not None:
         health.setText(
-            f"可导出 {counts['export_ready']} 组 · "
-            f"缺证明 {counts['missing_evidence']} 张 · "
-            f"异常 {counts['parse_error']} 张。"
+            f"可导出 {counts['export_ready']} 组" if counts['export_ready'] else "当前还没有可直接导出的报销组。"
         )
 
 
@@ -470,8 +468,8 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
         return
 
     page.setProperty("hciV1DashboardApplied", True)
-    header.set_title("今天需要处理什么")
-    header.set_subtitle("把待确认、缺材料和异常集中处理；完成后再准备报销。")
+    header.set_title("今日工作台")
+    header.set_subtitle("收集票据、完成审核，再准备本次报销。")
 
     old_summary = getattr(window, "overview_summary_strip", None)
     if old_summary is not None:
@@ -488,6 +486,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
     action_row.setSpacing(8)
     action_row.addStretch(1)
     window.lbl_hci_task_total = make_badge("—", variant="warning")
+    window.lbl_hci_task_total.hide()
     window.btn_hci_continue_tasks = make_button("继续处理", variant="primary")
     window.btn_hci_continue_tasks.clicked.connect(
         lambda: _switch_to_review(window, TO_REVIEW, continuous=True)
@@ -520,7 +519,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
     left_card = _section_ancestor(getattr(window, "lbl_overview_recent_imports", None))
     if left_card is not None:
         left_card.set_title("收集与同步")
-        left_card.set_hint("平时只同步新邮件；需要找回历史记录时再选择重新检查。")
+        left_card.set_hint("")
         old_review = getattr(window, "btn_overview_continue_review", None)
         if old_review is not None:
             old_review.hide()
@@ -528,21 +527,26 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
         sync_row = QHBoxLayout()
         sync_row.setContentsMargins(0, 0, 0, 0)
         sync_row.setSpacing(8)
-        btn_sync = make_button("同步新邮件", variant="primary")
+        btn_sync = make_button("同步新邮件", variant="secondary")
         btn_sync.clicked.connect(lambda: _open_import_sync(window, recheck=False))
         btn_recheck = make_button("重新检查", variant="secondary")
         btn_recheck.clicked.connect(lambda: _open_import_sync(window, recheck=True))
         sync_row.addWidget(btn_sync)
         sync_row.addWidget(btn_recheck)
+        btn_other = make_button("本地 / 手机导入", variant="ghost")
+        btn_other.setToolTip("打开导入中心，选择本地文件或手机扫码上传")
+        btn_other.clicked.connect(lambda: window._switch_main_page("imports"))
+        sync_row.addWidget(btn_other)
         sync_row.addStretch(1)
+        window.btn_hci_dashboard_import = btn_other
         left_card.body_layout.addLayout(sync_row)
         window.btn_hci_dashboard_sync = btn_sync
         window.btn_hci_dashboard_recheck = btn_recheck
 
     right_card = _section_ancestor(getattr(window, "lbl_overview_health", None))
     if right_card is not None:
-        right_card.set_title("即将报销")
-        right_card.set_hint("先看是否存在阻塞项，再进入报销组与导出。")
+        right_card.set_title("准备报销")
+        right_card.set_hint("")
         btn_claims = make_button("查看报销组", variant="secondary")
         btn_claims.clicked.connect(lambda: window._switch_main_page("export"))
         right_card.body_layout.addWidget(btn_claims)
@@ -550,8 +554,8 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
 
     activity = getattr(window, "overview_activity_card", None)
     if activity is not None:
-        activity.set_title("当前概况")
-        activity.set_hint("保留最近的导入、审核和导出活动，方便快速确认刚刚发生了什么。")
+        activity.set_title("最近导入")
+        activity.set_hint("")
 
     _install_dashboard_refresh(window)
     _sync_dashboard_hci(window)
@@ -611,6 +615,8 @@ def _enter_hci_continuous_review(window) -> None:
             header.lbl_title.text(),
             header.lbl_subtitle.text(),
         )
+        window._hci_review_header_max_height = header.maximumHeight()
+        header.setMaximumHeight(16777215)
         header.set_title("连续审核")
         header.set_subtitle("把列表暂时退到后台，减少视线跳转；一张正常票只需一次确认。")
 
@@ -662,6 +668,7 @@ def _exit_hci_continuous_review(window) -> None:
         else:
             header.set_title("发票审核")
             header.set_subtitle("逐张确认原件、状态和报销组，处理完成后再进入导出。")
+        header.setMaximumHeight(getattr(window, "_hci_review_header_max_height", 16777215))
 
     upper = getattr(window, "left_upper_widget", None)
     filter_bar = getattr(window, "filter_bar_widget", None)
@@ -1111,7 +1118,7 @@ def _sync_dashboard_closure(window) -> None:
     next_actions = getattr(window, "lbl_overview_next_actions", None)
     if next_actions is not None:
         next_actions.setText(
-            "普通同步不会重复处理已有邮件；误删记录或需要重新识别历史附件时，使用“重新检查”。"
+            "误删记录或需要重新识别旧附件时，使用“重新检查”。"
         )
 
 

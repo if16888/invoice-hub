@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from .ui_components import make_button
+from .dialog_shell import apply_dialog_shell, add_dialog_footer
 
 
 class DateRangeDialog(QDialog):
@@ -34,6 +35,8 @@ class DateRangeDialog(QDialog):
         title = QLabel("时间范围", self)
         title.setProperty("class", "DialogTitle")
         layout.addWidget(title)
+        apply_dialog_shell(self, layout, '')
+        self.resize(480, 360)
 
         presets = QHBoxLayout()
         presets.setSpacing(8)
@@ -81,7 +84,7 @@ class DateRangeDialog(QDialog):
         buttons.button(QDialogButtonBox.Ok).setText("开始重新检查")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        add_dialog_footer(self, layout, buttons)
 
         self.start_date_edit.dateChanged.connect(self._clear_error)
         self.end_date_edit.dateChanged.connect(self._clear_error)

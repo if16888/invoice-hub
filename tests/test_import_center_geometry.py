@@ -19,6 +19,20 @@ from scripts.invoice_fetch.gui.workbench_settings import (
 
 
 class ImportCenterGeometryTests(unittest.TestCase):
+    def test_hidden_mobile_page_minimum_does_not_expand_idle_task(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.resize(1440, 900)
+                window._switch_main_page('imports')
+                panel = window.mobile_upload_panel
+                panel.active_page.setMinimumHeight(1400)
+                window._select_import_source('mobile')
+                QTest.qWait(150)
+                self.assertLess(window.import_mobile_task_card.height(), 600)
+            finally:
+                window.close()
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -48,9 +62,25 @@ class ImportCenterGeometryTests(unittest.TestCase):
                 window._switch_main_page("imports")
                 QTest.qWait(100)
                 self.assertGreater(window.import_source_card.width(), 1000)
+                self.assertLessEqual(window.import_source_card.body.width(), 480)
                 for card in window.import_source_cards.values():
-                    self.assertGreater(card.width(), 250)
+                    self.assertGreaterEqual(card.width(), 96)
+                    self.assertLessEqual(card.width(), 180)
                 self.assertEqual(window.btn_import_local_task.text(), "选择文件夹")
+            finally:
+                window.close()
+
+    def test_idle_mobile_task_does_not_reserve_hidden_qr_page_height(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = self.make_window(td)
+            try:
+                window.resize(1440, 900)
+                window._switch_main_page('imports')
+                window._select_import_source('mobile')
+                QTest.qWait(100)
+                self.assertIs(window.mobile_upload_panel.stack.currentWidget(), window.mobile_upload_panel.idle_page)
+                self.assertLess(window.import_mobile_task_card.height(), 600)
+                self.assertTrue(window.mobile_upload_panel.btn_start.isVisible())
             finally:
                 window.close()
 

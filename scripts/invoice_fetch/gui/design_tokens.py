@@ -10,29 +10,29 @@ from __future__ import annotations
 from collections.abc import MutableMapping
 
 
-DESIGN_TOKEN_VERSION = "design-v1.3-visual-language"
+DESIGN_TOKEN_VERSION = "design-v1.4-desktop"
 
 DESIGN_V1_COLORS = {
-    "page": "#F7F8FA",
+    "page": "#F5F5F7",
     "surface": "#FFFFFF",
-    "surface_secondary": "#F8FAFC",
-    "canvas": "#F1F5F9",
-    "navigation": "#EDF2F8",
-    "navigation_border": "#CBD5E1",
-    "navigation_selected": "#D7E5FB",
-    "selected": "#EFF6FF",
-    "border": "#E5E7EB",
-    "border_subtle": "#E4E7EC",
-    "border_strong": "#D0D5DD",
-    "text": "#182230",
-    "text_secondary": "#475467",
-    "muted": "#667085",
-    "placeholder": "#98A2B3",
-    "accent": "#2563EB",
-    "accent_hover": "#1D4ED8",
-    "accent_border": "#BFDBFE",
+    "surface_secondary": "#F0F0F3",
+    "canvas": "#EAEAEF",
+    "navigation": "#EFEFF2",
+    "navigation_border": "#DCDCE1",
+    "navigation_selected": "#DDE8F7",
+    "selected": "#EAF2FC",
+    "border": "#E2E2E7",
+    "border_subtle": "#E8E8ED",
+    "border_strong": "#C7C7CE",
+    "text": "#1D1D1F",
+    "text_secondary": "#55555D",
+    "muted": "#63636A",
+    "placeholder": "#6E6E76",
+    "accent": "#0066CC",
+    "accent_hover": "#0055AD",
+    "accent_border": "#B8D2EF",
     # Focus indicators must remain visible on white, page, and selected surfaces.
-    "focus_ring": "#2563EB",
+    "focus_ring": "#0066CC",
     # Filled accent controls use an inverse inner border for the focused state.
     "focus_ring_inverse": "#FFFFFF",
     "success": "#16803C",
@@ -50,10 +50,10 @@ DESIGN_V1_COLORS = {
     "danger_surface": "#FEF3F2",
     "danger_border": "#FCA5A5",
     "danger_text": "#B91C1C",
-    "muted_surface": "#F2F4F7",
-    "muted_border": "#E2E8F0",
-    "muted_text": "#475467",
-    "info": "#2563EB",
+    "muted_surface": "#F0F0F3",
+    "muted_border": "#E2E2E7",
+    "muted_text": "#55555D",
+    "info": "#0066CC",
 }
 
 DESIGN_V1_TYPE = {
@@ -63,7 +63,7 @@ DESIGN_V1_TYPE = {
     "section_title": 13,
     "body": 13,
     "secondary": 12,
-    "caption": 11,
+    "caption": 12,
     "metric": 16,
     "badge": 12,
 }
@@ -73,8 +73,8 @@ DESIGN_V1_METRICS = {
     "workspace_horizontal_margin": 12,
     "section_gap": 16,
     "workspace_gap": 8,
-    "control_height": 34,
-    "toolbar_control_height": 32,
+    "control_height": 32,
+    "toolbar_control_height": 28,
     "toolbar_height": 56,
     "sidebar_width": 208,
     "review_width": 420,

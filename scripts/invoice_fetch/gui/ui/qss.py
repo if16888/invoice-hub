@@ -3,24 +3,118 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 from .theme import Theme
 
 
 def build_qss() -> str:
     """Build the application UI Kit stylesheet from Design v1 aliases."""
+    from ..dark_mode import prefers_dark
+
+    chevron_name = "chevron_down_dark.svg" if prefers_dark() else "chevron_down.svg"
+    chevron = (Path(__file__).resolve().parent.parent / "assets" / "icons" / chevron_name).as_posix()
+    icon_dir = Path(__file__).resolve().parent.parent / 'assets' / 'icons'
+    state_suffix = '_dark' if prefers_dark() else ''
+    check_mark = (icon_dir / f'checkbox_checked{state_suffix}.svg').as_posix()
+    partial_mark = (icon_dir / f'checkbox_partial{state_suffix}.svg').as_posix()
+    up_arrow = (icon_dir / f'chevron_up{state_suffix}.svg').as_posix()
+    font_family = {
+        "win32": '"Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
+        "darwin": '"SF Pro Text", "PingFang SC", sans-serif',
+    }.get(sys.platform, '"Noto Sans", "Noto Sans CJK SC", sans-serif')
     return f"""
     /* --------------------------------------------------------------------- */
     /* Global base and semantic typography                                   */
     /* --------------------------------------------------------------------- */
     QWidget {{
-        font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        font-family: {font_family};
         font-size: {Theme.TYPE_BODY}px;
+        font-weight: 400;
         color: {Theme.TEXT_MAIN};
     }}
+    QLabel {{ font-weight: 400; }}
 
-    QMainWindow, QWidget#PageRoot {{
+    QMainWindow, QWidget#PageRoot, QWidget[surfaceRole="page"] {{
         background-color: {Theme.BG_PAGE};
     }}
+    QWidget[surfaceRole="content"] {{ background: {Theme.BG_CARD}; }}
+    QWidget#ReviewEmptyState {{ background: {Theme.BG_PAGE}; }}
+    QFrame#InvoiceTableCard[empty="true"] {{ background: {Theme.BG_PAGE}; }}
+    QLabel[class="EmptyPageTitle"] {{ font-size: {Theme.TYPE_PAGE_TITLE}px; font-weight: 600; }}
+    QFrame#EmptyOnboardingStep {{
+        background: {Theme.BG_CARD};
+        border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CARD}px;
+    }}
+    QFrame#EmptyOnboardingStep[step="followup"] {{ background: transparent; border: none; }}
+    QFrame#EmptyOnboardingStep QLabel {{ border: none; background: transparent; }}
+    QFrame#ImportSourceSelector {{ background: transparent; border: none; }}
+    QWidget#ImportSourceSegment {{
+        background: {Theme.BG_SUBTLE};
+        border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CONTROL}px;
+    }}
+    QFrame#ImportSourceSelector QFrame#SelectableSourceCard {{
+        background: transparent;
+        border: 2px solid transparent;
+        border-radius: {Theme.RADIUS_SM}px;
+    }}
+    QFrame#ImportSourceSelector QFrame#SelectableSourceCard[selected="true"] {{
+        background: {Theme.BG_CARD};
+        border-color: {Theme.BORDER};
+    }}
+    QFrame#ImportSourceSelector QFrame#SelectableSourceCard:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QFrame#ImportSourceSelector QLabel {{ font-weight: 400; }}
+    QFrame#ImportSourceSelector QFrame[selected="true"] QLabel {{ font-weight: 600; }}
+    QToolButton#ExportPassedChecks {{
+        text-align: left;
+        padding: 2px 6px;
+        border: 2px solid transparent;
+        border-radius: {Theme.RADIUS_SM}px;
+        color: {Theme.BLUE};
+        background: transparent;
+    }}
+    QToolButton#ExportPassedChecks:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QToolButton#WorkbenchTopIconButton::menu-indicator {{ image: none; width: 0; }}
+    QFrame#WorkbenchTopToolbar {{
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: 0;
+        min-height: 40px;
+        max-height: 40px;
+    }}
+    QFrame#InvoiceTableCard {{ border: none; border-radius: 0; }}
+    QFrame#DetailSummaryCard {{
+        border: none;
+        border-bottom: 1px solid {Theme.BORDER};
+        border-radius: 0;
+        background: {Theme.BG_CARD};
+    }}
+    QFrame#ReviewActionRow QPushButton {{
+        min-height: 28px;
+        max-height: 28px;
+        border-width: 2px;
+    }}
+    QTabWidget#DetailTabs::pane {{ border: none; background: {Theme.BG_CARD}; }}
+    QTabWidget#DetailTabs QTabBar::tab {{
+        background: {Theme.BG_SUBTLE};
+        color: {Theme.TEXT_SUB};
+        border: 1px solid transparent;
+        border-radius: {Theme.RADIUS_SM}px;
+        padding: 6px 12px;
+        margin: 3px;
+    }}
+    QTabWidget#DetailTabs QTabBar::tab:selected {{
+        background: {Theme.BG_CARD};
+        border-color: {Theme.BORDER};
+        color: {Theme.TEXT_MAIN};
+    }}
+    QFrame#SecondaryNavStack {{ border: none; background: {Theme.BG_PAGE}; }}
+    QFrame#SecondaryNavStack QScrollArea,
+    QFrame#SecondaryNavStack QWidget#SettingsPageStack {{ background: {Theme.BG_PAGE}; }}
 
     QLabel[role="section-title"] {{
         color: {Theme.TEXT_MAIN};
@@ -61,20 +155,26 @@ def build_qss() -> str:
     /* Buttons                                                               */
     /* Reserve the final focus-border width in every state to avoid jitter.  */
     /* --------------------------------------------------------------------- */
-    QPushButton {{
-        min-height: {Theme.CONTROL_HEIGHT}px;
-        max-height: {Theme.CONTROL_HEIGHT}px;
+    QPushButton,
+    QPushButton.PrimaryBtn, QPushButton.SecondaryBtn,
+    QPushButton.ToolbarActionBtn, QPushButton.FilterBtn,
+    QPushButton[variant="primary"], QPushButton[variant="secondary"],
+    QPushButton[variant="danger"], QPushButton[variant="ghost"],
+    QPushButton[variant="toolbar"], QPushButton[variant="chip"],
+    QPushButton[emphasis="primary"] {{
+        min-height: {Theme.CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
+        max-height: {Theme.CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
         border-radius: {Theme.RADIUS_CONTROL}px;
         padding: 0 13px;
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER_STRONG};
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
         background-color: {Theme.BG_CARD};
         color: {Theme.TEXT_MAIN};
         font-size: {Theme.TYPE_BODY}px;
-        font-weight: 500;
+        font-weight: 400;
     }}
     QPushButton:hover {{
         background-color: {Theme.BG_SUBTLE};
-        border-color: {Theme.BLUE};
+        border-color: {Theme.BORDER_STRONG};
     }}
     QPushButton:focus {{
         border-color: {Theme.FOCUS_RING};
@@ -128,11 +228,19 @@ def build_qss() -> str:
     }}
 
     QPushButton[variant="toolbar"] {{
-        min-height: {Theme.TOOLBAR_CONTROL_HEIGHT}px;
-        max-height: {Theme.TOOLBAR_CONTROL_HEIGHT}px;
+        min-height: {Theme.TOOLBAR_CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
+        max-height: {Theme.TOOLBAR_CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
         border-radius: {Theme.RADIUS_SM}px;
         padding: 0 11px;
         font-size: {Theme.TYPE_SECONDARY}px;
+    }}
+    QPushButton:pressed {{ background-color: {Theme.BG_CANVAS}; }}
+    QPushButton[variant="primary"]:pressed {{ background-color: {Theme.BLUE_HOVER}; }}
+    QPushButton:disabled, QPushButton[variant="primary"]:disabled,
+    QPushButton[variant="ghost"]:disabled, QPushButton[variant="danger"]:disabled {{
+        background-color: {Theme.BG_SUBTLE};
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
+        color: {Theme.TEXT_HINT};
     }}
 
     /* --------------------------------------------------------------------- */
@@ -246,8 +354,8 @@ def build_qss() -> str:
     /* Form inputs                                                           */
     /* --------------------------------------------------------------------- */
     QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
-        min-height: {Theme.CONTROL_HEIGHT}px;
-        max-height: {Theme.CONTROL_HEIGHT}px;
+        min-height: {Theme.CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
+        max-height: {Theme.CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
         border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
         border-radius: {Theme.RADIUS_CONTROL}px;
         background-color: {Theme.BG_CARD};
@@ -265,6 +373,28 @@ def build_qss() -> str:
         color: {Theme.TEXT_MAIN};
         font-size: {Theme.TYPE_BODY}px;
     }}
+    QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: 26px;
+        border: none;
+        background: transparent;
+    }}
+    QComboBox::down-arrow {{ image: url("{chevron}"); width: 12px; height: 12px; }}
+
+    QFrame#InvoiceRecordHeader QToolButton {{
+        padding: 0 12px;
+        border: 1px solid transparent;
+        border-radius: {Theme.RADIUS_SM}px;
+        background: transparent;
+        color: {Theme.TEXT_MAIN};
+        font-size: {Theme.TYPE_SECONDARY}px;
+    }}
+    QFrame#InvoiceRecordHeader QToolButton:hover {{ background: {Theme.BG_SUBTLE}; }}
+    QFrame#InvoiceRecordHeader QToolButton:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QFrame#InvoiceRecordHeader QToolButton:disabled {{ color: {Theme.TEXT_HINT}; }}
+    QFrame#InvoiceRecordHeader QToolButton::menu-indicator {{ image: none; width: 0; }}
+
     QLineEdit:focus, QComboBox:focus, QTextEdit:focus,
     QLineEdit.DetailFieldInput:focus, QComboBox.DetailFieldInput:focus {{
         border-color: {Theme.FOCUS_RING};
@@ -408,5 +538,117 @@ def build_qss() -> str:
 
     QSplitter::handle {{
         background: transparent;
+    }}
+
+    /* Task dialogs share the same surfaces, sizing and action hierarchy. */
+    QDialog[dialogStyle="desktop"] {{ background: {Theme.BG_PAGE}; }}
+    QDialog[dialogStyle="desktop"] QLabel {{ font-size: {Theme.TYPE_BODY}px; }}
+    QDialog[dialogStyle="desktop"] QLabel[class="DialogTitle"] {{
+        color: {Theme.TEXT_MAIN}; font-size: {Theme.TYPE_PAGE_TITLE}px; font-weight: 600;
+    }}
+    QDialog[dialogStyle="desktop"] QLabel[class="DialogHint"],
+    QDialog[dialogStyle="desktop"] QLabel[class="SectionHint"] {{
+        color: {Theme.TEXT_MUTED}; font-size: {Theme.TYPE_SECONDARY}px;
+    }}
+    QDialog[dialogStyle="desktop"] QWidget#DialogFormBody {{
+        background: {Theme.BG_CARD}; border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CARD}px;
+    }}
+    QDialog[dialogStyle="desktop"] QScrollArea {{ background: transparent; border: none; }}
+    QDialog[dialogStyle="desktop"] QFrame#DialogFooter {{
+        background: transparent; border: none; border-top: 1px solid {Theme.BORDER};
+    }}
+    QDialog[dialogStyle="desktop"] QLineEdit,
+    QDialog[dialogStyle="desktop"] QComboBox,
+    QDialog[dialogStyle="desktop"] QAbstractSpinBox {{
+        min-height: 28px; max-height: 28px; padding: 0 9px;
+        border: 2px solid {Theme.BORDER}; border-radius: {Theme.RADIUS_CONTROL}px;
+        background: {Theme.BG_CARD}; color: {Theme.TEXT_MAIN}; font-size: {Theme.TYPE_BODY}px;
+        placeholder-text-color: {Theme.TEXT_HINT};
+    }}
+    QDialog[dialogStyle="desktop"] QAbstractSpinBox {{ padding-right: 30px; }}
+    QDialog[dialogStyle="desktop"] QSpinBox::up-arrow {{ image: url("{up_arrow}"); width: 10px; height: 10px; }}
+    QDialog[dialogStyle="desktop"] QSpinBox::down-arrow {{ image: url("{chevron}"); width: 10px; height: 10px; }}
+    QDialog[dialogStyle="desktop"] QDateEdit::drop-down {{
+        subcontrol-origin: padding; subcontrol-position: top right;
+        width: 26px; border: none; background: transparent;
+    }}
+    QDialog[dialogStyle="desktop"] QDateEdit::down-arrow {{ image: url("{chevron}"); width: 12px; height: 12px; }}
+    QDialog[dialogStyle="desktop"] QLineEdit:focus,
+    QDialog[dialogStyle="desktop"] QComboBox:focus,
+    QDialog[dialogStyle="desktop"] QAbstractSpinBox:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QDialog[dialogStyle="desktop"] QLineEdit:disabled,
+    QDialog[dialogStyle="desktop"] QComboBox:disabled,
+    QDialog[dialogStyle="desktop"] QAbstractSpinBox:disabled {{
+        background: {Theme.BG_SUBTLE}; color: {Theme.TEXT_SUB};
+    }}
+    QDialog[dialogStyle="desktop"] QPushButton {{
+        min-height: 28px; max-height: 28px; min-width: 64px; padding: 0 12px;
+        font-size: {Theme.TYPE_BODY}px; border: 2px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CONTROL}px; background: {Theme.BG_CARD}; color: {Theme.TEXT_MAIN};
+    }}
+    QDialog[dialogStyle="desktop"] QPushButton:hover {{ background: {Theme.BG_SUBTLE}; }}
+    QDialog[dialogStyle="desktop"] QPushButton:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QDialog[dialogStyle="desktop"] QPushButton[variant="primary"] {{
+        background: {Theme.BLUE}; border-color: {Theme.BLUE}; color: {Theme.BG_CARD}; font-weight: 600;
+    }}
+    QDialog[dialogStyle="desktop"] QPushButton[variant="primary"]:hover {{
+        background: {Theme.BLUE_HOVER}; border-color: {Theme.BLUE_HOVER};
+    }}
+    QDialog[dialogStyle="desktop"] QPushButton[variant="primary"]:focus {{ border-color: {Theme.BG_CARD}; }}
+    QDialog[dialogStyle="desktop"] QPushButton[variant="danger"] {{ color: {Theme.RED_TEXT}; border-color: {Theme.RED_BORDER}; }}
+    QDialog[dialogStyle="desktop"] QPushButton[variant="danger"]:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QDialog[dialogStyle="desktop"] QPushButton:pressed {{ background: {Theme.BG_CANVAS}; }}
+    QDialog[dialogStyle="desktop"] QPushButton[variant="primary"]:pressed {{ background: {Theme.BLUE_HOVER}; }}
+    QDialog[dialogStyle="desktop"] QPushButton:disabled,
+    QDialog[dialogStyle="desktop"] QPushButton[variant="primary"]:disabled,
+    QDialog[dialogStyle="desktop"] QPushButton[variant="danger"]:disabled {{
+        background: {Theme.BG_SUBTLE}; border-color: {Theme.BORDER}; color: {Theme.TEXT_SUB}; font-weight: 400;
+    }}
+    QDialog[dialogStyle="desktop"] QTableWidget {{
+        background: {Theme.BG_CARD}; border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CONTROL}px; gridline-color: {Theme.BORDER};
+        alternate-background-color: {Theme.BG_SUBTLE};
+    }}
+    QDialog[dialogStyle="desktop"] QPlainTextEdit {{
+        background: {Theme.BG_CARD}; color: {Theme.TEXT_MAIN}; border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CONTROL}px; padding: 10px;
+    }}
+    QDialog[dialogStyle="desktop"] QCheckBox::indicator,
+    QDialog[dialogStyle="desktop"] QTableWidget::indicator,
+    QDialog#columnFilterPopup QCheckBox::indicator,
+    QDialog#columnFilterPopup QListWidget::indicator {{
+        width: 14px; height: 14px; border: 1px solid {Theme.TEXT_MUTED};
+        border-radius: 3px; background: {Theme.BG_CARD};
+    }}
+    QDialog[dialogStyle="desktop"] QCheckBox::indicator:checked,
+    QDialog[dialogStyle="desktop"] QTableWidget::indicator:checked,
+    QDialog#columnFilterPopup QCheckBox::indicator:checked,
+    QDialog#columnFilterPopup QListWidget::indicator:checked {{
+        border-color: {Theme.BLUE}; background: {Theme.BLUE}; image: url("{check_mark}");
+    }}
+    QDialog[dialogStyle="desktop"] QCheckBox::indicator:indeterminate,
+    QDialog[dialogStyle="desktop"] QTableWidget::indicator:indeterminate,
+    QDialog#columnFilterPopup QCheckBox::indicator:indeterminate,
+    QDialog#columnFilterPopup QListWidget::indicator:indeterminate {{
+        border-color: {Theme.BLUE}; background: {Theme.BLUE}; image: url("{partial_mark}");
+    }}
+    QDialog[dialogStyle="desktop"] QCheckBox::indicator:disabled {{ border-color: {Theme.BORDER}; background: {Theme.BG_SUBTLE}; }}
+    QDialog[dialogStyle="desktop"] QCheckBox::indicator:checked:disabled,
+    QDialog[dialogStyle="desktop"] QCheckBox::indicator:indeterminate:disabled {{ background: {Theme.TEXT_MUTED}; }}
+    QMessageBox[dialogStyle="desktop"] QLabel#qt_msgbox_label {{ font-size: {Theme.TYPE_SURFACE_TITLE}px; font-weight: 600; }}
+    QMessageBox[dialogStyle="desktop"] QLabel#qt_msgbox_informativelabel {{ color: {Theme.TEXT_SUB}; }}
+    QCalendarWidget {{ background: {Theme.BG_CARD}; border: 1px solid {Theme.BORDER}; }}
+    QCalendarWidget QWidget#qt_calendar_navigationbar {{ background: {Theme.BG_SUBTLE}; }}
+    QCalendarWidget QToolButton {{
+        background: transparent; color: {Theme.TEXT_MAIN}; border: 2px solid transparent;
+        border-radius: {Theme.RADIUS_SM}px; min-height: 24px; min-width: 24px;
+        font-size: {Theme.TYPE_BODY}px;
+    }}
+    QCalendarWidget QToolButton:hover {{ background: {Theme.BG_CARD}; }}
+    QCalendarWidget QToolButton:focus {{ border-color: {Theme.FOCUS_RING}; }}
+    QCalendarWidget QAbstractItemView {{
+        background: {Theme.BG_CARD}; color: {Theme.TEXT_MAIN};
+        selection-background-color: {Theme.BLUE}; selection-color: {Theme.TEXT_ON_ACCENT};
     }}
     """

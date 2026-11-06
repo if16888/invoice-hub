@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
 
 from .ui_components import InlineErrorCard, make_button
+from .dialog_shell import apply_dialog_shell, add_dialog_footer
 
 
 class ApiKeyDialog(QDialog):
@@ -17,8 +18,7 @@ class ApiKeyDialog(QDialog):
         self.resize(480, 280)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        apply_dialog_shell(self, layout, '')
         title = QLabel(f"配置 {self.provider} API Key")
         title.setProperty("class", "DialogTitle")
         layout.addWidget(title)
@@ -60,7 +60,7 @@ class ApiKeyDialog(QDialog):
         footer.addWidget(self.btn_cancel)
         footer.addWidget(self.btn_save)
         footer.addWidget(self.btn_save_and_test)
-        layout.addLayout(footer)
+        add_dialog_footer(self, layout, footer)
         self.txt_key.returnPressed.connect(self._accept_save_and_test)
 
     def _toggle_visibility(self, visible: bool):
