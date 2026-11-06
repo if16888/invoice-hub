@@ -1090,24 +1090,18 @@ class InvoiceDB(EvidenceStoreMixin):
         if status not in review_status.ALL_STATUSES:
             raise ValueError(f"Invalid review status: '{status}'. Must be one of {review_status.ALL_STATUSES}")
 
-        # Check existence
-        inv = self.get_invoice(invoice_id)
-        if not inv:
-            self._set_last_error("not_found")
-            return False
-        if not self._require_invoice_editable(invoice_id):
-            return False
-
-        if status == review_status.APPROVED and is_pending_evidence_invoice(inv):
-            self._set_last_error("evidence_only")
-            return False
-
-        if status == review_status.TO_REVIEW:
-            confirmed_at = ""
-        else:
-            confirmed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            inv = self.get_invoice(invoice_id)
+            if not inv:
+                self._set_last_error("not_found")
+                return False
+            if not self._require_invoice_editable(invoice_id):
+                return False
+            if status == review_status.APPROVED and is_pending_evidence_invoice(inv):
+                self._set_last_error("evidence_only")
+                return False
+            confirmed_at = "" if status == review_status.TO_REVIEW else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._conn.execute(
                 "UPDATE invoices SET review_status = ?, confirmed_note = ?, confirmed_at = ? WHERE id = ?",
                 (status, note, confirmed_at, invoice_id)
@@ -1159,10 +1153,11 @@ class InvoiceDB(EvidenceStoreMixin):
 
     def update_invoice_note(self, invoice_id: int, note: str) -> bool:
         """Persist a note without rewriting parsed or edited financial fields."""
-        if not self._require_invoice_editable(invoice_id):
-            return False
         try:
             with self._atomic_savepoint():
+                self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+                if not self._require_invoice_editable(invoice_id):
+                    return False
                 cursor = self._conn.execute(
                     "UPDATE invoices SET confirmed_note=? WHERE id=?", (note, invoice_id)
                 )
@@ -1409,11 +1404,12 @@ class InvoiceDB(EvidenceStoreMixin):
         missing_extra: bool,
     ) -> bool:
         """Synchronize evidence flags without changing parsed invoice metadata."""
-        if not self._require_invoice_editable(invoice_id):
-            return False
-        if not self.get_invoice(invoice_id):
-            return False
         with self._atomic_savepoint():
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            if not self._require_invoice_editable(invoice_id):
+                return False
+            if not self.get_invoice(invoice_id):
+                return False
             self._conn.execute(
                 "UPDATE invoices SET has_extra=?, missing_extra=?, "
                 "evidence_required=MAX(evidence_required,?) WHERE id=?",
@@ -1691,8 +1687,9 @@ class InvoiceDB(EvidenceStoreMixin):
         * 缺证明  : fields and original exist but ``missing_extra`` is set
         * 正常    : everything present
 
-        ``month_amounts`` returns the raw amount strings of the requested month
-        so the caller keeps its Decimal handling (no float rounding in SQL).
+        ``month_invoices`` preserves raw amounts and currencies of financial
+        records. ``month_amounts`` keeps the legacy amount-only projection;
+        neither projection converts currencies or rounds through SQL floats.
         """
         normal = (
             "TRIM(COALESCE(i.invoice_number, '')) <> '' "
@@ -1713,8 +1710,9 @@ class InvoiceDB(EvidenceStoreMixin):
             (review_status.TO_REVIEW, review_status.ERROR),
         ).fetchone()
         month_rows = self._conn.execute(
-            "SELECT i.total_amount FROM invoices i "
-            f"WHERE {visible_invoice_sql()} AND i.is_deleted = 0 "
+            "SELECT i.total_amount, i.currency FROM invoices i "
+            "WHERE i.record_role='invoice' AND COALESCE(i.invoice_type,'')!='待关联证明材料' "
+            "AND i.is_deleted = 0 "
             "AND SUBSTR(TRIM(CASE WHEN COALESCE(i.expense_date, '') <> '' "
             "THEN i.expense_date ELSE COALESCE(i.invoice_date, '') END), 1, 7) = ?",
             (str(month_prefix),),
@@ -1725,6 +1723,7 @@ class InvoiceDB(EvidenceStoreMixin):
             "to_review": int(row["to_review"] if row else 0),
             "error": int(row["error"] if row else 0),
             "month_amounts": [r["total_amount"] for r in month_rows],
+            "month_invoices": [dict(r) for r in month_rows],
         }
 
     @staticmethod
@@ -1989,8 +1988,10 @@ class InvoiceDB(EvidenceStoreMixin):
         """Reconcile current weak keys and queue candidates without changing invoices' status."""
         from .duplicate_review import soft_invoice_fingerprint
         groups = {}
-        rows = self._conn.execute("SELECT * FROM invoices WHERE is_deleted=0 ORDER BY id").fetchall()
         with self._atomic_savepoint():
+            # A derived key must describe the same row version we publish it for.
+            self._conn.execute("UPDATE invoices SET id=id WHERE 0")
+            rows = self._conn.execute("SELECT * FROM invoices WHERE is_deleted=0 ORDER BY id").fetchall()
             for row in rows:
                 invoice = dict(row)
                 fingerprint = soft_invoice_fingerprint(invoice)
@@ -2040,6 +2041,19 @@ class InvoiceDB(EvidenceStoreMixin):
             "ORDER BY c.id", (decision,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def duplicate_review_snapshot(self) -> dict[str, set[int]]:
+        """Read current decisions without reconciling fingerprints or writing rows."""
+        snapshot = {key: set() for key in ("pending", "distinct", "duplicate")}
+        rows = self._conn.execute(
+            "SELECT c.invoice_id, c.decision FROM duplicate_review_candidates c "
+            "JOIN invoices i ON i.id=c.invoice_id JOIN invoices r ON r.id=c.reference_id "
+            "WHERE i.is_deleted=0 AND r.is_deleted=0 "
+            "AND i.soft_fingerprint=c.fingerprint AND r.soft_fingerprint=c.fingerprint"
+        )
+        for row in rows:
+            snapshot[row["decision"]].add(int(row["invoice_id"]))
+        return snapshot
 
     def resolve_duplicate_candidate(self, candidate_id: int, decision: str) -> bool:
         if decision not in {"distinct", "duplicate"}:
@@ -2510,7 +2524,7 @@ class InvoiceDB(EvidenceStoreMixin):
         rows = self._conn.execute(sql, (claim_id,)).fetchall()
         from .claim_reason import resolve_claim_reason
         claim = self.get_claim_group(claim_id)
-        invoices = [self._with_evidence(dict(r)) for r in rows]
+        invoices = self._with_evidence_many([dict(r) for r in rows])
         for invoice in invoices:
             invoice["reimbursement_reason"] = resolve_claim_reason(invoice, claim)
         return invoices
@@ -2575,6 +2589,8 @@ class InvoiceDB(EvidenceStoreMixin):
                 current_digest = claim_members_digest(self.get_claim_invoices(claim_id))
                 if current_digest != expected_digest:
                     raise ValueError("导出期间报销组内容已变化，请刷新后重新导出")
+            if set(item_ids) & self.duplicate_review_snapshot()["duplicate"]:
+                raise ValueError("导出已阻断：报销组包含已确认重复的票据，请先核对重复复核结论。")
             if item_ids:
                 placeholders = ",".join("?" for _ in item_ids)
                 blocked = self._conn.execute(
@@ -2654,6 +2670,9 @@ class InvoiceDB(EvidenceStoreMixin):
             invoice_ids = self.get_export_run_items(int(export_run_id))
             if not run or not invoice_ids:
                 self._set_last_error("export_run_items_missing")
+                return False
+            if set(invoice_ids) & self.duplicate_review_snapshot()["duplicate"]:
+                self._set_last_error("confirmed_duplicate")
                 return False
             # Only the newest package may be marked reimbursed: marking an older
             # package would lock the claim while the live package differs from it.

@@ -235,6 +235,26 @@ class EvidenceStoreMixin:
         invoice["linked_evidence"] = self.list_invoice_evidence(invoice["id"])
         return invoice
 
+    def _with_evidence_many(self, invoices: list[dict]) -> list[dict]:
+        """Hydrate relations in bounded batches instead of one query per invoice."""
+        ids = list(dict.fromkeys(int(row["id"]) for row in invoices))
+        by_invoice = {}
+        for start in range(0, len(ids), 500):
+            batch = ids[start:start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            rows = _rows(self._conn,
+                "SELECT e.*, r.invoice_id AS _parent_id, r.created_at AS linked_at, "
+                "e.id AS evidence_id, counts.linked_count "
+                "FROM invoice_evidence_relations r JOIN invoices e ON e.id=r.evidence_id "
+                "JOIN (SELECT evidence_id, COUNT(*) AS linked_count FROM invoice_evidence_relations "
+                "GROUP BY evidence_id) counts ON counts.evidence_id=e.id "
+                f"WHERE r.invoice_id IN ({placeholders}) ORDER BY r.created_at, e.id", batch)
+            for row in rows:
+                by_invoice.setdefault(row.pop("_parent_id"), []).append(row)
+        for invoice in invoices:
+            invoice["linked_evidence"] = by_invoice.get(invoice["id"], [])
+        return invoices
+
     def link_evidence_to_invoices(self, invoice_ids, evidence_ids) -> int:
         """Associate explicit IDs across any source, all-or-nothing and reusable."""
         targets = tuple(dict.fromkeys(int(value) for value in invoice_ids))
