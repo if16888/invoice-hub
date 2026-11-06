@@ -106,6 +106,68 @@ class DuplicateReviewTests(unittest.TestCase):
             items = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))['items']
             self.assertIn('distinct', {item['duplicate_review'] for item in items})
 
+    def test_export_rechecks_duplicate_decision_and_removes_failed_attempt(self):
+        from unittest.mock import patch
+        from scripts.invoice_fetch.excel_export import export_excel
+        (self.root / 'original.pdf').write_bytes(b'synthetic invoice')
+        path = self.root / 'concurrent.db'
+        with InvoiceDB(path) as db:
+            first, second = self.receipt(db), self.receipt(db)
+            claim = db.create_claim_group('Receipts')
+            for invoice in (first, second):
+                db.add_invoice_to_claim(claim, invoice)
+            candidate = db.list_duplicate_candidates()[0]
+
+            def confirm_during_generation(*args, **kwargs):
+                export_excel(*args, **kwargs)
+                with InvoiceDB(path) as other:
+                    self.assertTrue(other.resolve_duplicate_candidate(candidate['id'], 'duplicate'))
+
+            with patch('scripts.invoice_fetch.claim_export.export_excel', side_effect=confirm_during_generation):
+                with self.assertRaisesRegex(ValueError, '已确认重复'):
+                    export_claim_package(db, claim, self.root, self.root,
+                        export_root=self.root / 'exports', reimbursement_config={})
+            self.assertEqual(db.get_export_runs(claim), [])
+            self.assertEqual(db.get_claim_group(claim)['status'], 'draft')
+            self.assertFalse(list((self.root / 'exports').rglob('*.xlsx')))
+            self.assertTrue((self.root / 'original.pdf').is_file())
+
+    def test_reimbursement_rejects_duplicate_confirmed_after_export(self):
+        (self.root / 'original.pdf').write_bytes(b'synthetic invoice')
+        with InvoiceDB(self.root / 'reimbursement.db') as db:
+            first, second = self.receipt(db), self.receipt(db)
+            claim = db.create_claim_group('Receipts')
+            for invoice in (first, second):
+                db.add_invoice_to_claim(claim, invoice)
+            candidate = db.list_duplicate_candidates()[0]
+            export_claim_package(db, claim, self.root, self.root,
+                export_root=self.root / 'exports', reimbursement_config={})
+            self.assertTrue(db.resolve_duplicate_candidate(candidate['id'], 'duplicate'))
+            self.assertFalse(db.mark_claim_reimbursed(claim))
+            self.assertEqual(db.last_error, 'confirmed_duplicate')
+            self.assertEqual(db.get_claim_group(claim)['status'], 'exported')
+            for invoice in (first, second):
+                self.assertIsNone(db.get_invoice(invoice)['reimbursed_at'])
+            self.assertTrue(db.reset_duplicate_candidate(candidate['id']))
+            self.assertTrue(db.resolve_duplicate_candidate(candidate['id'], 'distinct'))
+            self.assertTrue(db.mark_claim_reimbursed(claim))
+
+    def test_first_export_handles_fresh_and_edited_unnumbered_receipts(self):
+        (self.root / 'original.pdf').write_bytes(b'synthetic invoice')
+        for edit in (False, True):
+            with self.subTest(edit=edit), InvoiceDB(self.root / f'fresh-{edit}.db') as db:
+                invoice = self.receipt(db)
+                if edit:
+                    db.refresh_duplicate_candidates()
+                    self.assertTrue(db.update_invoice_fields(invoice, '', '2026-10-07', 'Taxi Seller', '20.00', '交通'))
+                claim = db.create_claim_group('Receipt')
+                db.add_invoice_to_claim(claim, invoice)
+                package = export_claim_package(db, claim, self.root, self.root,
+                    export_root=self.root / f'exports-{edit}', reimbursement_config={})
+                self.assertTrue((package / 'manifest.json').is_file())
+                self.assertEqual(len(db.get_export_runs(claim)), 1)
+                self.assertEqual(db.get_claim_group(claim)['status'], 'exported')
+
     def test_backup_restores_review_decision(self):
         path = self.root / 'backup.db'
         with InvoiceDB(path) as db:

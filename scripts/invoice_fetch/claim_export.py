@@ -234,6 +234,16 @@ def inspect_invoice_materials(invoice: dict, runtime_dir: Path) -> dict:
     }
 
 
+def material_inspection_signature(invoices) -> tuple:
+    """Freeze only the fields that determine a material inspection result."""
+    return tuple((row.get("id"), str(row.get("attachment_path") or ""),
+                  tuple(_normalize_path_list(row.get("extra_paths"))),
+                  _flag_is_true(row.get("missing_extra")), _flag_is_true(row.get("has_extra")),
+                  str(row.get("extra_type") or ""),
+                  tuple((source.get("id"), source.get("is_deleted"), source.get("attachment_path"))
+                        for source in row.get("linked_evidence", ()))) for row in invoices)
+
+
 def inspect_materials_for_invoices(invoices, runtime_dir: Path) -> list[dict]:
     """Inspect many invoices, reading their files across a small thread pool.
 
@@ -521,6 +531,79 @@ def verify_export_manifest(export_dir: Path) -> dict:
     return {"valid": not errors, "checked": len(listed), "errors": errors}
 
 
+def invoice_export_issues(invoice: dict, reimbursement_config: dict | None = None,
+                          *, confirmed_duplicate: bool = False) -> dict[str, str]:
+    """Shared, read-only financial rules for UI preflight and package creation."""
+    issues = {}
+    if confirmed_duplicate:
+        issues["confirmed_duplicate"] = "导出已阻断：报销组包含已确认重复的票据，请先忽略该票据或重置复核结论。"
+    id_check = check_tax_id(invoice.get("buyer_tax_id"), invoice.get("buyer_tax_id_type", "unknown"))
+    if id_check.blocking:
+        issues["tax_id"] = "导出已阻断：" + id_check.message
+    balance = check_tax_balance(invoice)
+    if balance.blocking:
+        issues["tax_balance"] = "导出已阻断：" + _invoice_export_identity(invoice) + "；" + balance.message
+    settings = (reimbursement_config or {}).get("reimbursement", reimbursement_config or {})
+    if buyer_warning(invoice, {"reimbursement": {**settings, "strict_buyer_check": False}}):
+        issues["buyer_tax"] = "导出已阻断：购买方税号待核对，请修正税号或调整严格税号校验设置。"
+    try:
+        _normalized_finite_amount(invoice.get("total_amount"), invoice_identity=_invoice_export_identity(invoice))
+    except ValueError as exc:
+        key = "missing_amount" if not str(invoice.get("total_amount") or "").strip() else "invalid_amount"
+        issues[key] = str(exc)
+    return issues
+
+
+def export_preflight_blockers(stats: dict) -> list[str]:
+    """Return the same blocking reasons on every export-related UI surface."""
+    labels = (("missing_attachment", "缺原件"), ("missing_amount", "缺金额"),
+              ("invalid_amount", "金额无效"), ("missing_extra", "缺补充材料"),
+              ("unavailable_extra", "材料不可用"))
+    result = [f"{label} {stats[key]} 张" for key, label in labels if stats.get(key)]
+    result.extend(stats.get("business_blockers", ()))
+    return result
+
+
+def claim_export_preflight(invoices: list[dict], runtime_dir: Path, *, include_to_review: bool,
+                           reimbursement_config: dict | None = None, duplicate_ids=(),
+                           materials_by_id: dict | None = None) -> dict:
+    """Inspect a selected status range without mutating the ledger or queue."""
+    statuses = {review_status.APPROVED, review_status.TO_REVIEW} if include_to_review else {review_status.APPROVED}
+    stats = {status: 0 for status in review_status.ALL_STATUSES}
+    stats.update({key: 0 for key in ("missing_attachment", "missing_amount", "invalid_amount", "missing_extra", "unavailable_extra")})
+    business = []
+    stats["business_blocker_count"] = 0
+    selected = []
+    for invoice in invoices:
+        if is_pending_evidence_invoice(invoice):
+            continue
+        status = invoice.get("review_status") or review_status.TO_REVIEW
+        if status in review_status.ALL_STATUSES:
+            stats[status] += 1
+        if status not in statuses:
+            continue
+        selected.append(invoice)
+        issues = invoice_export_issues(invoice, reimbursement_config,
+                                      confirmed_duplicate=invoice.get("id") in duplicate_ids)
+        for key in ("missing_amount", "invalid_amount"):
+            stats[key] += int(key in issues)
+        stats["business_blocker_count"] += int(bool(set(issues) - {"missing_amount", "invalid_amount"}))
+        business.extend(message.removeprefix("导出已阻断：")
+                        for key, message in issues.items() if key not in {"missing_amount", "invalid_amount"})
+    if materials_by_id is None:
+        stats.update(summarize_extra_material_issues(selected, runtime_dir))
+    else:
+        for invoice in selected:
+            material = materials_by_id.get(int(invoice.get("id") or 0))
+            if material is None:
+                material = inspect_invoice_materials(invoice, runtime_dir)
+            stats["missing_attachment"] += int(not material["attachment_available"])
+            stats["missing_extra"] += int(material["missing_extra"])
+            stats["unavailable_extra"] += int(material["unavailable_extra"])
+    stats["business_blockers"] = tuple(dict.fromkeys(business))
+    return stats
+
+
 def export_claim_package(
     db: InvoiceDB,
     claim_id: int,
@@ -540,6 +623,8 @@ def export_claim_package(
     if claim.get("status") == "reimbursed":
         raise ValueError("该报销组已标记报销，不能再次导出。")
 
+    # Reconcile derived keys before capturing the immutable package snapshot.
+    db.refresh_duplicate_candidates()
     all_invoices = db.get_claim_invoices(claim_id)
     if not all_invoices:
         raise ValueError(f"报销组“{claim['name']}”没有可导出的发票。")
@@ -587,24 +672,15 @@ def export_claim_package(
     from .claim_cover import claim_filename
     export_settings = (reimbursement_config or {}).get("reimbursement", reimbursement_config or {})
     spreadsheet_name = claim_filename(export_settings.get("filename_template"), claim)
-    duplicate_decisions = {row["invoice_id"]: row["decision"]
-                           for row in db.list_duplicate_candidates("duplicate")}
-    pending_duplicate_ids = {row["invoice_id"] for row in db.list_duplicate_candidates()}
-    distinct_duplicate_ids = {row["invoice_id"] for row in db.list_duplicate_candidates("distinct")}
-    if any(invoice["id"] in duplicate_decisions for invoice in invoices):
-        raise ValueError("导出已阻断：报销组包含已确认重复的票据，请先忽略该票据或重置复核结论。")
+    duplicate_snapshot = db.duplicate_review_snapshot()
+    duplicate_decisions = duplicate_snapshot["duplicate"]
+    pending_duplicate_ids = duplicate_snapshot["pending"]
+    distinct_duplicate_ids = duplicate_snapshot["distinct"]
     for invoice in invoices:
-        id_check = check_tax_id(invoice.get("buyer_tax_id"), invoice.get("buyer_tax_id_type", "unknown"))
-        if id_check.blocking:
-            raise ValueError("导出已阻断：" + id_check.message)
-        balance = check_tax_balance(invoice)
-        if balance.blocking:
-            raise ValueError("导出已阻断：" + _invoice_export_identity(invoice) + "；" + balance.message)
-        if buyer_warning(invoice, {"reimbursement": {
-            **((reimbursement_config or {}).get("reimbursement", reimbursement_config or {})),
-            "strict_buyer_check": False,
-        }}):
-            raise ValueError("导出已阻断：购买方税号待核对，请修正税号或调整严格税号校验设置。")
+        issues = invoice_export_issues(invoice, reimbursement_config,
+                                      confirmed_duplicate=invoice["id"] in duplicate_decisions)
+        if issues:
+            raise ValueError(next(iter(issues.values())))
     normalized_amounts = {}
     for inv in invoices:
         identity = _invoice_export_identity(inv)

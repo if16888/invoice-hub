@@ -212,6 +212,27 @@ class ConcurrentClaimGuardTests(unittest.TestCase):
         with InvoiceDB(self.path) as db:
             self.assertIsNone(db.get_invoice(invoice)["custom_reason"])
 
+    def test_review_status_waits_for_export_lock(self):
+        invoice, accepted = self._run_with_claim_locked_by_other_connection(
+            lambda db, invoice_id: db.update_invoice_review_status(invoice_id, "ignored"))
+        self.assertFalse(accepted)
+        with InvoiceDB(self.path) as db:
+            self.assertEqual(db.get_invoice(invoice)["review_status"], "approved")
+
+    def test_note_waits_for_export_lock(self):
+        invoice, accepted = self._run_with_claim_locked_by_other_connection(
+            lambda db, invoice_id: db.update_invoice_note(invoice_id, "late edit"))
+        self.assertFalse(accepted)
+        with InvoiceDB(self.path) as db:
+            self.assertFalse(db.get_invoice(invoice)["confirmed_note"])
+
+    def test_material_flags_wait_for_export_lock(self):
+        invoice, accepted = self._run_with_claim_locked_by_other_connection(
+            lambda db, invoice_id: db.update_invoice_extra_flags(invoice_id, has_extra=False, missing_extra=True))
+        self.assertFalse(accepted)
+        with InvoiceDB(self.path) as db:
+            self.assertEqual(db.get_invoice(invoice)["missing_extra"], 0)
+
     def test_unlink_waits_for_export_lock_and_rejects_locked_group(self):
         invoice, accepted = self._run_with_claim_locked_by_other_connection(
             lambda db, invoice_id: db.remove_invoice_from_claim(self.claim_a, invoice_id))
@@ -225,6 +246,35 @@ class ConcurrentClaimGuardTests(unittest.TestCase):
         self.assertFalse(accepted)
         with InvoiceDB(self.path) as db:
             self.assertEqual(db.get_invoice(invoice)["is_deleted"], 0)
+
+    def test_duplicate_reconciliation_does_not_publish_a_stale_fingerprint(self):
+        from scripts.invoice_fetch.duplicate_review import soft_invoice_fingerprint
+        with InvoiceDB(self.path) as db:
+            receipt = db.insert_invoice({"seller_name": "Taxi", "invoice_date": "2026-11-06", "total_amount": "10.00"})
+        ready = threading.Event()
+        errors = []
+        def writer():
+            try:
+                with InvoiceDB(self.path) as db:
+                    with db._atomic_savepoint():
+                        self.assertTrue(db.update_invoice_fields(receipt, "", "2026-11-06", "Taxi", "20.00", "交通"))
+                        db.refresh_duplicate_candidates()
+                        ready.set()
+                        time.sleep(0.3)
+            except Exception as exc:
+                errors.append(exc)
+                ready.set()
+        with InvoiceDB(self.path) as reader:
+            thread = threading.Thread(target=writer)
+            thread.start()
+            self.assertTrue(ready.wait(5))
+            reader.refresh_duplicate_candidates()
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            row = reader.get_invoice(receipt)
+            self.assertEqual(row["total_amount"], "20.00")
+            self.assertEqual(row["soft_fingerprint"], soft_invoice_fingerprint(row))
 
     def test_export_rejects_changed_group_metadata(self):
         with InvoiceDB(self.path) as db:

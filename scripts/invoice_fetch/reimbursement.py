@@ -82,10 +82,15 @@ def compact_buyer_warning(value: str) -> str:
     )
 
 
+def financial_rows(rows: list[dict]) -> list[dict]:
+    """Exclude material records from monetary summaries, including legacy roles."""
+    from .evidence import is_evidence_record
+    return [row for row in rows if not is_evidence_record(row)]
+
+
 def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:
     """Return count, total amount, and whether any row has missing/invalid amount."""
-    from .evidence import is_evidence_record
-    rows = [row for row in rows if not is_evidence_record(row)]
+    rows = financial_rows(rows)
     total = Decimal("0")
     has_missing = False
     for row in rows:
@@ -108,6 +113,7 @@ def amount_total(rows: list[dict]) -> tuple[int, Decimal, bool]:
 
 
 def format_amount_total(rows: list[dict]) -> str:
+    rows = financial_rows(rows)
     count, _, has_missing = amount_total(rows)
     suffix = "｜部分金额缺失" if has_missing else ""
     return f"{count} 张｜合计 {currency_total(rows)}{suffix}"
@@ -151,8 +157,8 @@ def get_date_warning(invoice: dict) -> str:
     return ""
 
 
-def currency_total(rows: list[dict]) -> str:
-    """Format totals by currency; callers decide which records belong in scope."""
+def currency_amounts(rows: list[dict]) -> dict[str, Decimal]:
+    """Sum finite values by currency; callers decide which records belong in scope."""
     totals = {}
     with localcontext() as context:
         context.prec = 256
@@ -166,5 +172,11 @@ def currency_total(rows: list[dict]) -> str:
             currency = str(row.get("currency") or "CNY").strip().upper() or "CNY"
             currency = "CNY" if currency in {"RMB", "人民币"} else currency
             totals[currency] = totals.get(currency, Decimal("0")) + value
+    return totals
+
+
+def currency_total(rows: list[dict]) -> str:
+    """Format totals by currency without implying an exchange rate."""
+    totals = currency_amounts(rows)
     return " / ".join(f"{'¥' if key == 'CNY' else key + ' '}{value:.2f}"
                       for key, value in sorted(totals.items())) or "¥0.00"

@@ -288,6 +288,36 @@ class InvoiceRedownloadWorker(QThread):
             self.request = None
 
 
+class MaterialPreflightWorker(QThread):
+    """Inspect detached material rows; never access widgets or a GUI connection."""
+
+    result = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, invoices, runtime_dir, signature, parent=None):
+        super().__init__(parent)
+        # Ownership of these fresh, detached rows passes to this read-only job.
+        self.invoices = tuple(invoices)
+        self.runtime_dir = Path(runtime_dir)
+        self.signature = signature
+
+    def request_cancel(self):
+        self.requestInterruption()
+
+    def run(self):
+        from ..claim_export import inspect_materials_for_invoices
+        try:
+            results = []
+            for start in range(0, len(self.invoices), 128):
+                if self.isInterruptionRequested():
+                    return
+                results.extend(inspect_materials_for_invoices(self.invoices[start:start + 128], self.runtime_dir))
+            if not self.isInterruptionRequested():
+                self.result.emit((self.signature, results))
+        except Exception as exc:
+            self.error.emit(type(exc).__name__)
+
+
 class ClaimExportWorker(QThread):
     """Generate one claim package without blocking the Qt GUI thread."""
 
