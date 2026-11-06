@@ -162,7 +162,8 @@ class CompanyTaxProfileDialog(QDialog):
         save.clicked.connect(self._accept_if_valid)
         footer.addWidget(cancel)
         footer.addWidget(save)
-        root.addLayout(footer)
+        from .dialog_shell import add_dialog_footer
+        add_dialog_footer(self, root, footer)
 
     def values(self) -> dict[str, Any]:
         return normalize_company_tax_profile(

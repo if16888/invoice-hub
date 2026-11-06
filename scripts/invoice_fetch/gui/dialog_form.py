@@ -2,6 +2,8 @@
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import QLabel, QFormLayout, QWidget, QScrollArea, QFrame
 
+from .dialog_shell import apply_dialog_shell
+
 
 class DialogFormScroll(QScrollArea):
     """Use the visible form's natural height instead of an oversized viewport."""
@@ -11,19 +13,18 @@ class DialogFormScroll(QScrollArea):
         if body is None:
             return super().sizeHint()
         hint = body.sizeHint()
-        return QSize(hint.width() + 18, min(440, hint.height() + 4))
+        return QSize(hint.width() + 18, hint.height() + 4)
 
 
 def style_dialog_form(dialog, layout, form, title, hint=""):
     dialog.setProperty("inputDialog", True)
-    layout.setContentsMargins(20, 18, 20, 16)
-    layout.setSpacing(12)
+    apply_dialog_shell(dialog, layout, "")
     form.setHorizontalSpacing(14)
-    form.setVerticalSpacing(10)
+    form.setVerticalSpacing(12)
     form.setRowWrapPolicy(QFormLayout.WrapLongRows)
     form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-    form.setContentsMargins(0, 0, 6, 0)
+    form.setContentsMargins(16, 16, 16, 16)
     # Keep the footer reachable on small or DPI-scaled desktops.
     form_index = layout.indexOf(form)
     if form_index >= 0:
@@ -37,7 +38,7 @@ def style_dialog_form(dialog, layout, form, title, hint=""):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(body)
-        scroll.setMinimumHeight(160)
+        scroll.setMinimumHeight(min(160, body.sizeHint().height() + 4))
         layout.insertWidget(form_index, scroll, 1)
         dialog.form_scroll = scroll
         screen = dialog.screen()

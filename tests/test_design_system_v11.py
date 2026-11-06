@@ -133,7 +133,7 @@ class DesignSystemV11Tests(unittest.TestCase):
         return window, segment, reset, empty_reset
 
     def test_authoritative_tokens_include_interaction_metrics(self):
-        self.assertEqual(DESIGN_TOKEN_VERSION, "design-v1.3-visual-language")
+        self.assertEqual(DESIGN_TOKEN_VERSION, "design-v1.4-desktop")
         self.assertEqual(DESIGN_V1_METRICS["icon_button_size"], 32)
         self.assertEqual(DESIGN_V1_METRICS["segmented_control_height"], 36)
         self.assertEqual(DESIGN_V1_METRICS["segmented_item_height"], 30)
@@ -174,11 +174,11 @@ class DesignSystemV11Tests(unittest.TestCase):
             review_card = segment.buttons["to_review"]
             self.assertEqual(
                 all_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
-                DESIGN_V1_COLORS["accent_hover"].upper(),
+                DESIGN_V1_COLORS["text"].upper(),
             )
             self.assertEqual(
                 all_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
-                DESIGN_V1_COLORS["accent_hover"].upper(),
+                DESIGN_V1_COLORS["text"].upper(),
             )
             self.assertEqual(
                 review_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
@@ -201,11 +201,11 @@ class DesignSystemV11Tests(unittest.TestCase):
             )
             self.assertEqual(
                 review_card._lbl_title.palette().color(QPalette.WindowText).name().upper(),
-                DESIGN_V1_COLORS["accent_hover"].upper(),
+                DESIGN_V1_COLORS["text"].upper(),
             )
             self.assertEqual(
                 review_card._lbl_value.palette().color(QPalette.WindowText).name().upper(),
-                DESIGN_V1_COLORS["accent_hover"].upper(),
+                DESIGN_V1_COLORS["text"].upper(),
             )
         finally:
             window.close()

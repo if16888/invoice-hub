@@ -228,7 +228,8 @@ class PreviewMixin:
         container_layout.addWidget(self.preview_stack)
 
         self._init_overlay_toolbar()
-        # overlay_toolbar floats on preview_container directly
+        # Keep document controls in their own row so they never cover a ticket.
+        container_layout.insertWidget(0, self.overlay_toolbar, 0, Qt.AlignRight)
         self._reposition_overlay_toolbar()
 
         # Bind container resizing to overlay position alignment (Y-offset smaller = 4px)
@@ -274,6 +275,9 @@ class PreviewMixin:
             action.triggered.connect(lambda checked=False, target=button: target.click())
             tb.adjustSize()
         tb.adjustSize()
+        if container.layout() is not None and container.layout().indexOf(tb) >= 0:
+            tb.updateGeometry()
+            return
         w = tb.width()
         c_w = container.width()
         # Top-right alignment with 16px right padding and 10px top padding (never blocks center title)

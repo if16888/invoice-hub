@@ -1996,6 +1996,12 @@ QLabel#InvoiceTableStatsLabel {
 # The legacy QSS uses literal colors/metrics for its static rules. These tables
 # are the single render step that binds them to the Design v1 token values.
 _LITERAL_TOKEN_SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
+    ("#374151", "text_secondary"),
+    ("#4B5563", "text_secondary"),
+    ("#334155", "text_secondary"),
+    ("#475569", "text_secondary"),
+    ("#64748B", "text_muted"),
+    ("#6B7280", "text_muted"),
     ("#F6F8FB", "app_background"),
     ("#FFFFFF", "surface_primary"),
     ("#F8FAFC", "surface_secondary"),
@@ -2293,7 +2299,7 @@ QFrame[class="ChecklistRow"] QLabel[class="ChecklistValue"][state="muted"] {{
 def build_canonical_application_stylesheet() -> str:
     """Build the full application QSS from the Design v1 token authority."""
     apply_legacy_color_tokens(COLOR_TOKENS)
-    core_qss = build_app_stylesheet()
+    core_qss = build_app_stylesheet() + "\n" + BASELINE_QSS
     try:
         from .ui import build_qss
 
@@ -2304,7 +2310,7 @@ def build_canonical_application_stylesheet() -> str:
     # Keep late imports of APP_STYLESHEET aligned with the same authority.
     global APP_STYLESHEET
     APP_STYLESHEET = core_qss
-    return core_qss + "\n" + BASELINE_QSS
+    return core_qss
 
 
 def apply_global_design_baseline(page: QWidget) -> None:

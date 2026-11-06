@@ -10,10 +10,10 @@ class DesignSystemRampTests(unittest.TestCase):
     def test_type_ramp_has_no_off_ramp_sizes(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
 
-        for size in (10, 14, 16, 18, 20):
+        for size in (10, 14, 16, 18):
             with self.subTest(size=size):
                 self.assertNotIn(f"font-size: {size}px;", APP_STYLESHEET)
-        for size in (11, 12, 13, 15, 17, 22):
+        for size in (11, 12, 13, 15, 17, 20, 22):
             with self.subTest(size=size):
                 self.assertIn(f"font-size: {size}px;", APP_STYLESHEET)
 

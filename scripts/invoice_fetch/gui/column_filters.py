@@ -254,6 +254,8 @@ class ColumnFilterPopup(QDialog):
         clear_button = QPushButton("清除此列")
         clear_button.clicked.connect(self._clear)
         apply_button = QPushButton("应用")
+        apply_button.setProperty('variant', 'primary')
+        clear_button.setProperty('variant', 'secondary')
         apply_button.setDefault(True)
         apply_button.clicked.connect(self._apply)
         buttons.addWidget(clear_button)

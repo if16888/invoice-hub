@@ -658,7 +658,7 @@ _CROSS_WORKFLOW_BUTTONS = (
 
 
 def _compact_cross_workflow_actions(window) -> None:
-    """Keep Import/Scan/Export available but demoted inside the review toolbar."""
+    """Keep cross-workflow actions in More and leave space for the review task."""
     toolbar = getattr(window, "workbench_top_toolbar", None)
     toolbar_layout = toolbar.layout() if toolbar is not None else None
 
@@ -671,11 +671,7 @@ def _compact_cross_workflow_actions(window) -> None:
         button.setMinimumWidth(0)
         button.setMaximumWidth(120)
         button.setFocusPolicy(Qt.StrongFocus)
-        if attr == "btn_import_local":
-            # P1-1: import is discoverable from the More menu, not the bar.
-            button.hide()
-        else:
-            button.show()
+        button.hide()
 
     more = getattr(window, "btn_more", None)
     if more is not None:
@@ -704,8 +700,9 @@ def _compact_review_header(window) -> None:
     if header is None or not isValid(header):
         return
     header.setVisible(True)
+    header.set_subtitle("")
     header.setMinimumHeight(0)
-    header.setMaximumHeight(46)
+    header.setMaximumHeight(32)
     layout = header.layout()
     if layout is not None:
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1334,6 +1331,8 @@ class ReimbursementTitleDialog(QDialog):
         form.addRow("纳税人识别号", self.txt_tax_id)
         form.addRow("", self.chk_strict)
         root.addLayout(form)
+        from .dialog_form import style_dialog_form
+        style_dialog_form(self, root, form, '')
 
         footer = QHBoxLayout()
         footer.addStretch(1)
@@ -1343,7 +1342,8 @@ class ReimbursementTitleDialog(QDialog):
         save.clicked.connect(self._accept_if_valid)
         footer.addWidget(cancel)
         footer.addWidget(save)
-        root.addLayout(footer)
+        from .dialog_shell import add_dialog_footer
+        add_dialog_footer(self, root, footer)
 
     def _accept_if_valid(self) -> None:
         if self.chk_strict.isChecked() and not self.txt_buyer_name.text().strip():
@@ -1853,7 +1853,7 @@ REVIEW_BASELINE_STAGES: tuple[ReviewStage, ...] = (
     ("task_ownership", apply_design_v1_review_task_closure),
     # Keep the established Design System contract: visual language is the final
     # Review baseline stage.
-    ("visual_language_v11", lambda page: apply_review_status_segmented_control(page)),
+    ("visual_language_v11", lambda page: apply_review_status_segmented_control(page.window())),
 )
 
 
@@ -2018,25 +2018,23 @@ def _status_segment_stylesheet() -> str:
     metrics = DESIGN_V1_METRICS
     return f"""
 QFrame#CompactStatCard {{
-    min-height: {metrics['segmented_item_height']}px;
-    max-height: {metrics['segmented_item_height']}px;
+    min-height: {metrics['segmented_item_height'] - 4}px;
+    max-height: {metrics['segmented_item_height'] - 4}px;
     background-color: transparent;
-    border: none;
+    border: 2px solid transparent;
     border-radius: {metrics['radius_medium']}px;
 }}
 QFrame#CompactStatCard:hover {{
     background-color: {colors['surface']};
-    border: none;
 }}
 QFrame#CompactStatCard:focus {{
     background-color: {colors['surface']};
-    border: none;
+    border-color: {colors['focus_ring']};
     outline: 0;
 }}
 QFrame#CompactStatCard[selected="true"],
 QFrame#CompactStatCard[selected="true"]:focus {{
-    background-color: {colors['selected']};
-    border: none;
+    background-color: {colors['surface']};
     outline: 0;
 }}
 QFrame#CompactStatCard QLabel[class="CompactStatCardTitle"] {{
@@ -2051,8 +2049,8 @@ QFrame#CompactStatCard QLabel[class="CompactStatCardValue"] {{
 }}
 QFrame#CompactStatCard[selected="true"] QLabel[class="CompactStatCardTitle"],
 QFrame#CompactStatCard[selected="true"] QLabel[class="CompactStatCardValue"] {{
-    color: {colors['accent_hover']};
-    font-weight: 700;
+    color: {colors['text']};
+    font-weight: 600;
 }}
 """
 
@@ -2157,6 +2155,12 @@ def apply_review_status_segmented_control(window) -> None:
         layout.setContentsMargins(inset, inset, inset, inset)
         layout.setSpacing(metrics["segmented_item_gap"])
 
+    segment = getattr(window, "status_segment_control", None)
+    if segment is not None and isValid(segment):
+        segment.setFixedHeight(metrics["segmented_item_height"])
+        if segment.layout() is not None:
+            segment.layout().setContentsMargins(0, 0, 0, 0)
+            segment.layout().setSpacing(metrics["segmented_item_gap"])
     segment_qss = _status_segment_stylesheet()
     for status, card in cards.items():
         if card is None or not isValid(card):

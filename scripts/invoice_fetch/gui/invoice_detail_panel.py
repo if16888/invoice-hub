@@ -2141,6 +2141,8 @@ class InvoiceDetailPanel(QWidget):
         self.reimbursement_scroll.setFrameShape(QFrame.NoFrame)
         self.reimbursement_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         reimbursement_content = QWidget()
+        reimbursement_content.setProperty('surfaceRole', 'content')
+        self.reimbursement_scroll.viewport().setProperty('surfaceRole', 'content')
         reimbursement_layout = QVBoxLayout(reimbursement_content)
         reimbursement_layout.setContentsMargins(8, 8, 8, 8)
         self.claim_empty_hint = QLabel("暂无报销组。可先新建报销组，再将当前发票加入报销。")
@@ -5137,7 +5139,8 @@ class EditFieldsDialog(QDialog):
         confirm.clicked.connect(self._accept_if_valid)
         buttons.addWidget(cancel)
         buttons.addWidget(confirm)
-        layout.addLayout(buttons)
+        from .dialog_shell import add_dialog_footer
+        add_dialog_footer(self, layout, buttons)
 
         self.txt_buyer.setToolTip(buyer)
         self.txt_seller.setToolTip(seller)

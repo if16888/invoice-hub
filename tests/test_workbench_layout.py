@@ -154,6 +154,8 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
+                window.db.insert_invoice({"invoice_number": "SHELL-001", "total_amount": "1.00"})
+                window._load_invoices()
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
@@ -168,10 +170,10 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertIn("Ctrl + F", window.txt_search.placeholderText())
                 self.assertNotEqual(window.btn_import_local.property("emphasis"), "primary")
                 self.assertFalse(window.btn_mobile_upload.isVisible())
-                # HIG review P0-2: keep the cross-workflow actions visible
-                # but demoted to compact 34px toolbar controls.
-                self.assertTrue(window.btn_scan_email.isVisible())
-                self.assertTrue(window.btn_toolbar_export.isVisible())
+                # Cross-workflow actions remain in More and the sidebar so
+                # the review toolbar can prioritize search and invoice work.
+                self.assertTrue(window.btn_scan_email.isHidden())
+                self.assertTrue(window.btn_toolbar_export.isHidden())
                 self.assertTrue(window.btn_import_local.property("reviewCrossWorkflowActionCompact"))
                 self.assertTrue(window.btn_scan_email.property("reviewCrossWorkflowActionCompact"))
                 self.assertTrue(window.btn_toolbar_export.property("reviewCrossWorkflowActionCompact"))

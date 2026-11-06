@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QWidget
 
 from ..preview_toolbar_style import build_preview_toolbar_qss
+from ...icon_provider import IconProvider
 
 
 class PreviewToolbar(QFrame):
@@ -62,9 +63,14 @@ class PreviewToolbar(QFrame):
             button.setProperty("class", "PreviewToolBtn")
             button.setFocusPolicy(Qt.StrongFocus)
             button.setAccessibleName(tooltip or text)
+            if action_name != "zoom_100":
+                button.setIcon(IconProvider.icon(action_name))
+                button.setIconSize(QSize(18, 18))
+                button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                icon_only = True
             if icon_only:
                 button.setProperty("iconOnly", "true")
-                button.setFixedSize(30, 28)
+                button.setFixedSize(32, 28)
             else:
                 button.setFixedHeight(28)
                 if fixed_w:

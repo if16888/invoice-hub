@@ -399,6 +399,8 @@ def _classify_geometry_widget(widget: QWidget) -> tuple[str, str]:
         if isinstance(widget, QAbstractButton) and widget.isEnabled() and not widget.text().strip() and widget.icon().isNull():
             return "FAIL", "blank enabled clickable button"
         if isinstance(widget, QAbstractButton) and widget.text().strip():
+            if isinstance(widget, QToolButton) and widget.toolButtonStyle() == Qt.ToolButtonIconOnly and not widget.icon().isNull():
+                return "PASS", "icon-only control keeps its text as an accessible label"
             if widget.objectName() == "WorkbenchShortcutEntry":
                 return "INFO", "compact shortcut tool button uses intentional style width"
             required = widget.fontMetrics().horizontalAdvance(widget.text()) + 24
@@ -410,6 +412,19 @@ def _classify_geometry_widget(widget: QWidget) -> tuple[str, str]:
     if isinstance(widget, (QAbstractButton, QLabel, QLineEdit)):
         return "FAIL", "key control is partially clipped by parent visible rect"
     return "INFO", "minor layout or DPI intersection"
+
+
+def _review_pane_geometry_failures(window) -> list[str]:
+    from scripts.invoice_fetch.gui.review_layout import DETAIL_MIN_WIDTH
+
+    failures = []
+    detail = window._detail_panel
+    if detail.isVisible() and detail.width() < DETAIL_MIN_WIDTH:
+        failures.append(f"detail panel below {DETAIL_MIN_WIDTH}px: {detail.width()}")
+    preview = window.preview_panel
+    if preview.isVisible() and preview.height() < 240:
+        failures.append(f"preview below 240px: {preview.height()}")
+    return failures
 
 
 def _geometry(window, args: argparse.Namespace) -> dict:
@@ -509,10 +524,8 @@ def _geometry(window, args: argparse.Namespace) -> dict:
             failures.append(f"visible invoice rows below 7: {visible_rows}")
     else:
         visible_rows = window.table.viewport().height() // max(1, window.table.verticalHeader().defaultSectionSize())
-    if args.page == "review" and window._detail_panel.width() < 340:
-        failures.append(f"detail panel below 340px: {window._detail_panel.width()}")
-    if args.page == "review" and window.preview_panel.height() < 240:
-        failures.append(f"preview below 240px: {window.preview_panel.height()}")
+    if args.page == "review":
+        failures.extend(_review_pane_geometry_failures(window))
     evaluated = [item for item in window.findChildren(QWidget) if isinstance(item, (QAbstractButton, QLineEdit, QLabel)) and item.isVisible()]
     scroll_content = [item for item in evaluated if _is_scroll_descendant(item)]
     clipped_key = [item for item in overflow if item["class"] in {"QPushButton", "QLineEdit"}]

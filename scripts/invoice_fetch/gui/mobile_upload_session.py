@@ -6,17 +6,18 @@ import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, QThread, QTimer, Slot
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal, QThread, QTimer, Slot
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QFormLayout, QFrame, QHBoxLayout,
-    QLabel, QMessageBox, QPushButton, QSizePolicy, QStackedWidget,
+    QLabel, QMessageBox, QPushButton, QSizePolicy,
     QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..config import RUNTIME_DIR
 from .performance_probe import emit_performance_event, performance_stage
 from .ui_components import (
+    AdaptiveStackedWidget,
     MiddleElidedTextLabel,
     WrappedTextLabel,
     make_badge,
@@ -484,7 +485,8 @@ class MobileUploadSessionPanel(QFrame):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
-        self.stack = QStackedWidget(self)
+        self.stack = AdaptiveStackedWidget(self)
+        self.stack.currentChanged.connect(self.stack.updateGeometry)
         root.addWidget(self.stack, 0, Qt.AlignTop)
         self.idle_page = self._build_idle()
         self.starting_page = self._build_starting()
@@ -494,6 +496,7 @@ class MobileUploadSessionPanel(QFrame):
         self.stack.addWidget(self.starting_page)
         self.stack.addWidget(self.active_page)
         self.stack.addWidget(self.error_page)
+        self.stack.currentChanged.connect(self._sync_content_height)
         controller.starting.connect(self.show_starting)
         controller.started.connect(self._show_active)
         controller.stats_changed.connect(self._set_stats)
@@ -512,7 +515,7 @@ class MobileUploadSessionPanel(QFrame):
     def _build_idle(self):
         page = QWidget(self)
         layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(8)
-        title = QLabel("手机扫码上传"); title.setProperty("class", "SectionTitle")
+        title = QLabel("连接准备"); title.setProperty("class", "SectionTitle")
         desc = QLabel(
             "从手机上传发票原件、行程单或证明材料。\n"
             "手机和电脑需要连接同一局域网。\n"
@@ -1084,6 +1087,29 @@ class MobileUploadSessionPanel(QFrame):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_responsive_layout()
+        self._sync_content_height()
+
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() == QEvent.LayoutRequest:
+            self._sync_content_height()
+        return handled
+
+    def _sync_content_height(self, *_args):
+        if not hasattr(self, 'stack') or self.stack.currentWidget() is None:
+            return
+        page = self.stack.currentWidget()
+        if page is getattr(self, 'active_page', None):
+            height = 16777215
+        else:
+            # QStackedLayout still aggregates hidden pages for height-for-width
+            # even when the widget's sizeHint only describes the current page.
+            natural = page.heightForWidth(max(1, self.width())) if page.hasHeightForWidth() else -1
+            height = max(page.minimumSizeHint().height(), natural if natural >= 0 else page.sizeHint().height())
+            margins = self.layout().contentsMargins()
+            height += margins.top() + margins.bottom() + 2 * self.frameWidth()
+        if self.maximumHeight() != height:
+            self.setMaximumHeight(height)
 
     def _apply_responsive_layout(self):
         if not hasattr(self, "_active_body_layout"):

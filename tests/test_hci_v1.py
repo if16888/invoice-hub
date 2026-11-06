@@ -132,7 +132,7 @@ class HciV1DesktopTests(unittest.TestCase):
             try:
                 self.assertTrue(window.overview_page.property("hciV1DashboardApplied"))
                 self.assertTrue(window.overview_page.property("hciV1DashboardClosureApplied"))
-                self.assertEqual(window.overview_header.lbl_title.text(), "今天需要处理什么")
+                self.assertEqual(window.overview_header.lbl_title.text(), "今日工作台")
                 self.assertEqual(
                     set(window.hci_dashboard_task_cards),
                     {"to_review", "missing_evidence", "buyer_mismatch", "parse_error"},
@@ -153,7 +153,7 @@ class HciV1DesktopTests(unittest.TestCase):
                 self.assertIn("重新检查", window.lbl_overview_next_actions.text())
                 self.assertEqual(
                     window.overview_activity_card.lbl_title.text(),
-                    "当前概况",
+                    "最近导入",
                 )
                 window.resize(1180, 500)
                 window._switch_main_page("overview")
@@ -163,7 +163,9 @@ class HciV1DesktopTests(unittest.TestCase):
                 for i, card in enumerate(cards):
                     for other in cards[i + 1:]:
                         self.assertFalse(card.geometry().intersects(other.geometry()))
-                self.assertGreater(window.overview_scroll.verticalScrollBar().maximum(), 0)
+                scroll = window.overview_scroll
+                overflow = max(0, scroll.widget().height() - scroll.viewport().height())
+                self.assertGreaterEqual(scroll.verticalScrollBar().maximum(), overflow)
             finally:
                 window.db.close()
                 window.close()

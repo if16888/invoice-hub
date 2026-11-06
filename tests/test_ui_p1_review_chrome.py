@@ -41,10 +41,12 @@ class ReviewChromeTests(unittest.TestCase):
                 search = window.txt_search
                 self.assertGreaterEqual(search.minimumWidth(), 280)
                 self.assertLessEqual(search.maximumWidth(), 320)
-                self.assertTrue(window.btn_scan_email.isVisible())
-                self.assertTrue(window.btn_toolbar_export.isVisible())
+                self.assertTrue(window.btn_scan_email.isHidden())
+                self.assertTrue(window.btn_toolbar_export.isHidden())
                 self.assertTrue(window.btn_import_local.isHidden())
                 self.assertIn(window.action_import_local, window.more_menu.actions())
+                self.assertIn(window.action_scan_email, window.more_menu.actions())
+                self.assertIn(window.action_toolbar_export, window.more_menu.actions())
             finally:
                 window.db.close()
                 window.hide()

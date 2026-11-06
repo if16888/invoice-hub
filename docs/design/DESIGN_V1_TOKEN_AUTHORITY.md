@@ -1,4 +1,4 @@
-# Design Baseline v1.0 Token Authority
+# Design Baseline Token Authority
 
 `design_tokens.py` is the only product-wide source for shared visual colors,
 typography sizes and common geometry metrics.
@@ -16,18 +16,27 @@ Page-specific geometry, such as Review detail widths or table-column minimums,
 remains owned by the corresponding page contract and is not promoted to a
 product-wide token unless it is genuinely shared.
 
-## Approved shared values
+## Approved shared values (`design-v1.4-desktop`)
 
-- Page background: `#F7F8FA`
+- Page background: `#F5F5F7`
+- Navigation background: `#EFEFF2`
 - Surface: `#FFFFFF`
-- Selection background: `#EFF6FF`
-- Accent: `#2563EB`
+- Selection background: `#EAF2FC`
+- Main text: `#1D1D1F`
+- Secondary text: `#55555D`; muted text: `#63636A`
+- Accent and focus ring: `#0066CC`
 - Success: `#16803C`
 - Warning: `#B54708`
 - Danger: `#B42318`
-- Page title: `22px`
-- Standard control height: `34px`
+- Page title: `20px`; body: `13px`; secondary text: `12px`
+- Standard control height: `32px`; compact toolbar controls: `28px`
 - Page margin: `24px`
 
 New shared UI code must import from `design_tokens.py` rather than introduce a
 second token dictionary.
+
+The UI kit is the last layer of the canonical stylesheet, after the legacy
+baseline. Legacy neutral text literals are normalized to these tokens before
+rendering. The opt-in dark theme derives its colors from the same stylesheet;
+`INVOICE_HUB_THEME=dark` enables it. Native Windows system theme detection is
+not enabled by this change.

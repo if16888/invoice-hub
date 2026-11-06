@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -956,7 +957,7 @@ class StructuredSettingsSurface(QFrame):
         self.footer = QFrame(self)
         self.footer.setObjectName("SettingsActionFooter")
         self.footer.setMinimumHeight(52)
-        self.footer_layout = QHBoxLayout(self.footer)
+        self.footer_layout = QGridLayout(self.footer)
         self.footer_layout.setContentsMargins(0, 4, 0, 0)
         self.footer_layout.setSpacing(8)
         self.footer.hide()
@@ -1012,10 +1013,11 @@ class StructuredSettingsSurface(QFrame):
             item = self.footer_layout.takeAt(0)
             if item.widget() is not None:
                 item.widget().setParent(None)
-        for action in actions:
+        columns = 2 if len(actions) > 3 else max(1, len(actions))
+        for index, action in enumerate(actions):
             action.setParent(self.footer)
-            self.footer_layout.addWidget(action)
-        self.footer_layout.addStretch(1)
+            self.footer_layout.addWidget(action, index // columns, index % columns, Qt.AlignLeft)
+        self.footer_layout.setColumnStretch(columns, 1)
         self.footer.setVisible(bool(actions))
         self.footer_divider.setVisible(bool(actions))
 
@@ -1656,7 +1658,8 @@ def _polish_mailbox_actions(window) -> None:
         add.setToolTip("添加新的邮箱扫描账号")
         add.setMinimumWidth(132)
         add.setMaximumWidth(180)
-        add.setFixedHeight(34)
+        add.setFixedHeight(DESIGN_V1_METRICS['control_height'])
+        add.setObjectName('SettingsAddMailbox')
         add.setProperty("variant", "primary")
         _repolish(add)
 
@@ -1740,6 +1743,16 @@ def apply_settings_action_clarity(page: QWidget | None) -> None:
     page.setProperty("settingsActionClarityApplied", True)
     _remove_legacy_company_header_action(window)
     _insert_company_settings_page(window)
+    from .selection_surfaces import NAV_GROUP_ROLE
+
+    nav = window.settings_tabs.nav_list
+    for row in range(nav.count()):
+        item = nav.item(row)
+        item.setData(NAV_GROUP_ROLE, "常用" if row == 0 else "高级" if row == 2 else None)
+        item.setData(Qt.AccessibleDescriptionRole, "常用设置" if row < 2 else "高级设置")
+    for child in window.settings_tabs.stack.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
+        if child.layout() is not None:
+            child.layout().setContentsMargins(16, 12, 16, 16)
     _polish_mailbox_actions(window)
     _install_settings_refresh(window, page)
     _remove_status_bar_version(window)

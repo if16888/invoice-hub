@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from .helpers import resolve_stored_path
+from .dialog_shell import add_dialog_footer, apply_dialog_shell
 
 
 class EvidenceDialog(QDialog):
@@ -27,7 +28,9 @@ class EvidenceDialog(QDialog):
         hint = QLabel(f"将材料关联给已选择的 {len(self.invoice_ids)} 张发票。勾选关联到全部，取消勾选解除这些发票的关联。\n"
                       "横杠表示只关联了部分；保持横杠可保留原关系。解绑保留材料文件，其他发票的关联保持不变。")
         hint.setWordWrap(True)
+        hint.setProperty('class', 'DialogHint')
         layout.addWidget(hint)
+        apply_dialog_shell(self, layout, '证明材料共享')
         self.search = QLineEdit()
         self.search.setPlaceholderText("查找材料文件、来源或邮件主题")
         self.search.textChanged.connect(self._filter)
@@ -35,6 +38,9 @@ class EvidenceDialog(QDialog):
         self.table = QTableWidget(len(self._sources), 5)
         self.table.setHorizontalHeaderLabels(["关联", "材料文件", "来源 / 主题", "本次 / 全部引用", "状态"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().hide()
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(32)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -86,7 +92,7 @@ class EvidenceDialog(QDialog):
         self.save.setDefault(True)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
+        add_dialog_footer(self, layout, self.buttons)
         self.table.itemChanged.connect(self._changed)
 
     def association_changes(self):

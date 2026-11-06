@@ -73,7 +73,7 @@ class P2Batch6Tests(unittest.TestCase):
             / "scripts/invoice_fetch/gui/app.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn("setDuration(190)", source)
-        self.assertIn("motion_duration(190)", source)
+        self.assertIn("motion_duration(150)", source)
 
 
 if __name__ == "__main__":

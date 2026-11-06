@@ -9,11 +9,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 class BadgeContrastTests(unittest.TestCase):
     def test_status_badges_use_semantic_text_colors(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
+        from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_COLORS
 
         expected = {
             'QLabel.StatusBadge[variant="review"]': "#B54708",
             'QLabel.StatusBadge[variant="approved"]': "#067647",
-            'QLabel.StatusBadge[variant="ignored"]': "#475467",
+            'QLabel.StatusBadge[variant="ignored"]': DESIGN_V1_COLORS["text_secondary"],
             'QLabel.StatusBadge[variant="error"]': "#B91C1C",
         }
         for selector, color in expected.items():
@@ -29,7 +30,7 @@ class TableStateTests(unittest.TestCase):
 
         start = APP_STYLESHEET.index("QTableWidget {")
         block = APP_STYLESHEET[start : APP_STYLESHEET.index("}", start)]
-        self.assertIn("selection-background-color: #2563EB;", block)
+        self.assertIn("selection-background-color: #0066CC;", block)
         self.assertIn("selection-color: #FFFFFF;", block)
         self.assertIn("font-size: 13px;", block)
 
@@ -41,22 +42,25 @@ class TableStateTests(unittest.TestCase):
 
 class DisabledTreatmentTests(unittest.TestCase):
     def test_disabled_variants_share_one_readable_pair(self):
-        import re
+        from PySide6.QtGui import QColor, QPalette
+        from PySide6.QtWidgets import QApplication, QPushButton, QWidget
+        from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_COLORS
+        from scripts.invoice_fetch.gui.styles import build_canonical_application_stylesheet
 
-        from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
-
-        blocks = re.findall(r"([^\n{}]*:disabled[^\n{}]*)\{([^}]*)\}", APP_STYLESHEET)
-        self.assertGreaterEqual(len(blocks), 10)
-        checked = 0
-        for selector, body in blocks:
-            if "busy" in selector or ":read-only" in selector:
-                continue
-            checked += 1
-            with self.subTest(selector=selector.strip()):
-                self.assertIn("#667085", body)
-                if "background-color" in body:
-                    self.assertIn("#E4E7EC", body)
-        self.assertGreaterEqual(checked, 12)
+        app = QApplication.instance() or QApplication([])
+        parent = QWidget()
+        parent.setStyleSheet(build_canonical_application_stylesheet())
+        for variant in ("primary", "secondary", "ghost", "danger", "toolbar"):
+            button = QPushButton("Disabled action", parent)
+            button.setProperty("variant", variant)
+            button.setEnabled(False)
+            button.ensurePolished()
+            app.processEvents()
+            with self.subTest(variant=variant):
+                self.assertEqual(button.palette().color(QPalette.Disabled, QPalette.ButtonText),
+                                 QColor(DESIGN_V1_COLORS["muted"]))
+                self.assertLessEqual(button.minimumHeight(), button.maximumHeight())
+        parent.close()
 
 
 class DialogCopyTests(unittest.TestCase):

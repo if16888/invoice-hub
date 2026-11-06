@@ -765,6 +765,7 @@ if _HAS_QT:
             self._layout = QVBoxLayout(self)
             self._layout.setContentsMargins(14, 12, 14, 12)
             self._layout.setSpacing(10)
+            self._layout.setAlignment(Qt.AlignTop)
 
             self.lbl_eyebrow = QLabel(eyebrow, self)
             self.lbl_eyebrow.setProperty("class", "SectionEyebrow")
@@ -950,7 +951,10 @@ if _HAS_QT:
             self.setObjectName("WorkbenchTopIconButton")
             self.setText(text)
             self.setAccessibleName("更多操作")
-            self.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            from .icon_provider import IconProvider
+
+            self.setIcon(IconProvider.icon("more"))
+            self.setToolButtonStyle(Qt.ToolButtonIconOnly)
             self.setPopupMode(QToolButton.InstantPopup)
             self.setFixedSize(34, 34)
 

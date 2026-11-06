@@ -18,6 +18,16 @@ from shiboken6 import isValid
 
 from .design_tokens import DESIGN_V1_COLORS, DESIGN_V1_METRICS
 
+NAV_GROUP_ROLE = int(Qt.UserRole) + 67
+INVOICE_ROW_ROLE = int(Qt.UserRole) + 68
+
+
+def _paint_color(role: str) -> QColor:
+    from .dark_mode import DARK_COLOR_MAP, prefers_dark
+
+    value = DESIGN_V1_COLORS[role]
+    return QColor(DARK_COLOR_MAP.get(value.upper(), value) if prefers_dark() else value)
+
 
 class SelectionSurfaceDelegate(QStyledItemDelegate):
     """Preserve selection painting and draw an explicit keyboard focus ring."""
@@ -29,12 +39,35 @@ class SelectionSurfaceDelegate(QStyledItemDelegate):
         return normalized
 
     def paint(self, painter, option, index) -> None:  # noqa: N802
+        option = QStyleOptionViewItem(option)
+        group = index.data(NAV_GROUP_ROLE)
+        header = None
+        if group:
+            header = option.rect.adjusted(10, 0, -4, 0)
+            header.setHeight(24)
+            option.rect.adjust(0, 24, 0, 0)
         focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
         super().paint(painter, self.normalized_option(option), index)
+        if header is not None:
+            from .dark_mode import dark_stylesheet, prefers_dark
+
+            painter.save()
+            color = DESIGN_V1_COLORS["muted"]
+            painter.setPen(QColor(dark_stylesheet(color) if prefers_dark() else color))
+            font = painter.font()
+            font.setPixelSize(12)
+            font.setBold(False)
+            painter.setFont(font)
+            painter.drawText(header, Qt.AlignLeft | Qt.AlignVCenter, str(group))
+            painter.restore()
         if not focused:
             return
+        self.paint_focus(painter, option)
+
+    @staticmethod
+    def paint_focus(painter, option) -> None:
         painter.save()
-        pen = QPen(QColor(DESIGN_V1_COLORS["focus_ring"]))
+        pen = QPen(_paint_color("focus_ring"))
         pen.setWidth(DESIGN_V1_METRICS["focus_border_width"])
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
@@ -44,6 +77,57 @@ class SelectionSurfaceDelegate(QStyledItemDelegate):
             DESIGN_V1_METRICS["radius_small"],
         )
         painter.restore()
+
+    def sizeHint(self, option, index):  # noqa: N802
+        hint = super().sizeHint(option, index)
+        if index.data(NAV_GROUP_ROLE):
+            hint.setHeight(hint.height() + 24)
+        return hint
+
+
+class InvoiceListDelegate(SelectionSurfaceDelegate):
+    """Draw structured invoice rows without allocating child widgets per file."""
+
+    def sizeHint(self, option, index):  # noqa: N802
+        return QSize(0, 64) if index.data(INVOICE_ROW_ROLE) else super().sizeHint(option, index)
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        row = index.data(INVOICE_ROW_ROLE)
+        if not row:
+            super().paint(painter, option, index)
+            return
+        base = QStyleOptionViewItem(option)
+        self.initStyleOption(base, index)
+        base.text = ""
+        style = option.widget.style()
+        style.drawControl(QStyle.CE_ItemViewItem, self.normalized_option(base), painter, option.widget)
+        area = option.rect.adjusted(12, 8, -12, -8)
+        amount = str(row["amount"])
+        amount_width = min(max(64, base.fontMetrics.horizontalAdvance(amount) + 8), max(64, area.width() // 3))
+        title_rect = area.adjusted(0, 0, -amount_width - 12, 0)
+        title_rect.setHeight(20)
+        amount_rect = area.adjusted(area.width() - amount_width, 0, 0, 0)
+        amount_rect.setHeight(20)
+        painter.save()
+        painter.setFont(base.font)
+        painter.setPen(_paint_color("text"))
+        title = base.fontMetrics.elidedText(str(row["title"]), Qt.ElideRight, max(0, title_rect.width()))
+        painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
+        font = base.font
+        font.setBold(True)
+        painter.setFont(font)
+        amount = painter.fontMetrics().elidedText(amount, Qt.ElideMiddle, max(0, amount_rect.width()))
+        painter.drawText(amount_rect, Qt.AlignRight | Qt.AlignVCenter, amount)
+        font.setBold(False)
+        font.setPixelSize(12)
+        painter.setFont(font)
+        painter.setPen(_paint_color("warning_text" if row.get("attention") else "muted"))
+        subtitle_rect = area.adjusted(0, 24, 0, 0)
+        subtitle = painter.fontMetrics().elidedText(str(row["subtitle"]), Qt.ElideRight, max(0, subtitle_rect.width()))
+        painter.drawText(subtitle_rect, Qt.AlignLeft | Qt.AlignVCenter, subtitle)
+        painter.restore()
+        if option.state & QStyle.StateFlag.State_HasFocus:
+            self.paint_focus(painter, option)
 
 
 def _set_dynamic_property(widget: QWidget, name: str, value: bool) -> None:
@@ -82,6 +166,8 @@ QListWidget#EntityList::item:selected:!active {{
     border: none;
     outline: 0;
 }}
+QListWidget#EntityList[listRole="invoices"]::item:hover {{ background: {colors['surface_secondary']}; }}
+QListWidget#EntityList[listRole="invoices"]::item:selected {{ background: {colors['selected']}; }}
 QWidget[selectionSurfaceRow="true"] {{
     background-color: {colors['surface']};
     border: 1px solid transparent;
@@ -225,11 +311,17 @@ def _decorate_entity_rows(view: QListWidget) -> None:
 
 
 def _schedule_entity_sync(view: QListWidget) -> None:
+    if view is None or not isValid(view):
+        return
+    if view.property("entitySyncPending"):
+        return
+    view.setProperty("entitySyncPending", True)
     view_ref = weakref.ref(view)
 
     def run() -> None:
         target = view_ref()
         if target is not None and isValid(target):
+            target.setProperty("entitySyncPending", False)
             _decorate_entity_rows(target)
 
     QTimer.singleShot(0, run)
@@ -244,7 +336,8 @@ def _install_entity_list(view: QListWidget) -> None:
     view.setSelectionMode(QAbstractItemView.SingleSelection)
     view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
     view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    view.setItemDelegate(SelectionSurfaceDelegate(view))
+    delegate = InvoiceListDelegate if view.property("listRole") == "invoices" else SelectionSurfaceDelegate
+    view.setItemDelegate(delegate(view))
     view.setStyleSheet(view.styleSheet() + _entity_list_stylesheet())
     view.currentItemChanged.connect(lambda *_args, target=view: _schedule_entity_sync(target))
     view.itemSelectionChanged.connect(lambda target=view: _schedule_entity_sync(target))

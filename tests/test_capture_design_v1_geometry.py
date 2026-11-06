@@ -1,12 +1,13 @@
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QScrollArea, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QScrollArea, QStyle, QToolButton, QWidget
 
-from scripts.dev.capture_design_v1 import _classify_geometry_widget
+from scripts.dev.capture_design_v1 import _classify_geometry_widget, _review_pane_geometry_failures
 
 
 class CaptureGeometryTests(unittest.TestCase):
@@ -38,12 +39,45 @@ class CaptureGeometryTests(unittest.TestCase):
         parent.show(); self.app.processEvents()
         self.assertEqual(_classify_geometry_widget(button)[0], "FAIL")
 
+    def test_icon_only_label_is_not_measured_as_visible_text(self):
+        parent = QWidget(); parent.resize(200, 100)
+        button = QToolButton(parent)
+        button.setGeometry(10, 10, 32, 32)
+        button.setIcon(self.app.style().standardIcon(QStyle.SP_DialogOpenButton))
+        button.setText("Open the complete original invoice")
+        button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        parent.show(); self.app.processEvents()
+        self.assertEqual(_classify_geometry_widget(button)[0], "PASS")
+        button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.assertEqual(_classify_geometry_widget(button)[0], "FAIL")
+        parent.close()
+
     def test_offscreen_business_button_is_not_silently_ignored(self):
         parent = QWidget(); parent.resize(200, 100)
         button = QPushButton("legacy", parent); button.setGeometry(10, 10, 80, 30)
         button.setAttribute(Qt.WA_DontShowOnScreen, True)
         parent.show(); self.app.processEvents()
         self.assertEqual(_classify_geometry_widget(button)[0], "FAIL")
+
+    def test_review_pane_minimums_follow_layout_contract_and_skip_hidden_empty_panes(self):
+        parent = QWidget()
+        parent.resize(800, 600)
+        detail, preview = QWidget(parent), QWidget(parent)
+        detail.resize(319, 400)
+        preview.resize(400, 239)
+        parent.show()
+        self.app.processEvents()
+        window = SimpleNamespace(_detail_panel=detail, preview_panel=preview)
+        self.assertEqual(len(_review_pane_geometry_failures(window)), 2)
+        detail.resize(325, 400)
+        preview.resize(400, 240)
+        self.assertEqual(_review_pane_geometry_failures(window), [])
+        detail.resize(1, 1)
+        preview.resize(1, 1)
+        detail.hide()
+        preview.hide()
+        self.assertEqual(_review_pane_geometry_failures(window), [])
+        parent.close()
 
     def test_scroll_content_is_non_failing_info(self):
         scroll = QScrollArea(); scroll.resize(200, 100)

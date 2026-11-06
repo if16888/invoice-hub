@@ -130,6 +130,17 @@ def schedule_settings_baseline_pipeline(page: QWidget | None) -> None:
     QTimer.singleShot(0, run_pipeline)
 
 
+def _apply_window_visual_language(page: QWidget) -> None:
+    """Deferred page hooks run only once their real window owner exists."""
+    if not isValid(page):
+        return
+    window = page.window()
+    if window is None or not isValid(window) or getattr(window, "_shutdown_requested", False):
+        return
+    apply_sidebar_visual_language(window)
+    apply_review_status_segmented_control(window)
+
+
 class _PageLayoutContract:
     archetype = "base"
     maximum_width = 16777215
@@ -147,8 +158,11 @@ class _PageLayoutContract:
         layout.setAlignment(Qt.AlignTop)
         QTimer.singleShot(0, lambda p=page: apply_global_design_baseline(p))
         schedule_selection_surface_contracts(page)
-        apply_sidebar_visual_language(page)
-        apply_review_status_segmented_control(page)
+        QTimer.singleShot(0, lambda p=page: _apply_window_visual_language(p))
+        body = layout.parentWidget()
+        if body is not None and cls.archetype != "workspace":
+            body.setProperty("surfaceRole", "page")
+            body.setAttribute(Qt.WA_StyledBackground, True)
         return layout
 
     @classmethod
@@ -450,14 +464,14 @@ def apply_export_baseline(page: QWidget) -> None:
     group = getattr(window, "export_group_card", None)
     if group is not None:
         group.setFixedWidth(EXPORT_GROUP_WIDTH)
-        group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        group.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
     invoices = getattr(window, "export_invoices_card", None)
     if invoices is not None:
-        invoices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        invoices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     integrity = getattr(window, "export_integrity_card", None)
     if integrity is not None:
         integrity.setFixedWidth(EXPORT_CHECK_WIDTH)
-        integrity.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        integrity.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
 
     # Pending invoices are excluded by default rather than blocking an export.
     # Preserve the existing boolean call site but render false as a warning.
@@ -488,7 +502,11 @@ def apply_export_baseline(page: QWidget) -> None:
         _sync_export_naming_check(window)
         _sync_export_directory_state(window)
 
-    _content_width_button(getattr(window, "btn_run_export_page", None), minimum=128)
+    action = getattr(window, "btn_run_export_page", None)
+    if action is not None:
+        action.setMinimumWidth(128)
+        action.setMaximumWidth(16777215)
+        action.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
 def apply_task_flow_baseline(page: QWidget) -> None:
@@ -524,12 +542,12 @@ QFrame#WorkbenchNav {{
 QPushButton.WorkbenchNavButton {{
     background-color: transparent;
     color: {colors['text_secondary']};
-    border: none;
+    border: {metrics['focus_border_width']}px solid transparent;
     border-radius: {metrics['radius_medium']}px;
     padding: 0 12px;
     text-align: left;
     font-size: {DESIGN_V1_TYPE['section_title']}px;
-    font-weight: 600;
+    font-weight: 400;
 }}
 QPushButton.WorkbenchNavButton:hover {{
     background-color: {colors['surface_secondary']};
@@ -541,14 +559,14 @@ QPushButton.WorkbenchNavButton:focus {{
     border: {metrics['focus_border_width']}px solid {colors['focus_ring']};
     outline: 0;
 }}
-QPushButton.WorkbenchNavButton:checked,
-QPushButton.WorkbenchNavButton:checked:focus {{
+QPushButton.WorkbenchNavButton:checked {{
     background-color: {colors['navigation_selected']};
     color: {colors['accent_hover']};
-    border: none;
+    border: {metrics['focus_border_width']}px solid transparent;
     outline: 0;
-    font-weight: 700;
+    font-weight: 600;
 }}
+QPushButton.WorkbenchNavButton:checked:focus {{ border-color: {colors['focus_ring']}; }}
 QPushButton[navigationControl="collapse"] {{
     min-height: {metrics['icon_button_size']}px;
     max-height: {metrics['icon_button_size']}px;
