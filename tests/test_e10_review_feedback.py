@@ -36,17 +36,31 @@ class ReviewFeedbackPolishTests(unittest.TestCase):
                 window._detail_panel._update_status_badge("approved")
                 self.assertEqual(window.lbl_sum_status.text(), "✓ 已通过")
 
-                window._animate_approval_feedback()
+                # Force normal motion regardless of the Windows runner's
+                # accessibility preferences. The product pulse contract is 150ms.
+                with patch("scripts.invoice_fetch.gui.motion.animations_enabled", return_value=True):
+                    window._animate_approval_feedback()
                 self.assertIsInstance(window._detail_panel.btn_app.graphicsEffect(), QGraphicsOpacityEffect)
                 animation = window._approval_feedback_animation
-                from scripts.invoice_fetch.gui.motion import motion_duration
-                expected = motion_duration(190)
-                self.assertEqual(animation.duration(), expected)
+                self.assertEqual(animation.duration(), 150)
                 self.app.processEvents()
-                if expected:
-                    self.assertEqual(animation.state(), QAbstractAnimation.State.Running)
-                self.app.processEvents()
+                self.assertEqual(animation.state(), QAbstractAnimation.State.Running)
                 animation.stop()
+                self.app.processEvents()
+            finally:
+                window.close()
+                self.app.processEvents()
+
+    def test_approval_feedback_respects_reduced_motion(self):
+        with tempfile.TemporaryDirectory() as td:
+            window = InvoiceReviewApp(Path(td) / "reduced-motion.db")
+            try:
+                button = window._detail_panel.btn_app
+                self.assertIsNone(button.graphicsEffect())
+                with patch("scripts.invoice_fetch.gui.motion.animations_enabled", return_value=False):
+                    window._animate_approval_feedback()
+                self.assertIsNone(button.graphicsEffect())
+                self.assertIsNone(getattr(window, "_approval_feedback_animation", None))
             finally:
                 window.close()
                 self.app.processEvents()
