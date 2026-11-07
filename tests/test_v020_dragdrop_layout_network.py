@@ -124,46 +124,57 @@ class V020DragDropLayoutNetworkTests(unittest.TestCase):
             settings = QSettings(str(Path(td) / "workbench.ini"), QSettings.IniFormat)
             with patch("scripts.invoice_fetch.gui.app.workbench_settings", return_value=settings):
                 window = InvoiceReviewApp(db_path, splash=None)
-                window.resize(1440, 900)
-                window.show()
-                window._switch_main_page("review")
-                _APP.processEvents()
-                _APP.processEvents()
-                initial_width = window.main_splitter.sizes()[1]
-                self.assertGreater(initial_width, 0)
-                self.assertIn("Ctrl+B", window.workbench_shortcuts)
+                try:
+                    window.resize(1440, 900)
+                    window.show()
+                    window._switch_main_page("review")
+                    _APP.processEvents()
+                    _APP.processEvents()
+                    initial_width = window.main_splitter.sizes()[1]
+                    self.assertGreater(initial_width, 0)
+                    self.assertIn("Ctrl+B", window.workbench_shortcuts)
 
-                available = sum(window.main_splitter.sizes())
-                window.main_splitter.setSizes([available - 400, 400])
-                window.main_splitter.splitterMoved.emit(400, 1)
-                _APP.processEvents()
-                # CI runners have a small display: the responsive reflow clamps
-                # the detail pane to whatever the workspace can spare, so assert
-                # that the width the panel actually resolves to is persisted.
-                resolved_width = window.main_splitter.sizes()[1]
-                self.assertGreater(resolved_width, 0)
-                window._save_splitter_prefs()
-                self.assertEqual(
-                    settings.value("splitter/review_detail_restore_width", type=int),
-                    resolved_width,
-                )
+                    available = sum(window.main_splitter.sizes())
+                    window.main_splitter.setSizes([available - 400, 400])
+                    window.main_splitter.splitterMoved.emit(400, 1)
+                    _APP.processEvents()
+                    # CI runners have a small display: the responsive reflow clamps
+                    # the detail pane to whatever the workspace can spare, so assert
+                    # that the width the panel actually resolves to is persisted.
+                    resolved_width = window.main_splitter.sizes()[1]
+                    self.assertGreater(resolved_width, 0)
+                    window._save_splitter_prefs()
+                    self.assertEqual(
+                        settings.value("splitter/review_detail_restore_width", type=int),
+                        resolved_width,
+                    )
 
-                QTest.keyClick(window, Qt.Key_B, Qt.ControlModifier)
-                _APP.processEvents()
-                self.assertTrue(window._review_detail_collapsed)
-                self.assertEqual(window.main_splitter.sizes()[1], 0)
+                    # Ctrl+B is a WidgetWithChildrenShortcut owned by the review
+                    # workspace, not the top-level window. Deliver keyboard input
+                    # to its visible invoice table, as a real user would.
+                    window.table.setFocus(Qt.OtherFocusReason)
+                    _APP.processEvents()
+                    self.assertTrue(window.table.hasFocus())
+                    QTest.keyClick(window.table, Qt.Key_B, Qt.ControlModifier)
+                    _APP.processEvents()
+                    self.assertTrue(window._review_detail_collapsed)
+                    self.assertEqual(window.main_splitter.sizes()[1], 0)
 
-                window.btn_toggle_review_detail.click()
-                _APP.processEvents()
-                self.assertFalse(window._review_detail_collapsed)
-                self.assertGreater(window.main_splitter.sizes()[1], 0)
-                # P1-4: the elastic detail pane restores from a 320px minimum.
-                self.assertGreaterEqual(window._review_detail_restore_width, 320)
-                self.assertFalse(settings.value("review_detail_collapsed", True, type=bool))
-                window._splitter_save_timer.stop()
-                window._save_splitter_prefs()
-                window.close()
-                _APP.processEvents()
+                    window.btn_toggle_review_detail.click()
+                    _APP.processEvents()
+                    self.assertFalse(window._review_detail_collapsed)
+                    self.assertGreater(window.main_splitter.sizes()[1], 0)
+                    # P1-4: the elastic detail pane restores from a 320px minimum.
+                    self.assertGreaterEqual(window._review_detail_restore_width, 320)
+                    self.assertFalse(settings.value("review_detail_collapsed", True, type=bool))
+                    window._save_splitter_prefs()
+                finally:
+                    window._splitter_save_timer.stop()
+                    window.db.close()
+                    window.close()
+                    window.deleteLater()
+                    _APP.sendPostedEvents(None, QEvent.DeferredDelete)
+                    _APP.processEvents()
 
     def test_network_diagnosis_is_available_from_desktop_and_explains_ap_isolation(self):
         with tempfile.TemporaryDirectory() as td:
