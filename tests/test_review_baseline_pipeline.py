@@ -132,10 +132,21 @@ class ReviewBaselinePipelineTests(unittest.TestCase):
                 "scripts.invoice_fetch.gui.page_layouts.schedule_review_baseline_pipeline"
             ) as schedule, patch(
                 "scripts.invoice_fetch.gui.page_layouts.QTimer.singleShot"
-            ) as global_style_timer:
+            ) as global_style_timer, patch(
+                "scripts.invoice_fetch.gui.page_layouts.apply_global_design_baseline"
+            ) as apply_global_style, patch(
+                "scripts.invoice_fetch.gui.page_layouts._apply_window_visual_language"
+            ) as apply_visual_language:
                 WorkspacePageLayout.apply(page, layout)
-            schedule.assert_called_once_with(page)
-            global_style_timer.assert_called_once()
+                schedule.assert_called_once_with(page)
+                # Both the canonical stylesheet and the window visual language
+                # are deferred after the page owns its final window.
+                self.assertEqual(global_style_timer.call_count, 2)
+                for queued_call in global_style_timer.call_args_list:
+                    self.assertEqual(queued_call.args[0], 0)
+                    queued_call.args[1]()
+                apply_global_style.assert_called_once_with(page)
+                apply_visual_language.assert_called_once_with(page)
             self.assertEqual(page.property("pageArchetype"), "workspace")
         finally:
             page.close()
