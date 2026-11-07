@@ -5461,7 +5461,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertFalse(hasattr(window, "lbl_mail_scan_summary"))
                     self.assertFalse(hasattr(window, "lbl_import_recent_status"))
                     self.assertTrue(hasattr(window, "import_recent_timeline"))
-                    self.assertEqual(window.import_source_card.lbl_title.text(), "来源选择")
+                    self.assertEqual(window.import_source_card.accessibleName(), "导入来源")
                     self.assertTrue(window.import_mail_accounts_card.lbl_title.text())
                     self.assertEqual(window.import_mail_recent_card.lbl_title.text(), "本次运行")
                     next(action for action in window.import_mail_more_menu.actions() if action.text() == "管理邮箱").trigger()
@@ -5581,6 +5581,7 @@ class ClaimGroupsTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as td:
                 db_path = Path(td) / "test_gui_button_hierarchy.db"
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+                from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_COLORS
                 from scripts.invoice_fetch.gui.styles import (
                     ACTIVE_FILTER_STYLE,
                     APP_STYLESHEET,
@@ -5618,7 +5619,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn(DISABLED_BUTTON_STYLE, APP_STYLESHEET)
                     self.assertIn("QPushButton.FilterBtn:checked", APP_STYLESHEET)
                     self.assertIn("background-color: #EFF6FF;", APP_STYLESHEET)
-                    self.assertIn("color: #2563EB;", APP_STYLESHEET)
+                    self.assertIn(f"color: {DESIGN_V1_COLORS['accent']};", APP_STYLESHEET)
                     self.assertIn("border: 1px solid #93C5FD;", APP_STYLESHEET)
                     self.assertIn(MENU_STYLE, APP_STYLESHEET)
                     self.assertIn("QMenu::item", MENU_STYLE)
