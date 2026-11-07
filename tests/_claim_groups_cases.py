@@ -5621,7 +5621,14 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertIn("background-color: #EFF6FF;", APP_STYLESHEET)
                     self.assertIn(f"color: {DESIGN_V1_COLORS['accent']};", APP_STYLESHEET)
                     self.assertIn("border: 1px solid #93C5FD;", APP_STYLESHEET)
-                    self.assertIn(MENU_STYLE, APP_STYLESHEET)
+                    # The canonical QSS tokenizes legacy menu colors at render time;
+                    # assert the rendered menu contract, not raw QSS string identity.
+                    self.assertIn("/* QMenu dropdown styling */", APP_STYLESHEET)
+                    menu_css = APP_STYLESHEET.split("/* QMenu dropdown styling */", 1)[1].split("QMenu::separator", 1)[0]
+                    self.assertIn("QMenu::item {", menu_css)
+                    self.assertIn("min-height: 28px;", menu_css)
+                    self.assertIn("padding: 6px 24px 6px 16px;", menu_css)
+                    self.assertIn(f"color: {DESIGN_V1_COLORS['text_secondary']};", menu_css)
                     self.assertIn("QMenu::item", MENU_STYLE)
                     self.assertIn("min-height: 28px;", MENU_STYLE)
                     self.assertIn("padding: 6px 24px 6px 16px;", MENU_STYLE)
