@@ -83,8 +83,8 @@ def main() -> int:
             return result.returncode if result.returncode > 0 else 1
     print("\nLOCAL_CI_PREFLIGHT=PASS", flush=True)
     print(
-        "Native GUI geometry remains a separate Windows-only, non-gating lane; "
-        "installer and final UX acceptance remain release gates.",
+        "Native GUI geometry is a Windows physical-desktop release gate; "
+        "hosted PR CI omits the non-gating preflight.",
         flush=True,
     )
     return 0

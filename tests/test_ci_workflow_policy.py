@@ -84,19 +84,13 @@ class TestCIWorkflowPolicy(unittest.TestCase):
         self.assertIn('">=14.0.0"', config)
         self.assertIn("version-update:semver-major", config)
 
-    def test_native_geometry_is_pr_only_non_gating_and_preflight_conditioned(self):
-        geometry = self.workflow.split("  native_geometry_preflight:", 1)[1]
-        self.assertIn("if: github.event_name == 'pull_request'", geometry)
-        self.assertIn("continue-on-error: true", geometry)
-        self.assertIn("id: native_geometry_classification", geometry)
-        self.assertIn(
-            "if: steps.native_geometry_classification.outputs.suitable == 'true'",
-            geometry,
-        )
-        # An unsuitable hosted desktop must skip cleanly instead of painting a
-        # failing non-gating job red; a genuine classifier crash still fails.
-        self.assertIn("Environment is unsuitable for native geometry contracts", geometry)
-        self.assertIn("exit $code", geometry)
+    def test_native_geometry_remains_a_release_gate_without_a_pr_runner(self):
+        # The hosted Windows desktop cannot certify native geometry. Do not
+        # spend a separate non-gating PR runner on this unsuitable environment.
+        self.assertNotIn("  native_geometry_preflight:", self.workflow)
+        self.assertNotIn("Native GUI geometry preflight (non-gating)", self.workflow)
+        self.assertTrue((PROJECT_ROOT / "scripts/dev/check_native_gui_geometry.py").is_file())
+        self.assertTrue((PROJECT_ROOT / "tests/test_workbench_native_geometry.py").is_file())
 
 
 if __name__ == "__main__":
