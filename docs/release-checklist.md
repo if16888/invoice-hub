@@ -21,8 +21,7 @@ git diff --check
 - **真实浏览器 SSRF 回归**：在 Windows 上运行
   `INVOICE_HUB_RUN_BROWSER_SMOKE=1 python -m pytest tests/test_browser_ssrf_redirect.py -q`，
   确认内网重定向目标零请求到达且代理拒绝记录存在；该用例默认跳过，不得以"跳过"代替通过。
-- **原生 GUI 几何权威验收**：`Native GUI geometry preflight` 在 CI runner（1024×768）上会分类为
-  `ENVIRONMENT UNSUITABLE` 并保持非门禁；发布前必须在 **≥1366×768 的真实 Windows 显示环境**
+- **原生 GUI 几何权威验收**：不再在托管 CI 的不适用屏幕环境中运行非门禁检查；发布前必须在 **≥1366×768 的真实 Windows 显示环境**
   运行 `python scripts/dev/check_native_gui_geometry.py` 与
   `python -m unittest -v tests.test_workbench_native_geometry`，以合格结果作为权威验收证据。
 - **Exact-master CI attestation**：master 推送后必须确认 `Exact-master CI attestation` 为通过
