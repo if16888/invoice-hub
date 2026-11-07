@@ -43,7 +43,7 @@ class AccessibilityFocusContractTests(unittest.TestCase):
         qss = build_qss()
         base = _rule(qss, "QPushButton")
         focus = _rule(qss, "QPushButton:focus")
-        self.assertIn(f"border: {DESIGN_V1_METRICS['focus_border_width']}px", base)
+        self.assertIn(f"border-width: {DESIGN_V1_METRICS['focus_border_width']}px", base)
         self.assertIn("border-color:", focus)
         self.assertNotIn("border:", focus)
 
