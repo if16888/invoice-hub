@@ -9,6 +9,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QLabel
 
+from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_SPACING
+
 
 def _app():
     global _QAPP
@@ -32,12 +34,18 @@ class P2Batch5Tests(unittest.TestCase):
             def list_duplicate_candidates(self, decision):
                 return []
 
+        expected_margins = (
+            DESIGN_V1_SPACING["xl"],
+            DESIGN_V1_SPACING["xl"],
+            DESIGN_V1_SPACING["xl"],
+            DESIGN_V1_SPACING["lg"],
+        )
         duplicate = DuplicateReviewDialog(StubDB(), None, None, ())
         try:
             margins = duplicate.layout().contentsMargins()
             self.assertEqual(
                 (margins.left(), margins.top(), margins.right(), margins.bottom()),
-                (20, 18, 20, 16),
+                expected_margins,
             )
             titles = [
                 label
@@ -53,7 +61,7 @@ class P2Batch5Tests(unittest.TestCase):
             margins = seller.layout().contentsMargins()
             self.assertEqual(
                 (margins.left(), margins.top(), margins.right(), margins.bottom()),
-                (20, 18, 20, 16),
+                expected_margins,
             )
             titles = [
                 label
