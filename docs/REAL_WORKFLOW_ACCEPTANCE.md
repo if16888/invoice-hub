@@ -50,7 +50,7 @@ The exact final candidate must then have successful authority for:
 - Qt startup warning regression;
 - repeated PDF preview replacement without the known QPdfLinkModel/null-document warning.
 
-The native geometry lane remains diagnostic when the hosted environment cannot satisfy the physical desktop geometry contract.
+Native geometry is a release-only acceptance check on a suitable physical Windows desktop; hosted PR CI does not run the non-gating geometry lane. The classifier and native geometry tests remain available for explicit pre-release verification.
 
 ## Windows pre-tag release audit
 
