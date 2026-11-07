@@ -3442,9 +3442,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.overview_state_stack.show_error("无法读取工作台数据", retry=retry)
             for label in self.overview_value_labels.values():
                 label.set_value("—")
+            self.lbl_overview_month_total.setText("本月 —")
             if performance_trace is not None:
                 performance_trace.finish("error_state", surface="overview")
             return
+
+        self.lbl_overview_month_total.setText(f"本月 {metrics['month_total_text']}")
 
         if metrics["total"] == 0:
             action = make_button("开始导入", variant="primary")
@@ -5491,6 +5494,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             card = self.overview_summary_strip.add_metric(stat_key, title, "—", state=state)
             self.overview_value_labels[stat_key] = card
         layout.addWidget(self.overview_summary_strip)
+
+        # Preserve the per-currency monthly total outside the compact KPI strip.
+        # Excludes proof materials and never combines different currencies.
+        self.lbl_overview_month_total = QLabel("本月 —")
+        self.lbl_overview_month_total.setAccessibleName("本月发票金额")
+        self.lbl_overview_month_total.setProperty("role", "caption")
+        self.lbl_overview_month_total.setWordWrap(True)
+        layout.addWidget(self.lbl_overview_month_total)
 
         body_frame = QFrame()
         body_layout = QHBoxLayout(body_frame)
