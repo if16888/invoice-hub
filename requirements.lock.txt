@@ -63,7 +63,7 @@ pycparser==3.12
     # via cffi
 pyee==13.0.1
     # via playwright
-pypdfium2==5.14.0
+pypdfium2==5.15.0
     # via pdfplumber
 pypng==0.20220715.0
     # via qrcode
