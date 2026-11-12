@@ -4460,10 +4460,11 @@ def _run_classify(
     still_unknown = db.get_unclassified_emails(mailbox_key=mailbox_key)
     provider = str(ai_cfg.get("provider", "none") or "none").strip().lower()
 
-    from .ai_classifier import is_provider_session_paused
+    from .ai_classifier import is_provider_session_paused, provider_session_pause_reason
     if still_unknown and provider != "none" and is_provider_session_paused(provider):
-        _log.warning("AI 已因鉴权失败暂停，请检查 API Key。")
-        return {"auth_failed": True, "pending_classification": len(still_unknown)}
+        auth_failed = provider_session_pause_reason(provider) == "auth"
+        _log.warning("AI 已因鉴权失败暂停，请检查 API Key。" if auth_failed else "AI 会话已手动暂停，未调用远端服务。")
+        return {"auth_failed": auth_failed, "pending_classification": len(still_unknown), "session_paused": True}
 
     ai_disabled = no_ai or provider in {"", "none", "off", "disabled"}
     if still_unknown and not ai_disabled:

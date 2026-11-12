@@ -231,7 +231,7 @@ SELLER_MAX_WIDTH = 320
 INVOICE_NUMBER_DEFAULT_WIDTH = 190
 INVOICE_NUMBER_MIN_WIDTH = 178
 
-RECORD_MIN_HEIGHT = 260
+RECORD_MIN_HEIGHT = 200
 RECORD_MAX_HEIGHT = 480
 PREVIEW_MIN_HEIGHT = 200
 
@@ -293,6 +293,8 @@ def _apply_initial_vertical_sizes(splitter: QSplitter, requested_sizes: list[int
         RECORD_MIN_HEIGHT + PREVIEW_MIN_HEIGHT,
     )
     requested_record = requested_sizes[0] if requested_sizes else 320
+    if splitter.window().height() <= 720 and not getattr(splitter.window(), "_restored_left_splitter_sizes", None):
+        requested_record = RECORD_MIN_HEIGHT
     record, preview = clamp_vertical_split(
         total,
         requested_record,
@@ -340,7 +342,7 @@ def _install_real_vertical_splitter(window) -> None:
     splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # app.py historically fixed the list pane to 276 px. Restore the approved
-    # 260-480 px adjustable range and preserve the shared preview minimum.
+    # 200-480 px adjustable range and preserve the shared preview minimum.
     upper.setMinimumHeight(RECORD_MIN_HEIGHT)
     upper.setMaximumHeight(RECORD_MAX_HEIGHT)
     upper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -425,21 +427,22 @@ def _install_table_remainder_contract(window) -> None:
         try:
             viewport_width = max(0, table.viewport().width())
             compact = viewport_width < 720
-            # Keep assignment confirmation before the long identifier when
-            # native font minimums exceed the remaining compact width.
-            claim_visual = header.visualIndex(6)
-            number_visual = header.visualIndex(INVOICE_NUMBER_COLUMN)
-            if compact and claim_visual > number_visual:
-                header.moveSection(claim_visual, number_visual)
-            elif not compact and claim_visual < number_visual:
-                header.moveSection(claim_visual, number_visual)
-            for column in (1, 2):
-                table.setColumnHidden(column, compact)
+            # The target group is visible in the toolbar. Keep date and
+            # currency available for ticket verification on compact desktops.
+            table.setColumnHidden(1, compact)
+            table.setColumnHidden(2, False)
+            table.setColumnWidth(3, max(120, table.columnWidth(3)))
             if compact:
+                # Keep the last model column visible so native row selection
+                # includes the whole row. Long names/numbers can elide here.
+                table.setColumnWidth(6, 64)
+                table.setColumnWidth(INVOICE_NUMBER_COLUMN, max(96, min(140, viewport_width // 5)))
+                table.setColumnWidth(2, 90)
                 other_width = sum(table.columnWidth(index) for index in range(table.columnCount())
                                   if index != SELLER_COLUMN and not table.isColumnHidden(index))
                 table.setColumnWidth(SELLER_COLUMN, max(120, viewport_width - other_width))
                 return
+            table.setColumnWidth(6, max(96, table.columnWidth(6)))
             seller_width = max(
                 SELLER_MIN_WIDTH,
                 min(SELLER_MAX_WIDTH, table.columnWidth(SELLER_COLUMN)),
@@ -1025,7 +1028,7 @@ def _rebuild_claim_section(window) -> None:
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(10)
 
-    title = QLabel("当前报销组", section)
+    title = QLabel("此票归属", section)
     title.setProperty("class", "SectionTitle")
     layout.addWidget(title)
 
@@ -1056,7 +1059,7 @@ def _rebuild_claim_section(window) -> None:
         layout.addLayout(reason_action_row)
 
     detail.lbl_claim_total.setParent(section)
-    detail.lbl_claim_total.setWordWrap(False)
+    detail.lbl_claim_total.setWordWrap(True)
     detail.lbl_claim_total.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
     layout.addWidget(detail.lbl_claim_total)
 
@@ -2018,6 +2021,8 @@ def _status_segment_stylesheet() -> str:
     metrics = DESIGN_V1_METRICS
     return f"""
 QFrame#CompactStatCard {{
+    min-width: 0px;
+    padding: 0px;
     min-height: {metrics['segmented_item_height'] - 4}px;
     max-height: {metrics['segmented_item_height'] - 4}px;
     background-color: transparent;
@@ -2180,5 +2185,7 @@ def apply_review_status_segmented_control(window) -> None:
         if value is not None:
             value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         _repolish(card)
+    if segment is not None:
+        segment.refresh_geometry()
     _install_review_filter_state_contract(window)
     _repolish(bar)

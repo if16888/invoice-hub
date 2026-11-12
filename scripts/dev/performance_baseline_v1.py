@@ -431,12 +431,59 @@ def _run_shutdown(app: QApplication, root: Path, reps: int) -> list[dict]:
     return results
 
 
-def run(repetitions: int, *, completion_only: bool = False) -> dict:
+def _run_export_groups(app: QApplication, root: Path, reps: int) -> list[dict]:
+    """Measure end-to-end group refresh, including deferred file inspection."""
+    results = []
+    for count in (200, 2000):
+        folder = root / f"export-{count}"
+        folder.mkdir()
+        db_path = folder / "group.db"
+        ids = _seed_database(db_path, count, folder)
+        with InvoiceDB(db_path) as db:
+            group = db.create_claim_group("Synthetic export benchmark")
+            for invoice_id in ids:
+                db.add_invoice_to_claim(group, invoice_id)
+        window = _make_window(app, db_path)
+        try:
+            def settle_group():
+                deadline = time.perf_counter() + 30
+                while True:
+                    app.processEvents(QEventLoop.AllEvents, 20)
+                    worker = getattr(window, "_export_preflight_worker", None)
+                    if (worker is None or not worker.isRunning()) and window.export_invoice_list.count() == count:
+                        break
+                    if time.perf_counter() >= deadline:
+                        raise RuntimeError("Synthetic export inspection timed out")
+                window.export_invoice_list.viewport().repaint()
+
+            started = time.perf_counter()
+            window._switch_main_page("export")
+            settle_group()
+            first_ms = (time.perf_counter() - started) * 1000
+
+            def refresh():
+                window._sync_export_claim_selection()
+                settle_group()
+
+            results.append({"id": "P8", "size": count, "description": "export group refresh with distinct synthetic originals",
+                            "first_display_ms": round(first_ms, 3), "stats": _measure(app, reps, refresh)})
+        finally:
+            _close_window(app, window)
+    return results
+
+
+def run(repetitions: int, *, completion_only: bool = False, export_only: bool = False) -> dict:
     app = QApplication.instance() or QApplication([])
     _OBSERVED_PROBES.clear()
-    with tempfile.TemporaryDirectory(prefix="invoice-hub-perf-") as temp_dir:
+    with (
+        tempfile.TemporaryDirectory(prefix="invoice-hub-perf-") as temp_dir,
+        patch("scripts.invoice_fetch.gui.app.RUNTIME_DIR", Path(temp_dir)),
+        patch("scripts.invoice_fetch.gui.workbench_settings.RUNTIME_DIR", Path(temp_dir)),
+    ):
         root = Path(temp_dir)
-        if completion_only:
+        if export_only:
+            scenarios = _run_export_groups(app, root, repetitions)
+        elif completion_only:
             # Phase 2B compares only completion-to-result paths. Reuse the
             # same scenario functions and statistics while avoiding unrelated
             # PDF/shutdown/page-switch fixture churn in the triage loop.
@@ -486,6 +533,7 @@ def run(repetitions: int, *, completion_only: bool = False) -> dict:
                 "performance_mode": os.environ.get("INVOICE_HUB_PERFORMANCE", ""),
                 "synthetic_only": True,
                 "completion_only": completion_only,
+                "export_only": export_only,
                 "repetitions": repetitions,
             },
             "scenarios": scenarios,
@@ -500,6 +548,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repetitions", type=int, default=20)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--export-only", action="store_true", help="measure 200/2000-row group refresh and main-thread stalls")
     parser.add_argument(
         "--completion-only",
         action="store_true",
@@ -508,7 +557,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.repetitions < 20:
         parser.error("Phase 1 requires at least 20 repetitions per scenario")
-    result = run(args.repetitions, completion_only=args.completion_only)
+    if args.export_only and args.completion_only:
+        parser.error("choose either --export-only or --completion-only")
+    result = run(args.repetitions, completion_only=args.completion_only, export_only=args.export_only)
     encoded = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

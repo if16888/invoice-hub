@@ -32,7 +32,7 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
 
     @contextmanager
-    def window(self):
+    def window(self, size=(1440, 900), *, deferred=True):
         with tempfile.TemporaryDirectory() as td, patch.object(settings_module, "RUNTIME_DIR", Path(td)):
             settings = settings_module.workbench_settings()
             settings.setValue("migration/legacy_qsettings_v1", True)
@@ -51,8 +51,9 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
                     })
                     db.add_invoice_to_claim(claim, invoice)
             window = InvoiceReviewApp(path, splash=None)
-            window._deferred_init()
-            window.resize(1440, 900)
+            if deferred:
+                window._deferred_init()
+            window.resize(*size)
             window.show()
             window.activateWindow()
             self.settle()

@@ -61,6 +61,14 @@ def ai_key_source_text(source: str) -> str:
     }.get(source, "未配置")
 
 
+def ai_status(enabled: bool, key_source: str, paused: bool) -> tuple[str, str]:
+    if not enabled:
+        return "未启用", "muted"
+    if key_source not in {"profile", "provider", "env"}:
+        return "待补 Key", "warning"
+    return ("已暂停", "warning") if paused else ("已启用", "success")
+
+
 class CommonSettingsPage(QWidget):
     """Small, action-oriented summary of reimbursement, export, and mailbox setup."""
 
@@ -1220,7 +1228,7 @@ def _migrate_ai_page(window) -> None:
     window.btn_settings_ai_empty_validate = empty_validate
 
 
-def _normalize_ai(window) -> None:
+def render_ai_state(window) -> None:
     if not hasattr(window, "lbl_settings_ai_status_badge"):
         return
     for attr in ("lbl_settings_ai_provider", "lbl_settings_ai_model", "lbl_settings_ai_enabled",
@@ -1236,14 +1244,7 @@ def _normalize_ai(window) -> None:
     )
     enabled = bool(state.get("enabled"))
     paused = bool(state.get("paused"))
-    if not enabled:
-        status, tone = "未启用", "muted"
-    elif not configured:
-        status, tone = "待补 Key", "warning"
-    elif paused:
-        status, tone = "已暂停", "warning"
-    else:
-        status, tone = "已启用", "success"
+    status, tone = ai_status(enabled, key_source, paused)
     window.lbl_settings_ai_enabled.setText(status)
     window.lbl_settings_ai_enabled.setToolTip(
         "配置已启用；补充 API Key 后即可使用。" if enabled and not configured
@@ -1265,6 +1266,10 @@ def _normalize_ai(window) -> None:
     window.settings_ai_profile_list.setVisible(count > 1)
     window.settings_ai_detail_panel.setVisible(count > 0)
     window.settings_ai_empty_state.setVisible(count == 0)
+
+
+def _normalize_ai(window) -> None:
+    render_ai_state(window)
 
 
 def _install_refresh_contract(window, page: QWidget) -> None:

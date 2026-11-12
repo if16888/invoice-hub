@@ -1864,6 +1864,9 @@ class InvoiceDetailPanel(QWidget):
 
     def _show_claim_assignment_menu(self):
         menu = QMenu(self)
+        def choose(index):
+            self.combo_claims.setCurrentIndex(index)
+            self.combo_claims.activated.emit(index)
         for index in range(self.combo_claims.count()):
             label = self.combo_claims.itemText(index)
             group_id = self.combo_claims.itemData(index)
@@ -1872,10 +1875,10 @@ class InvoiceDetailPanel(QWidget):
             action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(index == self.combo_claims.currentIndex())
-            action.triggered.connect(lambda checked=False, i=index: self.combo_claims.setCurrentIndex(i))
+            action.triggered.connect(lambda checked=False, i=index: choose(i))
         current_id = self.combo_claims.currentData()
         if isinstance(current_id, int) and current_id > 0:
-            menu.addAction("移出报销组", lambda: self.combo_claims.setCurrentIndex(-1))
+            menu.addAction("清除加入目标", lambda: self.combo_claims.setCurrentIndex(-1))
         menu.addSeparator()
         menu.addAction("新建报销组", self._toggle_new_claim_input)
         menu.exec(self.btn_claim_assignment.mapToGlobal(self.btn_claim_assignment.rect().bottomLeft()))

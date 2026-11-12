@@ -2443,7 +2443,20 @@ class InvoiceDB(EvidenceStoreMixin):
         self._set_last_error("")
         return True
 
-    def remove_invoice_from_claim(self, claim_id: int, invoice_id: int) -> bool:
+    def get_claim_link_id(self, claim_id: int, invoice_id: int) -> int | None:
+        row = self._conn.execute(
+            "SELECT id FROM claim_group_items WHERE claim_id=? AND invoice_id=?", (claim_id, invoice_id)
+        ).fetchone()
+        return int(row[0]) if row else None
+
+    def add_invoice_to_claim_with_token(self, claim_id: int, invoice_id: int) -> int | None:
+        """Return the exact inserted relation while retaining the write lock."""
+        with self._atomic_savepoint():
+            if not self.add_invoice_to_claim(claim_id, invoice_id):
+                return None
+            return self.get_claim_link_id(claim_id, invoice_id)
+
+    def remove_invoice_from_claim(self, claim_id: int, invoice_id: int, *, expected_link_id: int | None = None) -> bool:
         """Remove a mapped invoice from a claim group."""
         with self._atomic_savepoint():
             self._conn.execute("UPDATE invoices SET id=id WHERE 0")
@@ -2453,10 +2466,12 @@ class InvoiceDB(EvidenceStoreMixin):
                 )
                 return False
             with self._atomic_savepoint():
-                cursor = self._conn.execute(
-                    "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?",
-                    (claim_id, invoice_id)
-                )
+                sql = "DELETE FROM claim_group_items WHERE claim_id = ? AND invoice_id = ?"
+                params = (claim_id, invoice_id)
+                if expected_link_id is not None:
+                    sql += " AND id = ?"
+                    params += (expected_link_id,)
+                cursor = self._conn.execute(sql, params)
                 rowcount = cursor.rowcount
             return rowcount > 0
 

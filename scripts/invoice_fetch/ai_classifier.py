@@ -20,6 +20,7 @@ _log = logging.getLogger(__name__)
 
 # Session-level paused providers set
 _SESSION_PAUSED_PROVIDERS: set[str] = set()
+_SESSION_PAUSE_REASONS: dict[str, str] = {}
 
 
 def is_provider_session_paused(provider: str) -> bool:
@@ -27,11 +28,17 @@ def is_provider_session_paused(provider: str) -> bool:
     return (provider or "").strip().lower() in _SESSION_PAUSED_PROVIDERS
 
 
-def pause_provider_session(provider: str) -> None:
+def provider_session_pause_reason(provider: str) -> str:
+    prov = (provider or "").strip().lower()
+    return _SESSION_PAUSE_REASONS.get(prov, "manual") if is_provider_session_paused(prov) else ""
+
+
+def pause_provider_session(provider: str, *, reason: str = "manual") -> None:
     """Pause the given provider for the current session."""
     prov = (provider or "").strip().lower()
     if prov and prov != "none":
         _SESSION_PAUSED_PROVIDERS.add(prov)
+        _SESSION_PAUSE_REASONS[prov] = reason
 
 
 def clear_provider_session_paused(provider: str) -> None:
@@ -39,11 +46,13 @@ def clear_provider_session_paused(provider: str) -> None:
     prov = (provider or "").strip().lower()
     if prov in _SESSION_PAUSED_PROVIDERS:
         _SESSION_PAUSED_PROVIDERS.remove(prov)
+    _SESSION_PAUSE_REASONS.pop(prov, None)
 
 
 def clear_all_session_paused() -> None:
     """Clear the session paused status for all providers."""
     _SESSION_PAUSED_PROVIDERS.clear()
+    _SESSION_PAUSE_REASONS.clear()
 
 
 # API endpoints
@@ -119,10 +128,11 @@ class AIClassifier:
             return self._mark_batch_unclassified(emails, "AI 分类未启用，仅使用本地规则/白名单")
 
         if is_provider_session_paused(self.provider):
-            _log.warning("AI 已因鉴权失败暂停，请检查 API Key。")
+            auth_pause = provider_session_pause_reason(self.provider) == "auth"
+            _log.warning("AI 会话已暂停，保持邮件待分类。")
             return self._mark_batch_unclassified(
                 emails,
-                "AI 鉴权失败，已暂停本轮 AI 分类",
+                "AI 鉴权失败，已暂停本轮 AI 分类" if auth_pause else "AI 会话已手动暂停，保持待分类",
             )
 
         results = []
@@ -138,7 +148,7 @@ class AIClassifier:
                 results.extend(batch_result)
             except AIAuthError as exc:
                 self.auth_failed = True
-                pause_provider_session(self.provider)
+                pause_provider_session(self.provider, reason="auth")
                 _log.error(
                     "AI API Key 鉴权失败，请检查设置: provider=%s, model=%s, status=%d",
                     exc.provider,
