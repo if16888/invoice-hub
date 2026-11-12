@@ -94,6 +94,20 @@ def _locked_version(lock_name: str, package_name: str) -> Version:
 
 
 class RuntimeDependencySecurityTests(unittest.TestCase):
+    def test_desktop_qt_excludes_the_known_windows_native_exit_regression(self):
+        inputs = [Requirement(line.strip()) for line in
+                  (PROJECT_ROOT / "requirements-desktop.txt").read_text(encoding="utf-8").splitlines()
+                  if line.strip() and not line.lstrip().startswith("#")]
+        requirement = next(item for item in inputs if item.name.lower() == "pyside6")
+        for incompatible in ("6.12.0", "6.12.1"):
+            self.assertNotIn(Version(incompatible), requirement.specifier,
+                             "Qt upgrades require a successful Windows native exit/HCI retest")
+        qt = _locked_version("requirements-desktop.lock.txt", "pyside6")
+        self.assertLess(qt, Version("6.12"))
+        self.assertIn(qt, requirement.specifier)
+        for dependency in ("pyside6-addons", "pyside6-essentials", "shiboken6"):
+            self.assertEqual(_locked_version("requirements-desktop.lock.txt", dependency), qt)
+
     def test_installed_runtime_meets_security_floors(self):
         floors = {
             "pdfminer.six": "20251230",

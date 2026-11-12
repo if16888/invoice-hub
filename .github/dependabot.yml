@@ -17,6 +17,14 @@ updates:
           - "minor"
           - "patch"
     ignore:
+      # Qt 6.12 causes a Windows native exit crash in the HCI lane. Keep the
+      # entire Qt family on the verified line until a deliberate native retest.
+      - dependency-name: "pyside6*"
+        versions:
+          - ">=6.12.0"
+      - dependency-name: "shiboken6"
+        versions:
+          - ">=6.12.0"
       # pyee 14+ requires Python >=3.12; the project baseline is 3.11.
       - dependency-name: "pyee"
         versions:
