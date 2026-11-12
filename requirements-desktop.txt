@@ -1,3 +1,3 @@
 # 6.12.0 can hit a native access violation when the interpreter exits after
 # tests.test_hci_v1 on Windows; hold at 6.11.1 until the upstream fix.
-PySide6>=6.12.0,<6.13
+PySide6>=6.11.1,<6.12
