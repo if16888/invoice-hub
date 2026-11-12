@@ -73,7 +73,7 @@ qrcode[pil]==8.2
     # via -r requirements.txt
 requests==2.34.2
     # via -r requirements.txt
-soupsieve==2.9
+soupsieve==4.0.1
     # via beautifulsoup4
 typing-extensions==4.16.0
     # via
