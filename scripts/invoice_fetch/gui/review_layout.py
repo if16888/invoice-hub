@@ -340,7 +340,7 @@ def _install_real_vertical_splitter(window) -> None:
     splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # app.py historically fixed the list pane to 276 px. Restore the approved
-    # 260-480 px adjustable range and preserve at least 240 px for preview.
+    # 260-480 px adjustable range and preserve the shared preview minimum.
     upper.setMinimumHeight(RECORD_MIN_HEIGHT)
     upper.setMaximumHeight(RECORD_MAX_HEIGHT)
     upper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -1240,7 +1240,7 @@ def sync_review_feedback_state(window) -> None:
     detail.lbl_sum_date.setToolTip(expense_date)
 
     detail.lbl_core_date.set_value(expense_date or "—")
-    detail.lbl_core_amount.set_value(detail._format_amount_display(amount))
+    detail.lbl_core_amount.set_value(detail._format_amount_display(amount, invoice.get("currency")))
     detail.lbl_core_seller.set_value(seller or "—")
     detail.lbl_core_buyer.set_value(buyer or "—")
 

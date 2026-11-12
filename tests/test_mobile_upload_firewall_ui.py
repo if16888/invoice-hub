@@ -354,6 +354,9 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             self.assertEqual(panel.lbl_lan_client_access.text(), "尚未确认")
             self.assertTrue(panel.lbl_lan_access_hint.isVisible())
             self.assertTrue(panel.btn_firewall_authorize.isHidden())
+            panel._set_stats({"lan_client_access_confirmed": True})
+            self.assertEqual(panel.lbl_lan_client_access.text(), "已确认")
+            self.assertTrue(panel.lbl_lan_access_hint.isVisible())
 
     def test_missing_and_dev_firewall_states_have_safe_fallbacks(self):
         with tempfile.TemporaryDirectory() as td:

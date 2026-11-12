@@ -11,7 +11,7 @@ from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut, QTransform
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
+    QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
     QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
@@ -96,11 +96,15 @@ class PreviewMixin:
         return
 
     def _init_preview_panel(self):
-        self.preview_panel = QGroupBox("原件预览")
+        self.preview_panel = QFrame()
+        self.preview_panel.setAccessibleName("原件预览")
         self.preview_panel.setFocusPolicy(Qt.StrongFocus)
         preview_layout = QVBoxLayout(self.preview_panel)
         preview_layout.setContentsMargins(8, 8, 8, 8)
-        preview_layout.setSpacing(0)
+        preview_layout.setSpacing(6)
+        self.preview_title = QLabel("原件预览", self.preview_panel)
+        self.preview_title.setProperty("class", "SectionTitle")
+        preview_layout.addWidget(self.preview_title)
 
         self.preview_workbench = QWidget(self.preview_panel)
         self.preview_workbench.setObjectName("PreviewWorkbench")

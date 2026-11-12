@@ -51,7 +51,7 @@ class DateRangeDialog(QDialog):
         presets.addStretch(1)
         layout.addLayout(presets)
 
-        self.start_date_edit = self._make_date_edit(today.addDays(-30))
+        self.start_date_edit = self._make_date_edit(today.addDays(-29))
         self.end_date_edit = self._make_date_edit(today)
         form = QFormLayout()
         form.setHorizontalSpacing(14)
@@ -104,9 +104,9 @@ class DateRangeDialog(QDialog):
 
     def _apply_preset(self, mode: str) -> None:
         if mode == "7d":
-            start = self._today.addDays(-7)
+            start = self._today.addDays(-6)
         elif mode == "30d":
-            start = self._today.addDays(-30)
+            start = self._today.addDays(-29)
         else:
             start = self._today.addMonths(-3)
         self.start_date_edit.setDate(start)

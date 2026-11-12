@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGridLayout, QStyle, QLayout, QBoxLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
     QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog,
-    QDialogButtonBox, QGraphicsOpacityEffect, QStatusBar,
+    QDialogButtonBox, QGraphicsOpacityEffect, QStatusBar, QAbstractButton, QTabBar,
 )
 from PySide6.QtCore import (
     QEasingCurve, QItemSelectionModel, QPoint, QPropertyAnimation, QTimer, QUrl, QEvent, Qt,
@@ -43,7 +43,7 @@ from .. import APP_VERSION
 from ..config import PROJECT_ROOT, RUNTIME_DIR, load_config_safe, save_config
 from ..export_paths import resolve_export_directory
 from ..diagnostics import collect_app_info, export_diagnostics_zip
-from ..reimbursement import amount_total, currency_total, currency_amounts, financial_rows, buyer_warning, format_amount_total, get_date_warning
+from ..reimbursement import amount_total, currency_total, currency_amounts, financial_rows, buyer_warning, format_amount_total, get_date_warning, format_currency_amount
 from ..review_status import TO_REVIEW, APPROVED, IGNORED, ERROR
 from ..redownload import (
     REDOWNLOAD_MODE_BATCH,
@@ -98,7 +98,7 @@ from .api_key_dialog import ApiKeyDialog
 from .dialog_form import style_dialog_form, complete_mailbox_address, MAILBOX_DOMAINS
 from .icon_provider import IconProvider
 from .page_layouts import DashboardPageLayout, SettingsPageLayout, TaskFlowPageLayout, WorkspacePageLayout
-from .settings_common import CommonSettingsPage, apply_settings_responsive_metrics
+from .settings_common import CommonSettingsPage, ai_key_source_text, apply_settings_responsive_metrics
 from .company_tax_profile import (
     CompanyTaxProfileDialog,
     refresh_company_tax_profile_status,
@@ -3076,6 +3076,24 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         header.blockSignals(False)
 
     def eventFilter(self, obj, event):
+        if (
+            isinstance(obj, (QAbstractButton, QTabBar))
+            and obj.property("reviewKeyControl")
+            and event.type() in (QEvent.ShortcutOverride, QEvent.KeyPress)
+            and event.key() in (Qt.Key_Return, Qt.Key_Enter)
+            and event.modifiers() == Qt.NoModifier
+        ):
+            # Focused controls own activation, even when moved into focus preview.
+            # A review-wide Enter shortcut must never approve instead of clicking.
+            event.accept()
+            if event.type() == QEvent.KeyPress and not event.isAutoRepeat():
+                if isinstance(obj, QAbstractButton) and obj.isEnabled():
+                    menu = getattr(obj, "menu", lambda: None)()
+                    if menu is not None:
+                        menu.popup(obj.mapToGlobal(QPoint(0, obj.height())))
+                    else:
+                        obj.click()
+            return True
         reason_editor = getattr(self, "txt_invoice_reason_inline", None)
         if (
             obj is reason_editor
@@ -3136,10 +3154,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if not getattr(self, "_shutdown_requested", False):
             self._adjust_column_4_width()
 
-    def _invoke_workbench_action(self, action) -> bool:
-        if QApplication.activeModalWidget() is not None:
+    def _invoke_workbench_action(self, action, *, sequence: str = "") -> bool:
+        if QApplication.activeModalWidget() is not None or QApplication.activePopupWidget() is not None:
             return False
-        if is_keyboard_input_target(QApplication.focusWidget()):
+        focused = QApplication.focusWidget()
+        if is_keyboard_input_target(focused):
+            return False
+        if sequence in {"Return", "Enter"} and isinstance(focused, (QAbstractButton, QTabBar)):
             return False
         action()
         return True
@@ -3234,7 +3255,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         shortcut = QShortcut(QKeySequence(sequence), owner)
         shortcut.setContext(Qt.WidgetWithChildrenShortcut if review_only else Qt.WindowShortcut)
         if guarded:
-            shortcut.activated.connect(lambda callback=action: self._invoke_workbench_action(callback))
+            shortcut.activated.connect(lambda callback=action, key=sequence: self._invoke_workbench_action(callback, sequence=key))
         else:
             shortcut.activated.connect(action)
         store[sequence] = shortcut
@@ -5212,7 +5233,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 title=str(profile.get("name") or f"{provider} · {model}").strip(),
                 subtitle=f"{provider} · {model}",
                 status_badge="已启用" if profile.get("enabled") else "未启用",
-                meta=key_source,
+                meta=ai_key_source_text(key_source),
                 user_data=profile.get("profile_id", ""),
             )
         self.settings_ai_profile_list.blockSignals(False)
@@ -5226,6 +5247,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "settings_ai_empty_state"):
             self.settings_ai_empty_state.setVisible(self.settings_ai_profile_list.count() == 0)
         if self.settings_ai_profile_list.count() == 0:
+            self._settings_ai_state = {}
             self.settings_ai_detail_panel.setVisible(False)
             self.btn_settings_ai_edit.setVisible(True)
             self.btn_settings_ai_edit.setProperty("variant", "primary")
@@ -5286,13 +5308,18 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         provider = str(profile.get("provider") or "—")
         model = str(profile.get("model") or "—")
         key_source = get_ai_api_key_source(profile.get("provider", ""), profile.get("profile_id", ""))
-        self.lbl_settings_ai_key_status.setText(f"API Key 状态：{key_source}")
+        self.lbl_settings_ai_key_status.setText(ai_key_source_text(key_source))
         self.lbl_settings_ai_validation_status.setText("已配置，尚未重新校验")
         paused = is_provider_session_paused(profile.get("provider", ""))
+        self._settings_ai_state = {
+            "enabled": bool(profile.get("enabled", False)),
+            "key_source": key_source,
+            "paused": paused,
+        }
         self.lbl_settings_ai_provider.setText(provider)
         self.lbl_settings_ai_model.setText(model)
         self.lbl_settings_ai_enabled.setText("已启用" if profile.get("enabled", False) else "未启用")
-        self.lbl_settings_ai_session_state.setText("已暂停" if paused else "正常")
+        self.lbl_settings_ai_session_state.setText("已暂停" if paused else "未暂停")
         self.lbl_settings_ai_failure_status.setText(f"失败状态：{'401 / 403 后本会话已暂停' if paused else '当前会话可用'}")
 
     def _current_settings_ai_profile(self) -> dict | None:
@@ -6645,7 +6672,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 status = self._get_invoice_review_status_chinese(inv)
                 number = str(inv.get("invoice_number") or "无票号").strip()
                 seller = str(inv.get("seller_name") or "未知销售方").strip()
-                amount = self._format_table_amount(inv.get("total_amount") or "")
+                amount = format_currency_amount(inv.get("total_amount"), inv.get("currency"))
                 # Surface the per-invoice blocker next to the row so the worker
                 # can tell which record to fix instead of only seeing a count.
                 # Uses the same inspection helpers as the completeness checklist.
@@ -6668,7 +6695,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 item.setData(Qt.UserRole, inv["id"])
                 item.setData(INVOICE_ROW_ROLE, {
                     "title": seller, "subtitle": f"{status} · {subtitle}",
-                    "amount": f"¥{amount}", "attention": bool(row_blockers),
+                    "amount": amount, "attention": bool(row_blockers),
                 })
                 item.setToolTip(item.text())
             self.lbl_export_invoice_meta.setText(
@@ -6917,6 +6944,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+U", self._mobile_upload_clicked, guarded=False)
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+M", self._scan_email_clicked, guarded=False)
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+R", self._load_invoices, guarded=False)
+        for control in (
+            self.review_page.findChildren(QAbstractButton)
+            + self.review_page.findChildren(QTabBar)
+        ):
+            control.setProperty("reviewKeyControl", True)
+            control.installEventFilter(self)
 
 
     def _base_filter_label(self, status) -> str:
@@ -8443,7 +8476,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             buyer_check_warning = self._buyer_warning(inv)
             # Update summary card via panel
             self._detail_panel.set_summary(
-                amount=total_amt, status=status, date=display_date,
+                amount=total_amt, currency=inv.get("currency"), status=status, date=display_date,
                 category=category, seller=seller, number=inv_num,
                 buyer_warning=buyer_check_warning,
                 date_warning=get_date_warning(inv),

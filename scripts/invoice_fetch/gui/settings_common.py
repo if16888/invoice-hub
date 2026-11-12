@@ -52,6 +52,15 @@ from .ui_components import (
 )
 
 
+def ai_key_source_text(source: str) -> str:
+    """Translate the credential resolver's values without parsing UI copy."""
+    return {
+        "profile": "已保存（当前配置专属）",
+        "provider": "已保存（此服务通用）",
+        "env": "使用环境变量",
+    }.get(source, "未配置")
+
+
 class CommonSettingsPage(QWidget):
     """Small, action-oriented summary of reimbursement, export, and mailbox setup."""
 
@@ -1218,26 +1227,29 @@ def _normalize_ai(window) -> None:
                  "lbl_settings_ai_key_status", "lbl_settings_ai_session_state"):
         label = getattr(window, attr)
         label.setToolTip(label.text())
-    raw_key_text = window.lbl_settings_ai_key_status.text().strip()
-    configured = any(token in raw_key_text for token in ("凭据管理器", "环境变量"))
-    if "API Key 状态：" not in raw_key_text:
-        source = raw_key_text if configured else "未配置"
-        window.lbl_settings_ai_key_status.setText(f"API Key 状态：{source}")
+    state = getattr(window, "_settings_ai_state", {})
+    key_source = state.get("key_source", "missing")
+    configured = key_source in {"profile", "provider", "env"}
+    window.lbl_settings_ai_key_status.setText(ai_key_source_text(key_source))
     window.lbl_settings_ai_key_status.setToolTip(
         "API Key 来源：环境变量 / Windows 凭据管理器；配置文件不保存密钥。"
     )
-    enabled = window.lbl_settings_ai_enabled.text().strip() in {"已启用", "开启"}
-    if enabled and not configured:
-        window.lbl_settings_ai_enabled.setText("未启用")
-        window.lbl_settings_ai_enabled.setToolTip("未配置 API Key，AI 无法启用。")
-        enabled = False
-    paused = "暂停" in window.lbl_settings_ai_session_state.text()
+    enabled = bool(state.get("enabled"))
+    paused = bool(state.get("paused"))
     if not enabled:
         status, tone = "未启用", "muted"
+    elif not configured:
+        status, tone = "待补 Key", "warning"
     elif paused:
         status, tone = "已暂停", "warning"
     else:
         status, tone = "已启用", "success"
+    window.lbl_settings_ai_enabled.setText(status)
+    window.lbl_settings_ai_enabled.setToolTip(
+        "配置已启用；补充 API Key 后即可使用。" if enabled and not configured
+        else "配置已启用；远端连接将在首次使用时确认。" if enabled
+        else "当前配置未启用。"
+    )
     badge = window.lbl_settings_ai_status_badge
     badge.setText(status)
     badge.setProperty("tone", tone)

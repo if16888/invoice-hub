@@ -1386,7 +1386,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-                    number: str = "", buyer_warning: str = "", date_warning: str = ""):
+                    number: str = "", buyer_warning: str = "", date_warning: str = "",
+                    currency: str | None = "CNY"):
 
 
 
@@ -1394,7 +1395,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.lbl_sum_amount.setText(self._format_amount_display(amount))
+        self.lbl_sum_amount.setText(self._format_amount_display(amount, currency))
 
 
 
@@ -2057,43 +2058,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-    def _format_amount_display(self, amount_text: str) -> str:
+    def _format_amount_display(self, amount_text: str, currency: str | None = "CNY") -> str:
+        from ..reimbursement import format_currency_amount
 
-
-
-        """Format amount for display."""
-
-
-
-        amount_text = str(amount_text or "").strip()
-
-
-
-        if not amount_text:
-
-
-
-            return "¥—"
-
-
-
-        try:
-
-
-
-            from decimal import Decimal, InvalidOperation
-
-
-
-            return f"¥{Decimal(amount_text):.2f}"
-
-
-
-        except (InvalidOperation, ValueError, TypeError):
-
-
-
-            return f"¥{amount_text}"
+        return format_currency_amount(amount_text, currency)
 
 
 

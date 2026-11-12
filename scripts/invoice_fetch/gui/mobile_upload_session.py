@@ -611,8 +611,7 @@ class MobileUploadSessionPanel(QFrame):
         self.lbl_lan_client_access = self._responsive_label("尚未确认")
         self.lbl_last_access = self._responsive_label("—")
         self.lbl_lan_access_hint = WrappedTextLabel(
-            "手机打不开？请确认手机和电脑连接到可互通的同一 Wi-Fi，并检查 Windows 网络/防火墙设置。\n"
-            "安全提示：上传地址对局域网可见且为明文传输，请仅在受信任网络使用，用完请点击“停止服务”。"
+            "仅在受信任的局域网使用；原件经明文 HTTP 传输，用完请点击“停止服务”。"
         )
         self.lbl_lan_access_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.lbl_lan_access_hint.setWordWrap(True)
@@ -795,7 +794,6 @@ class MobileUploadSessionPanel(QFrame):
         }.get(str(stats.get("local_self_check") or "pending"), "检查中"))
         confirmed = bool(stats.get("lan_client_access_confirmed"))
         self.lbl_lan_client_access.setText("已确认" if confirmed else "尚未确认")
-        self.lbl_lan_access_hint.setVisible(not confirmed)
         last_access = str(stats.get("last_lan_client_access_at") or "").strip()
         self.lbl_last_access.setText(last_access[11:19] if len(last_access) >= 19 else (last_access or "—"))
         self.lbl_service_state.setText("运行中" if stats.get("active", True) else "已停止")
@@ -895,15 +893,15 @@ class MobileUploadSessionPanel(QFrame):
         development_mode = bool(data.get("development_mode"))
         if state == "rule_present":
             summary = "已允许 · 仅私人网络"
-            hint = "仅正式 InvoiceHub.exe 的 Private 网络 TCP 入站规则生效。"
+            hint = "手机仍无法连接时，请使用“手机连接排查”。"
             button_visible = False
         elif state in {"rule_missing", "rule_disabled"}:
             summary = "未授权"
-            hint = "允许后仅对当前正式程序开放 Private 网络 TCP 入站访问。"
+            hint = "点击“允许手机访问”，仅对当前程序的私人网络开放。"
             button_visible = True
         elif state == "supported" and development_mode:
             summary = "本次访问尚未允许"
-            hint = "不会创建持久 Any-Port 规则；开发测试授权只针对当前 Python 和当前端口。"
+            hint = "启动服务后，可仅为本次端口授权。"
             button_visible = False
         elif state == "non_windows":
             summary = "当前系统不支持"
@@ -911,7 +909,7 @@ class MobileUploadSessionPanel(QFrame):
             button_visible = False
         else:
             summary = "无法确认"
-            hint = "无法读取 Windows 防火墙状态，仍可使用本地导入或邮箱扫描。"
+            hint = "可重试授权，或使用“手机连接排查”。"
             button_visible = True
         self._firewall_status = status
         self.lbl_idle_firewall.setText(f"Windows 防火墙：{summary}")
@@ -956,7 +954,7 @@ class MobileUploadSessionPanel(QFrame):
         elif development_mode and state == "rule_missing":
             if hasattr(self, "lbl_firewall_state"):
                 self.lbl_firewall_state.setText("本次访问尚未允许")
-                self.lbl_firewall_hint.setText("未授权。点击“允许本次访问”以开放当前端口的局域网入站。")
+                self.lbl_firewall_hint.setText("点击“允许本次访问”，仅开放当前端口。")
             self.lbl_idle_firewall.setText("Windows 防火墙：本次访问尚未允许")
         elif development_mode and state == "unknown":
             if hasattr(self, "lbl_firewall_state"):
