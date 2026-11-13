@@ -30,7 +30,7 @@ greenlet==3.5.6
     # via playwright
 idna==3.20
     # via requests
-importlib-metadata==10.1.0
+importlib-metadata==10.2.0
     # via keyring
 jaraco-classes==3.4.0
     # via keyring
@@ -40,6 +40,8 @@ jaraco-functools==4.6.0
     # via keyring
 keyring==25.7.0
     # via -r requirements.txt
+lazy-importer==0.1.0
+    # via importlib-metadata
 more-itertools==11.2.1
     # via
     #   jaraco-classes
@@ -57,13 +59,13 @@ pillow==13.0.0
     #   -r requirements.txt
     #   pdfplumber
     #   qrcode
-playwright==1.64.1
+playwright==1.65.0
     # via -r requirements.txt
 pycparser==3.12
     # via cffi
 pyee==13.0.1
     # via playwright
-pypdfium2==5.15.0
+pypdfium2==5.15.2
     # via pdfplumber
 pypng==0.20220715.0
     # via qrcode
