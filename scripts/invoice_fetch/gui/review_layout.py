@@ -429,6 +429,12 @@ def _install_table_remainder_contract(window) -> None:
             compact = viewport_width < 720
             # The target group is visible in the toolbar. Keep date and
             # currency available for ticket verification on compact desktops.
+            claim_visual = header.visualIndex(6)
+            number_visual = header.visualIndex(INVOICE_NUMBER_COLUMN)
+            if compact and claim_visual > number_visual:
+                header.moveSection(claim_visual, number_visual)
+            elif not compact and claim_visual < number_visual:
+                header.moveSection(claim_visual, number_visual)
             table.setColumnHidden(1, compact)
             table.setColumnHidden(2, False)
             table.setColumnWidth(3, max(120, table.columnWidth(3)))
@@ -436,11 +442,21 @@ def _install_table_remainder_contract(window) -> None:
                 # Keep the last model column visible so native row selection
                 # includes the whole row. Long names/numbers can elide here.
                 table.setColumnWidth(6, 64)
-                table.setColumnWidth(INVOICE_NUMBER_COLUMN, max(96, min(140, viewport_width // 5)))
                 table.setColumnWidth(2, 90)
-                other_width = sum(table.columnWidth(index) for index in range(table.columnCount())
-                                  if index != SELLER_COLUMN and not table.isColumnHidden(index))
-                table.setColumnWidth(SELLER_COLUMN, max(120, viewport_width - other_width))
+                fixed_width = sum(
+                    table.columnWidth(index)
+                    for index in range(table.columnCount())
+                    if index not in (SELLER_COLUMN, INVOICE_NUMBER_COLUMN)
+                    and not table.isColumnHidden(index)
+                )
+                flexible_width = max(0, viewport_width - fixed_width)
+                seller_minimum = min(120, max(80, flexible_width - 96))
+                invoice_width = min(
+                    max(96, min(140, viewport_width // 5)),
+                    max(96, flexible_width - seller_minimum),
+                )
+                table.setColumnWidth(INVOICE_NUMBER_COLUMN, invoice_width)
+                table.setColumnWidth(SELLER_COLUMN, max(seller_minimum, flexible_width - invoice_width))
                 return
             table.setColumnWidth(6, max(96, table.columnWidth(6)))
             seller_width = max(
