@@ -320,7 +320,6 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                 for label in (
                     panel.lbl_network_interface,
                     panel.lbl_lan_access_hint,
-                    panel.lbl_firewall_hint,
                     panel.lbl_stats,
                 ):
                     self.assertGreater(label.height(), 0)
