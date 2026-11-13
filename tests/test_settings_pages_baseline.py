@@ -80,17 +80,15 @@ class SettingsPagesBaselineTests(unittest.TestCase):
                 page = window.settings_tabs.widget(1)
                 self.assertEqual(len(page.findChildren(QFrame, "AISettingsDetailSurface")), 1)
                 self.assertEqual(page.findChildren(ReadOnlyDetailPanel), [])
-                window.lbl_settings_ai_enabled.setText("已启用")
-                window.lbl_settings_ai_session_state.setText("正常")
-                window.lbl_settings_ai_key_status.setText("API Key 状态：凭据管理器")
                 window.settings_ai_profile_list.addItem("Synthetic")
+                window._settings_ai_state = {"enabled": True, "key_source": "profile", "paused": False}
                 _normalize_ai(window)
-                self.assertEqual(window.lbl_settings_ai_key_status.text(), "API Key 状态：凭据管理器")
+                self.assertEqual(window.lbl_settings_ai_key_status.text(), "已保存（当前配置专属）")
                 self.assertEqual(window.lbl_settings_ai_status_badge.text(), "已启用")
-                window.lbl_settings_ai_key_status.setText("API Key 状态：未配置")
+                window._settings_ai_state["key_source"] = "missing"
                 _normalize_ai(window)
-                self.assertEqual(window.lbl_settings_ai_status_badge.text(), "未启用")
-                self.assertEqual(window.lbl_settings_ai_enabled.text(), "未启用")
+                self.assertEqual(window.lbl_settings_ai_status_badge.text(), "待补 Key")
+                self.assertEqual(window.lbl_settings_ai_enabled.text(), "待补 Key")
                 self.assertEqual(window.lbl_settings_ai_credential_store.text(), "Windows 凭据管理器")
             finally:
                 window.close()

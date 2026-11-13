@@ -52,6 +52,23 @@ from .ui_components import (
 )
 
 
+def ai_key_source_text(source: str) -> str:
+    """Translate the credential resolver's values without parsing UI copy."""
+    return {
+        "profile": "已保存（当前配置专属）",
+        "provider": "已保存（此服务通用）",
+        "env": "使用环境变量",
+    }.get(source, "未配置")
+
+
+def ai_status(enabled: bool, key_source: str, paused: bool) -> tuple[str, str]:
+    if not enabled:
+        return "未启用", "muted"
+    if key_source not in {"profile", "provider", "env"}:
+        return "待补 Key", "warning"
+    return ("已暂停", "warning") if paused else ("已启用", "success")
+
+
 class CommonSettingsPage(QWidget):
     """Small, action-oriented summary of reimbursement, export, and mailbox setup."""
 
@@ -1211,33 +1228,29 @@ def _migrate_ai_page(window) -> None:
     window.btn_settings_ai_empty_validate = empty_validate
 
 
-def _normalize_ai(window) -> None:
+def render_ai_state(window) -> None:
     if not hasattr(window, "lbl_settings_ai_status_badge"):
         return
     for attr in ("lbl_settings_ai_provider", "lbl_settings_ai_model", "lbl_settings_ai_enabled",
                  "lbl_settings_ai_key_status", "lbl_settings_ai_session_state"):
         label = getattr(window, attr)
         label.setToolTip(label.text())
-    raw_key_text = window.lbl_settings_ai_key_status.text().strip()
-    configured = any(token in raw_key_text for token in ("凭据管理器", "环境变量"))
-    if "API Key 状态：" not in raw_key_text:
-        source = raw_key_text if configured else "未配置"
-        window.lbl_settings_ai_key_status.setText(f"API Key 状态：{source}")
+    state = getattr(window, "_settings_ai_state", {})
+    key_source = state.get("key_source", "missing")
+    configured = key_source in {"profile", "provider", "env"}
+    window.lbl_settings_ai_key_status.setText(ai_key_source_text(key_source))
     window.lbl_settings_ai_key_status.setToolTip(
         "API Key 来源：环境变量 / Windows 凭据管理器；配置文件不保存密钥。"
     )
-    enabled = window.lbl_settings_ai_enabled.text().strip() in {"已启用", "开启"}
-    if enabled and not configured:
-        window.lbl_settings_ai_enabled.setText("未启用")
-        window.lbl_settings_ai_enabled.setToolTip("未配置 API Key，AI 无法启用。")
-        enabled = False
-    paused = "暂停" in window.lbl_settings_ai_session_state.text()
-    if not enabled:
-        status, tone = "未启用", "muted"
-    elif paused:
-        status, tone = "已暂停", "warning"
-    else:
-        status, tone = "已启用", "success"
+    enabled = bool(state.get("enabled"))
+    paused = bool(state.get("paused"))
+    status, tone = ai_status(enabled, key_source, paused)
+    window.lbl_settings_ai_enabled.setText(status)
+    window.lbl_settings_ai_enabled.setToolTip(
+        "配置已启用；补充 API Key 后即可使用。" if enabled and not configured
+        else "配置已启用；远端连接将在首次使用时确认。" if enabled
+        else "当前配置未启用。"
+    )
     badge = window.lbl_settings_ai_status_badge
     badge.setText(status)
     badge.setProperty("tone", tone)
@@ -1253,6 +1266,10 @@ def _normalize_ai(window) -> None:
     window.settings_ai_profile_list.setVisible(count > 1)
     window.settings_ai_detail_panel.setVisible(count > 0)
     window.settings_ai_empty_state.setVisible(count == 0)
+
+
+def _normalize_ai(window) -> None:
+    render_ai_state(window)
 
 
 def _install_refresh_contract(window, page: QWidget) -> None:

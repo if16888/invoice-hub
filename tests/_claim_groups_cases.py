@@ -3167,7 +3167,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.table.item(0, 0).text(), "待审核")
                     self.assertEqual(window.table.item(0, 1).text(), "缺原件")
                     self.assertEqual(window.table.item(0, 2).text(), "2026-05-24")
-                    self.assertEqual(window.table.item(0, 3).text(), "123.45")
+                    self.assertEqual(window.table.item(0, 3).text(), "¥123.45")
                     self.assertGreaterEqual(window.btn_clear_log.minimumWidth(), 64)
                     self.assertGreaterEqual(window.btn_copy_log.minimumWidth(), 64)
                 finally:
@@ -5921,7 +5921,7 @@ class ClaimGroupsTests(unittest.TestCase):
 
     def test_gui_status_filter_buttons_have_stable_labels_and_minimum_width(self):
         try:
-            from PySide6.QtWidgets import QApplication, QSizePolicy
+            from PySide6.QtWidgets import QApplication
             import sys
             app = QApplication.instance() or QApplication(sys.argv)
 
@@ -5929,6 +5929,9 @@ class ClaimGroupsTests(unittest.TestCase):
                 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
                 window = InvoiceReviewApp(Path(td) / "test_gui_filter_width.db", splash=None)
                 try:
+                    window.resize(1040, 700)
+                    window.show()
+                    window._switch_main_page("review")
                     app.processEvents()
                     expected_labels = {
                         "all": "全部",
@@ -5939,11 +5942,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     }
                     self.assertEqual(window.filter_base_labels, expected_labels)
                     for status, button in window.filter_buttons.items():
-                        self.assertGreaterEqual(button.minimumWidth(), 86)
-                        self.assertIn(
-                            button.sizePolicy().horizontalPolicy(),
-                            {QSizePolicy.Minimum, QSizePolicy.Preferred},
-                        )
+                        self.assertGreaterEqual(button.width(), 86)
                         if hasattr(button, "set_title") and hasattr(button, "set_value"):
                             button.set_title(expected_labels[status])
                             button.set_value("275")

@@ -80,7 +80,7 @@ class SegmentControl(QWidget):
             card.installEventFilter(self)
             card.clicked.connect(lambda value=key: self._activate(value))
             self.buttons[key] = card
-            layout.addWidget(card)
+            layout.addWidget(card, 1)
 
         if selected in self.buttons:
             self.set_selected(selected)
@@ -108,6 +108,16 @@ class SegmentControl(QWidget):
             return
         self.set_selected(key)
         self.changed.emit(key)
+
+    def refresh_geometry(self) -> None:
+        """The segmented container owns width, including the first layout."""
+        for card in self.buttons.values():
+            card.setMinimumWidth(0)
+            card.setMaximumWidth(16777215)
+            card.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            card.updateGeometry()
+        self.layout().invalidate()
+        self.updateGeometry()
 
     def set_selected(self, key: str) -> None:
         if key not in self.buttons:

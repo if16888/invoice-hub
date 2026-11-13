@@ -57,6 +57,8 @@ class ClaimMouseSelectionTests(unittest.TestCase):
             window = InvoiceReviewApp(db_path, splash=None)
             try:
                 window._deferred_init()
+                window.show()
+                window._switch_main_page("export")
                 self._flush()
                 window.export_group_list.show()
                 window.export_group_list.resize(360, 180)

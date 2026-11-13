@@ -120,7 +120,7 @@ class ReviewFeedbackFixesTests(unittest.TestCase):
             try:
                 detail = window._detail_panel
                 self.assertTrue(detail.claim_setup_section.property("claimLayoutReflowed"))
-                self.assertEqual(detail.claim_section_title.text(), "当前报销组")
+                self.assertEqual(detail.claim_section_title.text(), "此票归属")
                 self.assertEqual(detail.claim_action_row.count(), 3)
                 self.assertIs(detail.claim_action_row.itemAt(0).widget(), detail.btn_add_to_claim)
                 detail.btn_add_to_claim.setText("加入")

@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QScrollArea, QStyle, QToolButton, QWidget
 
 from scripts.dev.capture_design_v1 import _classify_geometry_widget, _review_pane_geometry_failures
+from scripts.invoice_fetch.gui.review_layout import DETAIL_MIN_WIDTH, PREVIEW_MIN_HEIGHT
 
 
 class CaptureGeometryTests(unittest.TestCase):
@@ -63,14 +64,14 @@ class CaptureGeometryTests(unittest.TestCase):
         parent = QWidget()
         parent.resize(800, 600)
         detail, preview = QWidget(parent), QWidget(parent)
-        detail.resize(319, 400)
-        preview.resize(400, 239)
+        detail.resize(DETAIL_MIN_WIDTH - 1, 400)
+        preview.resize(400, PREVIEW_MIN_HEIGHT - 1)
         parent.show()
         self.app.processEvents()
         window = SimpleNamespace(_detail_panel=detail, preview_panel=preview)
         self.assertEqual(len(_review_pane_geometry_failures(window)), 2)
-        detail.resize(325, 400)
-        preview.resize(400, 240)
+        detail.resize(DETAIL_MIN_WIDTH, 400)
+        preview.resize(400, PREVIEW_MIN_HEIGHT)
         self.assertEqual(_review_pane_geometry_failures(window), [])
         detail.resize(1, 1)
         preview.resize(1, 1)

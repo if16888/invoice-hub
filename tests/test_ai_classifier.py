@@ -220,7 +220,7 @@ class AIClassifierAuthTests(unittest.TestCase):
         from scripts.invoice_fetch.db import InvoiceDB
 
         clear_all_session_paused()
-        pause_provider_session("deepseek")
+        pause_provider_session("deepseek", reason="auth")
 
         db = Mock(spec=InvoiceDB)
         db.get_unclassified_emails.return_value = [{"uid": 1, "subject": "test", "sender": "test@example.com"}]
@@ -235,6 +235,25 @@ class AIClassifierAuthTests(unittest.TestCase):
             mock_log.warning.assert_any_call("AI 已因鉴权失败暂停，请检查 API Key。")
 
         clear_all_session_paused()
+
+    def test_manual_pause_is_not_reported_as_authentication_failure(self):
+        from scripts.invoice_fetch.services import _run_classify
+        from scripts.invoice_fetch.db import InvoiceDB
+        clear_all_session_paused()
+        pause_provider_session("deepseek")
+        self.addCleanup(clear_all_session_paused)
+        classifier = self._classifier()
+        with patch.object(classifier, "_call_api") as call:
+            result = classifier.classify_batch([{"uid": 1}])
+            call.assert_not_called()
+            self.assertIn("手动暂停", result[0]["reason"])
+        db = Mock(spec=InvoiceDB)
+        db.get_unclassified_emails.return_value = [{"uid": 1, "subject": "test", "sender": "test@example.com"}]
+        db.is_trusted_sender.return_value = False
+        result = _run_classify(db, {"provider": "deepseek"}, no_ai=False, mailbox_key="test")
+        self.assertFalse(result["auth_failed"])
+        self.assertTrue(result["session_paused"])
+        self.assertEqual(result["pending_classification"], 1)
 
 
 if __name__ == "__main__":

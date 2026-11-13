@@ -1386,7 +1386,8 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-                    number: str = "", buyer_warning: str = "", date_warning: str = ""):
+                    number: str = "", buyer_warning: str = "", date_warning: str = "",
+                    currency: str | None = "CNY"):
 
 
 
@@ -1394,7 +1395,7 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-        self.lbl_sum_amount.setText(self._format_amount_display(amount))
+        self.lbl_sum_amount.setText(self._format_amount_display(amount, currency))
 
 
 
@@ -1863,6 +1864,9 @@ class InvoiceDetailPanel(QWidget):
 
     def _show_claim_assignment_menu(self):
         menu = QMenu(self)
+        def choose(index):
+            self.combo_claims.setCurrentIndex(index)
+            self.combo_claims.activated.emit(index)
         for index in range(self.combo_claims.count()):
             label = self.combo_claims.itemText(index)
             group_id = self.combo_claims.itemData(index)
@@ -1871,10 +1875,10 @@ class InvoiceDetailPanel(QWidget):
             action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(index == self.combo_claims.currentIndex())
-            action.triggered.connect(lambda checked=False, i=index: self.combo_claims.setCurrentIndex(i))
+            action.triggered.connect(lambda checked=False, i=index: choose(i))
         current_id = self.combo_claims.currentData()
         if isinstance(current_id, int) and current_id > 0:
-            menu.addAction("移出报销组", lambda: self.combo_claims.setCurrentIndex(-1))
+            menu.addAction("清除加入目标", lambda: self.combo_claims.setCurrentIndex(-1))
         menu.addSeparator()
         menu.addAction("新建报销组", self._toggle_new_claim_input)
         menu.exec(self.btn_claim_assignment.mapToGlobal(self.btn_claim_assignment.rect().bottomLeft()))
@@ -2057,43 +2061,10 @@ class InvoiceDetailPanel(QWidget):
 
 
 
-    def _format_amount_display(self, amount_text: str) -> str:
+    def _format_amount_display(self, amount_text: str, currency: str | None = "CNY") -> str:
+        from ..reimbursement import format_currency_amount
 
-
-
-        """Format amount for display."""
-
-
-
-        amount_text = str(amount_text or "").strip()
-
-
-
-        if not amount_text:
-
-
-
-            return "¥—"
-
-
-
-        try:
-
-
-
-            from decimal import Decimal, InvalidOperation
-
-
-
-            return f"¥{Decimal(amount_text):.2f}"
-
-
-
-        except (InvalidOperation, ValueError, TypeError):
-
-
-
-            return f"¥{amount_text}"
+        return format_currency_amount(amount_text, currency)
 
 
 

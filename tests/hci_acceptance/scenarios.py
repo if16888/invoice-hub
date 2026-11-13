@@ -955,9 +955,9 @@ def run_date_01(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
         broken = None
         if initial_end != today:
             broken = f"Default end date expected today ({today}), got {initial_end}"
-        elif d7_start != today.addDays(-7) or d7_end != today:
+        elif d7_start.daysTo(d7_end) + 1 != 7 or d7_end != today:
             broken = f"Preset 7d mismatch: start={d7_start}, end={d7_end}"
-        elif d30_start != today.addDays(-30) or d30_end != today:
+        elif d30_start.daysTo(d30_end) + 1 != 30 or d30_end != today:
             broken = f"Preset 30d mismatch: start={d30_start}, end={d30_end}"
         elif d3m_start != today.addMonths(-3) or d3m_end != today:
             broken = f"Preset 3m mismatch: start={d3m_start}, end={d3m_end}"
@@ -969,7 +969,7 @@ def run_date_01(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
             passed=broken is None,
             backend_expected={},
             backend_actual={},
-            ui_expected={"preset_7d": "-7d", "preset_30d": "-30d", "preset_3m": "-3m"},
+            ui_expected={"preset_7d": "7 days including today", "preset_30d": "30 days including today", "preset_3m": "-3m"},
             ui_actual={"d7": str(d7_start), "d30": str(d30_start), "d3m": str(d3m_start)},
             broken_invariant=broken,
             duration_ms=duration,

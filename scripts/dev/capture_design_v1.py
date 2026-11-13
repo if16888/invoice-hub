@@ -415,15 +415,15 @@ def _classify_geometry_widget(widget: QWidget) -> tuple[str, str]:
 
 
 def _review_pane_geometry_failures(window) -> list[str]:
-    from scripts.invoice_fetch.gui.review_layout import DETAIL_MIN_WIDTH
+    from scripts.invoice_fetch.gui.review_layout import DETAIL_MIN_WIDTH, PREVIEW_MIN_HEIGHT
 
     failures = []
     detail = window._detail_panel
     if detail.isVisible() and detail.width() < DETAIL_MIN_WIDTH:
         failures.append(f"detail panel below {DETAIL_MIN_WIDTH}px: {detail.width()}")
     preview = window.preview_panel
-    if preview.isVisible() and preview.height() < 240:
-        failures.append(f"preview below 240px: {preview.height()}")
+    if preview.isVisible() and preview.height() < PREVIEW_MIN_HEIGHT:
+        failures.append(f"preview below {PREVIEW_MIN_HEIGHT}px: {preview.height()}")
     return failures
 
 

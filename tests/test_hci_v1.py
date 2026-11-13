@@ -453,10 +453,10 @@ class HciV1DesktopTests(unittest.TestCase):
             self.assertTrue(dialog.end_date_edit.calendarPopup())
 
             dialog._apply_preset("7d")
-            self.assertEqual(dialog.start_date_edit.date(), today.addDays(-7))
+            self.assertEqual(dialog.start_date_edit.date().daysTo(today) + 1, 7)
             self.assertEqual(dialog.end_date_edit.date(), today)
             dialog._apply_preset("30d")
-            self.assertEqual(dialog.start_date_edit.date(), today.addDays(-30))
+            self.assertEqual(dialog.start_date_edit.date().daysTo(today) + 1, 30)
             dialog._apply_preset("3m")
             self.assertEqual(dialog.start_date_edit.date(), today.addMonths(-3))
 
@@ -474,6 +474,26 @@ class HciV1DesktopTests(unittest.TestCase):
                 dialog.date_range(),
                 (today.addDays(-7).toString("yyyy-MM-dd"), today.toString("yyyy-MM-dd")),
             )
+        finally:
+            dialog.close()
+
+    def test_date_presets_select_exact_inclusive_days_from_email_history(self):
+        today = QDate.currentDate()
+        dialog = DateRangeDialog()
+        try:
+            with tempfile.TemporaryDirectory() as td, InvoiceDB(Path(td) / "history.db") as db:
+                for offset in range(-1, 32):
+                    db.upsert_email(uid=offset + 2, subject="Synthetic history", sender="fixture@example.invalid",
+                                    mail_date=today.addDays(-offset).toString("yyyy-MM-dd"), mailbox_key="fixture")
+                for mode, days in (("7d", 7), ("30d", 30)):
+                    with self.subTest(mode=mode):
+                        dialog._apply_preset(mode)
+                        since, until = dialog.date_range()
+                        matches = db.find_emails_for_reprocess(mailbox_key="fixture", since=since, until=until,
+                                                               only_downloaded=False, limit=200)
+                        self.assertEqual(len(matches), days)
+                        self.assertEqual(matches[0]["mail_date"], today.toString("yyyy-MM-dd"))
+                        self.assertEqual(matches[-1]["mail_date"], today.addDays(1 - days).toString("yyyy-MM-dd"))
         finally:
             dialog.close()
 

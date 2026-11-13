@@ -127,5 +127,7 @@ class ClaimShortcutTests(unittest.TestCase):
             view.table.selectRow(0)
             view.combo_claims.setCurrentIndex(-1)
             press(view)
-            assert warning.called
+            assert not warning.called
+            assert view.review_claim_target.view().isVisible()
+            view.review_claim_target.hidePopup()
             assert view.db.get_claim_invoices(claim) == []

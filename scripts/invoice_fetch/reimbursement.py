@@ -175,8 +175,22 @@ def currency_amounts(rows: list[dict]) -> dict[str, Decimal]:
     return totals
 
 
+def format_currency_amount(amount, currency: str | None = "CNY") -> str:
+    """Display an invoice amount in its own currency, including missing values."""
+    code = str(currency or "CNY").strip().upper() or "CNY"
+    code = "CNY" if code in {"RMB", "人民币"} else code
+    prefix = "¥" if code == "CNY" else code + " "
+    text = str(amount if amount is not None else "").strip()
+    if not text:
+        return prefix + "—"
+    try:
+        return prefix + format(Decimal(text.replace(",", "")), ".2f")
+    except (InvalidOperation, ValueError):
+        return prefix + text
+
+
 def currency_total(rows: list[dict]) -> str:
     """Format totals by currency without implying an exchange rate."""
     totals = currency_amounts(rows)
-    return " / ".join(f"{'¥' if key == 'CNY' else key + ' '}{value:.2f}"
+    return " / ".join(format_currency_amount(value, key)
                       for key, value in sorted(totals.items())) or "¥0.00"

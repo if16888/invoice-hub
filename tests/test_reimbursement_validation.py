@@ -12,10 +12,24 @@ from scripts.invoice_fetch.reimbursement import (
     amount_total,
     buyer_warning,
     compact_buyer_warning,
+    format_currency_amount,
 )
 
 
 class ReimbursementValidationTests(unittest.TestCase):
+    def test_invoice_amount_display_keeps_currency_zero_and_unknown_values(self):
+        for amount, currency, expected in (
+            ("78.5", "USD", "USD 78.50"),
+            ("1,234.50", "eur", "EUR 1234.50"),
+            (0, "USD", "USD 0.00"),
+            (None, "USD", "USD —"),
+            ("", "CNY", "¥—"),
+            ("10", "人民币", "¥10.00"),
+            ("10", None, "¥10.00"),
+        ):
+            with self.subTest(amount=amount, currency=currency):
+                self.assertEqual(format_currency_amount(amount, currency), expected)
+
     def test_amount_total_rejects_non_finite_values(self):
         from decimal import Decimal
 

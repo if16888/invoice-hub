@@ -36,6 +36,7 @@ EVENT_LABELS = {
     "mobile_diagnostics": "手机诊断",
     "shutdown": "退出",
     "review_action": "审核操作",
+    "export_selection": "报销组检查与列表",
     "stall": "stall",
 }
 

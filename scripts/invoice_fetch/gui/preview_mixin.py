@@ -11,7 +11,7 @@ from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut, QTransform
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
+    QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
     QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
@@ -96,11 +96,24 @@ class PreviewMixin:
         return
 
     def _init_preview_panel(self):
-        self.preview_panel = QGroupBox("原件预览")
+        self.preview_panel = QFrame()
+        self.preview_panel.setAccessibleName("原件预览")
         self.preview_panel.setFocusPolicy(Qt.StrongFocus)
         preview_layout = QVBoxLayout(self.preview_panel)
         preview_layout.setContentsMargins(8, 8, 8, 8)
-        preview_layout.setSpacing(0)
+        preview_layout.setSpacing(6)
+        self.preview_title = QLabel("原件预览", self.preview_panel)
+        self.preview_title.setProperty("class", "SectionTitle")
+        heading = QHBoxLayout()
+        heading.addWidget(self.preview_title)
+        heading.addStretch(1)
+        self.btn_focus_invoice = QPushButton("专注核票  F11", self.preview_panel)
+        self.btn_focus_invoice.setMinimumHeight(28)
+        self.btn_focus_invoice.setProperty("variant", "ghost")
+        self.btn_focus_invoice.setToolTip("放大当前票面；按 Esc 返回审核并保留当前记录")
+        self.btn_focus_invoice.clicked.connect(self._toggle_preview_focus_mode)
+        heading.addWidget(self.btn_focus_invoice)
+        preview_layout.addLayout(heading)
 
         self.preview_workbench = QWidget(self.preview_panel)
         self.preview_workbench.setObjectName("PreviewWorkbench")
@@ -1359,9 +1372,10 @@ class PreviewMixin:
         self.preview_focus_dialog = dialog
         if hasattr(self, "_bind_review_shortcuts"):
             self.preview_focus_shortcuts = self._bind_review_shortcuts(dialog)
-            self.preview_focus_workbench_shortcuts = self._bind_review_shortcuts(self.preview_workbench)
-        self._preview_escape_shortcut = QShortcut(QKeySequence("Esc"), dialog)
-        self._preview_escape_shortcut.activated.connect(self._exit_preview_focus_mode)
+            self.preview_focus_workbench_shortcuts = {}
+        else:
+            self._preview_escape_shortcut = QShortcut(QKeySequence("Esc"), dialog)
+            self._preview_escape_shortcut.activated.connect(self._exit_preview_focus_mode)
         dialog.finished.connect(self._preview_focus_finished)
         self.btn_preview_focus.setText("退出全屏")
         dialog.showMaximized()

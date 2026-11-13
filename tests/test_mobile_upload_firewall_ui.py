@@ -320,7 +320,6 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
                 for label in (
                     panel.lbl_network_interface,
                     panel.lbl_lan_access_hint,
-                    panel.lbl_firewall_hint,
                     panel.lbl_stats,
                 ):
                     self.assertGreater(label.height(), 0)
@@ -354,6 +353,14 @@ class MobileUploadFirewallUiTests(unittest.TestCase):
             self.assertEqual(panel.lbl_lan_client_access.text(), "尚未确认")
             self.assertTrue(panel.lbl_lan_access_hint.isVisible())
             self.assertTrue(panel.btn_firewall_authorize.isHidden())
+            self.assertFalse(panel.lbl_firewall_state.isVisible())
+            panel._active_tech_toggle.setChecked(True)
+            self.assertTrue(panel.lbl_firewall_state.isVisible())
+            panel._active_tech_toggle.setChecked(False)
+            panel._set_stats({"lan_client_access_confirmed": True})
+            self.assertEqual(panel.lbl_lan_client_access.text(), "已确认")
+            self.assertTrue(panel.lbl_lan_access_hint.isVisible())
+            self.assertFalse(panel.lbl_firewall_state.isVisible())
 
     def test_missing_and_dev_firewall_states_have_safe_fallbacks(self):
         with tempfile.TemporaryDirectory() as td:

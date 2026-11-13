@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication
 from scripts.invoice_fetch.db import InvoiceDB
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.design_tokens import DESIGN_V1_COLORS
+from scripts.invoice_fetch.gui.review_layout import PREVIEW_MIN_HEIGHT
 from scripts.invoice_fetch.gui import workbench_settings as settings_module
 
 
@@ -31,7 +32,7 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
 
     @contextmanager
-    def window(self):
+    def window(self, size=(1440, 900), *, deferred=True):
         with tempfile.TemporaryDirectory() as td, patch.object(settings_module, "RUNTIME_DIR", Path(td)):
             settings = settings_module.workbench_settings()
             settings.setValue("migration/legacy_qsettings_v1", True)
@@ -50,8 +51,9 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
                     })
                     db.add_invoice_to_claim(claim, invoice)
             window = InvoiceReviewApp(path, splash=None)
-            window._deferred_init()
-            window.resize(1440, 900)
+            if deferred:
+                window._deferred_init()
+            window.resize(*size)
             window.show()
             window.activateWindow()
             self.settle()
@@ -70,7 +72,7 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
             self.assertEqual(window.workbench_nav.property("visualLanguage"), "design-v1.1")
             bar = window.filter_bar_widget
             self.assertEqual(bar.property("visualRole"), "segmented-filter")
-            for size in ((1440, 900), (1280, 800), (1150, 850)):
+            for size in ((1440, 900), (1280, 800), (1150, 850), (1040, 700), (1248, 672)):
                 window.resize(*size)
                 self.settle()
                 for card in window.filter_buttons.values():
@@ -79,7 +81,11 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
                 for button in (window.btn_review_previous_page, window.btn_review_next_page,
                                window.btn_review_batch_menu, window.btn_toggle_review_detail):
                     self.assertTrue(window.record_header.rect().contains(button.geometry()), (size, button.geometry()))
-                self.assertGreaterEqual(window.preview_panel.height(), 240)
+                self.assertGreaterEqual(window.preview_panel.height(), PREVIEW_MIN_HEIGHT)
+                title = window.preview_title
+                self.assertTrue(title.isVisible())
+                self.assertTrue(window.preview_panel.contentsRect().contains(title.geometry()))
+                self.assertGreaterEqual(title.height(), title.fontMetrics().height())
             approved = window.filter_buttons["approved"]
             self.assertEqual(approved.focusPolicy(), Qt.StrongFocus)
             approved.setFocus()
@@ -105,6 +111,116 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
             self.settle()
             self.assertEqual(window.review_header.maximumHeight(), normal_header_max)
             self.assertFalse(subtitle.isVisible())
+
+    def test_enter_activates_focused_review_controls_instead_of_approving(self):
+        with self.window() as window:
+            window._switch_main_page("review")
+            window._change_filter("all")
+            self.settle()
+            invoice_id = next(inv["id"] for inv in window.invoices_list if inv["review_status"] == "to_review")
+            for key in (Qt.Key_Return, Qt.Key_Enter):
+                for button, expected in ((window.btn_ign, "ignored"), (window.btn_err, "error")):
+                    with self.subTest(key=key, status=expected):
+                        window.db.update_invoice_review_status(invoice_id, "to_review")
+                        window._load_invoices(preserve_invoice_id=invoice_id)
+                        button.setFocus(Qt.TabFocusReason)
+                        self.settle()
+                        self.assertTrue(button.hasFocus())
+                        QTest.keyClick(button, key)
+                        self.settle()
+                        self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], expected)
+
+            window.db.update_invoice_review_status(invoice_id, "to_review")
+            window._load_invoices(preserve_invoice_id=invoice_id)
+            for key in (Qt.Key_Return, Qt.Key_Enter):
+                before = window._review_detail_collapsed
+                window.btn_toggle_review_detail.setFocus(Qt.TabFocusReason)
+                self.settle()
+                QTest.keyClick(window.btn_toggle_review_detail, key)
+                self.settle()
+                self.assertEqual(window._review_detail_collapsed, not before)
+                self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], "to_review")
+
+            tabs = window._detail_panel.detail_tabs.tabBar()
+            tabs.setFocus(Qt.TabFocusReason)
+            self.settle()
+            QTest.keyClick(tabs, Qt.Key_Return)
+            self.settle()
+            self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], "to_review")
+            window.btn_review_batch_menu.setFocus(Qt.TabFocusReason)
+            self.settle()
+            QTest.keyClick(window.btn_review_batch_menu, Qt.Key_Return)
+            self.settle()
+            menu = self.app.activePopupWidget()
+            self.assertIsNotNone(menu)
+            menu.hide()
+            self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], "to_review")
+
+            # Table Enter remains the deliberate single-invoice approval action.
+            window.table.setFocus(Qt.OtherFocusReason)
+            self.settle()
+            QTest.keyClick(window.table, Qt.Key_Return)
+            self.settle()
+            self.assertEqual(window.db.get_invoice(invoice_id)["review_status"], "approved")
+
+    def test_invoice_currency_survives_review_selection_and_export_rows(self):
+        from scripts.invoice_fetch.gui.selection_surfaces import INVOICE_ROW_ROLE
+
+        with self.window() as window:
+            window._switch_main_page("review")
+            window._change_filter("all")
+            self.settle()
+            invoice_id = next(inv["id"] for inv in window.invoices_list if inv["review_status"] == "to_review")
+            window.db._conn.execute("UPDATE invoices SET currency='USD' WHERE id=?", (invoice_id,))
+            window.db._conn.commit()
+            window._load_invoices(preserve_invoice_id=invoice_id)
+            self.settle()
+            self.assertEqual(window._detail_panel.lbl_sum_amount.text(), "USD 20.00")
+            self.assertIn("USD 20.00", window.lbl_claim_total.text())
+            other = next(inv["id"] for inv in window.invoices_list if inv["id"] != invoice_id)
+            window._select_invoice_by_id(other)
+            self.settle()
+            self.assertEqual(window._detail_panel.lbl_sum_amount.text(), "¥20.00")
+            window._select_invoice_by_id(invoice_id)
+            self.settle()
+            self.assertEqual(window._detail_panel.lbl_sum_amount.text(), "USD 20.00")
+            window._switch_main_page("export")
+            self.settle()
+            rows = {window.export_invoice_list.item(i).data(Qt.UserRole): window.export_invoice_list.item(i)
+                    for i in range(window.export_invoice_list.count())}
+            self.assertEqual(rows[invoice_id].data(INVOICE_ROW_ROLE)["amount"], "USD 20.00")
+            self.assertIn("USD 20.00", rows[invoice_id].text())
+            self.assertEqual(rows[other].data(INVOICE_ROW_ROLE)["amount"], "¥20.00")
+
+    def test_ai_status_uses_credential_values_and_separates_pause_from_enablement(self):
+        from scripts.dev.capture_design_v1 import _synthetic_config
+        from scripts.invoice_fetch import credentials
+
+        cfg = _synthetic_config()
+        cfg["ai_profiles"] = [dict(profile_id="review-ai", name="Review AI", provider="deepseek",
+                                   model="deepseek-chat", enabled=True)]
+        with patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=cfg), self.window() as window:
+            window._switch_main_page("settings")
+            window.settings_tabs.setCurrentIndex(1)
+            for source, paused, enabled, expected in (
+                ("profile", False, True, "已启用"),
+                ("provider", False, True, "已启用"),
+                ("env", False, True, "已启用"),
+                ("missing", False, True, "待补 Key"),
+                ("profile", True, True, "已暂停"),
+                ("profile", False, False, "未启用"),
+            ):
+                with self.subTest(source=source, paused=paused, enabled=enabled), \
+                     patch.object(credentials, "get_ai_api_key_source", return_value=source), \
+                     patch("scripts.invoice_fetch.ai_classifier.is_provider_session_paused", return_value=paused):
+                    cfg["ai_profiles"][0]["enabled"] = enabled
+                    window._refresh_settings_page()
+                    self.settle()
+                    self.assertEqual(window.lbl_settings_ai_enabled.text(), expected)
+                    self.assertEqual(window.lbl_settings_ai_status_badge.text(), expected)
+                    self.assertNotIn(source, window.lbl_settings_ai_key_status.text())
+                    self.assertEqual(window.lbl_settings_ai_session_state.text(), "已暂停" if paused else "未暂停")
+                    self.assertEqual(cfg["ai_profiles"][0]["enabled"], enabled)
 
     def test_export_cards_align_and_primary_action_remains_usable(self):
         with self.window() as window:
