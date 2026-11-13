@@ -10711,6 +10711,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         selected_pending = bool(self.export_scope.currentData()) if page_scope else False
         cfg = load_config_safe()
         configured_export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(cfg)
+        export_destination_label = "已配置的本机导出目录（可在设置中查看）"
         rows = financial_rows(self.db.get_claim_invoices(claim_id))
         approved_rows = [row for row in rows if (row.get("review_status") or TO_REVIEW) == APPROVED]
         pending_rows = [row for row in rows if (row.get("review_status") or TO_REVIEW) == TO_REVIEW]
@@ -10719,13 +10720,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             selected_rows = approved_rows + (pending_rows if selected_pending else [])
             scope_name = "已通过和待审核发票" if selected_pending else "仅已通过发票"
             box.setText(f"导出【{claim.get('name') or claim_name}】\n\n范围：{scope_name}\n"
-                        f"共 {len(selected_rows)} 张 · {currency_total(selected_rows)}\n目录：{configured_export_dir}")
+                        f"共 {len(selected_rows)} 张 · {currency_total(selected_rows)}\n目录：{export_destination_label}")
             box.addButton("确认导出", QMessageBox.YesRole)
             btn_approved_only = btn_include_all = None
         else:
             box.setText(f"导出【{claim.get('name') or claim_name}】\n\n"
                         f"已通过：{len(approved_rows)} 张 · {currency_total(approved_rows)}\n"
-                        f"待审核：{len(pending_rows)} 张 · {currency_total(pending_rows)}\n目录：{configured_export_dir}")
+                        f"待审核：{len(pending_rows)} 张 · {currency_total(pending_rows)}\n目录：{export_destination_label}")
             btn_approved_only = box.addButton(" 仅打包已通过发票", QMessageBox.YesRole)
             btn_include_all = box.addButton(" 导出已通过 + 待审核发票", QMessageBox.NoRole) if pending_rows else None
         box.setInformativeText(
