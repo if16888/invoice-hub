@@ -2192,8 +2192,8 @@ def apply_review_status_segmented_control(window) -> None:
         card.setStyleSheet(segment_qss)
         card_layout = card.layout()
         if card_layout is not None:
-            card_layout.setContentsMargins(10, 0, 10, 0)
-            card_layout.setSpacing(5)
+            card_layout.setContentsMargins(4, 0, 4, 0)
+            card_layout.setSpacing(3)
         title = getattr(card, "_lbl_title", None)
         value = getattr(card, "_lbl_value", None)
         if title is not None:
