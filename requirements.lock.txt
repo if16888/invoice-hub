@@ -40,6 +40,8 @@ jaraco-functools==4.6.0
     # via keyring
 keyring==25.7.0
     # via -r requirements.txt
+lazy-importer==0.1.0
+    # via importlib-metadata
 more-itertools==11.2.1
     # via
     #   jaraco-classes
