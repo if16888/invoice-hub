@@ -59,7 +59,7 @@ pillow==13.0.0
     #   -r requirements.txt
     #   pdfplumber
     #   qrcode
-playwright==1.65.0
+playwright==1.65.1
     # via -r requirements.txt
 pycparser==3.12
     # via cffi
@@ -75,7 +75,7 @@ qrcode[pil]==8.2
     # via -r requirements.txt
 requests==2.34.2
     # via -r requirements.txt
-soupsieve==4.0.1
+soupsieve==4.1
     # via beautifulsoup4
 typing-extensions==4.16.0
     # via
