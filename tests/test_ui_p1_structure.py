@@ -34,22 +34,22 @@ class P1StructureTests(unittest.TestCase):
             self.app.processEvents()
         return window
 
-    def test_workspace_uses_separators_instead_of_nested_cards(self):
+    def test_workspace_uses_matching_table_and_preview_surfaces(self):
         from scripts.invoice_fetch.gui.styles import APP_STYLESHEET
 
         self.assertIn("QSplitter#WorkbenchMainSplitter::handle", APP_STYLESHEET)
-        table_rule = APP_STYLESHEET.split("QFrame#InvoiceTableCard", 1)[1].split("}", 1)[0]
-        self.assertIn("border: none", table_rule)
-        self.assertIn("border-radius: 0", table_rule)
-        preview_rule = APP_STYLESHEET.split("QFrame#PreviewPanel", 1)[1].split("}", 1)[0]
-        self.assertIn("border-radius: 0", preview_rule)
+        from scripts.invoice_fetch.gui.ui.qss import build_qss
+
+        shared_rule = build_qss().split("QFrame#ReviewPageBar, QFrame#InvoiceTableCard, QFrame#PreviewPanel", 1)[1].split("}", 1)[0]
+        self.assertIn("border-radius: 12px", shared_rule)
+        self.assertIn("background: #FFFFFF", shared_rule)
 
         with tempfile.TemporaryDirectory() as td:
             window = self._window(td)
             try:
                 self.assertEqual(window.preview_panel.objectName(), "PreviewPanel")
                 self.assertEqual(window.main_splitter.objectName(), "WorkbenchMainSplitter")
-                self.assertEqual(window.main_splitter.handleWidth(), 1)
+                self.assertEqual(window.main_splitter.handleWidth(), 12)
             finally:
                 window.db.close()
                 window.hide()

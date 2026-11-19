@@ -8,6 +8,8 @@ vertical splitter sizes.  No Qt or database imports; fully unit-testable.
 
 from dataclasses import dataclass
 
+from .design_tokens import DESIGN_V1_METRICS
+
 
 @dataclass(frozen=True)
 class WorkbenchMetrics:
@@ -31,26 +33,26 @@ def metrics_for_size(width: int, height: int) -> WorkbenchMetrics:
     """
     if width <= 1366 or (width <= 1440 and height <= 768):
         return WorkbenchMetrics(
-            nav_width=56,
+            nav_width=DESIGN_V1_METRICS["sidebar_compact_width"],
             nav_collapsed=True,
-            detail_width=344,
-            record_height=332,
+            detail_width=DESIGN_V1_METRICS["review_detail_compact_width"],
+            record_height=292,
             thumbnail_width=96,
             compact=True,
         )
     if width <= 1440:
         return WorkbenchMetrics(
-            nav_width=180,
+            nav_width=DESIGN_V1_METRICS["sidebar_width"],
             nav_collapsed=False,
-            detail_width=352,
-            record_height=336,
+            detail_width=DESIGN_V1_METRICS["review_detail_width"],
+            record_height=310,
             thumbnail_width=96,
             compact=True,
         )
     return WorkbenchMetrics(
-        nav_width=180,
+        nav_width=DESIGN_V1_METRICS["sidebar_width"],
         nav_collapsed=False,
-        detail_width=352,
+        detail_width=DESIGN_V1_METRICS["review_detail_width"],
         record_height=390,
         thumbnail_width=104,
         compact=False,

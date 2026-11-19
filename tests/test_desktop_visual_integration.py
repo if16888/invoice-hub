@@ -346,7 +346,9 @@ class DesktopVisualIntegrationTests(unittest.TestCase):
             self.settle()
             self.assertFalse(window.bottom_panel.isHidden())
             toolbar = window.overlay_toolbar
-            self.assertGreaterEqual(window.preview_stack.y(), toolbar.y() + toolbar.height())
+            preview_y = window.preview_stack.mapTo(window.preview_panel, QPoint()).y()
+            toolbar_y = toolbar.mapTo(window.preview_panel, QPoint()).y()
+            self.assertGreaterEqual(preview_y, toolbar_y + toolbar.height())
             for name, action in window.preview_actions.items():
                 self.assertTrue(action.accessibleName(), name)
                 if name != "zoom_100":

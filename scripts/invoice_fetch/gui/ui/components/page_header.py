@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 
 class PageHeader(QFrame):
-    """A consistent 22px page title with a muted 13px subtitle."""
+    """Shared page title, supporting text, and optional trailing action."""
 
     def __init__(self, title: str, subtitle: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -17,7 +17,10 @@ class PageHeader(QFrame):
         layout.setSpacing(4)
         self.lbl_title = QLabel(title, self)
         self.lbl_title.setProperty("class", "PageTitle")
-        layout.addWidget(self.lbl_title)
+        self.title_row = QHBoxLayout()
+        self.title_row.setSpacing(8)
+        self.title_row.addWidget(self.lbl_title, 1)
+        layout.addLayout(self.title_row)
         self.lbl_subtitle = QLabel(subtitle, self)
         self.lbl_subtitle.setProperty("class", "PageSubtitle")
         self.lbl_subtitle.setWordWrap(True)

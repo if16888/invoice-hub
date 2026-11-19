@@ -54,7 +54,7 @@ QMenu::separator {
 # P1-21: every product value below is derived from the single Design v1
 # authority in design_tokens; styles.py only keeps compatible names.
 SIDEBAR_EXPANDED_WIDTH = DESIGN_V1_METRICS["sidebar_width"]
-SIDEBAR_COLLAPSED_WIDTH = 56
+SIDEBAR_COLLAPSED_WIDTH = DESIGN_V1_METRICS["sidebar_compact_width"]
 PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
 PAGE_HEADER_HEIGHT = 54
 SECTION_GAP = DESIGN_V1_METRICS["section_gap"]

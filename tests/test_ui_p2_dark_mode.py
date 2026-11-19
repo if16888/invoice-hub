@@ -12,7 +12,7 @@ class DarkModeTests(unittest.TestCase):
 
         light = "background-color: #FFFFFF; color: #111827; border: 1px solid #E4E7EC;"
         dark = dark_stylesheet(light)
-        self.assertIn("#161A20", dark)
+        self.assertIn("#272D36", dark)
         self.assertIn("#E6E8EB", dark)
         self.assertIn("#2A3038", dark)
         self.assertNotIn("#FFFFFF", dark)
@@ -40,8 +40,8 @@ class DarkModeTests(unittest.TestCase):
         from scripts.invoice_fetch.gui.dark_mode import dark_palette
 
         palette = dark_palette()
-        self.assertEqual(palette.color(QPalette.Window).name(), "#0f1115")
-        self.assertEqual(palette.color(QPalette.Text).name(), "#e6e8eb")
+        self.assertEqual(palette.color(QPalette.Window).name(), "#1c2027")
+        self.assertEqual(palette.color(QPalette.Text).name(), "#f3f5f9")
 
 
 if __name__ == "__main__":

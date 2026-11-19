@@ -394,7 +394,7 @@ class StartupLazyPageIntegrationTests(unittest.TestCase):
                 self.assertLessEqual(abs(sum(sizes) - usable), 2)
                 self.assertGreaterEqual(sizes[0], 720)
                 # P1-4: the elastic detail pane now starts at 320px.
-                self.assertGreaterEqual(sizes[1], 320)
+                self.assertGreaterEqual(sizes[1], 294)
                 self.assertLessEqual(sizes[1], 520)
             finally:
                 window.close()

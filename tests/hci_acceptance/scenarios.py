@@ -409,8 +409,10 @@ def run_cr_06(window, db: InvoiceDB, qapp: QApplication) -> ScenarioResult:
         broken = f"DB TO_REVIEW changed on skip: expected {initial_to_review}, got {new_to_review}"
     elif initial_inv_status != TO_REVIEW:
         broken = f"Skipped invoice status changed to {initial_inv_status}"
-    elif f"1 / {initial_to_review}" not in progress_text:
-        broken = f"UI progress '{progress_text}' should still show 1 / {initial_to_review} (processed count must not +1)"
+    elif new_inv_id is None or new_inv_id == initial_inv_id:
+        broken = "Skipping an invoice did not advance the review cursor"
+    elif f"当前还剩 {initial_to_review} 张待审核" not in progress_text:
+        broken = f"UI progress {progress_text!r} must still show {initial_to_review} pending invoices"
 
     duration = int((time.perf_counter() - t0) * 1000)
     return ScenarioResult(
