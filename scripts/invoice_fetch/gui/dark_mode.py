@@ -14,6 +14,8 @@ import re
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QPalette
 
+from .design_tokens import DESIGN_V1_COLORS, DESKTOP_DARK_COLORS
+
 DARK_COLOR_MAP = {
     "#374151": "#CBCBD3",
     "#4B5563": "#CBCBD3",
@@ -81,6 +83,7 @@ DARK_COLOR_MAP = {
     "#FEF3F2": "#3B1D1D",
     "#FFFAEB": "#3A2E12",
     "#ECFDF3": "#123527",
+    **DESKTOP_DARK_COLORS,
 }
 
 
@@ -136,18 +139,22 @@ class _DarkStyleFilter(QObject):
 
 def dark_palette() -> QPalette:
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor("#0F1115"))
-    palette.setColor(QPalette.WindowText, QColor("#E6E8EB"))
-    palette.setColor(QPalette.Base, QColor("#161A20"))
-    palette.setColor(QPalette.AlternateBase, QColor("#1B2027"))
-    palette.setColor(QPalette.Text, QColor("#E6E8EB"))
-    palette.setColor(QPalette.Button, QColor("#1F252E"))
-    palette.setColor(QPalette.ButtonText, QColor("#E6E8EB"))
-    palette.setColor(QPalette.Highlight, QColor("#5B9BFF"))
-    palette.setColor(QPalette.HighlightedText, QColor("#0F1115"))
-    palette.setColor(QPalette.ToolTipBase, QColor("#1B2027"))
-    palette.setColor(QPalette.ToolTipText, QColor("#E6E8EB"))
-    palette.setColor(QPalette.PlaceholderText, QColor("#98A2B3"))
+    roles = {
+        QPalette.Window: "page",
+        QPalette.WindowText: "text",
+        QPalette.Base: "surface",
+        QPalette.AlternateBase: "surface_secondary",
+        QPalette.Text: "text",
+        QPalette.Button: "surface_secondary",
+        QPalette.ButtonText: "text",
+        QPalette.Highlight: "selected",
+        QPalette.HighlightedText: "selected_text",
+        QPalette.ToolTipBase: "surface_secondary",
+        QPalette.ToolTipText: "text",
+        QPalette.PlaceholderText: "placeholder",
+    }
+    for role, token in roles.items():
+        palette.setColor(role, QColor(DESKTOP_DARK_COLORS[DESIGN_V1_COLORS[token]]))
     return palette
 
 

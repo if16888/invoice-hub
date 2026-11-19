@@ -3227,10 +3227,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     self.assertEqual(window.table.currentRow(), 1)
                     self.assertEqual(window.current_invoice["id"], inv_id1)
 
-                    # The empty state now uses a three-step guide; mobile upload
-                    # remains available as an explicit action in the first step.
-                    self.assertIn("三步开始整理", window.lbl_guide.text())
-                    self.assertEqual(len(window.empty_step_cards), 3)
+                    self.assertEqual(window.empty_btn_import.text(), "本地导入")
                     self.assertEqual(window.empty_btn_mobile_upload.text(), "手机扫码")
 
                 finally:
@@ -6045,7 +6042,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window.search_reload_timer.stop()
                     window._load_invoices()
                     self.assertEqual(window.table.rowCount(), 0)
-                    self.assertEqual(window.lbl_empty_title.text(), "没有符合条件的发票")
+                    self.assertEqual(window.lbl_empty_title.text(), "没有匹配的发票")
                 finally:
                     if hasattr(window, "db") and window.db is not None:
                         window.db.close()
@@ -6225,7 +6222,7 @@ class ClaimGroupsTests(unittest.TestCase):
                     window._load_invoices()
 
                     self.assertEqual(window.table.rowCount(), 0)
-                    self.assertEqual(window.lbl_empty_title.text(), "没有符合条件的发票")
+                    self.assertEqual(window.lbl_empty_title.text(), "没有匹配的发票")
                     self.assertIn(True, count_calls)
                     self.assertFalse(window.table.signalsBlocked())
                     self.assertTrue(window.table.updatesEnabled())

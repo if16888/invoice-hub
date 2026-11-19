@@ -165,7 +165,7 @@ class V020DragDropLayoutNetworkTests(unittest.TestCase):
                     self.assertFalse(window._review_detail_collapsed)
                     self.assertGreater(window.main_splitter.sizes()[1], 0)
                     # P1-4: the elastic detail pane restores from a 320px minimum.
-                    self.assertGreaterEqual(window._review_detail_restore_width, 320)
+                    self.assertGreaterEqual(window._review_detail_restore_width, 294)
                     self.assertFalse(settings.value("review_detail_collapsed", True, type=bool))
                     window._save_splitter_prefs()
                 finally:

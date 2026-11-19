@@ -29,7 +29,7 @@ class EmptyStateOnboardingTests(unittest.TestCase):
     def tearDown(self):
         self._tmp_dir.cleanup()
 
-    def test_empty_review_state_shows_three_steps_and_routes_actions(self):
+    def test_empty_review_state_prioritizes_import_and_routes_sources(self):
         tmp_path = self.tmp_path
         window = InvoiceReviewApp(tmp_path / "empty.db", splash=None)
         window.show()
@@ -38,23 +38,20 @@ class EmptyStateOnboardingTests(unittest.TestCase):
             window._load_invoices()
             self.app.processEvents()
 
-            assert window.lbl_empty_title.text() == "当前没有发票记录"
+            assert window.lbl_empty_title.text() == "还没有发票"
             assert window.left_stack.currentWidget() is window.empty_widget
             assert window.empty_onboarding_widget.isVisible()
             assert not window.empty_filter_actions.isVisible()
-            assert len(window.empty_step_cards) == 3
-            assert [card.findChildren(type(window.lbl_empty_title))[0].text() for card in window.empty_step_cards] == [
-                "01  导入票据", "02  核对发票", "03  归组并导出",
-            ]
-            assert "扫码上传" in window.lbl_guide.text()
-
-            window.empty_btn_review.click()
+            assert window.empty_btn_import.text() == "本地导入"
+            assert window.empty_btn_import.isVisible()
+            window.empty_btn_settings.click()
             self.app.processEvents()
-            assert window.center_stack.currentWidget() is window.review_page
+            assert window.center_stack.currentWidget() is window.imports_page
 
-            window.empty_btn_export.click()
+            window._switch_main_page("review")
+            window.empty_btn_mobile_upload.click()
             self.app.processEvents()
-            assert window.center_stack.currentWidget() is window.export_page
+            assert window.center_stack.currentWidget() is window.imports_page
         finally:
             window._splitter_save_timer.stop()
             window.close()
@@ -76,7 +73,7 @@ class EmptyStateOnboardingTests(unittest.TestCase):
             window._load_invoices()
             self.app.processEvents()
 
-            assert window.lbl_empty_title.text() == "没有符合条件的发票"
+            assert window.lbl_empty_title.text() == "没有匹配的发票"
             assert not window.empty_onboarding_widget.isVisible()
             assert window.empty_filter_actions.isVisible()
             assert window.empty_btn_clear_search.isVisible()

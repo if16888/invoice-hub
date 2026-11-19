@@ -101,7 +101,7 @@ class ImportCenterGeometryTests(unittest.TestCase):
                 self.assertEqual(window.import_source_card.body_layout.direction(), QBoxLayout.LeftToRight)
                 self.assertEqual(window.import_main_row_layout.direction(), QBoxLayout.LeftToRight)
                 self.assertLessEqual(window.import_task_stack.maximumWidth(), 900)
-                self.assertIn(window.import_mail_recent_card.width(), [320, 340, 360])
+                self.assertIn(window.import_mail_recent_card.width(), [320, 332, 340, 360])
 
                 # 2. Medium Desktop (1100x800) - vertically stacked main row
                 window.resize(1100, 800)

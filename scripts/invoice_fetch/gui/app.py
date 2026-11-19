@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QPushButton, QLabel, QMessageBox, QCheckBox,
     QScrollArea, QAbstractItemView, QHeaderView, QFileDialog,
     QStackedWidget, QProgressBar, QFrame, QTabWidget, QMenu, QWidgetAction, QSizePolicy,
-    QButtonGroup, QGridLayout, QStyle, QLayout, QBoxLayout, QToolButton,
+    QButtonGroup, QStyle, QLayout, QBoxLayout, QToolButton,
     QStyledItemDelegate, QStyleOptionViewItem, QListWidget, QListWidgetItem,
     QComboBox, QSpinBox, QFormLayout, QGroupBox, QInputDialog, QDialog,
     QDialogButtonBox, QGraphicsOpacityEffect, QStatusBar, QAbstractButton, QTabBar,
@@ -93,7 +93,7 @@ from .helpers import _mask_url, _read_manifest_summary, resolve_stored_path
 from .invoice_detail_panel import InvoiceDetailCallbacks, InvoiceDetailPanel
 from .log_diagnostics_mixin import LogDiagnosticsMixin, LOG_DRAWER_EXPANDED_HEIGHT
 from .mobile_upload_session import MobileUploadSessionController, MobileUploadSessionPanel
-from .design_tokens import DESIGN_V1_COLORS
+from .design_tokens import DESIGN_V1_COLORS, DESIGN_V1_METRICS
 from .api_key_dialog import ApiKeyDialog
 from .dialog_form import style_dialog_form, complete_mailbox_address, MAILBOX_DOMAINS
 from .icon_provider import IconProvider
@@ -1395,12 +1395,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         else:
             nav_collapsed = bool(self._nav_collapsed_manual)
         self._nav_compact = nav_collapsed
-        search_placeholder = (
-            "搜索发票号 / 销售方 / 购买方 / 金额    Ctrl + F"
-            if metrics.compact
-            else "搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F"
-        )
-        self.txt_search.setPlaceholderText(search_placeholder)
+        self.txt_search.setPlaceholderText("搜索票号、销售方或金额   Ctrl + F")
+        self.txt_search.setToolTip("搜索票号、销售方、购买方、金额或邮件主题（Ctrl+F）")
         nav_width = (
             SIDEBAR_COLLAPSED_WIDTH
             if nav_collapsed
@@ -1425,7 +1421,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.setMinimumSize(min_window_width, 530)
         if hasattr(self, "thumbnail_rail"):
             self.thumbnail_rail.setFixedWidth(metrics.thumbnail_width)
-        self.btn_more.setText("更多")
+
         self.btn_toolbar_user.setMinimumWidth(96 if not metrics.compact else 84)
         self.status_segment_control.refresh_geometry()
         self.workbench_nav_title.setVisible(not nav_collapsed)
@@ -1713,18 +1709,29 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         nav_layout.setContentsMargins(12, 14, 12, 14)
         nav_layout.setSpacing(6)
 
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(8)
+        brand_icon = QLabel()
+        brand_icon.setObjectName("WorkbenchBrandIcon")
+        brand_icon.setFixedSize(34, 34)
+        brand_icon.setAlignment(Qt.AlignCenter)
+        brand_icon.setPixmap(IconProvider.icon("brand").pixmap(18, 18))
+        brand_row.addWidget(brand_icon, 0, Qt.AlignVCenter)
+        brand_copy = QVBoxLayout()
+        brand_copy.setSpacing(2)
         nav_title = QLabel("Invoice Hub")
         nav_title.setObjectName("WorkbenchNavTitle")
-        nav_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        nav_layout.addWidget(nav_title)
+        brand_copy.addWidget(nav_title)
         self.workbench_nav_title = nav_title
 
         nav_subtitle = QLabel("个人报销工作台")
         nav_subtitle.setObjectName("WorkbenchNavSubtitle")
-        nav_layout.addWidget(nav_subtitle)
+        brand_copy.addWidget(nav_subtitle)
         self.workbench_nav_subtitle = nav_subtitle
+        brand_row.addLayout(brand_copy, 1)
+        nav_layout.addLayout(brand_row)
         self.workbench_nav_spacer = QWidget()
-        self.workbench_nav_spacer.setFixedHeight(6)
+        self.workbench_nav_spacer.setFixedHeight(12)
         nav_layout.addWidget(self.workbench_nav_spacer)
 
         self.workbench_nav_buttons = {}
@@ -1820,7 +1827,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             "发票审核",
             "逐张确认原件、状态和报销组，处理完成后再进入导出。",
         )
-        main_layout.addWidget(self.review_header)
+        self.review_page_bar = QFrame()
+        self.review_page_bar.setObjectName("ReviewPageBar")
+        review_bar_layout = QHBoxLayout(self.review_page_bar)
+        review_bar_layout.setContentsMargins(12, 0, 12, 0)
+        review_bar_layout.setSpacing(12)
+        review_bar_layout.addWidget(self.review_header, 1)
+        main_layout.addWidget(self.review_page_bar)
         self.lbl_review_scope = QLabel()
         self.lbl_review_scope.setObjectName("ReviewScopeChip")
         self.lbl_review_scope.setStyleSheet(
@@ -1894,6 +1907,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.txt_search = QLineEdit(self.workbench_top_toolbar)
         self.txt_search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额 / 邮件主题    Ctrl + F")
         self.txt_search.setClearButtonEnabled(True)
+        self.txt_search.addAction(IconProvider.icon("search"), QLineEdit.LeadingPosition)
         self.txt_search.textChanged.connect(self._schedule_invoice_reload)
         self.txt_search.setMinimumWidth(280)
         self.txt_search.setMaximumWidth(320)
@@ -2010,7 +2024,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         action_layout.addWidget(self.btn_more)
         self.btn_toolbar_user.hide()
 
-        main_layout.addWidget(self.workbench_top_toolbar)
+        review_bar_layout.addWidget(self.workbench_top_toolbar)
 
         # 1. Top Filter Bar (36px Compact Segmented Filter Bar)
         self.filter_bar_widget = SummaryStrip()
@@ -2037,7 +2051,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         filter_layout.addStretch()
 
         # Advanced Filter Menu Popup for Secondary Filters
-        self.btn_advanced_filter = make_button("筛选 ▾", variant="secondary", min_width=72)
+        self.btn_advanced_filter = make_button("筛选", variant="secondary", min_width=72)
+        self.btn_advanced_filter.setIcon(IconProvider.icon("filter"))
         self.advanced_filter_menu = QMenu(self)
 
         self.chk_unlinked = QCheckBox("未关联报销组", self)
@@ -2071,7 +2086,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.advanced_filter_menu.addAction(action_show_deleted)
 
         self.btn_advanced_filter.setMenu(self.advanced_filter_menu)
-        filter_layout.addWidget(self.btn_advanced_filter)
+        action_layout.insertWidget(1, self.btn_advanced_filter)
 
         self.btn_reset_filters = make_button("重置", variant="secondary", min_width=60)
         self.btn_reset_filters.clicked.connect(self._reset_invoice_filters)
@@ -2101,7 +2116,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         # 2. Main Content Splitter
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("WorkbenchMainSplitter")
-        splitter.setHandleWidth(1)
+        splitter.setHandleWidth(DESIGN_V1_METRICS["workspace_gap"])
         splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         splitter.setChildrenCollapsible(True)
         self.main_splitter = splitter
@@ -2168,7 +2183,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.lbl_record_selection.setObjectName("InvoiceRecordSelection")
         record_header_layout.addWidget(self.lbl_record_selection)
         self.btn_review_batch_menu = QToolButton(self.record_header)
-        self.btn_review_batch_menu.setText("批量 ▾")
+        self.btn_review_batch_menu.setText("批量操作")
         self.btn_review_batch_menu.setFixedHeight(24)
         self.btn_review_batch_menu.setToolTip("区分已加载记录和全部筛选结果；批量通过会跳过异常记录")
         self.btn_review_batch_menu.setPopupMode(QToolButton.InstantPopup)
@@ -2196,9 +2211,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         record_header_layout.addWidget(self.btn_toggle_review_detail)
         self._update_review_detail_toggle_button()
 
+        from PySide6.QtGui import QFontDatabase
+
+        self._ledger_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        self._ledger_font.setPixelSize(12)
         self.table = QTableWidget()
         self.table.setColumnCount(len(VISIBLE_COLUMN_DEFINITIONS))
         self.table.setHorizontalHeaderLabels([label for _key, label in VISIBLE_COLUMN_DEFINITIONS])
+        header = self.table.horizontalHeader()
+        for visual_index, logical_index in enumerate((4, 2, 3, 5, 0, 1, 6)):
+            header.moveSection(header.visualIndex(logical_index), visual_index)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -2240,98 +2262,44 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.empty_widget = QWidget()
         self.empty_widget.setObjectName("ReviewEmptyState")
         empty_layout = QVBoxLayout(self.empty_widget)
-        empty_layout.setContentsMargins(8, 5, 8, 5)
-        empty_layout.setSpacing(7)
+        empty_layout.setContentsMargins(24, 16, 24, 16)
+        empty_layout.setSpacing(12)
+        empty_layout.addStretch(1)
 
-        self.lbl_empty_title = QLabel("当前没有发票记录")
+        empty_icon = QLabel()
+        empty_icon.setObjectName("WorkbenchBrandIcon")
+        empty_icon.setFixedSize(48, 48)
+        empty_icon.setAlignment(Qt.AlignCenter)
+        empty_icon.setPixmap(IconProvider.icon("brand").pixmap(18, 18))
+        empty_layout.addWidget(empty_icon, 0, Qt.AlignHCenter)
+        self.lbl_empty_title = QLabel("还没有发票")
         self.lbl_empty_title.setProperty("class", "EmptyPageTitle")
-        self.lbl_empty_title.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        self.lbl_empty_title.setProperty("role", "emphasis")
+        self.lbl_empty_title.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(self.lbl_empty_title)
 
-        self.lbl_guide = QLabel(
-            "从导入、核对到报销组导出，按这三步开始整理。"
-        )
-        self.lbl_guide.setFont(QFont("Segoe UI", 10))
+        self.lbl_guide = QLabel("导入后即可核对票面、补充材料，并生成报销包。")
         self.lbl_guide.setProperty("role", "guidePlain")
-        self.lbl_guide.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.lbl_guide.setAlignment(Qt.AlignCenter)
         self.lbl_guide.setWordWrap(True)
         empty_layout.addWidget(self.lbl_guide)
 
         self.empty_onboarding_widget = QWidget()
-        onboarding_layout = QGridLayout(self.empty_onboarding_widget)
-        self.empty_onboarding_widget.setMaximumWidth(900)
-        onboarding_layout.setContentsMargins(0, 0, 0, 0)
-        onboarding_layout.setSpacing(7)
-        self.empty_step_cards = []
-
-        def make_empty_step(number: str, title: str, description: str):
-            card = QFrame(self.empty_onboarding_widget)
-            card.setObjectName("EmptyOnboardingStep")
-            card.setFrameShape(QFrame.StyledPanel)
-            index = len(self.empty_step_cards)
-            card.setProperty("step", "import" if index == 0 else "followup")
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(16, 16, 16, 16)
-            card_layout.setSpacing(10)
-            heading = QLabel(f"{number}  {title}", card)
-            heading.setFont(QFont("Segoe UI", 10, QFont.Bold))
-            heading.setProperty("role", "strong")
-            detail = QLabel(description, card)
-            detail.setFont(QFont("Segoe UI", 9))
-            detail.setWordWrap(True)
-            detail.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-            detail.setProperty("role", "guidePlain")
-            card_layout.addWidget(heading)
-            card_layout.addWidget(detail, 1)
-            if index == 0:
-                onboarding_layout.addWidget(card, 0, 0, 1, 2)
-            else:
-                onboarding_layout.addWidget(card, 1, index - 1)
-            self.empty_step_cards.append(card)
-            return card_layout
-
-        import_layout = make_empty_step(
-            "01", "导入票据", "选择本地文件、拖入窗口，或用手机扫码上传。"
-        )
-        import_actions = QHBoxLayout()
-        import_actions.setSpacing(4)
-        self.empty_btn_import = make_button("本地导入", variant="primary", min_width=72)
+        onboarding = QVBoxLayout(self.empty_onboarding_widget)
+        onboarding.setContentsMargins(0, 0, 0, 0)
+        onboarding.setSpacing(8)
+        self.empty_btn_import = make_button("本地导入", variant="primary")
         self.empty_btn_import.clicked.connect(self._import_local_clicked)
-        import_actions.addWidget(self.empty_btn_import)
+        onboarding.addWidget(self.empty_btn_import, 0, Qt.AlignHCenter)
 
-        self.empty_btn_mobile_upload = make_button("手机扫码", variant="secondary", min_width=72)
+        other_sources = QHBoxLayout()
+        other_sources.setAlignment(Qt.AlignCenter)
+        self.empty_btn_settings = make_button("邮箱导入", variant="ghost")
+        self.empty_btn_settings.clicked.connect(lambda: self._switch_main_page("imports", sub_tab=2))
+        self.empty_btn_mobile_upload = make_button("手机扫码", variant="ghost")
         self.empty_btn_mobile_upload.clicked.connect(self._mobile_upload_clicked)
-        import_actions.addWidget(self.empty_btn_mobile_upload)
-        import_actions.addStretch(1)
-        import_layout.addLayout(import_actions)
-
-        mail_actions = QHBoxLayout()
-        mail_actions.setSpacing(4)
-        self.empty_btn_settings = make_button("配置邮箱", variant="secondary", min_width=66)
-        self.empty_btn_settings.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
-        mail_actions.addWidget(self.empty_btn_settings)
-
-        self.empty_btn_scan = make_button("扫描邮箱", variant="secondary", min_width=66)
-        self.empty_btn_scan.clicked.connect(self._scan_email_clicked)
-        mail_actions.addWidget(self.empty_btn_scan)
-        mail_actions.addStretch(1)
-        import_layout.addLayout(mail_actions)
-
-        review_layout = make_empty_step(
-            "02", "核对发票", "检查销售方、金额、日期和证明材料，再确认审核状态。"
-        )
-        self.empty_btn_review = make_button("进入审核", variant="secondary", min_width=80)
-        self.empty_btn_review.clicked.connect(self._open_review_from_empty_state)
-        review_layout.addWidget(self.empty_btn_review, 0, Qt.AlignLeft)
-
-        export_layout = make_empty_step(
-            "03", "归组并导出", "将通过的发票关联到报销组，检查完整性后生成报销包。"
-        )
-        self.empty_btn_export = make_button("报销组与导出", variant="secondary", min_width=90)
-        self.empty_btn_export.clicked.connect(lambda: self._switch_main_page("export"))
-        export_layout.addWidget(self.empty_btn_export, 0, Qt.AlignLeft)
-
+        other_sources.addWidget(self.empty_btn_settings)
+        other_sources.addWidget(self.empty_btn_mobile_upload)
+        onboarding.addLayout(other_sources)
         empty_layout.addWidget(self.empty_onboarding_widget)
 
         # Search / filter fail actions
@@ -2343,7 +2311,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.empty_btn_clear_search = make_button("清空搜索", variant="primary", min_width=76)
         self.empty_btn_clear_search.clicked.connect(self._clear_search_clicked)
 
-        self.empty_btn_reset_filters = make_button("重置筛选", variant="secondary", min_width=76)
+        self.empty_btn_reset_filters = make_button("清除筛选", variant="secondary", min_width=76)
         self.empty_btn_reset_filters.clicked.connect(self._reset_invoice_filters)
         filter_action_layout.addWidget(self.empty_btn_clear_search)
         filter_action_layout.addWidget(self.empty_btn_reset_filters)
@@ -2412,7 +2380,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 super().__init__(Qt.Vertical, parent)
                 self._upper = upper
                 self._lower = lower
-                self._sizes = [230, 520]
+                self._sizes = [310, 440]
             def widget(self, index: int):
                 if index == 0:
                     return self._upper
@@ -2663,6 +2631,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             on_claim_combo_changed=self._update_claim_total,
         )
         self._detail_panel = InvoiceDetailPanel(callbacks=cbs)
+        self._detail_panel.setObjectName("InvoiceInspector")
+        self._detail_panel.setAttribute(Qt.WA_StyledBackground, True)
+        inspector_title = QLabel("发票详情", self._detail_panel)
+        inspector_title.setObjectName("InvoiceInspectorTitle")
+        inspector_title.setContentsMargins(8, 4, 8, 4)
+        self._detail_panel.layout().insertWidget(0, inspector_title)
         self._detail_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def _proxy_detail_panel_attrs(self):
@@ -4209,20 +4183,27 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         if hasattr(self, "mail_checklist_layout"):
             while self.mail_checklist_layout.count():
                 child = self.mail_checklist_layout.takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
+                widget = child.widget()
+                if widget is not None:
+                    widget.hide()
+                    widget.deleteLater()
 
             cfg = getattr(self, "config", None) or load_config_safe()
             accounts = get_email_accounts(cfg)
             self.mail_account_checkboxes = []
 
             if not accounts:
-                lbl_empty = QLabel("暂无已启用邮箱账号。点击“更多 → 管理邮箱”完成配置。")
-                lbl_empty.setStyleSheet("color: #667085; font-size: 12px;")
-                self.mail_checklist_layout.addWidget(lbl_empty)
-                configure_mail = make_button("添加邮箱", variant="primary")
+                empty_row = QWidget()
+                empty_layout = QHBoxLayout(empty_row)
+                empty_layout.setContentsMargins(8, 4, 8, 4)
+                lbl_empty = QLabel("暂无已启用的邮箱账户")
+                lbl_empty.setProperty("role", "caption")
+                lbl_empty.setWordWrap(True)
+                empty_layout.addWidget(lbl_empty, 1)
+                configure_mail = make_button("添加邮箱", variant="secondary")
                 configure_mail.clicked.connect(lambda: self._switch_main_page("settings", sub_tab=1))
-                self.mail_checklist_layout.addWidget(configure_mail)
+                empty_layout.addWidget(configure_mail)
+                self.mail_checklist_layout.addWidget(empty_row)
             else:
                 for acc in accounts:
                     row_widget = QWidget()
@@ -4955,6 +4936,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         current_key = getattr(self, "_settings_mailbox_current_key", "")
         self.settings_mailbox_list.blockSignals(True)
+        for index in range(self.settings_mailbox_list.count()):
+            widget = self.settings_mailbox_list.itemWidget(self.settings_mailbox_list.item(index))
+            if widget is not None:
+                widget.hide()
         self.settings_mailbox_list.clear()
         for account in accounts:
             label = str(account.get("name") or account.get("address") or "未命名邮箱").strip()
@@ -5588,7 +5573,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(12)
 
-        left_card = SectionCard("下一步", eyebrow="今天最重要", hint="优先处理新导入和待审核发票。")
+        left_card = SectionCard("下一步", hint="优先处理新导入和待审核发票。")
         lc_layout = left_card.body_layout
         self.lbl_overview_recent_imports = QLabel("继续审核待处理发票。")
         self.lbl_overview_recent_imports.setStyleSheet("color: #667085; font-size: 12px;")
@@ -5758,10 +5743,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_mail_accounts_card.body_layout.addWidget(self.import_mail_command_bar)
         self.import_mail_accounts_card.body_layout.addWidget(self.lbl_import_scan_status)
 
-        self.import_local_task_card = SectionCard(
-            "本地导入",
-            hint="选择包含票据的文件夹，或将支持的本地文件拖入窗口。",
-        )
+        self.import_local_task_card = SectionCard("本地导入")
         self.import_local_task_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.import_local_task_card._layout.setAlignment(Qt.AlignTop)
         self.import_local_task_card.body_layout.setAlignment(Qt.AlignTop)
@@ -5772,14 +5754,25 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.import_local_processing = CompactFieldRow("处理", "自动识别、自动去重，冲突项进入待审核")
         self.import_local_task_card.body_layout.addWidget(self.import_local_types)
         self.import_local_task_card.body_layout.addWidget(self.import_local_processing)
-        self.import_local_drop_hint = QLabel("也可将 PDF、OFD、XML、图片或 ZIP 文件拖入窗口。")
+        self.import_local_drop_hint = QLabel("将票据拖到这里")
         self.import_local_drop_hint.setObjectName("LocalImportDropHint")
-        self.import_local_drop_hint.setWordWrap(True)
-        self.import_local_drop_hint.setProperty("class", "FieldHint")
-        self.import_local_task_card.body_layout.addWidget(self.import_local_drop_hint)
+        self.import_local_drop_hint.setProperty("class", "PageTitle")
+        self.import_local_drop_hint.setAlignment(Qt.AlignCenter)
+        drop_zone = QFrame()
+        drop_zone.setObjectName("LocalImportDropZone")
+        drop_zone.setMinimumHeight(132)
+        drop_layout = QVBoxLayout(drop_zone)
+        drop_layout.setContentsMargins(12, 8, 12, 8)
+        drop_layout.addStretch(1)
+        drop_icon = QLabel()
+        drop_icon.setPixmap(IconProvider.icon("brand").pixmap(18, 18))
+        drop_layout.addWidget(drop_icon, 0, Qt.AlignHCenter)
+        drop_layout.addWidget(self.import_local_drop_hint)
         self.btn_import_local_task = make_button("选择文件夹", variant="primary")
         self.btn_import_local_task.clicked.connect(self._import_local_clicked)
-        self.import_local_task_card.body_layout.addWidget(self.btn_import_local_task)
+        drop_layout.addWidget(self.btn_import_local_task, 0, Qt.AlignHCenter)
+        drop_layout.addStretch(1)
+        self.import_local_task_card.body_layout.insertWidget(0, drop_zone)
 
         self.import_mobile_task_card = SectionCard(
             "手机扫码",
@@ -6022,7 +6015,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self.lbl_export_action_hint = QLabel("未选报销组或检查未通过时，导出会保持禁用。")
         self.lbl_export_action_hint.setWordWrap(True)
-        self.lbl_export_action_hint.setStyleSheet("color: #475467; font-size: 12px;")
+        self.lbl_export_action_hint.setObjectName("ExportScopeFeedback")
         self.export_integrity_card.body_layout.addWidget(self.lbl_export_action_hint)
         self.btn_export_business_issues = make_button("处理财税或重复问题", variant="secondary")
         self.btn_export_business_issues.clicked.connect(lambda: self._open_export_issue("business"))
@@ -6880,6 +6873,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_run_export_page.setText("导出已通过和待审核发票" if include_pending else "导出已通过发票")
         exporting = self._data_operation_gate.owner == "报销组导出"
         self.btn_run_export_page.setEnabled(is_ready and claim_status != "reimbursed" and not exporting)
+        feedback = self.lbl_export_action_hint
+        feedback.setProperty("exportBlocked", claim_status == "draft" and not is_ready)
+        feedback.style().unpolish(feedback)
+        feedback.style().polish(feedback)
         duplicate_in_export = False
         if claim_status == "exported" and decisions["duplicate"]:
             runs = self.db.get_export_runs(int(claim_id))
@@ -6896,11 +6893,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 "报销组已导出并锁定；收到报销款后，可标记本次导出已报销。")
         if selection_trace is not None:
             selection_trace.finish("checklist", item_count=len(invoices))
-
-    def _open_review_from_empty_state(self) -> None:
-        """Open the pending-review queue from the first-use guide."""
-        self._switch_main_page("review")
-        self._change_filter(TO_REVIEW)
 
     def _mark_selected_claim_reimbursed(self) -> None:
         current_item = getattr(self, "export_group_list", None)
@@ -7178,7 +7170,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         return "正常"
 
     def _badge_spec_for_review_status(self, status: str) -> dict | None:
-        return REVIEW_STATUS_BADGES.get(status or TO_REVIEW)
+        return REVIEW_STATUS_BADGES.get(status) if status == ERROR else None
 
     def _badge_spec_for_data_status(self, status: str) -> dict | None:
         if status == "正常":
@@ -7763,41 +7755,37 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             elif hasattr(button, "setChecked"):
                 button.setChecked(status == selected)
 
-    def _apply_review_empty_chrome(self, *, empty_db: bool) -> None:
-        """Collapse review-only chrome while the database has no invoices.
-
-        First-run workers should see one guided onboarding surface instead of
-        an empty table header, batch actions, preview and detail pane carrying
-        three competing "no records" messages.
-        """
-        active = getattr(self, "_review_empty_chrome_active", None)
-        if active is not None and bool(active) == bool(empty_db):
+    def _apply_review_empty_chrome(self, *, empty_db: bool, no_matches: bool = False) -> None:
+        """Keep import or filter recovery visible while hiding vacant review panes."""
+        state = (empty_db, no_matches)
+        if getattr(self, "_review_empty_chrome_active", None) == state:
             return
-        self._review_empty_chrome_active = bool(empty_db)
+        self._review_empty_chrome_active = state
+        show_records = not (empty_db or no_matches)
         self.workbench_top_toolbar.setVisible(not empty_db)
-        self.left_upper_widget.setProperty("empty", empty_db)
+        self.left_upper_widget.setProperty("empty", not show_records)
         self.left_upper_widget.style().unpolish(self.left_upper_widget)
         self.left_upper_widget.style().polish(self.left_upper_widget)
         for attr in ("record_header",):
             widget = getattr(self, attr, None)
             if widget is not None:
-                widget.setVisible(not empty_db)
+                widget.setVisible(show_records)
         for attr in ("btn_hci_enter_review", "lbl_status_middle"):
             widget = getattr(self, attr, None)
             if widget is not None:
-                widget.setVisible(not empty_db)
+                widget.setVisible(show_records)
         preview = getattr(self, "preview_panel", None)
         if preview is not None:
-            preview.setVisible(not empty_db)
+            preview.setVisible(show_records)
         detail = getattr(self, "_detail_panel", None)
         if detail is not None:
-            detail.setVisible(not empty_db)
+            detail.setVisible(show_records)
         filter_bar = getattr(self, "filter_bar_widget", None)
         if filter_bar is not None:
             filter_bar.setVisible(not empty_db)
         upper = getattr(self, "left_upper_widget", None)
         if upper is not None:
-            if empty_db:
+            if not show_records:
                 upper.setMinimumHeight(0)
                 upper.setMaximumHeight(16777215)
                 upper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -7811,12 +7799,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     vertical.setSizes([RECORD_MIN_HEIGHT, max(PREVIEW_MIN_HEIGHT, vertical.height() - RECORD_MIN_HEIGHT)])
         splitter = getattr(self, "main_splitter", None)
         if splitter is not None:
-            if empty_db:
+            if not show_records:
                 handles = splitter.handleWidth() * max(0, splitter.count() - 1)
                 usable = max(1, splitter.width() - handles)
                 splitter.setSizes([usable, 0])
             else:
-                splitter.setSizes([650, 450])
+                splitter.setSizes([650, DESIGN_V1_METRICS["review_detail_width"]])
 
     def _start_continuous_review(self) -> None:
         """Single batch entry: delegate to the continuous-review mode when ready."""
@@ -8072,6 +8060,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     item.setData(SORT_KEY_ROLE, self._sort_key_for_column(col, inv, text))
                     item.setData(SORT_ID_ROLE, inv.get("id"))
 
+                    if col in (2, 3, 5):
+                        item.setFont(self._ledger_font)
                     if col == 3:
                         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                         item.setToolTip(total_amt or display_amount)
@@ -8081,7 +8071,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
                     if col == 0:
                         font = item.font()
-                        font.setBold(True)
+                        font.setBold(review_status == ERROR)
                         item.setFont(font)
                         badge = self._badge_spec_for_review_status(review_status)
                         if badge:
@@ -8112,7 +8102,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     elif col == 4 and seller:
                         item.setToolTip(seller)
                     elif col == 5 and inv_num:
-                        item.setForeground(QColor("#667085"))
                         item.setToolTip(inv_num)
                     elif col == 6:
                         item.setToolTip(
@@ -8145,9 +8134,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 _log.error("Invoice count query failed: error_type=%s", type(exc).__name__)
 
             if total_in_db == 0:
-                self.lbl_empty_title.setText("当前没有发票记录")
+                self.lbl_empty_title.setText("还没有发票")
                 self.lbl_guide.setText(
-                    "支持拖拽或本地选择，也可通过手机扫码上传；配置邮箱后还能扫描邮件。"
+                    "导入后即可核对票面、补充材料，并生成报销包。"
                 )
                 self.lbl_guide.setStyleSheet("color: #667085; padding: 0px 4px;")
                 self.lbl_guide.setVisible(True)
@@ -8155,12 +8144,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 self.empty_filter_actions.setVisible(False)
                 self._apply_review_empty_chrome(empty_db=True)
             else:
-                self._apply_review_empty_chrome(empty_db=False)
+                self._apply_review_empty_chrome(empty_db=False, no_matches=total_in_db is not None)
                 if total_in_db is None:
                     self.lbl_empty_title.setText("暂时无法读取发票记录")
                     self.lbl_guide.setText("数据库查询失败，请重试；此状态不表示数据为空。")
                 else:
-                    self.lbl_empty_title.setText("没有符合条件的发票")
+                    self.lbl_empty_title.setText("没有匹配的发票")
                     self.lbl_guide.setText("请清空搜索词或重置筛选条件。")
                 self.lbl_guide.setStyleSheet("color: #6B7280; line-height: 1.5; border: none; padding: 0px; background-color: transparent;")
                 self.lbl_guide.setVisible(True)
@@ -8171,7 +8160,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.current_invoice = None
             self.current_preview_docs = []
             self.current_preview_index = 0
-            self._preview_empty_message = "没有符合条件的发票" if total_in_db > 0 else "请选择一张发票查看原件"
+            self._preview_empty_message = "没有匹配的发票" if total_in_db else "请选择一张发票查看原件"
             self._performance_mark_list("preview_trigger")
             self._update_document_preview()
             self._clear_detail_form()

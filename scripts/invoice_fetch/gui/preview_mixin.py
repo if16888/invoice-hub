@@ -107,12 +107,6 @@ class PreviewMixin:
         heading = QHBoxLayout()
         heading.addWidget(self.preview_title)
         heading.addStretch(1)
-        self.btn_focus_invoice = QPushButton("专注核票  F11", self.preview_panel)
-        self.btn_focus_invoice.setMinimumHeight(28)
-        self.btn_focus_invoice.setProperty("variant", "ghost")
-        self.btn_focus_invoice.setToolTip("放大当前票面；按 Esc 返回审核并保留当前记录")
-        self.btn_focus_invoice.clicked.connect(self._toggle_preview_focus_mode)
-        heading.addWidget(self.btn_focus_invoice)
         preview_layout.addLayout(heading)
 
         self.preview_workbench = QWidget(self.preview_panel)
@@ -233,7 +227,7 @@ class PreviewMixin:
         self.lbl_image_preview = QLabel()
         self.lbl_image_preview.setAlignment(Qt.AlignCenter)
         self.lbl_image_preview.setStyleSheet("background-color: #F1F5F9;")
-        self.image_scroll_area.setStyleSheet("background-color: #F1F5F9; border: none;")
+        self.image_scroll_area.setObjectName("InvoiceImageCanvas")
         self.lbl_image_preview.installEventFilter(self)
         self.image_scroll_area.setWidget(self.lbl_image_preview)
 
@@ -241,8 +235,7 @@ class PreviewMixin:
         container_layout.addWidget(self.preview_stack)
 
         self._init_overlay_toolbar()
-        # Keep document controls in their own row so they never cover a ticket.
-        container_layout.insertWidget(0, self.overlay_toolbar, 0, Qt.AlignRight)
+        heading.addWidget(self.overlay_toolbar)
         self._reposition_overlay_toolbar()
 
         # Bind container resizing to overlay position alignment (Y-offset smaller = 4px)
@@ -288,16 +281,7 @@ class PreviewMixin:
             action.triggered.connect(lambda checked=False, target=button: target.click())
             tb.adjustSize()
         tb.adjustSize()
-        if container.layout() is not None and container.layout().indexOf(tb) >= 0:
-            tb.updateGeometry()
-            return
-        w = tb.width()
-        c_w = container.width()
-        # Top-right alignment with 16px right padding and 10px top padding (never blocks center title)
-        x = max(8, c_w - w - 16)
-        y = 10
-        tb.move(x, y)
-        tb.raise_()
+        tb.updateGeometry()
 
     def _show_overlay_toolbar(self):
         if hasattr(self, "overlay_hide_timer"):
@@ -797,7 +781,7 @@ class PreviewMixin:
             else:
                 self._reset_pdf_preview_state()
                 self.current_image_pixmap = pixmap
-                self.image_zoom_mode = "fit_width"
+                self.image_zoom_mode = "fit_page"
                 self.image_zoom_factor = 1.0
                 self._update_image_display()
                 self.preview_stack.setCurrentWidget(self.image_scroll_area)

@@ -75,7 +75,7 @@ class IconProvider:
                 (QIcon.Disabled, QIcon.Off, "muted"),
                 (QIcon.Disabled, QIcon.On, "muted"),
             ):
-                color = DESIGN_V1_COLORS[role]
+                color = DESIGN_V1_COLORS["link" if semantic == "brand" else role]
                 if key[1]:
                     color = dark_stylesheet(color)
                 renderer = QSvgRenderer(QByteArray(source.replace(b"currentColor", color.encode("ascii"))))

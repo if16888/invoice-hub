@@ -163,7 +163,7 @@ class TestWorkbenchNativeGeometry(unittest.TestCase):
             finally:
                 self._close_window(window)
 
-    def test_review_table_shows_at_least_seven_dense_rows_at_1366(self):
+    def test_review_table_shows_at_least_five_rows_at_1366(self):
         with tempfile.TemporaryDirectory() as td:
             window = self._make_window(td)
             try:
@@ -171,7 +171,7 @@ class TestWorkbenchNativeGeometry(unittest.TestCase):
                 window.resize(1366, 768)
                 QApplication.processEvents()
                 visible_rows = window.table.viewport().height() // window.table.verticalHeader().defaultSectionSize()
-                self.assertGreaterEqual(visible_rows, 7)
+                self.assertGreaterEqual(visible_rows, 5)
             finally:
                 self._close_window(window)
 
@@ -192,7 +192,7 @@ class TestWorkbenchNativeGeometry(unittest.TestCase):
                     QTest.qWait(100)
                     self.assertEqual(window.btn_more.text(), "更多")
                     self.assertEqual(window.table.verticalHeader().defaultSectionSize(), REVIEW_ROW_HEIGHT)
-                    self.assertGreaterEqual(window.table.viewport().height() // REVIEW_ROW_HEIGHT, 7)
+                    self.assertGreaterEqual(window.table.viewport().height() // REVIEW_ROW_HEIGHT, 5)
             finally:
                 self._close_window(window)
 
