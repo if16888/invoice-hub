@@ -30,14 +30,14 @@ class TableStateTests(unittest.TestCase):
 
         start = APP_STYLESHEET.index("QTableWidget {")
         block = APP_STYLESHEET[start : APP_STYLESHEET.index("}", start)]
-        self.assertIn("selection-background-color: #0066CC;", block)
+        self.assertIn("selection-background-color: #0963CB;", block)
         self.assertIn("selection-color: #FFFFFF;", block)
         self.assertIn("font-size: 13px;", block)
 
-    def test_review_rows_are_28px(self):
+    def test_review_rows_are_40px(self):
         from scripts.invoice_fetch.gui.review_layout import REVIEW_ROW_HEIGHT
 
-        self.assertEqual(REVIEW_ROW_HEIGHT, 28)
+        self.assertEqual(REVIEW_ROW_HEIGHT, 40)
 
 
 class DisabledTreatmentTests(unittest.TestCase):

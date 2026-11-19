@@ -5602,10 +5602,9 @@ class ClaimGroupsTests(unittest.TestCase):
                     secondary_empty_buttons = [
                         window.empty_btn_mobile_upload,
                         window.empty_btn_settings,
-                        window.empty_btn_scan,
                     ]
                     for btn in secondary_empty_buttons:
-                        self.assertEqual(btn.property("variant"), "secondary")
+                        self.assertEqual(btn.property("variant"), "ghost")
 
                     self.assertEqual(window.filter_buttons["all"].objectName(), "CompactStatCard")
                     self.assertEqual(window.filter_buttons["all"].property("selected"), True)
