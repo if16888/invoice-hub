@@ -65,7 +65,7 @@ class ReviewChromeTests(unittest.TestCase):
                 detail = window._detail_panel
                 self.assertEqual(detail.minimumWidth(), DETAIL_MIN_WIDTH)
                 self.assertEqual(detail.maximumWidth(), DETAIL_MAX_WIDTH)
-                self.assertEqual((DETAIL_MIN_WIDTH, DETAIL_MAX_WIDTH), (320, 420))
+                self.assertEqual((DETAIL_MIN_WIDTH, DETAIL_MAX_WIDTH), (294, 420))
                 sizes = window.main_splitter.sizes()
                 if len(sizes) > 1 and sizes[1] > 0:
                     self.assertLessEqual(sizes[1], DETAIL_MAX_WIDTH)

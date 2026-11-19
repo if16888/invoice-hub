@@ -50,7 +50,7 @@ from .ui_components import ElidedTextLabel, fit_button_to_content, make_button
 from .workbench_layout import clamp_vertical_split
 
 
-DETAIL_MIN_WIDTH = 320
+DETAIL_MIN_WIDTH = DESIGN_V1_METRICS["review_detail_compact_width"]
 DETAIL_MAX_WIDTH = 420
 COLLAPSED_NAV_THRESHOLD = 96
 COLLAPSED_DETAIL_BONUS = 48
@@ -64,13 +64,10 @@ def _nav_is_collapsed(window) -> bool:
 
 
 def _base_detail_width(window, available: int) -> int:
-    """Return the normal detail width before applying the collapsed-rail bonus."""
-    window_width = max(0, int(window.width()))
-    if window_width <= COMPACT_DESKTOP_MAX_WIDTH or available <= 1160:
-        return 352
-    if window_width <= 1440 or available <= 1280:
-        return 380
-    return 400
+    """Select the design's inspector width for the current workspace."""
+    if window.width() <= 1200 or available <= 1060:
+        return DESIGN_V1_METRICS["review_detail_compact_width"]
+    return DESIGN_V1_METRICS["review_detail_width"]
 
 
 def _target_detail_width(window) -> int:
@@ -426,7 +423,7 @@ def _install_table_remainder_contract(window) -> None:
         window._adjusting_review_columns = True
         try:
             viewport_width = max(0, table.viewport().width())
-            compact = viewport_width < 720
+            compact = viewport_width < 790
             # The target group is visible in the toolbar. Keep date and
             # currency available for ticket verification on compact desktops.
             claim_visual = header.visualIndex(6)
@@ -435,7 +432,7 @@ def _install_table_remainder_contract(window) -> None:
                 header.moveSection(claim_visual, number_visual)
             elif not compact and claim_visual < number_visual:
                 header.moveSection(claim_visual, number_visual)
-            table.setColumnHidden(1, compact)
+            table.setColumnHidden(1, viewport_width < 640)
             table.setColumnHidden(2, False)
             table.setColumnWidth(3, max(120, table.columnWidth(3)))
             if compact:
@@ -547,9 +544,9 @@ def install_review_vertical_workspace(page: QWidget) -> None:
 # ── Review workspace baseline (merged from review_workspace_baseline) ──
 FILTER_CARD_MIN_WIDTH = 108
 FILTER_CARD_MAX_WIDTH = 156
-WORKSPACE_DETAIL_MIN_WIDTH = 320
+WORKSPACE_DETAIL_MIN_WIDTH = DETAIL_MIN_WIDTH
 WORKSPACE_DETAIL_MAX_WIDTH = 420
-REVIEW_ROW_HEIGHT = 28
+REVIEW_ROW_HEIGHT = DESIGN_V1_METRICS["review_row_height"]
 
 
 def _normalize_filter_cards(window) -> None:
@@ -702,7 +699,7 @@ def _compact_cross_workflow_actions(window) -> None:
 
     search = getattr(window, "txt_search", None)
     if search is not None:
-        search.setPlaceholderText("搜索发票号 / 销售方 / 购买方 / 金额    Ctrl + F")
+        search.setPlaceholderText("搜索票号、销售方或金额   Ctrl + F")
         search.setAccessibleName("搜索发票")
 
     if toolbar_layout is not None:
@@ -1491,7 +1488,7 @@ def _clarify_review_toolbar(window) -> None:
         scan_button.setText("扫描邮箱")
         scan_button.setToolTip("扫描已配置邮箱中的新发票")
         scan_button.setAccessibleName("扫描邮箱")
-        scan_button.show()
+        scan_button.hide()
         _set_compact_button(scan_button, 88, 108)
     scan_action = getattr(window, "action_scan_email", None)
     if scan_action is not None:
@@ -1537,8 +1534,7 @@ def _compact_status_filters(window) -> None:
 
     advanced = getattr(window, "btn_advanced_filter", None)
     if advanced is not None:
-        advanced.hide()
-        advanced.setToolTip("字段筛选已移到表格列标题")
+        advanced.setToolTip("筛选资料、购买方与报销状态")
 
     reset = getattr(window, "btn_reset_filters", None)
     if reset is not None:

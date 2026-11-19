@@ -38,11 +38,11 @@ class DesignTokenAuthorityTests(unittest.TestCase):
 
     def test_design_v1_exports_the_approved_product_tokens(self):
         self.assertIs(BASELINE_COLORS, DESIGN_V1_COLORS)
-        self.assertEqual(DESIGN_V1_COLORS["page"], "#F5F5F7")
-        self.assertEqual(DESIGN_V1_COLORS["accent"], "#0066CC")
-        self.assertEqual(DESIGN_V1_COLORS["success"], "#16803C")
-        self.assertEqual(DESIGN_V1_COLORS["danger"], "#B42318")
-        self.assertEqual(DESIGN_V1_TYPE["page_title"], 20)
+        self.assertEqual(DESIGN_V1_COLORS["page"], "#F3F5F8")
+        self.assertEqual(DESIGN_V1_COLORS["accent"], "#0963CB")
+        self.assertEqual(DESIGN_V1_COLORS["success"], "#146247")
+        self.assertEqual(DESIGN_V1_COLORS["danger"], "#A5253D")
+        self.assertEqual(DESIGN_V1_TYPE["page_title"], 24)
         self.assertEqual(DESIGN_V1_TYPE["body"], 13)
         self.assertEqual(DESIGN_V1_METRICS["control_height"], 32)
 
@@ -51,10 +51,10 @@ class DesignTokenAuthorityTests(unittest.TestCase):
         styles.COLOR_TOKENS["accent"] = "#1599BD"
         stylesheet = build_canonical_application_stylesheet()
 
-        self.assertEqual(styles.COLOR_TOKENS["accent"], "#0066CC")
-        self.assertEqual(styles.COLOR_TOKENS["success"], "#16803C")
-        self.assertEqual(styles.COLOR_TOKENS["danger"], "#B42318")
-        self.assertIn("#0066CC", stylesheet)
+        self.assertEqual(styles.COLOR_TOKENS["accent"], "#0963CB")
+        self.assertEqual(styles.COLOR_TOKENS["success"], "#146247")
+        self.assertEqual(styles.COLOR_TOKENS["danger"], "#A5253D")
+        self.assertIn("#0963CB", stylesheet)
         self.assertNotIn("#1599BD", stylesheet)
         self.assertTrue(stylesheet.startswith(styles.APP_STYLESHEET))
 

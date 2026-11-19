@@ -384,7 +384,7 @@ class ReviewIntegrityTests(unittest.TestCase):
                 with self.window() as window:
                     window._switch_main_page("settings")
                     self.settle()
-                    self.assertIn("#161A20", window.styleSheet())
+                    self.assertIn("#272D36", window.styleSheet())
                     self.assertNotIn("#182230", window.styleSheet())
                     from scripts.invoice_fetch.gui.icon_provider import IconProvider
                     icon = IconProvider.icon("settings").pixmap(18, 18).toImage()
@@ -398,7 +398,7 @@ class ReviewIntegrityTests(unittest.TestCase):
                     child.setStyleSheet("background-color: #ffffff; color: #667085;")
                     child.show()
                     self.settle()
-                    self.assertEqual(child.grab().toImage().pixelColor(10, 10).name(), "#161a20")
+                    self.assertEqual(child.grab().toImage().pixelColor(10, 10).name(), "#272d36")
                     self.assertIn("#98A2B3", child.styleSheet())
                     apply_app_theme(self.app)
                     child.setStyleSheet(child.styleSheet() + " border: 1px solid #E4E7EC;")
@@ -406,7 +406,7 @@ class ReviewIntegrityTests(unittest.TestCase):
                     self.assertNotIn("#6B7687", child.styleSheet())
                     child.setStyleSheet("background-color: #ffffff; color: #667085;")
                     self.settle()
-                    self.assertEqual(child.grab().toImage().pixelColor(10, 10).name(), "#161a20")
+                    self.assertEqual(child.grab().toImage().pixelColor(10, 10).name(), "#272d36")
         finally:
             self.app.setPalette(palette)
 

@@ -6,6 +6,7 @@ from functools import wraps
 from types import MethodType
 
 from .design_tokens import DESIGN_V1_METRICS
+from .icon_provider import IconProvider
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -149,12 +150,12 @@ class CommonSettingsPage(QWidget):
 
 # ── Settings page baseline (merged from settings_baseline) ──
 _SETTINGS_MAX_WIDTH = 1120
-_SETTINGS_NAV_WIDTH = 168
+_SETTINGS_NAV_WIDTH = 184
 _PAGE_MARGIN = DESIGN_V1_METRICS["page_margin"]
 _HEADER_CONTENT_GAP = 20
-_MAILBOX_LIST_WIDTH = 280
+_MAILBOX_LIST_WIDTH = 286
 _MAILBOX_ROW_HEIGHT = 68
-_MAILBOX_DETAIL_MIN_WIDTH = 560
+_MAILBOX_DETAIL_MIN_WIDTH = 488
 _MAILBOX_DETAIL_MAX_WIDTH = 760
 _PROFILE_LIST_WIDTH = 240
 _FIELD_LABEL_WIDTH = 104
@@ -260,13 +261,14 @@ def _install_settings_styles(settings_tabs: QWidget) -> None:
             padding: 4px;
         }}
         QListWidget#MailboxAccountList::item {{
+            color: transparent;
             min-height: {_MAILBOX_ROW_HEIGHT}px;
             border-radius: 6px;
             padding: 0;
         }}
         QListWidget#MailboxAccountList::item:selected {{
+            color: transparent;
             background: {_BG_SELECTED};
-            color: {_ACCENT};
         }}
         QFrame#MailboxAccountRow {{
             background: transparent;
@@ -690,6 +692,8 @@ def _rebuild_mailbox_rows(window) -> None:
             continue
 
         old_widget = account_list.itemWidget(item)
+        if old_widget is not None:
+            old_widget.hide()
         row = QFrame(account_list)
         row.setObjectName("MailboxAccountRow")
         row.setMinimumHeight(_MAILBOX_ROW_HEIGHT)
@@ -722,8 +726,7 @@ def _rebuild_mailbox_rows(window) -> None:
         outer.addWidget(address_label)
         item.setSizeHint(QSize(0, _MAILBOX_ROW_HEIGHT))
         account_list.setItemWidget(item, row)
-        if old_widget is not None and old_widget is not row:
-            old_widget.deleteLater()
+
 
 
 def _sync_mailbox_empty_state(window) -> None:
@@ -1763,8 +1766,20 @@ def apply_settings_action_clarity(page: QWidget | None) -> None:
     from .selection_surfaces import NAV_GROUP_ROLE
 
     nav = window.settings_tabs.nav_list
+    icons = {
+        "邮箱账户": "mail",
+        "开票信息": "company",
+        "AI 配置": "spark",
+        "运行状态": "clock",
+        "安全与隐私": "shield",
+        "数据与备份": "local_file",
+        "关于": "info",
+    }
     for row in range(nav.count()):
         item = nav.item(row)
+        glyph = icons.get(item.text())
+        if glyph is not None:
+            item.setIcon(IconProvider.icon(glyph))
         item.setData(NAV_GROUP_ROLE, "常用" if row == 0 else "高级" if row == 2 else None)
         item.setData(Qt.AccessibleDescriptionRole, "常用设置" if row < 2 else "高级设置")
     for child in window.settings_tabs.stack.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):

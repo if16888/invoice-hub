@@ -141,9 +141,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window.show()
                 window.resize(1920, 1080)
                 QApplication.processEvents()
-                # P1-4: the detail pane is elastic from 320px, independently of
-                # the legacy metric token, so assert the reviewed minimum.
-                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 320)
+                self.assertGreaterEqual(window._detail_panel.minimumWidth(), 294)
                 self.assertLessEqual(window._detail_panel.maximumWidth(), 420)
             finally:
                 self._close_window(window)
@@ -162,7 +160,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
 
                 self.assertTrue(window.workbench_nav.isVisible())
                 self.assertEqual(window.workbench_nav.objectName(), "WorkbenchNav")
-                self.assertIn(window.workbench_nav.minimumWidth(), (56, 208))  # P1-21: sidebar_width token
+                self.assertIn(window.workbench_nav.minimumWidth(), (64, 208))  # P1-21: sidebar_width token
 
                 self.assertTrue(window.workbench_top_toolbar.isVisible())
                 self.assertEqual(window.workbench_top_toolbar.objectName(), "WorkbenchTopToolbar")
@@ -234,7 +232,7 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 window._apply_workbench_metrics(1920, 1080)
                 window.workbench_nav_buttons["export"].click()
                 QApplication.processEvents()
-                self.assertEqual(window.workbench_nav.width(), 56)
+                self.assertEqual(window.workbench_nav.width(), 64)
                 self.assertEqual(
                     [key for key in selectable if window.workbench_nav_buttons[key].isChecked()],
                     ["export"],
@@ -371,11 +369,11 @@ class TestWorkbenchShellIntegration(unittest.TestCase):
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "发票审核")
                 self.assertTrue(window.btn_collapse_nav.isVisible())
 
-                # Click collapse: should collapse to 52px
+                # Click collapse: should collapse to 64px
                 window.btn_collapse_nav.click()
                 QApplication.processEvents()
                 settings.sync()
-                self.assertEqual(window.workbench_nav.maximumWidth(), 56)
+                self.assertEqual(window.workbench_nav.maximumWidth(), 64)
                 self.assertEqual(window.workbench_nav_buttons["review"].text(), "")
                 self.assertTrue(settings.value("nav_collapsed_manual", False, type=bool))
 

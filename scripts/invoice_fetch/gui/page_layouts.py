@@ -245,9 +245,9 @@ install_semantic_checklist_contract(ChecklistRow)
 
 
 DASHBOARD_MAX_WIDTH = 1360
-IMPORT_RESULT_WIDTH = 340
-EXPORT_GROUP_WIDTH = 280
-EXPORT_CHECK_WIDTH = 360
+IMPORT_RESULT_WIDTH = 332
+EXPORT_GROUP_WIDTH = 246
+EXPORT_CHECK_WIDTH = 344
 PRIMARY_MAX_WIDTH = 180
 
 
@@ -546,7 +546,7 @@ QPushButton.WorkbenchNavButton {{
     border-radius: {metrics['radius_medium']}px;
     padding: 0 12px;
     text-align: left;
-    font-size: {DESIGN_V1_TYPE['section_title']}px;
+    font-size: {DESIGN_V1_TYPE['body']}px;
     font-weight: 400;
 }}
 QPushButton.WorkbenchNavButton:hover {{
@@ -561,7 +561,7 @@ QPushButton.WorkbenchNavButton:focus {{
 }}
 QPushButton.WorkbenchNavButton:checked {{
     background-color: {colors['navigation_selected']};
-    color: {colors['accent_hover']};
+    color: {colors['selected_text']};
     border: {metrics['focus_border_width']}px solid transparent;
     outline: 0;
     font-weight: 600;

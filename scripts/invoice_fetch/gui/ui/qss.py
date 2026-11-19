@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from ..design_tokens import DESIGN_V1_COLORS
 from .theme import Theme
 
 
@@ -86,7 +87,56 @@ def build_qss() -> str:
         min-height: 40px;
         max-height: 40px;
     }}
-    QFrame#InvoiceTableCard {{ border: none; border-radius: 0; }}
+    QFrame#ReviewPageBar, QFrame#InvoiceTableCard, QFrame#PreviewPanel,
+    QWidget#InvoiceInspector, QFrame#HciDashboardTaskHost {{
+        background: {Theme.BG_CARD};
+        border: 1px solid {Theme.BORDER};
+        border-radius: {Theme.RADIUS_CARD}px;
+    }}
+    QFrame#InvoiceTableCard[empty="true"] {{ background: {Theme.BG_PAGE}; border: none; }}
+    QLabel#ExportScopeFeedback[exportBlocked="true"] {{
+        background: {Theme.RED_BG};
+        color: {Theme.RED_TEXT};
+        padding: 8px 12px;
+        border-radius: {Theme.RADIUS_CONTROL}px;
+    }}
+    QFrame#PageHeader QLabel[class="PageSubtitle"] {{ color: {Theme.TEXT_SUB}; }}
+    QLabel#WorkbenchNavTitle {{
+        color: {Theme.TEXT_MAIN};
+        font-size: 16px;
+        font-weight: 600;
+    }}
+    QLabel#WorkbenchNavSubtitle {{ color: {Theme.TEXT_SUB}; }}
+    QFrame#ReviewPageBar {{ min-height: {Theme.TOOLBAR_HEIGHT}px; }}
+    QLabel#WorkbenchBrandIcon, QFrame#LocalImportDropZone {{
+        background: {DESIGN_V1_COLORS["accent_surface"]};
+        border-radius: {Theme.RADIUS_CONTROL}px;
+    }}
+    QFrame#LocalImportDropZone {{ border: 1px dashed {Theme.BORDER_STRONG}; }}
+    QScrollArea#InvoiceImageCanvas {{ background: {Theme.BG_CANVAS}; border: none; }}
+    QSplitter#WorkbenchMainSplitter::handle {{ background: transparent; }}
+    QLabel.InlineWarning {{
+        background: {Theme.ORANGE_BG};
+        color: {Theme.ORANGE_TEXT};
+        border: 1px solid {Theme.ORANGE_BORDER};
+        border-radius: {Theme.RADIUS_CONTROL}px;
+        padding: 8px 12px;
+        margin: 0;
+    }}
+    QLabel.DetailAmount {{
+        color: {Theme.TEXT_MAIN};
+        font-size: 28px;
+        font-weight: 600;
+    }}
+    QLabel#InvoiceInspectorTitle, QLabel#InvoiceRecordTitle {{
+        color: {Theme.TEXT_MAIN};
+        font-size: {Theme.TYPE_SECTION_TITLE}px;
+        font-weight: 700;
+    }}
+    QTableWidget::item:selected, QTableWidget::item:selected:active, QTableWidget::item:selected:!active {{
+        background: {DESIGN_V1_COLORS["selected"]};
+        color: {DESIGN_V1_COLORS["selected_text"]};
+    }}
     QFrame#DetailSummaryCard {{
         border: none;
         border-bottom: 1px solid {Theme.BORDER};
@@ -356,7 +406,7 @@ def build_qss() -> str:
     QLineEdit, QComboBox, QLineEdit.DetailFieldInput, QComboBox.DetailFieldInput {{
         min-height: {Theme.CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
         max-height: {Theme.CONTROL_HEIGHT - 2 * Theme.FOCUS_BORDER_WIDTH}px;
-        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER};
+        border: {Theme.FOCUS_BORDER_WIDTH}px solid {Theme.BORDER_STRONG};
         border-radius: {Theme.RADIUS_CONTROL}px;
         background-color: {Theme.BG_CARD};
         padding: 0 9px;

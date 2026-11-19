@@ -46,7 +46,7 @@ class SelectionSurfaceContractTests(unittest.TestCase):
         nav = shell.nav_list
         nav.item(0).setData(NAV_GROUP_ROLE, '常用')
         nav.setStyleSheet('QListWidget { background: #EFEFF2; } '
-                         'QListWidget::item:selected { background: #EAF2FC; color: #0066CC; }')
+                         'QListWidget::item:selected { background: #DFECFC; color: #0963CB; }')
         install_selection_surface_contracts(shell)
         shell.resize(500, 300)
         shell.show()

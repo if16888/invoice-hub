@@ -137,7 +137,7 @@ class DesktopWorkflowRefinementsTests(unittest.TestCase):
             w.table.selectRow(1); self.settle()
             invoice_id=w.current_invoice['id']
             scroll=w.table.verticalScrollBar().value()
-            w.btn_focus_invoice.click(); self.settle()
+            QTest.keyClick(w, Qt.Key_F11); self.settle()
             self.assertIsNotNone(w.preview_focus_dialog)
             QTest.keyClick(w.preview_focus_dialog,Qt.Key_Escape); self.settle()
             self.assertIsNone(w.preview_focus_dialog)

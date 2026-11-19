@@ -39,7 +39,8 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from ..review_status import ERROR, TO_REVIEW
-from .design_tokens import DESIGN_V1_COLORS
+from .design_tokens import DESIGN_V1_COLORS, DESIGN_V1_TYPE
+from .icon_provider import IconProvider
 from .date_range_dialog import DateRangeDialog
 from .ui_components import SectionCard, make_badge, make_button
 from .workbench_state import is_keyboard_input_target
@@ -167,14 +168,6 @@ class HciTaskCard(QFrame):
         layout.addWidget(self.lbl_hint)
 
         colors = DESIGN_V1_COLORS
-        if key == "to_review":
-            metric = colors["accent"]
-        elif state == "danger":
-            metric = colors["danger_text"]
-        elif state == "success":
-            metric = colors["success_text"]
-        else:
-            metric = colors["warning_text"]
 
         self.setStyleSheet(
             f"""
@@ -191,8 +184,8 @@ class HciTaskCard(QFrame):
                 border: 2px solid {colors["focus_ring"]};
             }}
             QLabel[class="HciTaskMetric"] {{
-                color: {metric};
-                font-size: 24px;
+                color: {colors["text"]};
+                font-size: {DESIGN_V1_TYPE["dashboard_metric"]}px;
                 font-weight: 700;
                 border: none;
                 background: transparent;
@@ -469,7 +462,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
 
     page.setProperty("hciV1DashboardApplied", True)
     header.set_title("今日工作台")
-    header.set_subtitle("收集票据、完成审核，再准备本次报销。")
+    header.set_subtitle("")
 
     old_summary = getattr(window, "overview_summary_strip", None)
     if old_summary is not None:
@@ -478,13 +471,18 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
     task_host = QFrame(host)
     task_host.setObjectName("HciDashboardTaskHost")
     task_layout = QVBoxLayout(task_host)
-    task_layout.setContentsMargins(0, 0, 0, 0)
+    task_layout.setContentsMargins(12, 8, 12, 12)
     task_layout.setSpacing(10)
 
     action_row = QHBoxLayout()
     action_row.setContentsMargins(0, 0, 0, 0)
     action_row.setSpacing(8)
+    queue_title = QLabel("发票待办")
+    queue_title.setProperty("class", "SectionTitle")
+    action_row.addWidget(queue_title)
     action_row.addStretch(1)
+    layout.removeWidget(window.lbl_overview_month_total)
+    action_row.addWidget(window.lbl_overview_month_total)
     window.lbl_hci_task_total = make_badge("—", variant="warning")
     window.lbl_hci_task_total.hide()
     window.btn_hci_continue_tasks = make_button("继续处理", variant="primary")
@@ -492,7 +490,7 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
         lambda: _switch_to_review(window, TO_REVIEW, continuous=True)
     )
     action_row.addWidget(window.lbl_hci_task_total)
-    action_row.addWidget(window.btn_hci_continue_tasks)
+    header.title_row.addWidget(window.btn_hci_continue_tasks)
     task_layout.addLayout(action_row)
 
     cards_row = ResponsiveTaskCardRow(task_host)
@@ -524,22 +522,48 @@ def apply_dashboard_hci_v1(page: QWidget | None) -> None:
         if old_review is not None:
             old_review.hide()
 
-        sync_row = QHBoxLayout()
-        sync_row.setContentsMargins(0, 0, 0, 0)
-        sync_row.setSpacing(8)
+        def open_source(source: str) -> None:
+            window._switch_main_page("imports")
+            window._set_import_source_selected(source)
+
         btn_sync = make_button("同步新邮件", variant="secondary")
         btn_sync.clicked.connect(lambda: _open_import_sync(window, recheck=False))
         btn_recheck = make_button("重新检查", variant="secondary")
         btn_recheck.clicked.connect(lambda: _open_import_sync(window, recheck=True))
-        sync_row.addWidget(btn_sync)
-        sync_row.addWidget(btn_recheck)
-        btn_other = make_button("本地 / 手机导入", variant="ghost")
-        btn_other.setToolTip("打开导入中心，选择本地文件或手机扫码上传")
-        btn_other.clicked.connect(lambda: window._switch_main_page("imports"))
-        sync_row.addWidget(btn_other)
-        sync_row.addStretch(1)
-        window.btn_hci_dashboard_import = btn_other
-        left_card.body_layout.addLayout(sync_row)
+        btn_local = make_button("选择文件夹", variant="ghost")
+        btn_local.clicked.connect(lambda: open_source("local"))
+        btn_mobile = make_button("打开扫码", variant="ghost")
+        btn_mobile.clicked.connect(lambda: open_source("mobile"))
+
+        window.lbl_overview_recent_imports.hide()
+        window.lbl_overview_next_actions.hide()
+        for glyph, label, hint, actions in (
+            ("mail", "邮箱", "默认只同步新邮件", (btn_sync, btn_recheck)),
+            ("local_file", "本地文件", "选择文件夹或拖入票据", (btn_local,)),
+            ("mobile", "手机扫码", "在同一局域网上传原件或证明", (btn_mobile,)),
+        ):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            icon = QLabel()
+            icon.setObjectName("WorkbenchBrandIcon")
+            icon.setFixedSize(32, 32)
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setPixmap(IconProvider.icon(glyph).pixmap(18, 18))
+            row.addWidget(icon)
+            copy = QVBoxLayout()
+            copy.setSpacing(2)
+            heading = QLabel(label)
+            heading.setProperty("role", "strong")
+            copy.addWidget(heading)
+            description = QLabel(hint)
+            description.setWordWrap(True)
+            description.setProperty("role", "caption")
+            copy.addWidget(description)
+            row.addLayout(copy, 1)
+            for action in actions:
+                row.addWidget(action)
+            left_card.body_layout.addLayout(row)
+        window.btn_hci_dashboard_import = btn_local
         window.btn_hci_dashboard_sync = btn_sync
         window.btn_hci_dashboard_recheck = btn_recheck
 
@@ -1055,7 +1079,7 @@ def apply_import_hci_v1(page: QWidget | None) -> None:
 
     recent = getattr(window, "import_mail_recent_card", None)
     if recent is not None:
-        recent.set_title("同步结果")
+        recent.set_title("本次运行")
         recent.set_hint("同步结束后会说明检查范围、找到多少票据，以及下一步可以做什么。")
         review_result = make_button("去审核", variant="primary")
         review_result.clicked.connect(
