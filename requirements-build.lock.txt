@@ -14,7 +14,7 @@ pefile==2024.8.26
     # via pyinstaller
 pyinstaller==6.22.3
     # via -r requirements-build.txt
-pyinstaller-hooks-contrib==2026.9
+pyinstaller-hooks-contrib==2026.10
     # via pyinstaller
 pywin32-ctypes==0.2.3
     # via pyinstaller
