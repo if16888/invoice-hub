@@ -214,7 +214,7 @@ class GuiColumnFilterTests(unittest.TestCase):
         self.assertEqual(window.table.item(0, 3).text(), "¥28.90")
         # Invoice numbers are informative text, so keep normal-text contrast
         # instead of the decorative-only #94A3B8 gray.
-        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#667085")
+        self.assertEqual(window.table.item(0, 5).foreground().color().name(), "#56657a")
 
 
     def test_invoice_record_header_row_exists(self):

@@ -2215,6 +2215,10 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
         self._ledger_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
         self._ledger_font.setPixelSize(12)
+        from .dark_mode import dark_stylesheet, prefers_dark
+
+        secondary = DESIGN_V1_COLORS["muted"]
+        self._ledger_secondary_color = QColor(dark_stylesheet(secondary) if prefers_dark() else secondary)
         self.table = QTableWidget()
         self.table.setColumnCount(len(VISIBLE_COLUMN_DEFINITIONS))
         self.table.setHorizontalHeaderLabels([label for _key, label in VISIBLE_COLUMN_DEFINITIONS])
@@ -8102,6 +8106,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     elif col == 4 and seller:
                         item.setToolTip(seller)
                     elif col == 5 and inv_num:
+                        item.setForeground(self._ledger_secondary_color)
                         item.setToolTip(inv_num)
                     elif col == 6:
                         item.setToolTip(
