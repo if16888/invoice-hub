@@ -23,6 +23,7 @@ class StartupDialogPresentationTests(unittest.TestCase):
                    "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring", "PYTHONIOENCODING": "utf-8"}
             env.pop("INVOICE_HUB_STARTUP_PROBE", None)
             env.pop("INVOICE_HUB_STARTUP_PROBE_FILE", None)
+            env.pop("PYTHONOPTIMIZE", None)  # the fresh-process assertions must stay active
             result = subprocess.run([sys.executable, "-m", "tests.test_startup_dialog_presentation", mode],
                                     cwd=Path(__file__).resolve().parents[1], env=env,
                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45)
