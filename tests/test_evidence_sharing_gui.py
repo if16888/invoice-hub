@@ -6,13 +6,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, Qt, QTimer
 from PySide6.QtGui import QPainter, QPdfWriter
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QFileDialog, QMessageBox, QToolButton
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 from scripts.invoice_fetch.gui.evidence_dialog import EvidenceDialog
+from tests import original_modal_entry_points
 
 
 class EvidenceSharingGuiTests(unittest.TestCase):
@@ -40,7 +42,8 @@ class EvidenceSharingGuiTests(unittest.TestCase):
         self.view._switch_main_page("review")
         self.counter = 0
         self.parent = self.seed()
-        self.source = self.seed(invoice_number=None, invoice_type="待关联证明材料", mailbox_key="phone", mail_uid=None)
+        self.source = self.seed(invoice_number=None, invoice_type="待关联证明材料",
+                                mailbox_key="phone", mail_uid=None, mail_subject="Hotel receipt")
         self.select(self.parent)
 
     def tearDown(self):
@@ -76,13 +79,91 @@ class EvidenceSharingGuiTests(unittest.TestCase):
                 break
         self.app.processEvents()
 
-    def check_source(self, dialog, state=Qt.Checked):
+    def material_item(self, dialog, source_id):
         for row in range(dialog.table.rowCount()):
             item = dialog.table.item(row, 0)
-            if item.data(Qt.UserRole) == self.source:
-                item.setCheckState(state)
+            if item.data(Qt.UserRole) == source_id:
                 return item
         self.fail("Missing material in sharing dialog")
+
+    def check_source(self, dialog, state=Qt.Checked):
+        item = self.material_item(dialog, self.source)
+        item.setCheckState(state)
+        return item
+
+    def rail_material(self):
+        return self.seed(invoice_number=None, invoice_type="待关联证明材料",
+                         mailbox_key="phone", mail_uid=None, mail_subject="Rail receipt")
+
+    def run_real_manager(self, interact):
+        # Restore the real modal loop for this dialog only; tests/__init__.py
+        # guards other modals so an unrelated warning cannot hang the suite.
+        real_exec = original_modal_entry_points().get("QDialog.exec", QDialog.exec)
+        entered, errors = [], []
+
+        def execute(dialog):
+            def drive():
+                entered.append(dialog)
+                try:
+                    self.assertIs(QApplication.activeModalWidget(), dialog)
+                    dialog.activateWindow()
+                    self.app.processEvents()
+                    interact(dialog)
+                    self.assertFalse(dialog.isVisible(), "Dialog should be explicitly closed by the test")
+                except BaseException as error:
+                    # Qt callbacks must relay assertions outside the event loop.
+                    errors.append(error)
+                    dialog.reject()
+
+            timer = QTimer(dialog)
+            timer.setSingleShot(True)
+            timer.timeout.connect(drive)
+            timer.start(0)
+            try:
+                return real_exec(dialog)
+            finally:
+                timer.stop()
+
+        detail = self.view._detail_panel
+        self.assertTrue(detail.btn_inline_more.isVisible())
+        self.assertIn(detail.action_link_evidence, detail.btn_inline_more.menu().actions())
+        self.assertTrue(detail.action_link_evidence.isEnabled())
+        with patch.object(EvidenceDialog, "exec", execute):
+            detail.action_link_evidence.trigger()
+        if errors:
+            raise errors[0]
+        self.assertEqual(len(entered), 1)
+        self.assertEqual(self.view._data_operation_gate.owner, "")
+
+    def select_material(self, dialog, source_id):
+        checkbox = self.material_item(dialog, source_id)
+        self.assertFalse(dialog.table.isRowHidden(checkbox.row()))
+        cell = dialog.table.item(checkbox.row(), 1)
+        dialog.table.scrollToItem(cell)
+        QTest.mouseClick(dialog.table.viewport(), Qt.LeftButton, Qt.NoModifier,
+                         dialog.table.visualItemRect(cell).center())
+        self.assertEqual(dialog.table.currentRow(), checkbox.row())
+        self.assertTrue(cell.isSelected())
+        return checkbox
+
+    def toggle_material(self, dialog, source_id, expected_state):
+        checkbox = self.select_material(dialog, source_id)
+        QTest.keyClick(dialog.table, Qt.Key_Left)
+        self.assertEqual(dialog.table.currentColumn(), 0)
+        QTest.keyClick(dialog.table, Qt.Key_Space)
+        self.assertEqual(checkbox.checkState(), expected_state)
+        return checkbox
+
+    def search_for(self, dialog, query):
+        QTest.mouseClick(dialog.search, Qt.LeftButton)
+        for _ in range(100):
+            if dialog.search.hasFocus():
+                break
+            QTest.qWait(20)
+        self.assertTrue(dialog.search.hasFocus())
+        QTest.keyClick(dialog.search, Qt.Key_A, Qt.ControlModifier)
+        QTest.keyClicks(dialog.search, query)
+        self.assertEqual(dialog.search.text(), query)
 
     def accept(self, dialog):
         self.check_source(dialog)
@@ -134,10 +215,18 @@ class EvidenceSharingGuiTests(unittest.TestCase):
         self.addCleanup(dialog.deleteLater)
         item = self.check_source(dialog, Qt.PartiallyChecked)
         self.assertEqual(dialog.association_changes(), ((), ()))
+        dialog.search.setText("unmatched")
+        self.assertEqual(item.checkState(), Qt.PartiallyChecked)
+        self.assertEqual(dialog.association_changes(), ((), ()))
+        dialog.search.clear()
         item.setCheckState(Qt.Checked)
         self.assertEqual(dialog.association_changes(), (((other, self.source),), ()))
         item.setCheckState(Qt.Unchecked)
+        summary = dialog.summary.text()
+        dialog.search.setText("unmatched")
         self.assertEqual(dialog.association_changes(), ((), ((self.parent, self.source),)))
+        self.assertEqual(dialog.summary.text(), summary)
+        self.assertEqual(dialog.invoice_ids, (self.parent, other))
 
     def test_open_material_keeps_dialog_choices_and_uses_local_file_url(self):
         dialog = EvidenceDialog((self.parent,), self.view.db.list_evidence_sources(), {}, self.runtime)
@@ -146,6 +235,15 @@ class EvidenceSharingGuiTests(unittest.TestCase):
         dialog.table.setCurrentItem(item)
         with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
             dialog.preview.click()
+            # Defend the action itself, independently of its enabled state:
+            # stale current indexes must not open hidden or unselected items.
+            dialog.table.setRowHidden(item.row(), True)
+            dialog._open_selected()
+            dialog.table.setRowHidden(item.row(), False)
+            dialog.table.setCurrentItem(item)
+            dialog.table.clearSelection()
+            self.assertFalse(dialog.preview.isEnabled())
+            dialog._open_selected()
         opened.assert_called_once()
         # toLocalFile() returns forward slashes on Qt 6 for Windows; compare as
         # paths so the assertion checks the target file, not separator style.
@@ -155,6 +253,120 @@ class EvidenceSharingGuiTests(unittest.TestCase):
         )
         self.assertEqual(dialog.association_changes(), (((self.parent, self.source),), ()))
         self.assertEqual(self.view.db.evidence_consumers(self.source), ())
+
+    def test_material_search_preserves_draft_and_opens_only_visible_selection(self):
+        rail = self.rail_material()
+        self.select(self.parent)
+
+        with patch.object(QDesktopServices, "openUrl", return_value=True) as opened:
+            def interact(dialog):
+                hotel = self.toggle_material(dialog, self.source, Qt.Checked)
+                draft = dialog.association_changes()
+                summary = dialog.summary.text()
+                self.assertEqual(draft, (((self.parent, self.source),), ()))
+                self.assertEqual(dialog.invoice_ids, (self.parent,))
+
+                self.search_for(dialog, "hotel")
+                self.assertEqual(dialog.table.currentRow(), hotel.row())
+                self.assertTrue(hotel.isSelected())
+                self.assertTrue(dialog.preview.isEnabled())
+
+                self.search_for(dialog, "rail")
+                self.assertTrue(dialog.table.isRowHidden(hotel.row()))
+                self.assertFalse(dialog.preview.isEnabled())
+                self.assertFalse(dialog.table.selectionModel().hasSelection())
+                self.assertEqual(dialog.table.currentRow(), -1)
+                QTest.mouseClick(dialog.preview, Qt.LeftButton)
+                opened.assert_not_called()
+                self.select_material(dialog, rail)
+                self.assertTrue(dialog.preview.isEnabled())
+                QTest.mouseClick(dialog.preview, Qt.LeftButton)
+                opened.assert_called_once()
+                self.assertEqual(Path(opened.call_args.args[0].toLocalFile()),
+                                 self.runtime / self.view.db.get_invoice(rail)["attachment_path"])
+
+                self.search_for(dialog, "unmatched")
+                self.assertTrue(all(dialog.table.isRowHidden(row) for row in range(dialog.table.rowCount())))
+                self.assertFalse(dialog.preview.isEnabled())
+                QTest.mouseClick(dialog.preview, Qt.LeftButton)
+                opened.assert_called_once()
+                self.assertTrue(dialog.empty_hint.isVisible())
+                self.assertIn("清空", dialog.empty_hint.text())
+                self.assertIn("搜索", dialog.empty_hint.text())
+                self.assertEqual(dialog.association_changes(), draft)
+                self.assertEqual(dialog.summary.text(), summary)
+
+                self.assertTrue(dialog.search.isClearButtonEnabled())
+                clear = dialog.search.findChild(QToolButton)
+                self.assertIsNotNone(clear)
+                self.assertTrue(clear.isVisible())
+                QTest.mouseClick(clear, Qt.LeftButton)
+                self.assertEqual(dialog.search.text(), "")
+                self.assertFalse(any(dialog.table.isRowHidden(row) for row in range(dialog.table.rowCount())))
+                self.assertFalse(dialog.empty_hint.isVisible())
+                self.assertFalse(dialog.preview.isEnabled())
+                self.assertEqual(hotel.checkState(), Qt.Checked)
+                self.assertEqual(dialog.association_changes(), draft)
+                self.assertEqual(dialog.summary.text(), summary)
+                self.assertTrue(dialog.save.isEnabled())
+                self.assertEqual(dialog.invoice_ids, (self.parent,))
+                QTest.mouseClick(dialog.buttons.button(QDialogButtonBox.Cancel), Qt.LeftButton)
+
+            self.run_real_manager(interact)
+
+        self.assertEqual(self.view.db.evidence_consumers(self.source), ())
+        self.assertEqual(self.view.db.evidence_consumers(rail), ())
+
+    def test_search_return_and_keypad_enter_keep_draft_until_explicit_save(self):
+        rail = self.rail_material()
+        outside = self.seed()
+        self.view.db.link_evidence_to_invoices((self.parent, outside), (rail,))
+        self.select(self.parent)
+
+        def interact(dialog):
+            self.toggle_material(dialog, rail, Qt.Unchecked)
+            hotel = self.toggle_material(dialog, self.source, Qt.Checked)
+            draft = (((self.parent, self.source),), ((self.parent, rail),))
+            self.assertEqual(dialog.association_changes(), draft)
+            summary = dialog.summary.text()
+            for query, visible_count in (("rail", 1), ("unmatched", 0)):
+                self.search_for(dialog, query)
+                self.assertTrue(dialog.table.isRowHidden(hotel.row()))
+                self.assertEqual(sum(not dialog.table.isRowHidden(row) for row in range(dialog.table.rowCount())),
+                                 visible_count)
+                for key, modifiers in ((Qt.Key_Return, Qt.NoModifier), (Qt.Key_Enter, Qt.KeypadModifier)):
+                    QTest.keyClick(dialog.search, key, modifiers)
+                    self.assertTrue(dialog.isVisible(), f"{query!r} search + {key!r} must not activate Save")
+                    self.assertTrue(dialog.search.hasFocus())
+                    self.assertEqual(dialog.association_changes(), draft)
+                    self.assertEqual(dialog.summary.text(), summary)
+                    self.assertEqual(self.view.db.evidence_consumers(self.source), ())
+                    self.assertEqual(self.view.db.evidence_consumers(rail), (self.parent, outside))
+            self.assertTrue(dialog.save.isEnabled())
+            self.assertEqual(dialog.invoice_ids, (self.parent,))
+            QTest.mouseClick(dialog.save, Qt.LeftButton)
+
+        self.run_real_manager(interact)
+        self.assertEqual(self.view.db.evidence_consumers(self.source), (self.parent,))
+        self.assertEqual(self.view.db.evidence_consumers(rail), (outside,))
+
+    def test_empty_material_library_keeps_import_hint_during_search(self):
+        self.assertTrue(self.view.db.delete_invoice_permanently(self.source))
+        self.select(self.parent)
+
+        def interact(dialog):
+            self.assertEqual(dialog.table.rowCount(), 0)
+            self.assertTrue(dialog.empty_hint.isVisible())
+            hint = dialog.empty_hint.text()
+            self.assertIn("导入证明文件", hint)
+            self.search_for(dialog, "hotel")
+            self.assertTrue(dialog.empty_hint.isVisible())
+            self.assertEqual(dialog.empty_hint.text(), hint)
+            self.assertFalse(dialog.preview.isEnabled())
+            self.assertFalse(dialog.save.isEnabled())
+            QTest.mouseClick(dialog.buttons.button(QDialogButtonBox.Cancel), Qt.LeftButton)
+
+        self.run_real_manager(interact)
 
     def test_deleted_material_can_be_unlinked_from_current_invoice_but_not_added_to_others(self):
         self.view.db.link_evidence_to_invoices((self.parent,), (self.source,))

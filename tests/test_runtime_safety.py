@@ -458,9 +458,11 @@ class WorkerShutdownTests(unittest.TestCase):
 
             real_import = services.import_local_directory
 
-            def wrapped_import(import_dir, db_path, *, scan_control):
+            def wrapped_import(import_dir, db_path, *, scan_control, include_desktop_failure_details):
                 observed["control"] = scan_control
-                return real_import(import_dir, db_path, scan_control=scan_control)
+                observed["details"] = include_desktop_failure_details
+                return real_import(import_dir, db_path, scan_control=scan_control,
+                                   include_desktop_failure_details=include_desktop_failure_details)
 
             def fake_pdf(source_name, *_args, **_kwargs):
                 processed.append(source_name)
@@ -505,6 +507,7 @@ class WorkerShutdownTests(unittest.TestCase):
                     self.assertFalse(worker.isRunning())
                     self.assertEqual(processed, ["A.pdf"])
                     self.assertIs(observed["control"], worker.control)
+                    self.assertTrue(observed["details"])
                     self.assertTrue(worker.control.cancelled)
                     self.assertEqual(db_open_during_wait, [True])
                     self.assertFalse(window.db.is_open)

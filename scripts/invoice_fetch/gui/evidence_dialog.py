@@ -33,6 +33,7 @@ class EvidenceDialog(QDialog):
         apply_dialog_shell(self, layout, '证明材料共享')
         self.search = QLineEdit()
         self.search.setPlaceholderText("查找材料文件、来源或邮件主题")
+        self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         layout.addWidget(self.search)
         self.table = QTableWidget(len(self._sources), 5)
@@ -70,9 +71,12 @@ class EvidenceDialog(QDialog):
                 cell.setToolTip(raw_path if column == 1 else cell.text())
                 self.table.setItem(row, column, cell)
         layout.addWidget(self.table)
-        self.empty_hint = QLabel("暂无可复用材料。请先用发票详情中的“添加 / 补充”导入证明文件。")
+        self.empty_hint = QLabel(
+            "没有符合搜索条件的材料。请清空或修改搜索内容以恢复列表。" if self._sources else
+            "暂无可复用材料。请先用发票详情中的“添加 / 补充”导入证明文件。"
+        )
         self.empty_hint.setWordWrap(True)
-        self.empty_hint.setVisible(not sources)
+        self.empty_hint.setVisible(not self._sources)
         layout.addWidget(self.empty_hint)
         self.summary = QLabel("未修改关联")
         self.summary.setWordWrap(True)
@@ -81,7 +85,8 @@ class EvidenceDialog(QDialog):
         self.preview = self.buttons.addButton("打开所选材料", QDialogButtonBox.ActionRole)
         self.preview.setEnabled(False)
         self.preview.clicked.connect(self._open_selected)
-        self.table.itemSelectionChanged.connect(lambda: self.preview.setEnabled(self.table.currentRow() >= 0))
+        self.table.itemSelectionChanged.connect(self._sync_preview_button)
+        self.table.currentItemChanged.connect(self._sync_preview_button)
         self.table.itemDoubleClicked.connect(lambda item: self._open_selected() if item.column() else None)
         self.save = self.buttons.button(QDialogButtonBox.Save)
         self.save.setText("保存关联")
@@ -113,9 +118,19 @@ class EvidenceDialog(QDialog):
         return {row["id"]: (str(row.get("attachment_path") or ""), str(row.get("file_hash") or ""))
                 for row in self._sources}
 
+    def _selected_visible_row(self):
+        item = self.table.currentItem()
+        if item is None or not item.isSelected():
+            return None
+        row = item.row()
+        return row if 0 <= row < len(self._sources) and not self.table.isRowHidden(row) else None
+
+    def _sync_preview_button(self, *_args):
+        self.preview.setEnabled(self._selected_visible_row() is not None)
+
     def _open_selected(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self._sources):
+        row = self._selected_visible_row()
+        if row is None:
             return
         path = resolve_stored_path(self._sources[row].get("attachment_path") or "", self._runtime_dir)
         if not path.is_file() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
@@ -135,6 +150,22 @@ class EvidenceDialog(QDialog):
 
     def _filter(self, text):
         needle = text.strip().casefold()
+        current_row = self.table.currentRow()
+        matches = 0
         for row in range(self.table.rowCount()):
             content = " ".join(self.table.item(row, column).text() for column in range(1, 5)).casefold()
-            self.table.setRowHidden(row, needle not in content)
+            matches_query = needle in content
+            self.table.setRowHidden(row, not matches_query)
+            matches += matches_query
+        if current_row >= 0 and self.table.isRowHidden(current_row):
+            self.table.clearSelection()
+            self.table.setCurrentItem(None)
+        self._sync_preview_button()
+        self.empty_hint.setVisible(matches == 0)
+
+    def keyPressEvent(self, event):
+        # Search filters as the user types; Return must not accept the draft.
+        if self.search.hasFocus() and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            event.accept()
+            return
+        super().keyPressEvent(event)

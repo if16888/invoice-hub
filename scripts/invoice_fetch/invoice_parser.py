@@ -121,6 +121,307 @@ def _append_parse_note(info: InvoiceInfo, note: str) -> None:
         info.parse_note = note
 
 
+# Ordinary PDF monetary fields use one complete token, never a search for a
+# positive decimal substring after currency or sign characters.
+_PDF_MONEY_NUMBER = r"(?:\d{1,3}(?:[,，]\d{3})+|\d+)\.\d{2}(?![\d.−－-]|[,，]\s*\d)"
+_PDF_MONEY_TOKEN = rf"(?:[-−－]\s*(?:[¥￥]\s*)?|[¥￥]\s*(?:[-−－]\s*)?)?{_PDF_MONEY_NUMBER}"
+_PDF_CURRENCY_TOKEN = rf"(?:[-−－]\s*[¥￥]\s*|[¥￥]\s*(?:[-−－]\s*)?){_PDF_MONEY_NUMBER}"
+_PDF_MONEY_LABELS = re.compile(
+    r"(?P<grand>价\s*税\s*合\s*计(?:[^\S\r\n]*金\s*额)?)"
+    r"|(?P<tax_total>合\s*计[^\S\r\n]*税\s*额|税\s*额[^\S\r\n]*合\s*计)"
+    r"|(?P<pretax>(?:不\s*含\s*税|税\s*前|未\s*税)[^\S\r\n]*"
+    r"(?:合\s*计(?:[^\S\r\n]*金\s*额)?|金\s*额)|金\s*额[^\S\r\n]*合\s*计)"
+    r"|(?P<net_alias>合\s*计[^\S\r\n]*金\s*额)"
+    r"|(?P<total_alias>总\s*计|发\s*票[^\S\r\n]*金\s*额)"
+    r"|(?P<aggregate>合\s*计)|(?P<item_subtotal>小\s*计)|(?P<tax>税\s*额)|(?P<amount>金\s*额)"
+)
+_PDF_SMALL_WRITING = r"[（(]?[^\S\r\n]*小[^\S\r\n]*写(?:[^\S\r\n]*[,，、][^\S\r\n]*单位\s*[:：]\s*元)?[^\S\r\n]*[）)]?"
+_PDF_LARGE_WRITING = r"[（(]?[^\S\r\n]*大[^\S\r\n]*写[^\S\r\n]*[）)]?"
+_PDF_UPPER_AMOUNT = r"[⊗负負零〇壹贰貳叁參肆伍陆陸柒捌玖拾佰仟万萬亿億兆圆圓元角分整正人民币\s]+"
+_PDF_UNIT = r"[（(]\s*(?:单位\s*[:：]\s*)?元\s*[）)]"
+_PDF_RMB = r"人\s*民\s*币"
+_PDF_DECIMAL = re.compile(r"\d[\d,，]*\.\d+")
+_PDF_ALTERNATIVE = r"(?:或(?:者)?|备选\s*[:：]?|[/／、])"
+_PDF_REMARK = re.compile(r"备[^\S\r\n]*注(?=[^\S\r\n]*[:：])|(?<![^\W\d_])备[^\S\r\n]*注(?=[^\S\r\n]|$)")
+_PDF_REFERENCE = re.compile(r"原(?:始)?(?:订单|单|票|发票|件)")
+_PDF_CONTINUATION = re.compile(r"以下|下[行列]|摘录|引用|如下|仅供参考|不计入|明细")
+_PDF_CURRENT_FIELD = re.compile(r"\s*(?:本票|本发票|本次发票)\s*[:：]?\s*")
+_PDF_NOTE_END = re.compile(r"^\s*(?:开票人|收款人|复核)(?:\s|[:：]|$)")
+_PDF_QUOTES = {"“": "”", "‘": "’", '"': '"', "'": "'"}
+_PDF_RATE_COLUMN = re.compile(
+    r"\s*(?:税\s*率(?:\s*[/／]\s*征\s*收\s*率)?|征\s*收\s*率)\s*[:：]?\s*(?:\d+(?:\.\d+)?\s*[%％]|免税|不征税)\s*"
+)
+# A generic adjacent field needs its own value, not merely a colon introducing
+# the following amount label (which may be a citation).
+_PDF_PARALLEL_FIELD = re.compile(r"\s*\w[\w \t/／-]{0,30}\s*[:：]\s*(?=[^\r\n]*\w)[^\r\n]+\s*")
+_PDF_DETAIL_PREFIX = re.compile(r"\s*(?:项目|分项|明细|小\s*计|单\s*价|数\s*量|规格型号|\*)")
+
+
+def _pdf_safe_summary_prefix(prefix: str) -> bool:
+    return (not _PDF_REFERENCE.search(prefix) and not _PDF_CONTINUATION.search(prefix)
+            and not _PDF_DETAIL_PREFIX.match(prefix) and not any(quote in prefix for quote in _PDF_QUOTES))
+
+
+def _pdf_parallel_summary_label(kind: str, prefix: str, *, known_only: bool = False) -> bool:
+    """A strongly labelled invoice summary may be in an adjacent column."""
+    independent = _PDF_RATE_COLUMN.fullmatch(prefix) or (not known_only and _PDF_PARALLEL_FIELD.fullmatch(prefix))
+    return (kind in ("grand", "pretax", "tax_total", "net_alias", "total_alias")
+            and bool(independent)
+            and _pdf_safe_summary_prefix(prefix))
+
+
+def _pdf_amount_body(text: str) -> tuple[str, list[int]]:
+    """Mask remark regions, preserving independent fields in PDF reading order."""
+    # Local compatibility glyphs only; names and original raw_text are intact.
+    text = text.translate(str.maketrans("⼤⼩⾦⼈⺠⾏⽀⼊", "大小金人民行支入"))
+    parts, boundaries = [], []
+    offset = 0
+    note_pending = False
+    reference_continues = False
+    quote_end = None
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        marker = _PDF_REMARK.search(content)
+        start = None
+        stripped = content.lstrip()
+        if quote_end or stripped[:1] in _PDF_QUOTES:
+            # Quoted citations can span lines; their own 本票 or footer text
+            # must not end the surrounding notes region.
+            if quote_end:
+                if quote_end in content:
+                    quote_end = None
+            else:
+                closer = _PDF_QUOTES[stripped[0]]
+                if closer not in stripped[1:]:
+                    quote_end = closer
+            start = 0
+            if note_pending and stripped:
+                reference_continues = True
+        if start is None and note_pending:
+            # A clearly separate section or explicitly current-invoice field
+            # can resume parsing. A generic 金额/税额 alone cannot distinguish
+            # a remark continuation from an actual current invoice field.
+            main_label = _PDF_MONEY_LABELS.match(stripped)
+            independent = (main_label and main_label.lastgroup not in ("amount", "tax", "item_subtotal")) or any(
+                _pdf_parallel_summary_label(label.lastgroup, stripped[:label.start()], known_only=True)
+                for label in _PDF_MONEY_LABELS.finditer(stripped)
+            )
+            current = _PDF_CURRENT_FIELD.match(content)
+            current_label = current and _PDF_MONEY_LABELS.match(content, current.end())
+            if (_PDF_NOTE_END.match(content) or current_label
+                    or (not reference_continues and independent)):
+                note_pending = False
+                reference_continues = False
+            else:
+                start = 0
+                # A nonempty line without an independent current field is a
+                # remark continuation, regardless of the citation's wording.
+                reference_continues = reference_continues or bool(stripped)
+        if start is None and marker:
+            start = marker.start()
+            note_pending = True
+            note = content[marker.end():].lstrip(" \t:：").rstrip()
+            if note[:1] in _PDF_QUOTES and _PDF_QUOTES[note[0]] not in note[1:]:
+                quote_end = _PDF_QUOTES[note[0]]
+            # A complete one-line remark (e.g. a prior order's printed amount)
+            # need not hide later fields. An introduced citation/continuation
+            # without its value, however, is not an independent invoice field.
+            reference_continues = bool(
+                not note or _PDF_CONTINUATION.search(note)
+                or (_PDF_REFERENCE.search(note) and not _PDF_DECIMAL.search(note))
+                or note.endswith((":", "："))
+            )
+        if start is not None:
+            boundaries.append(offset + start)
+            line = content[:start] + " " * (len(content) - start) + line[len(content):]
+        parts.append(line)
+        offset += len(line)
+    return "".join(parts), boundaries
+
+
+def _pdf_money_match(tail: str, *, multiline: bool = False, total: bool = False):
+    """Match a numeric value immediately after its label or uppercase amount."""
+    sep = r"\s*[:：]?\s*" if multiline else r"[^\S\r\n]*(?:[:：]\s*)?"
+    decorations = rf"(?:{_PDF_UNIT}{sep})?(?:{_PDF_RMB}{sep})?"
+    prefixes = (sep,)
+    if total:
+        # Chinese uppercase and Arabic lowercase can appear on the same or
+        # consecutive lines. Only the Arabic token determines the amount/sign.
+        small = rf"{_PDF_SMALL_WRITING}{sep}"
+        prefixes = (
+            rf"{sep}(?:{small})?",
+            rf"{sep}(?:{_PDF_LARGE_WRITING}{sep}(?:{_PDF_UPPER_AMOUNT})?|{_PDF_UPPER_AMOUNT})(?:{small})?",
+        )
+    for prefix in prefixes:
+        match = re.match(rf"{prefix}{decorations}(?P<value>{_PDF_MONEY_TOKEN})", tail)
+        if match:
+            return match
+    return None
+
+
+def _normalize_pdf_money(value: str) -> str:
+    return re.sub(r"[\s¥￥,，]", "", value).replace("−", "-").replace("－", "-")
+
+
+def _unlabelled_pdf_total(body: str, labels, owned) -> str:
+    """Preserve an unambiguous trailing currency value, not a field's tail."""
+    candidates = []
+    for match in re.finditer(rf"(?m)(?P<value>{_PDF_CURRENCY_TOKEN})[^\S\r\n]*$", body):
+        start = match.start("value")
+        line_start = body.rfind("\n", 0, start) + 1
+        prefix = body[line_start:start]
+        # A preceding sign must not be discarded. A sign alone on the prior
+        # line is too ambiguous, unless explicitly attached to 人民币.
+        first, newline, _ = match["value"].partition("\n")
+        if newline and first.strip() in ("-", "−", "－") and not re.search(rf"{_PDF_RMB}\s*$", prefix):
+            continue
+        if re.search(r"[-−－¥￥]\s*$", body[:start]) or _PDF_DECIMAL.search(prefix):
+            continue
+        if any(begin <= start < end for begin, end in owned):
+            continue
+        if any(label.end() <= start and (label.start() >= line_start
+               or re.fullmatch(r"\s*[:：]?\s*", body[label.end():start])) for label in labels):
+            continue
+        candidates.append((match.end(), _normalize_pdf_money(match["value"])))
+    if len(candidates) == 1 and not body[candidates[0][0]:].strip():
+        return candidates[0][1]
+    return ""
+
+
+def _pdf_amount_conflicts(tail: str, match, *, aggregate: bool = False, net_or_tax: bool = False) -> bool:
+    same_line, _, later = tail[match.end():].partition("\n")
+    if _PDF_DECIMAL.search(same_line):
+        # A traditional 合计 row contains net and tax columns. Only the first
+        # is the net total; the second is not an explicitly collected tax.
+        if not aggregate or not re.fullmatch(rf"[^\S\r\n]+{_PDF_MONEY_TOKEN}[^\S\r\n]*", same_line):
+            return True
+    if re.search(rf"{_PDF_ALTERNATIVE}\s*[-−－¥￥\d]", same_line):
+        return True
+    if re.match(rf"\s*{_PDF_ALTERNATIVE}\s*[-−－¥￥\d]", later):
+        return True
+    # An adjacent unlabelled second value on another line is ambiguous for a
+    # net/tax field, not a new total to feed the currency fallback.
+    return net_or_tax and _pdf_value_continuation(later)
+
+
+def _pdf_value_continuation(text: str) -> bool:
+    """A value/alternative line can belong to the preceding field."""
+    return bool(re.match(rf"\s*(?:{_PDF_ALTERNATIVE}\s*)?(?:{_PDF_RMB}\s*)?(?:[-−－¥￥]|\d[\d,，]*\.\d)", text))
+
+
+def _pdf_owned_tail_end(tail: str, match) -> int:
+    """Own the field's value line and adjacent amount-like continuation only."""
+    newline = tail.find("\n", match.end() if match else 0)
+    if newline < 0:
+        return len(tail)
+    end = newline + 1
+    for line in tail[end:].splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped and not (_pdf_value_continuation(stripped) or re.fullmatch(_PDF_RMB, stripped)):
+            break
+        end += len(line)
+    return end
+
+
+def _extract_pdf_amounts(text: str) -> tuple[str, str | None, str]:
+    """Return pre-tax, explicit tax and total for ordinary invoice PDFs."""
+    body, boundaries = _pdf_amount_body(text)
+    labels = list(_PDF_MONEY_LABELS.finditer(body))
+    values: dict[str, set[str]] = {}
+    unresolved: set[str] = set()
+    owned: list[tuple[int, int]] = []
+
+    def segment_end(start, end):
+        # A label with no value must not reach across a remarks block to pick
+        # up an amount from the next line.
+        boundary = next((entry for entry in boundaries if entry >= start), len(body))
+        return min(end, boundary)
+
+    def collect(field, kind, tail, match):
+        found = values.setdefault(field, set())
+        if not match:
+            # Standalone generic column headings without a value are not
+            # declarations; explicit/qualified fields remain unresolved.
+            if kind not in ("amount", "tax") or re.match(r"\s*[:：]", tail):
+                unresolved.add(field)
+            return
+        if _pdf_amount_conflicts(tail, match, aggregate=kind == "aggregate", net_or_tax=field in ("net", "tax")):
+            unresolved.add(field)
+        found.add(_normalize_pdf_money(match["value"]))
+
+    main_labels = []
+    main_lines = set()
+    unassigned_grand = False
+    for index, label in enumerate(labels):
+        kind = label.lastgroup
+        if kind == "item_subtotal":
+            continue
+        line_start = body.rfind("\n", 0, label.start()) + 1
+        prefix = body[line_start:label.start()]
+        # A field starts its own row, or follows another invoice field on
+        # that row. Labels embedded in item descriptions/quoted words do not
+        # become invoice-level candidates, even if every item has equal tax.
+        if prefix.strip() and not _PDF_CURRENT_FIELD.fullmatch(prefix):
+            if (body[label.start() - 1].isalpha() or body[label.start() - 1] == "_"
+                    or not _pdf_safe_summary_prefix(prefix)):
+                continue
+            if line_start not in main_lines and not _pdf_parallel_summary_label(kind, prefix):
+                # A distinct grand label in an unfamiliar column arrangement
+                # still prevents an unlabelled deposit/other tail from being
+                # substituted for an unknown invoice total.
+                unassigned_grand |= kind == "grand"
+                continue
+        main_lines.add(line_start)
+        main_labels.append((index, label, not prefix.strip() or bool(_PDF_CURRENT_FIELD.fullmatch(prefix))))
+
+    has_grand = any(label.lastgroup == "grand" for _, label, _ in main_labels)
+    for index, label, standalone in main_labels:
+        kind = label.lastgroup
+        if kind in ("pretax", "aggregate", "amount") or (kind == "net_alias" and has_grand):
+            field = "net"
+        elif kind in ("tax_total", "tax"):
+            field = "tax"
+        else:
+            field = "grand" if kind == "grand" else "alias"
+        end = labels[index + 1].start() if index + 1 < len(labels) else len(body)
+        end = segment_end(label.end(), end)
+        tail = body[label.end():end]
+        total = field in ("grand", "alias")
+        match = _pdf_money_match(tail, multiline=standalone or kind not in ("amount", "tax"), total=total)
+        owned.append((label.end(), label.end() + _pdf_owned_tail_end(tail, match)))
+        collect(field, kind, tail, match)
+
+    def unique(field):
+        candidates = values.get(field, ())
+        return next(iter(candidates)) if field not in unresolved and len(candidates) == 1 else ""
+
+    amount = unique("net")
+    tax = unique("tax") or None
+    if has_grand:
+        # A present but unreadable/conflicting grand total must remain empty;
+        # never replace it with a less specific number elsewhere in the PDF.
+        return amount, tax, unique("grand")
+    if unassigned_grand:
+        return amount, tax, ""
+
+    # Preserve recognizable total fallbacks when the full 价税合计 label is
+    # absent. The value must still be directly bound to the fallback label.
+    markers = re.finditer(rf"(?P<small>{_PDF_SMALL_WRITING})|(?P<round>[圆圓元]\s*整)", body)
+    for marker in markers:
+        end = next((label.start() for label in labels if label.start() >= marker.end()), len(body))
+        tail = body[marker.end():segment_end(marker.end(), end)]
+        match = _pdf_money_match(tail, multiline=True)
+        if marker.lastgroup == "round" and (not match or not re.search(r"[¥￥]", match["value"])):
+            continue
+        collect("alias", "total_alias", tail, match)
+    if "alias" in values:
+        return amount, tax, unique("alias")
+
+    # Unlabelled fallback cannot distinguish a multi-line remarks continuation
+    # from a grand total. Only consider the text before the first remark.
+    return amount, tax, _unlabelled_pdf_total(body[:boundaries[0]] if boundaries else body, labels, owned)
+
+
 # ── PDF parsing ──────────────────────────────────────────────────────
 
 class IsolatedInvoiceParser:
@@ -240,8 +541,7 @@ class InvoiceParser:
             if buyer_tax and '销售方' not in buyer_tax[0]:
                 info.buyer_tax_id = buyer_tax[1]
             tax = re.search(r'(?:合计税额|税额合计|税\s*额)[:：]\s*[¥￥]?\s*(-?[\d,]+\.\d{2})', text)
-            if tax:
-                info.tax_amount = tax[1].replace(',', '')
+            legacy_tax_amount = tax[1].replace(',', '') if tax else None
             rates = re.findall(r'税率[:：]\s*(\d+(?:\.\d+)?%|免税|不征税)', text)
             if rates:
                 unique_rates = list(dict.fromkeys(rates))
@@ -249,10 +549,12 @@ class InvoiceParser:
 
 
             if self._parse_transport_receipt(text, info):
+                info.tax_amount = legacy_tax_amount
                 return info
 
             is_fiscal = self._is_fiscal_toll_invoice(text)
             if not is_fiscal and not self._looks_like_invoice(text):
+                info.tax_amount = legacy_tax_amount
                 info.parse_note = "内容不像发票"
                 return info
 
@@ -348,24 +650,6 @@ class InvoiceParser:
                     break
             if date_candidates and not info.invoice_date:
                 _append_parse_note(info, "开票日期无效，已留空，请人工核对")
-
-            # ── Amounts ──
-            info.amount = self._field(text, [
-                r"合\s*计\s*[¥￥]?\s*([\d,]+\.\d{2})",
-                r"金\s*额\s*[¥￥]?\s*([\d,]+\.\d{2})",
-            ]).replace(",", "")
-            info.total_amount = self._field(text, [
-                r"价税合计\s*[（(]?大写[）)]?\s*.*?[¥￥]\s*([\d,]+\.\d{2})",
-                r"价税合计.*?[¥￥]\s*([\d,]+\.\d{2})",
-                r"[（(]小写[）)]\s*[¥￥]?\s*([\d,]+\.\d{2})",
-                r"小写\s*[¥￥]?\s*([\d,]+\.\d{2})",
-                r"\(小写\)\s*[¥￥]?\s*([\d,]+\.\d{2})",
-                r"[圆圓]整\s*[¥￥]\s*([\d,]+\.\d{2})",
-                r"[¥￥]\s*([\d,]+\.\d{2})\s*$",
-                r"价\s*税\s*合\s*计.*?([\d,]+\.\d{2})",
-                r"总计\s*[¥￥]?\s*([\d,]+\.\d{2})",
-                r"合计金额\s*[¥￥]?\s*([\d,]+\.\d{2})",
-            ]).replace(",", "")
 
             # ── Names ──
             info.seller_name = self._name(text, [
@@ -470,6 +754,33 @@ class InvoiceParser:
                 or weak_railway_signals >= 2
                 or info.seller_name == "中国国家铁路集团有限公司"
             )
+            # A fiscal receipt's printed 合计 is its charge, not a VAT
+            # subtotal. Keep its old amount contract (and the railway fare
+            # fallbacks), without exempting an ordinary VAT toll invoice.
+            fiscal_receipt = is_fiscal and not re.search(
+                r"增值税|(?:电[子⼦]|普通|专用)发票|价\s*税\s*合\s*计|(?:税前|不含税|未税)\s*[金⾦]\s*额",
+                _pdf_amount_body(text)[0],
+            )
+            if is_railway or fiscal_receipt:
+                info.tax_amount = legacy_tax_amount
+                info.amount = self._field(text, [
+                    r"合\s*计\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                    r"金\s*额\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                ]).replace(",", "")
+                info.total_amount = self._field(text, [
+                    r"价税合计\s*[（(]?大写[）)]?\s*.*?[¥￥]\s*([\d,]+\.\d{2})",
+                    r"价税合计.*?[¥￥]\s*([\d,]+\.\d{2})",
+                    r"[（(]小写[）)]\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                    r"小写\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                    r"\(小写\)\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                    r"[圆圓]整\s*[¥￥]\s*([\d,]+\.\d{2})",
+                    r"[¥￥]\s*([\d,]+\.\d{2})\s*$",
+                    r"价\s*税\s*合\s*计.*?([\d,]+\.\d{2})",
+                    r"总计\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                    r"合计金额\s*[¥￥]?\s*([\d,]+\.\d{2})",
+                ]).replace(",", "")
+            else:
+                info.amount, info.tax_amount, info.total_amount = _extract_pdf_amounts(text)
             if is_railway:
                 m_amt = re.search(r"[￥¥]\s*([\d,]+\.\d{2})", text)
                 if m_amt:
