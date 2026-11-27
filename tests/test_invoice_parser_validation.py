@@ -466,13 +466,37 @@ class ParsePdfAmountValidationTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assert_amounts(("合计 ￥100.00", "税额：￥6.00", line), ("100.00", "6.00", "106.00"))
 
+    def test_parallel_summary_columns_do_not_lose_explicit_total_to_deposit(self):
+        for sign in ("", "-"):
+            for trailing in ((), ("预付押金 ￥199.00",)):
+                with self.subTest(sign=sign, trailing=trailing):
+                    self.assert_amounts((f"合计 ￥{sign}100.00", f"税额：￥{sign}6.00",
+                                         f"税率：6% 价税合计 ￥{sign}106.00", *trailing),
+                                        (f"{sign}100.00", f"{sign}6.00", f"{sign}106.00"))
+        for gross in ("￥--106.00", "￥106.00 或 ￥199.00", "（小写）待核对"):
+            with self.subTest(gross=gross):
+                self.assert_amounts(("合计 ￥100.00", "税额：￥6.00", f"税率：6% 价税合计 {gross}",
+                                     "预付押金 ￥299.00"), ("100.00", "6.00", ""))
+        self.assert_amounts(("税率：6% 税前金额 ￥100.00", "开票日期：2026年05月23日 合计税额 ￥6.00",
+                             "价税合计 ￥106.00"), ("100.00", "6.00", "106.00"))
+        self.assert_amounts(("合计 ￥100.00", "税额：￥6.00", "收款人：示例 价税合计 ￥106.00",
+                             "预付押金 ￥199.00"), ("100.00", "6.00", "106.00"))
+        self.assert_amounts(("合计 ￥100.00", "税额：￥6.00", "汇总区域 价税合计 待核对",
+                             "预付押金 ￥199.00"), ("100.00", "6.00", ""))
+        self.assert_amounts(("合计 ￥100.00", "税额：￥6.00", "备注：出差用途", "税率：6% 价税合计 ￥106.00"),
+                            ("100.00", "6.00", "106.00"))
+        self.assert_amounts(("合计 ￥100.00", "税额：￥6.00", "税率：6% 原订单 价税合计 ￥199.00",
+                             "税率：6% “价税合计 ￥199.00”", "价税合计 ￥106.00"), ("100.00", "6.00", "106.00"))
+
     def test_fiscal_toll_keeps_legacy_total_while_vat_toll_is_signed(self):
-        info = _parse_text("\n".join([
-            "车辆通行费财政电子票据", "票据号码：95810015", "开票日期：2026年11月20日",
-            "财政电子票据公共服务平台", "交费项目：高速公路车辆通行费", "合计 ￥35.00",
-        ]))
-        self.assertTrue(info.parse_success)
-        self.assertEqual((info.amount, info.tax_amount, info.total_amount), ("35.00", None, "35.00"))
+        for remark in ("备注：示例车辆通行", "备注：本票不作为增值税发票使用", "备注：原订单票种为增值税普通发票"):
+            with self.subTest(remark=remark):
+                info = _parse_text("\n".join([
+                    "车辆通行费财政电子票据", "票据号码：95810015", "开票日期：2026年11月20日",
+                    "财政电子票据公共服务平台", "交费项目：高速公路车辆通行费", remark, "合计 ￥35.00",
+                ]))
+                self.assertTrue(info.parse_success)
+                self.assertEqual((info.amount, info.tax_amount, info.total_amount), ("35.00", None, "35.00"))
         fiscal = _parse_text("财务专用章\n车牌号：某车\n入站：甲\n出口站：乙\n票据号码：95810015\n合计 ￥35.00")
         self.assertTrue(fiscal.parse_success)
         self.assertEqual((fiscal.amount, fiscal.tax_amount, fiscal.total_amount), ("35.00", None, "35.00"))

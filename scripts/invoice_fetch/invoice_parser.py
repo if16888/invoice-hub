@@ -148,6 +148,23 @@ _PDF_CONTINUATION = re.compile(r"以下|下[行列]|摘录|引用|如下|仅供�
 _PDF_CURRENT_FIELD = re.compile(r"\s*(?:本票|本发票|本次发票)\s*[:：]?\s*")
 _PDF_NOTE_END = re.compile(r"^\s*(?:开票人|收款人|复核)(?:\s|[:：]|$)")
 _PDF_QUOTES = {"“": "”", "‘": "’", '"': '"', "'": "'"}
+_PDF_PARALLEL_FIELD = re.compile(
+    r"\s*(?:(?:税\s*率(?:\s*[/／]\s*征\s*收\s*率)?|征\s*收\s*率)\s*[:：]?\s*(?:\d+(?:\.\d+)?\s*[%％]|免税|不征税)"
+    r"|\w[\w \t/／-]{0,30}\s*[:：][^\r\n]*)\s*"
+)
+_PDF_DETAIL_PREFIX = re.compile(r"\s*(?:项目|分项|明细|小\s*计|单\s*价|数\s*量|规格型号|\*)")
+
+
+def _pdf_safe_summary_prefix(prefix: str) -> bool:
+    return (not _PDF_REFERENCE.search(prefix) and not _PDF_CONTINUATION.search(prefix)
+            and not _PDF_DETAIL_PREFIX.match(prefix) and not any(quote in prefix for quote in _PDF_QUOTES))
+
+
+def _pdf_parallel_summary_label(kind: str, prefix: str) -> bool:
+    """A strongly labelled invoice summary may be in an adjacent column."""
+    return (kind in ("grand", "pretax", "tax_total", "net_alias", "total_alias")
+            and bool(_PDF_PARALLEL_FIELD.fullmatch(prefix))
+            and _pdf_safe_summary_prefix(prefix))
 
 
 def _pdf_amount_body(text: str) -> tuple[str, list[int]]:
@@ -180,7 +197,10 @@ def _pdf_amount_body(text: str) -> tuple[str, list[int]]:
             # can resume parsing. A generic 金额/税额 alone cannot distinguish
             # a remark continuation from an actual current invoice field.
             main_label = _PDF_MONEY_LABELS.match(stripped)
-            independent = main_label and main_label.lastgroup not in ("amount", "tax", "item_subtotal")
+            independent = (main_label and main_label.lastgroup not in ("amount", "tax", "item_subtotal")) or any(
+                _pdf_parallel_summary_label(label.lastgroup, stripped[:label.start()])
+                for label in _PDF_MONEY_LABELS.finditer(stripped)
+            )
             current = _PDF_CURRENT_FIELD.match(content)
             current_label = current and _PDF_MONEY_LABELS.match(content, current.end())
             if (_PDF_NOTE_END.match(content) or current_label
@@ -329,6 +349,7 @@ def _extract_pdf_amounts(text: str) -> tuple[str, str | None, str]:
 
     main_labels = []
     main_lines = set()
+    unassigned_grand = False
     for index, label in enumerate(labels):
         kind = label.lastgroup
         if kind == "item_subtotal":
@@ -339,7 +360,14 @@ def _extract_pdf_amounts(text: str) -> tuple[str, str | None, str]:
         # that row. Labels embedded in item descriptions/quoted words do not
         # become invoice-level candidates, even if every item has equal tax.
         if prefix.strip() and not _PDF_CURRENT_FIELD.fullmatch(prefix):
-            if line_start not in main_lines or (body[label.start() - 1].isalpha() or body[label.start() - 1] == "_"):
+            if (body[label.start() - 1].isalpha() or body[label.start() - 1] == "_"
+                    or not _pdf_safe_summary_prefix(prefix)):
+                continue
+            if line_start not in main_lines and not _pdf_parallel_summary_label(kind, prefix):
+                # A distinct grand label in an unfamiliar column arrangement
+                # still prevents an unlabelled deposit/other tail from being
+                # substituted for an unknown invoice total.
+                unassigned_grand |= kind == "grand"
                 continue
         main_lines.add(line_start)
         main_labels.append((index, label, not prefix.strip() or bool(_PDF_CURRENT_FIELD.fullmatch(prefix))))
@@ -371,6 +399,8 @@ def _extract_pdf_amounts(text: str) -> tuple[str, str | None, str]:
         # A present but unreadable/conflicting grand total must remain empty;
         # never replace it with a less specific number elsewhere in the PDF.
         return amount, tax, unique("grand")
+    if unassigned_grand:
+        return amount, tax, ""
 
     # Preserve recognizable total fallbacks when the full 价税合计 label is
     # absent. The value must still be directly bound to the fallback label.
@@ -725,10 +755,10 @@ class InvoiceParser:
             # A fiscal receipt's printed 合计 is its charge, not a VAT
             # subtotal. Keep its old amount contract (and the railway fare
             # fallbacks), without exempting an ordinary VAT toll invoice.
-            ordinary_amount_semantics = re.search(
-                r"增值税|(?:电[子⼦]|普通|专用)发票|价\s*税\s*合\s*计|(?:税前|不含税|未税)\s*[金⾦]\s*额", text
+            fiscal_receipt = is_fiscal and not re.search(
+                r"增值税|(?:电[子⼦]|普通|专用)发票|价\s*税\s*合\s*计|(?:税前|不含税|未税)\s*[金⾦]\s*额",
+                _pdf_amount_body(text)[0],
             )
-            fiscal_receipt = is_fiscal and not ordinary_amount_semantics
             if is_railway or fiscal_receipt:
                 info.tax_amount = legacy_tax_amount
                 info.amount = self._field(text, [
