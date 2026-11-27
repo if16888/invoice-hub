@@ -148,10 +148,12 @@ _PDF_CONTINUATION = re.compile(r"以下|下[行列]|摘录|引用|如下|仅供�
 _PDF_CURRENT_FIELD = re.compile(r"\s*(?:本票|本发票|本次发票)\s*[:：]?\s*")
 _PDF_NOTE_END = re.compile(r"^\s*(?:开票人|收款人|复核)(?:\s|[:：]|$)")
 _PDF_QUOTES = {"“": "”", "‘": "’", '"': '"', "'": "'"}
-_PDF_PARALLEL_FIELD = re.compile(
-    r"\s*(?:(?:税\s*率(?:\s*[/／]\s*征\s*收\s*率)?|征\s*收\s*率)\s*[:：]?\s*(?:\d+(?:\.\d+)?\s*[%％]|免税|不征税)"
-    r"|\w[\w \t/／-]{0,30}\s*[:：][^\r\n]*)\s*"
+_PDF_RATE_COLUMN = re.compile(
+    r"\s*(?:税\s*率(?:\s*[/／]\s*征\s*收\s*率)?|征\s*收\s*率)\s*[:：]?\s*(?:\d+(?:\.\d+)?\s*[%％]|免税|不征税)\s*"
 )
+# A generic adjacent field needs its own value, not merely a colon introducing
+# the following amount label (which may be a citation).
+_PDF_PARALLEL_FIELD = re.compile(r"\s*\w[\w \t/／-]{0,30}\s*[:：]\s*(?=[^\r\n]*\w)[^\r\n]+\s*")
 _PDF_DETAIL_PREFIX = re.compile(r"\s*(?:项目|分项|明细|小\s*计|单\s*价|数\s*量|规格型号|\*)")
 
 
@@ -160,10 +162,11 @@ def _pdf_safe_summary_prefix(prefix: str) -> bool:
             and not _PDF_DETAIL_PREFIX.match(prefix) and not any(quote in prefix for quote in _PDF_QUOTES))
 
 
-def _pdf_parallel_summary_label(kind: str, prefix: str) -> bool:
+def _pdf_parallel_summary_label(kind: str, prefix: str, *, known_only: bool = False) -> bool:
     """A strongly labelled invoice summary may be in an adjacent column."""
+    independent = _PDF_RATE_COLUMN.fullmatch(prefix) or (not known_only and _PDF_PARALLEL_FIELD.fullmatch(prefix))
     return (kind in ("grand", "pretax", "tax_total", "net_alias", "total_alias")
-            and bool(_PDF_PARALLEL_FIELD.fullmatch(prefix))
+            and bool(independent)
             and _pdf_safe_summary_prefix(prefix))
 
 
@@ -192,13 +195,15 @@ def _pdf_amount_body(text: str) -> tuple[str, list[int]]:
                 if closer not in stripped[1:]:
                     quote_end = closer
             start = 0
+            if note_pending and stripped:
+                reference_continues = True
         if start is None and note_pending:
             # A clearly separate section or explicitly current-invoice field
             # can resume parsing. A generic 金额/税额 alone cannot distinguish
             # a remark continuation from an actual current invoice field.
             main_label = _PDF_MONEY_LABELS.match(stripped)
             independent = (main_label and main_label.lastgroup not in ("amount", "tax", "item_subtotal")) or any(
-                _pdf_parallel_summary_label(label.lastgroup, stripped[:label.start()])
+                _pdf_parallel_summary_label(label.lastgroup, stripped[:label.start()], known_only=True)
                 for label in _PDF_MONEY_LABELS.finditer(stripped)
             )
             current = _PDF_CURRENT_FIELD.match(content)
@@ -209,12 +214,9 @@ def _pdf_amount_body(text: str) -> tuple[str, list[int]]:
                 reference_continues = False
             else:
                 start = 0
-                # Continuation cues can occur on later remark lines, not
-                # just alongside the initial 备注 heading.
-                reference_continues = bool(
-                    reference_continues or _PDF_CONTINUATION.search(content) or _PDF_REFERENCE.search(content)
-                    or (main_label and _PDF_DECIMAL.search(content))
-                )
+                # A nonempty line without an independent current field is a
+                # remark continuation, regardless of the citation's wording.
+                reference_continues = reference_continues or bool(stripped)
         if start is None and marker:
             start = marker.start()
             note_pending = True
