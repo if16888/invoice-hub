@@ -7030,12 +7030,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
 
 
+    def _focus_invoice_search(self) -> None:
+        self.txt_search.setFocus()
+        self.txt_search.selectAll()
+
     def _setup_workbench_shortcuts(self) -> None:
         self.workbench_shortcuts = {}
         self._register_shortcut(self, self.workbench_shortcuts, "Up", lambda: self._move_invoice_selection(-1))
         self._register_shortcut(self, self.workbench_shortcuts, "Down", lambda: self._move_invoice_selection(1))
         self._bind_review_shortcuts(self, self.workbench_shortcuts)
-        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+F", self.txt_search.setFocus, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+F", self._focus_invoice_search, guarded=False)
         self._register_shortcut(self, self.workbench_shortcuts, "F11", self._toggle_preview_focus_mode, guarded=False)
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+B", self._toggle_review_detail_panel)
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+I", self._import_local_clicked, guarded=False)
