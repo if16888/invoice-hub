@@ -4,6 +4,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -311,7 +312,9 @@ class ReviewPagingTests(unittest.TestCase):
             raise
 
     def _invoice_snapshot(self, path):
-        with sqlite3.connect(path) as db:
+        # sqlite3.Connection's own context manager ends the transaction,
+        # not the connection; Windows needs the file handle closed here.
+        with closing(sqlite3.connect(path)) as db:
             return db.execute("SELECT id, invoice_number, invoice_date, expense_date, total_amount, "
                               "currency, seller_name, buyer_name, review_status, confirmed_note "
                               "FROM invoices ORDER BY id").fetchall()
@@ -381,8 +384,8 @@ class ReviewPagingTests(unittest.TestCase):
     def test_visible_nonfirst_scroll_append_populates_every_cell_and_keeps_selection(self):
         with tempfile.TemporaryDirectory() as td:
             window, ids, path = self._visible_window(td, 130)
-            before = self._invoice_snapshot(path)
             try:
+                before = self._invoice_snapshot(path)
                 self._assert_table_rows(window, range(130, 80, -1), ids)
                 queries = self._record_queries(window)
                 self._click(window.btn_review_next_page)
@@ -421,13 +424,14 @@ class ReviewPagingTests(unittest.TestCase):
             finally:
                 window.close()
                 self._events()
+                self.assertFalse(window.db.is_open)
             self.assertEqual(self._invoice_snapshot(path), before)
 
     def test_visible_filtered_sorted_nonfirst_keyboard_append_keeps_row_identity(self):
         with tempfile.TemporaryDirectory() as td:
             window, ids, path = self._visible_window(td, 145)
-            before = self._invoice_snapshot(path)
             try:
+                before = self._invoice_snapshot(path)
                 # Use the real table-header filter and sort interactions, not
                 # direct assignments to the query/controller state.
                 self._click_amount_header(window, filter_popup=True)
@@ -480,6 +484,7 @@ class ReviewPagingTests(unittest.TestCase):
             finally:
                 window.close()
                 self._events()
+                self.assertFalse(window.db.is_open)
             self.assertEqual(self._invoice_snapshot(path), before)
 
 
