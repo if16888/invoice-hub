@@ -327,7 +327,8 @@ def installed_executable(build: Build, sample_root: Path, record: dict):
         record["uninstall_verified"] = True
 
 
-def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: dict) -> None:
+def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: dict,
+            *, etw_collector: Path | None = None) -> None:
     env = sample_environment(sample_root / "runtime")
     log = evidence / f"{record['sample']}.log"
     command = [build.python, build.checker, exe, "--threshold", str(record["threshold_ms"]), "--output-json"]
@@ -337,14 +338,33 @@ def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: 
             observer = observer_module()
         except Exception as exc:
             record["native_observer"] = {"observer_error": f"Could not import observer: {type(exc).__name__}"}
-    if observer is not None:
-        print(f"PERF_AB_STEP {record['sample']} started with read-only native observation", flush=True)
-        record["checker_exit"], record["native_observer"] = observer.run_observed_checker(
-            command, cwd=sample_root, env=env, log=log, exe=exe,
-            trace_path=evidence / f"{record['sample']}.native-trace.json")
-    else:
-        record["checker_exit"] = run_logged(command, cwd=sample_root, env=env, log=log, timeout=75,
-                                           stage=record["sample"], check=False)
+    capture = None
+    if etw_collector is not None:
+        try:
+            spec = importlib.util.spec_from_file_location("_ab_etw", Path(__file__).with_name("windows_startup_etw.py"))
+            etw = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(etw)
+            capture = etw.EtwCapture(etw_collector, sample_root / "etw-control",
+                                     evidence / f"{record['sample']}.etw.json")
+            capture.start()
+        except Exception as exc:
+            record["etw"] = {"status": "unavailable", "error": f"ETW bridge: {type(exc).__name__}"}
+    try:
+        if observer is not None:
+            print(f"PERF_AB_STEP {record['sample']} started with read-only native observation", flush=True)
+            extra = {"etw": capture} if capture is not None else {}
+            record["checker_exit"], record["native_observer"] = observer.run_observed_checker(
+                command, cwd=sample_root, env=env, log=log, exe=exe,
+                trace_path=evidence / f"{record['sample']}.native-trace.json", **extra)
+        else:
+            record["checker_exit"] = run_logged(command, cwd=sample_root, env=env, log=log, timeout=75,
+                                               stage=record["sample"], check=False)
+    finally:
+        if capture is not None:
+            try:
+                record["etw"] = capture.finish(record.get("native_observer", {}))
+            except Exception as exc:
+                record["etw"] = {"status": "unavailable", "error": f"ETW finish: {type(exc).__name__}"}
     raw = list((sample_root / "bench-local/results").glob("startup_metrics_*.json"))
     if len(raw) == 1:
         target = evidence / f"{record['sample']}.metrics.json"
@@ -362,7 +382,8 @@ def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: 
 
 
 def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: Path,
-                   *, fresh_install: bool, observe_native: bool = False) -> dict:
+                   *, fresh_install: bool, observe_native: bool = False,
+                   etw_collector: Path | None = None) -> dict:
     sample = f"{mode}-{ordinal:02d}-{build.label}"
     root = work / "samples" / sample
     root.mkdir(parents=True)
@@ -373,12 +394,15 @@ def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: 
               "started_utc": utc_now(), "checker_exit": None, "gate_pass": False, "metrics": None}
     if observe_native:
         record["native_observation_requested"] = True
+    if etw_collector is not None:
+        record["etw_requested"] = True
+    extra = {"etw_collector": etw_collector} if etw_collector is not None else {}
     try:
         if fresh_install:
             with installed_executable(build, root, record) as exe:
-                measure(build, exe, root, evidence, record)
+                measure(build, exe, root, evidence, record, **extra)
         else:
-            measure(build, build.exe, root, evidence, record)
+            measure(build, build.exe, root, evidence, record, **extra)
     except Exception as exc:
         record["error"] = f"{type(exc).__name__}: {exc}"
         if fresh_install:
@@ -403,7 +427,7 @@ def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: 
 def summarize(records: list[dict], expected: int) -> dict:
     groups = {}
     for mode in THRESHOLDS:
-        for label in "AB":
+        for label in "ABF":
             selected = [r for r in records if r["mode"] == mode and r["label"] == label]
             if not selected:
                 continue
@@ -475,6 +499,8 @@ def main(argv=None) -> int:
     parser.add_argument("--baseline-exe", type=Path, help="Offline comparison: trusted existing B executable")
     parser.add_argument("--native-qt", action="store_true", help="After frozen samples, run diagnostic-only native Qt window variants")
     parser.add_argument("--baseline-first", action="store_true", help="Build only historical B; observe two consecutive native startup samples")
+    parser.add_argument("--optimized-sha", help="Compare exact optimized F with A/B, including a first-position ETW sample")
+    parser.add_argument("--etw-collector", type=Path, help="Built StartupEtw.dll for the three-revision diagnostic")
     args = parser.parse_args(argv)
     if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"} or sys.maxsize <= 2**32:
         parser.error("This diagnostic requires native Windows x64 and 64-bit Python")
@@ -489,6 +515,16 @@ def main(argv=None) -> int:
         parser.error("Provided executables support one declared mode, without installing or source Qt probes")
     if args.baseline_first and (provided or args.mode != "portable" or args.disposable_runner):
         parser.error("--baseline-first uses only a freshly built baseline portable package, without installation")
+    three_way = args.optimized_sha is not None
+    if three_way:
+        revisions = (args.candidate_sha, args.baseline_sha, args.optimized_sha)
+        if (provided or args.baseline_first or args.mode == "installed" or
+                not all(re.fullmatch(r"[0-9a-fA-F]{40}", rev) for rev in revisions) or
+                len({rev.lower() for rev in revisions}) != 3 or
+                args.etw_collector is None or not args.etw_collector.resolve().is_file()):
+            parser.error("Three-revision comparison requires three distinct exact source SHAs and a built ETW collector, with portable or both modes")
+    elif args.etw_collector is not None:
+        parser.error("--etw-collector requires --optimized-sha")
     real_install = not provided and args.mode in {"installed", "both"}
     if real_install and not args.disposable_runner:
         parser.error("Real Inno samples require --disposable-runner on a clean disposable Windows host")
@@ -500,15 +536,23 @@ def main(argv=None) -> int:
     evidence.mkdir()
     modes = ("portable", "installed") if args.mode == "both" else (args.mode,)
     order = "BB" if args.baseline_first else args.order
+    traced_order = "FFABBAF"
+    control_order = "BAFFAB"
+    if three_way:
+        order = traced_order + control_order
     records = []
-    expected = len(order) * len(modes)
+    expected = len(order) + (2 if "installed" in modes else 0) if three_way else len(order) * len(modes)
     error = None
     qt_ok = not args.native_qt
     write_json(evidence / "host.json", {"started_utc": utc_now(), "platform": platform.platform(),
                "machine": platform.machine(), "python": sys.version, "logical_cpus": os.cpu_count(),
                "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_ENVIRONMENT", "ImageOS", "ImageVersion")},
                "native_qt_platform": "windows", "order": order, "modes": modes, "thresholds_ms": THRESHOLDS,
-               "diagnostic_protocol": "baseline-first" if args.baseline_first else "balanced-ab",
+               "diagnostic_protocol": "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
+               "optimized_sha": args.optimized_sha,
+               "traced_portable_order": traced_order if three_way else None,
+               "untraced_portable_order": control_order if three_way else None,
+               "installed_order": "FF" if three_way and "installed" in modes else None,
                "candidate_sha": args.candidate_sha, "baseline_sha": args.baseline_sha,
                "provided_executables": provided, "fresh_inno_install": real_install,
                "runtime_policy": "fresh empty database/config defaults, synthetic workbench migration marker, null keyring",
@@ -524,19 +568,27 @@ def main(argv=None) -> int:
         elif args.baseline_first:
             builds = {"B": build_source("B", args.baseline_sha.lower(), work, evidence)}
             record_system_state(evidence, "before-first")
+        elif three_way:
+            builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in
+                      (("F", args.optimized_sha), ("A", args.candidate_sha), ("B", args.baseline_sha))}
+            record_system_state(evidence, "before-first")
         else:
             builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in
                       (("A", args.candidate_sha), ("B", args.baseline_sha))}
         for mode in modes:
+            lane_order = "FF" if three_way and mode == "installed" else order
             if mode == "installed" and real_install:
-                for build in builds.values():
+                for build in (builds["F"],) if three_way else builds.values():
                     build_installer(build, iscc, work, evidence)
-            for ordinal, label in enumerate(order, 1):
-                observe_native = args.baseline_first
+            for ordinal, label in enumerate(lane_order, 1):
+                trace_sample = three_way and ((mode == "portable" and ordinal <= len(traced_order)) or
+                                              (mode == "installed" and ordinal == 1))
+                observe_native = args.baseline_first or trace_sample
+                extra = {"etw_collector": args.etw_collector.resolve()} if trace_sample else {}
                 record = collect_sample(builds[label], mode, ordinal, work, evidence,
-                                        fresh_install=real_install and mode == "installed", observe_native=observe_native)
+                                        fresh_install=real_install and mode == "installed", observe_native=observe_native, **extra)
                 records.append(record)
-                if observe_native and ordinal == 1:
+                if observe_native and mode == "portable" and ordinal == 1:
                     record_system_state(evidence, "after-first")
                 if record.get("error") and record["fresh_inno_install"]:
                     raise DiagnosticError("Installed sample infrastructure/cleanup failure; stop further installs")
@@ -547,9 +599,17 @@ def main(argv=None) -> int:
         print("PERF_AB_ERROR " + error, file=sys.stderr, flush=True)
     summary = {**summarize(records, expected), "error": error, "native_qt_requested": args.native_qt,
                "native_qt_completed": qt_ok if args.native_qt else None, "finished_utc": utc_now()}
+    if three_way:
+        statuses = [r.get("etw", {}).get("status", "unavailable") for r in records if r.get("etw_requested")]
+        summary["etw_samples"] = {status: statuses.count(status) for status in ("complete", "partial", "unavailable")}
+        summary["etw_evidence_collected"] = any(status in ("complete", "partial") for status in statuses)
+        traced = [record for record in records if record.get("etw_requested")]
+        controls = [record for record in records if not record.get("etw_requested")]
+        summary["traced_groups"] = summarize(traced, len(traced_order) + int("installed" in modes))["groups"]
+        summary["untraced_groups"] = summarize(controls, len(control_order) + int("installed" in modes))["groups"]
     write_json(evidence / "summary.json", summary)
     print("PERF_AB_SUMMARY " + json.dumps(summary, ensure_ascii=False, separators=(",", ":")), flush=True)
-    return 0 if summary["all_gates_passed"] and error is None and qt_ok else 1
+    return 0 if summary["all_gates_passed"] and error is None and qt_ok and summary.get("etw_evidence_collected", True) else 1
 
 
 if __name__ == "__main__":

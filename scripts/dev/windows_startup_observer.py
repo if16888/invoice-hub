@@ -77,6 +77,10 @@ class WindowsApi:
         self.process_memory = bind(psapi, "GetProcessMemoryInfo", wt.BOOL, wt.HANDLE,
                                    ctypes.POINTER(MemoryCounters), wt.DWORD)
         self.wait = bind(kernel, "WaitForSingleObject", wt.DWORD, wt.HANDLE, wt.DWORD)
+        self.create_file = bind(kernel, "CreateFileW", wt.HANDLE, wt.LPCWSTR, wt.DWORD, wt.DWORD,
+                                ctypes.c_void_p, wt.DWORD, wt.DWORD, wt.HANDLE)
+        self.read_file = bind(kernel, "ReadFile", wt.BOOL, wt.HANDLE, ctypes.c_void_p,
+                              wt.DWORD, ctypes.POINTER(wt.DWORD), ctypes.c_void_p)
         self.window_callback = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
         self.enum_windows = bind(user, "EnumWindows", wt.BOOL, self.window_callback, wt.LPARAM)
         self.window_pid = bind(user, "GetWindowThreadProcessId", wt.DWORD, wt.HWND, ctypes.POINTER(wt.DWORD))
@@ -149,13 +153,29 @@ class WindowsApi:
                           private_bytes=int(memory.private_bytes))
         return result
 
+    def read_probe(self, path: Path) -> bytes:
+        # The official checker deletes this synthetic file as soon as it has
+        # read its own evidence. Share deletion AND concurrent reads/writes.
+        # A normal Python open on Windows can deny that unlink.
+        handle = self.create_file(str(path), 0x80000000, 0x7, None, 3, 0x80, None)
+        if not handle or handle == INVALID_HANDLE:
+            return b""
+        try:
+            buffer = ctypes.create_string_buffer(65536)
+            count = wt.DWORD()
+            if self.read_file(handle, buffer, len(buffer), ctypes.byref(count), None):
+                return buffer.raw[:count.value]
+            return b""
+        finally:
+            self.close(handle)
+
     def windows(self, pid: int) -> list[dict] | None:
         result = []
 
         @self.window_callback
         def visit(hwnd, _argument):
             owner = wt.DWORD()
-            self.window_pid(hwnd, ctypes.byref(owner))
+            thread = int(self.window_pid(hwnd, ctypes.byref(owner)))
             if owner.value != pid:
                 return True
             rect = wt.RECT()
@@ -172,6 +192,7 @@ class WindowsApi:
             splash_like = (tool and cls.value.lower().startswith("qt") and width and height
                            and width >= 200 and height >= 100 and 1.2 <= width / height <= 2.8)
             result.append({"hwnd": int(hwnd), "class": cls.value, "visible": bool(self.visible(hwnd)),
+                           "thread_id": thread,
                            "width": width, "height": height,
                            "tool": tool, "layered": bool(style & 0x80000),
                            "role": "main-like" if main_like else "splash-like" if splash_like else "other"})
@@ -203,7 +224,7 @@ class WindowsApi:
 
 
 def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path, trace_path: Path,
-                         timeout: int = 75) -> tuple[int, dict]:
+                         timeout: int = 75, etw=None) -> tuple[int, dict]:
     """Launch once; failures in observation never replace the checker's exit."""
     trace = {"requested_interval_ms": POLL_SECONDS * 1000, "clock": "observer monotonic plus OS process creation FILETIME",
              "scope": "verified descendant executable only", "samples": [], "events": {}, "module_snapshots": {},
@@ -214,11 +235,15 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
     pid = None
     process_origin = None
     saw_probe = False
-    event_fields = ("observer_ms", "process_ms", "kernel_cpu_ms", "user_cpu_ms", "read_ops", "read_bytes", "page_faults", "threads")
+    saw_valid_probe = False
+    ui_threads = set()
+    event_fields = ("observer_ms", "process_ms", "kernel_cpu_ms", "user_cpu_ms", "read_ops", "read_bytes", "page_faults", "threads", "qpc_ms")
     with log.open("wb") as output:
         checker = subprocess.Popen([str(x) for x in command], cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT)
         trace["checker_pid"] = checker.pid
         try:
+            if etw is not None:
+                etw.checker_started(checker.pid)
             api = WindowsApi()
             while checker.poll() is None and time.monotonic() - started < timeout:
                 sample_started = time.monotonic()
@@ -236,6 +261,7 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
                     windows = api.windows(pid) if not counters.get("exited") else []
                     point = {"observer_ms": round((sample_started - started) * 1000, 2),
                              "process_ms": round((sample_started - process_origin) * 1000, 2) if process_origin is not None else None,
+                             "qpc_ms": time.perf_counter() * 1000,
                              **counters, "threads": next((p["threads"] for p in processes if p["pid"] == pid), None),
                              "windows": windows}
                     event_values = {key: point.get(key) for key in event_fields}
@@ -244,22 +270,35 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
                     for role in ("splash-like", "main-like"):
                         for state in ("seen", "visible"):
                             key = f"{role}_{state}"
-                            if key not in trace["events"] and any(w["role"] == role and (state == "seen" or w["visible"]) for w in (windows or [])):
-                                trace["events"][key] = dict(event_values)
+                            matching = [w for w in (windows or []) if w["role"] == role and (state == "seen" or w["visible"])]
+                            ui_threads.update(w["thread_id"] for w in matching if w.get("thread_id"))
+                            if key not in trace["events"] and matching:
+                                trace["events"][key] = {**event_values, "qpc_ms": time.perf_counter() * 1000,
+                                                        "window_thread_id": matching[0].get("thread_id")}
                                 if state == "visible":
                                     trace["module_snapshots"][key] = api.modules(pid)
-                    if not saw_probe:
+                    if not saw_valid_probe:
                         # The checker owns and deletes this synthetic JSON. It
                         # may disappear between polls; absence is not failure.
                         for probe in (cwd / "tmp").glob("*_startup_probe.json"):
                             try:
-                                if probe.stat().st_size:
+                                if not probe.stat().st_size:
+                                    continue
+                                if not saw_probe:
                                     saw_probe = True
-                                    # Nonempty does not imply valid Paint evidence: the
-                                    # file can contain a failure or a partial write.
                                     trace["events"]["nonempty_probe_file_observed"] = dict(event_values)
+                                data = json.loads(api.read_probe(probe))
+                                if (data.get("PROBE_CONTRACT") == "main_window_first_paint_v1"
+                                        and data.get("QT_PAINT_EVENT_COMPLETED") is True
+                                        and type(data.get("FIRST_PAINT_MS")) is int and data["FIRST_PAINT_MS"] > 0):
+                                    saw_valid_probe = True
+                                    # Observation is an upper bound on the Paint
+                                    # timestamp, and does not replace the checker.
+                                    trace["events"]["valid_probe_file_observed"] = {
+                                        **event_values, "qpc_ms": time.perf_counter() * 1000,
+                                    }
                                     break
-                            except FileNotFoundError:
+                            except (OSError, ValueError, AttributeError):
                                 pass
                     point["observer_work_ms"] = round((time.monotonic() - sample_started) * 1000, 2)
                     trace["samples"].append(point)
@@ -295,6 +334,9 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
     summary = {"observed_target": trace["observed_target"], "sample_count": len(trace["samples"]),
                "events": trace["events"], "observer_error": trace.get("observer_error")}
     summary["gui_pid"] = trace.get("gui_pid")
+    summary["gui_creation_unix_ms"] = trace.get("gui_creation_unix_ms")
+    summary["ui_threads"] = sorted(ui_threads)
+    trace["ui_threads"] = summary["ui_threads"]
     summary["module_snapshots"] = trace["module_snapshots"]
     summary["last_counters"] = trace.get("last_counters")
     summary["available_samples"] = {key: sum(point.get(key) is not None for point in trace["samples"])

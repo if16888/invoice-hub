@@ -13,9 +13,77 @@ from unittest.mock import patch
 
 from scripts.dev import windows_startup_ab as ab
 from scripts.dev import windows_startup_observer as observer
+from scripts.dev import windows_startup_etw as etw
 
 
 class StartupABDiagnosticTests(unittest.TestCase):
+    def test_three_revision_plan_retains_cold_trace_warm_control_and_two_real_installs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            collector = root / "StartupEtw.dll"
+            collector.touch()
+            optimized = "7" * 40
+            calls = []
+
+            def build(label, revision, *_args):
+                return ab.Build(label, revision, root / "InvoiceHub.exe", "synthetic",
+                                root / "checker.py", Path(sys.executable), source=root)
+
+            def sample(obj, mode, ordinal, _work, _evidence, **kwargs):
+                calls.append((obj.label, mode, ordinal, kwargs))
+                return {"mode": mode, "label": obj.label, "gate_pass": True,
+                        "metrics": None, "fresh_inno_install": kwargs["fresh_install"],
+                        "etw_requested": "etw_collector" in kwargs,
+                        "etw": {"status": "partial"} if "etw_collector" in kwargs else {}}
+
+            fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
+            fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
+                                       version="3.11 (simulated)", executable=sys.executable, stderr=sys.stderr)
+            with patch.object(ab, "os", fake_os), patch.object(ab, "sys", fake_sys), \
+                    patch.object(ab.platform, "machine", return_value="AMD64"), \
+                    patch.object(ab, "build_source", side_effect=build) as builder, \
+                    patch.object(ab, "collect_sample", side_effect=sample), \
+                    patch.object(ab, "record_system_state") as state, \
+                    patch.object(ab, "require_no_installation"), \
+                    patch.object(ab, "find_iscc", return_value=root / "ISCC.exe"), \
+                    patch.object(ab, "record_iscc"), patch.object(ab, "build_installer") as installer:
+                code = ab.main(["--output-dir", str(root / "output"), "--mode", "both",
+                                "--disposable-runner", "--optimized-sha", optimized, "--etw-collector", str(collector)])
+            self.assertEqual(code, 0)
+            self.assertEqual([call.args[:2] for call in builder.call_args_list],
+                             [("F", optimized), ("A", ab.CANDIDATE), ("B", ab.BASELINE)])
+            self.assertEqual("".join(c[0] for c in calls), "FFABBAFBAFFABFF")
+            self.assertEqual([c[3]["observe_native"] for c in calls], [True] * 7 + [False] * 6 + [True, False])
+            self.assertEqual([c[1] for c in calls], ["portable"] * 13 + ["installed"] * 2)
+            self.assertEqual([c.args[1] for c in state.call_args_list], ["before-first", "after-first"])
+            installer.assert_called_once()
+            self.assertEqual(installer.call_args.args[0].label, "F")
+            self.assertEqual(ab.THRESHOLDS, {"portable": 5000, "installed": 2000})
+
+    def test_probe_observer_shares_deletion_and_closes_owned_read_handle(self):
+        api = observer.WindowsApi.__new__(observer.WindowsApi)
+        calls = []
+        api.create_file = lambda *args: calls.append(args) or 42
+        api.read_file = lambda *_args: False
+        api.close = lambda handle: calls.append(handle)
+        self.assertEqual(api.read_probe(Path("synthetic-probe.json")), b"")
+        self.assertEqual(calls[0][1:3], (0x80000000, 7))
+        self.assertEqual(calls[1], 42)
+
+    def test_etw_summary_retains_ui_waits_without_raw_series_in_console(self):
+        report = etw.compact({
+            "status": "partial", "raw_scheduler_points": [1, 2],
+            "threads": [
+                {"thread_id": 42, "ui_thread": True, "hard_fault_count": 3,
+                 "longest_off_cpu": [{"module_stacks": [["Qt6Gui.dll+0x1"] * 64]}],
+                 "longest_hard_faults": []},
+                {"thread_id": 43, "ui_thread": False, "hard_fault_count": 5},
+            ],
+        })
+        self.assertNotIn("raw_scheduler_points", report)
+        self.assertEqual(report["other_thread_hard_fault_count"], 5)
+        self.assertEqual(len(report["ui_threads"][0]["longest_off_cpu"][0]["module_stacks"][0]), 24)
+
     def test_default_order_is_balanced_and_rejects_arbitrary_sequences(self):
         for given in ("ABBA,BAAB", "BAAB,ABBA", "ABBA", "BAAB"):
             order = ab.sample_order(given)

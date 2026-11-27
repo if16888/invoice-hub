@@ -1,4 +1,4 @@
-name: Windows Baseline-first Startup Diagnostic
+name: Windows Startup Three-revision ETW Diagnostic
 
 on:
   push:
@@ -11,9 +11,10 @@ permissions:
 jobs:
   diagnose:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       PYTHONIOENCODING: utf-8
+      OPTIMIZED_SHA: 8c94421d97c9ddc02127ed399b8d82c4d379e532
     steps:
       - name: Checkout exact source history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -27,11 +28,37 @@ jobs:
           python-version: "3.11"
           architecture: x64
 
-      - name: Build historical B and observe its first desktop startup twice
+      - name: Build and test the diagnostic-only ETW consumer
+        shell: pwsh
+        run: |
+          git cat-file -e "$env:OPTIMIZED_SHA^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw 'Exact reviewed optimization commit is unavailable' }
+          $collector = Join-Path $env:RUNNER_TEMP "ih-etw-$env:GITHUB_RUN_ATTEMPT"
+          dotnet build scripts/dev/windows_startup_etw/StartupEtw.csproj --configuration Release --output "$collector"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet (Join-Path $collector "StartupEtw.dll") --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "ETW_COLLECTOR=$(Join-Path $collector 'StartupEtw.dll')" >> $env:GITHUB_ENV
+
+      - name: Resolve Inno Setup compiler
+        shell: pwsh
+        run: |
+          $command = Get-Command iscc -CommandType Application -ErrorAction SilentlyContinue
+          $path = if ($command) { $command.Source } else { Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe' }
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $command = Get-Command iscc -CommandType Application -ErrorAction SilentlyContinue
+            $path = if ($command) { $command.Source } else { Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe' }
+          }
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'ISCC.exe not found' }
+          "ISCC_PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Compare three exact packages with cold-position ETW and warm controls
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP "ih-ab-$env:GITHUB_RUN_ATTEMPT"
-          python scripts/dev/windows_startup_ab.py --output-dir "$output" --baseline-first --native-qt
+          python scripts/dev/windows_startup_ab.py --output-dir "$output" --mode both --disposable-runner --iscc "$env:ISCC_PATH" --optimized-sha "$env:OPTIMIZED_SHA" --etw-collector "$env:ETW_COLLECTOR"
           exit $LASTEXITCODE
 
       - name: Upload compact diagnostic evidence
@@ -41,4 +68,4 @@ jobs:
           name: windows-startup-ab-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ih-ab-${{ github.run_attempt }}/evidence
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 30
