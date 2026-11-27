@@ -126,6 +126,7 @@ def compact(full: dict) -> dict:
     """Keep enough target-only evidence in CI logs without dumping all events."""
     omitted = {"raw_scheduler_points", "raw_thread_lifetimes", "raw_hard_faults", "threads"}
     summary = {key: value for key, value in full.items() if key not in omitted}
+    summary["raw_scheduler_point_count"] = len(full.get("raw_scheduler_points", []))
     threads = full.get("threads", [])
     summary["target_thread_count"] = len(threads)
     summary["ui_threads"] = []

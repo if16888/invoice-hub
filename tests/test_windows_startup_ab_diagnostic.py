@@ -53,6 +53,7 @@ class StartupABDiagnosticTests(unittest.TestCase):
             collector.touch()
             optimized = "8" * 40
             calls = []
+            raw_points = 1
 
             def build(label, revision, *_args):
                 return ab.Build(label, revision, root / "InvoiceHub.exe", "synthetic",
@@ -60,8 +61,9 @@ class StartupABDiagnosticTests(unittest.TestCase):
 
             def sample(obj, mode, ordinal, *_args, **kwargs):
                 calls.append((obj.label, mode, ordinal, kwargs))
-                return {"mode": mode, "label": obj.label, "gate_pass": True, "metrics": None,
-                        "fresh_inno_install": False, "etw_requested": True, "etw": {"status": "partial"}}
+                return {"mode": mode, "index": ordinal, "label": obj.label, "gate_pass": True, "metrics": None,
+                        "fresh_inno_install": False, "etw_requested": True,
+                        "etw": {"status": "partial", "raw_scheduler_point_count": raw_points}}
 
             fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
             fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
@@ -73,9 +75,13 @@ class StartupABDiagnosticTests(unittest.TestCase):
                     patch.object(ab, "record_system_state"), patch.object(ab, "build_installer") as installer:
                 code = ab.main(["--output-dir", str(root / "out"), "--optimized-sha", optimized,
                                 "--etw-collector", str(collector), "--etw-focus"])
+                raw_points = 0
+                missing_evidence_code = ab.main(["--output-dir", str(root / "no-points"), "--optimized-sha", optimized,
+                                                 "--etw-collector", str(collector), "--etw-focus"])
             self.assertEqual(code, 0)
-            self.assertEqual([c.args[:2] for c in builder.call_args_list], [("F", optimized), ("B", ab.BASELINE)])
-            self.assertEqual("".join(c[0] for c in calls), "FFBB")
+            self.assertEqual(missing_evidence_code, 1)
+            self.assertEqual([c.args[:2] for c in builder.call_args_list], [("F", optimized), ("B", ab.BASELINE)] * 2)
+            self.assertEqual("".join(c[0] for c in calls), "FFBBFFBB")
             self.assertTrue(all(c[1] == "portable" and c[3]["observe_native"] for c in calls))
             installer.assert_not_called()
 
@@ -93,10 +99,10 @@ class StartupABDiagnosticTests(unittest.TestCase):
 
             def sample(obj, mode, ordinal, _work, _evidence, **kwargs):
                 calls.append((obj.label, mode, ordinal, kwargs))
-                return {"mode": mode, "label": obj.label, "gate_pass": True,
+                return {"mode": mode, "index": ordinal, "label": obj.label, "gate_pass": True,
                         "metrics": None, "fresh_inno_install": kwargs["fresh_install"],
                         "etw_requested": "etw_collector" in kwargs,
-                        "etw": {"status": "partial"} if "etw_collector" in kwargs else {}}
+                        "etw": {"status": "partial", "raw_scheduler_point_count": 1} if "etw_collector" in kwargs else {}}
 
             fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
             fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
@@ -143,6 +149,7 @@ class StartupABDiagnosticTests(unittest.TestCase):
             ],
         })
         self.assertNotIn("raw_scheduler_points", report)
+        self.assertEqual(report["raw_scheduler_point_count"], 2)
         self.assertEqual(report["other_thread_hard_fault_count"], 5)
         self.assertEqual(len(report["ui_threads"][0]["longest_off_cpu"][0]["module_stacks"][0]), 24)
 

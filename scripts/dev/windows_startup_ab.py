@@ -607,9 +607,28 @@ def main(argv=None) -> int:
     if three_way:
         statuses = [r.get("etw", {}).get("status", "unavailable") for r in records if r.get("etw_requested")]
         summary["etw_samples"] = {status: statuses.count(status) for status in ("complete", "partial", "unavailable")}
-        summary["etw_evidence_collected"] = any(status in ("complete", "partial") for status in statuses)
         traced = [record for record in records if record.get("etw_requested")]
         controls = [record for record in records if not record.get("etw_requested")]
+        observed = [r for r in traced if r.get("etw", {}).get("status") in ("complete", "partial")
+                    and r["etw"].get("raw_scheduler_point_count", 0) > 0]
+        summary["etw_evidence_collected"] = bool(observed)
+        summary["etw_samples_with_verified_scheduler_points"] = len(observed)
+        first = next((r for r in traced if r["mode"] == "portable" and r.get("index") == 1), {})
+        first_etw = first.get("etw", {})
+        native_events = first.get("native_observer", {}).get("events", {})
+        splash_tid = native_events.get("splash-like_seen", {}).get("window_thread_id")
+        visible_tid = native_events.get("splash-like_visible", {}).get("window_thread_id")
+        ui = next((t for t in first_etw.get("ui_threads", [])
+                   if splash_tid and splash_tid == visible_tid == t.get("thread_id")), {})
+        splash_phase = ui.get("phases", {}).get("splash-like_seen_to_splash-like_visible", {})
+        summary["optimized_first_etw"] = {
+            "status": first_etw.get("status", "unavailable"),
+            "verified_scheduler_points": first_etw.get("raw_scheduler_point_count", 0),
+            "splash_visibility_bounds": first_etw.get("coverage", {}).get("splash_visibility_bounds", False),
+            "ui_splash_scheduler_covered_ms": (
+                splash_phase["off_cpu_ms"] + splash_phase["completed_running_ms"] if splash_phase else None
+            ),
+        }
         summary["traced_groups"] = summarize(traced, len(traced_order) + int("installed" in modes))["groups"]
         summary["untraced_groups"] = summarize(controls, len(control_order) + int("installed" in modes))["groups"]
     write_json(evidence / "summary.json", summary)
