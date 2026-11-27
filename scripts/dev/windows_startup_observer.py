@@ -55,6 +55,20 @@ def bind(dll, name, result, *arguments):
     return function
 
 
+def descendant_depth(processes, root: int, target: int) -> int | None:
+    parents = {p["pid"]: p.get("parent") for p in processes}
+    visited = set()
+    depth = 0
+    current = target
+    while current != root:
+        if current in visited or current not in parents:
+            return None
+        visited.add(current)
+        current = parents[current]
+        depth += 1
+    return depth
+
+
 class WindowsApi:
     def __init__(self):
         # Loaded only after the official checker has been spawned. None of
@@ -252,6 +266,7 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
                     pid, handle = api.open_exact_child(processes, checker.pid, exe)
                     if handle:
                         trace["gui_pid"] = pid
+                        trace["checker_lineage_depth"] = descendant_depth(processes, checker.pid, pid)
                         trace["module_snapshots"]["pid_observed"] = api.modules(pid)
                 if handle:
                     counters = api.counters(handle)
@@ -335,6 +350,7 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
                "events": trace["events"], "observer_error": trace.get("observer_error")}
     summary["gui_pid"] = trace.get("gui_pid")
     summary["gui_creation_unix_ms"] = trace.get("gui_creation_unix_ms")
+    summary["checker_lineage_depth"] = trace.get("checker_lineage_depth")
     summary["ui_threads"] = sorted(ui_threads)
     trace["ui_threads"] = summary["ui_threads"]
     summary["module_snapshots"] = trace["module_snapshots"]

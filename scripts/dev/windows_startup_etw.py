@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import gzip
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -67,6 +70,7 @@ class EtwCapture:
             marker = {
                 "gui_pid": native.get("gui_pid"),
                 "gui_creation_unix_ms": native.get("gui_creation_unix_ms"),
+                "checker_lineage_depth": native.get("checker_lineage_depth"),
                 "ui_threads": native.get("ui_threads", []),
                 "markers": {
                     name: {"qpc_ms": values.get("qpc_ms")}
@@ -90,6 +94,8 @@ class EtwCapture:
                 report = {"artifact": self.evidence.name, **compact(full)}
                 if self.error:
                     report.update(status="unavailable", bridge_error=self.error)
+                elif full.get("status") in {"complete", "partial"}:
+                    report["raw_log_transport"] = print_raw_chunks(self.evidence)
             else:
                 report["error"] = self.error or "Collector did not return evidence"
         except Exception as exc:
@@ -140,3 +146,20 @@ def compact(full: dict) -> dict:
         t["hard_fault_count"] for t in threads if not t.get("ui_thread")
     )
     return summary
+
+
+def print_raw_chunks(path: Path) -> dict:
+    """Retain small verified-target evidence in the downloadable job log too."""
+    raw = path.read_bytes()
+    packed = gzip.compress(raw, mtime=0)
+    digest = hashlib.sha256(raw).hexdigest()
+    if len(packed) > 512 * 1024:
+        return {"included": False, "compressed_bytes": len(packed), "sha256": digest}
+    encoded = base64.b64encode(packed).decode("ascii")
+    chunks = [encoded[i:i + 10000] for i in range(0, len(encoded), 10000)]
+    for index, chunk in enumerate(chunks, 1):
+        print("PERF_AB_ETW_RAW " + json.dumps({
+            "name": path.name, "part": index, "parts": len(chunks), "sha256": digest,
+            "codec": "gzip+base64", "data": chunk,
+        }, separators=(",", ":")), flush=True)
+    return {"included": True, "compressed_bytes": len(packed), "sha256": digest}

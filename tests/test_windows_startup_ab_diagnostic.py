@@ -1,8 +1,12 @@
 """Platform-independent checks for the diagnostic harness, not a Windows gate."""
 
 import argparse
+import base64
 from contextlib import contextmanager
+from io import StringIO
 from pathlib import Path
+import gzip
+import hashlib
 import json
 import os
 import sys
@@ -17,6 +21,64 @@ from scripts.dev import windows_startup_etw as etw
 
 
 class StartupABDiagnosticTests(unittest.TestCase):
+    def test_descendant_depth_accepts_windows_python_redirector_only_with_root_chain(self):
+        entries = [
+            {"pid": 10, "parent": 1}, {"pid": 11, "parent": 10},
+            {"pid": 12, "parent": 11}, {"pid": 99, "parent": 1},
+            {"pid": 22, "parent": 23}, {"pid": 23, "parent": 22},
+        ]
+        self.assertEqual(observer.descendant_depth(entries, 10, 12), 2)
+        self.assertEqual(observer.descendant_depth(entries, 10, 11), 1)
+        self.assertIsNone(observer.descendant_depth(entries, 10, 99))
+        self.assertIsNone(observer.descendant_depth(entries, 10, 22))
+
+    def test_raw_etw_log_chunks_round_trip_exact_target_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target.etw.json"
+            original = json.dumps({"raw_scheduler_points": [[42, n, "out"] for n in range(4000)]}).encode()
+            target.write_bytes(original)
+            with patch("sys.stdout", new_callable=StringIO) as stream:
+                summary = etw.print_raw_chunks(target)
+            rows = [json.loads(line.removeprefix("PERF_AB_ETW_RAW ")) for line in stream.getvalue().splitlines()]
+            packed = base64.b64decode("".join(row["data"] for row in rows))
+            self.assertEqual(gzip.decompress(packed), original)
+            self.assertEqual(summary["sha256"], hashlib.sha256(original).hexdigest())
+            self.assertTrue(summary["included"])
+            self.assertEqual([r["part"] for r in rows], list(range(1, len(rows) + 1)))
+
+    def test_focused_etw_plan_does_not_rebuild_a_or_installers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            collector = root / "StartupEtw.dll"
+            collector.touch()
+            optimized = "8" * 40
+            calls = []
+
+            def build(label, revision, *_args):
+                return ab.Build(label, revision, root / "InvoiceHub.exe", "synthetic",
+                                root / "checker.py", Path(sys.executable), source=root)
+
+            def sample(obj, mode, ordinal, *_args, **kwargs):
+                calls.append((obj.label, mode, ordinal, kwargs))
+                return {"mode": mode, "label": obj.label, "gate_pass": True, "metrics": None,
+                        "fresh_inno_install": False, "etw_requested": True, "etw": {"status": "partial"}}
+
+            fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
+            fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
+                                       version="3.11 (simulated)", executable=sys.executable, stderr=sys.stderr)
+            with patch.object(ab, "os", fake_os), patch.object(ab, "sys", fake_sys), \
+                    patch.object(ab.platform, "machine", return_value="AMD64"), \
+                    patch.object(ab, "build_source", side_effect=build) as builder, \
+                    patch.object(ab, "collect_sample", side_effect=sample), \
+                    patch.object(ab, "record_system_state"), patch.object(ab, "build_installer") as installer:
+                code = ab.main(["--output-dir", str(root / "out"), "--optimized-sha", optimized,
+                                "--etw-collector", str(collector), "--etw-focus"])
+            self.assertEqual(code, 0)
+            self.assertEqual([c.args[:2] for c in builder.call_args_list], [("F", optimized), ("B", ab.BASELINE)])
+            self.assertEqual("".join(c[0] for c in calls), "FFBB")
+            self.assertTrue(all(c[1] == "portable" and c[3]["observe_native"] for c in calls))
+            installer.assert_not_called()
+
     def test_three_revision_plan_retains_cold_trace_warm_control_and_two_real_installs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

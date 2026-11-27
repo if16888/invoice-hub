@@ -501,6 +501,7 @@ def main(argv=None) -> int:
     parser.add_argument("--baseline-first", action="store_true", help="Build only historical B; observe two consecutive native startup samples")
     parser.add_argument("--optimized-sha", help="Compare exact optimized F with A/B, including a first-position ETW sample")
     parser.add_argument("--etw-collector", type=Path, help="Built StartupEtw.dll for the three-revision diagnostic")
+    parser.add_argument("--etw-focus", action="store_true", help="After an infrastructure correction, trace only F and historical B twice")
     args = parser.parse_args(argv)
     if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"} or sys.maxsize <= 2**32:
         parser.error("This diagnostic requires native Windows x64 and 64-bit Python")
@@ -525,6 +526,8 @@ def main(argv=None) -> int:
             parser.error("Three-revision comparison requires three distinct exact source SHAs and a built ETW collector, with portable or both modes")
     elif args.etw_collector is not None:
         parser.error("--etw-collector requires --optimized-sha")
+    if args.etw_focus and (not three_way or args.mode != "portable" or args.native_qt or args.disposable_runner):
+        parser.error("--etw-focus requires the exact optimization and portable ETW comparison")
     real_install = not provided and args.mode in {"installed", "both"}
     if real_install and not args.disposable_runner:
         parser.error("Real Inno samples require --disposable-runner on a clean disposable Windows host")
@@ -536,8 +539,8 @@ def main(argv=None) -> int:
     evidence.mkdir()
     modes = ("portable", "installed") if args.mode == "both" else (args.mode,)
     order = "BB" if args.baseline_first else args.order
-    traced_order = "FFABBAF"
-    control_order = "BAFFAB"
+    traced_order = "FFBB" if args.etw_focus else "FFABBAF"
+    control_order = "" if args.etw_focus else "BAFFAB"
     if three_way:
         order = traced_order + control_order
     records = []
@@ -548,7 +551,7 @@ def main(argv=None) -> int:
                "machine": platform.machine(), "python": sys.version, "logical_cpus": os.cpu_count(),
                "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_ENVIRONMENT", "ImageOS", "ImageVersion")},
                "native_qt_platform": "windows", "order": order, "modes": modes, "thresholds_ms": THRESHOLDS,
-               "diagnostic_protocol": "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
+               "diagnostic_protocol": "focused-etw" if args.etw_focus else "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
                "optimized_sha": args.optimized_sha,
                "traced_portable_order": traced_order if three_way else None,
                "untraced_portable_order": control_order if three_way else None,
@@ -569,8 +572,10 @@ def main(argv=None) -> int:
             builds = {"B": build_source("B", args.baseline_sha.lower(), work, evidence)}
             record_system_state(evidence, "before-first")
         elif three_way:
-            builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in
-                      (("F", args.optimized_sha), ("A", args.candidate_sha), ("B", args.baseline_sha))}
+            revisions = [("F", args.optimized_sha), ("B", args.baseline_sha)]
+            if not args.etw_focus:
+                revisions.insert(1, ("A", args.candidate_sha))
+            builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in revisions}
             record_system_state(evidence, "before-first")
         else:
             builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in

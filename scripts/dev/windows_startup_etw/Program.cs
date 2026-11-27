@@ -29,9 +29,41 @@ internal static class Program
         File.Move(temporary, file, true);
     }
 
-    internal static bool MatchesChild(int expectedParent, int reportedParent, string image) =>
-        expectedParent > 0 && expectedParent == reportedParent &&
-        string.Equals(Path.GetFileName(image.Replace('\\', '/')), "InvoiceHub.exe", StringComparison.OrdinalIgnoreCase);
+    // A Windows venv python.exe may be a redirector that launches the real
+    // interpreter. Track only the known checker's live Python descendants.
+    internal sealed class CheckerLineage
+    {
+        readonly Dictionary<int, (long Tick, int Depth)> interpreters = new();
+        bool rootEnded;
+        internal int Root { get; set; }
+        internal int PythonStarts { get; private set; }
+
+        internal int ParentDepth(int parent, long tick)
+        {
+            if (Root > 0 && parent == Root && !rootEnded) return 0;
+            return interpreters.TryGetValue(parent, out var value) && value.Tick <= tick ? value.Depth : -1;
+        }
+
+        internal int Start(int process, int parent, long tick, string image)
+        {
+            int depth = ParentDepth(parent, tick);
+            if (depth < 0 || depth >= 4) return -1;
+            string basename = Path.GetFileName(image.Replace('\\', '/'));
+            if (string.Equals(basename, "python.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                interpreters[process] = (tick, depth + 1);
+                PythonStarts++;
+            }
+            return string.Equals(basename, "InvoiceHub.exe", StringComparison.OrdinalIgnoreCase) ? depth + 1 : -1;
+        }
+
+        internal void End(int process, long tick)
+        {
+            if (process == Root) rootEnded = true;
+            if (interpreters.TryGetValue(process, out var value) && value.Tick <= tick)
+                interpreters.Remove(process);
+        }
+    }
 
     static bool StopOwnedSession(string name)
     {
@@ -62,6 +94,16 @@ internal static class Program
     {
         if (args.Length == 1 && args[0] == "--self-test")
             return Timeline.SelfTest();
+        if (args.Length == 1 && args[0] == "--trace-fixture")
+        {
+            // A non-GUI infrastructure fixture. No Qt, probe metrics or
+            // production program is launched.
+            var pages = new byte[2 * 1024 * 1024];
+            for (int i = 0; i < pages.Length; i += 4096) pages[i] = 1;
+            Thread.Sleep(1100);
+            GC.KeepAlive(pages);
+            return 0;
+        }
         if (args.Length != 2 || !Regex.IsMatch(args[0], "^InvoiceHubStartup-[a-f0-9]{32}$"))
             return 2;
         string name = args[0], directory = Path.GetFullPath(args[1]);
@@ -69,6 +111,7 @@ internal static class Program
         string checker = Path.Combine(directory, "checker.pid");
         string result = Path.Combine(directory, "result.json");
         var timeline = new Timeline();
+        var lineage = new CheckerLineage();
         TraceEventSession? session = null;
         bool owned = false, drained = false, cleanup = false;
         int? lost = null;
@@ -94,17 +137,23 @@ internal static class Program
                 switches | hard, switches | hard);
             var source = session.Source;
             var kernel = new KernelTraceEventParser(source, KernelTraceEventParser.ParserTrackingOptions.ThreadToProcess);
-            int parent = 0;
             kernel.ProcessStart += data =>
             {
-                if (parent == 0 && File.Exists(checker))
-                    int.TryParse(File.ReadAllText(checker), NumberStyles.None, CultureInfo.InvariantCulture, out parent);
-                if (parent > 0 && data.ParentID == parent &&
-                    MatchesChild(parent, data.ParentID, data.KernelImageFileName))
+                if (lineage.Root == 0 && File.Exists(checker) &&
+                    int.TryParse(File.ReadAllText(checker), NumberStyles.None, CultureInfo.InvariantCulture, out int parent))
+                    lineage.Root = parent;
+                if (lineage.ParentDepth(data.ParentID, data.TimeStampQPC) < 0)
+                    return;
+                int depth = lineage.Start(data.ProcessID, data.ParentID, data.TimeStampQPC, data.KernelImageFileName);
+                if (depth > 0)
                     timeline.Start(data.ProcessID, data.TimeStampQPC,
-                        new DateTimeOffset(data.TimeStamp.ToUniversalTime()).ToUnixTimeMilliseconds());
+                        new DateTimeOffset(data.TimeStamp.ToUniversalTime()).ToUnixTimeMilliseconds(), depth);
             };
-            kernel.ProcessStop += data => timeline.End(data.ProcessID, data.TimeStampQPC);
+            kernel.ProcessStop += data =>
+            {
+                timeline.End(data.ProcessID, data.TimeStampQPC);
+                lineage.End(data.ProcessID, data.TimeStampQPC);
+            };
             kernel.ThreadStart += data => timeline.ThreadStart(data.ProcessID, data.ThreadID, data.TimeStampQPC);
             kernel.ThreadStop += data => timeline.ThreadEnd(data.ProcessID, data.ThreadID, data.TimeStampQPC);
             kernel.ImageLoad += data =>
@@ -192,6 +241,8 @@ internal static class Program
         {
             using var observation = JsonDocument.Parse(File.ReadAllText(stop));
             var report = timeline.Report(observation.RootElement, lost, cleanup);
+            report["checker_lineage"] = new { root_marker_seen = lineage.Root > 0,
+                python_descendant_starts = lineage.PythonStarts };
             WriteJson(result, report);
             return (string)report["status"]! == "unavailable" ? 1 : 0;
         }
@@ -217,7 +268,7 @@ internal sealed class Timeline
     readonly List<ImageEvent> images = new();
     readonly List<FaultEvent> faults = new();
     readonly Dictionary<(int, long), List<ulong[]>> stacks = new();
-    int pid, eventCount;
+    int pid, eventCount, targetDepth;
     long start, end, creationUtc;
     bool ambiguous, limited;
 
@@ -229,7 +280,7 @@ internal sealed class Timeline
         return false;
     }
 
-    internal void Start(int process, long tick, long creationUtcMs)
+    internal void Start(int process, long tick, long creationUtcMs, int depth)
     {
         if (pid != 0)
         {
@@ -239,6 +290,7 @@ internal sealed class Timeline
         pid = process;
         start = tick;
         creationUtc = creationUtcMs;
+        targetDepth = depth;
     }
 
     internal bool IsTarget(int process, long tick) =>
@@ -372,12 +424,21 @@ internal sealed class Timeline
 
     internal Dictionary<string, object?> Report(JsonElement control, int? lost, bool cleanup)
     {
-        if (ambiguous || pid <= 0 || end <= start || !control.TryGetProperty("gui_pid", out var verified) ||
-            verified.ValueKind != JsonValueKind.Number || verified.GetInt32() != pid ||
-            !control.TryGetProperty("gui_creation_unix_ms", out var creation) ||
-            creation.ValueKind != JsonValueKind.Number || Math.Abs(creation.GetDouble() - creationUtc) > 250)
+        bool nativePid = control.TryGetProperty("gui_pid", out var verified) && verified.ValueKind == JsonValueKind.Number;
+        bool pidMatches = nativePid && verified.GetInt32() == pid;
+        bool nativeCreation = control.TryGetProperty("gui_creation_unix_ms", out var creation) &&
+            creation.ValueKind == JsonValueKind.Number;
+        double? creationDelta = pidMatches && nativeCreation ? creation.GetDouble() - creationUtc : null;
+        bool nativeDepth = control.TryGetProperty("checker_lineage_depth", out var depth) && depth.ValueKind == JsonValueKind.Number;
+        bool depthMatches = nativeDepth && depth.GetInt32() == targetDepth;
+        var identity = new { matched_start = pid > 0, matched_stop = end > start, ambiguous,
+            native_pid_observed = nativePid, pid_matches = pidMatches, native_creation_observed = nativeCreation,
+            creation_delta_ms = creationDelta, creation_matches = creationDelta.HasValue && Math.Abs(creationDelta.Value) <= 250,
+            etw_depth = pid > 0 ? targetDepth : (int?)null, native_depth = nativeDepth ? depth.GetInt32() : (int?)null,
+            depth_matches = depthMatches };
+        if (ambiguous || pid <= 0 || end <= start || !pidMatches || !identity.creation_matches || !depthMatches)
             return new() { ["status"] = "unavailable", ["error"] = "ETW child and independently path-verified target did not match",
-                ["events_lost"] = lost, ["cleanup"] = cleanup };
+                ["identity_checks"] = identity, ["events_lost"] = lost, ["cleanup"] = cleanup };
 
         var marks = new SortedDictionary<string, long>();
         foreach (var mark in control.GetProperty("markers").EnumerateObject())
@@ -434,6 +495,7 @@ internal sealed class Timeline
         {
             ["status"] = complete ? "complete" : "partial",
             ["gui_pid"] = pid, ["target_lifetime_ms"] = Relative(end),
+            ["identity_checks"] = identity,
             ["creation_clock_delta_ms"] = Math.Round(creation.GetDouble() - creationUtc, 3),
             ["qpc_frequency"] = Stopwatch.Frequency, ["process_start_qpc_ms"] = Program.Milliseconds(start),
             ["cutoff_ms"] = Relative(cutoff), ["cutoff_basis"] = paintObserved ? "observed_valid_probe_file_upper_bound" : "target_exit_or_last_observed_event",
@@ -464,7 +526,7 @@ internal sealed class Timeline
     {
         var t = new Timeline();
         long Ms(int value) => Program.FromMilliseconds(value);
-        t.Start(42, Ms(1), 12345);
+        t.Start(42, Ms(1), 12345, 2);
         t.ThreadStart(42, 7, Ms(2));
         t.Image(Ms(3), 0x1000, 0x1000, "Qt6Gui.dll", false);
         t.Switch(7, Ms(5), "in");
@@ -476,13 +538,13 @@ internal sealed class Timeline
         t.Switch(7, Ms(80), "out", "Waiting", "Executive");
         t.ThreadEnd(42, 7, Ms(90));
         t.End(42, Ms(95));
-        using var control = JsonDocument.Parse("""{"gui_pid":42,"gui_creation_unix_ms":12345,"markers":{},"ui_threads":[7]}""");
+        using var control = JsonDocument.Parse("""{"gui_pid":42,"gui_creation_unix_ms":12345,"checker_lineage_depth":2,"markers":{},"ui_threads":[7]}""");
         string output = JsonSerializer.Serialize(t.Report(control.RootElement, 0, true));
         using var recorded = JsonDocument.Parse(output);
         var first = recorded.RootElement.GetProperty("threads")[0].GetProperty("longest_off_cpu")[0];
         string coveredJson = JsonSerializer.Serialize(new
         {
-            gui_pid = 42, gui_creation_unix_ms = 12345, ui_threads = new[] { 7 },
+            gui_pid = 42, gui_creation_unix_ms = 12345, checker_lineage_depth = 2, ui_threads = new[] { 7 },
             markers = new Dictionary<string, object> {
                 ["splash-like_seen"] = new { qpc_ms = 8 },
                 ["splash-like_visible"] = new { qpc_ms = 60 },
@@ -492,14 +554,22 @@ internal sealed class Timeline
         });
         using var covered = JsonDocument.Parse(coveredJson);
         using var wrong = JsonDocument.Parse("""{"gui_pid":43,"markers":{},"ui_threads":[7]}""");
+        var lineage = new Program.CheckerLineage { Root = 11 };
+        if (lineage.Start(20, 100, Ms(1), "python.exe") >= 0 ||
+            lineage.ParentDepth(20, Ms(2)) >= 0 ||
+            lineage.Start(12, 11, Ms(2), @"C:\Python\python.exe") >= 0 ||
+            lineage.Start(42, 12, Ms(3), "InvoiceHub.exe") != 2)
+            return 1;
+        lineage.End(12, Ms(4));
+        if (lineage.Start(43, 12, Ms(5), "InvoiceHub.exe") >= 0)
+            return 1;
         if (recorded.RootElement.GetProperty("status").GetString() != "partial" ||
             (string?)t.Report(covered.RootElement, 0, true)["status"] != "complete" ||
             (string?)t.Report(covered.RootElement, 3, true)["status"] != "partial" ||
             first.GetProperty("module_stacks")[0][0].GetString() != "Qt6Gui.dll+0x10" ||
             first.GetProperty("ready_delay_ms").GetDouble() != 10 || output.Contains("ffff000", StringComparison.OrdinalIgnoreCase) ||
             (string?)t.Report(wrong.RootElement, 0, true)["status"] != "unavailable" ||
-            !Program.MatchesChild(12, 12, @"C:\synthetic\InvoiceHub.exe") ||
-            Program.MatchesChild(12, 13, "InvoiceHub.exe"))
+            lineage.Start(44, 11, Ms(6), @"C:\synthetic\InvoiceHub.exe") != 1)
             return 1;
         Console.WriteLine("ETW timeline synthetic controls passed (no native ETW started).");
         return 0;
