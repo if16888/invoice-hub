@@ -4,12 +4,15 @@ import argparse
 from contextlib import contextmanager
 from pathlib import Path
 import json
+import os
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from scripts.dev import windows_startup_ab as ab
+from scripts.dev import windows_startup_observer as observer
 
 
 class StartupABDiagnosticTests(unittest.TestCase):
@@ -133,6 +136,109 @@ class StartupABDiagnosticTests(unittest.TestCase):
                     self.assertEqual(record["installed_exe_sha256"], build.exe_hash)
                 self.assertTrue(record["uninstall_verified"])
             self.assertEqual(calls, ["installed-01-A/install", "installed-01-A/version-probe", "installed-01-A/uninstall"])
+
+    def test_native_liveness_uses_wait_not_undefined_active_exit_filetime(self):
+        api = observer.WindowsApi.__new__(observer.WindowsApi)
+        api.process_io = lambda *_: False
+        api.process_memory = lambda *_: False
+
+        def process_times(_handle, _creation, exit_time, _kernel, _user):
+            exit_time._obj.dwLowDateTime = 123456  # arbitrary undefined live-process exit bytes
+            return True
+
+        api.process_times = process_times
+        for status, expected in ((0, True), (258, False), (0xFFFFFFFF, None)):
+            with self.subTest(status=status):
+                api.wait = lambda _handle, _timeout: status
+                result = api.counters(100)
+                self.assertIs(result["exited"], expected)
+                self.assertEqual(result["wait_status"], status)
+
+    def test_observer_failure_keeps_single_official_checker_invocation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "launches.txt"
+            script = "from pathlib import Path; import sys; p=Path(sys.argv[1]); p.open('a').write('one launch'); sys.exit(1)"
+            with patch.object(observer, "WindowsApi", side_effect=OSError("Synthetic unavailable counters")):
+                code, summary = observer.run_observed_checker([sys.executable, "-c", script, marker], cwd=root,
+                    env=ab.child_environment(), log=root / "checker.log", exe=root / "InvoiceHub.exe",
+                    trace_path=root / "trace.json", timeout=5)
+            self.assertEqual(code, 1)
+            self.assertEqual(marker.read_text(), "one launch")
+            self.assertIn("Synthetic unavailable counters", summary["observer_error"])
+            self.assertEqual(summary["sample_count"], 0)
+            self.assertEqual(json.loads((root / "trace.json").read_text())["checker_exit"], 1)
+
+    def test_observer_records_window_events_and_scoped_counter_summary(self):
+        class FakeApi:
+            def __init__(self):
+                self.polls = 0
+
+            def processes(self):
+                self.polls += 1
+                return [{"pid": 42, "threads": 3}]
+
+            def open_exact_child(self, *_args):
+                return 42, 100
+
+            def counters(self, _handle):
+                return {"exited": False, "kernel_cpu_ms": self.polls, "user_cpu_ms": self.polls * 2,
+                        "read_ops": self.polls, "read_bytes": self.polls * 10, "page_faults": self.polls * 3}
+
+            def windows(self, _pid):
+                return [{"role": "splash-like" if self.polls < 3 else "main-like", "visible": True}]
+
+            def modules(self, _pid):
+                return {"module_count": 3, "notable_basenames": ["Qt6Gui.dll"]}
+
+            def close(self, _handle):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(observer, "WindowsApi", FakeApi), patch.object(observer, "POLL_SECONDS", 0.01):
+                code, summary = observer.run_observed_checker([sys.executable, "-c", "import time; time.sleep(.17)"],
+                    cwd=root, env=ab.child_environment(), log=root / "checker.log", exe=root / "InvoiceHub.exe",
+                    trace_path=root / "trace.json", timeout=5)
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["gui_pid"], 42)
+            self.assertIn("splash-like_visible", summary["events"])
+            self.assertIn("main-like_visible", summary["events"])
+            self.assertIn("read_bytes", summary["events"]["main-like_visible"])
+            self.assertIn("main-like_visible", summary["module_snapshots"])
+            self.assertTrue(summary["second_marks"])
+            self.assertEqual(summary["available_samples"]["page_faults"], summary["sample_count"])
+
+    def test_baseline_first_plan_builds_only_b_and_observes_both_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output"
+            calls = []
+            build = ab.Build("B", ab.BASELINE, Path("unused"), "hash", Path("unused"), Path(sys.executable))
+
+            def collect(obj, mode, ordinal, _work, _evidence, **kwargs):
+                calls.append((obj.label, mode, ordinal, kwargs))
+                return {"mode": mode, "label": obj.label, "gate_pass": False, "metrics": None,
+                        "fresh_inno_install": False}
+
+            # Mock only the platform gate and expensive boundary operations;
+            # pathlib still uses the real local filesystem. No Windows claim.
+            fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
+            with patch.object(ab, "os", fake_os), patch.object(ab.platform, "machine", return_value="AMD64"), \
+                    patch.object(ab, "build_source", return_value=build) as build_source, \
+                    patch.object(ab, "collect_sample", side_effect=collect), \
+                    patch.object(ab, "record_system_state") as state, \
+                    patch.object(ab, "build_installer") as installer, \
+                    patch.object(ab, "native_qt_samples", return_value=True) as native:
+                code = ab.main(["--output-dir", str(output), "--baseline-first", "--native-qt"])
+            self.assertEqual(code, 1)  # simulated gate misses remain failures
+            build_source.assert_called_once()
+            self.assertEqual(build_source.call_args.args[:2], ("B", ab.BASELINE))
+            self.assertEqual(calls, [("B", "portable", 1, {"fresh_install": False, "observe_native": True}),
+                                     ("B", "portable", 2, {"fresh_install": False, "observe_native": True})])
+            self.assertEqual([call.args[1] for call in state.call_args_list], ["before-first", "after-first"])
+            installer.assert_not_called()
+            native.assert_called_once()
+            self.assertEqual(set(native.call_args.args[0]), {"B"})
 
 
 if __name__ == "__main__":

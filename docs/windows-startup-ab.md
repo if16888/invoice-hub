@@ -2,6 +2,17 @@
 
 本诊断仅比较同一台原生 Windows x64 主机上的启动阶段，不发布安装包、不改变现有发布工作流和阈值。A 为 `ca358f9f62e4d8912a72f64f4600de52d9746acb`，B 为曾通过安装启动门禁的 `b30a42eef585624a7d30cb792dce46f5f0548262`。
 
+## 反转首次位置的短诊断
+
+```powershell
+# 新 runner：只构建历史 B，连续两次完整桌面启动均使用相同只读旁观
+python scripts/dev/windows_startup_ab.py --output-dir "$env:TEMP\ih-ab-b-first" --baseline-first --native-qt
+```
+
+此次只构建 B 的 onedir（不重新安装 Inno，也不构建 A）。两次均使用官方 5000 ms 门槛和独立合成运行目录。第一份样本是**该 runner 本次诊断首次 Invoice Hub 桌面进程/窗口**，其他系统窗口、构建阶段和文件缓存未必为空，不能声称冷启动系统。预估构建约 2–4 分钟，具体取决于依赖安装和机器；分支自动任务仅运行此短协议。
+
+两次采样均由 Qt 之外的旁观进程用 Win32 只读 API 以约 50 ms 间隔确认官方 checker 的目标 exe 子进程，记录累计 user/kernel CPU、I/O 读次数与字节、页错误、线程、可见窗口以及少数相关模块名。`*.native-trace.json` 仅含合成程序，事件附带观测时刻及当时计数器，日志摘要另保留每秒最后一条计数。进程创建时间与官方内部 launch stages 的起点并不相同，窗口可见也不是 Qt Paint/物理呈现证明；非空探针临时文件可能是失败或部分写入，不能替代最终 checker 证据。CPU 为进程总计，I/O 是逻辑进程 I/O 而非物理磁盘读，页错误包含软/硬错误。目标进程过短、权限或采样间隙可能造成缺项；可用计数、最大采样间隙、旁观工作时间和错误均明确记录。旁观缺失不改变官方 checker 的退出码/门槛。首样本前后另外只读查询 FontCache 服务状态/启动类型、当前系统功耗方案 GUID 和会话类型；不清缓存、启停服务或改变系统防护，不采集/上传全系统 ETL。可选 `--native-qt` 在两个冻结样本之后对 B 的锁环境运行三项源窗口对照。
+
 ## 一键运行
 
 需要 Windows x64、64 位 Python 3.11 和完整 Git 历史。构建时需要能按两版锁文件安装依赖，实装另需 Inno Setup 6。请使用尚不存在的短路径作为输出目录。
@@ -35,4 +46,4 @@ python scripts/dev/windows_startup_ab.py --output-dir "$env:TEMP\ih-ab-offline" 
 - `--native-qt` 仅在全部正式冻结样本之后运行，两版源码环境各三个新进程：直接生产闪屏、先空窗口再生产闪屏、先 Segoe UI 中英文普通标签再生产闪屏。前置窗口沿用生产闪屏的窗口类型和透明属性，只改变其内容；记录各阶段 wall/CPU 时间、Qt 版本及屏幕尺寸/DPR。这是 `PERF_AB_QT` 辅助对照，不计入正式首次 Paint 门槛。
 - `<输出目录>/work/` 保存两套 Git archive 解包源目录、各自 venv/完整构建和安装日志。诊断工作流只上传小型 `evidence/`，保留三天，不上传程序、venv 或运行数据库。
 
-诊断工作流仅在 `diagnostics/windows-startup-ab-ca358f9` 分支 push 时运行，单台 `windows-latest`，无发布权限；本地也可直接运行相同入口。在 Windows 实测之前，Linux 只能验证脚本语法、调度与证据处理逻辑，不能据此宣称 Windows 性能通过。
+诊断工作流仅在 `diagnostics/windows-startup-ab-ca358f9` 分支 push 时运行，单台 `windows-latest`，无发布权限；现阶段自动执行 `--baseline-first --native-qt` 短协议，原双版 A/B 和实装接口仍可本地使用。在 Windows 实测之前，Linux 只能验证脚本语法、调度与证据处理逻辑，不能据此宣称 Windows 性能通过。

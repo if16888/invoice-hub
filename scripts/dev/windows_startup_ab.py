@@ -330,9 +330,21 @@ def installed_executable(build: Build, sample_root: Path, record: dict):
 def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: dict) -> None:
     env = sample_environment(sample_root / "runtime")
     log = evidence / f"{record['sample']}.log"
-    record["checker_exit"] = run_logged([build.python, build.checker, exe, "--threshold", str(record["threshold_ms"]),
-                                        "--output-json"], cwd=sample_root, env=env, log=log, timeout=75,
-                                       stage=record["sample"], check=False)
+    command = [build.python, build.checker, exe, "--threshold", str(record["threshold_ms"]), "--output-json"]
+    observer = None
+    if record.get("native_observation_requested"):
+        try:
+            observer = observer_module()
+        except Exception as exc:
+            record["native_observer"] = {"observer_error": f"Could not import observer: {type(exc).__name__}"}
+    if observer is not None:
+        print(f"PERF_AB_STEP {record['sample']} started with read-only native observation", flush=True)
+        record["checker_exit"], record["native_observer"] = observer.run_observed_checker(
+            command, cwd=sample_root, env=env, log=log, exe=exe,
+            trace_path=evidence / f"{record['sample']}.native-trace.json")
+    else:
+        record["checker_exit"] = run_logged(command, cwd=sample_root, env=env, log=log, timeout=75,
+                                           stage=record["sample"], check=False)
     raw = list((sample_root / "bench-local/results").glob("startup_metrics_*.json"))
     if len(raw) == 1:
         target = evidence / f"{record['sample']}.metrics.json"
@@ -350,7 +362,7 @@ def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: 
 
 
 def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: Path,
-                   *, fresh_install: bool) -> dict:
+                   *, fresh_install: bool, observe_native: bool = False) -> dict:
     sample = f"{mode}-{ordinal:02d}-{build.label}"
     root = work / "samples" / sample
     root.mkdir(parents=True)
@@ -359,6 +371,8 @@ def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: 
               "claimed_source_sha": build.source_sha if not build.source else None, "exe_sha256": build.exe_hash,
               "threshold_ms": THRESHOLDS[mode], "fresh_inno_install": fresh_install,
               "started_utc": utc_now(), "checker_exit": None, "gate_pass": False, "metrics": None}
+    if observe_native:
+        record["native_observation_requested"] = True
     try:
         if fresh_install:
             with installed_executable(build, root, record) as exe:
@@ -411,6 +425,8 @@ def native_qt_samples(builds: dict[str, Build], work: Path, evidence: Path) -> b
     helper = Path(__file__).with_name("windows_startup_qt_probe.py")
     for variant, order in (("plain", "AB"), ("label", "BA"), ("production-splash", "AB")):
         for label in order:
+            if label not in builds:
+                continue
             build = builds[label]
             root = work / "native-qt" / f"{variant}-{label}"
             root.mkdir(parents=True)
@@ -425,6 +441,27 @@ def native_qt_samples(builds: dict[str, Build], work: Path, evidence: Path) -> b
     return successful
 
 
+def observer_module():
+    if __package__:
+        from . import windows_startup_observer
+    else:
+        import windows_startup_observer
+    return windows_startup_observer
+
+
+def record_system_state(evidence: Path, phase: str) -> None:
+    try:
+        state = observer_module().system_state()
+    except Exception as exc:
+        state = {"unavailable": type(exc).__name__}
+    payload = {"phase": phase, "utc": utc_now(), **state}
+    print("PERF_AB_SYSTEM_STATE " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+    try:
+        write_json(evidence / f"system-{phase}.json", payload)
+    except OSError as exc:
+        print(f"PERF_AB_OBSERVER_STATE_ERROR {phase} {type(exc).__name__}", flush=True)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True, help="New directory for builds, raw logs and evidence")
@@ -437,6 +474,7 @@ def main(argv=None) -> int:
     parser.add_argument("--candidate-exe", type=Path, help="Offline comparison: trusted existing A executable")
     parser.add_argument("--baseline-exe", type=Path, help="Offline comparison: trusted existing B executable")
     parser.add_argument("--native-qt", action="store_true", help="After frozen samples, run diagnostic-only native Qt window variants")
+    parser.add_argument("--baseline-first", action="store_true", help="Build only historical B; observe two consecutive native startup samples")
     args = parser.parse_args(argv)
     if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"} or sys.maxsize <= 2**32:
         parser.error("This diagnostic requires native Windows x64 and 64-bit Python")
@@ -449,6 +487,8 @@ def main(argv=None) -> int:
         parser.error("Provide both existing executables for offline comparison")
     if provided and (args.mode == "both" or args.native_qt or args.disposable_runner):
         parser.error("Provided executables support one declared mode, without installing or source Qt probes")
+    if args.baseline_first and (provided or args.mode != "portable" or args.disposable_runner):
+        parser.error("--baseline-first uses only a freshly built baseline portable package, without installation")
     real_install = not provided and args.mode in {"installed", "both"}
     if real_install and not args.disposable_runner:
         parser.error("Real Inno samples require --disposable-runner on a clean disposable Windows host")
@@ -459,14 +499,16 @@ def main(argv=None) -> int:
     work.mkdir(parents=True)
     evidence.mkdir()
     modes = ("portable", "installed") if args.mode == "both" else (args.mode,)
+    order = "BB" if args.baseline_first else args.order
     records = []
-    expected = len(args.order) * len(modes)
+    expected = len(order) * len(modes)
     error = None
     qt_ok = not args.native_qt
     write_json(evidence / "host.json", {"started_utc": utc_now(), "platform": platform.platform(),
                "machine": platform.machine(), "python": sys.version, "logical_cpus": os.cpu_count(),
                "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_ENVIRONMENT", "ImageOS", "ImageVersion")},
-               "native_qt_platform": "windows", "order": args.order, "modes": modes, "thresholds_ms": THRESHOLDS,
+               "native_qt_platform": "windows", "order": order, "modes": modes, "thresholds_ms": THRESHOLDS,
+               "diagnostic_protocol": "baseline-first" if args.baseline_first else "balanced-ab",
                "candidate_sha": args.candidate_sha, "baseline_sha": args.baseline_sha,
                "provided_executables": provided, "fresh_inno_install": real_install,
                "runtime_policy": "fresh empty database/config defaults, synthetic workbench migration marker, null keyring",
@@ -479,6 +521,9 @@ def main(argv=None) -> int:
         if provided:
             builds = {"A": provided_build("A", args.candidate_sha, args.candidate_exe, evidence),
                       "B": provided_build("B", args.baseline_sha, args.baseline_exe, evidence)}
+        elif args.baseline_first:
+            builds = {"B": build_source("B", args.baseline_sha.lower(), work, evidence)}
+            record_system_state(evidence, "before-first")
         else:
             builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in
                       (("A", args.candidate_sha), ("B", args.baseline_sha))}
@@ -486,10 +531,13 @@ def main(argv=None) -> int:
             if mode == "installed" and real_install:
                 for build in builds.values():
                     build_installer(build, iscc, work, evidence)
-            for ordinal, label in enumerate(args.order, 1):
+            for ordinal, label in enumerate(order, 1):
+                observe_native = args.baseline_first
                 record = collect_sample(builds[label], mode, ordinal, work, evidence,
-                                        fresh_install=real_install and mode == "installed")
+                                        fresh_install=real_install and mode == "installed", observe_native=observe_native)
                 records.append(record)
+                if observe_native and ordinal == 1:
+                    record_system_state(evidence, "after-first")
                 if record.get("error") and record["fresh_inno_install"]:
                     raise DiagnosticError("Installed sample infrastructure/cleanup failure; stop further installs")
         if args.native_qt:
