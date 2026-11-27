@@ -1,4 +1,4 @@
-name: Windows Startup Mapped-file ETW Diagnostic
+name: Windows Startup Font Backend Diagnostic
 
 on:
   push:
@@ -10,11 +10,17 @@ permissions:
 
 jobs:
   diagnose:
+    name: Font backend ${{ matrix.order }}
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        order: [DDGG, GGDD]
     env:
       PYTHONIOENCODING: utf-8
       OPTIMIZED_SHA: 8cfe7b9f5b630323d7e46a8134432165c6741010
+      FONT_ENGINE_ORDER: ${{ matrix.order }}
     steps:
       - name: Checkout exact source history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -53,18 +59,18 @@ jobs:
           python scripts/dev/windows_startup_etw_fixture.py --output-dir "$output" --collector "$env:ETW_COLLECTOR" --fixture "$env:ETW_FIXTURE" --mapped-files
           exit $LASTEXITCODE
 
-      - name: Trace exact master twice and query only its live mapped-file metadata
+      - name: Compare the same exact package under the default and GDI font options
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP "ih-ab-$env:GITHUB_RUN_ATTEMPT"
-          python scripts/dev/windows_startup_ab.py --output-dir "$output" --optimized-sha "$env:OPTIMIZED_SHA" --etw-collector "$env:ETW_COLLECTOR" --mapped-file-focus
+          python scripts/dev/windows_startup_ab.py --output-dir "$output" --optimized-sha "$env:OPTIMIZED_SHA" --etw-collector "$env:ETW_COLLECTOR" --font-engine-order "$env:FONT_ENGINE_ORDER"
           exit $LASTEXITCODE
 
       - name: Upload compact diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: windows-startup-ab-${{ github.run_id }}-${{ github.run_attempt }}
+          name: windows-startup-font-${{ matrix.order }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/ih-ab-${{ github.run_attempt }}/evidence
             ${{ runner.temp }}/ih-fixture-${{ github.run_attempt }}/evidence

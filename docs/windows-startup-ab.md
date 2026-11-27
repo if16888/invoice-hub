@@ -46,7 +46,7 @@ python scripts/dev/windows_startup_ab.py --output-dir "$env:TEMP\ih-ab-offline" 
 - `--native-qt` 仅在全部正式冻结样本之后运行，两版源码环境各三个新进程：直接生产闪屏、先空窗口再生产闪屏、先 Segoe UI 中英文普通标签再生产闪屏。前置窗口沿用生产闪屏的窗口类型和透明属性，只改变其内容；记录各阶段 wall/CPU 时间、Qt 版本及屏幕尺寸/DPR。这是 `PERF_AB_QT` 辅助对照，不计入正式首次 Paint 门槛。
 - `<输出目录>/work/` 保存 Git archive 解包源目录、各自 venv/完整构建和安装日志。诊断工作流只上传小型 `evidence/`。早期双版本和历史优先运行的附件保留三天。
 
-诊断工作流仅在 `diagnostics/windows-startup-ab-ca358f9` 分支 push 时运行，单台 `windows-latest`，无发布权限。原双版 A/B、历史优先和实装接口仍可本地使用。
+诊断工作流仅在 `diagnostics/windows-startup-ab-ca358f9` 分支 push 时运行，每个作业使用独立标准 `windows-latest`，无发布权限。原双版 A/B、历史优先和实装接口仍可本地使用。
 
 ## 三版本首启 ETW 测量
 
@@ -98,3 +98,19 @@ python scripts/dev/windows_startup_ab.py --output-dir "$env:TEMP\ih-mapped-etw" 
 标准 Windows runner 首先运行同进程的合成映射 Win32 自检，再执行独立非 GUI venv 目标夹具，验证真实身份、调度和映射查询前提。通过后，只构建一次当前精确 master 的便携包，在同一台机器上连续 F F 两次。其余历史版本、真实安装对照和完整发行审计均复用已保留证据。
 
 实时消费者只在 ETW 目标生存期内、独立 Win32 完整 EXE 路径与 PID/创建时间/进程链深度均匹配后，以查询权限持有同一进程句柄，通过 GetMappedFileNameW 观察该进程地址的映射文件名。仅保留属于精确程序包目录、Windows Fonts 或 System32 的基名；其他映射只保留类别。私有握手文件不写入证据。每个目标缺页均记录查询时状态、事件到查询的延迟和有限查询预算，原始缺页及调度序列保持独立。输出不包含完整路径、裸地址或内存内容，也没有增加全局文件名 ETW provider。映射查询所得文件代表查询时状态，延迟或地址复用可能影响历史归因。检查查询和事件是否均在实际观察到的 UI 窗口区间，并结合缺页等待交集判断。[Microsoft GetMappedFileNameW 文档](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmappedfilenamew)
+
+### 同包字体后端单因素对照
+
+在两台独立标准 Windows runner 上分别按 `DDGG` 和 `GGDD` 顺序，各从精确提交 `8cfe7b9f5b630323d7e46a8134432165c6741010` 和原锁文件构建一次 F。D 使用 `QT_QPA_PLATFORM=windows`，G 使用 `QT_QPA_PLATFORM=windows:fontengine=gdi`。Qt 6.8 起默认 Windows 字体后端为 DirectWrite；GDI 选项选择传统字体数据库，个别字体仍可能使用 DirectWrite。见 [Qt 6.8 变更说明](https://doc.qt.io/qt-6/whatsnew68.html#windows) 和 [锁定 Qt 6.11.1 的 Windows 插件实现](https://github.com/qt/qtbase/blob/v6.11.1/src/plugins/platforms/windows/qwindowsintegration.cpp)。本实验不改产品源码、打包内容或发布门槛，也不安装/修改系统字体，不清缓存。
+
+```powershell
+# 按上一节先构建、自检 ETW 消费者，并通过非 GUI 目标身份夹具，再运行其中一个顺序。
+python scripts/dev/windows_startup_ab.py --output-dir "$env:TEMP\ih-font-ddgg" --optimized-sha 8cfe7b9f5b630323d7e46a8134432165c6741010 --etw-collector (Join-Path $collector 'StartupEtw.dll') --font-engine-order DDGG
+# 独立 runner 使用 GGDD 和不同的输出目录。
+```
+
+每个样本仍由官方 checker 实测完整审核窗口首 Paint，保持 5000 ms 门槛，使用独立合成运行目录和相同的目标级 ETW/映射观察器。样本按 `portable-01-D` / `portable-01-G` 等命名，`label` 仍为 F；`font_backend`、`font_engine`、`qt_qpa_platform` 表示传入的实际选项，不冒充每个字形的内部引擎实测。`host.json`/`PERF_AB_HOST` 保存顺序和 runner image；样本另保存该后端的首次或重复位置、独立运行子目录、原始 EXE 哈希。所有正式样本后才读取整个 onedir 生成 `package-F.json`/`PERF_AB_PACKAGE` 的目录内容哈希并复核 EXE，避免为哈希预热文件。该哈希是同一构建在测试后的指纹，不是逐个样本前重新读取整个包的指纹。
+
+四次实际 checker 判定与 `font_evidence_complete` 分列。后者逐样本检查完整 ETW、零丢失、进程身份及映射身份、字体目录解析、原始调度/缺页与日志传输 SHA，并核验各后端首次样本的同 TID 闪屏边界。零硬缺页是合法结果。某个时间门禁失败不跳过后续样本，也不能把缺失的 ETW 数据计作诊断成功。`PERF_AB_ETW_RAW` 仍保留目标级压缩 JSON，未启用新的 provider。
+
+四次计时完成后，锁定源码环境以每个 QPA 选项独立运行一次中文简繁体及金额字符塑形和真实标准中文消息框的 Paint、默认按钮与 Esc 烟测（`PERF_AB_FONT_QT`、`font-qt-D/G.json`）。该辅助证据仅确认原生 QPA 平台、选项、实际 glyph runs/非缺字及对话框行为；不会计入正式首帧门禁，不能证明每个 glyph 使用纯 GDI 或覆盖物理 DPI/显示器组合。在两台 runner 上分别区分首次位置与已暖位置，不能直接把第二后端首次进程等同于整台机器冷启动。

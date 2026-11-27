@@ -119,6 +119,171 @@ class StartupABDiagnosticTests(unittest.TestCase):
             self.assertTrue(all(c[3]["mapped_files"] and c[3]["observe_native"] for c in calls))
             installer.assert_not_called()
 
+    def test_font_backend_orders_share_one_f_package_and_finish_timing_before_smoke(self):
+        for order in ("DDGG", "GGDD"):
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                collector = root / "StartupEtw.dll"
+                collector.touch()
+                optimized = "8cfe7b9f5b630323d7e46a8134432165c6741010"
+                calls = []
+                build = ab.Build("F", optimized, root / "InvoiceHub.exe", "synthetic", root / "checker.py",
+                                 Path(sys.executable), source=root)
+
+                def sample(obj, mode, ordinal, _work, sample_evidence, **kwargs):
+                    calls.append((obj, mode, ordinal, kwargs))
+                    record = self.complete_font_record(sample_evidence, ordinal, kwargs["font_backend"],
+                                                       kwargs["backend_sample_index"])
+                    if order == "DDGG" and ordinal == 1:
+                        record.update(gate_pass=False, checker_exit=1)
+                    if order == "GGDD" and ordinal == 3:
+                        record["etw"]["status"] = "partial"
+                    return record
+
+                def fingerprint(obj, _evidence):
+                    self.assertIs(obj, build)
+                    self.assertEqual(len(calls), 4)
+                    return {"exe_unchanged": True, "package_sha256": "synthetic-package"}
+
+                def smoke(obj, requested_order, *_):
+                    self.assertIs(obj, build)
+                    self.assertEqual(requested_order, order)
+                    self.assertEqual(len(calls), 4)
+                    return True
+
+                fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
+                fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
+                                           version="3.11 (simulated)", executable=sys.executable, stderr=sys.stderr)
+                with patch.object(ab, "os", fake_os), patch.object(ab, "sys", fake_sys), \
+                        patch.object(ab.platform, "machine", return_value="AMD64"), \
+                        patch.object(ab, "build_source", return_value=build) as builder, \
+                        patch.object(ab, "collect_sample", side_effect=sample), \
+                        patch.object(ab, "package_fingerprint", side_effect=fingerprint) as hashed, \
+                        patch.object(ab, "font_qt_samples", side_effect=smoke) as smoked, \
+                        patch.object(ab, "record_system_state"), patch.object(ab, "build_installer") as installer:
+                    code = ab.main(["--output-dir", str(root / "out"), "--optimized-sha", optimized,
+                                    "--etw-collector", str(collector), "--font-engine-order", order])
+                # A threshold miss and incomplete ETW each independently
+                # make the job nonzero without skipping later samples.
+                self.assertEqual(code, 1)
+                builder.assert_called_once()
+                self.assertEqual(builder.call_args.args[:2], ("F", optimized))
+                self.assertTrue(all(c[0] is build and c[1] == "portable" for c in calls))
+                self.assertEqual("".join(c[3]["font_backend"] for c in calls), order)
+                self.assertEqual([c[3]["backend_sample_index"] for c in calls], [1, 2, 1, 2])
+                self.assertTrue(all(c[3]["mapped_files"] and c[3]["observe_native"] and
+                                    c[3]["etw_collector"] == collector and not c[3]["fresh_install"] for c in calls))
+                installer.assert_not_called()
+                hashed.assert_called_once()
+                smoked.assert_called_once()
+                evidence = root / "out/evidence"
+                host = json.loads((evidence / "host.json").read_text())
+                summary = json.loads((evidence / "summary.json").read_text())
+                self.assertEqual(host["order"], order)
+                self.assertEqual(host["font_backend_options"]["G"]["qt_qpa_platform"], "windows:fontengine=gdi")
+                self.assertEqual(set(summary["groups"]), {"portable-D", "portable-G"})
+                self.assertEqual(len(summary["mapped_file_samples"]), 4)
+                self.assertTrue(summary["font_qt_completed"])
+                self.assertEqual(summary["font_evidence_complete"], order == "DDGG")
+                self.assertEqual(summary["all_gates_passed"], order == "GGDD")
+
+    @staticmethod
+    def complete_font_record(evidence, ordinal=1, backend="D", occurrence=1):
+        sample = f"portable-{ordinal:02d}-{backend}"
+        raw = evidence / f"{sample}.etw.json"
+        ab.write_json(raw, {"raw_scheduler_points": [[42, 50, "out"], [42, 80, "in"]], "raw_mapped_faults": []})
+        return {"sample": sample, "index": ordinal, "mode": "portable", "label": "F", "font_backend": backend,
+                "backend_sample_index": occurrence, "gate_pass": True, "checker_exit": 0,
+                "metrics": {"TOTAL_STARTUP_MS": 1200}, "truth_errors": [], "fresh_inno_install": False,
+                "etw_requested": True, "native_observer": {"events": {
+                    "splash-like_seen": {"window_thread_id": 42, "qpc_ms": 50},
+                    "splash-like_visible": {"window_thread_id": 42, "qpc_ms": 80}}},
+                "etw": {"status": "complete", "cleanup": True, "events_lost": 0, "raw_scheduler_point_count": 2,
+                    "identity_checks": {"ambiguous": False, **dict.fromkeys(("matched_start", "matched_stop", "native_pid_observed",
+                        "pid_matches", "native_creation_observed", "creation_matches", "depth_matches"), True)},
+                    "mapped_target_marker_published": True, "hard_fault_count": 0, "raw_mapped_fault_count": 0,
+                    "mapped_file_lookup": {"coverage": {"verified": True, "fonts_root_resolved": True}, "retained_faults": 0},
+                    "coverage": {"splash_visibility_bounds": True}, "ui_threads": [{"thread_id": 42,
+                        "phases": {"splash-like_seen_to_splash-like_visible": {"start_ms": 50, "end_ms": 80,
+                            "off_cpu_ms": 20, "completed_running_ms": 10}}}],
+                    "artifact": raw.name, "raw_log_transport": {"included": True, "compressed_bytes": 90, "sha256": ab.sha256(raw)}}}
+
+    def test_font_completeness_allows_zero_faults_but_rejects_lost_identity_and_raw_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            record = self.complete_font_record(evidence)
+            self.assertTrue(ab.font_sample_completeness(record, evidence)["complete"])
+            record["etw"]["events_lost"] = 1
+            self.assertFalse(ab.font_sample_completeness(record, evidence)["checks"]["etw_complete"])
+            record = self.complete_font_record(evidence)
+            record["etw"]["mapped_file_lookup"]["coverage"]["verified"] = False
+            self.assertFalse(ab.font_sample_completeness(record, evidence)["complete"])
+            record = self.complete_font_record(evidence)
+            record["native_observer"]["events"]["splash-like_visible"]["window_thread_id"] = 99
+            self.assertFalse(ab.font_sample_completeness(record, evidence)["checks"]["first_backend_splash_bounds"])
+            record = self.complete_font_record(evidence)
+            (evidence / record["etw"]["artifact"]).write_text("corrupted")
+            self.assertFalse(ab.font_sample_completeness(record, evidence)["checks"]["raw_transport_verified"])
+
+    def test_font_backend_measures_original_checker_with_only_child_qpa_option_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            build = ab.Build("F", "8" * 40, root / "InvoiceHub.exe", "synthetic-hash",
+                             ab.REPO / "scripts/check_startup_time.py", Path(sys.executable), source=root)
+            calls = []
+
+            def fake_checker(cmd, *, cwd, env, log, exe, **_):
+                calls.append((cmd, cwd, env))
+                self.assertEqual(exe, build.exe)
+                self.assertEqual(cmd, [build.python, build.checker, build.exe, "--threshold", "5000", "--output-json"])
+                self.assertEqual(Path(env["INVOICE_HUB_RUNTIME_DIR"]), cwd / "runtime")
+                self.assertEqual(Path(env["TMP"]), cwd / "tmp")
+                self.assertIn("legacy_qsettings_v1=true", (cwd / "runtime/workbench.ini").read_text())
+                raw = cwd / "bench-local/results/startup_metrics_0.json"
+                raw.parent.mkdir(parents=True)
+                ab.write_json(raw, {"PROBE_CONTRACT": "main_window_first_paint_v1", "QT_PAINT_EVENT_COMPLETED": True,
+                    "PROCESS_RETURN_CODE": 0, "APP_INIT_MS": 126, "TOTAL_STARTUP_MS": 1200,
+                    "STARTUP_MS": 1200, "MAIN_WINDOW_SHOW_MS": 900, "FIRST_PAINT_MS": 1074})
+                log.write_text("synthetic checker", encoding="utf-8")
+                return 0, {}
+
+            with patch.dict(os.environ, {"QT_QPA_PLATFORM": "offscreen", "ImageVersion": "synthetic-image"}), \
+                    patch.object(ab, "observer_module", return_value=SimpleNamespace(run_observed_checker=fake_checker)):
+                records = [ab.collect_sample(build, "portable", i, root / "work", evidence, fresh_install=False,
+                            observe_native=True, font_backend=backend, backend_sample_index=1)
+                           for i, backend in enumerate("DG", 1)]
+                self.assertEqual(os.environ["QT_QPA_PLATFORM"], "offscreen")
+            self.assertEqual([r["sample"] for r in records], ["portable-01-D", "portable-02-G"])
+            self.assertEqual([r["font_engine"] for r in records], ["default", "gdi"])
+            self.assertEqual([c[2]["QT_QPA_PLATFORM"] for c in calls], ["windows", "windows:fontengine=gdi"])
+            self.assertNotEqual(calls[0][1], calls[1][1])
+            differing = {k for k in calls[0][2] if calls[0][2][k] != calls[1][2][k]}
+            self.assertEqual(differing, {"QT_QPA_PLATFORM", "INVOICE_HUB_RUNTIME_DIR", "TMP", "TEMP"})
+            self.assertTrue(all(r["gate_pass"] and r["label"] == "F" and r["runner"]["ImageVersion"] == "synthetic-image"
+                                and r["package_ref"] == "package-F.json" for r in records))
+
+    def test_package_fingerprint_includes_companion_files_and_checks_original_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package, evidence = root / "package", root / "evidence"
+            package.mkdir()
+            evidence.mkdir()
+            exe, dll = package / "InvoiceHub.exe", package / "Qt6Gui.dll"
+            exe.write_bytes(b"same exe")
+            dll.write_bytes(b"first Qt")
+            build = ab.Build("F", "8" * 40, exe, ab.sha256(exe), Path("unused"), Path(sys.executable))
+            first = ab.package_fingerprint(build, evidence)
+            self.assertEqual(first, ab.package_fingerprint(build, evidence))
+            self.assertEqual(first["file_count"], 2)
+            dll.write_bytes(b"other Qt")
+            second = ab.package_fingerprint(build, evidence)
+            self.assertNotEqual(first["package_sha256"], second["package_sha256"])
+            self.assertTrue(second["exe_unchanged"])
+            exe.write_bytes(b"changed exe")
+            self.assertFalse(ab.package_fingerprint(build, evidence)["exe_unchanged"])
+
     def test_live_mapping_marker_stays_private_and_is_not_used_by_old_protocol(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

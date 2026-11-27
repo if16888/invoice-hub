@@ -30,6 +30,7 @@ CANDIDATE = "ca358f9f62e4d8912a72f64f4600de52d9746acb"
 BASELINE = "b30a42eef585624a7d30cb792dce46f5f0548262"
 LOCKS = ("requirements.lock.txt", "requirements-desktop.lock.txt", "requirements-build.lock.txt")
 THRESHOLDS = {"portable": 5000, "installed": 2000}
+FONT_BACKENDS = {"D": ("default", "windows"), "G": ("gdi", "windows:fontengine=gdi")}
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{B4A5B8B8-0F83-4E8B-9A8D-3C4321609C5D}_is1"
 
 
@@ -44,6 +45,33 @@ def sha256(path: Path) -> str:
 
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def runner_identity() -> dict:
+    return {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_ENVIRONMENT", "ImageOS", "ImageVersion")}
+
+
+def package_fingerprint(build: Build, evidence: Path) -> dict:
+    """Hash the entire shared onedir AFTER timing, not to warm its files beforehand."""
+    root = build.exe.parent
+    digest = hashlib.sha256()
+    count = size = 0
+    for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
+        if not path.is_file():
+            continue
+        entry = [path.relative_to(root).as_posix(), path.stat().st_size, sha256(path)]
+        digest.update((json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
+        count += 1
+        size += entry[1]
+    exe_hash_after = sha256(build.exe)
+    record = {"build_label": build.label, "source_sha": build.source_sha, "exe_sha256": build.exe_hash,
+              "exe_sha256_after": exe_hash_after, "exe_unchanged": exe_hash_after == build.exe_hash,
+              "package_sha256": digest.hexdigest(), "file_count": count, "total_bytes": size,
+              "fingerprint_phase": "after-all-timed-samples",
+              "fingerprint_scheme": "sha256 of sorted UTF-8 JSONL [relative_posix_path,size,sha256]"}
+    write_json(evidence / f"package-{build.label}.json", record)
+    print("PERF_AB_PACKAGE " + json.dumps(record, separators=(",", ":")), flush=True)
+    return record
 
 
 def utc_now() -> str:
@@ -330,6 +358,9 @@ def installed_executable(build: Build, sample_root: Path, record: dict):
 def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: dict,
             *, etw_collector: Path | None = None, mapped_files: bool = False) -> None:
     env = sample_environment(sample_root / "runtime")
+    if record.get("font_backend"):
+        env["QT_QPA_PLATFORM"] = FONT_BACKENDS[record["font_backend"]][1]
+        record["qt_qpa_platform"] = env["QT_QPA_PLATFORM"]
     log = evidence / f"{record['sample']}.log"
     command = [build.python, build.checker, exe, "--threshold", str(record["threshold_ms"]), "--output-json"]
     observer = None
@@ -383,8 +414,9 @@ def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: 
 
 def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: Path,
                    *, fresh_install: bool, observe_native: bool = False,
-                   etw_collector: Path | None = None, mapped_files: bool = False) -> dict:
-    sample = f"{mode}-{ordinal:02d}-{build.label}"
+                   etw_collector: Path | None = None, mapped_files: bool = False,
+                   font_backend: str | None = None, backend_sample_index: int | None = None) -> dict:
+    sample = f"{mode}-{ordinal:02d}-{font_backend or build.label}"
     root = work / "samples" / sample
     root.mkdir(parents=True)
     record = {"sample": sample, "index": ordinal, "label": build.label, "mode": mode,
@@ -392,6 +424,13 @@ def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: 
               "claimed_source_sha": build.source_sha if not build.source else None, "exe_sha256": build.exe_hash,
               "threshold_ms": THRESHOLDS[mode], "fresh_inno_install": fresh_install,
               "started_utc": utc_now(), "checker_exit": None, "gate_pass": False, "metrics": None}
+    if font_backend is not None:
+        engine, platform_option = FONT_BACKENDS[font_backend]
+        record.update(font_backend=font_backend, font_engine=engine, qt_qpa_platform=platform_option,
+                      font_engine_evidence="documented-QPA-option-not-per-glyph-engine",
+                      backend_sample_index=backend_sample_index, first_on_runner=ordinal == 1,
+                      package_ref=f"package-{build.label}.json", runner=runner_identity(),
+                      runtime_subdir=f"work/samples/{sample}/runtime", temp_subdir=f"work/samples/{sample}/tmp")
     if observe_native:
         record["native_observation_requested"] = True
     if etw_collector is not None:
@@ -430,8 +469,8 @@ def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: 
 def summarize(records: list[dict], expected: int) -> dict:
     groups = {}
     for mode in THRESHOLDS:
-        for label in "ABF":
-            selected = [r for r in records if r["mode"] == mode and r["label"] == label]
+        for label in "ABFDG":
+            selected = [r for r in records if r["mode"] == mode and r.get("font_backend", r["label"]) == label]
             if not selected:
                 continue
             metrics = [r["metrics"] for r in selected if r.get("metrics") and not r.get("truth_errors")]
@@ -444,6 +483,52 @@ def summarize(records: list[dict], expected: int) -> dict:
                                          "splash_show_ms": shows, "splash_show_median_ms": statistics.median(shows) if shows else None}
     return {"expected_samples": expected, "recorded_samples": len(records), "groups": groups,
             "all_gates_passed": len(records) == expected and all(r["gate_pass"] and not r.get("error") for r in records)}
+
+
+def font_sample_completeness(record: dict, evidence: Path) -> dict:
+    """Separate usable A/B diagnostic evidence from the official checker verdict."""
+    etw = record.get("etw", {})
+    identity = etw.get("identity_checks", {})
+    mapping = etw.get("mapped_file_lookup", {})
+    map_coverage = mapping.get("coverage", {})
+    transport = etw.get("raw_log_transport", {})
+    native = record.get("native_observer", {}).get("events", {})
+    seen = native.get("splash-like_seen", {})
+    visible = native.get("splash-like_visible", {})
+    tid = seen.get("window_thread_id")
+    phase = next((t.get("phases", {}).get("splash-like_seen_to_splash-like_visible")
+                  for t in etw.get("ui_threads", []) if t.get("thread_id") == tid), None)
+    splash_valid = (type(tid) is int and tid > 0 and tid == visible.get("window_thread_id") and
+                    isinstance(seen.get("qpc_ms"), (int, float)) and isinstance(visible.get("qpc_ms"), (int, float)) and
+                    seen["qpc_ms"] <= visible["qpc_ms"] and
+                    etw.get("coverage", {}).get("splash_visibility_bounds") is True and bool(phase))
+    raw_name = record.get("sample", "") + ".etw.json"
+    raw_path = evidence / raw_name
+    try:
+        raw_verified = (etw.get("artifact") == raw_name and raw_path.is_file() and
+                        transport.get("included") is True and type(transport.get("compressed_bytes")) is int and
+                        0 < transport["compressed_bytes"] <= 512 * 1024 and sha256(raw_path) == transport.get("sha256"))
+    except OSError:
+        raw_verified = False
+    faults = etw.get("hard_fault_count")
+    checks = {
+        "checker_verdict": type(record.get("checker_exit")) is int and type(record.get("gate_pass")) is bool and
+                           bool(record.get("metrics")) and record.get("truth_errors") == [],
+        "etw_complete": etw.get("status") == "complete" and etw.get("cleanup") is True and etw.get("events_lost") == 0,
+        "target_identity": identity.get("ambiguous") is False and all(identity.get(k) is True for k in
+            ("matched_start", "matched_stop", "native_pid_observed", "pid_matches", "native_creation_observed", "creation_matches", "depth_matches")),
+        "mapping_identity": etw.get("mapped_target_marker_published") is True and map_coverage.get("verified") is True,
+        "font_root_resolved": map_coverage.get("fonts_root_resolved") is True,
+        "raw_scheduler_points": type(etw.get("raw_scheduler_point_count")) is int and etw["raw_scheduler_point_count"] > 0,
+        # Zero hard faults is a legitimate result, not missing mapping data.
+        "raw_mapped_faults": type(faults) is int and faults >= 0 and etw.get("raw_mapped_fault_count") == faults == mapping.get("retained_faults"),
+        "raw_transport_verified": raw_verified,
+        "first_backend_splash_bounds": record.get("backend_sample_index") != 1 or splash_valid,
+    }
+    return {"sample": record.get("sample"), "font_backend": record.get("font_backend"),
+            "backend_sample_index": record.get("backend_sample_index"), "checker_exit": record.get("checker_exit"),
+            "gate_pass": record.get("gate_pass"), "same_tid_splash_bounds": splash_valid,
+            "checks": checks, "complete": all(checks.values())}
 
 
 def native_qt_samples(builds: dict[str, Build], work: Path, evidence: Path) -> bool:
@@ -465,6 +550,27 @@ def native_qt_samples(builds: dict[str, Build], work: Path, evidence: Path) -> b
             print("PERF_AB_QT " + json.dumps({"label": label, "source_sha": build.source_sha, "variant": variant,
                                                    "exit": code, "metrics": data}, ensure_ascii=False), flush=True)
             successful = successful and code == 0 and data is not None
+    return successful
+
+
+def font_qt_samples(build: Build, order: str, work: Path, evidence: Path) -> bool:
+    """Untimed source/lock smoke, only after every frozen startup sample."""
+    successful = True
+    helper = Path(__file__).with_name("windows_startup_font_probe.py")
+    for backend in dict.fromkeys(order):
+        root = work / "font-qt" / backend
+        root.mkdir(parents=True)
+        output = evidence / f"font-qt-{backend}.json"
+        env = sample_environment(root / "runtime")
+        engine, env["QT_QPA_PLATFORM"] = FONT_BACKENDS[backend]
+        code = run_logged([build.python, helper, "--source", build.source, "--output", output],
+                          cwd=root, env=env, log=evidence / f"font-qt-{backend}.log",
+                          timeout=60, stage=f"font-qt/{backend}", check=False)
+        data = json.loads(output.read_text(encoding="utf-8")) if output.is_file() else None
+        print("PERF_AB_FONT_QT " + json.dumps({"font_backend": backend, "font_engine": engine,
+              "source_sha": build.source_sha, "qt_qpa_platform": env["QT_QPA_PLATFORM"],
+              "exit": code, "metrics": data}, ensure_ascii=False, separators=(",", ":")), flush=True)
+        successful = successful and code == 0 and data is not None and data.get("passed") is True
     return successful
 
 
@@ -506,6 +612,7 @@ def main(argv=None) -> int:
     parser.add_argument("--etw-collector", type=Path, help="Built StartupEtw.dll for the three-revision diagnostic")
     parser.add_argument("--etw-focus", action="store_true", help="After an infrastructure correction, trace only F and historical B twice")
     parser.add_argument("--mapped-file-focus", action="store_true", help="Trace only the exact current optimized package twice with query-time mapped-file observations")
+    parser.add_argument("--font-engine-order", choices=("DDGG", "GGDD"), help="Trace one exact optimized portable package four times: D=default Windows font backend, G=windows:fontengine=gdi")
     args = parser.parse_args(argv)
     if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"} or sys.maxsize <= 2**32:
         parser.error("This diagnostic requires native Windows x64 and 64-bit Python")
@@ -534,6 +641,8 @@ def main(argv=None) -> int:
         parser.error("--etw-focus requires the exact optimization and portable ETW comparison")
     if args.mapped_file_focus and (not three_way or args.etw_focus or args.mode != "portable" or args.native_qt or args.disposable_runner):
         parser.error("--mapped-file-focus requires one exact optimized portable package and ETW collector")
+    if args.font_engine_order and (not three_way or args.etw_focus or args.mapped_file_focus or args.mode != "portable" or args.native_qt or args.disposable_runner):
+        parser.error("--font-engine-order requires one exact optimized portable package and ETW collector, without other diagnostic modes")
     real_install = not provided and args.mode in {"installed", "both"}
     if real_install and not args.disposable_runner:
         parser.error("Real Inno samples require --disposable-runner on a clean disposable Windows host")
@@ -545,19 +654,22 @@ def main(argv=None) -> int:
     evidence.mkdir()
     modes = ("portable", "installed") if args.mode == "both" else (args.mode,)
     order = "BB" if args.baseline_first else args.order
-    traced_order = "FF" if args.mapped_file_focus else "FFBB" if args.etw_focus else "FFABBAF"
-    control_order = "" if args.etw_focus or args.mapped_file_focus else "BAFFAB"
+    mapped_scope = bool(args.mapped_file_focus or args.font_engine_order)
+    traced_order = args.font_engine_order or ("FF" if args.mapped_file_focus else "FFBB" if args.etw_focus else "FFABBAF")
+    control_order = "" if args.etw_focus or mapped_scope else "BAFFAB"
     if three_way:
         order = traced_order + control_order
     records = []
     expected = len(order) + (2 if "installed" in modes else 0) if three_way else len(order) * len(modes)
     error = None
     qt_ok = not args.native_qt
-    write_json(evidence / "host.json", {"started_utc": utc_now(), "platform": platform.platform(),
+    package_identity = None
+    font_qt_ok = None
+    host = {"started_utc": utc_now(), "platform": platform.platform(),
                "machine": platform.machine(), "python": sys.version, "logical_cpus": os.cpu_count(),
-               "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_ENVIRONMENT", "ImageOS", "ImageVersion")},
+               "runner": runner_identity(),
                "native_qt_platform": "windows", "order": order, "modes": modes, "thresholds_ms": THRESHOLDS,
-               "diagnostic_protocol": "mapped-file-focus" if args.mapped_file_focus else "focused-etw" if args.etw_focus else "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
+               "diagnostic_protocol": "font-engine-ab" if args.font_engine_order else "mapped-file-focus" if args.mapped_file_focus else "focused-etw" if args.etw_focus else "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
                "optimized_sha": args.optimized_sha,
                "traced_portable_order": traced_order if three_way else None,
                "untraced_portable_order": control_order if three_way else None,
@@ -565,7 +677,15 @@ def main(argv=None) -> int:
                "candidate_sha": args.candidate_sha, "baseline_sha": args.baseline_sha,
                "provided_executables": provided, "fresh_inno_install": real_install,
                "runtime_policy": "fresh empty database/config defaults, synthetic workbench migration marker, null keyring",
-               "cache_policy": "new process/runtime per sample; no OS cache flushing or intentional Qt warmup"})
+               "cache_policy": "new process/runtime per sample; no OS cache flushing or intentional Qt warmup"}
+    if args.font_engine_order:
+        host.update(font_engine_order=args.font_engine_order,
+                    font_backend_options={label: {"font_engine": engine, "qt_qpa_platform": option}
+                                          for label, (engine, option) in FONT_BACKENDS.items()},
+                    package_ref="package-F.json")
+    write_json(evidence / "host.json", host)
+    if args.font_engine_order:
+        print("PERF_AB_HOST " + json.dumps(host, ensure_ascii=False, separators=(",", ":")), flush=True)
     try:
         if real_install:
             require_no_installation()
@@ -579,7 +699,7 @@ def main(argv=None) -> int:
             record_system_state(evidence, "before-first")
         elif three_way:
             revisions = [("F", args.optimized_sha)]
-            if not args.mapped_file_focus:
+            if not mapped_scope:
                 if not args.etw_focus:
                     revisions.append(("A", args.candidate_sha))
                 revisions.append(("B", args.baseline_sha))
@@ -598,9 +718,11 @@ def main(argv=None) -> int:
                                               (mode == "installed" and ordinal == 1))
                 observe_native = args.baseline_first or trace_sample
                 extra = {"etw_collector": args.etw_collector.resolve()} if trace_sample else {}
-                if trace_sample and args.mapped_file_focus:
+                if trace_sample and mapped_scope:
                     extra["mapped_files"] = True
-                record = collect_sample(builds[label], mode, ordinal, work, evidence,
+                if args.font_engine_order:
+                    extra.update(font_backend=label, backend_sample_index=lane_order[:ordinal].count(label))
+                record = collect_sample(builds["F" if args.font_engine_order else label], mode, ordinal, work, evidence,
                                         fresh_install=real_install and mode == "installed", observe_native=observe_native, **extra)
                 records.append(record)
                 if observe_native and mode == "portable" and ordinal == 1:
@@ -609,6 +731,9 @@ def main(argv=None) -> int:
                     raise DiagnosticError("Installed sample infrastructure/cleanup failure; stop further installs")
         if args.native_qt:
             qt_ok = native_qt_samples(builds, work, evidence)
+        if args.font_engine_order:
+            package_identity = package_fingerprint(builds["F"], evidence)
+            font_qt_ok = font_qt_samples(builds["F"], order, work, evidence)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         print("PERF_AB_ERROR " + error, file=sys.stderr, flush=True)
@@ -641,14 +766,23 @@ def main(argv=None) -> int:
         }
         summary["traced_groups"] = summarize(traced, len(traced_order) + int("installed" in modes))["groups"]
         summary["untraced_groups"] = summarize(controls, len(control_order) + int("installed" in modes))["groups"]
-        if args.mapped_file_focus:
+        if mapped_scope:
             summary["mapped_file_samples"] = [{"sample": r.get("sample"),
                 "identity_verified": r.get("etw", {}).get("mapped_file_lookup", {}).get("coverage", {}).get("verified", False),
                 "observed_queries": r.get("etw", {}).get("mapped_file_lookup", {}).get("observed_queries", 0),
                 "retained_faults": r.get("etw", {}).get("mapped_file_lookup", {}).get("retained_faults", 0)} for r in traced]
+    if args.font_engine_order:
+        completeness = [font_sample_completeness(r, evidence) for r in records]
+        summary.update(font_engine_order=order, package_identity=package_identity,
+                       font_qt_completed=font_qt_ok,
+                       font_sample_completeness=completeness,
+                       font_evidence_complete=len(completeness) == expected and all(r["complete"] for r in completeness),
+                       font_engine_evidence="QPA option varies; actual glyph engine may still vary by font")
     write_json(evidence / "summary.json", summary)
     print("PERF_AB_SUMMARY " + json.dumps(summary, ensure_ascii=False, separators=(",", ":")), flush=True)
-    return 0 if summary["all_gates_passed"] and error is None and qt_ok and summary.get("etw_evidence_collected", True) else 1
+    font_ok = not args.font_engine_order or (package_identity is not None and package_identity["exe_unchanged"] and
+                                            font_qt_ok is True and summary["font_evidence_complete"])
+    return 0 if summary["all_gates_passed"] and error is None and qt_ok and font_ok and summary.get("etw_evidence_collected", True) else 1
 
 
 if __name__ == "__main__":
