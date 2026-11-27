@@ -6793,6 +6793,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         selection_trace = self._performance_probe.begin("export_selection", item_count=len(invoices))
         if hasattr(self, "export_invoice_list"):
             from ..claim_export import inspect_extra_material, inspect_original_attachment, invoice_export_issues
+            from ..financial_validation import check_tax_balance
+            from ..tax_id_validation import check_tax_id
+            from ..reimbursement import normalize_tax_id, _norm_text, get_date_warning
             from .selection_surfaces import INVOICE_ROW_ROLE
 
             old_ids = [self.export_invoice_list.item(i).data(Qt.UserRole) for i in range(self.export_invoice_list.count())]
@@ -6809,23 +6812,61 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 # can tell which record to fix instead of only seeing a count.
                 # Uses the same inspection helpers as the completeness checklist.
                 row_blockers = []
+                row_warnings = []
+                invoice_status = inv.get("review_status") or TO_REVIEW
+                in_scope = (invoice_status in ({APPROVED, TO_REVIEW} if include_pending else {APPROVED})) and not is_pending_evidence_invoice(inv)
+
                 snapshot = getattr(self, "_export_material_snapshot", None)
                 cached = snapshot.get(claim_id, ([], {}))[1].get(int(inv["id"])) if snapshot is not None else None
                 attachment_available = cached["attachment_available"] if cached is not None else inspect_original_attachment(inv, RUNTIME_DIR)["available"]
-                if not attachment_available:
-                    row_blockers.append("缺原件")
-                issues = invoice_export_issues(inv, self.config, confirmed_duplicate=inv["id"] in decisions["duplicate"])
-                row_blockers.extend(message.removeprefix("导出已阻断：") for message in issues.values())
                 material = cached if cached is not None else inspect_extra_material(inv, RUNTIME_DIR)
-                if material["missing_extra"]:
-                    row_blockers.append("缺补充材料")
-                elif material["unavailable_extra"]:
-                    row_blockers.append("材料不可用")
-                invoice_status = inv.get("review_status") or TO_REVIEW
+                issues = invoice_export_issues(inv, self.config, confirmed_duplicate=inv["id"] in decisions["duplicate"])
+
+                if in_scope:
+                    if not attachment_available:
+                        row_blockers.append("缺原件")
+                    for key, message in issues.items():
+                        if key == "tax_balance":
+                            balance = check_tax_balance(inv)
+                            row_blockers.append(balance.message if balance.message else "价税不平")
+                        elif key == "buyer_tax":
+                            actual_tax = normalize_tax_id(inv.get("buyer_tax_id"))
+                            if not actual_tax:
+                                row_blockers.append("购方税号待核对")
+                            else:
+                                row_blockers.append("税号与默认主体不符")
+                        elif key == "missing_amount":
+                            row_blockers.append("缺金额")
+                        elif key == "invalid_amount":
+                            row_blockers.append("金额无效")
+                        elif key == "confirmed_duplicate":
+                            row_blockers.append("已确认重复")
+                        elif key == "tax_id":
+                            id_check = check_tax_id(inv.get("buyer_tax_id"), inv.get("buyer_tax_id_type", "unknown"))
+                            row_blockers.append(id_check.message if id_check.message else "税号无效")
+                        else:
+                            row_blockers.append(message.removeprefix("导出已阻断："))
+                    if material["missing_extra"]:
+                        row_blockers.append("缺补充材料")
+                    elif material["unavailable_extra"]:
+                        row_blockers.append("材料不可用")
+
+                    reimb_cfg = (self.config or {}).get("reimbursement", self.config or {})
+                    if reimb_cfg.get("strict_buyer_check", False):
+                        expected_buyer = str(reimb_cfg.get("buyer_name") or "").strip()
+                        actual_buyer = str(inv.get("buyer_name") or "").strip()
+                        if not actual_buyer:
+                            row_warnings.append("购买方抬头缺失")
+                        elif expected_buyer and _norm_text(actual_buyer) != _norm_text(expected_buyer):
+                            row_warnings.append("购买方抬头不符")
+                    d_warn = get_date_warning(inv)
+                    if d_warn:
+                        row_warnings.append(d_warn)
+
                 if not is_pending_evidence_invoice(inv):
                     if invoice_status == TO_REVIEW:
                         self._export_issue_ids["pending"].append(inv["id"])
-                    if invoice_status in ({APPROVED, TO_REVIEW} if include_pending else {APPROVED}):
+                    if in_scope:
                         flags = {"missing_attachment": not attachment_available,
                                  "missing_extra": material["missing_extra"],
                                  "unavailable_extra": material["unavailable_extra"],
@@ -6835,15 +6876,17 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                         for key, problem in flags.items():
                             if problem:
                                 self._export_issue_ids[key].append(inv["id"])
-                suffix = f"  注意 {'、'.join(row_blockers)}" if row_blockers else ""
-                subtitle = f"需处理：{'、'.join(row_blockers)} · {number}" if row_blockers else number
+
+                row_issues = row_blockers + row_warnings
+                suffix = f"  注意 {'、'.join(row_issues)}" if row_issues else ""
+                subtitle = f"需处理：{'、'.join(row_issues)} · {number}" if row_issues else number
                 text = f"{status} · {seller} · {amount} · {number}{suffix}"
                 if row_index >= self.export_invoice_list.count():
                     self.export_invoice_list.addItem("")
                 item = self.export_invoice_list.item(row_index)
                 payload = {
                     "title": seller, "subtitle": f"{status} · {subtitle}",
-                    "amount": amount, "attention": bool(row_blockers),
+                    "amount": amount, "attention": bool(row_issues),
                 }
                 if item.text() != text or item.data(INVOICE_ROW_ROLE) != payload:
                     item.setText(text)
@@ -10666,6 +10709,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_id: int,
         *,
         include_to_review: bool = True,
+        reimbursement_config: dict | None = None,
     ) -> dict:
         snapshot = getattr(self, "_export_material_snapshot", None)
         if snapshot is not None:
@@ -10678,10 +10722,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return self._claim_export_preflight_stats_for_range(
                 claim_id, include_to_review=include_to_review,
                 invoices=rows, materials_by_id=materials,
+                reimbursement_config=reimbursement_config,
             )
         return self._claim_export_preflight_stats_for_range(
             claim_id,
             include_to_review=include_to_review,
+            reimbursement_config=reimbursement_config,
         )
 
     def _claim_export_preflight_stats_for_range(
@@ -10692,6 +10738,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         invoices: list[dict] | None = None,
         materials_by_id: dict[int, dict] | None = None,
         duplicate_ids: set[int] | None = None,
+        reimbursement_config: dict | None = None,
     ) -> dict:
         """Calculate preflight stats for the selected export status range.
 
@@ -10710,7 +10757,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self._export_duplicate_snapshot = decisions
             duplicate_ids = decisions["duplicate"]
         return claim_export_preflight(invoices, RUNTIME_DIR, include_to_review=include_to_review,
-            reimbursement_config=self.config, duplicate_ids=duplicate_ids, materials_by_id=materials_by_id)
+            reimbursement_config=self.config if reimbursement_config is None else reimbursement_config,
+            duplicate_ids=duplicate_ids, materials_by_id=materials_by_id)
 
     def _format_claim_export_preflight_text(self, stats: dict) -> str:
         return (
@@ -10765,7 +10813,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         box.setTextFormat(Qt.PlainText)
         page_scope = self._current_page_key() == "export"
         selected_pending = bool(self.export_scope.currentData()) if page_scope else False
-        cfg = load_config_safe()
+        cfg = getattr(self, "config", None) or load_config_safe()
         configured_export_dir = getattr(self, "_export_dir", None) or resolve_export_directory(cfg)
         export_destination_label = "已配置的本机导出目录（可在设置中查看）"
         rows = financial_rows(self.db.get_claim_invoices(claim_id))
@@ -10796,12 +10844,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         include_to_review = selected_pending if page_scope else btn_include_all is not None and box.clickedButton() == btn_include_all
+        # Another window may have saved company settings while this page or the
+        # confirmation dialog was open. Validate and export using the same fresh
+        # snapshot, without changing the destination already confirmed above.
+        saved_config = load_config_safe()
+        reimbursement_config = saved_config.get("reimbursement", saved_config)
+        self.config = {**(self.config or {}), "reimbursement": deepcopy(reimbursement_config)}
         selected_stats = self._claim_export_preflight_stats(
             claim_id,
             include_to_review=include_to_review,
+            reimbursement_config=reimbursement_config,
         )
         material_blocker = self._claim_export_material_blocker_text(selected_stats)
         if material_blocker:
+            if page_scope:
+                self._refresh_export_page()
             QMessageBox.warning(self, "导出已阻断", material_blocker)
             return
         if not self._try_begin_data_operation("报销组导出"):
@@ -10826,7 +10883,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             project_root=PROJECT_ROOT,
             runtime_dir=RUNTIME_DIR,
             include_to_review=include_to_review,
-            reimbursement_config=cfg.get("reimbursement", {}),
+            reimbursement_config=reimbursement_config,
             export_root=Path(configured_export_dir),
         )
         self.claim_export_worker = worker

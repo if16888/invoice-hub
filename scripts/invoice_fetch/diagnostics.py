@@ -120,7 +120,8 @@ def redact_text(value: object) -> str:
 
 
 def _redact_config_value(key: str, value: Any) -> Any:
-    if _SECRET_KEY_RE.search(str(key)):
+    # The saved reimbursement taxpayer ID is private even though it is not a credential.
+    if str(key).lower() == "buyer_tax_id" or _SECRET_KEY_RE.search(str(key)):
         return "***redacted***"
     if isinstance(value, dict):
         return {str(k): _redact_config_value(str(k), v) for k, v in value.items()}

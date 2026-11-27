@@ -28,7 +28,7 @@ from .excel_export import export_excel
 from .export_paths import normalize_export_date_prefix as _normalize_export_date_prefix
 from .filename_safety import escape_windows_reserved_stem
 from .log_privacy import mask_path
-from .reimbursement import buyer_warning, get_date_warning
+from .reimbursement import buyer_warning, get_date_warning, normalize_tax_id
 
 _log = logging.getLogger(__name__)
 
@@ -534,6 +534,8 @@ def verify_export_manifest(export_dir: Path) -> dict:
 def invoice_export_issues(invoice: dict, reimbursement_config: dict | None = None,
                           *, confirmed_duplicate: bool = False) -> dict[str, str]:
     """Shared, read-only financial rules for UI preflight and package creation."""
+    if reimbursement_config is None:
+        reimbursement_config = load_config_safe().get("reimbursement", {})
     issues = {}
     if confirmed_duplicate:
         issues["confirmed_duplicate"] = "导出已阻断：报销组包含已确认重复的票据，请先忽略该票据或重置复核结论。"
@@ -544,8 +546,14 @@ def invoice_export_issues(invoice: dict, reimbursement_config: dict | None = Non
     if balance.blocking:
         issues["tax_balance"] = "导出已阻断：" + _invoice_export_identity(invoice) + "；" + balance.message
     settings = (reimbursement_config or {}).get("reimbursement", reimbursement_config or {})
-    if buyer_warning(invoice, {"reimbursement": {**settings, "strict_buyer_check": False}}):
-        issues["buyer_tax"] = "导出已阻断：购买方税号待核对，请修正税号或调整严格税号校验设置。"
+    if settings.get("strict_buyer_tax_check", False):
+        expected_tax = normalize_tax_id(settings.get("buyer_tax_id"))
+        if expected_tax and invoice.get("buyer_tax_id") is not None:
+            actual_tax = normalize_tax_id(invoice.get("buyer_tax_id"))
+            if not actual_tax:
+                issues["buyer_tax"] = f"导出已阻断：{_invoice_export_identity(invoice)}；购买方税号待核对，请修正税号或调整严格税号校验设置。"
+            elif actual_tax != expected_tax:
+                issues["buyer_tax"] = f"导出已阻断：{_invoice_export_identity(invoice)}；购买方税号与默认主体不符，请修正税号或调整严格税号校验设置。"
     try:
         _normalized_finite_amount(invoice.get("total_amount"), invoice_identity=_invoice_export_identity(invoice))
     except ValueError as exc:
@@ -568,6 +576,8 @@ def claim_export_preflight(invoices: list[dict], runtime_dir: Path, *, include_t
                            reimbursement_config: dict | None = None, duplicate_ids=(),
                            materials_by_id: dict | None = None) -> dict:
     """Inspect a selected status range without mutating the ledger or queue."""
+    if reimbursement_config is None:
+        reimbursement_config = load_config_safe().get("reimbursement", {})
     statuses = {review_status.APPROVED, review_status.TO_REVIEW} if include_to_review else {review_status.APPROVED}
     stats = {status: 0 for status in review_status.ALL_STATUSES}
     stats.update({key: 0 for key in ("missing_attachment", "missing_amount", "invalid_amount", "missing_extra", "unavailable_extra")})
