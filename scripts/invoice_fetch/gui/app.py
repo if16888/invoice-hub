@@ -836,12 +836,14 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         from .dark_mode import apply_app_theme as _apply_app_theme
         _apply_app_theme(QApplication.instance())
         from .dialog_shell import install_dialog_presentation
-        install_dialog_presentation(QApplication.instance())
-
-
-        if self.splash:
-            self.splash.show_message("正在初始化界面布局...", 70)
-        self._init_ui()
+        try:
+            if self.splash:
+                self.splash.show_message("正在初始化界面布局...", 70)
+            self._init_ui()
+        finally:
+            # Avoid filtering every widget-construction event. Install before
+            # reveal/deferred work, or before propagating a construction error.
+            install_dialog_presentation(QApplication.instance())
         self._local_file_drop_filter = LocalFileDropFilter(self)
         self._init_performance_observation()
         self._scan_stage_display = "准备连接"
