@@ -553,7 +553,7 @@ def invoice_export_issues(invoice: dict, reimbursement_config: dict | None = Non
             if not actual_tax:
                 issues["buyer_tax"] = f"导出已阻断：{_invoice_export_identity(invoice)}；购买方税号待核对，请修正税号或调整严格税号校验设置。"
             elif actual_tax != expected_tax:
-                issues["buyer_tax"] = f"导出已阻断：{_invoice_export_identity(invoice)}；购买方税号与默认主体不符（当前税号：{actual_tax}，默认税号：{expected_tax}），请修正税号或调整严格税号校验设置。"
+                issues["buyer_tax"] = f"导出已阻断：{_invoice_export_identity(invoice)}；购买方税号与默认主体不符，请修正税号或调整严格税号校验设置。"
     try:
         _normalized_finite_amount(invoice.get("total_amount"), invoice_identity=_invoice_export_identity(invoice))
     except ValueError as exc:

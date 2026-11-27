@@ -10709,6 +10709,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         claim_id: int,
         *,
         include_to_review: bool = True,
+        reimbursement_config: dict | None = None,
     ) -> dict:
         snapshot = getattr(self, "_export_material_snapshot", None)
         if snapshot is not None:
@@ -10721,10 +10722,12 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return self._claim_export_preflight_stats_for_range(
                 claim_id, include_to_review=include_to_review,
                 invoices=rows, materials_by_id=materials,
+                reimbursement_config=reimbursement_config,
             )
         return self._claim_export_preflight_stats_for_range(
             claim_id,
             include_to_review=include_to_review,
+            reimbursement_config=reimbursement_config,
         )
 
     def _claim_export_preflight_stats_for_range(
@@ -10735,6 +10738,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         invoices: list[dict] | None = None,
         materials_by_id: dict[int, dict] | None = None,
         duplicate_ids: set[int] | None = None,
+        reimbursement_config: dict | None = None,
     ) -> dict:
         """Calculate preflight stats for the selected export status range.
 
@@ -10753,7 +10757,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     self._export_duplicate_snapshot = decisions
             duplicate_ids = decisions["duplicate"]
         return claim_export_preflight(invoices, RUNTIME_DIR, include_to_review=include_to_review,
-            reimbursement_config=self.config, duplicate_ids=duplicate_ids, materials_by_id=materials_by_id)
+            reimbursement_config=self.config if reimbursement_config is None else reimbursement_config,
+            duplicate_ids=duplicate_ids, materials_by_id=materials_by_id)
 
     def _format_claim_export_preflight_text(self, stats: dict) -> str:
         return (
@@ -10839,12 +10844,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
 
         include_to_review = selected_pending if page_scope else btn_include_all is not None and box.clickedButton() == btn_include_all
+        # Another window may have saved company settings while this page or the
+        # confirmation dialog was open. Validate and export using the same fresh
+        # snapshot, without changing the destination already confirmed above.
+        saved_config = load_config_safe()
+        reimbursement_config = saved_config.get("reimbursement", saved_config)
+        self.config = {**(self.config or {}), "reimbursement": deepcopy(reimbursement_config)}
         selected_stats = self._claim_export_preflight_stats(
             claim_id,
             include_to_review=include_to_review,
+            reimbursement_config=reimbursement_config,
         )
         material_blocker = self._claim_export_material_blocker_text(selected_stats)
         if material_blocker:
+            if page_scope:
+                self._refresh_export_page()
             QMessageBox.warning(self, "导出已阻断", material_blocker)
             return
         if not self._try_begin_data_operation("报销组导出"):
@@ -10869,7 +10883,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             project_root=PROJECT_ROOT,
             runtime_dir=RUNTIME_DIR,
             include_to_review=include_to_review,
-            reimbursement_config=cfg.get("reimbursement", cfg),
+            reimbursement_config=reimbursement_config,
             export_root=Path(configured_export_dir),
         )
         self.claim_export_worker = worker
