@@ -8130,7 +8130,9 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             self.table.setRowCount(len(self.invoices_list))
             if performance_trace is not None:
                 performance_trace.mark("item_population")
-            start_idx = offset if append else 0
+            # SQL offset includes the review window's absolute start; table
+            # rows are local to that window, including when we append a batch.
+            start_idx = len(existing_rows)
             for idx in range(start_idx, len(self.invoices_list)):
                 inv = self.invoices_list[idx]
                 inv_num = str(inv.get("invoice_number") or "")

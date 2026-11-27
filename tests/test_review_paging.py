@@ -1,16 +1,19 @@
 import os
+import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QLabel, QPushButton, QWidget
 
-from scripts.invoice_fetch.gui.app import InvoiceReviewApp
+from scripts.invoice_fetch.db import InvoiceDB
+from scripts.invoice_fetch.gui.app import InvoiceReviewApp, SORT_ID_ROLE
 from scripts.invoice_fetch.gui.review_paging import (
     ReviewPagingController,
     install_review_paging,
@@ -268,6 +271,216 @@ class ReviewPagingTests(unittest.TestCase):
                 self.assertIn("125", window.lbl_record_count.text())
             finally:
                 window.close()
+
+    def _wait_for(self, predicate, description):
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            QTest.qWait(10)
+            self.app.processEvents()
+        self.assertTrue(predicate(), description)
+
+    def _click(self, widget):
+        self.assertTrue(widget.isVisible() and widget.isEnabled())
+        QTest.mouseClick(widget, Qt.LeftButton)
+        self._events()
+
+    def _visible_window(self, td, count):
+        path = Path(td) / "visible-paging.db"
+        ids = {}
+        with InvoiceDB(path) as db:
+            for n in range(1, count + 1):
+                ids[n] = db.insert_invoice({
+                    "invoice_number": f"VISIBLE-{n:04d}", "invoice_date": "2026-07-01",
+                    "expense_date": "2026-07-01", "total_amount": f"{n}.00", "currency": "CNY",
+                    "seller_name": f"合成商户{n:04d}", "buyer_name": "合成购方",
+                    "category": "办公", "review_status": TO_REVIEW,
+                })
+                self.assertIsNotNone(ids[n])
+        window = InvoiceReviewApp(path)
+        try:
+            window.resize(1500, 900)
+            window.show()
+            window.activateWindow()
+            self._wait_for(lambda: window._deferred_init_done, "initial workbench load")
+            self._click(window.workbench_nav_buttons["review"])
+            self._wait_for(lambda: window.table.isVisible() and len(window.invoices_list) == 50,
+                           "visible first review page")
+            return window, ids, path
+        except BaseException:
+            window.close()
+            raise
+
+    def _invoice_snapshot(self, path):
+        with sqlite3.connect(path) as db:
+            return db.execute("SELECT id, invoice_number, invoice_date, expense_date, total_amount, "
+                              "currency, seller_name, buyer_name, review_status, confirmed_note "
+                              "FROM invoices ORDER BY id").fetchall()
+
+    def _assert_table_rows(self, window, numbers, ids):
+        numbers = list(numbers)
+        self.assertEqual(window.table.columnCount(), 7)
+        self.assertEqual(window.table.rowCount(), len(numbers))
+        self.assertEqual([inv["id"] for inv in window.invoices_list], [ids[n] for n in numbers])
+        for row, n in enumerate(numbers):
+            expected = ["待审核", "缺原件", "2026-07-01", f"¥{n}.00", f"合成商户{n:04d}",
+                        f"VISIBLE-{n:04d}", "—"]
+            for col, text in enumerate(expected):
+                item = window.table.item(row, col)
+                self.assertIsNotNone(item, f"local row {row}, column {col} was not populated")
+                self.assertEqual(item.data(SORT_ID_ROLE), ids[n], f"wrong invoice at local row {row}, column {col}")
+                self.assertEqual(item.text(), text)
+
+    def _assert_selected(self, window, row, number, ids):
+        self.assertEqual(window.table.currentRow(), row)
+        self.assertEqual([index.row() for index in window.table.selectionModel().selectedRows()], [row])
+        self.assertEqual(window.table.item(row, 5).data(SORT_ID_ROLE), ids[number])
+        self.assertEqual(window.current_invoice["id"], ids[number])
+        self.assertEqual(window.txt_number.text(), f"VISIBLE-{number:04d}")
+
+    def _click_table_row(self, window, row):
+        table = window.table
+        index = table.model().index(row, 0)
+        # Let any queued view layout and selection restore finish before
+        # locating the row in the actual viewport.
+        QTest.qWait(20)
+        table.scrollTo(index, QAbstractItemView.PositionAtCenter)
+        self._events()
+        rect = table.visualRect(index).intersected(table.viewport().rect())
+        self.assertFalse(rect.isEmpty(), f"row {row} is outside the viewport")
+        QTest.mouseClick(table.viewport(), Qt.LeftButton, Qt.NoModifier, rect.center())
+        self._events()
+
+    def _click_amount_header(self, window, *, filter_popup=False):
+        header = window.table.horizontalHeader()
+        width = header.sectionSize(3)
+        point = QPoint(header.sectionViewportPosition(3) + (width - 8 if filter_popup else width // 3),
+                       header.height() // 2)
+        self.assertEqual(header.logicalIndexAt(point), 3)
+        QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+        self._events()
+
+    def _record_queries(self, window):
+        queries = []
+        original_list = window.db.list_review_invoices
+
+        def record_query(query):
+            queries.append(query)
+            return original_list(query)
+
+        window.db.list_review_invoices = record_query
+        return queries
+
+    def _scroll_to_end(self, window, expected_count):
+        scrollbar = window.table.verticalScrollBar()
+        self.assertGreater(scrollbar.maximum(), 0)
+        scrollbar.setFocus()
+        QTest.keyClick(scrollbar, Qt.Key_End)
+        self._wait_for(lambda: len(window.invoices_list) == expected_count and not window._is_loading_more_invoices,
+                       "scrollbar End should append the remaining review rows")
+
+    def test_visible_nonfirst_scroll_append_populates_every_cell_and_keeps_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            window, ids, path = self._visible_window(td, 130)
+            before = self._invoice_snapshot(path)
+            try:
+                self._assert_table_rows(window, range(130, 80, -1), ids)
+                queries = self._record_queries(window)
+                self._click(window.btn_review_next_page)
+                self.assertEqual(window._review_window_start, 50)
+                self._assert_table_rows(window, range(80, 30, -1), ids)
+                old_items = [window.table.item(row, col) for row in range(50) for col in range(7)]
+                self._click_table_row(window, 12)
+                self._assert_selected(window, 12, 68, ids)
+                self._scroll_to_end(window, 80)
+
+                self.assertEqual(window._review_window_start, 50)
+                self.assertEqual(window.lbl_record_count.text(), "第 51–130 / 共 130 张")
+                self._assert_table_rows(window, range(80, 0, -1), ids)
+                self.assertEqual([window.table.item(row, col) for row in range(50) for col in range(7)], old_items)
+                self._assert_selected(window, 12, 68, ids)
+                self._click_table_row(window, 52)
+                self._assert_selected(window, 52, 28, ids)
+                self.assertEqual([(q.limit, q.offset) for q in queries], [(50, 50), (50, 100)])
+
+                # Return to the first window and append normally from there;
+                # the explicit terminal page must still start at SQL row 100.
+                self._click(window.btn_review_previous_page)
+                self.assertEqual(window._review_window_start, 0)
+                self._assert_table_rows(window, range(130, 80, -1), ids)
+                window.table.verticalScrollBar().setFocus()
+                QTest.keyClick(window.table.verticalScrollBar(), Qt.Key_Home)
+                self._click_table_row(window, 0)
+                self._scroll_to_end(window, 100)
+                self._assert_table_rows(window, range(130, 30, -1), ids)
+                self._assert_selected(window, 0, 130, ids)
+                self._click(window.btn_review_next_page)
+                self.assertEqual(window._review_window_start, 100)
+                self._assert_table_rows(window, range(30, 0, -1), ids)
+                self.assertFalse(window.btn_review_next_page.isEnabled())
+                self.assertEqual([(q.limit, q.offset) for q in queries], [(50, 50), (50, 100), (50, 0), (50, 50), (50, 100)])
+            finally:
+                window.close()
+                self._events()
+            self.assertEqual(self._invoice_snapshot(path), before)
+
+    def test_visible_filtered_sorted_nonfirst_keyboard_append_keeps_row_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            window, ids, path = self._visible_window(td, 145)
+            before = self._invoice_snapshot(path)
+            try:
+                # Use the real table-header filter and sort interactions, not
+                # direct assignments to the query/controller state.
+                self._click_amount_header(window, filter_popup=True)
+                popup = window._column_filter_popup
+                self.assertIsNotNone(popup)
+                self.assertTrue(popup.isVisible())
+                self.assertEqual(popup.key, "total_amount")
+                QTest.keyClicks(popup.max_edit, "130")
+                self._click(next(button for button in popup.findChildren(QPushButton) if button.text() == "应用"))
+                self.assertEqual(window._record_total_matching, 130)
+                self._assert_table_rows(window, range(130, 80, -1), ids)
+                self._click(window.btn_review_next_page)
+                self._click_table_row(window, 12)
+                self._assert_selected(window, 12, 68, ids)
+                self._click_amount_header(window)
+                self.assertEqual(window._review_window_start, 50)
+                self.assertEqual(window._column_sort_state, (3, Qt.AscendingOrder))
+                self._assert_table_rows(window, range(51, 101), ids)
+                self._assert_selected(window, 17, 68, ids)
+                queries = self._record_queries(window)
+
+                # Isolate the keyboard trigger from the competing 100 ms
+                # scrollbar append during positioning. Restore the real
+                # signal before pressing ↓; neither rendering nor keyboard
+                # paging is mocked (the other test covers actual scrolling).
+                scroll_signal = window.table.verticalScrollBar().valueChanged
+                scroll_signal.disconnect(window._maybe_load_more_invoices)
+                try:
+                    self._click_table_row(window, 49)
+                finally:
+                    scroll_signal.connect(window._maybe_load_more_invoices)
+                self.assertEqual(len(window.invoices_list), 50)
+                window.table.setFocus()
+                self._assert_selected(window, 49, 100, ids)
+                QTest.keyClick(window.table, Qt.Key_Down)
+                self._wait_for(lambda: len(window.invoices_list) == 80, "Down should cross the nonfirst page boundary")
+                self._events()
+                self._assert_table_rows(window, range(51, 131), ids)
+                self._assert_selected(window, 50, 101, ids)
+                for key, row, number in ((Qt.Key_Up, 49, 100), (Qt.Key_Down, 50, 101)):
+                    QTest.keyClick(window.table, key)
+                    self._events()
+                    self._assert_selected(window, row, number, ids)
+                self._click_table_row(window, 52)
+                self._assert_selected(window, 52, 103, ids)
+                self.assertEqual([(q.limit, q.offset) for q in queries], [(50, 100)])
+                self.assertEqual(queries[0].sort_key, "total_amount")
+                self.assertFalse(queries[0].sort_descending)
+                self.assertEqual(queries[0].column_filters[0].maximum, "130")
+            finally:
+                window.close()
+                self._events()
+            self.assertEqual(self._invoice_snapshot(path), before)
 
 
 if __name__ == "__main__":
