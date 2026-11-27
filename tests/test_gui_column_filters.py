@@ -92,6 +92,30 @@ class GuiColumnFilterTests(unittest.TestCase):
         window._set_column_filter("invoice_number", {"values": {"INV-B"}})
         self.assertEqual(self._numbers(window), ["INV-B"])
 
+    def test_search_shortcut_replaces_previous_query(self):
+        from PySide6.QtTest import QTest
+
+        window = self._make_window([
+            {"invoice_number": "INV-A"},
+            {"invoice_number": "INV-B"},
+        ])
+        window.show()
+        window._switch_main_page("review")
+        window.activateWindow()
+        self.app.processEvents()
+        window.table.setFocus()
+        for query in ("INV-A", "INV-B"):
+            QTest.keyClick(window, Qt.Key_F, Qt.ControlModifier)
+            self.assertTrue(window.txt_search.hasFocus())
+            self.assertEqual(window.txt_search.selectedText(), window.txt_search.text())
+            QTest.keyClicks(window.txt_search, query)
+            self.assertEqual(window.txt_search.text(), query)
+            for _ in range(120):
+                if self._numbers(window) == [query]:
+                    break
+                QTest.qWait(25)
+            self.assertEqual(self._numbers(window), [query])
+
     def test_date_and_amount_filters(self):
         window = self._make_window([
             {"invoice_number": "LOW", "expense_date": "2026-06-01", "total_amount": "10"},

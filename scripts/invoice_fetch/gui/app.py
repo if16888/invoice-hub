@@ -10,7 +10,7 @@ import sys
 import logging
 import time
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from datetime import date, datetime
@@ -264,6 +264,8 @@ class ImportActivity:
     new_invoice_ids: tuple[int, ...] = ()
     review_invoice_ids: tuple[int, ...] = ()
     duplicate_outcomes: tuple[dict, ...] = ()
+    # Raw source paths are desktop-session-only and belong to the latest batch.
+    local_failure_details: tuple[dict, ...] = field(default=(), repr=False)
 
 def _v1_badge(kind: str, icon: str = "") -> dict[str, str]:
     c = DESIGN_V1_COLORS
@@ -584,13 +586,13 @@ class SingleTaskMailboxDialog(QDialog):
         return dict(self._result_account or {}), str(self._result_auth_code or "")
 
 
-class DuplicateOutcomesDialog(QDialog):
-    """Scrollable, screen-bounded dialog for duplicate import explanations."""
+class _ImportOutcomeDetailsDialog(QDialog):
+    """Scrollable, screen-bounded, plain-text import result detail."""
 
-    def __init__(self, parent=None, detail_text: str = "", duplicate_count: int = 0):
+    def __init__(self, parent, detail_text, *, title, summary_text, object_name, details_name):
         super().__init__(parent)
-        self.setWindowTitle("重复项详情")
-        self.setObjectName("DuplicateOutcomesDialog")
+        self.setWindowTitle(title)
+        self.setObjectName(object_name)
         self.setModal(True)
         self.setSizeGripEnabled(True)
 
@@ -598,16 +600,13 @@ class DuplicateOutcomesDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 14)
         layout.setSpacing(10)
 
-        summary = QLabel(
-            f"本次发现 {max(0, int(duplicate_count or 0))} 个重复文件。可滚动查看完整判定依据。",
-            self,
-        )
+        summary = QLabel(summary_text, self)
         summary.setWordWrap(True)
         summary.setProperty("class", "SectionHint")
         layout.addWidget(summary)
 
         self.details = QPlainTextEdit(self)
-        self.details.setObjectName("DuplicateOutcomesDetails")
+        self.details.setObjectName(details_name)
         self.details.setReadOnly(True)
         self.details.setPlainText(str(detail_text or ""))
         self.details.setLineWrapMode(QPlainTextEdit.WidgetWidth)
@@ -633,6 +632,21 @@ class DuplicateOutcomesDialog(QDialog):
             width = min(760, max(320, int(available.width() * 0.70)), max(320, available.width() - 32))
             height = min(560, max(240, int(available.height() * 0.74)), max(240, available.height() - 32))
             self.resize(width, height)
+
+
+class DuplicateOutcomesDialog(_ImportOutcomeDetailsDialog):
+    def __init__(self, parent=None, detail_text: str = "", duplicate_count: int = 0):
+        super().__init__(parent, detail_text, title="重复项详情",
+                         summary_text=f"本次发现 {max(0, int(duplicate_count or 0))} 个重复文件。可滚动查看完整判定依据。",
+                         object_name="DuplicateOutcomesDialog", details_name="DuplicateOutcomesDetails")
+
+
+class LocalImportFailuresDialog(_ImportOutcomeDetailsDialog):
+    def __init__(self, parent=None, detail_text: str = "", failed_count: int = 0):
+        super().__init__(parent, detail_text, title="本地导入失败明细",
+                         summary_text=f"本次有 {failed_count} 个文件导入失败。请按原因处理；已入库的待补录材料不在此列。"
+                                      "文件夹导入显示相对路径，拖放文件显示本地路径。",
+                         object_name="LocalImportFailuresDialog", details_name="LocalImportFailureDetails")
 
 
 class SingleTaskAiProfileDialog(QDialog):
@@ -4014,6 +4028,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         self._scan_selected_email_accounts()
 
+    def _clear_local_failure_details(self) -> None:
+        for activity in self._import_activities:
+            activity.local_failure_details = ()
+        button = getattr(self, "btn_import_recent_failures", None)
+        if button is not None:
+            button.hide()
+
     def _record_import_activity(
         self,
         source: str,
@@ -4029,14 +4050,21 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         new_invoice_ids: tuple[int, ...] | list[int] = (),
         review_invoice_ids: tuple[int, ...] | list[int] | None = None,
         duplicate_outcomes: tuple[dict, ...] | list[dict] = (),
+        local_failure_details: tuple[dict, ...] | list[dict] = (),
     ) -> ImportActivity:
         """Record a structured import outcome for the in-session result surface."""
+        self._clear_local_failure_details()
         normalized_batch = str(batch_id or "").strip()
         normalized_new_ids = tuple(dict.fromkeys(int(invoice_id) for invoice_id in new_invoice_ids if int(invoice_id) > 0))
         normalized_added = max(0, int(added or 0))
         normalized_duplicate_outcomes = tuple(
             dict(outcome) for outcome in duplicate_outcomes if isinstance(outcome, dict)
         )
+        normalized_failure_details = tuple(
+            {"source": str(detail.get("source") or "未命名文件"),
+             "reason": str(detail.get("reason") or "文件处理失败。请确认原件可用后重试。")}
+            for detail in (local_failure_details or ()) if isinstance(detail, dict)
+        ) if source == "local" else ()
         # review_invoice_ids defaults to new_invoice_ids when not provided.
         if review_invoice_ids is None:
             normalized_review_ids = normalized_new_ids
@@ -4059,6 +4087,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 existing.new_invoice_ids = normalized_new_ids
                 existing.review_invoice_ids = normalized_review_ids
                 existing.duplicate_outcomes = normalized_duplicate_outcomes
+                existing.local_failure_details = normalized_failure_details
                 self._import_activities.remove(existing)
                 self._import_activities.insert(0, existing)
                 return existing
@@ -4076,6 +4105,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             new_invoice_ids=normalized_new_ids,
             review_invoice_ids=normalized_review_ids,
             duplicate_outcomes=normalized_duplicate_outcomes,
+            local_failure_details=normalized_failure_details,
         )
         self._import_activities.insert(0, activity)
         del self._import_activities[10:]
@@ -4180,6 +4210,13 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     f"查看重复项（{duplicate_count}）" if duplicate_count else "查看重复项"
                 )
                 self.btn_import_recent_duplicates.setVisible(duplicate_count > 0)
+            if hasattr(self, "btn_import_recent_failures"):
+                latest = activities[0] if activities else None
+                failure_count = len(latest.local_failure_details) if latest is not None and latest.source == "local" else 0
+                self.btn_import_recent_failures.setText(
+                    f"查看失败明细（{failure_count}）" if failure_count else "查看失败明细"
+                )
+                self.btn_import_recent_failures.setVisible(failure_count > 0)
 
         if performance_trace is not None:
             performance_trace.mark("activity_state")
@@ -4353,6 +4390,22 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             sections.append("\n".join(lines))
         detail_text = "\n\n".join(sections)
         DuplicateOutcomesDialog(self, detail_text, len(outcomes)).exec()
+
+    def _show_local_import_failures(self, _checked: bool = False) -> None:
+        latest = self._import_activities[0] if self._import_activities else None
+        details = latest.local_failure_details if latest is not None and latest.source == "local" else ()
+        if not details:
+            return
+        sections = []
+        for index, detail in enumerate(details, start=1):
+            # Preserve literal file names, including visible escapes for line breaks.
+            source = detail["source"].replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+            sections.append(f"失败文件 {index}\n来源：{source}\n{detail['reason']}")
+        dialog = LocalImportFailuresDialog(self, "\n\n".join(sections), len(details))
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     @staticmethod
     def _format_scan_result_for_people(summary: dict) -> str:
@@ -5829,6 +5882,11 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.btn_import_recent_duplicates.clicked.connect(self._show_duplicate_outcomes)
         self.btn_import_recent_duplicates.hide()
         self.import_recent_content_layout.addWidget(self.btn_import_recent_duplicates)
+        self.btn_import_recent_failures = make_button("查看失败明细", variant="secondary")
+        self.btn_import_recent_failures.setObjectName("btn_import_recent_failures")
+        self.btn_import_recent_failures.clicked.connect(self._show_local_import_failures)
+        self.btn_import_recent_failures.hide()
+        self.import_recent_content_layout.addWidget(self.btn_import_recent_failures)
         self.import_recent_state_stack.set_content(self.import_recent_content)
         self.import_mail_recent_card.body_layout.addWidget(self.import_recent_state_stack)
 
@@ -7030,12 +7088,16 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
 
 
+    def _focus_invoice_search(self) -> None:
+        self.txt_search.setFocus()
+        self.txt_search.selectAll()
+
     def _setup_workbench_shortcuts(self) -> None:
         self.workbench_shortcuts = {}
         self._register_shortcut(self, self.workbench_shortcuts, "Up", lambda: self._move_invoice_selection(-1))
         self._register_shortcut(self, self.workbench_shortcuts, "Down", lambda: self._move_invoice_selection(1))
         self._bind_review_shortcuts(self, self.workbench_shortcuts)
-        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+F", self.txt_search.setFocus, guarded=False)
+        self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+F", self._focus_invoice_search, guarded=False)
         self._register_shortcut(self, self.workbench_shortcuts, "F11", self._toggle_preview_focus_mode, guarded=False)
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+B", self._toggle_review_detail_panel)
         self._register_shortcut(self, self.workbench_shortcuts, "Ctrl+I", self._import_local_clicked, guarded=False)
@@ -11345,6 +11407,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         path = Path(path)
         if not self._try_begin_data_operation("本地导入"):
             return False
+        self._clear_local_failure_details()
         file_count = len(file_paths) if file_paths is not None else None
         if file_count is None:
             self.write_log(" [本地导入] 已选择本地发票文件夹。")
@@ -11550,6 +11613,8 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 source = str(item.get("source") or "压缩包")
                 reason = str(item.get("reason") or "未处理")
                 lines.append(f"  · {source}: {reason}")
+        if stats.get("failure_details"):
+            lines.extend(["", "关闭后可在导入中心的本次运行中点击“查看失败明细”，定位失败文件并按原因处理。"])
         return "\n".join(lines)
 
     def _import_local_finished(self, stats: dict):
@@ -11584,6 +11649,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                 status="cancelled",
                 new_invoice_ids=new_ids,
                 review_invoice_ids=review_ids,
+                local_failure_details=stats.get("failure_details", ()),
             )
             if performance_trace is not None:
                 performance_trace.mark("T2_state_update")
@@ -11618,6 +11684,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             status="complete",
             new_invoice_ids=new_ids,
             review_invoice_ids=review_ids,
+            local_failure_details=stats.get("failure_details", ()),
         )
         if performance_trace is not None:
             performance_trace.mark("T2_state_update")

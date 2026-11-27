@@ -420,7 +420,7 @@ class LocalImportWorker(QThread):
         try:
             from ..services import import_local_directory
 
-            import_options = {"scan_control": self.control}
+            import_options = {"scan_control": self.control, "include_desktop_failure_details": True}
             if self.file_paths is not None:
                 import_options["file_paths"] = self.file_paths
             if self.allow_external_file_paths:

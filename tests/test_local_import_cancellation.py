@@ -189,6 +189,7 @@ class LocalImportCancellationTests(unittest.TestCase):
             self.assertEqual(result, stats)
             operation.assert_called_once()
             self.assertIsNone(operation.call_args.kwargs["scan_control"])
+            self.assertNotIn("include_desktop_failure_details", operation.call_args.kwargs)
             self.assertNotIn("cancelled", result)
             export.assert_called_once()
 
@@ -271,10 +272,11 @@ class LocalImportCancellationTests(unittest.TestCase):
         worker.error.connect(errors.append)
         observed = {}
 
-        def fake_import(import_dir, db_path, *, scan_control):
+        def fake_import(import_dir, db_path, *, scan_control, include_desktop_failure_details):
             observed["import_dir"] = import_dir
             observed["db_path"] = db_path
             observed["control"] = scan_control
+            observed["details"] = include_desktop_failure_details
             scan_control.cancel()
             return {"added": 1, "failed": 0, "cancelled": True}
 
@@ -282,6 +284,7 @@ class LocalImportCancellationTests(unittest.TestCase):
             worker.run()
 
         self.assertIs(observed["control"], worker.control)
+        self.assertTrue(observed["details"])
         self.assertEqual(observed["import_dir"], Path("source"))
         self.assertEqual(observed["db_path"], Path("invoices.db"))
         self.assertEqual(len(finished), 1)
