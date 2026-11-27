@@ -220,10 +220,13 @@ class StartupABDiagnosticTests(unittest.TestCase):
                 return {"mode": mode, "label": obj.label, "gate_pass": False, "metrics": None,
                         "fresh_inno_install": False}
 
-            # Mock only the platform gate and expensive boundary operations;
+            # Mock the Windows/Python 3.11 gate and expensive boundary operations;
             # pathlib still uses the real local filesystem. No Windows claim.
             fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
-            with patch.object(ab, "os", fake_os), patch.object(ab.platform, "machine", return_value="AMD64"), \
+            fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
+                                       version="3.11 (simulated)", executable=sys.executable, stderr=sys.stderr)
+            with patch.object(ab, "os", fake_os), patch.object(ab, "sys", fake_sys), \
+                    patch.object(ab.platform, "machine", return_value="AMD64"), \
                     patch.object(ab, "build_source", return_value=build) as build_source, \
                     patch.object(ab, "collect_sample", side_effect=collect), \
                     patch.object(ab, "record_system_state") as state, \
