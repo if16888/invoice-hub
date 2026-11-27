@@ -82,3 +82,19 @@ ETW 使用一次性的唯一具名实时系统日志会话。Windows 内核调�
 Windows venv 的 Python 重定向器可再派生真正运行 checker 的 Python。更新后，ETW 仅跟踪 checker 的在世 Python 子链，实际程序还须与独立 Win32 的完整路径核对、PID、创建时间和链深度匹配。各项核对分别报告。专用工作流先用同样的 venv 进程结构启动单独编译的非 GUI 合成夹具。夹具不加载 Qt 或发票程序，不产生首 Paint 指标，须核验目标进程和非空调度数据后才构建正式包。
 
 短程回验只构建 F 和 B，按 F F B B 采集四个便携样本。已有的 A/F 无观察器暖态对照和 F 实装证据可继续复用。运行顺序不能把 B 首次出现称为同一宿主的首个 Invoice Hub 启动。使用本文三版本命令并追加 `--etw-focus` 可复现短程正式采样。小于 512 KiB gzip 后的已验证目标 JSON 也分段写入作业日志，带原文 SHA-256，便于附件存储不可访问时复核。
+
+### 映射文件归属短测
+
+[聚焦 ETW 作业 46014820597](https://github.com/if16888/invoice-hub/actions/runs/46014820597) 的四次正式采样均通过 5000 ms 门槛，原始事件完整。首位 F 为 4655 ms，第二次为 1608 ms。首次闪屏 UI 离开 CPU 的约 2225 ms 有约 2215 ms 与硬缺页相交。首位窗口区间的 679 个硬缺页均未识别映射模块。PR #271 已通过必要 Windows CI 并合入 `8cfe7b9f5b630323d7e46a8134432165c6741010`，树与已审 F 一致。新 master [正式预发行 audit 46017090758](https://github.com/if16888/invoice-hub/actions/runs/46017090758) 仍以便携 7327 ms 超限，因此当前工作流只定位映射文件，保留原门槛。
+
+```powershell
+$collector = Join-Path $env:TEMP 'ih-mapped-etw-collector'
+dotnet build scripts/dev/windows_startup_etw/StartupEtw.csproj -c Release -o "$collector"
+dotnet (Join-Path $collector 'StartupEtw.dll') --self-test
+dotnet (Join-Path $collector 'StartupEtw.dll') --mapped-file-self-test
+python scripts/dev/windows_startup_ab.py --output-dir "$env:TEMP\ih-mapped-etw" --optimized-sha 8cfe7b9f5b630323d7e46a8134432165c6741010 --etw-collector (Join-Path $collector 'StartupEtw.dll') --mapped-file-focus
+```
+
+标准 Windows runner 首先运行同进程的合成映射 Win32 自检，再执行独立非 GUI venv 目标夹具，验证真实身份、调度和映射查询前提。通过后，只构建一次当前精确 master 的便携包，在同一台机器上连续 F F 两次。其余历史版本、真实安装对照和完整发行审计均复用已保留证据。
+
+实时消费者只在 ETW 目标生存期内、独立 Win32 完整 EXE 路径与 PID/创建时间/进程链深度均匹配后，以查询权限持有同一进程句柄，通过 GetMappedFileNameW 观察该进程地址的映射文件名。仅保留属于精确程序包目录、Windows Fonts 或 System32 的基名；其他映射只保留类别。私有握手文件不写入证据。每个目标缺页均记录查询时状态、事件到查询的延迟和有限查询预算，原始缺页及调度序列保持独立。输出不包含完整路径、裸地址或内存内容，也没有增加全局文件名 ETW provider。映射查询所得文件代表查询时状态，延迟或地址复用可能影响历史归因。检查查询和事件是否均在实际观察到的 UI 窗口区间，并结合缺页等待交集判断。[Microsoft GetMappedFileNameW 文档](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmappedfilenamew)

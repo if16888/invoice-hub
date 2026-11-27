@@ -94,17 +94,22 @@ internal static class Program
     {
         if (args.Length == 1 && args[0] == "--self-test")
             return Timeline.SelfTest();
-        if (args.Length == 1 && args[0] == "--trace-fixture")
+        if (args.Length == 1 && args[0] == "--mapped-file-self-test")
+            return MappedFileObserver.NativeSelfTest();
+        if (args.Length == 1 && (args[0] == "--trace-fixture" || args[0] == "--mapped-trace-fixture"))
         {
             // A non-GUI infrastructure fixture. No Qt, probe metrics or
             // production program is launched.
             var pages = new byte[2 * 1024 * 1024];
             for (int i = 0; i < pages.Length; i += 4096) pages[i] = 1;
-            Thread.Sleep(1100);
+            if (args[0] == "--mapped-trace-fixture")
+                for (int i = 0; i < 150; i++) Thread.Sleep(30); // allow live marker verification despite buffered realtime delivery
+            else Thread.Sleep(1100);
             GC.KeepAlive(pages);
             return 0;
         }
-        if (args.Length != 2 || !Regex.IsMatch(args[0], "^InvoiceHubStartup-[a-f0-9]{32}$"))
+        bool mappedFiles = args.Length == 3 && args[2] == "--mapped-files";
+        if ((args.Length != 2 && !mappedFiles) || !Regex.IsMatch(args[0], "^InvoiceHubStartup-[a-f0-9]{32}$"))
             return 2;
         string name = args[0], directory = Path.GetFullPath(args[1]);
         string ready = Path.Combine(directory, "ready.json"), stop = Path.Combine(directory, "stop.json");
@@ -112,6 +117,7 @@ internal static class Program
         string result = Path.Combine(directory, "result.json");
         var timeline = new Timeline();
         var lineage = new CheckerLineage();
+        using var mapping = mappedFiles ? new MappedFileObserver(Path.Combine(directory, "target.json")) : null;
         TraceEventSession? session = null;
         bool owned = false, drained = false, cleanup = false;
         int? lost = null;
@@ -170,9 +176,15 @@ internal static class Program
             {
                 long tick = data.TimeStampQPC;
                 if (timeline.IsTarget(data.OldProcessID, tick))
+                {
                     timeline.Switch(data.OldThreadID, tick, "out", data.OldThreadState.ToString(), data.OldThreadWaitReason.ToString());
+                    mapping?.ObserveTarget(timeline, data.OldProcessID, tick, lineage.Root);
+                }
                 if (timeline.IsTarget(data.NewProcessID, tick))
+                {
                     timeline.Switch(data.NewThreadID, tick, "in");
+                    mapping?.ObserveTarget(timeline, data.NewProcessID, tick, lineage.Root);
+                }
             };
             kernel.DispatcherReadyThread += data =>
             {
@@ -182,7 +194,8 @@ internal static class Program
             kernel.MemoryHardFault += data =>
             {
                 if (timeline.IsTarget(data.ProcessID, data.TimeStampQPC))
-                    timeline.Fault(data.ThreadID, data.TimeStampQPC, data.VirtualAddress, data.ByteCount, data.ElapsedTimeMSec);
+                    timeline.Fault(data.ThreadID, data.TimeStampQPC, data.VirtualAddress, data.ByteCount, data.ElapsedTimeMSec,
+                        mapping?.Lookup(timeline, data.ProcessID, data.TimeStampQPC, data.VirtualAddress, lineage.Root));
             };
             kernel.StackWalkStack += data =>
             {
@@ -240,7 +253,7 @@ internal static class Program
         try
         {
             using var observation = JsonDocument.Parse(File.ReadAllText(stop));
-            var report = timeline.Report(observation.RootElement, lost, cleanup);
+            var report = timeline.Report(observation.RootElement, lost, cleanup, mapping);
             report["checker_lineage"] = new { root_marker_seen = lineage.Root > 0,
                 python_descendant_starts = lineage.PythonStarts };
             WriteJson(result, report);
@@ -259,7 +272,7 @@ internal sealed class Timeline
     record ThreadLife(long Start, long? End);
     record Point(int Thread, long Tick, string Kind, string State, string Reason);
     record ImageEvent(long Tick, ulong Base, int Size, string Name, bool Unload);
-    record FaultEvent(int Thread, long Tick, ulong Address, int Bytes, double Duration);
+    record FaultEvent(int Thread, long Tick, ulong Address, int Bytes, double Duration, MappedFileEvidence? Mapping);
     record Slice(int Thread, long Start, long End, string State, string Reason, long? Ready, bool Censored);
 
     const int MaxEvents = 150_000;
@@ -295,6 +308,13 @@ internal sealed class Timeline
 
     internal bool IsTarget(int process, long tick) =>
         !ambiguous && pid > 0 && process == pid && tick >= start && (end == 0 || tick <= end);
+
+    internal bool MatchesLiveMarker(int process, long tick, int depth, ulong creationFiletime)
+    {
+        const ulong epoch = 116444736000000000UL;
+        return IsTarget(process, tick) && end == 0 && depth == targetDepth && creationFiletime >= epoch &&
+            Math.Abs((creationFiletime - epoch) / 10000.0 - creationUtc) <= 250;
+    }
 
     internal void End(int process, long tick)
     {
@@ -333,9 +353,9 @@ internal sealed class Timeline
         images.Add(new(tick, address, size, safe, unload));
     }
 
-    internal void Fault(int thread, long tick, ulong address, int bytes, double duration)
+    internal void Fault(int thread, long tick, ulong address, int bytes, double duration, MappedFileEvidence? mapping = null)
     {
-        if (Accept()) faults.Add(new(thread, tick, address, bytes, duration));
+        if (Accept()) faults.Add(new(thread, tick, address, bytes, duration, mapping));
     }
 
     internal void Stack(int thread, long tick, ulong[] frames)
@@ -422,7 +442,7 @@ internal sealed class Timeline
             uncovered_ms = Duration(Math.Max(0, hi - lo - off - run)) };
     }
 
-    internal Dictionary<string, object?> Report(JsonElement control, int? lost, bool cleanup)
+    internal Dictionary<string, object?> Report(JsonElement control, int? lost, bool cleanup, MappedFileObserver? mapping = null)
     {
         bool nativePid = control.TryGetProperty("gui_pid", out var verified) && verified.ValueKind == JsonValueKind.Number;
         bool pidMatches = nativePid && verified.GetInt32() == pid;
@@ -486,12 +506,13 @@ internal sealed class Timeline
         bool uiSwitches = ui.Count > 0 && ui.All(t => lives.ContainsKey(t) &&
             points.Any(p => p.Thread == t && p.Kind == "out" && p.Tick <= cutoff && Owns(t, p.Tick)) &&
             points.Any(p => p.Thread == t && p.Kind == "in" && p.Tick <= cutoff && Owns(t, p.Tick)));
-        bool splashBounds = marks.TryGetValue("splash-like_seen", out long splashStart) &&
-            marks.TryGetValue("splash-like_visible", out long splashEnd) &&
+        long splashStart = 0, splashEnd = 0;
+        bool splashBounds = marks.TryGetValue("splash-like_seen", out splashStart) &&
+            marks.TryGetValue("splash-like_visible", out splashEnd) &&
             splashStart >= start && splashEnd >= splashStart && splashEnd <= cutoff;
         bool mainBound = marks.TryGetValue("main-like_visible", out long main) && main >= start && main <= cutoff;
         bool complete = streamComplete && uiSwitches && splashBounds && mainBound && paintObserved;
-        return new()
+        var report = new Dictionary<string, object?>()
         {
             ["status"] = complete ? "complete" : "partial",
             ["gui_pid"] = pid, ["target_lifetime_ms"] = Relative(end),
@@ -520,6 +541,23 @@ internal sealed class Timeline
             ["raw_hard_faults"] = summaryFaults.OrderBy(f => f.Tick)
                 .Select(f => new object[] { f.Thread, Relative(f.Tick), f.Bytes, Math.Round(f.Duration, 3), Module(f.Address, f.Tick) }).ToArray(),
         };
+        if (mapping != null)
+        {
+            object[] Groups(IEnumerable<FaultEvent> events) => events.GroupBy(f => (
+                    category: f.Mapping?.category ?? "unknown", basename: f.Mapping?.basename))
+                .Select(g => new { g.Key.category, g.Key.basename, faults = g.Count(), bytes = g.Sum(f => (long)f.Bytes),
+                    sum_ms = Math.Round(g.Sum(f => f.Duration), 3) }).OrderByDescending(g => g.sum_ms).Take(30).Cast<object>().ToArray();
+            var splashFaults = splashBounds ? summaryFaults.Where(f => ui.Contains(f.Thread) && f.Tick >= splashStart && f.Tick <= splashEnd) :
+                Enumerable.Empty<FaultEvent>();
+            report["mapped_file_lookup"] = new { coverage = mapping.Coverage(), retained_faults = summaryFaults.Count,
+                observed_queries = summaryFaults.Count(f => f.Mapping?.status == "query_observed"),
+                statuses = summaryFaults.GroupBy(f => f.Mapping?.status ?? "not_observed").ToDictionary(g => g.Key, g => g.Count()),
+                total_retained_observer_work_ms = Math.Round(summaryFaults.Sum(f => f.Mapping?.observer_work_ms ?? 0), 3),
+                all_completion_groups = Groups(summaryFaults), ui_splash_completion_groups = Groups(splashFaults) };
+            report["raw_mapped_faults"] = summaryFaults.OrderBy(f => f.Tick).Select(f =>
+                new object?[] { f.Thread, Relative(f.Tick), f.Bytes, Math.Round(f.Duration, 3), f.Mapping }).ToArray();
+        }
+        return report;
     }
 
     internal static int SelfTest()
@@ -527,6 +565,10 @@ internal sealed class Timeline
         var t = new Timeline();
         long Ms(int value) => Program.FromMilliseconds(value);
         t.Start(42, Ms(1), 12345, 2);
+        ulong birth = 116444736000000000UL + 12345UL * 10000;
+        if (!t.MatchesLiveMarker(42, Ms(2), 2, birth) || t.MatchesLiveMarker(43, Ms(2), 2, birth) ||
+            t.MatchesLiveMarker(42, Ms(2), 1, birth) || t.MatchesLiveMarker(42, Ms(2), 2, birth + 10000000))
+            return 1;
         t.ThreadStart(42, 7, Ms(2));
         t.Image(Ms(3), 0x1000, 0x1000, "Qt6Gui.dll", false);
         t.Switch(7, Ms(5), "in");
@@ -534,13 +576,22 @@ internal sealed class Timeline
         t.Stack(7, Ms(10), new ulong[] { 0x1010, 0xffff000000000010 });
         t.Switch(7, Ms(50), "ready");
         t.Switch(7, Ms(60), "in");
-        t.Fault(7, Ms(70), 0x1020, 4096, 2);
+        t.Fault(7, Ms(70), 0x1020, 4096, 2,
+            new MappedFileEvidence("app-package", "Qt6Gui.dll", "query_observed", 4, 5, 0.1, 0.2));
         t.Switch(7, Ms(80), "out", "Waiting", "Executive");
         t.ThreadEnd(42, 7, Ms(90));
         t.End(42, Ms(95));
+        if (t.MatchesLiveMarker(42, Ms(94), 2, birth)) return 1;
         using var control = JsonDocument.Parse("""{"gui_pid":42,"gui_creation_unix_ms":12345,"checker_lineage_depth":2,"markers":{},"ui_threads":[7]}""");
         string output = JsonSerializer.Serialize(t.Report(control.RootElement, 0, true));
         using var recorded = JsonDocument.Parse(output);
+        using var syntheticMapping = new MappedFileObserver("unused-synthetic-marker");
+        using var mappedReport = JsonDocument.Parse(JsonSerializer.Serialize(t.Report(control.RootElement, 0, true, syntheticMapping)));
+        var mappedRoot = mappedReport.RootElement;
+        if (recorded.RootElement.TryGetProperty("raw_mapped_faults", out _) ||
+            mappedRoot.GetProperty("raw_hard_faults")[0].GetArrayLength() != 5 ||
+            mappedRoot.GetProperty("raw_mapped_faults")[0][4].GetProperty("basename").GetString() != "Qt6Gui.dll")
+            return 1;
         var first = recorded.RootElement.GetProperty("threads")[0].GetProperty("longest_off_cpu")[0];
         string coveredJson = JsonSerializer.Serialize(new
         {
@@ -563,7 +614,8 @@ internal sealed class Timeline
         lineage.End(12, Ms(4));
         if (lineage.Start(43, 12, Ms(5), "InvoiceHub.exe") >= 0)
             return 1;
-        if (recorded.RootElement.GetProperty("status").GetString() != "partial" ||
+        if (!MappedFileObserver.ClassificationSelfTest() ||
+            recorded.RootElement.GetProperty("status").GetString() != "partial" ||
             (string?)t.Report(covered.RootElement, 0, true)["status"] != "complete" ||
             (string?)t.Report(covered.RootElement, 3, true)["status"] != "partial" ||
             first.GetProperty("module_stacks")[0][0].GetString() != "Qt6Gui.dll+0x10" ||

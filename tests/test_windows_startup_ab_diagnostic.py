@@ -85,6 +85,78 @@ class StartupABDiagnosticTests(unittest.TestCase):
             self.assertTrue(all(c[1] == "portable" and c[3]["observe_native"] for c in calls))
             installer.assert_not_called()
 
+    def test_mapped_file_focus_builds_only_f_and_observes_two_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            collector = root / "StartupEtw.dll"
+            collector.touch()
+            optimized = "8cfe7b9f5b630323d7e46a8134432165c6741010"
+            calls = []
+
+            def build(label, revision, *_):
+                return ab.Build(label, revision, root / "InvoiceHub.exe", "synthetic", root / "checker.py",
+                                Path(sys.executable), source=root)
+
+            def sample(obj, mode, ordinal, _work, _evidence, **kwargs):
+                calls.append((obj.label, mode, ordinal, kwargs))
+                return {"mode": mode, "label": obj.label, "index": ordinal, "gate_pass": True,
+                        "metrics": None, "fresh_inno_install": False, "etw_requested": True,
+                        "etw": {"status": "partial", "raw_scheduler_point_count": 1}}
+
+            fake_os = SimpleNamespace(name="nt", environ=os.environ, cpu_count=os.cpu_count)
+            fake_sys = SimpleNamespace(version_info=(3, 11, 0), maxsize=sys.maxsize,
+                                       version="3.11 (simulated)", executable=sys.executable, stderr=sys.stderr)
+            with patch.object(ab, "os", fake_os), patch.object(ab, "sys", fake_sys), \
+                    patch.object(ab.platform, "machine", return_value="AMD64"), \
+                    patch.object(ab, "build_source", side_effect=build) as builder, \
+                    patch.object(ab, "collect_sample", side_effect=sample), \
+                    patch.object(ab, "record_system_state"), patch.object(ab, "build_installer") as installer:
+                code = ab.main(["--output-dir", str(root / "out"), "--optimized-sha", optimized,
+                                "--etw-collector", str(collector), "--mapped-file-focus"])
+            self.assertEqual(code, 0)
+            self.assertEqual([call.args[:2] for call in builder.call_args_list], [("F", optimized)])
+            self.assertEqual([c[:3] for c in calls], [("F", "portable", 1), ("F", "portable", 2)])
+            self.assertTrue(all(c[3]["mapped_files"] and c[3]["observe_native"] for c in calls))
+            installer.assert_not_called()
+
+    def test_live_mapping_marker_stays_private_and_is_not_used_by_old_protocol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            private = root / "control"
+            private.mkdir()
+            evidence = root / "evidence.json"
+            exe = root / "InvoiceHub.exe"
+            capture = etw.EtwCapture(root / "collector.dll", private, evidence, mapped_files=True)
+            capture.ready = True
+            capture.target_verified(42, 11, exe, 116444736000000111, 2)
+            marker = json.loads((private / "target.json").read_text())
+            self.assertEqual(marker, {"pid": 42, "checker_pid": 11, "exe_path": str(exe.resolve()),
+                                      "creation_filetime": 116444736000000111, "checker_lineage_depth": 2})
+            capture.target_verified(43, 11, exe, 1, 1)
+            self.assertEqual(json.loads((private / "target.json").read_text()), marker)
+            self.assertFalse(evidence.exists())
+            legacy = root / "legacy"
+            legacy.mkdir()
+            old = etw.EtwCapture(root / "collector.dll", legacy, evidence)
+            old.ready = True
+            old.target_verified(42, 11, exe, 1, 2)
+            self.assertFalse((legacy / "target.json").exists())
+            compact = etw.compact({"raw_mapped_faults": [1, 2], "mapped_file_lookup": {"observed_queries": 1}})
+            self.assertNotIn("raw_mapped_faults", compact)
+            self.assertEqual(compact["raw_mapped_fault_count"], 2)
+
+    def test_mapping_birth_marker_requires_live_handle(self):
+        api = observer.WindowsApi.__new__(observer.WindowsApi)
+        def times(_handle, creation, *_):
+            creation._obj.dwHighDateTime = 1
+            creation._obj.dwLowDateTime = 2
+            return True
+        api.process_times = times
+        api.wait = lambda *_: 258
+        self.assertEqual(api.live_creation_filetime(99), (1 << 32) | 2)
+        api.wait = lambda *_: 0
+        self.assertIsNone(api.live_creation_filetime(99))
+
     def test_three_revision_plan_retains_cold_trace_warm_control_and_two_real_installs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

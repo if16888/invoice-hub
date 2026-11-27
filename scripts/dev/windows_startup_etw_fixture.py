@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--collector", required=True, type=Path)
     parser.add_argument("--fixture", required=True, type=Path)
+    parser.add_argument("--mapped-files", action="store_true")
     args = parser.parse_args()
     root = args.output_dir.resolve()
     evidence = root / "evidence"
@@ -26,7 +27,8 @@ def main():
     venv = root / "venv"
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True, timeout=60)
     environment = sample_environment(root / "runtime")
-    capture = EtwCapture(args.collector.resolve(strict=True), root / "etw-control", evidence / "fixture.etw.json")
+    capture = EtwCapture(args.collector.resolve(strict=True), root / "etw-control", evidence / "fixture.etw.json",
+                         mapped_files=args.mapped_files)
     capture.start()
     native = {}
     code = None
@@ -35,7 +37,8 @@ def main():
         # official checker. The fixture never emits timing/paint evidence.
         code, native = run_observed_checker(
             [venv / "Scripts/python.exe", "-c",
-             "import subprocess,sys;sys.exit(subprocess.run([sys.argv[1], '--trace-fixture']).returncode)", exe],
+             "import subprocess,sys;sys.exit(subprocess.run([sys.argv[1], sys.argv[2]]).returncode)", exe,
+             "--mapped-trace-fixture" if args.mapped_files else "--trace-fixture"],
             cwd=root, env=environment, log=evidence / "fixture.log", exe=exe,
             trace_path=evidence / "fixture.native.json", timeout=20, etw=capture,
         )
@@ -47,6 +50,9 @@ def main():
               and trace.get("identity_checks", {}).get("depth_matches") is True
               and trace.get("cleanup") is True and trace.get("events_lost") == 0
               and bool(raw.get("raw_scheduler_points")))
+    if args.mapped_files:
+        passed = (passed and trace.get("mapped_target_marker_published") is True
+                  and raw.get("mapped_file_lookup", {}).get("coverage", {}).get("verified") is True)
     report = {"synthetic_non_gui_fixture": True, "fixture_process_exit": code,
               "identity_and_scheduler_verified": passed, "native": native, "etw": trace}
     (evidence / "fixture-result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

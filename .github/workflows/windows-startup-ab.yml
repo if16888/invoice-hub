@@ -1,4 +1,4 @@
-name: Windows Startup Scoped ETW Follow-up
+name: Windows Startup Mapped-file ETW Diagnostic
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 25
     env:
       PYTHONIOENCODING: utf-8
-      OPTIMIZED_SHA: 8c94421d97c9ddc02127ed399b8d82c4d379e532
+      OPTIMIZED_SHA: 8cfe7b9f5b630323d7e46a8134432165c6741010
     steps:
       - name: Checkout exact source history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -38,24 +38,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet (Join-Path $collector "StartupEtw.dll") --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet (Join-Path $collector "StartupEtw.dll") --mapped-file-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "ETW_COLLECTOR=$(Join-Path $collector 'StartupEtw.dll')" >> $env:GITHUB_ENV
           $fixture = Join-Path $env:RUNNER_TEMP "ih-etw-fixture-bin-$env:GITHUB_RUN_ATTEMPT"
           dotnet build scripts/dev/windows_startup_etw/StartupEtw.csproj --configuration Release --output "$fixture" /p:AssemblyName=InvoiceHub
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "ETW_FIXTURE=$(Join-Path $fixture 'InvoiceHub.exe')" >> $env:GITHUB_ENV
 
-      - name: Verify target identity with a non-GUI Windows venv fixture
+      - name: Verify target identity and live mapping with a non-GUI Windows venv fixture
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP "ih-fixture-$env:GITHUB_RUN_ATTEMPT"
-          python scripts/dev/windows_startup_etw_fixture.py --output-dir "$output" --collector "$env:ETW_COLLECTOR" --fixture "$env:ETW_FIXTURE"
+          python scripts/dev/windows_startup_etw_fixture.py --output-dir "$output" --collector "$env:ETW_COLLECTOR" --fixture "$env:ETW_FIXTURE" --mapped-files
           exit $LASTEXITCODE
 
-      - name: Trace two exact frozen packages twice without rebuilding installers
+      - name: Trace exact master twice and query only its live mapped-file metadata
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP "ih-ab-$env:GITHUB_RUN_ATTEMPT"
-          python scripts/dev/windows_startup_ab.py --output-dir "$output" --optimized-sha "$env:OPTIMIZED_SHA" --etw-collector "$env:ETW_COLLECTOR" --etw-focus
+          python scripts/dev/windows_startup_ab.py --output-dir "$output" --optimized-sha "$env:OPTIMIZED_SHA" --etw-collector "$env:ETW_COLLECTOR" --mapped-file-focus
           exit $LASTEXITCODE
 
       - name: Upload compact diagnostic evidence

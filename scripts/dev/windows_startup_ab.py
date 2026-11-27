@@ -328,7 +328,7 @@ def installed_executable(build: Build, sample_root: Path, record: dict):
 
 
 def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: dict,
-            *, etw_collector: Path | None = None) -> None:
+            *, etw_collector: Path | None = None, mapped_files: bool = False) -> None:
     env = sample_environment(sample_root / "runtime")
     log = evidence / f"{record['sample']}.log"
     command = [build.python, build.checker, exe, "--threshold", str(record["threshold_ms"]), "--output-json"]
@@ -345,7 +345,7 @@ def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: 
             etw = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(etw)
             capture = etw.EtwCapture(etw_collector, sample_root / "etw-control",
-                                     evidence / f"{record['sample']}.etw.json")
+                                     evidence / f"{record['sample']}.etw.json", mapped_files=mapped_files)
             capture.start()
         except Exception as exc:
             record["etw"] = {"status": "unavailable", "error": f"ETW bridge: {type(exc).__name__}"}
@@ -383,7 +383,7 @@ def measure(build: Build, exe: Path, sample_root: Path, evidence: Path, record: 
 
 def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: Path,
                    *, fresh_install: bool, observe_native: bool = False,
-                   etw_collector: Path | None = None) -> dict:
+                   etw_collector: Path | None = None, mapped_files: bool = False) -> dict:
     sample = f"{mode}-{ordinal:02d}-{build.label}"
     root = work / "samples" / sample
     root.mkdir(parents=True)
@@ -397,6 +397,9 @@ def collect_sample(build: Build, mode: str, ordinal: int, work: Path, evidence: 
     if etw_collector is not None:
         record["etw_requested"] = True
     extra = {"etw_collector": etw_collector} if etw_collector is not None else {}
+    if mapped_files:
+        record["mapped_files_requested"] = True
+        extra["mapped_files"] = True
     try:
         if fresh_install:
             with installed_executable(build, root, record) as exe:
@@ -502,6 +505,7 @@ def main(argv=None) -> int:
     parser.add_argument("--optimized-sha", help="Compare exact optimized F with A/B, including a first-position ETW sample")
     parser.add_argument("--etw-collector", type=Path, help="Built StartupEtw.dll for the three-revision diagnostic")
     parser.add_argument("--etw-focus", action="store_true", help="After an infrastructure correction, trace only F and historical B twice")
+    parser.add_argument("--mapped-file-focus", action="store_true", help="Trace only the exact current optimized package twice with query-time mapped-file observations")
     args = parser.parse_args(argv)
     if os.name != "nt" or platform.machine().lower() not in {"amd64", "x86_64"} or sys.maxsize <= 2**32:
         parser.error("This diagnostic requires native Windows x64 and 64-bit Python")
@@ -528,6 +532,8 @@ def main(argv=None) -> int:
         parser.error("--etw-collector requires --optimized-sha")
     if args.etw_focus and (not three_way or args.mode != "portable" or args.native_qt or args.disposable_runner):
         parser.error("--etw-focus requires the exact optimization and portable ETW comparison")
+    if args.mapped_file_focus and (not three_way or args.etw_focus or args.mode != "portable" or args.native_qt or args.disposable_runner):
+        parser.error("--mapped-file-focus requires one exact optimized portable package and ETW collector")
     real_install = not provided and args.mode in {"installed", "both"}
     if real_install and not args.disposable_runner:
         parser.error("Real Inno samples require --disposable-runner on a clean disposable Windows host")
@@ -539,8 +545,8 @@ def main(argv=None) -> int:
     evidence.mkdir()
     modes = ("portable", "installed") if args.mode == "both" else (args.mode,)
     order = "BB" if args.baseline_first else args.order
-    traced_order = "FFBB" if args.etw_focus else "FFABBAF"
-    control_order = "" if args.etw_focus else "BAFFAB"
+    traced_order = "FF" if args.mapped_file_focus else "FFBB" if args.etw_focus else "FFABBAF"
+    control_order = "" if args.etw_focus or args.mapped_file_focus else "BAFFAB"
     if three_way:
         order = traced_order + control_order
     records = []
@@ -551,7 +557,7 @@ def main(argv=None) -> int:
                "machine": platform.machine(), "python": sys.version, "logical_cpus": os.cpu_count(),
                "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_ENVIRONMENT", "ImageOS", "ImageVersion")},
                "native_qt_platform": "windows", "order": order, "modes": modes, "thresholds_ms": THRESHOLDS,
-               "diagnostic_protocol": "focused-etw" if args.etw_focus else "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
+               "diagnostic_protocol": "mapped-file-focus" if args.mapped_file_focus else "focused-etw" if args.etw_focus else "three-way-etw" if three_way else "baseline-first" if args.baseline_first else "balanced-ab",
                "optimized_sha": args.optimized_sha,
                "traced_portable_order": traced_order if three_way else None,
                "untraced_portable_order": control_order if three_way else None,
@@ -572,9 +578,11 @@ def main(argv=None) -> int:
             builds = {"B": build_source("B", args.baseline_sha.lower(), work, evidence)}
             record_system_state(evidence, "before-first")
         elif three_way:
-            revisions = [("F", args.optimized_sha), ("B", args.baseline_sha)]
-            if not args.etw_focus:
-                revisions.insert(1, ("A", args.candidate_sha))
+            revisions = [("F", args.optimized_sha)]
+            if not args.mapped_file_focus:
+                if not args.etw_focus:
+                    revisions.append(("A", args.candidate_sha))
+                revisions.append(("B", args.baseline_sha))
             builds = {label: build_source(label, rev.lower(), work, evidence) for label, rev in revisions}
             record_system_state(evidence, "before-first")
         else:
@@ -590,6 +598,8 @@ def main(argv=None) -> int:
                                               (mode == "installed" and ordinal == 1))
                 observe_native = args.baseline_first or trace_sample
                 extra = {"etw_collector": args.etw_collector.resolve()} if trace_sample else {}
+                if trace_sample and args.mapped_file_focus:
+                    extra["mapped_files"] = True
                 record = collect_sample(builds[label], mode, ordinal, work, evidence,
                                         fresh_install=real_install and mode == "installed", observe_native=observe_native, **extra)
                 records.append(record)
@@ -631,6 +641,11 @@ def main(argv=None) -> int:
         }
         summary["traced_groups"] = summarize(traced, len(traced_order) + int("installed" in modes))["groups"]
         summary["untraced_groups"] = summarize(controls, len(control_order) + int("installed" in modes))["groups"]
+        if args.mapped_file_focus:
+            summary["mapped_file_samples"] = [{"sample": r.get("sample"),
+                "identity_verified": r.get("etw", {}).get("mapped_file_lookup", {}).get("coverage", {}).get("verified", False),
+                "observed_queries": r.get("etw", {}).get("mapped_file_lookup", {}).get("observed_queries", 0),
+                "retained_faults": r.get("etw", {}).get("mapped_file_lookup", {}).get("retained_faults", 0)} for r in traced]
     write_json(evidence / "summary.json", summary)
     print("PERF_AB_SUMMARY " + json.dumps(summary, ensure_ascii=False, separators=(",", ":")), flush=True)
     return 0 if summary["all_gates_passed"] and error is None and qt_ok and summary.get("etw_evidence_collected", True) else 1

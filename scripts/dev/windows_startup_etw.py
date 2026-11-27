@@ -20,7 +20,7 @@ def publish(path: Path, content: str) -> None:
 
 
 class EtwCapture:
-    def __init__(self, dll: Path, directory: Path, evidence: Path):
+    def __init__(self, dll: Path, directory: Path, evidence: Path, *, mapped_files: bool = False):
         self.dll = dll
         self.directory = directory
         self.evidence = evidence
@@ -28,13 +28,19 @@ class EtwCapture:
         self.process = None
         self.ready = False
         self.error = None
+        self.mapped_files = mapped_files
+        self.mapping_marker_published = False
+        self.mapping_bridge_error = None
 
     def start(self) -> None:
         """Start the consumer before launching the unchanged checker."""
         try:
             self.directory.mkdir()
+            command = ["dotnet", str(self.dll), self.name, str(self.directory)]
+            if self.mapped_files:
+                command.append("--mapped-files")
             self.process = subprocess.Popen(
-                ["dotnet", str(self.dll), self.name, str(self.directory)],
+                command,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             marker = self.directory / "ready.json"
@@ -59,6 +65,18 @@ class EtwCapture:
                 publish(self.directory / "checker.pid", str(pid))
             except OSError as exc:
                 self.error = f"Checker identity marker: {type(exc).__name__}"
+
+    def target_verified(self, pid: int, checker_pid: int, exe: Path, creation_filetime: int, depth: int) -> None:
+        if not self.mapped_files or not self.ready or self.mapping_marker_published:
+            return
+        try:
+            # Private control marker, not an uploaded evidence file or log.
+            publish(self.directory / "target.json", json.dumps({"pid": pid, "checker_pid": checker_pid,
+                "exe_path": str(exe.resolve()), "creation_filetime": creation_filetime,
+                "checker_lineage_depth": depth}))
+            self.mapping_marker_published = True
+        except (OSError, ValueError) as exc:
+            self.mapping_bridge_error = f"Target marker: {type(exc).__name__}"
 
     def finish(self, native: dict) -> dict:
         """Always produce an explicit ETW result. Never rerun the checker."""
@@ -119,14 +137,20 @@ class EtwCapture:
             except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
                 report["fallback_cleanup_error"] = type(exc).__name__
                 print(f"PERF_AB_ETW_CLEANUP owned_session={self.name} error={type(exc).__name__}", flush=True)
+        if self.mapped_files:
+            report["mapped_target_marker_published"] = self.mapping_marker_published
+            if self.mapping_bridge_error:
+                report["mapping_bridge_error"] = self.mapping_bridge_error
         return report
 
 
 def compact(full: dict) -> dict:
     """Keep enough target-only evidence in CI logs without dumping all events."""
-    omitted = {"raw_scheduler_points", "raw_thread_lifetimes", "raw_hard_faults", "threads"}
+    omitted = {"raw_scheduler_points", "raw_thread_lifetimes", "raw_hard_faults", "raw_mapped_faults", "threads"}
     summary = {key: value for key, value in full.items() if key not in omitted}
     summary["raw_scheduler_point_count"] = len(full.get("raw_scheduler_points", []))
+    if "raw_mapped_faults" in full:
+        summary["raw_mapped_fault_count"] = len(full["raw_mapped_faults"])
     threads = full.get("threads", [])
     summary["target_thread_count"] = len(threads)
     summary["ui_threads"] = []

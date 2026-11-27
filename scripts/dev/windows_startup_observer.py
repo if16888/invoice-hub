@@ -167,6 +167,15 @@ class WindowsApi:
                           private_bytes=int(memory.private_bytes))
         return result
 
+    def live_creation_filetime(self, handle) -> int | None:
+        """Exact birth identity from the same path-verified live process handle."""
+        if self.wait(handle, 0) != 258:
+            return None
+        creation, exit_time, kernel, user = (wt.FILETIME() for _ in range(4))
+        if self.process_times(handle, *(ctypes.byref(x) for x in (creation, exit_time, kernel, user))):
+            return filetime(creation)
+        return None
+
     def read_probe(self, path: Path) -> bytes:
         # The official checker deletes this synthetic file as soon as it has
         # read its own evidence. Share deletion AND concurrent reads/writes.
@@ -267,6 +276,15 @@ def run_observed_checker(command, *, cwd: Path, env: dict, log: Path, exe: Path,
                     if handle:
                         trace["gui_pid"] = pid
                         trace["checker_lineage_depth"] = descendant_depth(processes, checker.pid, pid)
+                        if etw is not None and getattr(etw, "mapped_files", False) and trace["checker_lineage_depth"]:
+                            try:
+                                creation = api.live_creation_filetime(handle)
+                                if creation is not None:
+                                    etw.target_verified(pid, checker.pid, exe, creation, trace["checker_lineage_depth"])
+                            except Exception:
+                                # Mapping marker absence must not invalidate
+                                # the unchanged scheduler/checker evidence.
+                                pass
                         trace["module_snapshots"]["pid_observed"] = api.modules(pid)
                 if handle:
                     counters = api.counters(handle)
