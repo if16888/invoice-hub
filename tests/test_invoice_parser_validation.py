@@ -74,6 +74,17 @@ def _basic_invoice_lines(*extra_lines: str, issue_date: str = "2026年05月01日
     ])
 
 
+def _invoice_with_amounts(*amount_lines: str, title: str = "电子发票（普通发票）") -> str:
+    return "\n".join([
+        title,
+        "发票号码：26322000000000000001",
+        "开票日期：2026年05月23日",
+        "销售方名称：示例服务有限公司",
+        "购买方名称：示例科技有限公司",
+        *amount_lines,
+    ])
+
+
 class NormalizeDateValidationTests(unittest.TestCase):
     def test_impossible_calendar_dates_are_rejected(self):
         for value in (
@@ -253,6 +264,116 @@ class WellFormedInvoiceRegressionTests(unittest.TestCase):
         self.assertEqual(info.seller_name, "示例餐饮管理有限公司")
         self.assertEqual(info.buyer_name, "示例科技有限公司")
         self.assertEqual(info.invoice_type, "电子发票")
+
+
+class ParsePdfAmountValidationTests(unittest.TestCase):
+    def assert_amounts(self, lines, expected, *, title="电子发票（普通发票）"):
+        info = _parse_text(_invoice_with_amounts(*lines, title=title))
+        self.assertTrue(info.parse_success)
+        self.assertEqual((info.amount, info.tax_amount, info.total_amount), expected)
+
+    def test_signed_amounts_are_bound_to_each_label(self):
+        cases = [
+            (("合计 ¥-100.00", "税额：¥-6.00", "价税合计（小写）¥-106.00"),
+             ("-100.00", "-6.00", "-106.00")),
+            (("合计 -￥100.00", "税额：-￥6.00", "价税合计（小写）-￥106.00"),
+             ("-100.00", "-6.00", "-106.00")),
+            (("合 计 ￥ − 1,000.00", "合计税额：￥−60.00", "价税合计（⼩写）￥−1,060.00"),
+             ("-1000.00", "-60.00", "-1060.00")),
+            (("金 额：− ¥100.00", "税额合计 −¥6.00", "价 税 合 计 −¥106.00"),
+             ("-100.00", "-6.00", "-106.00")),
+            (("不含税金额：－ ￥1,234.00", "税 额 ￥ － 12.34", "价税合计金额：－￥1,246.34"),
+             ("-1234.00", "-12.34", "-1246.34")),
+            (("合计 -100.00", "税额：-6.00", "价 税 合 计（小写）-106.00"),
+             ("-100.00", "-6.00", "-106.00")),
+            (("金额：￥1,000.00", "税额合计：60.00", "价税合计（小写）￥1,060.00"),
+             ("1000.00", "60.00", "1060.00")),
+        ]
+        for lines, expected in cases:
+            with self.subTest(lines=lines):
+                self.assert_amounts(lines, expected)
+
+    def test_explicit_total_wins_over_later_unlabelled_and_remark_amounts(self):
+        for tail in ("￥199.00", "备注：原订单⾦额 ￥199.00", "总计 ￥199.00"):
+            with self.subTest(tail=tail):
+                self.assert_amounts(
+                    ("合计 ￥-100.00", "税额：￥-6.00", "价税合计（⼩写）￥-106.00", tail),
+                    ("-100.00", "-6.00", "-106.00"),
+                )
+        # PDF reading order may put the remarks block ahead of the total.
+        self.assert_amounts(
+            ("备注：原订单⾦额 ￥199.00", "合计 ￥100.00", "税额：￥6.00",
+             "价税合计（⼩写）￥106.00"),
+            ("100.00", "6.00", "106.00"),
+        )
+        self.assert_amounts(
+            ("合计 ￥-100.00", "税额：￥-6.00", "价税合计 ￥-106.00 备注：原订单金额 ￥199.00"),
+            ("-100.00", "-6.00", "-106.00"),
+        )
+
+    def test_total_before_independent_subtotal_does_not_fill_pretax(self):
+        self.assert_amounts(
+            ("价税合计 ￥106.00", "合 计 ￥100.00", "税额：￥6.00"),
+            ("100.00", "6.00", "106.00"),
+        )
+        self.assert_amounts(
+            ("价 税 合 计 － ￥106.00", "金 额：-100.00"),
+            ("-100.00", None, "-106.00"),
+        )
+
+    def test_total_only_never_becomes_pretax_and_missing_fields_are_not_calculated(self):
+        for line, total in (("价 税 合 计 ￥106.00", "106.00"),
+                            ("价 税 合 计 −￥106.00", "-106.00"),
+                            ("价税合计（⼩写）¥-106.00", "-106.00")):
+            with self.subTest(line=line):
+                self.assert_amounts((line,), ("", None, total))
+        self.assert_amounts(("税额：￥6.00", "价税合计 ￥106.00"), ("", "6.00", "106.00"))
+        self.assert_amounts(("合计 ￥100.00", "税额：￥6.00"), ("100.00", "6.00", ""))
+
+    def test_unlabelled_second_subtotal_column_does_not_supply_missing_tax(self):
+        self.assert_amounts(
+            ("合 计 ￥-100.00 ￥-6.00", "价税合计（⼤写）负壹佰零陆元整（⼩写）￥-106.00"),
+            ("-100.00", None, "-106.00"),
+        )
+
+    def test_sign_is_not_inferred_from_red_invoice_or_other_fields(self):
+        self.assert_amounts(
+            ("合计 ￥100.00", "税额：￥6.00", "价税合计 ￥106.00"),
+            ("100.00", "6.00", "106.00"), title="红字电子发票（普通发票）",
+        )
+        self.assert_amounts(
+            ("合计 ￥-100.00", "税额：￥6.00", "价税合计 ￥106.00"),
+            ("-100.00", "6.00", "106.00"),
+        )
+
+    def test_ambiguous_or_malformed_explicit_total_is_left_empty(self):
+        for lines in (
+            ("价税合计 ￥-106.00 ￥199.00",),
+            ("价税合计 ￥-106.00", "价税合计 ￥-105.00"),
+            ("价税合计 ￥--106.00", "备注：原订单金额 ￥199.00"),
+            ("价税合计 ￥−1,00.00",),
+            ("价税合计 ￥−106.000",),
+        ):
+            with self.subTest(lines=lines):
+                self.assert_amounts(lines, ("", None, ""))
+
+    def test_total_fallbacks_keep_sign_without_stealing_other_fields(self):
+        for label in ("（小写）", "小 写：", "壹佰圆整 ", "总计：", "合计金额 ", "发票金额：", "人民币 ", ""):
+            for token, total in (("￥106.00", "106.00"), ("− ￥106.00", "-106.00")):
+                with self.subTest(label=label, token=token):
+                    self.assert_amounts((label + token,), ("", None, total))
+        for lines, expected in (
+            (("合计 ￥-100.00",), ("-100.00", None, "")),
+            (("合计", "￥100.00"), ("100.00", None, "")),
+            (("税额：￥-6.00",), ("", "-6.00", "")),
+            (("备注：原订单金额 ￥199.00",), ("", None, "")),
+            (("备注：原订单", "￥199.00"), ("", None, "")),
+            (("原订单⾦额 ￥199.00",), ("", None, "")),
+            (("人民币 --￥106.00",), ("", None, "")),
+            (("￥−1,00.00",), ("", None, "")),
+        ):
+            with self.subTest(lines=lines):
+                self.assert_amounts(lines, expected)
 
 
 if __name__ == "__main__":
