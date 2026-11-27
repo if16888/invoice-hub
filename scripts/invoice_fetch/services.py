@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import time
 import zipfile
 from dataclasses import dataclass
@@ -2259,6 +2260,23 @@ def _extract_local_zip(src: Path, att_dir: Path) -> list[Path]:
     ]
 
 
+def _local_import_failure_reason(exc: Exception, *, reading_archive: bool = False) -> str:
+    """Fixed, actionable copy; exception messages may contain private paths."""
+    if isinstance(exc, FileNotFoundError):
+        return "文件不存在或已移动。请确认原文件后重新导入。"
+    if isinstance(exc, PermissionError):
+        return "无法访问文件。请检查权限或关闭占用文件的程序后重试。"
+    if isinstance(exc, zipfile.BadZipFile):
+        return "压缩包损坏或不是有效 ZIP。请重新获取原始压缩包。"
+    if isinstance(exc, sqlite3.Error):
+        return "本地数据库操作失败。请确认数据目录可用后重试。"
+    if isinstance(exc, OSError):
+        return "文件读取或保存失败。请检查原件、数据目录权限和可用空间。"
+    if reading_archive:
+        return "压缩包无法正常展开。请确认压缩包可正常解压且未加密后重新导入。"
+    return "文件处理失败。请确认原件可正常打开，再重新导入。"
+
+
 def _import_local_directory(
     import_dir: str | Path,
     db: InvoiceDB,
@@ -2268,6 +2286,7 @@ def _import_local_directory(
     file_paths=None,
     scan_control: ScanControl | None = None,
     allow_external_file_paths: bool = False,
+    include_desktop_failure_details: bool = False,
 ) -> dict:
     root = Path(import_dir)
     if not root.exists() or not root.is_dir():
@@ -2306,6 +2325,9 @@ def _import_local_directory(
         "skipped": 0,
         "skipped_details": [],
     }
+    # Opt-in only: desktop paths are session data, not CLI/mobile results.
+    if include_desktop_failure_details:
+        stats["failure_details"] = []
 
     # Local import intentionally cancels only between top-level source files.
     # The current source must finish its parser/file/DB operation so its
@@ -2314,8 +2336,23 @@ def _import_local_directory(
         stats["cancelled"] = True
         return stats
 
-    def record_item_result(res: LocalImportItemResult) -> None:
-        if res.status in stats:
+    def record_failure(src: Path, reason: str, error_kind: str = "") -> None:
+        stats["failed"] += 1
+        if include_desktop_failure_details:
+            # Folder imports have a user-selected root. Explicit external
+            # drops do not, so keep the absolute local paths for those files.
+            if file_paths is not None and allow_external_file_paths:
+                source = str(src)
+            else:
+                source = src.relative_to(root).as_posix()
+            stats["failure_details"].append({"source": source, "reason": reason})
+        _log.warning("本地导入失败 %s: %s%s", mask_path(src), reason,
+                     f" ({error_kind})" if error_kind else "")
+
+    def record_item_result(res: LocalImportItemResult, src: Path) -> None:
+        if res.status == "failed":
+            record_failure(src, "文件处理失败。请确认原件可正常打开，再重新导入。")
+        elif res.status in stats:
             stats[res.status] += 1
         else:
             key = res.status + "s" if res.status in ("duplicate", "conflict") else res.status
@@ -2342,6 +2379,7 @@ def _import_local_directory(
             stats["cancelled"] = True
             break
         ext = src.suffix.lower()
+        reading_archive = ext == ".zip"
         try:
             preserve_source_path = _path_is_within(src, runtime_root)
             if preserve_source_path and ("inbox/mobile_upload" in src.as_posix() or "inbox\\mobile_upload" in str(src)):
@@ -2353,25 +2391,28 @@ def _import_local_directory(
                 if discovered > _LOCAL_ZIP_MAX_FILES:
                     stats["archive_members_unprocessed"] += discovered
                     stats["skipped"] += discovered
+                    reason = f"压缩包含 {discovered} 个可处理文件，超过安全上限 {_LOCAL_ZIP_MAX_FILES}，已整包拒绝"
                     stats["skipped_details"].append({
                         "source": src.name,
-                        "reason": f"压缩包含 {discovered} 个可处理文件，超过安全上限 {_LOCAL_ZIP_MAX_FILES}，已整包拒绝",
+                        "reason": reason,
                         "count": discovered,
                     })
-                    raise ValueError(
-                        f"ZIP contains {discovered} supported files; limit is {_LOCAL_ZIP_MAX_FILES}"
-                    )
+                    record_failure(src, reason + "。请拆分压缩包或单独导入其中的文件。")
+                    continue
                 if total_uncompressed > _LOCAL_ZIP_MAX_BYTES:
                     stats["archive_members_unprocessed"] += discovered
                     stats["skipped"] += discovered
+                    reason = "压缩包解压后体积超过 50 MB，已整包拒绝"
                     stats["skipped_details"].append({
                         "source": src.name,
-                        "reason": "压缩包解压后体积超过 50 MB，已整包拒绝",
+                        "reason": reason,
                         "count": discovered,
                     })
-                    raise ValueError("ZIP uncompressed content exceeds 50 MB")
+                    record_failure(src, reason + "。请拆分压缩包或单独导入其中的文件。")
+                    continue
 
                 extracted = _extract_local_zip(src, att_dir)
+                reading_archive = False
                 stats["archive_members_processed"] += len(extracted)
                 unprocessed = max(0, discovered - len(extracted))
                 if unprocessed:
@@ -2387,7 +2428,7 @@ def _import_local_directory(
                     res = _insert_local_exception(
                         db, copied, src.name, "ZIP中未发现可处理 PDF/OFD/图片文件", categories
                     )
-                    record_item_result(res)
+                    record_item_result(res, src)
                     continue
 
                 for extracted_file in extracted:
@@ -2396,7 +2437,7 @@ def _import_local_directory(
                         res = _import_local_pdf(
                             src.name, extracted_file, db, parser, categories, att_dir
                         )
-                        record_item_result(res)
+                        record_item_result(res, src)
                     elif inner_ext in {".png", ".jpg", ".jpeg", ".heic"}:
                         evidence_result = _import_local_evidence(
                             db=db,
@@ -2416,7 +2457,7 @@ def _import_local_directory(
                             )
                         else:
                             res = evidence_result
-                        record_item_result(res)
+                        record_item_result(res, src)
                     else:
                         res = _insert_local_exception(
                             db,
@@ -2425,7 +2466,7 @@ def _import_local_directory(
                             "本地导入暂不支持OFD解析，请人工处理",
                             categories,
                         )
-                        record_item_result(res)
+                        record_item_result(res, src)
                 continue
 
             working_file = src if preserve_source_path else _copy_local_file_to_staging(src, staging_dir)
@@ -2439,7 +2480,7 @@ def _import_local_directory(
                     att_dir,
                     preserve_source_path=preserve_source_path,
                 )
-                record_item_result(res)
+                record_item_result(res, src)
             elif ext in {".png", ".jpg", ".jpeg", ".heic"}:
                 evidence_result = _import_local_evidence(
                     db=db,
@@ -2459,7 +2500,7 @@ def _import_local_directory(
                     )
                 else:
                     res = evidence_result
-                record_item_result(res)
+                record_item_result(res, src)
             else:
                 evidence_result = _import_local_evidence(
                     db=db,
@@ -2477,7 +2518,7 @@ def _import_local_directory(
                     )
                 else:
                     res = evidence_result
-                record_item_result(res)
+                record_item_result(res, src)
         except ScanCancelled:
             # A cancellation surfacing from a source operation must not look
             # like a failed file: keep completed results and stop cleanly.
@@ -2485,8 +2526,7 @@ def _import_local_directory(
             stats["cancelled"] = True
             break
         except Exception as exc:
-            _log.warning("本地导入失败 %s: %s", mask_path(src), exc)
-            stats["failed"] += 1
+            record_failure(src, _local_import_failure_reason(exc, reading_archive=reading_archive), type(exc).__name__)
 
     # Observe a request made while the final source was executing as well.
     # There is no next source to skip, but the caller still needs a neutral
@@ -4648,6 +4688,7 @@ def import_local_directory(
     file_paths: Iterable[str | Path] | None = None,
     scan_control: ScanControl | None = None,
     allow_external_file_paths: bool = False,
+    include_desktop_failure_details: bool = False,
 ) -> dict:
     """Public wrapper to import a local directory of invoices."""
     try:
@@ -4666,6 +4707,8 @@ def import_local_directory(
             }
             if allow_external_file_paths:
                 import_options["allow_external_file_paths"] = True
+            if include_desktop_failure_details:
+                import_options["include_desktop_failure_details"] = True
             stats = _import_local_directory(
                 import_dir=import_dir,
                 db=db,
