@@ -73,6 +73,7 @@ class DesignTokenAuthorityTests(unittest.TestCase):
         for dark in (False, True):
             for foreground, background, minimum in (
                 ("text", "surface", 4.5), ("muted", "surface", 4.5),
+                ("muted_text", "muted_surface", 4.5),
                 ("placeholder", "surface", 4.5), ("surface", "accent", 4.5),
                 ("warning_text", "warning_surface", 4.5),
                 ("danger_text", "danger_surface", 4.5),

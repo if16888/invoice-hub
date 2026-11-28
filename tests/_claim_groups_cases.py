@@ -6000,58 +6000,100 @@ class ClaimGroupsTests(unittest.TestCase):
 
     def test_gui_search_uses_debounce_timer(self):
         try:
+            from PySide6.QtCore import QEvent
+            from PySide6.QtTest import QSignalSpy
             from PySide6.QtWidgets import QApplication
-            import sys
+            from scripts.invoice_fetch.gui import workbench_settings
+            from scripts.invoice_fetch.gui.app import InvoiceReviewApp
             app = QApplication.instance() or QApplication(sys.argv)
+        except (ImportError, RuntimeError) as e:
+            self.skipTest(f"Skipping GUI test: {e}")
 
-            with tempfile.TemporaryDirectory() as td:
-                db_path = Path(td) / "test_gui_search_debounce.db"
-                with InvoiceDB(db_path) as db:
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(workbench_settings, "RUNTIME_DIR", Path(td)), \
+                patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value={}):
+            settings = workbench_settings.workbench_settings()
+            settings.setValue("migration/legacy_qsettings_v1", True)
+            settings.sync()
+            db_path = Path(td) / "test_gui_search_debounce.db"
+            numbers = ("DEBOUNCE001", "DEBOUNCE002")
+            with InvoiceDB(db_path) as db:
+                for number in numbers:
                     db.insert_invoice({
-                        "invoice_number": "DEBOUNCE001",
+                        "invoice_number": number,
                         "total_amount": "10.00",
                         "seller_name": "Debounce Seller",
                         "invoice_date": "2026-06-01",
                         "review_status": "to_review",
                     })
 
-                from scripts.invoice_fetch.gui.app import InvoiceReviewApp
-                window = InvoiceReviewApp(db_path, splash=None)
-                try:
-                    window._deferred_init()
-                    app.processEvents()
-                    self.assertTrue(hasattr(window, "search_reload_timer"))
-                    self.assertTrue(window.search_reload_timer.isSingleShot())
-                    self.assertGreaterEqual(window.search_reload_timer.interval(), 250)
-                    self.assertLessEqual(window.search_reload_timer.interval(), 300)
+            window = InvoiceReviewApp(db_path, splash=None)
+            try:
+                window._deferred_init()
+                window.show()
+                app.processEvents()
+                self.assertEqual(window.table.rowCount(), len(numbers))
+                timer = window.search_reload_timer
+                self.assertTrue(timer.isSingleShot())
+                self.assertGreaterEqual(timer.interval(), 250)
+                self.assertLessEqual(timer.interval(), 300)
+                timeouts = QSignalSpy(timer.timeout)
+                loaded_searches = []
+                original_load = window._load_invoices_impl
 
-                    load_count = 0
-                    original_load = window._load_invoices
+                def spy_load(*args, **kwargs):
+                    loaded_searches.append(window.txt_search.text())
+                    return original_load(*args, **kwargs)
 
-                    def spy_load():
-                        nonlocal load_count
-                        load_count += 1
-                        original_load()
+                scenarios = (
+                    (("missing", numbers[0], numbers[1]), (numbers[1],)),
+                    (("missing",), ()),
+                    ((numbers[0],), (numbers[0],)),
+                    (("",), numbers),
+                )
+                expected_searches = []
+                # Observe the implementation reached by the existing timer slot.
+                # Replacing _load_invoices after signal wiring can miss that slot.
+                with patch.object(window, "_load_invoices_impl", side_effect=spy_load):
+                    for edits, expected_numbers in scenarios:
+                        # Submit one burst without pumping the event loop.
+                        for text in edits:
+                            previous_timer_id = timer.timerId()
+                            window.txt_search.setText(text)
+                            self.assertTrue(timer.isActive())
+                            # Restarting a QTimer changes its ID, even when
+                            # the last input arrives before any event dispatch.
+                            self.assertNotEqual(timer.timerId(), previous_timer_id, text)
+                        self.assertEqual(loaded_searches, expected_searches)
+                        self.assertEqual(timeouts.count(), len(expected_searches))
 
-                    window._load_invoices = spy_load
-                    window.txt_search.setText("missing")
-                    app.processEvents()
-                    self.assertEqual(load_count, 0)
+                        self.assertTrue(timeouts.wait(10000), f"Search timer did not fire for {edits[-1]!r}")
+                        app.processEvents()
+                        expected_searches.append(edits[-1])
+                        self.assertEqual(timeouts.count(), len(expected_searches))
+                        self.assertEqual(loaded_searches, expected_searches)
+                        self.assertFalse(timer.isActive())
 
-                    window.search_reload_timer.stop()
-                    window._load_invoices()
-                    self.assertEqual(window.table.rowCount(), 0)
-                    self.assertEqual(window.lbl_empty_title.text(), "没有匹配的发票")
-                finally:
-                    if hasattr(window, "db") and window.db is not None:
-                        window.db.close()
-                    window.close()
-                    window.deleteLater()
-                    app.processEvents()
-        except Exception as e:
-            if isinstance(e, (ImportError, RuntimeError)):
-                self.skipTest(f"Skipping GUI test: {e}")
-            raise
+                        self.assertEqual(window.table.rowCount(), len(expected_numbers), edits[-1])
+                        self.assertCountEqual(
+                            [window.table.item(row, 5).text() for row in range(window.table.rowCount())],
+                            expected_numbers,
+                        )
+                        if expected_numbers:
+                            self.assertTrue(window.table.isVisibleTo(window))
+                        else:
+                            self.assertTrue(window.lbl_empty_title.isVisibleTo(window))
+                            self.assertEqual(window.lbl_empty_title.text(), "没有匹配的发票")
+            finally:
+                # A failed assertion may leave a timeout and UI callbacks pending.
+                timer = getattr(window, "search_reload_timer", None)
+                if timer is not None:
+                    timer.stop()
+                window.close()
+                app.processEvents()
+                window.deleteLater()
+                app.sendPostedEvents(None, QEvent.DeferredDelete)
+                app.processEvents()
 
     def test_gui_scan_finished_builds_actionable_summary(self):
         try:
