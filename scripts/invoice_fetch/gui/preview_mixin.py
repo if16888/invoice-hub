@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
+from PySide6.QtCore import QEvent, QPointF, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut, QTransform
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
@@ -930,7 +930,7 @@ class PreviewMixin:
             new_page = current + delta
             if new_page < 0 or new_page >= page_count:
                 return False
-            nav.jump(new_page, 0.0, 0.0)
+            nav.jump(new_page, QPointF(), 0.0)
             self._update_pdf_page_buttons()
             return True
         except Exception:

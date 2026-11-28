@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QPointF, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QStackedWidget
 
 
@@ -162,7 +162,7 @@ class PdfPreviewController(QObject):
             # old and new callers operate on the same live object.
             if not hasattr(document, "pageNavigator"):
                 document.pageNavigator = view.pageNavigator
-            navigator.jump(0, 0.0, 0.0)
+            navigator.jump(0, QPointF(), 0.0)
             navigator.currentPageChanged.connect(self._emit_page_changed)
         except Exception:
             pass
