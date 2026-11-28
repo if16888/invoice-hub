@@ -40,18 +40,50 @@ class DesktopDarkModeRenderingTests(unittest.TestCase):
                 app.processEvents()
 
         try:
+            config = {
+                "email_accounts": [{
+                    "address": "fixtures@example.invalid",
+                    "name": "Synthetic mailbox",
+                    "provider": "custom",
+                    "enabled": True,
+                    "is_default": True,
+                    "imap": {"server": "localhost", "port": 993, "ssl": True},
+                    "search": {"folder": "INBOX", "months_back": 3},
+                }],
+            }
             with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"INVOICE_HUB_THEME": "dark"}), \
                     patch.object(workbench_settings, "RUNTIME_DIR", Path(td)), \
-                    patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value={}):
+                    patch("scripts.invoice_fetch.gui.app.load_config_safe", return_value=config), \
+                    patch("scripts.invoice_fetch.credentials.has_auth_code", return_value=False), \
+                    patch("scripts.invoice_fetch.gui.settings_common.has_auth_code", return_value=False):
                 path = Path(td) / "theme.db"
                 settings = workbench_settings.workbench_settings()
                 settings.setValue("migration/legacy_qsettings_v1", True)
                 settings.sync()
+                attachment = Path(td) / "synthetic.xml"
+                attachment.write_text("<invoice/>", encoding="utf-8")
                 with InvoiceDB(path) as db:
                     invoice = db.insert_invoice({"invoice_number": "DARK-1", "seller_name": "Synthetic seller",
                                                  "total_amount": "20.00", "review_status": "to_review"})
                     claim = db.create_claim_group("Synthetic claim")
                     self.assertTrue(db.add_invoice_to_claim(claim, invoice))
+                    ready_invoice = db.insert_invoice({
+                        "invoice_number": "DARK-2",
+                        "invoice_type": "电子普通发票",
+                        "seller_name": "Synthetic seller",
+                        "buyer_name": "Synthetic buyer",
+                        "invoice_date": "2026-06-01",
+                        "expense_date": "2026-06-01",
+                        "category": "其他",
+                        "total_amount": "10.00",
+                        "amount": "10.00",
+                        "tax_amount": "0.00",
+                        "parse_success": 1,
+                        "attachment_path": str(attachment),
+                        "review_status": "approved",
+                    })
+                    ready_claim = db.create_claim_group("Synthetic ready claim")
+                    self.assertTrue(db.add_invoice_to_claim(ready_claim, ready_invoice))
                 window = InvoiceReviewApp(path)
                 try:
                     window._deferred_init()
@@ -75,6 +107,22 @@ class DesktopDarkModeRenderingTests(unittest.TestCase):
                                 more = window._detail_panel.btn_more_source
                                 self.assertTrue(more.isVisible())
                                 self.assertGreaterEqual(_contrast(more.palette().color(QPalette.ButtonText), surface), 4.5)
+                        for page, text in (
+                            ("export", "可导出"),
+                            ("settings", "默认"),
+                            ("imports", "最近 3 个月"),
+                        ):
+                            window.workbench_nav_buttons[page].click()
+                            settle()
+                            badges = [label for label in window.findChildren(QLabel)
+                                      if label.isVisible() and label.property("class") == "StatusBadge"
+                                      and label.property("variant") == "muted" and label.text() == text]
+                            with self.subTest(page=page, badge=text):
+                                self.assertTrue(badges)
+                                for badge in badges:
+                                    foreground = badge.palette().color(QPalette.WindowText)
+                                    background = badge.palette().color(QPalette.Window)
+                                    self.assertGreaterEqual(_contrast(foreground, background), 4.5)
                 finally:
                     window.close()
                     window.deleteLater()

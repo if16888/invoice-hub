@@ -1366,7 +1366,7 @@ QLabel.StatusBadge[variant="info"] {
     border: 1px solid #BFDBFE;
 }
 QLabel.StatusBadge[variant="muted"] {
-    background-color: #F3F4F6;
+    background-color: __MUTED_BADGE_SURFACE__;
     color: #4B5563;
     border: 1px solid #E5E7EB;
 }
@@ -2099,6 +2099,9 @@ def build_app_stylesheet() -> str:
             placeholder,
             str(DESIGN_V1_BUYER_WARNING[key]),
         )
+    stylesheet = stylesheet.replace(
+        "__MUTED_BADGE_SURFACE__", DESIGN_V1_COLORS["muted_surface"]
+    )
     return stylesheet + _focus_ring_stylesheet() + _scrollbar_stylesheet()
 
 
