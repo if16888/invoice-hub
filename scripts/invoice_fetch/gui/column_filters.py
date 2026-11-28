@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..review_query import recent_three_months_start
 from .selection_surfaces import install_selection_surface_contracts
 
 
@@ -119,6 +120,8 @@ def _matches_quick_date(value: str, quick: str, today: date) -> bool:
         return current.year == today.year and current.month == today.month
     if quick == "last_30_days":
         return today - timedelta(days=29) <= current <= today
+    if quick == "last_3_months":
+        return current.isoformat() == value[:10] and recent_three_months_start(today) <= current <= today
     return True
 
 
@@ -147,12 +150,17 @@ def apply_column_filters(
     for row in rows:
         keep = True
         for key, spec in active.items():
+            quick = str(spec.get("quick") or "")
             value = column_value(row, key, value_getters)
+            if key == "expense_date" and quick == "last_3_months" and not (value_getters or {}).get(key):
+                # Match SQLite's TRIM and blank-expense fallback for this
+                # preset only; leave custom filters and old presets as-is.
+                value = (str(row.get("expense_date") or "").strip(" ")
+                         or str(row.get("invoice_date") or "").strip(" "))
             selected = set(spec.get("values") or ())
             if "values" in spec and (value or "(空白)") not in selected:
                 keep = False
                 break
-            quick = str(spec.get("quick") or "")
             if quick and not _matches_quick_date(value, quick, today):
                 keep = False
                 break
@@ -225,6 +233,9 @@ class ColumnFilterPopup(QDialog):
                 self.quick_combo.addItem("本周", "week")
                 self.quick_combo.addItem("本月", "month")
                 self.quick_combo.addItem("最近 30 天", "last_30_days")
+                self.quick_combo.addItem("最近 3 个月", "last_3_months")
+                self.quick_combo.setItemData(self.quick_combo.count() - 1,
+                                             "向前推 3 个日历月至今天，包含首尾；无对应日时取当月末日。", Qt.ToolTipRole)
                 quick_index = self.quick_combo.findData(str(self.current.get("quick") or ""))
                 self.quick_combo.setCurrentIndex(max(0, quick_index))
                 layout.addWidget(self.quick_combo)

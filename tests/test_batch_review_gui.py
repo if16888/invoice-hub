@@ -1,10 +1,12 @@
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtCore import QEvent, QItemSelectionModel
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QDate, QEvent, QItemSelectionModel, QPoint, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from scripts.invoice_fetch.gui.app import InvoiceReviewApp
 
@@ -61,6 +63,124 @@ class BatchReviewGuiTests(unittest.TestCase):
         for row in rows:
             model.select(model.model().index(row, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
         self.app.processEvents()
+
+    def test_recent_three_months_from_date_header_preserves_paging_and_batch_scope(self):
+        today = date.today()
+        # Qt's existing calendar-month convention is an independent reference
+        # for the Review preset (not the implementation being tested).
+        start = QDate(today.year, today.month, today.day).addMonths(-3).toPython()
+        within = sorted({start, today, *(today - timedelta(days=n) for n in range(2, 88, 4))})
+        expected, pending = set(), set()
+        for day in within:
+            for status in ('to_review', 'approved', 'to_review'):
+                invoice_id = self.seed(expense_date=day.isoformat(), invoice_date=day.isoformat(), review_status=status)[0]
+                expected.add(invoice_id)
+                if status == 'to_review':
+                    pending.add(invoice_id)
+        for day in [start - timedelta(days=n) for n in range(1, 183, 7)] + [today + timedelta(days=1), today + timedelta(days=21)]:
+            self.seed(2, expense_date=day.isoformat(), invoice_date=day.isoformat())
+        for expense, invoice in (('', start.isoformat()), (None, today.isoformat()),
+                                 (within[1].isoformat(), (today + timedelta(days=1)).isoformat())):
+            invoice_id = self.seed(expense_date=expense, invoice_date=invoice)[0]
+            expected.add(invoice_id)
+            pending.add(invoice_id)
+        self.seed(expense_date=(start - timedelta(days=1)).isoformat(), invoice_date=today.isoformat())
+        self.seed(expense_date='', invoice_date='')
+        self.seed(expense_date='not-a-date', invoice_date=today.isoformat())
+        self.seed(expense_date=today.isoformat(), invoice_date=today.isoformat(), is_deleted=1)
+        self.assertEqual((len(expected), len(pending), self.counter), (75, 51, 135))
+
+        def invoice_state():
+            # Use the test window's owned connection, not an extra open file
+            # handle that could outlive TemporaryDirectory on Windows.
+            return list(self.view.db._conn.iterdump())
+
+        before = invoice_state()
+        self.view.resize(1440, 900)
+        self.view.activateWindow()
+        QTest.qWait(20)
+        self.reload()
+        QTest.mouseClick(self.view.workbench_nav_buttons['review'], Qt.LeftButton)
+        self.app.processEvents()
+        header = self.view.table.horizontalHeader()
+        section = 2
+        point = QPoint(header.sectionViewportPosition(section) + header.sectionSize(section) - 8, header.height() // 2)
+        self.assertTrue(header.viewport().rect().contains(point))
+        self.assertEqual(header.logicalIndexAt(point), section)
+        QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+        self.app.processEvents()
+        popup = self.view._column_filter_popup
+        try:
+            self.assertTrue(popup.isVisible())
+            self.assertEqual(popup.key, 'expense_date')
+            combo = popup.quick_combo
+            target = combo.findData('last_3_months')
+            self.assertGreaterEqual(target, 0, 'recent three calendar months is available in the actual date popup')
+            self.assertEqual(combo.itemText(target), '最近 3 个月')
+            self.assertEqual([combo.itemData(i) for i in range(target)], ['', 'today', 'week', 'month', 'last_30_days'])
+            QTest.mouseClick(combo, Qt.LeftButton)
+            self.app.processEvents()
+            QTest.qWait(20)
+            choice = combo.view()
+            self.assertTrue(choice.isVisible())
+            # A keyboard choice in the actual opened combo is portable to
+            # offscreen Qt's nested popup surface (mouse grabs vary by host).
+            QTest.keyClick(choice, Qt.Key_End)
+            self.assertEqual(choice.currentIndex().data(Qt.UserRole), 'last_3_months')
+            QTest.keyClick(choice, Qt.Key_Return)
+            self.app.processEvents()
+            QTest.qWait(20)
+            self.assertEqual(combo.currentData(), 'last_3_months')
+            apply = next(button for button in popup.findChildren(QPushButton) if button.text() == '应用')
+            QTest.mouseClick(apply, Qt.LeftButton)
+            self.app.processEvents()
+            self.assertFalse(popup.isVisible())
+            self.assertFalse(choice.isVisible())
+        finally:
+            if popup is not None and popup.isVisible():
+                popup.quick_combo.hidePopup()
+                popup.close()
+                self.app.processEvents()
+        self.assertIsNone(self.app.activePopupWidget())
+        self.assertEqual(self.view.column_filters['expense_date'], {'quick': 'last_3_months'})
+        self.assertTrue(any('费用日期: 最近 3 个月' in button.text()
+                            for button in self.view.filter_chips_widget.findChildren(QPushButton)))
+
+        def visible_ids():
+            from scripts.invoice_fetch.gui.app import SORT_ID_ROLE
+            ids = [row['id'] for row in self.view.invoices_list]
+            self.assertEqual(self.view.table.rowCount(), len(ids))
+            self.assertEqual([self.view.table.item(row, 5).data(SORT_ID_ROLE) for row in range(len(ids))], ids)
+            return ids
+
+        def assert_two_pages(wanted, second_size):
+            self.assertEqual(self.view._record_total_matching, len(wanted))
+            first = visible_ids()
+            self.assertEqual(len(first), 50)
+            self.assertTrue(self.view.btn_review_next_page.isEnabled())
+            QTest.mouseClick(self.view.btn_review_next_page, Qt.LeftButton)
+            self.app.processEvents()
+            second = visible_ids()
+            self.assertEqual(len(second), second_size)
+            self.assertFalse(set(first) & set(second))
+            self.assertEqual(set(first + second), wanted)
+
+        assert_two_pages(expected, 25)
+        self.assertIn('75', self.view.action_approve_filtered.text())
+        # Real QAction computes the whole query scope, not just the visible
+        # 25 rows. Only the modal's response is controlled to cancel safely.
+        with patch.object(QMessageBox, 'question', return_value=QMessageBox.No) as confirm:
+            self.view.action_approve_filtered.trigger()
+        confirm.assert_called_once()
+        self.assertIn('共 75 张：可通过 51 张，跳过 24 张', confirm.call_args.args[2])
+        self.assertEqual(confirm.call_args.args[-1], QMessageBox.No)
+        self.assertEqual(invoice_state(), before)
+        QTest.mouseClick(self.view.filter_buttons['to_review'], Qt.LeftButton)
+        self.app.processEvents()
+        self.assertEqual(self.view.current_filter_status, 'to_review')
+        self.assertEqual(self.view.column_filters['expense_date'], {'quick': 'last_3_months'})
+        assert_two_pages(pending, 1)
+        self.assertEqual(invoice_state(), before)
 
     def test_menu_selects_only_loaded_rows_and_bar_approval_preserves_notes(self):
         ids = self.seed(75)
