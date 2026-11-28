@@ -4527,8 +4527,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             # A worker's first step is creating a claim, not picking invoices:
             # hide claim-dependent actions and promote the only valid action.
             for attr in (
-                "btn_edit_claim_reason",
-                "btn_export_filename",
                 "btn_export_choose_invoices",
                 "btn_mark_claim_reimbursed",
             ):
@@ -4565,8 +4563,6 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_invoices_card.setVisible(True)
         self.export_integrity_card.setVisible(True)
         for attr in (
-            "btn_edit_claim_reason",
-            "btn_export_filename",
             "btn_export_choose_invoices",
             "btn_mark_claim_reimbursed",
         ):
@@ -5970,9 +5966,15 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
         self.export_group_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
         self.btn_export_create_group = make_button("新建报销组", variant="primary")
         self.btn_export_create_group.clicked.connect(self._create_export_claim)
+        # Compatibility references only; the visible commands belong to the
+        # More menu. Keep them owned and explicitly hidden, not top-level.
         self.btn_edit_claim_reason = make_button("编辑报销信息", variant="secondary")
+        self.btn_edit_claim_reason.setParent(self.export_group_card)
+        self.btn_edit_claim_reason.hide()
         self.btn_edit_claim_reason.clicked.connect(self._edit_claim_reason)
         self.btn_export_filename = make_button("导出文件名模板", variant="secondary")
+        self.btn_export_filename.setParent(self.export_group_card)
+        self.btn_export_filename.hide()
         self.btn_export_filename.clicked.connect(self._configure_export_filename)
         self.export_group_more = MoreMenuButton(parent=self.export_group_card)
         self.export_group_more.setToolTip("更多报销组操作")
