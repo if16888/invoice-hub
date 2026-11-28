@@ -7565,6 +7565,7 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
                     "week": "本周",
                     "month": "本月",
                     "last_30_days": "最近 30 天",
+                    "last_3_months": "最近 3 个月",
                 }.get(spec["quick"], spec["quick"])
                 chips_to_add.append((f"费用日期: {quick_disp}", key))
 

@@ -1,11 +1,11 @@
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from scripts.invoice_fetch.db import InvoiceDB
-from scripts.invoice_fetch.review_query import ReviewColumnFilter, ReviewQuery
+from scripts.invoice_fetch.review_query import ReviewColumnFilter, ReviewQuery, recent_three_months_start
 from scripts.invoice_fetch.review_status import APPROVED, TO_REVIEW
 
 
@@ -142,6 +142,75 @@ class ReviewQueryBoundaryTests(unittest.TestCase):
         rows = self.db.list_review_invoices(query)
         self.assertEqual([row["id"] for row in rows], [normal_id])
         self.assertEqual(self.db.count_review_invoices(query), 1)
+
+    def test_recent_three_months_clamps_calendar_days_and_includes_both_endpoints(self):
+        from scripts.invoice_fetch.gui.column_filters import apply_column_filters
+
+        for index, (today, start) in enumerate((
+            (date(2026, 5, 31), date(2026, 2, 28)),  # shorter target month
+            (date(2024, 5, 31), date(2024, 2, 29)),  # leap year
+            (date(2026, 1, 31), date(2025, 10, 31)),  # across New Year
+            (date(2026, 11, 30), date(2026, 8, 30)),  # not a 90-day window
+        )):
+            with self.subTest(today=today):
+                self.assertEqual(recent_three_months_start(today), start)
+                ids = [self.db.insert_invoice({"invoice_number": f"CAL-{index}-{n}", "expense_date": day.isoformat(),
+                         "invoice_date": day.isoformat(), "total_amount": "10", "seller_name": "Synthetic"})
+                       for n, day in enumerate((start - timedelta(days=1), start, today, today + timedelta(days=1)))]
+                query = ReviewQuery(invoice_ids=tuple(ids), today=today,
+                                    column_filters=(ReviewColumnFilter("expense_date", quick="last_3_months"),))
+                self.assertEqual(set(self.db.list_review_invoice_ids(query)), set(ids[1:3]))
+                rows = [self.db.get_invoice(invoice_id) for invoice_id in ids]
+                self.assertEqual([row["id"] for row in apply_column_filters(rows, {"expense_date": {"quick": "last_3_months"}}, today=today)], ids[1:3])
+
+    def test_recent_three_months_sql_and_memory_agree_on_strict_dates_and_fallback(self):
+        from scripts.invoice_fetch.gui.column_filters import apply_column_filters
+
+        today = date(2026, 5, 31)
+        # Nonempty malformed expense dates must not fall back to an in-range
+        # invoice date; SQLite must not normalize an impossible day into it.
+        cases = [
+            ("2026-02-28", "2026-02-01", True), ("2026-05-31", "2026-06-01", True),
+            ("2026-02-27", "2026-05-01", False), ("2026-06-01", "2026-05-01", False),
+            ("2026-03-15T12:34:56", "", True), (None, "2026-05-31", True),
+            ("", "2026-02-28", True), ("   ", "2026-03-01", True), (" 2026-04-01 ", "", True),
+            ("2026-04-31", "2026-05-01", False), ("2026-02-29", "2026-03-01", False),
+            ("2026-4-01", "2026-04-01", False), ("not-a-date", "2026-04-01", False),
+            ("\t2026-04-01", "2026-04-01", False), (" \t ", "2026-04-01", False),
+            (None, None, False), ("", "", False),
+        ]
+        ids, expected = [], set()
+        for n, (expense, invoice, matches) in enumerate(cases):
+            invoice_id = self.db.insert_invoice({"invoice_number": f"STRICT-{n}", "expense_date": expense,
+                         "invoice_date": invoice, "total_amount": "10", "seller_name": "Synthetic"})
+            self.assertIsNotNone(invoice_id)
+            ids.append(invoice_id)
+            if matches:
+                expected.add(invoice_id)
+        query = ReviewQuery(today=today, column_filters=(ReviewColumnFilter("expense_date", quick="last_3_months"),), limit=2)
+        self.assertEqual(set(self.db.list_review_invoice_ids(query)), expected)
+        self.assertEqual(self.db.count_review_invoices(query), len(expected))
+        pages = [row["id"] for offset in range(0, len(expected), 2)
+                 for row in self.db.list_review_invoices(replace(query, offset=offset))]
+        self.assertEqual(len(pages), len(expected))
+        self.assertEqual(set(pages), expected)
+        rows = [self.db.get_invoice(invoice_id) for invoice_id in ids]
+        self.assertEqual({row["id"] for row in apply_column_filters(rows, {"expense_date": {"quick": "last_3_months"}}, today=today)}, expected)
+
+    def test_existing_quick_date_presets_keep_their_current_ranges(self):
+        from scripts.invoice_fetch.gui.column_filters import apply_column_filters
+
+        today = date(2026, 5, 15)
+        days = ("2026-04-15", "2026-04-16", "2026-05-01", "2026-05-11", "2026-05-15", "2026-05-31", "2026-06-01")
+        ids = [self.db.insert_invoice({"invoice_number": f"OLD-{n}", "expense_date": day,
+                "invoice_date": day, "total_amount": "10", "seller_name": "Synthetic"}) for n, day in enumerate(days)]
+        rows = [self.db.get_invoice(invoice_id) for invoice_id in ids]
+        for quick, positions in (("today", (4,)), ("week", (3, 4)), ("month", (2, 3, 4, 5)), ("last_30_days", (1, 2, 3, 4))):
+            with self.subTest(quick=quick):
+                expected = {ids[n] for n in positions}
+                query = ReviewQuery(today=today, column_filters=(ReviewColumnFilter("expense_date", quick=quick),))
+                self.assertEqual(set(self.db.list_review_invoice_ids(query)), expected)
+                self.assertEqual({row["id"] for row in apply_column_filters(rows, {"expense_date": {"quick": quick}}, today=today)}, expected)
 
     def test_page_query_executes_limit_and_offset(self):
         self._insert_rows(300)

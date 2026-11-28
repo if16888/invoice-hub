@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from . import review_status
 from .log_privacy import mask_invoice_number, mask_mailbox_key
-from .review_query import ReviewColumnFilter, ReviewQuery
+from .review_query import ReviewColumnFilter, ReviewQuery, recent_three_months_start
 from .evidence import (
     EvidenceStoreMixin, is_evidence_record, material_paths, path_key,
     refresh_material_projection, replace_material_paths, visible_invoice_sql,
@@ -1849,6 +1849,12 @@ class InvoiceDB(EvidenceStoreMixin):
                     end = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
                 elif column_filter.quick == "last_30_days":
                     start, end = today - timedelta(days=29), today
+                elif column_filter.quick == "last_3_months":
+                    start, end = recent_three_months_start(today), today
+                    # Reject noncanonical/invalid ISO days instead of letting
+                    # SQLite normalize them into this reimbursement range.
+                    prefix = f"substr({expression}, 1, 10)"
+                    clauses.append(f"date({prefix}, '+0 days') = {prefix}")
                 else:
                     raise ValueError(f"Unsupported quick date filter: {column_filter.quick}")
                 clauses.append(f"date(substr({expression}, 1, 10)) BETWEEN date(?) AND date(?)")
