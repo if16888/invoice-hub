@@ -10235,14 +10235,39 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
 
     def _choose_claim_invoices(self):
         current = self.export_group_list.currentItem()
-        if current is not None:
-            self._load_claims(selected_claim_id=current.data(Qt.UserRole))
+        self._open_claim_review(current.data(Qt.UserRole) if current is not None else None)
+
+    def _clear_claim_review_target(self):
+        self._quick_claim_target_id = None
+        self.combo_claims.setCurrentIndex(-1)
+        self._update_claim_total()
+
+    def _open_claim_review(self, claim_id) -> bool:
         self._switch_main_page("review")
+        if self.center_stack.currentWidget() is not self.review_page:
+            return False
+
+        # An export refresh deliberately preserves its previous selection.
+        # Bind the requested ID only after leaving that page so its selection
+        # cannot restore a different group as the Review assignment target.
+        target_available = True
+        if claim_id is not None:
+            try:
+                self._load_claims(selected_claim_id=claim_id)
+                target_available = self.combo_claims.currentData() == claim_id
+            except Exception as exc:
+                _log.warning("Unable to select Review claim target: %s", type(exc).__name__)
+                target_available = False
+            if not target_available:
+                self._clear_claim_review_target()
         self._reset_invoice_filters()
         self._change_filter("all")
-        if self.center_stack.currentWidget() is self.review_page:
-            self._detail_panel.detail_tabs.setCurrentIndex(1)
+        self._detail_panel.detail_tabs.setCurrentIndex(1)
+        if target_available:
             self.statusBar().showMessage("选择发票后，在右侧“报销信息”中关联报销组。", 8000)
+        else:
+            self.statusBar().showMessage("目标报销组已不存在或暂不可读取，请重新选择加入目标。", 8000)
+        return True
 
     def _open_soft_duplicate_review(self):
         from .duplicate_review_dialog import DuplicateReviewDialog
@@ -10457,11 +10482,31 @@ class InvoiceReviewApp(PreviewMixin, LogDiagnosticsMixin, QMainWindow):
             return
         try:
             claim_id = self.db.create_claim_group(name)
-            self._load_claims(selected_claim_id=claim_id)
-            self._refresh_export_page()
-            self._choose_claim_invoices()
         except Exception:
             QMessageBox.warning(self, "创建失败", "报销组未能创建，请检查名称或数据目录。")
+            return
+
+        # Creation has committed. The new ID, not a possibly stale export
+        # list row, is the intended target. Refresh export when it is next
+        # visible instead of doing another material preflight before Review.
+        self.export_dirty = True
+        try:
+            if not self._open_claim_review(claim_id):
+                blocked_message = self.statusBar().currentMessage()
+                self._load_claims()
+                self._refresh_export_page()
+                self.statusBar().showMessage(
+                    "报销组已创建，尚未切换到审核页。" + (blocked_message or "请完成当前操作后再选择发票。"),
+                    8000,
+                )
+            elif self.combo_claims.currentData() != claim_id:
+                self.statusBar().showMessage("报销组已创建，但目标暂不可用，请刷新后重新选择加入目标。", 8000)
+        except Exception as exc:
+            _log.warning("Claim created but Review handoff failed: %s", type(exc).__name__)
+            self.export_dirty = True
+            if self.center_stack.currentWidget() is self.review_page:
+                self._clear_claim_review_target()
+            QMessageBox.warning(self, "报销组已创建", "报销组已创建，但界面未能更新。请刷新后重新选择加入目标。")
 
     def _create_claim(self):
         """Insert a new claim group into DB and reload dropdown."""
